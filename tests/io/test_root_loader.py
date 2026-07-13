@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import os
 from pathlib import Path
 
@@ -375,6 +376,374 @@ def test_root_loader_reads_flame_sensor_named_temperature_logs(tmp_path) -> None
     assert dil_series["role"] == "sample_temperature"
     assert dil_series["sensor"] == "DIL_T_mix_value"
     assert dil_series["primary"] is False
+
+
+def _write_header_strings(root_file, entries: list[tuple[str, str, str]]) -> None:
+    """Write ``RunHeader`` TObjStrings with explicit TKey names.
+
+    ``root_file[path] = value`` cannot create the new-format leaves: the
+    encoded names contain ``/`` ("N/A", "MeV/c", URLs) and ``:``, which
+    uproot's path assignment splits or rejects, so the strings are added to
+    each folder directly.
+    """
+    from uproot.writing.identify import add_to_directory
+
+    directories: dict[str, object] = {}
+    streamers: list = []
+    for folder, name, payload in entries:
+        directory = directories.get(folder)
+        if directory is None:
+            directory = root_file.mkdir(f"RunHeader/{folder}")
+            directories[folder] = directory
+        add_to_directory(payload, name, directory, streamers)
+    root_file.file._cascading.streamers.update_streamers(root_file.file.sink, streamers)
+
+
+def _th1(name: str, title: str, counts: np.ndarray, *, xmax: float):
+    """A writable TH1D with an explicit ``fTitle``.
+
+    uproot's plain ``(counts, edges)`` assignment cannot set a title, and the
+    new-format fixtures need one to reproduce the DAQ trap of writing every
+    histogram title with the last character of the filename dropped.
+    """
+    from uproot.writing.identify import to_TAxis, to_TH1x
+
+    data = np.concatenate([[0.0], np.asarray(counts, dtype=np.float64), [0.0]])
+    return to_TH1x(
+        fName=name,
+        fTitle=title,
+        data=data,
+        fEntries=float(len(counts)),
+        fTsumw=0.0,
+        fTsumw2=0.0,
+        fTsumwx=0.0,
+        fTsumwx2=0.0,
+        fSumw2=np.zeros(len(data)),
+        fXaxis=to_TAxis(fName="xaxis", fTitle="", fNbins=len(counts), fXmin=0.0, fXmax=xmax),
+    )
+
+
+_ENCODED_FLAME_DETECTORS = ["Forward", "Backward", "Right", "Left", "R_F", "R_B", "L_F", "L_B"]
+
+#: Free-text RunSummary lines (some with colons, some without, one blank); the
+#: DAQ numbers them "NNNN <text>" with no ``-@type`` suffix.
+_ENCODED_RUN_SUMMARY_LINES = [
+    "########################################",
+    "# Run summary information",
+    "########################################",
+    "",
+    "Run:",
+    "  started at: 2026-01-02 10:00:00",
+    "Events: 12345678",
+]
+
+
+def _write_encoded_musrroot_directory(path: Path) -> None:
+    """Write the new-format (2026 FLAME DAQ) MusrRoot TDirectory layout.
+
+    Every ``RunHeader`` leaf is a TObjString whose TKey name AND payload are
+    the identical encoded string ``NNN - Label: Value -@type``, numbered by a
+    single global counter that interleaves across subfolders (so per-folder
+    numbering is non-contiguous, as in real files). All values are invented.
+    """
+    n_bins = 102401
+    counter = itertools.count()
+    entries: list[tuple[str, str, str]] = []
+
+    def put(folder: str, entry: str) -> None:
+        encoded = f"{next(counter):03d} - {entry}"
+        entries.append((folder, encoded, encoded))
+
+    def put_detector(index: int) -> None:
+        folder = f"DetectorInfo/Detector{index:03d}"
+        put(folder, f"Name: {_ENCODED_FLAME_DETECTORS[index - 1]} -@0")
+        put(folder, f"Histo Number: {index} -@1")
+        put(folder, f"Histo Length: {n_bins} -@1")
+        put(folder, "Time Zero Bin: 2000.000000 -@2")
+        put(folder, "First Good Bin: 2020 -@1")
+        put(folder, f"Last Good Bin: {n_bins - 1} -@1")
+
+    for entry in [
+        "Version: N/A -@0",
+        "Generic Validator URL: https://example.invalid/validator -@0",
+        "Specific Validator URL: https://example.invalid/validator -@0",
+        "Generator: MuSRrootHeader -@0",
+        "Proposal Number: 20990001 -@1",
+        "Main Proposer: A. Nonymous -@0",
+        "Run Title: CuTest, TF45, synthetic run -@0",
+        "Run Number: 4321 -@1",
+        "Run Start Time: 2026-01-02 10:00:00 -@0",
+        "Run Stop Time: 2026-01-02 11:00:00 -@0",
+        "Run Duration: 3600 sec -@3",
+        "Laboratory: PSI -@0",
+        "Instrument: flame -@0",  # the DAQ writes the instrument in lower case
+        "Muon Beam Momentum: 28.1000003815 MeV/c -@3",
+        "Muon Source: M -@0",
+        "Setup: flame, Sample, TestMag, SampleStick -@0",
+        "Comment: n/a -@0",
+        "Sample Name: CuTest -@0",
+        "Sample Temperature: 150.15 +- 0.01 K -@3",
+        "Sample Magnetic Field: 7799.8 +- 0.1 G -@3",
+        "No of Histos: 8 -@1",
+        "Time Resolution: 0.09765625 ns; SiPM -@3",
+        "RedGreen Offsets: 0 -@5",
+    ]:
+        put("RunInfo", entry)
+    put_detector(1)
+    put("SampleEnvironmentInfo", "Cryo: SampleStick -@0")
+    put("MagneticFieldEnvironmentInfo", "Magnet Name: TestMag -@0")
+    put("BeamlineInfo", "Name: piM3.3 -@0")
+    for entry in [
+        "P-Group: p00000 -@0",
+        "Field longitudinal: 7799.8 +- 0.1 G -@3",
+        "Field vertical: 0.014 +- 0.008 G -@3",
+        "Field horizontal: -0.012 +- 0.007 G -@3",
+        "Cryostat Temperature: 149.998 +- 0.008 K -@3",
+        "Dilution Mix Temperature: 126.112 +- 0.005 K -@3",
+        "Dilution Sorb Temperature: 132 +- 138 K -@3",
+    ]:
+        put("RunInfo", entry)
+    for index in range(2, 9):
+        put_detector(index)
+
+    for line_no, text in enumerate(_ENCODED_RUN_SUMMARY_LINES):
+        payload = f"{line_no:04d} {text}"
+        entries.append(("RunSummary", payload.rstrip(), payload))
+
+    truncated = f"{path.name[:-1]}"  # the DAQ drops the filename's last char
+    sc_edges = 6
+    with uproot.recreate(path) as root_file:
+        _write_header_strings(root_file, entries)
+        for index, name in enumerate(_ENCODED_FLAME_DETECTORS, start=1):
+            counts = np.zeros(n_bins)
+            counts[2000:] = 100.0 + index
+            root_file[f"histos/DecayAnaModule/hDecay{index:03d}"] = _th1(
+                f"hDecay{index:03d}", f"{name} Run {truncated}", counts, xmax=float(n_bins)
+            )
+        for name, values in [
+            # Zero-padded tail after the recorded range (real trap shape).
+            ("Cryostat Sample Temperature", [150.2, 150.1, 150.15, 0.0, 0.0, 0.0]),
+            ("Cryostat Temperature", [149.9, 150.0, 150.1, 0.0, 0.0, 0.0]),
+            # NaN in the populated range plus the zero-padded tail (real trap).
+            ("Dilution Sample Temperature", [np.nan, np.nan, np.nan, 0.0, 0.0, 0.0]),
+            # A channel with no finite samples at all.
+            ("Dilution Still Temperature", [np.nan] * sc_edges),
+        ]:
+            root_file[f"histos/SCAnaModule/{name}"] = _th1(
+                name, f"{name} Run {truncated}", np.asarray(values), xmax=3600.0
+            )
+
+
+def _write_encoded_gps_directory(path: Path) -> None:
+    """GPS variant of the encoded TDirectory layout (split _B/_F halves)."""
+    labels = ["Forw", "Back", "Up_B", "Up_F", "Down_B", "Down_F"]
+    counter = itertools.count()
+    entries: list[tuple[str, str, str]] = []
+
+    def put(folder: str, entry: str) -> None:
+        encoded = f"{next(counter):03d} - {entry}"
+        entries.append((folder, encoded, encoded))
+
+    for entry in [
+        "Run Number: 7654 -@1",
+        "Laboratory: PSI -@0",
+        "Instrument: gps -@0",
+        f"No of Histos: {len(labels)} -@1",
+        "Time Resolution: 10 ns -@3",
+    ]:
+        put("RunInfo", entry)
+    for index, label in enumerate(labels, start=1):
+        folder = f"DetectorInfo/Detector{index:03d}"
+        put(folder, f"Name: {label} -@0")
+        put(folder, f"Histo Number: {index} -@1")
+        put(folder, "Time Zero Bin: 1.000000 -@2")
+        put(folder, "First Good Bin: 1 -@1")
+        put(folder, "Last Good Bin: 4 -@1")
+
+    edges = np.arange(-0.5, 5.5, 1.0)
+    with uproot.recreate(path) as root_file:
+        _write_header_strings(root_file, entries)
+        for index in range(1, len(labels) + 1):
+            root_file[f"histos/DecayAnaModule/hDecay{index:03d}"] = (
+                np.arange(5, dtype=np.float64) + index,
+                edges,
+            )
+
+
+def test_load_encoded_musrroot_directory_parses_header(tmp_path) -> None:
+    # The filename digits (00001) are deliberately misleading: everything must
+    # come from the encoded header, not from filename scraping.
+    path = tmp_path / "flame99_his_00001.root"
+    _write_encoded_musrroot_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.metadata["root_format"] == "musr-root-directory"
+    assert ds.run_number == 4321
+    assert ds.metadata["title"] == "CuTest, TF45, synthetic run"
+    assert ds.metadata["sample"] == "CuTest"
+    assert ds.metadata["temperature"] == pytest.approx(150.15)
+    assert ds.metadata["field"] == pytest.approx(7799.8)
+    assert ds.metadata["instrument"] == "FLAME"
+    assert ds.metadata["facility"] == "PSI"
+    assert ds.metadata["beamline"] == "piM3.3"
+    assert ds.metadata["muon_source"] == "M"
+    assert ds.metadata["comment"] == "n/a"
+    assert ds.metadata["started"] == "2026-01-02 10:00:00"
+    assert ds.metadata["stopped"] == "2026-01-02 11:00:00"
+    # 0.09765625 ns despite the "; SiPM" description on the @3 quantity.
+    assert ds.run.histograms[0].bin_width == pytest.approx(9.765625e-5)
+    assert ds.metadata["musrroot_run_summary"] == "\n".join(_ENCODED_RUN_SUMMARY_LINES)
+
+
+def test_encoded_musrroot_header_decodes_labels_and_skips_run_summary(tmp_path) -> None:
+    path = tmp_path / "flame99_his_00001.root"
+    _write_encoded_musrroot_directory(path)
+
+    with uproot.open(path) as root_file:
+        header, kind, run_summary = RootLoader()._read_header(root_file)
+
+    assert kind == "musr-root-directory"
+    assert header["RunInfo/Run Title"] == "CuTest, TF45, synthetic run"
+    assert header["RunInfo/Instrument"] == "flame"
+    # "/" inside a leaf name must not be mistaken for a path separator.
+    assert header["RunInfo/Version"] == "N/A"
+    assert header["RunInfo/Muon Beam Momentum"] == "28.1000003815 MeV/c"
+    assert header["RunInfo/RedGreen Offsets"] == "0"
+    assert header["RunInfo/Time Resolution"] == "0.09765625 ns; SiPM"
+    assert header["DetectorInfo/Detector001/Name"] == "Forward"
+    assert header["DetectorInfo/Detector008/Name"] == "L_B"
+    assert header["SampleEnvironmentInfo/Cryo"] == "SampleStick"
+    assert header["MagneticFieldEnvironmentInfo/Magnet Name"] == "TestMag"
+    assert header["BeamlineInfo/Name"] == "piM3.3"
+    assert not any(key.startswith("RunSummary") for key in header)
+    assert run_summary == "\n".join(_ENCODED_RUN_SUMMARY_LINES)
+
+
+def test_encoded_musrroot_directory_grouping_and_good_bins(tmp_path) -> None:
+    path = tmp_path / "flame99_his_00001.root"
+    _write_encoded_musrroot_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    grouping = ds.run.grouping
+    # Labels come from the decoded header Names, not the truncated TH1 titles,
+    # and the single-letter R_F/R_B/L_F/L_B detectors are genuinely distinct
+    # (never merged into synthetic "R"/"L" groups).
+    assert grouping["groups"] == {gid: [gid] for gid in range(1, 9)}
+    assert grouping["group_names"] == {
+        gid: name for gid, name in enumerate(_ENCODED_FLAME_DETECTORS, start=1)
+    }
+    assert grouping["forward_group"] == 2
+    assert grouping["backward_group"] == 1
+    assert grouping["detector_t0_bins"] == [2000] * 8
+    assert grouping["detector_first_good_bins"] == [2020] * 8
+    assert grouping["detector_last_good_bins"] == [102400] * 8
+    assert len(ds.run.histograms) == 8
+    assert ds.run.histograms[0].n_bins == 102401
+
+
+def test_encoded_musrroot_slow_control_roles_and_nan_robustness(tmp_path) -> None:
+    path = tmp_path / "flame99_his_00001.root"
+    _write_encoded_musrroot_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    series = ds.metadata["nexus_time_series"]
+    primary = series["musrroot_slow_control/Cryostat Sample Temperature"]
+    assert primary["role"] == "sample_temperature"
+    assert primary["primary"] is True
+    assert primary["units"] == "K"
+
+    dilution = series["musrroot_slow_control/Dilution Sample Temperature"]
+    assert dilution["role"] == "sample_temperature"
+    assert dilution["primary"] is False
+    assert np.isfinite(dilution["values"]).all()
+
+    # Cryostat Temperature is a distinct RunInfo entry, not the sample role.
+    assert not series["musrroot_slow_control/Cryostat Temperature"].get("primary", False)
+    # A channel with no finite samples is dropped rather than crashing.
+    assert "musrroot_slow_control/Dilution Still Temperature" not in series
+
+
+def test_primary_sample_temperature_selection_masks_zero_padding() -> None:
+    # Without masking the zero-padded tail, the padded series' mean is ~75.1
+    # and the 80 K series would win the closeness comparison against 150.15.
+    loader = RootLoader()
+    padded = {
+        "role": "sample_temperature",
+        "primary": False,
+        "values": [150.2, 150.1, 150.15, 0.0, 0.0, 0.0],
+    }
+    offset = {"role": "sample_temperature", "primary": False, "values": [80.0, 80.0]}
+    series = {"musrroot_slow_control/padded": padded, "musrroot_slow_control/offset": offset}
+
+    loader._resolve_primary_sample_temperature(
+        series, {"RunInfo/Sample Temperature": "150.15 +- 0.01 K"}
+    )
+
+    assert padded["primary"] is True
+    assert offset["primary"] is False
+
+
+def test_primary_sample_temperature_promotes_lone_candidate() -> None:
+    # A file with a single label-matched temperature channel must still get a
+    # primary series (psi.py and series scoring key off the flag).
+    loader = RootLoader()
+    lone = {"role": "sample_temperature", "primary": False, "values": [150.1, 150.2]}
+    series = {"musrroot_slow_control/Cryostat Sample Temperature": lone}
+
+    loader._resolve_primary_sample_temperature(series, {})
+
+    assert lone["primary"] is True
+
+
+def test_primary_sample_temperature_keeps_sensor_primary_without_scalar() -> None:
+    # With no usable header scalar, a Sens=-designated primary must not be
+    # demoted in favour of whichever candidate happens to iterate first.
+    loader = RootLoader()
+    first = {"role": "sample_temperature", "primary": False, "values": [10.9]}
+    designated = {"role": "sample_temperature", "primary": True, "values": [10.4]}
+    series = {
+        "musrroot_slow_control/a_first": first,
+        "musrroot_slow_control/b_designated": designated,
+    }
+
+    loader._resolve_primary_sample_temperature(series, {})
+
+    assert designated["primary"] is True
+    assert first["primary"] is False
+
+
+def test_encoded_gps_directory_merges_split_halves_like_folder_fixture(tmp_path) -> None:
+    # The encoded TDirectory form must group GPS exactly like the clean/folder
+    # fixtures: _B/_F transverse halves merge, beam counters stay separate.
+    path = tmp_path / "gps_encoded.root"
+    _write_encoded_gps_directory(path)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run_number == 7654
+    assert ds.metadata["instrument"] == "GPS"
+    assert ds.run.grouping["groups"] == {1: [1], 2: [2], 3: [3, 4], 4: [5, 6]}
+    assert ds.run.grouping["group_names"] == {1: "Forw", 2: "Back", 3: "Up", 4: "Down"}
+    assert ds.run.grouping["forward_group"] == 2
+    assert ds.run.grouping["backward_group"] == 1
+
+
+def test_parse_musrroot_string_preserves_internal_hyphens() -> None:
+    loader = RootLoader()
+    assert loader._parse_musrroot_string("005 - Name: Left/Forward - field off -@0") == (
+        "Name",
+        "Left/Forward - field off",
+    )
+    assert loader._parse_musrroot_string("023 - Time Resolution: 0.09765625 ns; SiPM -@3") == (
+        "Time Resolution",
+        "0.09765625 ns; SiPM",
+    )
 
 
 def test_load_convenience_registers_root_loader(tmp_path) -> None:
