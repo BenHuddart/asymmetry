@@ -17,6 +17,11 @@ matplotlib>=3.7,<3.11
 # Optional I/O
 h5py>=3.8,<4
 uproot>=5.0,<6
+# pyhdf 0.11.7 published its macOS wheels with a macosx_26_0 platform tag
+# (built without a pinned MACOSX_DEPLOYMENT_TARGET), so pip on the macos-14
+# release runner rejects them and falls back to an sdist build that needs the
+# HDF4 C headers. Cap until upstream ships wheels installable on macOS < 26.
+pyhdf<0.11.7
 
 # Tooling
 pytest>=7.0,<10
