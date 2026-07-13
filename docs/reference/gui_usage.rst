@@ -300,6 +300,12 @@ Control the plot range using the spinboxes at the top:
 Auto-Y uses points inside the currently selected X range and prefers reliable
 foreground points (excluding undefined/low-confidence bins when available).
 
+**Auto X** and **Auto Y** stay active until you take manual control of the
+view: typing a limit value turns off that axis's auto-scaling, and a **Zoom**
+or **Pan** gesture turns off both so the framing you dragged to is kept
+instead of snapping back to the data extent. Re-enable either at any time by
+clicking its button again.
+
 Default limits automatically adjust to fit the data including error bars, 
 with 5% padding.
 

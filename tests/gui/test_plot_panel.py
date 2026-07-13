@@ -434,6 +434,58 @@ class TestPlotPanel:
         assert second_x[0] > 40.0
         assert second_y[1] > first_y[1]
 
+    def test_interactive_zoom_drops_auto_limit_toggles(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """A zoom/pan gesture clears Auto X/Y so the view is not reframed back."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel._auto_x_btn.click()
+        panel._auto_y_btn.click()
+        assert panel._auto_x_btn.isChecked()
+        assert panel._auto_y_btn.isChecked()
+
+        # Arm the Zoom tool, then simulate the rubber-band result: Matplotlib's
+        # set_xlim/set_ylim fire xlim_changed/ylim_changed with nav mode "zoom",
+        # which is the discriminator for a genuine interactive gesture.
+        panel._zoom_btn.click()
+        assert panel._current_navigation_mode() == "zoom"
+        panel._ax.set_xlim(1.1, 3.9)
+        panel._ax.set_ylim(-0.15, 0.25)
+        panel._canvas.draw()
+
+        # The gesture takes control: both toggles drop, mirroring a field edit.
+        assert not panel._auto_x_btn.isChecked()
+        assert not panel._auto_y_btn.isChecked()
+        # But the view is not "locked", so later content switches still reframe.
+        assert panel._limits_user_locked is False
+
+        # The next redraw's re-apply of the (now-off) toggles must be a no-op:
+        # the zoomed window survives instead of snapping back to the data extent.
+        panel._apply_auto_limits_if_enabled()
+        assert panel._ax.get_xlim() == pytest.approx((1.1, 3.9))
+        assert panel._ax.get_ylim() == pytest.approx((-0.15, 0.25))
+
+    def test_programmatic_limit_change_keeps_auto_toggles(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Auto-framing (nav mode "none") must not clear the Auto toggles."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel._auto_x_btn.click()
+        panel._auto_y_btn.click()
+        assert panel._current_navigation_mode() == "none"
+
+        # Re-applying auto limits fires the same xlim_changed callback, but with
+        # no nav tool armed it is a programmatic change and must leave auto on.
+        panel._apply_auto_limits_if_enabled()
+        assert panel._auto_x_btn.isChecked()
+        assert panel._auto_y_btn.isChecked()
+
     def test_auto_y_uses_current_x_range_and_ignores_low_count_points(
         self, panel: PlotPanel
     ) -> None:
