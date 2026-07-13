@@ -1591,9 +1591,11 @@ class PlotPanel(QWidget):
         # the next redraw's ``_apply_auto_limits_if_enabled`` reframes the gesture
         # straight back to the data extent (the reported friction). Programmatic
         # limit changes from auto-framing or field edits run with nav mode
-        # ``"none"`` and are deliberately left alone. Unlike a field edit we do
-        # not set ``_limits_user_locked``, so a later run/polarization switch
-        # still reframes the new content sensibly.
+        # ``"none"`` and are deliberately left alone. The lock itself is set at
+        # gesture end (``_on_canvas_button_release`` with a nav tool armed), so
+        # a completed zoom/pan holds its window across later run/polarization
+        # switches exactly like a typed limit; re-enabling Auto X/Y is the
+        # explicit escape hatch that releases it.
         if self._current_navigation_mode() != "none":
             self._clear_auto_limit_toggles()
         if not self._viewport_refresh_in_progress:

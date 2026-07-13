@@ -434,10 +434,18 @@ class TestPlotPanel:
         assert second_x[0] > 40.0
         assert second_y[1] > first_y[1]
 
-    def test_interactive_zoom_drops_auto_limit_toggles(
+    def test_interactive_zoom_drops_auto_limit_toggles_and_sets_lock(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
-        """A zoom/pan gesture clears Auto X/Y so the view is not reframed back."""
+        """A zoom/pan gesture clears Auto X/Y AND takes control of the frame.
+
+        The two halves of the gesture contract: the limit callback (fired
+        mid-drag) drops the persistent Auto toggles so the next redraw does not
+        reframe the gesture back to the data extent, and the gesture's end
+        (button release with a nav tool armed) sets ``_limits_user_locked`` so
+        the chosen window then survives run/polarization switches like a typed
+        limit.
+        """
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -459,14 +467,61 @@ class TestPlotPanel:
         # The gesture takes control: both toggles drop, mirroring a field edit.
         assert not panel._auto_x_btn.isChecked()
         assert not panel._auto_y_btn.isChecked()
-        # But the view is not "locked", so later content switches still reframe.
+        # The lock is set at gesture END, never from the limit callback itself
+        # (which also fires for programmatic set_xlim during auto-framing).
         assert panel._limits_user_locked is False
+
+        # Complete the gesture: releasing the mouse with the tool armed locks
+        # the chosen window, so later content switches keep it.
+        panel._on_canvas_button_release(SimpleNamespace(button=1))
+        assert panel._limits_user_locked is True
 
         # The next redraw's re-apply of the (now-off) toggles must be a no-op:
         # the zoomed window survives instead of snapping back to the data extent.
         panel._apply_auto_limits_if_enabled()
         assert panel._ax.get_xlim() == pytest.approx((1.1, 3.9))
         assert panel._ax.get_ylim() == pytest.approx((-0.15, 0.25))
+
+    def test_gesture_then_auto_reenable_releases_lock_and_follows_data(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """The full round trip: gesture locks, re-enabling Auto releases and follows.
+
+        Composes the two mechanisms: a completed zoom gesture drops the Auto
+        toggles and sets the frame lock; the user clicking Auto X back on is the
+        explicit "follow the data" escape hatch — it clears the lock and
+        auto-scales, and the next content switch reframes again.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel._auto_x_btn.click()
+        assert panel._auto_x_btn.isChecked()
+
+        # Complete zoom gesture: toggles drop, lock set.
+        panel._zoom_btn.click()
+        panel._ax.set_xlim(1.1, 3.9)
+        panel._canvas.draw()
+        panel._on_canvas_button_release(SimpleNamespace(button=1))
+        panel._set_navigation_mode("none")
+        assert not panel._auto_x_btn.isChecked()
+        assert panel._limits_user_locked is True
+
+        # Re-enabling Auto X releases the lock and follows the data again.
+        panel._auto_x_btn.click()
+        assert panel._auto_x_btn.isChecked()
+        assert panel._limits_user_locked is False
+        assert panel._ax.get_xlim()[1] > 3.9  # back out to the data extent
+
+        # And with the lock released, a run switch reframes to the new content.
+        t = np.linspace(0.0, 10.0, 100)
+        e = np.full_like(t, 0.01)
+        other = MuonDataset(
+            time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 6301}
+        )
+        panel.plot_dataset(other)
+        assert panel._y_max.value() > 1.0  # framed to the 4.0-amplitude run
 
     def test_programmatic_limit_change_keeps_auto_toggles(
         self, panel: PlotPanel, sample_dataset: MuonDataset

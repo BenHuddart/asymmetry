@@ -50,7 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   straight back to the full data extent, because the next redraw re-applied
   the still-active auto-scaling. An interactive zoom/pan now turns off both
   toggles — the same way typing a limit value already did — so the framing you
-  dragged to is kept. Switching runs still reframes the new data as before.
+  dragged to is kept (and, per the entry above, held across run switches until
+  you re-enable Auto X/Y).
 
 ## [0.12.1] - 2026-07-13
 
