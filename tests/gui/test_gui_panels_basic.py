@@ -868,6 +868,122 @@ def test_frequency_view_window_inverts_shift_mode_to_canonical_mhz(qapp: QApplic
     assert hi == pytest.approx(ref * 1.1, rel=1e-6)
 
 
+def _spectrum_peak_x(panel: PlotPanel, label: str) -> float:
+    """Return the x position of the max-amplitude sample of the labelled line."""
+    line = next(ln for ln in panel._ax.get_lines() if ln.get_label() == label)
+    x = np.asarray(line.get_xdata())
+    y = np.asarray(line.get_ydata())
+    return float(x[int(np.argmax(y))])
+
+
+def test_frequency_reference_spin_steps_commit_via_debounce(qapp: QApplication) -> None:
+    """Arrow/wheel steps redraw promptly; programmatic syncs never commit."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+    if hasattr(panel, "set_decimation_enabled"):
+        panel.set_decimation_enabled(False, redraw=False)
+
+    ds = _freq_spectrum(108, field=3000.0, center_mhz=_gamma_mhz(3000.0))
+    panel.set_frequency_axis_mode("shift")
+    panel.plot_dataset(ds)  # seeds the common reference from the 3000 G field
+    panel._frequency_reference_mode_combo.setCurrentText("Common")
+    panel.set_view_limits(-4.0, 4.0, 0.0, 1.5)
+    assert _spectrum_peak_x(panel, "108") == pytest.approx(0.0, abs=1e-6)
+
+    # A step fires valueChanged (not editingFinished) — the debounce arms…
+    panel._frequency_reference_spin.setValue(2000.0)
+    assert panel._frequency_reference_debounce.isActive()
+    # …and its timeout commits: the data re-shifts by γ_μ·(3000 − 2000) G.
+    panel._frequency_reference_debounce.stop()
+    panel._frequency_reference_debounce.timeout.emit()
+    assert _spectrum_peak_x(panel, "108") == pytest.approx(_gamma_mhz(1000.0), abs=1e-3)
+    # Idempotent: a follow-up editingFinished for the same value is a no-op.
+    before = panel.get_view_limits()
+    panel._frequency_reference_spin.editingFinished.emit()
+    assert panel.get_view_limits() == pytest.approx(before)
+
+    # A programmatic dataset sync rewrites the spin without arming the debounce.
+    panel._set_frequency_reference_from_dataset(ds)
+    assert not panel._frequency_reference_debounce.isActive()
+
+
+def test_frequency_reference_mode_switch_keeps_physical_window(qapp: QApplication) -> None:
+    """Run→Common re-anchors the window to the same canonical MHz interval."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+    if hasattr(panel, "set_decimation_enabled"):
+        panel.set_decimation_enabled(False, redraw=False)
+
+    ds_a = _freq_spectrum(111, field=3000.0, center_mhz=_gamma_mhz(3000.0))
+    ds_b = _freq_spectrum(112, field=5000.0, center_mhz=_gamma_mhz(5000.0))
+    panel.set_frequency_axis_mode("shift")
+    panel.plot_datasets([ds_a, ds_b])  # active reference = ds_a's 3000 G
+    # Pre-set a Common value different from the active run's field (the spin
+    # commit stores it without redrawing while Run-field mode is selected).
+    panel._frequency_reference_spin.setValue(5000.0)
+    panel._on_frequency_reference_spin_committed()
+
+    panel.set_view_limits(-2.0, 2.0, 0.0, 1.5)
+    canonical_before = panel.get_frequency_view_window_mhz()
+
+    panel._frequency_reference_mode_combo.setCurrentText("Common")
+
+    # Same physical frequencies: the canonical window is unchanged, so the
+    # display window moved by the reference delta γ_μ·(3000 − 5000) G.
+    canonical_after = panel.get_frequency_view_window_mhz()
+    # The limit fields round to ~3 dp, so the round-trip is mm-precise, not exact.
+    assert canonical_after == pytest.approx(canonical_before, abs=5e-3)
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    delta = _gamma_mhz(3000.0) - _gamma_mhz(5000.0)
+    assert x_min == pytest.approx(-2.0 + delta, abs=5e-3)
+    assert x_max == pytest.approx(2.0 + delta, abs=5e-3)
+    # The active trace stays inside the view at its unchanged physical position.
+    peak = _spectrum_peak_x(panel, "111")
+    assert peak == pytest.approx(delta, abs=1e-3)
+    assert x_min <= peak <= x_max
+
+
+def test_frequency_common_value_change_shifts_data_and_window_together(
+    qapp: QApplication,
+) -> None:
+    """A new Common value moves the data and the window by the same delta."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+    if hasattr(panel, "set_decimation_enabled"):
+        panel.set_decimation_enabled(False, redraw=False)
+
+    ds = _freq_spectrum(113, field=3000.0, center_mhz=_gamma_mhz(3000.0))
+    panel.set_frequency_axis_mode("shift")
+    panel.plot_dataset(ds)
+    panel._frequency_reference_mode_combo.setCurrentText("Common")
+    panel.set_view_limits(-2.0, 2.0, 0.0, 1.5)
+    assert _spectrum_peak_x(panel, "113") == pytest.approx(0.0, abs=1e-6)
+
+    panel._frequency_reference_spin.setValue(2000.0)
+    panel._on_frequency_reference_spin_committed()
+
+    # Data and window both moved by γ_μ·(3000 − 2000) G: the peak keeps its
+    # axis-relative position (window centre) instead of exiting the view.
+    delta = _gamma_mhz(1000.0)
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    assert x_min == pytest.approx(-2.0 + delta, abs=5e-3)
+    assert x_max == pytest.approx(2.0 + delta, abs=5e-3)
+    peak = _spectrum_peak_x(panel, "113")
+    assert peak == pytest.approx(delta, abs=1e-3)
+    assert peak - x_min == pytest.approx(2.0, abs=5e-3)
+
+    # The stash for this unit:mode was invalidated: a mode round-trip restores
+    # the re-anchored window, not the pre-change one.
+    panel.set_frequency_axis_mode("absolute")
+    panel.set_frequency_axis_mode("shift")
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    assert x_min == pytest.approx(-2.0 + delta, abs=5e-3)
+    assert x_max == pytest.approx(2.0 + delta, abs=5e-3)
+
+
 def test_plot_panel_basic_plot_fit_clear_flow(qapp: QApplication) -> None:
     panel = PlotPanel()
     if not getattr(panel, "_has_mpl", False):

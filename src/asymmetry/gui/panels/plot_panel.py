@@ -767,6 +767,22 @@ class PlotPanel(QWidget):
             self._frequency_reference_spin.editingFinished.connect(
                 self._on_frequency_reference_spin_committed
             )
+            # Arrow clicks and wheel steps fire valueChanged but not
+            # editingFinished until focus leaves, so without this the plot
+            # ignores stepping — commit through a short single-shot debounce
+            # (the fourier_panel settings-debounce idiom). editingFinished
+            # (Enter / focus-out) still commits immediately; the commit is
+            # idempotent so both paths firing for one edit is harmless.
+            # Parented so it dies with the panel.
+            self._frequency_reference_debounce = QTimer(self)
+            self._frequency_reference_debounce.setSingleShot(True)
+            self._frequency_reference_debounce.setInterval(300)
+            self._frequency_reference_debounce.timeout.connect(
+                self._on_frequency_reference_spin_committed
+            )
+            self._frequency_reference_spin.valueChanged.connect(
+                self._on_frequency_reference_spin_stepped
+            )
             row1.addWidget(self._frequency_reference_spin)
 
             row1.addStretch()
@@ -1167,22 +1183,26 @@ class PlotPanel(QWidget):
         *,
         unit: str,
         mode: str,
+        reference_mhz: float | None = None,
     ) -> float:
         """Convert one displayed x value (active-dataset frame) back to canonical MHz.
 
-        Uses the ACTIVE dataset's reference — the limit boxes, moments overlay,
-        fit-range span, and view window are all per-active-run concepts.
+        Defaults to the ACTIVE dataset's reference — the limit boxes, moments
+        overlay, fit-range span, and view window are all per-active-run
+        concepts. An explicit *reference_mhz* overrides it, so a reference
+        change can convert the same window through the OLD and NEW references
+        deterministically (see :meth:`_apply_frequency_reference_change`).
         """
+        ref = self._active_reference_mhz() if reference_mhz is None else float(reference_mhz)
         if mode == "relative_ppm":
-            reference_mhz = self._active_reference_mhz()
-            if reference_mhz <= 0.0:
+            if ref <= 0.0:
                 return float(value)
-            return reference_mhz * (1.0 + float(value) / 1.0e6)
+            return ref * (1.0 + float(value) / 1.0e6)
         canonical = self._convert_display_limit_between_units(
             value, from_unit=unit, to_unit="frequency_mhz"
         )
         if mode == "shift":
-            canonical += self._active_reference_mhz()
+            canonical += ref
         return canonical
 
     def _convert_canonical_mhz_to_display_limit(
@@ -1191,16 +1211,21 @@ class PlotPanel(QWidget):
         *,
         unit: str,
         mode: str,
+        reference_mhz: float | None = None,
     ) -> float:
-        """Convert one canonical absolute MHz value into the current display mode."""
+        """Convert one canonical absolute MHz value into the current display mode.
+
+        *reference_mhz* overrides the active-dataset reference exactly as in
+        :meth:`_convert_display_limit_to_canonical_mhz`.
+        """
+        ref = self._active_reference_mhz() if reference_mhz is None else float(reference_mhz)
         if mode == "relative_ppm":
-            reference_mhz = self._active_reference_mhz()
-            if reference_mhz <= 0.0:
+            if ref <= 0.0:
                 return float(value)
-            return (float(value) - reference_mhz) / reference_mhz * 1.0e6
+            return (float(value) - ref) / ref * 1.0e6
         display_value = float(value)
         if mode == "shift":
-            display_value -= self._active_reference_mhz()
+            display_value -= ref
         return self._convert_display_limit_between_units(
             display_value,
             from_unit="frequency_mhz",
@@ -1257,26 +1282,100 @@ class PlotPanel(QWidget):
         new_mode = str(self._frequency_reference_mode_combo.currentData() or "run")
         if new_mode not in _FREQUENCY_REFERENCE_MODES:
             new_mode = "run"
+        old_reference = self._frequency_reference_mhz
         self._frequency_reference_mode = new_mode
-        # Re-resolve the active reference under the new mode, then redraw so the
-        # shift-space data and the limit boxes follow.
+        # Re-resolve the active reference under the new mode, then re-anchor the
+        # view and redraw so the shift-space data and the limit boxes follow.
         self._frequency_missing_reference_noted = False
         self._set_frequency_reference_from_dataset(self._current_dataset)
         self._sync_frequency_axis_controls()
-        if self._is_frequency_shift_mode():
-            self._switch_frequency_axis_display(force=True)
+        self._apply_frequency_reference_change(old_reference)
+
+    def _on_frequency_reference_spin_stepped(self, _value: float) -> None:
+        """Debounce arrow/wheel steps on the reference spin into a commit.
+
+        ``valueChanged`` also fires for programmatic ``setValue`` calls, but the
+        only such writer (:meth:`_set_frequency_reference_from_dataset`) wraps
+        its write in a ``QSignalBlocker`` and stops any pending debounce, so a
+        dataset sync can never trigger a commit from here.
+        """
+        if not hasattr(self, "_frequency_reference_debounce"):
+            return
+        self._frequency_reference_debounce.start()
 
     def _on_frequency_reference_spin_committed(self) -> None:
-        """Apply a user-supplied common-reference field on editing commit."""
+        """Apply a user-supplied common-reference field (Enter, focus-out, or debounce)."""
         if not hasattr(self, "_frequency_reference_spin"):
             return
-        value_gauss = self._frequency_reference_spin.value()
-        self._frequency_common_reference_mhz = float(value_gauss) * self._mhz_per_gauss()
+        if hasattr(self, "_frequency_reference_debounce"):
+            self._frequency_reference_debounce.stop()
+        value_gauss = float(self._frequency_reference_spin.value())
+        # Idempotent: the debounce and editingFinished can both fire for one
+        # edit — skip when the value already matches within the spin's 2-dp
+        # resolution, so the second arrival cannot double-redraw.
+        if self._frequency_common_reference_mhz is not None:
+            current_gauss = self._frequency_common_reference_mhz / self._mhz_per_gauss()
+            if abs(value_gauss - current_gauss) < 0.005:
+                return
+        old_reference = self._frequency_reference_mhz
+        self._frequency_common_reference_mhz = value_gauss * self._mhz_per_gauss()
         if self._frequency_reference_mode == "common":
             self._frequency_reference_mhz = self._frequency_common_reference_mhz
             self._frequency_missing_reference_noted = False
-            if self._is_frequency_shift_mode():
-                self._switch_frequency_axis_display(force=True)
+            self._apply_frequency_reference_change(old_reference)
+
+    def _apply_frequency_reference_change(self, old_reference_mhz: float | None) -> None:
+        """Re-anchor the shift-space view after the effective reference changed.
+
+        The plotted data re-shifts by the new reference, so holding the old
+        x-window would show DIFFERENT physical frequencies — with a zoomed
+        window the trace exits the view entirely and the change reads as "does
+        nothing" or "loses traces". Instead the current window is converted to
+        canonical absolute MHz with the OLD active reference and back into
+        display space with the NEW one, so the view keeps showing the same
+        physical frequencies; the per-``unit:mode`` limit stash entry is
+        invalidated because its stored window belonged to the old reference.
+
+        In Run-field mode the per-trace references differ, so the window can
+        only follow one anchor — the ACTIVE dataset's reference (the same
+        anchor the limit boxes and view-window inversion use); overlay members
+        re-anchor relative to it. Called only when the reference state changed;
+        in absolute mode the reference is display-irrelevant, so this is a
+        no-op (no window work, no redraw).
+        """
+        if not self._is_frequency_plot_panel() or not self._is_frequency_shift_mode():
+            return
+        old_ref = float(old_reference_mhz or 0.0)
+        new_ref = self._active_reference_mhz()
+        if old_ref != new_ref:
+            unit = self._current_frequency_x_unit
+            mode = self._frequency_axis_mode
+            x_min, x_max, y_min, y_max = self.get_view_limits()
+            canonical_lo = self._convert_display_limit_to_canonical_mhz(
+                float(x_min), unit=unit, mode=mode, reference_mhz=old_ref
+            )
+            canonical_hi = self._convert_display_limit_to_canonical_mhz(
+                float(x_max), unit=unit, mode=mode, reference_mhz=old_ref
+            )
+            new_x_min = self._convert_canonical_mhz_to_display_limit(
+                canonical_lo, unit=unit, mode=mode, reference_mhz=new_ref
+            )
+            new_x_max = self._convert_canonical_mhz_to_display_limit(
+                canonical_hi, unit=unit, mode=mode, reference_mhz=new_ref
+            )
+            # The stashed window for this unit:mode belonged to the old
+            # reference; drop it so a later mode round-trip restores the
+            # re-anchored window (re-stashed on switch-away), not the stale one.
+            self._frequency_x_limits_by_unit.pop(self._frequency_limit_mode_key(), None)
+            self._set_view_limits_fields(new_x_min, new_x_max, y_min, y_max)
+        # Redraw even when the active reference is unchanged: a Run↔Common
+        # switch re-shifts overlay members whose own fields differ from the
+        # active one, so the traces move although the window does not.
+        if self.has_plot_content():
+            self._redraw_current_view()
+        else:
+            self._apply_axis_labels(*self._default_axis_labels())
+            self._apply_limits()
 
     def get_frequency_view_window_mhz(
         self,
@@ -2751,7 +2850,12 @@ class PlotPanel(QWidget):
             )
 
         # Reflect the common value in the spin (disabled outside Common mode).
+        # The blocker keeps this programmatic write from firing valueChanged
+        # (and thus the step-debounce), and any debounce already pending from a
+        # user step is cancelled — a dataset sync must never commit a reference.
         if hasattr(self, "_frequency_reference_spin"):
+            if hasattr(self, "_frequency_reference_debounce"):
+                self._frequency_reference_debounce.stop()
             gauss = (
                 self._frequency_common_reference_mhz / self._mhz_per_gauss()
                 if self._frequency_common_reference_mhz is not None
