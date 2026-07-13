@@ -1160,6 +1160,26 @@
       "src_path": "src/asymmetry/core/fitting/global_fit_wizard.py",
       "updated": "2026-07-05",
       "notes": "Study + 5-PR phased plan complete, decision-ready. PR1 golden-verdict harness (gate, <10min via frozen-baseline cache + P<=5 cases), PR2 free wins (layer/cross-template bounds + no-Hesse screening + escalation-on-anomaly, target 7-12x, all tiers), PR3 engine G-scaling (profiled/nested locals + VarPro, Ben-requested, own PR), PR4 search+surrogate (greedy _search_parameter_roles + Q pre-tests + Wald surrogate + template racing), PR5 effort slider + GUI (Sonnet). Spine PR1->PR2->PR4->PR5; PR2//PR3 parallel (share only fit_global sig, mitigate w/ stub commit). Dropped: per-node B&B (redundant w/ layer bound), _staged_globalization as search, GlobalSearchOrchestrator on slider (park behind post-delivery bake-off), G subsetting, simplex-first."
+    },
+    {
+      "slug": "musrroot-tdirectory",
+      "feature_name": "MusrRoot TDirectory-based RunHeader parsing",
+      "status": "implemented",
+      "path": "docs/porting/musrroot-tdirectory",
+      "references": [
+        "musrfit ($MUSRFIT_SRC: TMusrRunHeader.cpp/.h, PRunDataHandler.cpp)"
+      ],
+      "docs": {
+        "readme": "docs/porting/musrroot-tdirectory/README.md",
+        "comparison": "docs/porting/musrroot-tdirectory/comparison.md",
+        "implementation_options": "docs/porting/musrroot-tdirectory/implementation-options.md",
+        "test_data": "docs/porting/musrroot-tdirectory/test-data.md",
+        "verification_plan": "docs/porting/musrroot-tdirectory/verification-plan.md"
+      },
+      "tests_path": "tests/io/test_root_loader.py",
+      "src_path": "src/asymmetry/core/io/root.py",
+      "updated": "2026-07-13",
+      "notes": "PSI's 2026 FLAME DAQ writes MusrRoot RunHeader as nested TDirectorys of labelled, globally-numbered TObjString leaves ('NNN - Label: Value -@type'), per musrfit's 2025 TDirectory commit series (e38fa479 skeleton, 7e28402e infrastructure, 4917e5c7 reader, ea646e01 MusrRoot v2.0, df7b8433 PRunDataHandler::ReadRootFile TDirectory+TFolder, dbbaf554 unrelated XML-schema DOI move). RootLoader already detected the TDirectory layout but never decoded the per-leaf encoding, so such files loaded with blank title, 0.0 temperature/field, a filename-guessed run number, and verbose histogram-title detector labels. Fix decodes each leaf with the existing _parse_musrroot_string regex (verified to match musrfit's first-'-'/first-':'/last-' -@' delimiter semantics, internal hyphens preserved), keyed on label (NNN is a single counter shared across all subfolders, so numbering is non-contiguous per subfolder and must never be used as a key); encoded-vs-clean discrimination uses the TKey name, since clean payloads like dates false-parse. Asymmetry-specific divergences: RunSummary (free text; musrfit ignores this block — its ring-anode-HV mining reads the legacy LEM run summary, not MusrRoot's) is attached verbatim as metadata['musrroot_run_summary'] provenance rather than discarded; instrument matching is now case-insensitive (FLAME writes lowercase 'flame'); a backward-compatible 'Label: Value' clean-form fallback is accepted for synthetic fixtures. Legacy TFolder MusrRoot and pre-2011 LEM ROOT are unaffected. Validation is synthetic encoded fixtures (no real PSI data committed); a 2026 FLAME commissioning-era file was checked locally only, and no path/filename/run number/sample/proposal detail from it appears anywhere in this repository."
     }
   ]
 }

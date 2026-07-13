@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **PSI MusrRoot files with the new TDirectory-based header layout.** ROOT
+  files written with musrfit's TDirectory-based `RunHeader` layout (PSI's 2026
+  FLAME DAQ; musrfit ≥ 2025, now the canonical MusrRoot spec) now parse
+  correctly — run title, run number, sample, temperature, field, time
+  resolution, and short detector names with per-detector time-zero/good-bin
+  ranges are read from the header instead of falling back to filename or
+  histogram-title guesses. Legacy TFolder-based MusrRoot and pre-2011 LEM ROOT
+  files are unaffected. Instrument strings are now matched case-insensitively,
+  since the new DAQ writes the lowercase `flame` instrument name.
+
+### Added
+
+- **RunSummary captured as provenance for PSI MusrRoot files.** The free-text
+  `RunSummary` block in the new TDirectory-based header — a block musrfit
+  itself does not read — is now attached verbatim to loaded runs as
+  `metadata["musrroot_run_summary"]`.
+
 ## [0.11.0] - 2026-07-11
 
 ### Fixed
