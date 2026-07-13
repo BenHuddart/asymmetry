@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **macOS app build restored.** The v0.12.0 macOS DMG build failed because
+  pyhdf 0.11.7 published its macOS wheels with a `macosx_26_0` platform tag
+  (requiring macOS 26), so the build runner fell back to a source build that
+  needs the HDF4 C headers. The build constraints now cap `pyhdf<0.11.7`
+  until upstream ships wheels installable on older macOS; no analysis
+  behaviour changes. (v0.12.0 itself shipped no binaries — this release
+  carries the identical feature set plus this fix.)
+
 ## [0.12.0] - 2026-07-13
 
 ### Fixed
