@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the display-unit column, and digit-led sidecar filenames (a bare run
   number like `20`) are prefixed with `run_` so the gleplot editor's parser
   accepts them. Time-domain exports are unchanged.
+- **Zooming or panning no longer fights the Auto X / Auto Y toggles.** With
+  **Auto X** or **Auto Y** active, a rubber-band zoom or pan used to snap
+  straight back to the full data extent, because the next redraw re-applied
+  the still-active auto-scaling. An interactive zoom/pan now turns off both
+  toggles — the same way typing a limit value already did — so the framing you
+  dragged to is kept. Switching runs still reframes the new data as before.
 
 ## [0.12.1] - 2026-07-13
 

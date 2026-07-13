@@ -1576,8 +1576,37 @@ class PlotPanel(QWidget):
     def _on_axis_limits_changed(self, axis_obj) -> None:
         """Sync limit controls when Matplotlib axes change via pan/zoom."""
         synced = self._sync_limits_from_axes(source_axis=axis_obj)
-        if synced and not self._viewport_refresh_in_progress:
+        if not synced:
+            return
+        # A limit change while a navigation tool (Zoom/Pan) is armed is a genuine
+        # interactive gesture — a rubber-band zoom or pan drag can only happen in
+        # that mode. That is the user taking control of the view, exactly like a
+        # manual limit-field edit, so drop the persistent Auto toggles: otherwise
+        # the next redraw's ``_apply_auto_limits_if_enabled`` reframes the gesture
+        # straight back to the data extent (the reported friction). Programmatic
+        # limit changes from auto-framing or field edits run with nav mode
+        # ``"none"`` and are deliberately left alone. Unlike a field edit we do
+        # not set ``_limits_user_locked``, so a later run/polarization switch
+        # still reframes the new content sensibly.
+        if self._current_navigation_mode() != "none":
+            self._clear_auto_limit_toggles()
+        if not self._viewport_refresh_in_progress:
             self._schedule_viewport_refresh()
+
+    def _clear_auto_limit_toggles(self) -> None:
+        """Un-check Auto X/Y without re-entering their ``clicked`` handlers.
+
+        ``setChecked(False)`` does not emit ``clicked`` (only ``toggled``), so
+        this clears the persistent toggles without re-running the auto path —
+        the same pattern used by ``_on_x_limit_field_edited``. Both axes are
+        cleared even for a constrained (x- or y-only) zoom, since the limit
+        callback cannot tell which axis moved; "zoom turns off auto" is the
+        simplest mental model and the un-zoomed axis simply keeps its limits.
+        """
+        if self._auto_x_btn.isChecked():
+            self._auto_x_btn.setChecked(False)
+        if self._auto_y_btn.isChecked():
+            self._auto_y_btn.setChecked(False)
 
     def _on_canvas_draw_event(self, _event) -> None:
         """Keep nav buttons and limit controls aligned after Matplotlib redraws."""
