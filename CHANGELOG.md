@@ -7,8 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Unit-area (field-distribution) FFT display.** A new *Unit area (field
+  distribution)* option in the Fourier panel's FFT settings presents a
+  magnitude-family spectrum as a field distribution `p(ν)` that integrates to
+  one: the noise floor is fitted (a σ-clipped block median) and subtracted, and
+  the residual is normalised to unit area over the full frequency range
+  (range-independent by construction). A significance guard refuses the
+  normalisation for a pure-noise spectrum, keeping the calibrated scale and
+  noting why. Applies to the Magnitude, (Power)^1/2 and Power displays.
+
 ### Changed
 
+- **FFT amplitudes are now calibrated to fractional asymmetry in percent.** The
+  grouped FFT previously plotted raw, unnormalised count-scale amplitudes whose
+  height depended on the counting statistics, the length of the time window, and
+  the apodisation. The spectrum is now put on a fractional footing (each group's
+  signal divided by its error-weighted baseline) and coherent-gain corrected
+  (`× 2/Σw`), so a pure cosine of fractional asymmetry amplitude *A* peaks at
+  `100·A` — invariant to count level, window length, apodisation choice, and
+  zero padding. Y-axis labels read `(%)` (`(%²)` for Power); a relaxing line
+  reads below `100·A` because damping trades peak height for area. Spectra
+  computed before this change are flagged stale so they recompute onto the new
+  scale.
 - **The Fourier panel's "Compute FFT" is now selection-scoped, replacing
   "Apply to selection."** The old secondary button copied the active run's
   already-computed recipe onto the other selected runs, so a setting changed
