@@ -152,6 +152,29 @@ _FREQUENCY_X_UNIT_FIELD = {
     "field_tesla": "tesla",
 }
 
+# Self-describing x-column names for frequency-view ``.dat`` sidecars, keyed on
+# the panel's current display unit. The correlation (hyperfine-coupling) axis
+# names its column separately (``coupling_MHz``).
+_FREQUENCY_X_COLUMN_NAME = {
+    "frequency_mhz": "frequency_MHz",
+    "field_gauss": "field_G",
+    "field_tesla": "field_T",
+}
+
+# GLE has no fill transparency: gleplot's writer drops fill_between's alpha and
+# rgb_to_gle quantizes computed tints to named colors (a 75%-gray tint maps to
+# WHITE, and the series color itself renders as a solid block that swallows the
+# line). The exported ±1σ band therefore uses an explicit light GLE tint
+# matched to the series color; LIGHTGRAY/LIGHTBLUE/LIGHTCYAN/LIGHTGREEN are the
+# only light tints in gleplot's passthrough color set.
+_GLE_BAND_TINT = {
+    "black": "lightgray",
+    "gray": "lightgray",
+    "blue": "lightblue",
+    "cyan": "lightcyan",
+    "green": "lightgreen",
+}
+
 # Neutral y-range for a stacked projection subplot whose asymmetry is entirely
 # non-finite (no data). Without it matplotlib keeps its default (0, 1) box,
 # which reads as "counts" rather than "asymmetry, no data".
@@ -6662,6 +6685,23 @@ class PlotPanel(QWidget):
         return dedup_export_token(base, used)
 
     @staticmethod
+    def _strip_matplotlib_math(value: object) -> str:
+        """Strip matplotlib math markup so an axis label renders as plain text.
+
+        Frequency y-labels can carry matplotlib mathtext (e.g. the
+        ``$|F|$ (arb.)`` fallback). GLE has no use for the ``$…$`` delimiters,
+        ``\\mathrm``-style commands, or their braces, so they are removed here —
+        locally, on the frequency labels only — rather than by widening the
+        shared :meth:`_sanitize_gle_text` (which the byte-identical time-domain
+        export also flows through).
+        """
+        text = str(value)
+        text = text.replace("$", "")
+        text = re.sub(r"\\(?:mathrm|mathit|mathsf|mathbf|text|rm|it|bf)\b", "", text)
+        text = text.replace("{", "").replace("}", "")
+        return text
+
+    @staticmethod
     def _sanitize_gle_text(value: object, *, fallback: str = "") -> str:
         """Return text that is safe for GLE string rendering."""
         text = str(value)
@@ -6744,23 +6784,57 @@ class PlotPanel(QWidget):
 
             label_text = self._dataset_label_for(dataset)
 
+            is_frequency = self._is_frequency_plot_panel() or self._is_frequency_domain_dataset(
+                dataset
+            )
+
+            fit_payload = (
+                {"t": t_fit, "y": y_fit, "label": fit_label}
+                if t_fit is not None and y_fit is not None
+                else None
+            )
+
             payload = {
                 "run_number": rn,
                 "label": label_text,
+                "domain": "frequency" if is_frequency else "time",
                 "data": {
                     "t": analysis.time,
                     "y": analysis.asymmetry,
                     "err": analysis.error,
                 },
-                "fit": {"t": t_fit, "y": y_fit, "label": fit_label}
-                if t_fit is not None and y_fit is not None
-                else None,
+                "fit": fit_payload,
                 "components": [{"name": name, "y": y_vals} for name, y_vals in component_data],
                 "fit_metadata": self._fit_metadata_for_dataset(dataset),
                 "grouping": grouping,
                 "run_metadata": run_metadata,
                 "histogram_info": histogram_info,
             }
+
+            # Frequency payloads mirror the on-screen spectrum: display-unit x
+            # data and window, real axis labels, and the Fourier provenance the
+            # sidecar header records. Read x_display, x_unit, and the
+            # correlation flag from the same panel state the on-screen render
+            # uses so the recorded unit can never disagree with the plotted x.
+            if is_frequency:
+                x_label, y_label = self._axis_labels_for_dataset(dataset, None)
+                payload["x_display"] = self._convert_frequency_axis_for_display(analysis.time)
+                payload["x_label"] = x_label
+                payload["y_label"] = y_label
+                payload["x_unit"] = self._current_frequency_x_unit
+                payload["is_correlation"] = bool(self._frequency_axis_is_correlation)
+                payload["relative_to_reference"] = bool(self._frequency_axis_relative_to_reference)
+                reference_gauss = reference_field_gauss(run, dataset)
+                if reference_gauss is not None:
+                    payload["reference_field_gauss"] = float(reference_gauss)
+                payload["fourier_metadata"] = {
+                    key: dataset.metadata[key]
+                    for key in sorted(dataset.metadata)
+                    if key.startswith("fourier_")
+                    and isinstance(dataset.metadata[key], (str, int, float, bool))
+                }
+                if fit_payload is not None:
+                    fit_payload["x_display"] = self._convert_frequency_axis_for_display(t_fit)
             # Mirror the waterfall stack the current render actually drew: the
             # offset comes from the per-dataset draw record, never from the
             # checkbox, so a non-stacked view (single run, grouped subplots,
@@ -6820,9 +6894,13 @@ class PlotPanel(QWidget):
                 label_text,
                 fallback=f"Run {payload.get('run_number', i)}",
             )
-            token = self._dedup_export_token(
-                self._safe_file_token(f"{label_text}_{axis_suffix}"), used_tokens
-            )
+            # Digit-led sidecar filenames (a bare run number like ``20`` →
+            # ``20_main.dat``) break the gleplot editor's parser when referenced
+            # unquoted; prefix the GLE sidecar token with ``run_`` before dedup.
+            raw_token = self._safe_file_token(f"{label_text}_{axis_suffix}")
+            if raw_token[:1].isdigit():
+                raw_token = f"run_{raw_token}"
+            token = self._dedup_export_token(raw_token, used_tokens)
             data_color = colors[i % len(colors)] if is_multi else "black"
             fit_color = data_color if is_multi else "red"
             suppress_subplot_labels = axis_key in {"P_x", "P_y", "P_z"} and not show_legend
@@ -6846,18 +6924,53 @@ class PlotPanel(QWidget):
             if t_data is not None and y_data is not None:
                 dat_writes.append((dat_path, payload, label_text, axis_key))
                 written_files.append(dat_path)
-                ax.errorbar(
-                    t_data,
-                    y_data,
-                    yerr=y_err,
-                    fmt="none",
-                    marker="o",
-                    color=data_color,
-                    markersize=4,
-                    capsize=2,
-                    label=data_label,
-                    data_name=token,
-                )
+                if payload.get("domain") == "frequency":
+                    # Mirror the on-screen renderer (_plot_frequency_line_masked):
+                    # a solid line in display-unit x, plus a shaded ±1σ band
+                    # when the error array carries any positive finite value.
+                    x_display = payload.get("x_display")
+                    x_plot = (
+                        np.asarray(x_display, dtype=float)
+                        if x_display is not None
+                        else np.asarray(t_data, dtype=float)
+                    )
+                    ax.plot(
+                        x_plot,
+                        y_data,
+                        "-",
+                        color=data_color,
+                        linewidth=1.2,
+                        label=data_label,
+                        data_name=token,
+                    )
+                    if y_err is not None:
+                        err = np.asarray(y_err, dtype=float)
+                        if bool(np.any(np.isfinite(err) & (err > 0.0))):
+                            band_err = np.where(np.isfinite(err), err, 0.0)
+                            y_arr = np.asarray(y_data, dtype=float)
+                            band_color = _GLE_BAND_TINT.get(str(data_color).lower(), "lightgray")
+                            ax.fill_between(
+                                x_plot,
+                                y_arr - band_err,
+                                y_arr + band_err,
+                                color=band_color,
+                                alpha=0.25,
+                                label=None,
+                                data_name=f"{token}_band",
+                            )
+                else:
+                    ax.errorbar(
+                        t_data,
+                        y_data,
+                        yerr=y_err,
+                        fmt="none",
+                        marker="o",
+                        color=data_color,
+                        markersize=4,
+                        capsize=2,
+                        label=data_label,
+                        data_name=token,
+                    )
 
             fit_path = gle_path.parent / f"{token}.fit"
             if t_fit is not None and y_fit is not None:
@@ -6869,8 +6982,12 @@ class PlotPanel(QWidget):
                     fit_label = None
                 else:
                     fit_label = self._sanitize_gle_text(fit_label, fallback="Fit")
+                if payload.get("domain") == "frequency" and fit.get("x_display") is not None:
+                    x_fit = np.asarray(fit.get("x_display"), dtype=float)
+                else:
+                    x_fit = t_fit
                 ax.plot(
-                    t_fit,
+                    x_fit,
                     y_fit,
                     color=fit_color,
                     linewidth=1.6,
@@ -6890,9 +7007,23 @@ class PlotPanel(QWidget):
             if text:
                 ax.text(x, y, text, color="black", ha="left")
 
-        ax.set_ylabel(self._export_axis_ylabel(axis_key))
+        frequency_payload = next((p for p in payloads if p.get("domain") == "frequency"), None)
+        if frequency_payload is not None:
+            ax.set_ylabel(
+                self._sanitize_gle_text(
+                    self._strip_matplotlib_math(frequency_payload.get("y_label")),
+                    fallback="FFT (a.u.)",
+                )
+            )
+        else:
+            ax.set_ylabel(self._export_axis_ylabel(axis_key))
         if hasattr(ax, "set_xlim"):
-            ax.set_xlim(float(self._x_min.value()), float(self._x_max.value()))
+            x_lo = float(self._x_min.value())
+            x_hi = float(self._x_max.value())
+            if self._is_frequency_plot_panel():
+                x_lo = self._convert_frequency_control_value_to_axis_limit(x_lo)
+                x_hi = self._convert_frequency_control_value_to_axis_limit(x_hi)
+            ax.set_xlim(x_lo, x_hi)
 
         if axis_key in self._y_limits_by_polarization and hasattr(ax, "set_ylim"):
             y0, y1 = self._y_limits_by_polarization[axis_key]
@@ -6946,9 +7077,23 @@ class PlotPanel(QWidget):
                     else:
                         f.write(f"!   {p['name']} = {p['value']:.8g}\n")
             f.write("!\n")
-            f.write("! time  asymmetry_fit\n")
+            if payload.get("domain") == "frequency":
+                x_unit = str(payload.get("x_unit", "frequency_mhz"))
+                x_column = _FREQUENCY_X_COLUMN_NAME.get(x_unit, "frequency_MHz")
+                if payload.get("is_correlation"):
+                    x_column = "coupling_MHz"
+                x_display = fit.get("x_display")
+                x_fit = (
+                    np.asarray(x_display, dtype=float)
+                    if x_display is not None
+                    else self._convert_frequency_axis_for_display(t_fit)
+                )
+                f.write(f"! {x_column}  amplitude_fit\n")
+            else:
+                x_fit = t_fit
+                f.write("! time  asymmetry_fit\n")
             lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
-            for t_val, y_val in zip(t_fit, y_fit):
+            for t_val, y_val in zip(x_fit, y_fit):
                 tf = float(t_val)
                 if lo is not None and (tf < lo or tf > hi):
                     continue
@@ -7156,6 +7301,12 @@ class PlotPanel(QWidget):
             f.write("! END OF GROUPING INFORMATION\n")
             f.write("!\n")
 
+            if payload.get("domain") == "frequency":
+                self._write_frequency_data_body(
+                    f, payload, display_label=display_label, x_range=x_range
+                )
+                return
+
             if axis_key in {"P_x", "P_y", "P_z"}:
                 suffix = axis_key.split("_", 1)[1]
                 datarow_label = f"a_0 P_{suffix}(t)"
@@ -7182,6 +7333,90 @@ class PlotPanel(QWidget):
                 if lo is not None and (tf < lo or tf > hi):
                     continue
                 f.write(f"{tf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
+
+    def _write_frequency_data_body(
+        self,
+        f,
+        payload: dict,
+        *,
+        display_label: object,
+        x_range: tuple[float, float] | None,
+    ) -> None:
+        """Write the frequency-view DATA SET / FOURIER header and data rows.
+
+        Columns are ``c1`` = x in the current display unit, ``c2`` = amplitude,
+        ``c3`` = error, and — only when the display unit differs from canonical
+        MHz — ``c4`` = the canonical ``frequency_MHz`` axis, so the file stays
+        self-describing while the GLE script's ``d1=c1,c2`` mapping (plotted x,
+        amplitude) remains valid. The x-range filter is applied to the
+        display-unit column, matching the on-screen window and the text
+        export's control-value conversion.
+        """
+        data = payload.get("data") or {}
+        t_data = data.get("t")
+        y_data = data.get("y")
+        y_err = data.get("err")
+        if t_data is None or y_data is None:
+            return
+
+        mhz_arr = np.asarray(t_data, dtype=float)
+        x_display = payload.get("x_display")
+        x_disp_arr = (
+            np.asarray(x_display, dtype=float)
+            if x_display is not None
+            else self._convert_frequency_axis_for_display(t_data)
+        )
+
+        x_unit = str(payload.get("x_unit", "frequency_mhz"))
+        is_correlation = bool(payload.get("is_correlation"))
+        x_column = _FREQUENCY_X_COLUMN_NAME.get(x_unit, "frequency_MHz")
+        if is_correlation:
+            x_column = "coupling_MHz"
+        include_mhz = x_unit in ("field_gauss", "field_tesla") and not is_correlation
+
+        x_label = str(payload.get("x_label") or self._display_x_label())
+        y_label = str(payload.get("y_label") or "FFT (a.u.)")
+
+        f.write("! START OF DATA SET INFORMATION\n")
+        f.write(f"!  Datarow: ({x_label}) (Amplitude) (Error)\n")
+        f.write(f"!  Title: {display_label}\n")
+        f.write(f"!  Xlabel: {x_label}\n")
+        f.write(f"!  Ylabel: {y_label}\n")
+        f.write("! END OF DATA SET INFORMATION\n")
+        f.write("!\n")
+
+        f.write("! START OF FOURIER INFORMATION\n")
+        fourier_metadata = payload.get("fourier_metadata")
+        if isinstance(fourier_metadata, dict):
+            for key in sorted(fourier_metadata):
+                f.write(f"!  {key}: {fourier_metadata[key]}\n")
+        f.write(f"!  Display mode: {y_label}\n")
+        f.write(f"!  X unit: {x_unit}\n")
+        reference_gauss = payload.get("reference_field_gauss")
+        if reference_gauss is not None:
+            f.write(f"!  Reference field: {float(reference_gauss):.4g} G\n")
+        f.write(
+            f"!  X relative to reference: {bool(payload.get('relative_to_reference', False))}\n"
+        )
+        f.write("! END OF FOURIER INFORMATION\n")
+
+        column_names = [x_column, "amplitude", "error"]
+        if include_mhz:
+            column_names.append("frequency_MHz")
+        f.write("! " + "  ".join(column_names) + "\n")
+
+        err_arr = y_err if y_err is not None else np.zeros_like(y_data)
+        lo, hi = (None, None) if x_range is None else (min(x_range), max(x_range))
+        for x_val, y_val, e_val, mhz_val in zip(x_disp_arr, y_data, err_arr, mhz_arr):
+            xf = float(x_val)
+            if lo is not None and (xf < lo or xf > hi):
+                continue
+            if include_mhz:
+                f.write(
+                    f"{xf:.10g} {float(y_val):.10g} {float(e_val):.10g} {float(mhz_val):.10g}\n"
+                )
+            else:
+                f.write(f"{xf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
 
     def _show_export_result_dialog(self, title: str, summary: str, details: str) -> None:
         """Show export results (delegates to the shared foundation)."""
@@ -7426,9 +7661,11 @@ class PlotPanel(QWidget):
     def export_plots_to_gle(self) -> None:
         """Export current main-plot view as GLE using gleplot.
 
-        Data is plotted with error bars (no connecting lines), fit curves
-        with lines (no markers).  File names are derived from the Label
-        dropdown value for each dataset.
+        Time-domain data is plotted with error bars (no connecting lines) and
+        fit curves with lines (no markers). Frequency-domain (FFT/MaxEnt) views
+        mirror the on-screen spectrum instead: a piecewise-linear line in the
+        current display unit plus a light shaded ±1σ band. File names are
+        derived from the Label dropdown value for each dataset.
         """
         payloads = self._collect_export_payloads()
         if not payloads:
@@ -7545,7 +7782,18 @@ class PlotPanel(QWidget):
         else:
             # Create the figure only in the branch that uses it (the stacked
             # branches build their own via _make_stacked_gle_axes).
-            fig = glp.figure(figsize=self._export_figure_size(len(payloads)))
+            figure_kwargs: dict = {"figsize": self._export_figure_size(len(payloads))}
+            if any(p.get("domain") == "frequency" for p in payloads) and hasattr(
+                glp, "GLEGraphConfig"
+            ):
+                # A measured spectrum must render piecewise-linear: GLE's
+                # ``smooth`` spline overshoots on sharp resonance lines.
+                # ``GlobalConfig.get_graph()`` hands every figure the shared
+                # singleton, so never flip ``smooth_curves`` on it in place —
+                # pass this figure its own config instead. Time-domain exports
+                # keep gleplot's default behavior untouched.
+                figure_kwargs["graph"] = glp.GLEGraphConfig(smooth_curves=False)
+            fig = glp.figure(**figure_kwargs)
             ax = fig.add_subplot(111)
             self._plot_export_payloads_on_axis(
                 ax,
@@ -7558,7 +7806,17 @@ class PlotPanel(QWidget):
                 show_legend=len(payloads) > 1,
                 used_tokens=used_tokens,
             )
-            ax.set_xlabel("Time (µs)")
+            if payloads and payloads[0].get("domain") == "frequency":
+                ax.set_xlabel(
+                    self._sanitize_gle_text(
+                        self._strip_matplotlib_math(
+                            payloads[0].get("x_label") or self._display_x_label()
+                        ),
+                        fallback="Frequency (MHz)",
+                    )
+                )
+            else:
+                ax.set_xlabel("Time (µs)")
 
         fig.savefig(str(gle_path))
 
