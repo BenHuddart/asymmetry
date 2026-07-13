@@ -149,7 +149,6 @@ from asymmetry.core.fourier import (
     GroupSpectrumConfig,
     build_group_signal_dataset,
     canonical_fourier_display_mode,
-    compute_average_group_spectrum,
     config_differences,
     estimate_fft_phase,
     fft_complex_asymmetry,
@@ -2038,10 +2037,6 @@ class MainWindow(QMainWindow):
 
         if hasattr(self._fourier_panel, "_fft_btn"):
             self._fourier_panel._fft_btn.clicked.connect(self._on_compute_fourier)
-        if hasattr(self._fourier_panel, "_compute_for_selection_btn"):
-            self._fourier_panel._compute_for_selection_btn.clicked.connect(
-                self._on_compute_fourier_for_selection
-            )
         if hasattr(self._fourier_panel, "_auto_phase_btn"):
             self._fourier_panel._auto_phase_btn.clicked.connect(self._on_fill_fourier_phases)
         if hasattr(self._fourier_panel, "_suggest_apodisation_btn"):
@@ -6436,54 +6431,6 @@ class MainWindow(QMainWindow):
             )
         return phases
 
-    def _resolve_group_phase_degrees(
-        self,
-        dataset: MuonDataset,
-        selected_group_ids: list[int],
-        state: dict,
-        *,
-        apply_phase_correction: bool,
-        auto_phase: bool,
-        use_phase_table: bool,
-        manual_phase: float,
-        group_phase_table: dict[int, float],
-        prepared_histograms: list[Histogram] | None,
-        reference_t0_bin: int | None,
-        plot_window=_VIEW_FROM_WIDGET,
-    ) -> dict[int, float]:
-        """Resolve concrete per-group phase corrections for *dataset*.
-
-        Mirrors the previous inline auto/table/manual selection so the shared
-        spectrum core (and recipe recompute) receives fully-resolved phases.
-        Takes ``dataset`` explicitly (rather than reading ``_current_dataset``)
-        so it is safe to run on a worker thread; ``plot_window`` snapshots the
-        frequency-plot view for the same reason.
-        """
-        if not apply_phase_correction or dataset is None or dataset.run is None:
-            return {}
-        resolved: dict[int, float] = {}
-        # Shared so a reference_run background loads + deadtime-prepares once
-        # across the phase-estimation sweep, not once per group.
-        background_reference_cache: dict = {}
-        for group_id in selected_group_ids:
-            if auto_phase and not use_phase_table:
-                group_dataset = build_group_signal_dataset(
-                    dataset.run,
-                    group_id,
-                    center_signal=False,
-                    reference_t0_bin=reference_t0_bin,
-                    prepared_histograms=prepared_histograms,
-                    background_reference_cache=background_reference_cache,
-                )
-                resolved[group_id] = self._estimate_dataset_fourier_phase(
-                    group_dataset, state, plot_window=plot_window
-                )
-            elif use_phase_table:
-                resolved[group_id] = group_phase_table.get(group_id, manual_phase)
-            else:
-                resolved[group_id] = manual_phase
-        return resolved
-
     def _fourier_display_ylabel(self, display: str) -> str:
         """Return a display-specific y-axis label for FFT plots.
 
@@ -6570,32 +6517,6 @@ class MainWindow(QMainWindow):
                 f"Burg pole scan optimum ({order}) hit a scan boundary — widen the "
                 "pole range for a reliable order estimate."
             )
-
-    def _record_frequency_fft_recipe(
-        self,
-        run_number: int,
-        config: GroupSpectrumConfig,
-        spectrum: MuonDataset,
-        *,
-        grouping_digest: str | None = None,
-    ) -> None:
-        """Persist the generation recipe for a run's FFT representation.
-
-        The recipe lets the spectrum be recomputed on project load instead of
-        storing the spectrum arrays.  The freshly computed spectrum is cached on
-        the representation so it need not be recomputed immediately.
-        ``grouping_digest`` records the grouping provenance the spectrum was
-        computed from (see :func:`fourier_grouping_digest`); the staleness check
-        compares it against the run's current grouping.
-        """
-        representation = self._project_model.ensure_dataset(int(run_number)).ensure(
-            RepresentationType.FREQ_FFT
-        )
-        recipe: dict[str, object] = {"fourier_config": config.to_dict()}
-        if grouping_digest:
-            recipe["grouping_digest"] = grouping_digest
-        representation.recipe = recipe
-        representation.cache_datasets([spectrum])
 
     def _restore_frequency_representations(self, state: dict) -> None:
         """Load recipe state; spectra are recomputed lazily on first view.
@@ -8031,96 +7952,126 @@ class MainWindow(QMainWindow):
         self._set_fourier_status(f"Apodisation suggestion failed: {message}")
         self._log_panel.log(f"Apodisation suggestion failed: {message}")
 
-    def _on_compute_fourier(self) -> None:
-        """Compute one averaged grouped FFT spectrum for the active run.
+    def _fourier_compute_targets(self) -> dict[int, MuonDataset]:
+        """The Compute FFT target set: Data-Browser selection ∪ active dataset.
 
-        Validates the selection and snapshots launch-time context on the GUI
-        thread, then runs the phase estimation + averaged grouped FFT on the
-        shared TaskRunner so the GUI stays live; results are applied in
-        :meth:`_on_fourier_payload_finished`.
+        Deduplicated by run number; the active dataset is always in scope even
+        when it is technically absent from the browser's selection, so with
+        nothing (else) selected the button acts on the active run alone. This
+        is the single source of truth for both the handler and the button's
+        dynamic scope label (:meth:`_refresh_fourier_compute_scope`), so the
+        label can never disagree with what a click would compute.
         """
-        state = self._fourier_panel.get_state()
-        display = str(state.get("display", "Real"))
-        apply_phase_correction = fourier_mode_uses_phase_correction(display)
-        auto_phase = bool(state.get("auto_phase", False))
-        use_phase_table = bool(state.get("use_phase_table", False))
-        manual_phase = float(state.get("phase_degrees", 0.0))
-        group_phase_table = {
-            int(group_id): float(phase)
-            for group_id, phase in self._fourier_panel.group_phase_table().items()
-        }
+        targets: dict[int, MuonDataset] = {}
+        for dataset in self._data_browser.get_selected_datasets():
+            try:
+                run_number = int(dataset.run_number)
+            except (TypeError, ValueError):
+                continue
+            targets[run_number] = dataset
+        if self._current_dataset is not None:
+            try:
+                active_run = int(self._current_dataset.run_number)
+            except (TypeError, ValueError):
+                active_run = None
+            if active_run is not None:
+                targets.setdefault(active_run, self._current_dataset)
+        return targets
 
+    def _refresh_fourier_compute_scope(self, *_args) -> None:
+        """Keep the Compute FFT button's scope label in step with the selection."""
+        panel = getattr(self, "_fourier_panel", None)
+        if panel is None or not hasattr(panel, "set_compute_scope"):
+            return
+        panel.set_compute_scope(len(self._fourier_compute_targets()))
+
+    def _on_compute_fourier(self) -> None:
+        """Compute FFTs for every Data-Browser-selected run from the LIVE panel settings.
+
+        THE Compute FFT handler: selection-scoped. The target set is the
+        Data-Browser selection unioned with the active dataset (the active run
+        alone when nothing else is selected), and the button's dynamic label
+        (``"Compute FFT (N runs)"``) shows that scope before the click. Each
+        target's config comes from :meth:`_candidate_fourier_config` — the
+        live panel state, with each run keeping its own groups and phases (the
+        active run from the live table, others from their stored per-run state
+        or defaults) — and is stamped as the run's recipe with its own
+        grouping digest. The spectra themselves come from the shared
+        ``FrequencyFFT.compute`` (``compute_average_group_spectrum``), the
+        same core the recipe recompute uses, so an explicit compute and a
+        recipe recompute are identical by construction.
+
+        Computation runs off the GUI thread through the shared batch machinery
+        (:meth:`_ensure_frequency_spectra_for_runs_async`) as one background
+        task — no wave cap; that throttle belongs to
+        :meth:`_render_frequency_overlay`'s *auto*-compute — and completion
+        (:meth:`_finish_compute_fourier`) re-renders the frequency view,
+        switches the workspace to it, and restores the single-run path's
+        S/N summary and diagnostics for the active run. Runs that cannot
+        compute (no data / no enabled groups) are skipped and counted.
+        """
         if self._fourier_compute_active:
             # Clear the summary only when we actually start a fresh compute;
             # blanking it here would wipe the in-flight compute's S/N readout.
             self._set_fourier_status("A Fourier transform is already being computed.")
             return
         self._fourier_panel.clear_average_summary()
-        if self._current_dataset is None or self._current_dataset.run is None:
-            self._set_fourier_status("Select a grouped run before computing the Fourier transform.")
+        targets = self._fourier_compute_targets()
+        if not targets:
+            self._set_fourier_status("Select a run before computing Fourier spectra.")
             return
 
-        # Preserve any live panel edits across the cascaded re-sync below. The
-        # sync restores both tables from their per-run stores, so live edits the
-        # stores haven't captured yet (e.g. Include-column toggles, which do not
-        # fire a store) would otherwise be clobbered — re-checking groups the
-        # user just disabled. Snapshot the live state into the stores first so
-        # the re-sync is a no-op for those edits.
-        self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
-        self._store_maxent_panel_state_for_dataset(self._current_dataset)
-        self._sync_fourier_panel_for_dataset(self._current_dataset)
+        if self._current_dataset is not None:
+            # Preserve any live panel edits across the cascaded re-sync below.
+            # The sync restores both tables from their per-run stores, so live
+            # edits the stores haven't captured yet (e.g. Include-column
+            # toggles, which do not fire a store) would otherwise be clobbered
+            # — re-checking groups the user just disabled. Snapshot the live
+            # state into the stores first so the re-sync is a no-op for those
+            # edits. (This also freshens the store other targets' configs read.)
+            self._store_fourier_group_phase_state_for_dataset(self._current_dataset)
+            self._store_maxent_panel_state_for_dataset(self._current_dataset)
+            self._sync_fourier_panel_for_dataset(self._current_dataset)
 
-        group_names = self._fourier_group_names_for_dataset(self._current_dataset)
-        if not group_names:
-            self._set_fourier_status("The active run does not define detector groups.")
-            return
-        selected_group_ids = self._selected_fourier_group_ids(self._current_dataset)
-        if not selected_group_ids:
-            self._set_fourier_status(
-                "Select at least one detector group before computing the Fourier transform."
+        cache = self._frequency_cache(RepresentationType.FREQ_FFT)
+        pending, failures = self._ensure_recompute_tracking()
+        run_numbers: list[int] = []
+        skipped = 0
+        for run_number, dataset in targets.items():
+            run = dataset.run
+            if run is None or not run.histograms:
+                skipped += 1
+                continue
+            config = self._candidate_fourier_config(dataset)
+            if not config.selected_group_ids:
+                skipped += 1
+                continue
+            representation = self._project_model.ensure_dataset(run_number).ensure(
+                RepresentationType.FREQ_FFT
             )
+            # Each target's digest is its OWN grouping right now, not the
+            # active run's — the live config is evaluated against the target.
+            representation.recipe = {
+                "fourier_config": config.to_dict(),
+                "grouping_digest": fourier_grouping_digest(run),
+            }
+            representation.invalidate()
+            cache.pop(run_number, None)
+            key = (run_number, RepresentationType.FREQ_FFT)
+            pending.discard(key)
+            failures.discard(key)
+            run_numbers.append(run_number)
+
+        if not run_numbers:
+            self._set_fourier_status("Selected run(s) have no enabled detector groups to compute.")
             return
-
-        fourier_t_min_us, fourier_t_max_us = self._current_fourier_time_window_us()
-
-        # Snapshot everything the compute needs; the worker must not read widgets
-        # or _current_dataset (the user may navigate while it runs).
-        dataset = self._current_dataset
-        # Keep the spent, ±100 %-saturated late-time tail out of the transform —
-        # otherwise its low-frequency leakage buries the physical line and the
-        # spectrum renders as an empty plot (round-2 ISIS NeXus EMU/MUSR finding).
-        fourier_t_min_us, fourier_t_max_us = self._fourier_time_window_excluding_tail(
-            dataset, fourier_t_min_us, fourier_t_max_us
-        )
-        run_number = int(dataset.run_number)
-        plot_window = self._capture_fourier_plot_window(dataset)
-        started_at = time.perf_counter()
 
         self._fourier_compute_active = True
-        self._set_status_state("Computing Fourier…")
-        self._set_fourier_status(f"Computing Fourier transform for run {run_number}…")
-        self._tasks.start(
-            lambda w, dataset=dataset, state=state, ids=list(selected_group_ids): (
-                self._compute_fourier_payload(
-                    dataset=dataset,
-                    state=state,
-                    selected_group_ids=ids,
-                    apply_phase_correction=apply_phase_correction,
-                    auto_phase=auto_phase,
-                    use_phase_table=use_phase_table,
-                    manual_phase=manual_phase,
-                    group_phase_table=dict(group_phase_table),
-                    t_min_us=fourier_t_min_us,
-                    t_max_us=fourier_t_max_us,
-                    plot_window=plot_window,
-                )
-            ),
-            on_finished=lambda payload, started_at=started_at: self._on_fourier_payload_finished(
-                payload, started_at
-            ),
-            on_error=lambda message, started_at=started_at: self._on_fourier_payload_error(
-                message, started_at
-            ),
+        self._ensure_frequency_spectra_for_runs_async(
+            run_numbers,
+            RepresentationType.FREQ_FFT,
+            on_ready=lambda: self._finish_compute_fourier(run_numbers, skipped),
+            busy_message=f"Computing FFT for {len(run_numbers)} run(s)…",
         )
 
     def _fourier_config_from_state(
@@ -8462,318 +8413,62 @@ class MainWindow(QMainWindow):
                 self._sync_frequency_plot_for_current_dataset()
         self._refresh_fourier_staleness()
 
-    def _compute_fourier_payload(
-        self,
-        *,
-        dataset: MuonDataset,
-        state: dict,
-        selected_group_ids: list[int],
-        apply_phase_correction: bool,
-        auto_phase: bool,
-        use_phase_table: bool,
-        manual_phase: float,
-        group_phase_table: dict[int, float],
-        t_min_us: float | None,
-        t_max_us: float | None,
-        plot_window,
-    ) -> dict:
-        """Run the averaged grouped FFT off the GUI thread; return a result bundle.
+    def _fourier_average_summary(
+        self, run_number: int, spectrum: MuonDataset
+    ) -> dict[str, float | int] | None:
+        """The averaged-spectrum S/N summary for a freshly computed spectrum.
 
-        Pure compute: reads only the snapshot arguments (no widgets, no
-        ``_current_dataset``), so it is safe on a worker thread. The S/N summary
-        numbers are computed here too, leaving the GUI callback to only set the
-        label.
+        Mirrors the summary the old single-run payload computed inline: mean
+        per-point error, the peak signal-to-noise excluding the DC bin (the
+        average-signal subtraction leaves a near-zero error there that can
+        spike S/N), and the number of averaged groups (read back from the
+        just-stamped recipe). ``None`` when the spectrum carries no positive
+        errors — the panel summary is only meaningful with error estimates.
         """
-        run = dataset.run
-        prepared_histograms, reference_t0_bin = self._precompute_group_fourier_inputs(dataset)
-
-        estimated_phases: dict[int, float] = {}
-        if auto_phase and apply_phase_correction:
-            estimated_phases = self._estimate_group_fourier_phases(
-                dataset, state, plot_window=plot_window
-            )
-            if use_phase_table and estimated_phases:
-                group_phase_table.update(estimated_phases)
-
-        group_phase_degrees = self._resolve_group_phase_degrees(
-            dataset,
-            selected_group_ids,
-            state,
-            apply_phase_correction=apply_phase_correction,
-            auto_phase=auto_phase,
-            use_phase_table=use_phase_table,
-            manual_phase=manual_phase,
-            group_phase_table=group_phase_table,
-            prepared_histograms=prepared_histograms,
-            reference_t0_bin=reference_t0_bin,
-            plot_window=plot_window,
+        values = np.asarray(spectrum.asymmetry, dtype=float)
+        error = np.asarray(spectrum.error, dtype=float)
+        if error.size == 0 or not np.any(error > 0.0):
+            return None
+        sn = np.divide(
+            np.abs(values),
+            error,
+            out=np.zeros_like(values),
+            where=error > 0.0,
         )
-
-        fourier_config = self._fourier_config_from_state(
-            state,
-            selected_group_ids=selected_group_ids,
-            group_phase_degrees=group_phase_degrees,
-            t_min_us=t_min_us,
-            t_max_us=t_max_us,
+        if sn.size > 1:
+            sn = sn[1:]
+        finite_sn = sn[np.isfinite(sn)]
+        peak_signal_to_noise = float(np.max(finite_sn)) if finite_sn.size else 0.0
+        representation = self._project_model.representation(
+            int(run_number), RepresentationType.FREQ_FFT
         )
-        average_dataset = compute_average_group_spectrum(
-            run,
-            fourier_config,
-            prepared_histograms=prepared_histograms,
-            reference_t0_bin=reference_t0_bin,
-        )
-
-        summary: dict | None = None
-        if average_dataset is not None:
-            averaged_display = average_dataset.asymmetry
-            averaged_error = average_dataset.error
-            if averaged_error.size > 0 and np.any(averaged_error > 0.0):
-                sn = np.divide(
-                    np.abs(averaged_display),
-                    averaged_error,
-                    out=np.zeros_like(averaged_display),
-                    where=averaged_error > 0.0,
-                )
-                # Exclude the DC bin from the peak search: the average-signal
-                # subtraction leaves a near-zero error there that can spike S/N.
-                if sn.size > 1:
-                    sn = sn[1:]
-                finite_sn = sn[np.isfinite(sn)]
-                peak_signal_to_noise = float(np.max(finite_sn)) if finite_sn.size else 0.0
-                summary = {
-                    "mean_error": float(np.nanmean(averaged_error)) if averaged_error.size else 0.0,
-                    "peak_signal_to_noise": peak_signal_to_noise,
-                    "group_count": len(selected_group_ids),
-                }
-
+        recipe = getattr(representation, "recipe", None) if representation is not None else None
+        config = recipe.get("fourier_config") if isinstance(recipe, dict) else None
+        ids = config.get("selected_group_ids") if isinstance(config, dict) else None
+        group_count = len(ids) if isinstance(ids, list) else 0
         return {
-            "average_dataset": average_dataset,
-            "config": fourier_config,
-            # Snapshot the grouping provenance the spectrum was computed from,
-            # so the staleness check can detect a later regroup of this run.
-            "grouping_digest": fourier_grouping_digest(run),
-            "estimated_phases": estimated_phases,
-            "use_phase_table": use_phase_table,
-            "summary": summary,
-            "run_number": int(dataset.run_number),
-            "selected_group_count": len(selected_group_ids),
-            "display": str(state.get("display", "Real")),
-            "padding": int(state.get("padding", 1)),
+            "mean_error": float(np.nanmean(error)) if error.size else 0.0,
+            "peak_signal_to_noise": peak_signal_to_noise,
+            "group_count": group_count,
         }
 
-    def _on_fourier_payload_finished(self, payload: dict, started_at: float) -> None:
-        """Apply a completed averaged grouped FFT to the GUI (GUI thread)."""
-        self._fourier_compute_active = False
-        self._clear_status_state_if_idle()
-        average_dataset = payload["average_dataset"]
-        fourier_config = payload["config"]
-        run_number = int(payload["run_number"])
-        display = str(payload["display"])
-        spectra: list[MuonDataset] = []
-        try:
-            # Auto-filled phases were estimated on the worker's table copy; reflect
-            # them into the panel here (the only widget write of the result path).
-            if payload["use_phase_table"] and payload["estimated_phases"]:
-                self._fourier_panel.set_group_phases(payload["estimated_phases"], auto_filled=True)
+    def _finish_compute_fourier(self, requested: list[int], skipped: int) -> None:
+        """Completion for :meth:`_on_compute_fourier` (GUI thread).
 
-            if (
-                average_dataset is not None
-                and average_dataset.metadata.get("correlation_axis")
-                and np.asarray(average_dataset.asymmetry).size == 0
-            ):
-                # The correlation transform produced nothing (no transverse field,
-                # or no Breit–Rabi partner within the measured range): report why
-                # rather than appending an empty spectrum as a success.
-                self._set_fourier_status(
-                    "No correlation spectrum: the radical correlation needs a "
-                    "transverse field and a radical line pair within the measured "
-                    "frequency range. Check the correlation field and the spectrum."
-                )
-                return
-            if average_dataset is not None:
-                if payload["summary"] is not None:
-                    self._fourier_panel.set_average_summary(**payload["summary"])
-                self._report_fourier_diagnostics(average_dataset)
-                spectra.append(average_dataset)
-                self._record_frequency_fft_recipe(
-                    run_number,
-                    fourier_config,
-                    average_dataset,
-                    grouping_digest=str(payload.get("grouping_digest") or "") or None,
-                )
-
-            if not spectra:
-                self._set_fourier_status(
-                    "No FFT spectra could be generated from the current selection."
-                )
-                return
-
-            self._store_frequency_spectra_for_run(
-                run_number,
-                list(spectra),
-                rep_type=RepresentationType.FREQ_FFT,
-            )
-
-            # Only steal the view if the computed run is still selected; if the
-            # user navigated away mid-compute, the spectrum stays cached for later.
-            current_run = (
-                None if self._current_dataset is None else int(self._current_dataset.run_number)
-            )
-            if current_run == run_number:
-                self._sync_frequency_plot_for_run(run_number, preserve_x_limits=True)
-                self._plot_workspace.set_active_view("frequency")
-                self._show_panel("fourier")
-            suffix = "s" if len(spectra) != 1 else ""
-            # Disclose a fit-and-subtract that silently no-opped (e.g. below the
-            # 5 G seed field) so the spectrum is not mistaken for diamag-removed.
-            diamag_skipped = (
-                average_dataset.metadata.get("fourier_diamag_skipped")
-                if average_dataset is not None
-                else None
-            )
-            if diamag_skipped:
-                message = (
-                    f"Computed {len(spectra)} Fourier spectrum{suffix}. "
-                    f"Diamagnetic subtraction skipped: {diamag_skipped} — "
-                    "spectrum left unsubtracted."
-                )
-                self._set_fourier_status(message)
-                self._log_panel.log(f"Diamagnetic subtraction skipped: {diamag_skipped}.")
-            else:
-                self._set_fourier_status(
-                    f"Computed {len(spectra)} Fourier spectrum{suffix}.", success=True
-                )
-            self._log_panel.log(
-                f"Computed averaged grouped Fourier spectrum using {display.lower()} display."
-            )
-            # A fresh compute is in sync by construction; clear (or, if the user
-            # kept editing while it ran, re-derive) the staleness banner.
-            self._refresh_fourier_staleness()
-        finally:
-            self._log_perf_event(
-                "compute_fourier",
-                started_at,
-                run=run_number,
-                groups=int(payload["selected_group_count"]),
-                padding=int(payload["padding"]),
-                display=display,
-                spectra=len(spectra),
-            )
-
-    def _on_fourier_payload_error(self, message: str, started_at: float) -> None:
-        """Report a failed background Fourier compute (GUI thread)."""
-        self._fourier_compute_active = False
-        self._clear_status_state_if_idle()
-        self._set_fourier_status(f"Fourier transform failed: {message}")
-        self._log_panel.log(f"Fourier transform failed: {message}")
-        self._log_perf_event("compute_fourier", started_at, spectra=0)
-
-    def _on_compute_fourier_for_selection(self) -> None:
-        """Compute FFTs for every Data-Browser-selected run from the LIVE panel settings.
-
-        Replaces the old "Apply to selection", which copied the active run's
-        STORED recipe (silently ignoring any panel edits made since the last
-        Compute FFT), recomputed each target synchronously on the GUI thread,
-        and never re-rendered. This handler instead builds each target's
-        config from the live panel state via :meth:`_candidate_fourier_config`
-        — the same chokepoint an explicit Compute FFT on that run would use
-        right now — so every target picks up the CURRENT apodisation, padding,
-        display mode, and conditioning, while each run keeps its own groups
-        and phases (the active run from the live table, others from their
-        stored per-run state or defaults). The active run is always among the
-        targets: recomputing it with live settings is what "compute for
-        selection" means when the panel has been edited since the last
-        Compute FFT.
-
-        Computation runs off the GUI thread through the shared
-        :meth:`_ensure_frequency_spectra_for_runs_async` — the same batch
-        machinery :meth:`_on_moments_send_to_trend` uses — rather than the old
-        handler's synchronous per-run loop. The whole selection is submitted
-        as one background task (no 25-run wave cap here): that throttle
-        belongs to :meth:`_render_frequency_overlay`'s *auto*-compute, which
-        re-renders after each wave because it is filling in for a passive
-        selection change; an explicit "Compute for selection" click is a
-        deliberate one-shot action, so it computes every target in a single
-        task and re-renders once, on completion. On completion, the visible
-        frequency view (single-run or overlay) is re-rendered.
+        Carries the old single-run completion's user-visible behaviors over to
+        the batch path: the S/N summary and diamagnetic/Burg diagnostics for
+        the active run's fresh spectrum, the workspace switch to the frequency
+        view (only when the active run was among the targets — a mid-compute
+        navigation away must not steal the view), the Fourier dock raise, the
+        empty-correlation and diamag-skipped disclosures, plus the batch
+        path's own staleness/fit-availability refreshes and the
+        computed-vs-skipped status count.
         """
-        target_datasets: dict[int, MuonDataset] = {}
-        for dataset in self._data_browser.get_selected_datasets():
-            try:
-                run_number = int(dataset.run_number)
-            except (TypeError, ValueError):
-                continue
-            target_datasets[run_number] = dataset
-
-        # The active run is always a target, whether or not it is technically
-        # part of the Data Browser's selection.
-        if self._current_dataset is not None:
-            try:
-                active_run = int(self._current_dataset.run_number)
-            except (TypeError, ValueError):
-                active_run = None
-            if active_run is not None:
-                target_datasets.setdefault(active_run, self._current_dataset)
-
-        if not target_datasets:
-            self._set_fourier_status("Select a run before computing Fourier spectra.")
-            return
-
-        # Computed from the FINAL target set (after the active-run union), not
-        # from the raw Data Browser selection — a single OTHER run plus the
-        # active run is a genuine 2-run selection, not a fallback.
-        fallback = len(target_datasets) <= 1
-
-        cache = self._frequency_cache(RepresentationType.FREQ_FFT)
-        pending, failures = self._ensure_recompute_tracking()
-        run_numbers: list[int] = []
-        skipped = 0
-        for run_number, dataset in target_datasets.items():
-            run = dataset.run
-            if run is None or not run.histograms:
-                skipped += 1
-                continue
-            config = self._candidate_fourier_config(dataset)
-            if not config.selected_group_ids:
-                skipped += 1
-                continue
-            representation = self._project_model.ensure_dataset(run_number).ensure(
-                RepresentationType.FREQ_FFT
-            )
-            # Each target's digest is its OWN grouping right now, not the
-            # active run's — the live config is evaluated against the target.
-            representation.recipe = {
-                "fourier_config": config.to_dict(),
-                "grouping_digest": fourier_grouping_digest(run),
-            }
-            representation.invalidate()
-            cache.pop(run_number, None)
-            key = (run_number, RepresentationType.FREQ_FFT)
-            pending.discard(key)
-            failures.discard(key)
-            run_numbers.append(run_number)
-
-        if not run_numbers:
-            self._set_fourier_status("Selected run(s) have no enabled detector groups to compute.")
-            return
-
-        note = " Only the active run was targeted (same as Compute FFT)." if fallback else ""
-        self._ensure_frequency_spectra_for_runs_async(
-            run_numbers,
-            RepresentationType.FREQ_FFT,
-            on_ready=lambda: self._finish_compute_fourier_for_selection(run_numbers, skipped, note),
-            busy_message=f"Computing FFT for {len(run_numbers)} run(s)…",
-        )
-
-    def _finish_compute_fourier_for_selection(
-        self, requested: list[int], skipped: int, note: str
-    ) -> None:
-        """Completion for :meth:`_on_compute_fourier_for_selection`.
-
-        Re-renders the visible frequency view (single-run or overlay — the
-        current selection decides which), refreshes staleness/fit-availability
-        state, and reports how many spectra landed vs. were skipped.
-        """
+        self._fourier_compute_active = False
+        # The batch helper's own idle check ran while this flag was still True
+        # (its _finished calls _finish_frequency_recompute_ui before on_ready),
+        # so the status dot needs the re-check the old completion also did.
+        self._clear_status_state_if_idle()
         computed = sum(
             1
             for run_number in requested
@@ -8781,8 +8476,45 @@ class MainWindow(QMainWindow):
         )
         failed = len(requested) - computed
         total_skipped = skipped + failed
-        if self._frequency_domain_is_active():
+
+        active_run: int | None = None
+        if self._current_dataset is not None:
+            try:
+                active_run = int(self._current_dataset.run_number)
+            except (TypeError, ValueError):
+                active_run = None
+
+        active_spectrum: MuonDataset | None = None
+        if active_run is not None and active_run in requested:
+            cached = self._cached_frequency_spectra(active_run, RepresentationType.FREQ_FFT)
+            active_spectrum = cached[0] if cached else None
+
+        if active_spectrum is not None:
+            summary = self._fourier_average_summary(active_run, active_spectrum)
+            if summary is not None:
+                self._fourier_panel.set_average_summary(**summary)
+            self._report_fourier_diagnostics(active_spectrum)
+
+        if active_run is not None and active_run in requested:
+            # The explicit compute lands on screen: sync the frequency plot
+            # (hidden syncs defer painting; the view switch below repaints),
+            # switch the central workspace to the frequency view, and raise
+            # the Fourier dock — the old single-run contract, applied for any
+            # N. Overlay mode with a multi-run selection renders the overlay.
+            if (
+                self._frequency_overlay_enabled()
+                and len(self._selected_frequency_run_numbers()) > 1
+            ):
+                self._sync_frequency_plot_for_current_dataset()
+            else:
+                self._sync_frequency_plot_for_run(active_run, preserve_x_limits=True)
+            self._plot_workspace.set_active_view("frequency")
+            self._show_panel("fourier")
+        elif self._frequency_domain_is_active():
+            # The user navigated away from every target mid-compute: leave the
+            # workspace alone, but keep a visible frequency view current.
             self._sync_frequency_plot_for_current_dataset()
+
         self._refresh_fourier_staleness()
         # Newly-cached spectra change both single- and batch-fit availability
         # (F17): nothing else refreshes the Fit dock after this, so a compute
@@ -8790,9 +8522,43 @@ class MainWindow(QMainWindow):
         # unrelated browser-selection change happened to poke it.
         self._set_frequency_fit_datasets_for_selection()
         self._update_fit_block_state()
+
+        if (
+            active_spectrum is not None
+            and active_spectrum.metadata.get("correlation_axis")
+            and np.asarray(active_spectrum.asymmetry).size == 0
+        ):
+            # The correlation transform produced nothing (no transverse field,
+            # or no Breit–Rabi partner within the measured range): report why
+            # rather than counting an empty spectrum as a success.
+            self._set_fourier_status(
+                "No correlation spectrum: the radical correlation needs a "
+                "transverse field and a radical line pair within the measured "
+                "frequency range. Check the correlation field and the spectrum."
+            )
+            return
+
         noun = "spectrum" if computed == 1 else "spectra"
-        message = f"Computed {computed} {noun} ({total_skipped} skipped).{note}"
-        self._set_fourier_status(message, success=computed > 0)
+        message = f"Computed {computed} {noun}"
+        if total_skipped:
+            message += f" ({total_skipped} skipped)"
+        message += "."
+        diamag_skipped = (
+            active_spectrum.metadata.get("fourier_diamag_skipped")
+            if active_spectrum is not None
+            else None
+        )
+        if diamag_skipped:
+            # Disclose a fit-and-subtract that silently no-opped (e.g. below
+            # the 5 G seed field) so the spectrum is not mistaken for
+            # diamag-removed.
+            message += (
+                f" Diamagnetic subtraction skipped: {diamag_skipped} — spectrum left unsubtracted."
+            )
+            self._set_fourier_status(message)
+            self._log_panel.log(f"Diamagnetic subtraction skipped: {diamag_skipped}.")
+        else:
+            self._set_fourier_status(message, success=computed > 0)
         self._log_panel.log(message)
 
     def _record_frequency_maxent_recipe(
@@ -9705,6 +9471,9 @@ class MainWindow(QMainWindow):
             if dataset:
                 self._current_dataset = dataset
                 self._sync_fourier_panel_for_dataset(dataset)
+                # A new active run can change the compute target set (it is
+                # always unioned in), so keep the scope label current.
+                self._refresh_fourier_compute_scope()
                 if hasattr(self._frequency_plot_panel, "update_frequency_reference"):
                     self._frequency_plot_panel.update_frequency_reference(dataset)
                 # Reduce the newly selected run to the projection the fit will run
@@ -13764,6 +13533,10 @@ class MainWindow(QMainWindow):
         else:
             self._update_fit_block_state()
         self._update_status_selection()
+        # The Compute FFT button's scope label tracks the selection ∪ active
+        # run (cheap: a run-number count), so it always names what a click
+        # would compute.
+        self._refresh_fourier_compute_scope()
 
         is_frequency_domain = (
             hasattr(self, "_plot_workspace") and self._plot_workspace.active_domain() == "frequency"

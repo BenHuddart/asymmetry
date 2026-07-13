@@ -295,7 +295,7 @@ class FourierPanel(QWidget):
         # _refresh_fourier_staleness / _fourier_overlay_mismatch.
         self._overlay_mismatch_banner = make_warning_banner("", severity="warn")
         self._overlay_mismatch_banner.setText(
-            "Overlaid spectra use different settings — Compute for selection to unify."
+            "Overlaid spectra use different settings — Compute FFT to unify."
         )
         self._overlay_mismatch_banner.hide()
         layout.addWidget(self._overlay_mismatch_banner)
@@ -707,13 +707,30 @@ class FourierPanel(QWidget):
         # Read-only hint: the grouping's pre-FFT background correction is
         # inherited by the Fourier input (F3) and is otherwise invisible here.
         self.set_background_hint(None)
+        # ONE selection-scoped compute action: the primary button computes the
+        # full Data-Browser selection (the active run alone when nothing else
+        # is selected) and set_compute_scope() reflects the target count in
+        # its label, so the scope is visible before clicking.
         self._fft_btn = self._action_footer.add_primary("Compute FFT")
-        self._compute_for_selection_btn = self._action_footer.add_secondary("Compute for selection")
-        self._compute_for_selection_btn.setToolTip(
+        self._fft_btn.setToolTip(
             "Compute FFTs for every run selected in the Data Browser using the "
             "current settings. Each run keeps its own groups and phases."
         )
         return self._action_footer
+
+    def set_compute_scope(self, count: int) -> None:
+        """Reflect the compute target count in the primary button's label.
+
+        ``"Compute FFT"`` for a single-run scope; ``"Compute FFT (N runs)"``
+        when the Data-Browser selection puts N > 1 runs in scope — the button
+        always computes the full selection, and the label makes that scope
+        visible before clicking.
+        """
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            count = 1
+        self._fft_btn.setText("Compute FFT" if count <= 1 else f"Compute FFT ({count} runs)")
 
     # ── conditioning + exclusions sections ─────────────────────────────
 

@@ -780,7 +780,9 @@ never-computed run picks up a fresh spectrum as you select it. ``Compute FFT``,
 pinned in the action footer at the bottom of the Fourier panel (always visible,
 outside the scrolling settings area), remains the explicit way to re-run the
 transform after you change a setting — auto-compute only ever fills a genuinely
-empty spectrum, it never overwrites one you have already computed.
+empty spectrum, it never overwrites one you have already computed. The button
+acts on the full Data-Browser selection and its label counts the scope (see
+`Computing for a selection`_).
 
 A **multi-run overlay** extends the same idea to a selection: toggling Overlay
 with several runs selected auto-computes every member that has no spectrum yet,
@@ -906,47 +908,45 @@ the new grouping automatically.
 Computing for a selection
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``Compute FFT`` only ever acts on the active run. To (re)compute several
-runs at once with the same settings — say, retuning apodisation and pushing it
-out across a whole series — select the runs in the Data Browser and click
-**Compute for selection**, the secondary action beside ``Compute FFT`` in the
-panel's pinned footer:
+``Compute FFT`` is **selection-scoped**: it computes every run selected in
+the Data Browser, or the active run alone when nothing else is selected. The
+button's label shows that scope before you click — ``Compute FFT`` for a
+single run, ``Compute FFT (3 runs)`` when three runs are in scope — and its
+tooltip reads:
 
    Compute FFTs for every run selected in the Data Browser using the current
    settings. Each run keeps its own groups and phases.
 
-Each selected run is recomputed from the CURRENT panel state — apodisation,
-padding, display mode, phase mode, and conditioning — exactly what an explicit
-``Compute FFT`` on that run would use right now. Group inclusion and phases
-stay per-run: the active run's come from the live ``Groups`` table, and every
-other run's from its own stored per-run state (or its grouping's own
-inclusion default). The active run is always included, so editing a setting
-and clicking **Compute for selection** with nothing else selected is
-equivalent to **Compute FFT**. Runs with no enabled detector groups are
-skipped and reported in the status line (*"Computed <n> spectra (<m>
-skipped)."*). Computation runs off the GUI thread, and the visible frequency
-view — a single run or a multi-run overlay — re-renders once every target has
-landed.
+Every run in scope is recomputed from the CURRENT panel state — apodisation,
+padding, display mode, phase mode, and conditioning. Group inclusion and
+phases stay per-run: the active run's come from the live ``Groups`` table,
+and every other run's from its own stored per-run state (or its grouping's
+own inclusion default). Runs with no enabled detector groups are skipped and
+reported in the status line (*"Computed <n> spectra (<m> skipped)."* — the
+skipped count appears only when runs were skipped). Computation runs off the
+GUI thread, and on completion the central workspace switches to the
+Frequency-domain view and renders the result — the active run's spectrum, or
+the full overlay when the Overlay toggle is on with several runs selected.
 
-This replaces an earlier **Apply to selection** affordance that copied the
-active run's already-computed recipe onto the other selected runs without
-reading the live panel state, so a setting changed after the last
+This consolidation replaces an earlier **Apply to selection** affordance that
+copied the active run's already-computed recipe onto the other selected runs
+without reading the live panel state, so a setting changed after the last
 ``Compute FFT`` was silently left out, and did not re-render the view. That
-compute-once-copy-around model is gone: **Compute for selection** always
-reads the panel as it stands now.
+compute-once-copy-around model is gone: ``Compute FFT`` always reads the
+panel as it stands now and always acts on the scope its label names.
 
-Because overlay members are computed independently — one now, one earlier
-under different settings, one auto-filled by the overlay itself — they can
-drift out of alignment with each other. When an active overlay mixes spectra
+Because overlay members can be computed independently — one earlier under
+different settings, one auto-filled by the overlay itself — they can drift
+out of alignment with each other. When an active overlay mixes spectra
 computed under different settings, the panel raises a second banner,
 independent of the out-of-date indicator below::
 
-   Overlaid spectra use different settings — Compute for selection to unify.
+   Overlaid spectra use different settings — Compute FFT to unify.
 
 The comparison is cheap (stored recipe dictionaries only, no recomputation)
-and only looks at the runs actually in the overlay; **Compute for selection**
-with the mismatched runs selected recomputes them all under one configuration
-and clears the banner.
+and only looks at the runs actually in the overlay; a ``Compute FFT`` with
+the mismatched runs selected recomputes them all under one configuration and
+clears the banner.
 
 Fitting the displayed spectrum
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

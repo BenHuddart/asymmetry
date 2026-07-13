@@ -14,8 +14,6 @@ flag.
 
 from __future__ import annotations
 
-import time
-
 import numpy as np
 import pytest
 from PySide6.QtCore import QSettings
@@ -24,6 +22,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.panels.fourier_panel import FourierPanel
+from tests._qt_helpers import wait_for
 
 pytestmark = pytest.mark.gui
 
@@ -225,7 +224,7 @@ def test_set_overlay_mismatch_shows_and_hides_banner(qapp) -> None:
     assert panel.is_overlay_mismatched() is True
     assert (
         panel._overlay_mismatch_banner.text()
-        == "Overlaid spectra use different settings — Compute for selection to unify."
+        == "Overlaid spectra use different settings — Compute FFT to unify."
     )
 
     panel.set_overlay_mismatch(False)
@@ -286,11 +285,15 @@ def window():
 def _computed_window(window: MainWindow) -> tuple[MainWindow, MuonDataset]:
     """A window whose current run has one explicitly computed FFT spectrum.
 
-    Drives the real compute path synchronously: the payload builder is pure
-    (worker-thread code), so calling it inline and handing the result to the
-    GUI-thread completion handler exercises recipe recording, digest stamping,
-    and the staleness refresh without TaskRunner asynchrony.
+    Drives the real, unified Compute FFT handler (selection-scoped since the
+    one-button consolidation): the run is loaded into the Data Browser (the
+    batch recompute resolves target runs through it), the handler stamps the
+    recipe + digest and computes off-thread, and the loop is spun until the
+    completion lands — exercising recipe recording, digest stamping, and the
+    staleness refresh through the same path a button click takes.
     """
+    from PySide6.QtWidgets import QApplication
+
     run = _tf_run()
     dataset = MuonDataset(
         time=np.array([0.0, 1.0]),
@@ -299,23 +302,12 @@ def _computed_window(window: MainWindow) -> tuple[MainWindow, MuonDataset]:
         metadata={"run_number": run.run_number, "field": 200.0},
         run=run,
     )
+    if window._data_browser.get_dataset(run.run_number) is None:
+        window._data_browser.add_dataset(dataset)
     window._current_dataset = dataset
     window._sync_fourier_panel_for_dataset(dataset)
-    state = window._fourier_panel.get_state()
-    payload = window._compute_fourier_payload(
-        dataset=dataset,
-        state=state,
-        selected_group_ids=window._selected_fourier_group_ids(dataset),
-        apply_phase_correction=False,
-        auto_phase=False,
-        use_phase_table=False,
-        manual_phase=0.0,
-        group_phase_table={},
-        t_min_us=None,
-        t_max_us=window._fourier_time_window_excluding_tail(dataset, None, None)[1],
-        plot_window=(None, False),
-    )
-    window._on_fourier_payload_finished(payload, time.perf_counter())
+    window._on_compute_fourier()
+    wait_for(lambda: not window._fourier_compute_active, QApplication.instance(), timeout_s=15.0)
     assert window._cached_frequency_spectra(run.run_number, RepresentationType.FREQ_FFT)
     return window, dataset
 

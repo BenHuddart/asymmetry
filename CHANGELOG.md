@@ -9,19 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The Fourier panel's "Apply to selection" is now "Compute for selection."**
-  The old button copied the active run's already-computed recipe onto the
-  other selected runs, so a setting changed after the last **Compute FFT**
-  was silently left out, it recomputed each target synchronously on the GUI
-  thread, and it never re-rendered the view — nothing visibly happened.
-  **Compute for selection** instead builds every target's config from the
-  panel as it stands right now (the same read **Compute FFT** uses), keeps
-  each run's own groups and phases, computes the whole selection
-  asynchronously, and re-renders the visible frequency view when it lands.
-  The active run is always included, so with nothing else selected it behaves
-  like **Compute FFT**. A new banner also flags when an active overlay mixes
-  spectra computed under different settings, independent of the existing
-  out-of-date indicator.
+- **The Fourier panel's "Compute FFT" is now selection-scoped, replacing
+  "Apply to selection."** The old secondary button copied the active run's
+  already-computed recipe onto the other selected runs, so a setting changed
+  after the last **Compute FFT** was silently left out, it recomputed each
+  target synchronously on the GUI thread, and it never re-rendered the view —
+  nothing visibly happened. There is now ONE compute action: **Compute FFT**
+  computes every run selected in the Data Browser (the active run alone when
+  nothing else is selected), and its label shows the scope before you click —
+  "Compute FFT (3 runs)" for a three-run selection. Every target's
+  configuration is read from the panel as it stands right now, each run keeps
+  its own groups and phases, the whole selection computes asynchronously, and
+  on completion the workspace switches to the frequency view and renders the
+  result (the overlay, when Overlay mode is on). A new banner also flags when
+  an active overlay mixes spectra computed under different settings,
+  independent of the existing out-of-date indicator. The MaxEnt panel's
+  "Apply to selection" is unchanged.
 
 ### Fixed
 
