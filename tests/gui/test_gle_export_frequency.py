@@ -2,8 +2,9 @@
 
 The GLE/text export path is shared with the time domain but must mirror the
 on-screen *spectrum* render when the panel is in frequency mode: display-unit x
-data and window, real axis labels, a line + translucent ±1σ band idiom (not the
-time-domain errorbar dots), self-describing sidecar columns with Fourier
+data and window, real axis labels, a piecewise-linear line + light shaded ±1σ
+band idiom (not the time-domain errorbar dots or the GLE spline),
+self-describing sidecar columns with Fourier
 provenance, and digit-safe (``run_``-prefixed) sidecar filenames. These tests
 drive the real gleplot API, matching ``test_gle_export.py``.
 """
@@ -106,8 +107,10 @@ def test_frequency_gauss_export_window_labels_and_line(qapp, tmp_path):
         assert 'xtitle "Field (G)"' in gle
         assert 'ytitle "FFT Magnitude (a.u.)"' in gle
         assert "xaxis min 0 max 6000" in gle
-        # Line idiom, not the time-domain errorbar dots.
+        # Line idiom, not the time-domain errorbar dots — and piecewise-linear:
+        # GLE's ``smooth`` spline overshoots on sharp resonance lines.
         assert " line " in gle
+        assert " smooth" not in gle
         assert "errup" not in gle and "errdown" not in gle
 
         # Digit-led run label is prefixed to survive the gleplot parser.
@@ -170,8 +173,16 @@ def test_frequency_band_present_with_positive_errors(qapp, tmp_path):
         gle_path, export_dir = _build(panel, ds, tmp_path)
         gle = gle_path.read_text(encoding="utf-8")
 
-        # The band is drawn as a fill referencing its own data file.
+        # The band is drawn as a fill referencing its own data file, in a light
+        # GLE tint — GLE has no fill alpha, so the series color itself would
+        # render as a solid block that swallows the spectrum line.
         assert "fill d" in gle
+        band_fills = [ln for ln in gle.splitlines() if ln.strip().startswith("fill d")]
+        assert band_fills and all("LIGHTGRAY" in ln for ln in band_fills)
+        assert "fill d1,d2 color BLACK" not in gle
+        # The spectrum line itself stays piecewise-linear (no GLE spline).
+        series_lines = [ln for ln in gle.splitlines() if " line " in ln and "key" in ln]
+        assert series_lines and all(" smooth" not in ln for ln in series_lines)
         from asymmetry.gui.utils.gle_export import extract_gle_data_dependencies
 
         deps = extract_gle_data_dependencies(gle_path)

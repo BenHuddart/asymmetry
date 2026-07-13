@@ -18,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time-domain error-bar dots. The export now mirrors the on-screen render: x
   data and the exported window are in the current display unit (MHz / Field G /
   Field T, reference-shifted when *FFT X relative to field* is on), the axis
-  titles are the real spectrum labels, and the spectrum draws as a line plus a
-  translucent ±1σ band (omitted when the spectrum has no per-point errors). The
+  titles are the real spectrum labels, and the spectrum draws as a
+  piecewise-linear line (no GLE spline, which overshoots on sharp resonance
+  lines) plus a light shaded ±1σ band (omitted when the spectrum has no
+  per-point errors). The
   `.dat` sidecars are self-describing — columns are named in the header, the
   canonical `frequency_MHz` axis is kept as a trailing column whenever the
   display unit differs, and a `START OF FOURIER INFORMATION` block records the

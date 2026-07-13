@@ -995,9 +995,10 @@ is on screen rather than the time-domain idiom:
   ``FFT X relative to field`` on, in the same reference-shifted window the
   toolbar shows. Real axis titles (for example ``Field (G)`` and
   ``FFT Magnitude (a.u.)``) replace the time-domain labels.
-- **Line and band.** A spectrum draws as a solid line plus a translucent ±1σ
-  band, matching the screen; the band is omitted when the spectrum carries no
-  per-point errors.
+- **Line and band.** A spectrum draws as a solid piecewise-linear line plus a
+  light shaded ±1σ band behind it, matching the screen (GLE has no fill
+  transparency, so the band compiles as a light tint of the series colour);
+  the band is omitted when the spectrum carries no per-point errors.
 - **Self-describing sidecars.** Each ``.dat`` names its columns in the header
   (for example ``field_G  amplitude  error  frequency_MHz``) and keeps the
   canonical ``frequency_MHz`` axis as a trailing column whenever the display

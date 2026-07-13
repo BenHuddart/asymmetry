@@ -161,6 +161,20 @@ _FREQUENCY_X_COLUMN_NAME = {
     "field_tesla": "field_T",
 }
 
+# GLE has no fill transparency: gleplot's writer drops fill_between's alpha and
+# rgb_to_gle quantizes computed tints to named colors (a 75%-gray tint maps to
+# WHITE, and the series color itself renders as a solid block that swallows the
+# line). The exported ±1σ band therefore uses an explicit light GLE tint
+# matched to the series color; LIGHTGRAY/LIGHTBLUE/LIGHTCYAN/LIGHTGREEN are the
+# only light tints in gleplot's passthrough color set.
+_GLE_BAND_TINT = {
+    "black": "lightgray",
+    "gray": "lightgray",
+    "blue": "lightblue",
+    "cyan": "lightcyan",
+    "green": "lightgreen",
+}
+
 # Neutral y-range for a stacked projection subplot whose asymmetry is entirely
 # non-finite (no data). Without it matplotlib keeps its default (0, 1) box,
 # which reads as "counts" rather than "asymmetry, no data".
@@ -6912,7 +6926,7 @@ class PlotPanel(QWidget):
                 written_files.append(dat_path)
                 if payload.get("domain") == "frequency":
                     # Mirror the on-screen renderer (_plot_frequency_line_masked):
-                    # a solid line in display-unit x, plus a translucent ±1σ band
+                    # a solid line in display-unit x, plus a shaded ±1σ band
                     # when the error array carries any positive finite value.
                     x_display = payload.get("x_display")
                     x_plot = (
@@ -6934,11 +6948,12 @@ class PlotPanel(QWidget):
                         if bool(np.any(np.isfinite(err) & (err > 0.0))):
                             band_err = np.where(np.isfinite(err), err, 0.0)
                             y_arr = np.asarray(y_data, dtype=float)
+                            band_color = _GLE_BAND_TINT.get(str(data_color).lower(), "lightgray")
                             ax.fill_between(
                                 x_plot,
                                 y_arr - band_err,
                                 y_arr + band_err,
-                                color=data_color,
+                                color=band_color,
                                 alpha=0.25,
                                 label=None,
                                 data_name=f"{token}_band",
@@ -7648,9 +7663,9 @@ class PlotPanel(QWidget):
 
         Time-domain data is plotted with error bars (no connecting lines) and
         fit curves with lines (no markers). Frequency-domain (FFT/MaxEnt) views
-        mirror the on-screen spectrum instead: a line in the current display
-        unit plus a translucent ±1σ band. File names are derived from the Label
-        dropdown value for each dataset.
+        mirror the on-screen spectrum instead: a piecewise-linear line in the
+        current display unit plus a light shaded ±1σ band. File names are
+        derived from the Label dropdown value for each dataset.
         """
         payloads = self._collect_export_payloads()
         if not payloads:
@@ -7767,7 +7782,18 @@ class PlotPanel(QWidget):
         else:
             # Create the figure only in the branch that uses it (the stacked
             # branches build their own via _make_stacked_gle_axes).
-            fig = glp.figure(figsize=self._export_figure_size(len(payloads)))
+            figure_kwargs: dict = {"figsize": self._export_figure_size(len(payloads))}
+            if any(p.get("domain") == "frequency" for p in payloads) and hasattr(
+                glp, "GLEGraphConfig"
+            ):
+                # A measured spectrum must render piecewise-linear: GLE's
+                # ``smooth`` spline overshoots on sharp resonance lines.
+                # ``GlobalConfig.get_graph()`` hands every figure the shared
+                # singleton, so never flip ``smooth_curves`` on it in place —
+                # pass this figure its own config instead. Time-domain exports
+                # keep gleplot's default behavior untouched.
+                figure_kwargs["graph"] = glp.GLEGraphConfig(smooth_curves=False)
+            fig = glp.figure(**figure_kwargs)
             ax = fig.add_subplot(111)
             self._plot_export_payloads_on_axis(
                 ax,
