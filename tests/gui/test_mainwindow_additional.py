@@ -1731,27 +1731,22 @@ class TestMainWindowFourier:
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8811)
         _compute_fourier_sync(mainwindow)
-        abs_x_min, abs_x_max, _abs_y_min, _abs_y_max = (
-            mainwindow._frequency_plot_panel.get_view_limits()
-        )
-        abs_axis_min, abs_axis_max = mainwindow._frequency_plot_panel._ax.get_xlim()
+        panel = mainwindow._frequency_plot_panel
 
-        mainwindow._frequency_axis_relative_check.setChecked(True)
+        # Shift mode genuinely re-centres the axis on the run's reference field:
+        # the plotted x-limits move by γ_μ·B and the axis label names the shift.
+        abs_axis_min, abs_axis_max = panel._ax.get_xlim()
+        panel.set_frequency_axis_mode("shift")
 
-        x_min, x_max, _y_min, _y_max = mainwindow._frequency_plot_panel.get_view_limits()
         center = 100.0 * 135.538817 * 1.0e-4
-        plotted = mainwindow._frequency_plot_panel._current_dataset
-
-        assert plotted is not None
-        assert mainwindow._frequency_plot_panel._ax.get_xlabel() == "Frequency (MHz)"
-        assert x_min == pytest.approx(abs_x_min - center, abs=1e-3)
-        assert x_max == pytest.approx(abs_x_max - center, abs=1e-3)
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(
-            abs_axis_min, abs=1e-3
-        )
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(
-            abs_axis_max, abs=1e-3
-        )
+        assert panel._current_dataset is not None
+        assert panel._ax.get_xlabel() == "Frequency shift ν − ν₀ (MHz)"
+        # The plotted matplotlib axis itself is now shift-space (not a hidden
+        # absolute axis behind offset boxes).
+        shift_axis_min, shift_axis_max = panel._ax.get_xlim()
+        assert shift_axis_min == pytest.approx(abs_axis_min - center, abs=0.5)
+        assert shift_axis_max == pytest.approx(abs_axis_max - center, abs=0.5)
+        assert panel.is_frequency_axis_relative_to_reference() is True
 
     def test_frequency_phase_window_narrows_wide_relative_view(
         self,
@@ -1762,7 +1757,7 @@ class TestMainWindowFourier:
         mainwindow._on_dataset_selected(8813)
         _compute_fourier_sync(mainwindow)
 
-        mainwindow._frequency_axis_relative_check.setChecked(True)
+        mainwindow._frequency_plot_panel.set_frequency_axis_mode("shift")
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
         mainwindow._frequency_plot_panel.set_view_limits(-40.0, 40.0, y_min, y_max)
 
@@ -1779,23 +1774,20 @@ class TestMainWindowFourier:
         mainwindow._on_dataset_selected(8814)
         _compute_fourier_sync(mainwindow)
 
-        mainwindow._frequency_axis_relative_check.setChecked(True)
+        mainwindow._frequency_plot_panel.set_frequency_axis_mode("shift")
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
         mainwindow._frequency_plot_panel.set_view_limits(-0.75, 0.25, y_min, y_max)
 
         _compute_fourier_sync(mainwindow)
 
         x_min, x_max, _y_min, _y_max = mainwindow._frequency_plot_panel.get_view_limits()
-        center = 100.0 * 135.538817 * 1.0e-4
 
+        # Shift mode: the limit boxes ARE the plotted axis (identity mapping), so
+        # both the control values and the matplotlib xlim survive the recompute.
         assert x_min == pytest.approx(-0.75, abs=1e-6)
         assert x_max == pytest.approx(0.25, abs=1e-6)
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(
-            center - 0.75, abs=1e-3
-        )
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(
-            center + 0.25, abs=1e-3
-        )
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(-0.75, abs=1e-3)
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(0.25, abs=1e-3)
 
     def test_frequency_typed_limits_survive_browsing_past_uncomputed_run(
         self, mainwindow: MainWindow
@@ -2000,7 +1992,7 @@ class TestMainWindowFourier:
         mainwindow._fourier_panel._phase_mode_radio.setChecked(True)
         mainwindow._fourier_panel._use_phase_table_check.setChecked(True)
         mainwindow._fourier_panel.set_group_phases({1: 14.0, 2: -9.0}, auto_filled=True)
-        mainwindow._frequency_axis_relative_check.setChecked(True)
+        mainwindow._frequency_plot_panel.set_frequency_axis_mode("shift")
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
         mainwindow._frequency_plot_panel.set_view_limits(-0.8, 0.4, y_min, y_max)
 
