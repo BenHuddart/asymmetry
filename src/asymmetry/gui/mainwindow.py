@@ -79,6 +79,7 @@ from __future__ import annotations
 import copy
 import functools
 import hashlib
+import math
 import os
 import time
 from collections.abc import Callable, Iterable, Sequence
@@ -15374,42 +15375,62 @@ class MainWindow(QMainWindow):
             panel = getattr(self, attr, None)
             if panel is not None and hasattr(panel, "shutdown_workers"):
                 panel.shutdown_workers()
+        # Persist only a fully finite limit set: one NaN/Inf written here is
+        # replayed into Axes.set_xlim/set_ylim on every subsequent startup,
+        # which raises and kills the app before the window appears. Skipping
+        # the write keeps the previous session's good ranges instead.
         if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
-            x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
-            self._settings.setValue("plot/time_x_min", float(x_min))
-            self._settings.setValue("plot/time_x_max", float(x_max))
-            self._settings.setValue("plot/time_y_min", float(y_min))
-            self._settings.setValue("plot/time_y_max", float(y_max))
+            limits = self._plot_panel.get_view_limits()
+            if all(math.isfinite(float(v)) for v in limits):
+                x_min, x_max, y_min, y_max = limits
+                self._settings.setValue("plot/time_x_min", float(x_min))
+                self._settings.setValue("plot/time_x_max", float(x_max))
+                self._settings.setValue("plot/time_y_min", float(y_min))
+                self._settings.setValue("plot/time_y_max", float(y_max))
         if hasattr(self, "_frequency_plot_panel") and hasattr(
             self._frequency_plot_panel, "get_view_limits"
         ):
-            x_min, x_max, y_min, y_max = self._frequency_plot_panel.get_view_limits()
-            self._settings.setValue("plot/freq_x_min", float(x_min))
-            self._settings.setValue("plot/freq_x_max", float(x_max))
-            self._settings.setValue("plot/freq_y_min", float(y_min))
-            self._settings.setValue("plot/freq_y_max", float(y_max))
+            limits = self._frequency_plot_panel.get_view_limits()
+            if all(math.isfinite(float(v)) for v in limits):
+                x_min, x_max, y_min, y_max = limits
+                self._settings.setValue("plot/freq_x_min", float(x_min))
+                self._settings.setValue("plot/freq_x_max", float(x_max))
+                self._settings.setValue("plot/freq_y_min", float(y_min))
+                self._settings.setValue("plot/freq_y_max", float(y_max))
         self._settings.sync()
         super().closeEvent(event)
 
     def _restore_plot_ranges_from_settings(self) -> None:
-        """Restore saved x/y axis ranges from QSettings if available."""
+        """Restore saved x/y axis ranges from QSettings if available.
+
+        Every value is validated for finiteness before it reaches
+        ``set_view_limits``: a NaN persisted by an earlier (pre-guard) session
+        would otherwise crash startup in ``Axes.set_ylim`` on every launch,
+        with no way to recover short of hand-editing the settings store.
+        A non-finite entry falls back to that key's default.
+        """
+
+        def _finite(key: str, default: float) -> float:
+            value = float(self._settings.value(key, default, float))
+            return value if math.isfinite(value) else float(default)
+
         if self._settings.contains("plot/time_x_min") and hasattr(
             self._plot_panel, "set_view_limits"
         ):
-            x_min = self._settings.value("plot/time_x_min", 0.0, float)
-            x_max = self._settings.value("plot/time_x_max", 10.0, float)
-            y_min = self._settings.value("plot/time_y_min", -30.0, float)
-            y_max = self._settings.value("plot/time_y_max", 30.0, float)
+            x_min = _finite("plot/time_x_min", 0.0)
+            x_max = _finite("plot/time_x_max", 10.0)
+            y_min = _finite("plot/time_y_min", -30.0)
+            y_max = _finite("plot/time_y_max", 30.0)
             self._plot_panel.set_view_limits(x_min, x_max, y_min, y_max)
             if hasattr(self._plot_panel, "_limits_initialized"):
                 self._plot_panel._limits_initialized = True
         if self._settings.contains("plot/freq_x_min") and hasattr(
             self._frequency_plot_panel, "set_view_limits"
         ):
-            x_min = self._settings.value("plot/freq_x_min", 0.0, float)
-            x_max = self._settings.value("plot/freq_x_max", 20.0, float)
-            y_min = self._settings.value("plot/freq_y_min", 0.0, float)
-            y_max = self._settings.value("plot/freq_y_max", 10.0, float)
+            x_min = _finite("plot/freq_x_min", 0.0)
+            x_max = _finite("plot/freq_x_max", 20.0)
+            y_min = _finite("plot/freq_y_min", 0.0)
+            y_max = _finite("plot/freq_y_max", 10.0)
             self._frequency_plot_panel.set_view_limits(x_min, x_max, y_min, y_max)
             if hasattr(self._frequency_plot_panel, "_limits_initialized"):
                 self._frequency_plot_panel._limits_initialized = True

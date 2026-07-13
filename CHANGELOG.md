@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Startup crash loop from a NaN saved plot range.** If a session ever
+  persisted a non-finite axis limit (e.g. `plot/freq_y_min = nan`) to the
+  application settings at shutdown, every subsequent launch replayed it into
+  Matplotlib's `set_ylim` and crashed before the window appeared, with no way
+  to recover short of hand-editing the settings store. Non-finite values are
+  now rejected at all three layers: the axis-limit fields refuse a NaN
+  (`setValue(nan)` keeps the last good value; NaN previously slipped straight
+  through min/max clamping), shutdown skips persisting a limit set containing
+  a non-finite value, and startup falls back to the per-axis default for any
+  non-finite entry already in the settings — so existing poisoned settings
+  recover on the next launch.
 - **Fit-range spinboxes now commit a programmatically set value.** Setting a
   fit-range field's value in code (e.g. from a scripted/automated scenario)
   used to update only the field's display while the fit kept running over the
