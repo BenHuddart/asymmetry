@@ -6208,6 +6208,65 @@ class TestReductionSettingsPersistence:
         assert "binning_mode" not in dataset.run.grouping
 
 
+class TestPlotRangeSettingsNaNRecovery:
+    """A NaN persisted in the plot-range settings must never crash startup.
+
+    Regression: a session persisted ``plot/freq_y_min``/``plot/freq_y_max`` as
+    NaN at shutdown; every subsequent launch replayed them through
+    ``set_view_limits`` into ``Axes.set_ylim``, which raises ``ValueError:
+    Axis limits cannot be NaN or Inf`` before the window appeared — an
+    unrecoverable crash loop short of hand-editing the settings store.
+    """
+
+    def _seed_poisoned_settings(self) -> None:
+        settings = QSettings()
+        settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
+        settings.setValue("plot/time_x_min", 0.0)
+        settings.setValue("plot/time_x_max", 107520.0)
+        settings.setValue("plot/time_y_min", -96.278)
+        settings.setValue("plot/time_y_max", float("nan"))
+        settings.setValue("plot/freq_x_min", -0.025)
+        settings.setValue("plot/freq_x_max", 0.525)
+        settings.setValue("plot/freq_y_min", float("nan"))
+        settings.setValue("plot/freq_y_max", float("nan"))
+        settings.sync()
+
+    def test_startup_survives_nan_plot_ranges_and_falls_back_to_defaults(
+        self, qapp: QApplication
+    ) -> None:
+        self._seed_poisoned_settings()
+
+        window = MainWindow()  # must not raise
+
+        # Finite saved values are honoured; each NaN falls back to its default.
+        x_min, x_max, y_min, y_max = window._plot_panel.get_view_limits()
+        assert y_min == pytest.approx(-96.278)
+        assert y_max == pytest.approx(30.0)  # NaN -> time-panel default
+        x_min, x_max, y_min, y_max = window._frequency_plot_panel.get_view_limits()
+        assert (x_min, x_max) == pytest.approx((-0.025, 0.525))
+        assert (y_min, y_max) == pytest.approx((0.0, 10.0))  # NaN -> freq defaults
+
+    def test_close_event_never_persists_non_finite_limits(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The write side is guarded too: a non-finite limit set is skipped,
+        keeping the previous session's good ranges in the store."""
+        settings = QSettings()
+        settings.setValue("plot/freq_y_min", 1.5)
+        settings.setValue("plot/freq_y_max", 7.5)
+        monkeypatch.setattr(
+            mainwindow._frequency_plot_panel,
+            "get_view_limits",
+            lambda: (0.0, 20.0, float("nan"), float("inf")),
+        )
+
+        mainwindow.close()
+
+        settings.sync()
+        assert float(settings.value("plot/freq_y_min", type=float)) == pytest.approx(1.5)
+        assert float(settings.value("plot/freq_y_max", type=float)) == pytest.approx(7.5)
+
+
 class TestRefitCoadded:
     """Browser "Re-fit as Co-added": combine selection, fit, record trend row."""
 

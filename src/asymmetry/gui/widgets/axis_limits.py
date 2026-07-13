@@ -28,6 +28,8 @@ above the top of the axis.
 
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDoubleValidator, QKeyEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QWidget
@@ -136,8 +138,18 @@ class FloatLimitField(QLineEdit):
         entry committed on focus-out. The spin boxes this field replaces
         clamped both, so do the same here — otherwise an out-of-range limit
         could reach the engine or the plot.
+
+        NaN needs its own guard: ``min``/``max`` pass it straight through
+        (every comparison is False), so without one a programmatic
+        ``setValue(nan)`` would take residence in the field, round-trip
+        through QSettings at shutdown, and crash the next startup when the
+        restored limit reaches ``Axes.set_ylim``. Fall back to the last good
+        value instead. ±Inf already clamps to the range ends.
         """
-        return min(max(float(value), self._validator.bottom()), self._validator.top())
+        value = float(value)
+        if math.isnan(value):
+            value = self._value if math.isfinite(self._value) else 0.0
+        return min(max(value, self._validator.bottom()), self._validator.top())
 
     def _normalise_text(self) -> None:
         if self._unset_capable and not self.text().strip():

@@ -102,6 +102,30 @@ def test_fit_panel_field_set_range_narrows_clamp(qapp: QApplication) -> None:
     assert field.value() == pytest.approx(0.0)
 
 
+def test_field_rejects_nan_set_value_keeping_last_good_value(qapp: QApplication) -> None:
+    """setValue(nan) keeps the last good value — NaN slips through min/max
+    clamping, and once resident it round-trips to QSettings at shutdown and
+    crashes the next startup in Axes.set_ylim."""
+    field = FitPanelFloatLimitField()
+    field.setValue(3.5)
+    field.setValue(float("nan"))
+    assert field.value() == pytest.approx(3.5)
+    assert field.text() == "3.500"
+
+
+def test_field_clamps_infinite_set_value_to_range_ends(qapp: QApplication) -> None:
+    field = FitPanelFloatLimitField()
+    field.setValue(float("inf"))
+    assert field.value() == pytest.approx(1000.0)
+    field.setValue(float("-inf"))
+    assert field.value() == pytest.approx(-1000.0)
+
+
+def test_field_constructed_with_nan_falls_back_to_zero(qapp: QApplication) -> None:
+    field = FitPanelFloatLimitField(float("nan"))
+    assert field.value() == pytest.approx(0.0)
+
+
 def test_fit_panel_field_empty_input_falls_back_to_last_value(qapp: QApplication) -> None:
     """A blank field (unparsable text) returns the last committed value()."""
     field = FitPanelFloatLimitField()
