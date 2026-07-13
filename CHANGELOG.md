@@ -7,8 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **PSI MusrRoot files with the new TDirectory-based header layout.** ROOT
+  files written with musrfit's TDirectory-based `RunHeader` layout (PSI's 2026
+  FLAME DAQ; musrfit ≥ 2025, now the canonical MusrRoot spec) now parse
+  correctly — run title, run number, sample, temperature, field, time
+  resolution, and short detector names with per-detector time-zero/good-bin
+  ranges are read from the header instead of falling back to filename or
+  histogram-title guesses. Legacy TFolder-based MusrRoot and pre-2011 LEM ROOT
+  files are unaffected. Instrument strings are now matched case-insensitively,
+  since the new DAQ writes the lowercase `flame` instrument name.
+- **Startup crash loop from a NaN saved plot range.** If a session ever
+  persisted a non-finite axis limit (e.g. `plot/freq_y_min = nan`) to the
+  application settings at shutdown, every subsequent launch replayed it into
+  Matplotlib's `set_ylim` and crashed before the window appeared, with no way
+  to recover short of hand-editing the settings store. Non-finite values are
+  now rejected at all three layers: the axis-limit fields refuse a NaN
+  (`setValue(nan)` keeps the last good value; NaN previously slipped straight
+  through min/max clamping), shutdown skips persisting a limit set containing
+  a non-finite value, and startup falls back to the per-axis default for any
+  non-finite entry already in the settings — so existing poisoned settings
+  recover on the next launch.
+- **Fit-range spinboxes now commit a programmatically set value.** Setting a
+  fit-range field's value in code (e.g. from a scripted/automated scenario)
+  used to update only the field's display while the fit kept running over the
+  old range — the range is owned by the plot panel, and a bare `setValue`
+  never reached it. The Single and Batch (and grouped multi-group) fit-range
+  fields now push a driven `setValue` through to the plot's fit range exactly
+  as a typed entry does, while the plot→field display mirror stays silent (no
+  feedback loop). Interactive editing (type + Return / focus-out) was already
+  correct and is unchanged.
+
 ### Added
 
+- **RunSummary captured as provenance for PSI MusrRoot files.** The free-text
+  `RunSummary` block in the new TDirectory-based header — a block musrfit
+  itself does not read — is now attached verbatim to loaded runs as
+  `metadata["musrroot_run_summary"]`.
 - **Per-axis transforms in the parameter-trending panel.** A collapsible
   **Axis transforms** section (below the Y-parameter list) applies a transform
   to either the X or Y axis — `None`, `1/x  (reciprocal)`, `x²  (square)`,
