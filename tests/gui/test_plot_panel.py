@@ -1045,6 +1045,52 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
+    def test_frequency_auto_x_frames_dominant_peak_and_clears_prior_lock(
+        self, qapp: QApplication
+    ) -> None:
+        """Auto X on a spectrum frames the peak (not full Nyquist) and clears a lock.
+
+        Plan-A #5/#6: frequency Auto X should mean "frame the line sensibly" via
+        the same smart window used on first paint, not span the whole Nyquist
+        range; and enabling Auto X is the explicit follow-the-data escape hatch,
+        so it releases any manual frame lock.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 2000.0, 2048)  # 0..2000 MHz span
+            values = np.full_like(freqs, 1.0)
+            values[:3] = 3.0e5  # dominant DC peak
+            peak_idx = int(np.argmin(np.abs(freqs - 813.0)))
+            values[peak_idx] = 5.0e3  # high-TF Larmor peak at ~813 MHz
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 741,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            # Manually take control (a locked, full-Nyquist window) …
+            panel.set_view_limits(0.0, 2000.0, panel._y_min.value(), panel._y_max.value())
+            panel._limits_user_locked = True
+
+            # … then enable Auto X: the lock clears and the axis frames the peak.
+            panel._auto_x_btn.click()
+            assert panel._limits_user_locked is False
+            x_max = panel._x_max.value()
+            assert x_max >= 813.0
+            assert x_max < 1600.0  # framed to the peak, not the 2000 MHz span
+        finally:
+            panel.close()
+            panel.deleteLater()
+
     def test_tf_autoscale_frames_signal_despite_diverging_error_tail(
         self, panel: PlotPanel
     ) -> None:
@@ -1695,6 +1741,130 @@ class TestPlotPanel:
         panel.plot_dataset(sample_dataset)
 
         assert panel.get_view_limits() == pytest.approx(framed)
+
+    def test_pan_zoom_gesture_sets_user_lock_but_programmatic_change_does_not(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """A completed pan/zoom gesture locks the frame; a programmatic set does not.
+
+        Plan-A #1: interactive nav (button release while in pan/zoom mode) is the
+        user choosing a window, so it must set ``_limits_user_locked`` just like
+        typing a limit. Programmatic paths (``plot_dataset``, ``set_view_limits``)
+        route ``set_xlim`` through the axes callback, never ``button_release``, so
+        they must leave the lock clear or every redraw would freeze the frame.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        assert panel._limits_user_locked is False  # first paint never locks
+        panel.set_view_limits(1.0, 3.0, -0.1, 0.4)
+        assert panel._limits_user_locked is False  # programmatic set never locks
+
+        # A real interactive gesture: enter zoom mode, then release the mouse.
+        panel._set_navigation_mode("zoom")
+        assert panel._current_navigation_mode() == "zoom"
+        panel._on_canvas_button_release(SimpleNamespace(button=1))
+        assert panel._limits_user_locked is True
+
+    def test_zoom_locked_view_survives_run_switch_but_unlocked_reframes(
+        self, panel: PlotPanel
+    ) -> None:
+        """A zoom-locked window holds across a run switch; an unlocked one reframes.
+
+        Plan-A #2 (contract): zoom/pan counts as user intent, so a switched-in run
+        keeps the locked window; without the lock the switch reframes to the new
+        run's own scale.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 100)
+        e = np.full_like(t, 0.01)
+        ds_a = MuonDataset(
+            time=t, asymmetry=0.2 * np.exp(-0.4 * t), error=e, metadata={"run_number": 6201}
+        )
+        ds_b = MuonDataset(
+            time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 6202}
+        )
+
+        # Locked branch: choose a window by gesture, then switch runs.
+        panel.plot_dataset(ds_a)
+        panel.set_view_limits(1.0, 3.0, -0.5, 0.5)
+        panel._set_navigation_mode("zoom")
+        panel._on_canvas_button_release(SimpleNamespace(button=1))
+        panel._set_navigation_mode("none")
+        panel.plot_dataset(ds_b)
+        assert panel._x_min.value() == pytest.approx(1.0)
+        assert panel._x_max.value() == pytest.approx(3.0)
+        assert panel._y_min.value() == pytest.approx(-0.5)
+        assert panel._y_max.value() == pytest.approx(0.5)
+
+        # Unlocked branch: a fresh panel with no gesture reframes on the switch.
+        other = PlotPanel()
+        try:
+            other.plot_dataset(ds_a)
+            small_y_max = other._y_max.value()
+            other.plot_dataset(ds_b)
+            assert other._y_max.value() > small_y_max * 5
+        finally:
+            other.close()
+            other.deleteLater()
+
+    def test_clear_preserve_view_state_keeps_latches_but_plain_clear_resets(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """``clear(preserve_view_state=True)`` keeps the frame latches; plain resets.
+
+        Plan-A #2: a transient blank must not forfeit the user's window, so the
+        latches survive and a subsequent same-identity plot holds the limits.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel._x_min.setValue(0.5)
+        panel._x_max.setValue(2.5)
+        panel._y_min.setValue(-0.1)
+        panel._y_max.setValue(0.4)
+        panel._on_limit_fields_edited()
+        assert panel._limits_user_locked is True
+
+        panel.clear(preserve_view_state=True)
+        assert panel._limits_user_locked is True
+        assert panel._limits_initialized is True
+        assert panel._framed_identity is not None
+
+        # A subsequent plot of the same content keeps the locked window.
+        panel.plot_dataset(sample_dataset)
+        assert panel._x_min.value() == pytest.approx(0.5)
+        assert panel._x_max.value() == pytest.approx(2.5)
+        assert panel._y_min.value() == pytest.approx(-0.1)
+        assert panel._y_max.value() == pytest.approx(0.4)
+
+        # Plain clear() is a teardown: it drops every latch.
+        panel.clear()
+        assert panel._limits_user_locked is False
+        assert panel._limits_initialized is False
+        assert panel._framed_identity is None
+
+    def test_view_reframed_on_last_draw_tracks_first_paint_vs_redraw(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """The reframe accessor reports first-paint True, same-content redraw False.
+
+        Plan-A #4: the frequency render path restores caller-preserved limits only
+        when the draw did NOT reframe. The accessor is that signal — a genuine
+        first paint framed the axes (True), an incidental redraw preserved them
+        (False).
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        assert panel.view_reframed_on_last_draw() is True  # first paint framed
+        panel.plot_dataset(sample_dataset)
+        assert panel.view_reframed_on_last_draw() is False  # same content, no reframe
 
     def test_default_x_limits_clamps_pre_t0_band_in_time_domain(self, panel: PlotPanel) -> None:
         """Time-domain first-paint x never frames into the empty pre-t0 band (P1-1)."""
