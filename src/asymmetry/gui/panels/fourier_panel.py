@@ -287,6 +287,19 @@ class FourierPanel(QWidget):
         self._stale_banner.hide()
         layout.addWidget(self._stale_banner)
 
+        # Overlay-mismatch banner — a second, independent strip: an overlay
+        # can mix spectra computed under different settings even when the
+        # ACTIVE run's own displayed spectrum is perfectly in sync, so this
+        # cannot share state with _stale_banner above (both can be true at
+        # once). set_overlay_mismatch() toggles it; see MainWindow's
+        # _refresh_fourier_staleness / _fourier_overlay_mismatch.
+        self._overlay_mismatch_banner = make_warning_banner("", severity="warn")
+        self._overlay_mismatch_banner.setText(
+            "Overlaid spectra use different settings — Compute for selection to unify."
+        )
+        self._overlay_mismatch_banner.hide()
+        layout.addWidget(self._overlay_mismatch_banner)
+
         # Pinned action footer — the panel's primary action is "Compute FFT",
         # which previously sat at the bottom of the scroll content and was
         # unreachable at the default window size. The footer (background hint +
@@ -695,10 +708,10 @@ class FourierPanel(QWidget):
         # inherited by the Fourier input (F3) and is otherwise invisible here.
         self.set_background_hint(None)
         self._fft_btn = self._action_footer.add_primary("Compute FFT")
-        self._apply_to_selection_btn = self._action_footer.add_secondary("Apply to selection")
-        self._apply_to_selection_btn.setToolTip(
-            "Copy this run's Fourier settings to the other selected runs and "
-            "generate their spectra."
+        self._compute_for_selection_btn = self._action_footer.add_secondary("Compute for selection")
+        self._compute_for_selection_btn.setToolTip(
+            "Compute FFTs for every run selected in the Data Browser using the "
+            "current settings. Each run keeps its own groups and phases."
         )
         return self._action_footer
 
@@ -1243,6 +1256,23 @@ class FourierPanel(QWidget):
     def is_stale(self) -> bool:
         """Return whether the stale-spectrum banner is currently shown."""
         return not self._stale_banner.isHidden()
+
+    def set_overlay_mismatch(self, mismatched: bool) -> None:
+        """Show or hide the "overlay mixes settings" banner.
+
+        Independent of :meth:`set_stale`: an overlay can mix spectra computed
+        under different settings even when the active run's own displayed
+        spectrum is in sync with the live panel state, so the two banners
+        can be shown together.
+        """
+        if mismatched:
+            self._overlay_mismatch_banner.show()
+        else:
+            self._overlay_mismatch_banner.hide()
+
+    def is_overlay_mismatched(self) -> bool:
+        """Return whether the overlay-mismatch banner is currently shown."""
+        return not self._overlay_mismatch_banner.isHidden()
 
     # ── project state helpers ──────────────────────────────────────────
 

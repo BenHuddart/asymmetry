@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The Fourier panel's "Apply to selection" is now "Compute for selection."**
+  The old button copied the active run's already-computed recipe onto the
+  other selected runs, so a setting changed after the last **Compute FFT**
+  was silently left out, it recomputed each target synchronously on the GUI
+  thread, and it never re-rendered the view — nothing visibly happened.
+  **Compute for selection** instead builds every target's config from the
+  panel as it stands right now (the same read **Compute FFT** uses), keeps
+  each run's own groups and phases, computes the whole selection
+  asynchronously, and re-renders the visible frequency view when it lands.
+  The active run is always included, so with nothing else selected it behaves
+  like **Compute FFT**. A new banner also flags when an active overlay mixes
+  spectra computed under different settings, independent of the existing
+  out-of-date indicator.
+
 ### Fixed
 
 - **Frequency-view (FFT/MaxEnt) GLE and text export now mirror the screen.**

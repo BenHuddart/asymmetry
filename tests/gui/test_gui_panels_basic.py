@@ -99,10 +99,17 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
         panel._phase_table.horizontalHeader().sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
     )
     assert panel._fft_btn.text() == "Compute FFT"
+    assert panel._compute_for_selection_btn.text() == "Compute for selection"
+    assert panel._compute_for_selection_btn.toolTip() == (
+        "Compute FFTs for every run selected in the Data Browser using the "
+        "current settings. Each run keeps its own groups and phases."
+    )
+    assert panel.is_overlay_mismatched() is False
 
 
 def test_fourier_compute_button_pinned_outside_scroll(qapp: QApplication) -> None:
-    """Compute FFT must live in the pinned footer, not the scrolling content.
+    """Compute FFT and Compute for selection must live in the pinned footer,
+    not the scrolling content.
 
     Regression guard for the "bury-the-button" fix: the primary action sat at
     the bottom of the ~9-section scroll content and was unreachable at the
@@ -116,6 +123,8 @@ def test_fourier_compute_button_pinned_outside_scroll(qapp: QApplication) -> Non
     assert footer is not None
     assert panel._fft_btn in footer.findChildren(QPushButton)
     assert panel._fft_btn not in scroll.widget().findChildren(QPushButton)
+    assert panel._compute_for_selection_btn in footer.findChildren(QPushButton)
+    assert panel._compute_for_selection_btn not in scroll.widget().findChildren(QPushButton)
 
 
 def test_maxent_panel_defaults_and_group_state(qapp: QApplication) -> None:

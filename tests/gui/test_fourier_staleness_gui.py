@@ -210,6 +210,42 @@ def test_set_stale_empty_string_hides_banner(qapp) -> None:
     assert panel.is_stale() is False
 
 
+# ── overlay-mismatch banner ───────────────────────────────────────────────
+
+
+def test_overlay_mismatch_banner_hidden_by_default(qapp) -> None:
+    panel = _scratch_panel()
+    assert panel.is_overlay_mismatched() is False
+
+
+def test_set_overlay_mismatch_shows_and_hides_banner(qapp) -> None:
+    panel = _scratch_panel()
+    panel.set_overlay_mismatch(True)
+
+    assert panel.is_overlay_mismatched() is True
+    assert (
+        panel._overlay_mismatch_banner.text()
+        == "Overlaid spectra use different settings — Compute for selection to unify."
+    )
+
+    panel.set_overlay_mismatch(False)
+    assert panel.is_overlay_mismatched() is False
+
+
+def test_stale_and_overlay_mismatch_banners_are_independent(qapp) -> None:
+    """The two banners track different conditions and can show together."""
+    panel = _scratch_panel()
+    panel.set_stale("grouping changed")
+    panel.set_overlay_mismatch(True)
+
+    assert panel.is_stale() is True
+    assert panel.is_overlay_mismatched() is True
+
+    panel.set_stale(None)
+    assert panel.is_stale() is False
+    assert panel.is_overlay_mismatched() is True
+
+
 # ── MainWindow integration: staleness evaluation end-to-end ──────────────
 
 
