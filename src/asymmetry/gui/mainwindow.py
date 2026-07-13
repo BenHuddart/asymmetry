@@ -8094,6 +8094,7 @@ class MainWindow(QMainWindow):
             display=str(state.get("display", "Real")),
             window=str(state.get("window", "none")),
             padding=int(state.get("padding", 1)),
+            display_normalisation=str(state.get("display_normalisation", "calibrated")),
             filter_start_us=float(state.get("filter_start_us", 0.0)),
             filter_time_constant_us=float(state.get("filter_time_constant_us", 1.5)),
             t0_offset_us=float(state.get("t0_offset_us", 0.0)),

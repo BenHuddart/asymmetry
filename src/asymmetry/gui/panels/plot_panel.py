@@ -965,14 +965,36 @@ class PlotPanel(QWidget):
         }.get(self._current_frequency_x_unit, "MHz")
 
     def _display_y_unit_suffix(self, y_label: str | None = None) -> str:
-        """Return the compact unit suffix for the y-limit controls."""
+        """Return the compact unit suffix for the y-limit controls.
+
+        Derived from the dataset's own y-label so the calibrated percent scale
+        ("%", "%²"), the phase-spectrum degrees ("deg"), the unit-area field
+        distribution ("1/MHz"), and any residual arbitrary-unit derived modes
+        ("a.u.") each read correctly.
+        """
         if not self._is_frequency_plot_panel():
             return "%"
         text = str(y_label or "").strip().lower()
-        return "deg" if "deg" in text else "a.u."
+        if "1/mhz" in text or "(1/" in text:
+            return "1/MHz"
+        if "deg" in text:
+            return "deg"
+        if "%²" in text or "%^2" in text:
+            return "%²"
+        if "%" in text:
+            return "%"
+        return "a.u."
 
     def _convert_frequency_axis_for_display(self, x_values) -> np.ndarray:
-        """Convert canonical MHz axis data into the selected absolute display unit."""
+        """Convert canonical MHz axis data into the selected absolute display unit.
+
+        Only the x axis is rescaled here.  The unit-area field distribution p(ν)
+        is kept on its canonical per-MHz footing (``∫ p dν = 1``) and labelled
+        ``(1/MHz)`` in every x unit: the constant dν/dB density Jacobian for the
+        G/T axes (and the per-dataset one for relative-ppm) is deliberately not
+        applied, so the displayed density is not silently rescaled when the x
+        unit changes.  See ``docs/reference/fourier_analysis.rst`` (Normalisation).
+        """
         arr = np.asarray(x_values, dtype=float)
         if not self._is_frequency_plot_panel() or self._frequency_axis_is_correlation:
             return arr
@@ -7041,7 +7063,7 @@ class PlotPanel(QWidget):
             ax.set_ylabel(
                 self._sanitize_gle_text(
                     self._strip_matplotlib_math(frequency_payload.get("y_label")),
-                    fallback="FFT (a.u.)",
+                    fallback="FFT (%)",
                 )
             )
         else:
@@ -7404,7 +7426,11 @@ class PlotPanel(QWidget):
         include_mhz = x_unit in ("field_gauss", "field_tesla") and not is_correlation
 
         x_label = str(payload.get("x_label") or self._display_x_label())
-        y_label = str(payload.get("y_label") or "FFT (a.u.)")
+        y_label = str(payload.get("y_label") or "FFT (%)")
+        # A unit-area field distribution is a density (per MHz on the canonical
+        # axis), so name its column distinctly from an amplitude spectrum.
+        is_density = "1/mhz" in y_label.lower()
+        amplitude_column = "density_per_MHz" if is_density else "amplitude"
 
         f.write("! START OF DATA SET INFORMATION\n")
         f.write(f"!  Datarow: ({x_label}) (Amplitude) (Error)\n")
@@ -7429,7 +7455,7 @@ class PlotPanel(QWidget):
         )
         f.write("! END OF FOURIER INFORMATION\n")
 
-        column_names = [x_column, "amplitude", "error"]
+        column_names = [x_column, amplitude_column, "error"]
         if include_mhz:
             column_names.append("frequency_MHz")
         f.write("! " + "  ".join(column_names) + "\n")
