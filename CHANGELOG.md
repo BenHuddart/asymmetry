@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Frequency-view (FFT/MaxEnt) GLE and text export now mirror the screen.**
+  Exporting a frequency-domain spectrum reused the time-domain export path
+  verbatim, so the output was wrong in several ways: the axis window was taken
+  raw from the display-unit toolbar fields but applied to canonical-MHz data
+  (a Tesla-mode export produced a meaningless sliver), the axes were labelled
+  `Time (µs)` / `Asymmetry (%)`, and the spectrum was drawn with the
+  time-domain error-bar dots. The export now mirrors the on-screen render: x
+  data and the exported window are in the current display unit (MHz / Field G /
+  Field T, reference-shifted when *FFT X relative to field* is on), the axis
+  titles are the real spectrum labels, and the spectrum draws as a
+  piecewise-linear line (no GLE spline, which overshoots on sharp resonance
+  lines) plus a light shaded ±1σ band (omitted when the spectrum has no
+  per-point errors). The
+  `.dat` sidecars are self-describing — columns are named in the header, the
+  canonical `frequency_MHz` axis is kept as a trailing column whenever the
+  display unit differs, and a `START OF FOURIER INFORMATION` block records the
+  display mode, apodisation/zero-pad settings, reference field, and
+  relative-axis flag. The text export's *Limit to current x-range* now filters
+  on the display-unit column, and digit-led sidecar filenames (a bare run
+  number like `20`) are prefixed with `run_` so the gleplot editor's parser
+  accepts them. Time-domain exports are unchanged.
+
 ## [0.12.1] - 2026-07-13
 
 ### Fixed

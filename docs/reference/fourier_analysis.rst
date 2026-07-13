@@ -982,6 +982,30 @@ toggle, which recentres the x-limit controls around the applied
 field/frequency of the selected run while leaving the plotted tick labels in
 absolute units.
 
+Exporting the spectrum
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The plot toolbar's ``Export…`` menu offers ``Export to GLE…`` (a compiled
+figure with editable ``.gle`` script and data sidecars) and ``Export plotted
+data (text)…`` (the sidecar files alone). On the frequency tab both mirror what
+is on screen rather than the time-domain idiom:
+
+- **Display units and window.** The x column and the exported axis window are
+  written in the current display unit — MHz, Field (G), or Field (T) — and, with
+  ``FFT X relative to field`` on, in the same reference-shifted window the
+  toolbar shows. Real axis titles (for example ``Field (G)`` and
+  ``FFT Magnitude (a.u.)``) replace the time-domain labels.
+- **Line and band.** A spectrum draws as a solid piecewise-linear line plus a
+  light shaded ±1σ band behind it, matching the screen (GLE has no fill
+  transparency, so the band compiles as a light tint of the series colour);
+  the band is omitted when the spectrum carries no per-point errors.
+- **Self-describing sidecars.** Each ``.dat`` names its columns in the header
+  (for example ``field_G  amplitude  error  frequency_MHz``) and keeps the
+  canonical ``frequency_MHz`` axis as a trailing column whenever the display
+  unit is not MHz, so the raw spectrum is always recoverable. A
+  ``START OF FOURIER INFORMATION`` block records the display mode, apodisation
+  and zero-pad settings, the reference field, and the relative-axis flag.
+
 References
 ----------
 
