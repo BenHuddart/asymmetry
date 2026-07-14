@@ -143,23 +143,62 @@ def test_frequency_mhz_export_has_no_trailing_mhz_column(qapp, tmp_path):
         panel.deleteLater()
 
 
-def test_frequency_relative_mode_window_adds_reference(qapp, tmp_path):
+def test_frequency_shift_mode_exports_shift_columns_and_reference(qapp, tmp_path):
     panel = _panel(qapp)
     try:
         ds = _spectrum(run_number=22, field=3000.0)
         panel.plot_dataset(ds)
         panel._frequency_x_unit_combo.setCurrentText("Field (G)")
-        panel._frequency_axis_relative_check.setChecked(True)
-        panel._x_min.setValue(0.0)
-        panel._x_max.setValue(500.0)
+        panel._frequency_axis_mode_combo.setCurrentText("Shift (x − x₀)")
+        # The window is now genuinely in shift-space (identity control↔axis).
+        panel._x_min.setValue(-200.0)
+        panel._x_max.setValue(200.0)
 
-        reference_g = panel._display_frequency_reference(unit="field_gauss")
-        assert reference_g == pytest.approx(3000.0, abs=1e-6)
+        # The on-screen axis label carries the full unicode shift title (the GLE
+        # writer downgrades non-ASCII, so assert the source label here).
+        assert panel._display_x_label() == "Field shift B − B₀ (G)"
 
-        gle_path, _ = _build(panel, ds, tmp_path)
+        gle_path, export_dir = _build(panel, ds, tmp_path)
         gle = gle_path.read_text(encoding="utf-8")
-        # Exported window is the absolute display value: control + reference.
-        assert f"xaxis min {reference_g:g} max {reference_g + 500.0:g}" in gle
+        # The plotted window is the shift window itself — no reference offset.
+        assert "xaxis min -200 max 200" in gle
+        assert "xtitle" in gle and "Field shift" in gle
+
+        dat = (export_dir / "run_22_main.dat").read_text(encoding="utf-8")
+        # Shift x-column named for the mode, canonical MHz kept alongside it, and
+        # the per-dataset reference field recorded in the FOURIER block.
+        assert "! shift_G  amplitude  error  frequency_MHz" in dat
+        assert "!  Axis mode: shift" in dat
+        assert "!  Reference field: 3000 G" in dat
+        rows = _data_rows(dat)
+        x_display = panel._convert_frequency_axis_for_display(ds.time, ds)
+        np.testing.assert_allclose([r[0] for r in rows], x_display, rtol=1e-6)
+        # Trailing canonical-MHz column preserves the spectrum's own axis.
+        np.testing.assert_allclose([r[3] for r in rows], ds.time, rtol=1e-6)
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
+def test_frequency_ppm_mode_exports_relative_shift_column(qapp, tmp_path):
+    panel = _panel(qapp)
+    try:
+        ds = _spectrum(run_number=28, field=3000.0)
+        panel.plot_dataset(ds)
+        panel._frequency_axis_mode_combo.setCurrentText("Relative shift (ppm)")
+        assert panel._display_x_label() == "Relative shift (B − B₀)/B₀ (ppm)"
+
+        gle_path, export_dir = _build(panel, ds, tmp_path)
+        gle = gle_path.read_text(encoding="utf-8")
+        assert "xtitle" in gle and "ppm" in gle
+
+        dat = (export_dir / "run_28_main.dat").read_text(encoding="utf-8")
+        assert "! relative_shift_ppm  amplitude  error  frequency_MHz" in dat
+        assert "!  Axis mode: relative_ppm" in dat
+        rows = _data_rows(dat)
+        x_display = panel._convert_frequency_axis_for_display(ds.time, ds)
+        np.testing.assert_allclose([r[0] for r in rows], x_display, rtol=1e-6)
+        np.testing.assert_allclose([r[3] for r in rows], ds.time, rtol=1e-6)
     finally:
         panel.close()
         panel.deleteLater()
