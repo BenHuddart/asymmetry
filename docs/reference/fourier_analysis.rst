@@ -173,10 +173,21 @@ window (the same window automatic phase estimation uses) is measured at half
 maximum, and the matched time constant follows from the line shape —
 ``τ = 1/(πΓ)`` for a Lorentzian of power-spectrum FWHM ``Γ``, with the
 equivalent (Dawson-corrected) relation for a Gaussian. If the ``Gaussian``
-filter mode is selected the match is Gaussian; otherwise Lorentzian. When no
-line clears the noise baseline, or the dominant line is resolution-limited
-(its width is the transform's, not the sample's), the status reads *"No clear
-line to match — leave apodisation off."* and nothing is filled.
+filter mode is selected the match is Gaussian; otherwise Lorentzian.
+
+Detection is two-stage. A cheap check first looks for a line that already
+towers over the raw spectrum's noise floor. A line that is genuinely present
+but sits below that — for example an un-windowed, lifetime-corrected record
+whose late-time noise is amplified by the deadtime/decay correction — can
+still be invisible in the raw spectrum while remaining detectable: the
+fallback search itself smooths the spectrum at a range of candidate
+linewidths (anchored to the spectrum's real frequency resolution, not the
+zero-padded display grid, so it cannot mistake padding-correlated noise for
+a line), so a line buried in an un-apodised spectrum's noise floor is still
+found. "No clear line" now means no line at any scanned width — only then,
+or when the dominant line is resolution-limited (its width is the
+transform's, not the sample's), does the status read *"No clear line to
+match — leave apodisation off."* and nothing is filled.
 
 How the GUI FFT is built
 ~~~~~~~~~~~~~~~~~~~~~~~~
