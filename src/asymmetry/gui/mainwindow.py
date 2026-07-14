@@ -1578,15 +1578,6 @@ class MainWindow(QMainWindow):
             return
         self._apply_bunch_factor_to_context(bunch_factor)
 
-    def _set_frequency_axis_relative_check(self, enabled: bool) -> None:
-        """Synchronize the frequency-axis checkbox without re-entry."""
-        check = getattr(self, "_frequency_axis_relative_check", None)
-        if check is None:
-            return
-        previous = check.blockSignals(True)
-        check.setChecked(bool(enabled))
-        check.blockSignals(previous)
-
     def _on_plot_view_limits_changed(
         self,
         x_min: float,
@@ -1651,9 +1642,6 @@ class MainWindow(QMainWindow):
         self._plot_workspace.active_domain_changed.connect(self._on_plot_workspace_domain_changed)
         if hasattr(self._plot_workspace, "active_view_changed"):
             self._plot_workspace.active_view_changed.connect(self._on_plot_workspace_view_changed)
-        self._frequency_axis_relative_check = getattr(
-            self._frequency_plot_panel, "_frequency_axis_relative_check", None
-        )
         self.setCentralWidget(self._plot_workspace)
 
         # Left dock — data browser / logbook
@@ -6928,7 +6916,10 @@ class MainWindow(QMainWindow):
             # Record that nothing is displayed so an async recompute completing
             # for a switched-away run does not redraw over the current view.
             self._frequency_display_key = None
-            self._frequency_plot_panel.clear()
+            # Transient blank: browsing onto a run with no spectrum must not
+            # forfeit the user's chosen window — keep the frame latches so the
+            # next compute (below / on the recompute completion) holds them.
+            self._frequency_plot_panel.clear(preserve_view_state=True)
             if preserved_x_limits is not None and preserved_y_limits is not None:
                 self._frequency_plot_panel.set_view_limits(
                     preserved_x_limits[0],
@@ -6984,7 +6975,12 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Draw *spectra* (or clear + status when empty) on the frequency tab."""
         if not spectra:
-            self._frequency_plot_panel.clear(message=self._frequency_empty_prompt(rep_type))
+            # Transient empty-spectrum render (e.g. a run whose recipe produced
+            # nothing): keep the frame latches so a later compute of a real
+            # spectrum inherits the user's window rather than reframing.
+            self._frequency_plot_panel.clear(
+                message=self._frequency_empty_prompt(rep_type), preserve_view_state=True
+            )
             if preserved_x_limits is not None and preserved_y_limits is not None:
                 self._frequency_plot_panel.set_view_limits(
                     preserved_x_limits[0],
@@ -7019,15 +7015,22 @@ class MainWindow(QMainWindow):
         else:
             self._frequency_plot_panel.plot_datasets(spectra)
 
-        if preserved_x_limits is not None:
-            _current_x_min, _current_x_max, y_min, y_max = (
-                self._frequency_plot_panel.get_view_limits()
-            )
+        # Restore the caller's preserved window only when the draw did NOT
+        # first-paint frame. A same-run recompute keeps the user's window (X and
+        # Y both — recomputing a spectrum must never reframe); a genuine first
+        # paint keeps its freshly computed smart framing instead of being
+        # overwritten by stale pre-compute defaults. view_reframed_on_last_draw()
+        # reports what the draw actually did, which — unlike predicting from the
+        # pre-draw latch — stays correct after a transient preserve_view_state
+        # clear() carries a stale identity across a run switch.
+        reframed = getattr(self._frequency_plot_panel, "view_reframed_on_last_draw", None)
+        did_reframe = bool(reframed()) if callable(reframed) else False
+        if not did_reframe and preserved_x_limits is not None and preserved_y_limits is not None:
             self._frequency_plot_panel.set_view_limits(
                 preserved_x_limits[0],
                 preserved_x_limits[1],
-                y_min,
-                y_max,
+                preserved_y_limits[0],
+                preserved_y_limits[1],
             )
         if (
             hasattr(self, "_plot_workspace")
@@ -15206,8 +15209,10 @@ class MainWindow(QMainWindow):
         self._plot_workspace.clear()
         if hasattr(self._frequency_plot_panel, "_frequency_x_unit_combo"):
             self._frequency_plot_panel._frequency_x_unit_combo.setCurrentIndex(0)
-        if hasattr(self._frequency_plot_panel, "set_frequency_axis_relative_to_reference"):
-            self._frequency_plot_panel.set_frequency_axis_relative_to_reference(False)
+        if hasattr(self._frequency_plot_panel, "set_frequency_axis_mode"):
+            self._frequency_plot_panel.set_frequency_axis_mode("absolute")
+        if hasattr(self._frequency_plot_panel, "_frequency_reference_mode_combo"):
+            self._frequency_plot_panel._frequency_reference_mode_combo.setCurrentIndex(0)
         if hasattr(self._fit_panel, "clear"):
             self._fit_panel.clear()
         else:

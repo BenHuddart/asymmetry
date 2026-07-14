@@ -111,6 +111,8 @@ Version 11 schema
                 "y_min": -1.0,
                 "y_max": 10.0,
                 "frequency_x_unit": "frequency_mhz",
+                "frequency_axis_mode": "absolute",
+                "frequency_reference_mode": "run",
                 "frequency_x_limits_by_unit": {},
                 "waterfall": {"enabled": false, "offset": null}
             },
@@ -167,9 +169,11 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 15
+CURRENT_SCHEMA_VERSION: int = 16
 
-_SUPPORTED_VERSIONS: frozenset[int] = frozenset({1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
+_SUPPORTED_VERSIONS: frozenset[int] = frozenset(
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+)
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
 #: persistence carries these into each dataset's ``freq_fft`` representation).
@@ -276,6 +280,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 14
     if version == 14:
         migrated = _migrate_v14_to_v15(migrated)
+        version = 15
+    if version == 15:
+        migrated = _migrate_v15_to_v16(migrated)
     return migrated
 
 
@@ -768,6 +775,51 @@ def _migrate_v14_to_v15(data: dict) -> dict:
                 entry["last_fitted_members"] = members
             updated_batches.append(entry)
         migrated["batches"] = updated_batches
+
+    return migrated
+
+
+def _migrate_v15_to_v16(data: dict) -> dict:
+    """Migrate schema v15 project state to v16.
+
+    v16 replaces the frequency panel's boolean ``frequency_axis_relative_to_
+    reference`` (an offset applied only to the x-limit boxes, never to the
+    plotted data) with a real ``frequency_axis_mode`` transform
+    (``"absolute"``/``"shift"``/``"relative_ppm"``) plus a
+    ``frequency_reference_mode`` (``"run"``/``"common"``). A pre-v16 project that
+    had the old flag ON maps to ``"shift"`` about a ``"common"`` reference — the
+    closest match to the retired behaviour, where a single panel reference was
+    applied. The flag OFF (or absent) maps to plain ``"absolute"``. The retired
+    ``:relative`` per-mode x-limit stash keys are ephemeral view state and are
+    dropped; new limits reframe cleanly. Lives inside ``plot_state`` and its
+    nested ``frequency_plot_state``.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 16
+
+    def _upgrade_freq_state(freq_state: dict) -> dict:
+        freq_state = dict(freq_state)
+        if "frequency_axis_mode" not in freq_state:
+            legacy_relative = bool(freq_state.get("frequency_axis_relative_to_reference", False))
+            freq_state["frequency_axis_mode"] = "shift" if legacy_relative else "absolute"
+            freq_state.setdefault(
+                "frequency_reference_mode", "common" if legacy_relative else "run"
+            )
+        freq_state.pop("frequency_axis_relative_to_reference", None)
+        stash = freq_state.get("frequency_x_limits_by_unit")
+        if isinstance(stash, dict):
+            freq_state["frequency_x_limits_by_unit"] = {
+                key: value for key, value in stash.items() if not str(key).endswith(":relative")
+            }
+        return freq_state
+
+    plot_state = migrated.get("plot_state")
+    if isinstance(plot_state, dict):
+        plot_state = dict(plot_state)
+        freq_state = plot_state.get("frequency_plot_state")
+        if isinstance(freq_state, dict):
+            plot_state["frequency_plot_state"] = _upgrade_freq_state(freq_state)
+        migrated["plot_state"] = plot_state
 
     return migrated
 

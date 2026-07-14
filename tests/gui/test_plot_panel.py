@@ -434,10 +434,18 @@ class TestPlotPanel:
         assert second_x[0] > 40.0
         assert second_y[1] > first_y[1]
 
-    def test_interactive_zoom_drops_auto_limit_toggles(
+    def test_interactive_zoom_drops_auto_limit_toggles_and_sets_lock(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
-        """A zoom/pan gesture clears Auto X/Y so the view is not reframed back."""
+        """A zoom/pan gesture clears Auto X/Y AND takes control of the frame.
+
+        The two halves of the gesture contract: the limit callback (fired
+        mid-drag) drops the persistent Auto toggles so the next redraw does not
+        reframe the gesture back to the data extent, and the gesture's end
+        (button release with a nav tool armed) sets ``_limits_user_locked`` so
+        the chosen window then survives run/polarization switches like a typed
+        limit.
+        """
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -459,14 +467,61 @@ class TestPlotPanel:
         # The gesture takes control: both toggles drop, mirroring a field edit.
         assert not panel._auto_x_btn.isChecked()
         assert not panel._auto_y_btn.isChecked()
-        # But the view is not "locked", so later content switches still reframe.
+        # The lock is set at gesture END, never from the limit callback itself
+        # (which also fires for programmatic set_xlim during auto-framing).
         assert panel._limits_user_locked is False
+
+        # Complete the gesture: releasing the mouse with the tool armed locks
+        # the chosen window, so later content switches keep it.
+        panel._on_canvas_button_release(SimpleNamespace(button=1))
+        assert panel._limits_user_locked is True
 
         # The next redraw's re-apply of the (now-off) toggles must be a no-op:
         # the zoomed window survives instead of snapping back to the data extent.
         panel._apply_auto_limits_if_enabled()
         assert panel._ax.get_xlim() == pytest.approx((1.1, 3.9))
         assert panel._ax.get_ylim() == pytest.approx((-0.15, 0.25))
+
+    def test_gesture_then_auto_reenable_releases_lock_and_follows_data(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """The full round trip: gesture locks, re-enabling Auto releases and follows.
+
+        Composes the two mechanisms: a completed zoom gesture drops the Auto
+        toggles and sets the frame lock; the user clicking Auto X back on is the
+        explicit "follow the data" escape hatch — it clears the lock and
+        auto-scales, and the next content switch reframes again.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel._auto_x_btn.click()
+        assert panel._auto_x_btn.isChecked()
+
+        # Complete zoom gesture: toggles drop, lock set.
+        panel._zoom_btn.click()
+        panel._ax.set_xlim(1.1, 3.9)
+        panel._canvas.draw()
+        panel._on_canvas_button_release(SimpleNamespace(button=1))
+        panel._set_navigation_mode("none")
+        assert not panel._auto_x_btn.isChecked()
+        assert panel._limits_user_locked is True
+
+        # Re-enabling Auto X releases the lock and follows the data again.
+        panel._auto_x_btn.click()
+        assert panel._auto_x_btn.isChecked()
+        assert panel._limits_user_locked is False
+        assert panel._ax.get_xlim()[1] > 3.9  # back out to the data extent
+
+        # And with the lock released, a run switch reframes to the new content.
+        t = np.linspace(0.0, 10.0, 100)
+        e = np.full_like(t, 0.01)
+        other = MuonDataset(
+            time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 6301}
+        )
+        panel.plot_dataset(other)
+        assert panel._y_max.value() > 1.0  # framed to the 4.0-amplitude run
 
     def test_programmatic_limit_change_keeps_auto_toggles(
         self, panel: PlotPanel, sample_dataset: MuonDataset
@@ -811,7 +866,7 @@ class TestPlotPanel:
             panel.deleteLater()
 
     def test_frequency_field_seed_skipped_on_relative_axis(self, qapp: QApplication) -> None:
-        """On the reference-relative axis the expected line sits at ~0 — no seed."""
+        """On a shift axis the expected line sits at ~0 — no field-upper seed."""
         panel = PlotPanel(domain="frequency")
         try:
             if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -825,7 +880,7 @@ class TestPlotPanel:
             )
             panel._current_dataset = ds
             panel._current_datasets = [ds]
-            panel._frequency_axis_relative_to_reference = True
+            panel._frequency_axis_mode = "shift"
             assert panel._frequency_field_upper_bound(ds.time) is None
         finally:
             panel.close()
@@ -935,8 +990,61 @@ class TestPlotPanel:
             freqs = np.linspace(0.0, 1300.0, 13001)
             values = np.ones_like(freqs)
             values[8130] = 5.0e3
-            panel._frequency_axis_relative_to_reference = True
+            panel._frequency_axis_mode = "shift"
             assert panel._frequency_centered_window(freqs, values) is None
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_interactive_zoom_in_shift_mode_drops_toggles_and_locks(
+        self, qapp: QApplication
+    ) -> None:
+        """The #254 gesture contract holds unchanged on a shift axis.
+
+        The shift-mode plotted axis IS the display axis (identity limit-box
+        mapping), so a rubber-band zoom while a shift mode is active must behave
+        exactly like absolute mode: the mid-drag limit callback drops the Auto
+        toggles, button release sets ``_limits_user_locked``, and the zoomed
+        shift-space window survives the next auto-limits pass.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            center = 100.0 * 135.538817 * 1.0e-4
+            ds = MuonDataset(
+                time=np.linspace(center - 3.0, center + 3.0, 61),
+                asymmetry=np.exp(
+                    -((np.linspace(center - 3.0, center + 3.0, 61) - center) ** 2) / 0.18
+                ),
+                error=np.zeros(61),
+                metadata={"run_number": 6401, "field": 100.0, "plot_domain": "frequency"},
+            )
+            panel.set_frequency_axis_mode("shift")
+            panel.plot_dataset(ds)
+            panel._auto_x_btn.setChecked(True)
+            panel._auto_y_btn.setChecked(True)
+
+            panel._zoom_btn.click()
+            assert panel._current_navigation_mode() == "zoom"
+            panel._ax.set_xlim(-0.5, 0.5)
+            panel._canvas.draw()
+
+            # Mid-drag: toggles drop; lock waits for the gesture end.
+            assert not panel._auto_x_btn.isChecked()
+            assert not panel._auto_y_btn.isChecked()
+            assert panel._limits_user_locked is False
+
+            panel._on_canvas_button_release(SimpleNamespace(button=1))
+            assert panel._limits_user_locked is True
+
+            # The zoomed shift-space window survives the auto-limits pass, and
+            # the limit boxes read the same (identity) shift values.
+            panel._apply_auto_limits_if_enabled()
+            assert panel._ax.get_xlim() == pytest.approx((-0.5, 0.5))
+            assert panel._x_min.value() == pytest.approx(-0.5)
+            assert panel._x_max.value() == pytest.approx(0.5)
         finally:
             panel.close()
             panel.deleteLater()
@@ -1041,6 +1149,52 @@ class TestPlotPanel:
             qapp.processEvents()
             assert panel._ax.get_xlim()[1] == pytest.approx(350.0)
             assert panel._x_max.value() == pytest.approx(350.0)
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_frequency_auto_x_frames_dominant_peak_and_clears_prior_lock(
+        self, qapp: QApplication
+    ) -> None:
+        """Auto X on a spectrum frames the peak (not full Nyquist) and clears a lock.
+
+        Plan-A #5/#6: frequency Auto X should mean "frame the line sensibly" via
+        the same smart window used on first paint, not span the whole Nyquist
+        range; and enabling Auto X is the explicit follow-the-data escape hatch,
+        so it releases any manual frame lock.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            freqs = np.linspace(0.0, 2000.0, 2048)  # 0..2000 MHz span
+            values = np.full_like(freqs, 1.0)
+            values[:3] = 3.0e5  # dominant DC peak
+            peak_idx = int(np.argmin(np.abs(freqs - 813.0)))
+            values[peak_idx] = 5.0e3  # high-TF Larmor peak at ~813 MHz
+            ds = MuonDataset(
+                time=freqs,
+                asymmetry=values,
+                error=np.zeros_like(freqs),
+                metadata={
+                    "run_number": 741,
+                    "plot_domain": "frequency",
+                    "x_label": "Frequency (MHz)",
+                },
+            )
+            panel.plot_dataset(ds)
+
+            # Manually take control (a locked, full-Nyquist window) …
+            panel.set_view_limits(0.0, 2000.0, panel._y_min.value(), panel._y_max.value())
+            panel._limits_user_locked = True
+
+            # … then enable Auto X: the lock clears and the axis frames the peak.
+            panel._auto_x_btn.click()
+            assert panel._limits_user_locked is False
+            x_max = panel._x_max.value()
+            assert x_max >= 813.0
+            assert x_max < 1600.0  # framed to the peak, not the 2000 MHz span
         finally:
             panel.close()
             panel.deleteLater()
@@ -1695,6 +1849,130 @@ class TestPlotPanel:
         panel.plot_dataset(sample_dataset)
 
         assert panel.get_view_limits() == pytest.approx(framed)
+
+    def test_pan_zoom_gesture_sets_user_lock_but_programmatic_change_does_not(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """A completed pan/zoom gesture locks the frame; a programmatic set does not.
+
+        Plan-A #1: interactive nav (button release while in pan/zoom mode) is the
+        user choosing a window, so it must set ``_limits_user_locked`` just like
+        typing a limit. Programmatic paths (``plot_dataset``, ``set_view_limits``)
+        route ``set_xlim`` through the axes callback, never ``button_release``, so
+        they must leave the lock clear or every redraw would freeze the frame.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        assert panel._limits_user_locked is False  # first paint never locks
+        panel.set_view_limits(1.0, 3.0, -0.1, 0.4)
+        assert panel._limits_user_locked is False  # programmatic set never locks
+
+        # A real interactive gesture: enter zoom mode, then release the mouse.
+        panel._set_navigation_mode("zoom")
+        assert panel._current_navigation_mode() == "zoom"
+        panel._on_canvas_button_release(SimpleNamespace(button=1))
+        assert panel._limits_user_locked is True
+
+    def test_zoom_locked_view_survives_run_switch_but_unlocked_reframes(
+        self, panel: PlotPanel
+    ) -> None:
+        """A zoom-locked window holds across a run switch; an unlocked one reframes.
+
+        Plan-A #2 (contract): zoom/pan counts as user intent, so a switched-in run
+        keeps the locked window; without the lock the switch reframes to the new
+        run's own scale.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 100)
+        e = np.full_like(t, 0.01)
+        ds_a = MuonDataset(
+            time=t, asymmetry=0.2 * np.exp(-0.4 * t), error=e, metadata={"run_number": 6201}
+        )
+        ds_b = MuonDataset(
+            time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 6202}
+        )
+
+        # Locked branch: choose a window by gesture, then switch runs.
+        panel.plot_dataset(ds_a)
+        panel.set_view_limits(1.0, 3.0, -0.5, 0.5)
+        panel._set_navigation_mode("zoom")
+        panel._on_canvas_button_release(SimpleNamespace(button=1))
+        panel._set_navigation_mode("none")
+        panel.plot_dataset(ds_b)
+        assert panel._x_min.value() == pytest.approx(1.0)
+        assert panel._x_max.value() == pytest.approx(3.0)
+        assert panel._y_min.value() == pytest.approx(-0.5)
+        assert panel._y_max.value() == pytest.approx(0.5)
+
+        # Unlocked branch: a fresh panel with no gesture reframes on the switch.
+        other = PlotPanel()
+        try:
+            other.plot_dataset(ds_a)
+            small_y_max = other._y_max.value()
+            other.plot_dataset(ds_b)
+            assert other._y_max.value() > small_y_max * 5
+        finally:
+            other.close()
+            other.deleteLater()
+
+    def test_clear_preserve_view_state_keeps_latches_but_plain_clear_resets(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """``clear(preserve_view_state=True)`` keeps the frame latches; plain resets.
+
+        Plan-A #2: a transient blank must not forfeit the user's window, so the
+        latches survive and a subsequent same-identity plot holds the limits.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        panel._x_min.setValue(0.5)
+        panel._x_max.setValue(2.5)
+        panel._y_min.setValue(-0.1)
+        panel._y_max.setValue(0.4)
+        panel._on_limit_fields_edited()
+        assert panel._limits_user_locked is True
+
+        panel.clear(preserve_view_state=True)
+        assert panel._limits_user_locked is True
+        assert panel._limits_initialized is True
+        assert panel._framed_identity is not None
+
+        # A subsequent plot of the same content keeps the locked window.
+        panel.plot_dataset(sample_dataset)
+        assert panel._x_min.value() == pytest.approx(0.5)
+        assert panel._x_max.value() == pytest.approx(2.5)
+        assert panel._y_min.value() == pytest.approx(-0.1)
+        assert panel._y_max.value() == pytest.approx(0.4)
+
+        # Plain clear() is a teardown: it drops every latch.
+        panel.clear()
+        assert panel._limits_user_locked is False
+        assert panel._limits_initialized is False
+        assert panel._framed_identity is None
+
+    def test_view_reframed_on_last_draw_tracks_first_paint_vs_redraw(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """The reframe accessor reports first-paint True, same-content redraw False.
+
+        Plan-A #4: the frequency render path restores caller-preserved limits only
+        when the draw did NOT reframe. The accessor is that signal — a genuine
+        first paint framed the axes (True), an incidental redraw preserved them
+        (False).
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        assert panel.view_reframed_on_last_draw() is True  # first paint framed
+        panel.plot_dataset(sample_dataset)
+        assert panel.view_reframed_on_last_draw() is False  # same content, no reframe
 
     def test_default_x_limits_clamps_pre_t0_band_in_time_domain(self, panel: PlotPanel) -> None:
         """Time-domain first-paint x never frames into the empty pre-t0 band (P1-1)."""
