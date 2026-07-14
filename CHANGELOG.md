@@ -22,6 +22,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Jacobian — labelled `p(B) (1/G)` / `(1/T)` and integrating to one per
   displayed unit — and exports name the y column per unit (`density_per_G`
   etc.).
+- **Field-shift axes for the frequency view.** A new **Axis:** selector above
+  the spectrum offers three x-axis modes that genuinely transform the plotted
+  data: **Absolute** (today's measured frequency/field), **Shift (x − x₀)** (each
+  spectrum minus its reference field, in MHz / G / T), and **Relative shift
+  (ppm)** ((x − x₀)/x₀ × 10⁶, dimensionless). A companion **Ref.:** selector
+  chooses the reference: **Run field** (the default) shifts each spectrum by
+  *its own* applied field, so transverse-field runs measured at different fields
+  overlay aligned at zero shift and a paramagnetic/Knight shift between them
+  reads at a glance; **Common** shifts every spectrum by a shared, editable Gauss
+  value. A run with no field metadata is drawn untransformed with a logged note
+  rather than dropped. The plotted axis, tick labels, x-limit boxes, framing,
+  the γ_μ·B marker, the moments/fit-range overlays, and the GLE/text export all
+  follow the selected mode; shift/ppm exports name their x-column (`shift_G`,
+  `relative_shift_ppm`, …) and always keep the canonical `frequency_MHz` column
+  alongside.
 
 ### Changed
 
@@ -36,6 +51,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads below `100·A` because damping trades peak height for area. Spectra
   computed before this change are flagged stale so they recompute onto the new
   scale.
+- **The frequency toolbar's "X relative to ref. field" checkbox is replaced by
+  the Axis/Ref. selectors above.** The old checkbox only offset the x-limit
+  entry boxes while leaving the plotted curve and ticks in absolute units, so
+  spectra measured at different fields could not be aligned; the new shift axes
+  transform the data itself. Saved projects that had the old flag on migrate to
+  **Shift (x − x₀)** about a **Common** reference (schema v16). Per-mode x-limit
+  view stashes from the retired flag are ephemeral and are discarded on load;
+  the fresh view reframes cleanly.
 - **The Fourier panel's "Compute FFT" is now selection-scoped, replacing
   "Apply to selection."** The old secondary button copied the active run's
   already-computed recipe onto the other selected runs, so a setting changed
@@ -45,16 +68,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computes every run selected in the Data Browser (the active run alone when
   nothing else is selected), and its label shows the scope before you click —
   "Compute FFT (3 runs)" for a three-run selection. Every target's
-  configuration is read from the panel as it stands right now, each run keeps
-  its own groups and phases, the whole selection computes asynchronously, and
-  on completion the workspace switches to the frequency view and renders the
-  result (the overlay, when Overlay mode is on). A new banner also flags when
+  configuration is read from the panel as it stands right now: the Groups
+  table's enabled groups apply to every run in the selection (intersected
+  with each run's own available groups, and each target's stored Groups
+  table is updated to match), while phases stay per-run. The whole selection
+  computes asynchronously, and on completion the workspace switches to the
+  frequency view and renders the result (the overlay, when Overlay mode is
+  on). A new banner also flags when
   an active overlay mixes spectra computed under different settings,
   independent of the existing out-of-date indicator. The MaxEnt panel's
   "Apply to selection" is unchanged.
 
 ### Fixed
 
+- **Plot limits no longer reset themselves on the frequency view.** Computing
+  or recomputing a spectrum could silently reframe the plot: a same-run
+  recompute reset the vertical zoom (only the horizontal window was kept),
+  browsing onto a run with no spectrum forfeited a typed window, the first FFT
+  overwrote its own freshly framed view with the pre-compute defaults, and a
+  pan/zoom gesture — unlike typing — was not treated as a deliberate view
+  choice, so it was reframed away on the next redraw. A recompute now never
+  reframes; only a genuine content change (a different run, domain, or view
+  mode) reframes, and never once you have chosen a window by typing or by
+  pan/zoom. The same latching protects the time-domain view, so a zoomed
+  time-domain window survives run switches too. Toggling **Auto X** or **Auto
+  Y** on remains the explicit "always follow the data" escape hatch and now
+  releases any manual lock. On the frequency view **Auto X** frames the
+  spectrum sensibly (the dominant line / field-derived window) instead of
+  snapping to the full Nyquist span.
 - **Frequency-view (FFT/MaxEnt) GLE and text export now mirror the screen.**
   Exporting a frequency-domain spectrum reused the time-domain export path
   verbatim, so the output was wrong in several ways: the axis window was taken
@@ -63,16 +104,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Time (µs)` / `Asymmetry (%)`, and the spectrum was drawn with the
   time-domain error-bar dots. The export now mirrors the on-screen render: x
   data and the exported window are in the current display unit (MHz / Field G /
-  Field T, reference-shifted when *FFT X relative to field* is on), the axis
-  titles are the real spectrum labels, and the spectrum draws as a
+  Field T, or a reference shift — see the *Field-shift axes* addition above), the
+  axis titles are the real spectrum labels, and the spectrum draws as a
   piecewise-linear line (no GLE spline, which overshoots on sharp resonance
   lines) plus a light shaded ±1σ band (omitted when the spectrum has no
   per-point errors). The
   `.dat` sidecars are self-describing — columns are named in the header, the
   canonical `frequency_MHz` axis is kept as a trailing column whenever the
   display unit differs, and a `START OF FOURIER INFORMATION` block records the
-  display mode, apodisation/zero-pad settings, reference field, and
-  relative-axis flag. The text export's *Limit to current x-range* now filters
+  display mode, apodisation/zero-pad settings, axis mode, and reference field.
+  The text export's *Limit to current x-range* now filters
   on the display-unit column, and digit-led sidecar filenames (a bare run
   number like `20`) are prefixed with `run_` so the gleplot editor's parser
   accepts them. Time-domain exports are unchanged.
@@ -81,7 +122,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   straight back to the full data extent, because the next redraw re-applied
   the still-active auto-scaling. An interactive zoom/pan now turns off both
   toggles — the same way typing a limit value already did — so the framing you
-  dragged to is kept. Switching runs still reframes the new data as before.
+  dragged to is kept (and, per the entry above, held across run switches until
+  you re-enable Auto X/Y).
 
 ## [0.12.1] - 2026-07-13
 

@@ -1577,15 +1577,6 @@ class MainWindow(QMainWindow):
             return
         self._apply_bunch_factor_to_context(bunch_factor)
 
-    def _set_frequency_axis_relative_check(self, enabled: bool) -> None:
-        """Synchronize the frequency-axis checkbox without re-entry."""
-        check = getattr(self, "_frequency_axis_relative_check", None)
-        if check is None:
-            return
-        previous = check.blockSignals(True)
-        check.setChecked(bool(enabled))
-        check.blockSignals(previous)
-
     def _on_plot_view_limits_changed(
         self,
         x_min: float,
@@ -1650,9 +1641,6 @@ class MainWindow(QMainWindow):
         self._plot_workspace.active_domain_changed.connect(self._on_plot_workspace_domain_changed)
         if hasattr(self._plot_workspace, "active_view_changed"):
             self._plot_workspace.active_view_changed.connect(self._on_plot_workspace_view_changed)
-        self._frequency_axis_relative_check = getattr(
-            self._frequency_plot_panel, "_frequency_axis_relative_check", None
-        )
         self.setCentralWidget(self._plot_workspace)
 
         # Left dock — data browser / logbook
@@ -6283,6 +6271,30 @@ class MainWindow(QMainWindow):
             return
         self._fourier_group_phase_state_by_run[run_number] = self._fourier_panel.group_phase_state()
 
+    def _propagate_fourier_inclusion_to_stored_state(
+        self,
+        run_number: int,
+        dataset: MuonDataset,
+        selected_group_ids: list[int],
+    ) -> None:
+        """Set a run's stored Groups-table inclusion to match a just-stamped recipe.
+
+        An explicit selection-scoped Compute FFT applies the live table's
+        enabled groups to every target; without this, visiting a target run
+        later would restore its OLD stored inclusion into the table and the
+        staleness check would immediately flag the fresh spectrum ("included
+        groups changed"). Only the inclusion flags are rewritten — stored
+        phases and auto-filled markers are preserved (phases stay per-run).
+        """
+        selected = {int(group_id) for group_id in selected_group_ids}
+        group_names = self._fourier_group_names_for_dataset(dataset)
+        stored = self._fourier_group_phase_state_by_run.get(int(run_number))
+        stored = dict(stored) if isinstance(stored, dict) else {}
+        stored["group_enabled_table"] = {
+            int(group_id): int(group_id) in selected for group_id in group_names
+        }
+        self._fourier_group_phase_state_by_run[int(run_number)] = stored
+
     def _estimate_dataset_fourier_phase(
         self, dataset: MuonDataset, state: dict, *, plot_window=_VIEW_FROM_WIDGET
     ) -> float:
@@ -6849,7 +6861,10 @@ class MainWindow(QMainWindow):
             # Record that nothing is displayed so an async recompute completing
             # for a switched-away run does not redraw over the current view.
             self._frequency_display_key = None
-            self._frequency_plot_panel.clear()
+            # Transient blank: browsing onto a run with no spectrum must not
+            # forfeit the user's chosen window — keep the frame latches so the
+            # next compute (below / on the recompute completion) holds them.
+            self._frequency_plot_panel.clear(preserve_view_state=True)
             if preserved_x_limits is not None and preserved_y_limits is not None:
                 self._frequency_plot_panel.set_view_limits(
                     preserved_x_limits[0],
@@ -6905,7 +6920,12 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Draw *spectra* (or clear + status when empty) on the frequency tab."""
         if not spectra:
-            self._frequency_plot_panel.clear(message=self._frequency_empty_prompt(rep_type))
+            # Transient empty-spectrum render (e.g. a run whose recipe produced
+            # nothing): keep the frame latches so a later compute of a real
+            # spectrum inherits the user's window rather than reframing.
+            self._frequency_plot_panel.clear(
+                message=self._frequency_empty_prompt(rep_type), preserve_view_state=True
+            )
             if preserved_x_limits is not None and preserved_y_limits is not None:
                 self._frequency_plot_panel.set_view_limits(
                     preserved_x_limits[0],
@@ -6940,15 +6960,22 @@ class MainWindow(QMainWindow):
         else:
             self._frequency_plot_panel.plot_datasets(spectra)
 
-        if preserved_x_limits is not None:
-            _current_x_min, _current_x_max, y_min, y_max = (
-                self._frequency_plot_panel.get_view_limits()
-            )
+        # Restore the caller's preserved window only when the draw did NOT
+        # first-paint frame. A same-run recompute keeps the user's window (X and
+        # Y both — recomputing a spectrum must never reframe); a genuine first
+        # paint keeps its freshly computed smart framing instead of being
+        # overwritten by stale pre-compute defaults. view_reframed_on_last_draw()
+        # reports what the draw actually did, which — unlike predicting from the
+        # pre-draw latch — stays correct after a transient preserve_view_state
+        # clear() carries a stale identity across a run switch.
+        reframed = getattr(self._frequency_plot_panel, "view_reframed_on_last_draw", None)
+        did_reframe = bool(reframed()) if callable(reframed) else False
+        if not did_reframe and preserved_x_limits is not None and preserved_y_limits is not None:
             self._frequency_plot_panel.set_view_limits(
                 preserved_x_limits[0],
                 preserved_x_limits[1],
-                y_min,
-                y_max,
+                preserved_y_limits[0],
+                preserved_y_limits[1],
             )
         if (
             hasattr(self, "_plot_workspace")
@@ -7993,13 +8020,18 @@ class MainWindow(QMainWindow):
         alone when nothing else is selected), and the button's dynamic label
         (``"Compute FFT (N runs)"``) shows that scope before the click. Each
         target's config comes from :meth:`_candidate_fourier_config` — the
-        live panel state, with each run keeping its own groups and phases (the
-        active run from the live table, others from their stored per-run state
-        or defaults) — and is stamped as the run's recipe with its own
-        grouping digest. The spectra themselves come from the shared
+        live panel state, with the live Groups table's ENABLED GROUPS applied
+        to every target (intersected with each run's own available groups; an
+        empty intersection skips-and-counts the run) while PHASES stay
+        per-run (the active run from the live table, others from their stored
+        per-run state or defaults) — and is stamped as the run's recipe with
+        its own grouping digest, the stored Groups-table inclusion updated to
+        match. The spectra themselves come from the shared
         ``FrequencyFFT.compute`` (``compute_average_group_spectrum``), the
         same core the recipe recompute uses, so an explicit compute and a
-        recipe recompute are identical by construction.
+        recipe recompute are identical by construction. The implicit
+        compute-on-view seeding and overlay auto-compute keep their per-run
+        stored inclusion — only this explicit action propagates the panel's.
 
         Computation runs off the GUI thread through the shared batch machinery
         (:meth:`_ensure_frequency_spectra_for_runs_async`) as one background
@@ -8033,6 +8065,15 @@ class MainWindow(QMainWindow):
             self._store_maxent_panel_state_for_dataset(self._current_dataset)
             self._sync_fourier_panel_for_dataset(self._current_dataset)
 
+        # The live Groups table's enabled ids apply to EVERY run in the
+        # selection (intersected per target with that run's own available
+        # groups); phases stay per-run. Read once, after the re-sync above.
+        enabled_group_ids = {
+            int(group_id)
+            for group_id, enabled in self._fourier_panel.group_enabled_table().items()
+            if enabled
+        }
+
         cache = self._frequency_cache(RepresentationType.FREQ_FFT)
         pending, failures = self._ensure_recompute_tracking()
         run_numbers: list[int] = []
@@ -8042,7 +8083,7 @@ class MainWindow(QMainWindow):
             if run is None or not run.histograms:
                 skipped += 1
                 continue
-            config = self._candidate_fourier_config(dataset)
+            config = self._candidate_fourier_config(dataset, enabled_group_ids=enabled_group_ids)
             if not config.selected_group_ids:
                 skipped += 1
                 continue
@@ -8060,6 +8101,12 @@ class MainWindow(QMainWindow):
             key = (run_number, RepresentationType.FREQ_FFT)
             pending.discard(key)
             failures.discard(key)
+            # The stored Groups-table inclusion follows what was just
+            # computed, so visiting this run later shows a table consistent
+            # with its recipe (no instant stale banner). Phases are preserved.
+            self._propagate_fourier_inclusion_to_stored_state(
+                run_number, dataset, config.selected_group_ids
+            )
             run_numbers.append(run_number)
 
         if not run_numbers:
@@ -8157,7 +8204,12 @@ class MainWindow(QMainWindow):
             enabled = self._default_group_enabled_table(dataset, group_names)
         return [group_id for group_id in group_names if enabled.get(int(group_id), True)]
 
-    def _candidate_fourier_config(self, dataset: MuonDataset) -> GroupSpectrumConfig:
+    def _candidate_fourier_config(
+        self,
+        dataset: MuonDataset,
+        *,
+        enabled_group_ids: set[int] | None = None,
+    ) -> GroupSpectrumConfig:
         """Return the config an explicit Compute FFT would use right now.
 
         GUI-thread only. Mirrors :meth:`_on_compute_fourier`'s snapshotting —
@@ -8167,18 +8219,31 @@ class MainWindow(QMainWindow):
         Comparing the *resolved* window means a time-view fit-range wiggle that
         the good-statistics tail cap absorbs does not read as a difference.
 
-        The live Groups table describes only the ACTIVE run; for any other
-        dataset (overlay auto-compute) group inclusion and phases resolve from
-        that run's stored state / defaults instead.
+        Group inclusion: by default (``enabled_group_ids=None``) the live
+        Groups table describes only the ACTIVE run; for any other dataset
+        (overlay auto-compute, compute-on-view seeding, the staleness
+        candidate) inclusion and phases resolve from that run's stored state /
+        defaults instead. An explicit Compute FFT instead passes the live
+        table's enabled ids as ``enabled_group_ids``, which then applies to
+        THIS dataset as override ∩ its own available groups — propagating the
+        panel's inclusion to every selected run. Phases are always resolved
+        per-run for whichever ids end up selected.
         """
         state = self._fourier_panel.get_state()
         display = str(state.get("display", "(Power)^1/2"))
         is_active_run = dataset is self._current_dataset
-        selected_group_ids = (
-            self._selected_fourier_group_ids(dataset)
-            if is_active_run
-            else self._fourier_group_ids_for_dataset(dataset)
-        )
+        if enabled_group_ids is not None:
+            selected_group_ids = [
+                int(group_id)
+                for group_id in self._fourier_group_names_for_dataset(dataset)
+                if int(group_id) in enabled_group_ids
+            ]
+        else:
+            selected_group_ids = (
+                self._selected_fourier_group_ids(dataset)
+                if is_active_run
+                else self._fourier_group_ids_for_dataset(dataset)
+            )
         t_min_us, t_max_us = self._current_fourier_time_window_us()
         t_min_us, t_max_us = self._fourier_time_window_excluding_tail(dataset, t_min_us, t_max_us)
         group_phase_degrees: dict[int, float] = {}
@@ -15091,8 +15156,10 @@ class MainWindow(QMainWindow):
         self._plot_workspace.clear()
         if hasattr(self._frequency_plot_panel, "_frequency_x_unit_combo"):
             self._frequency_plot_panel._frequency_x_unit_combo.setCurrentIndex(0)
-        if hasattr(self._frequency_plot_panel, "set_frequency_axis_relative_to_reference"):
-            self._frequency_plot_panel.set_frequency_axis_relative_to_reference(False)
+        if hasattr(self._frequency_plot_panel, "set_frequency_axis_mode"):
+            self._frequency_plot_panel.set_frequency_axis_mode("absolute")
+        if hasattr(self._frequency_plot_panel, "_frequency_reference_mode_combo"):
+            self._frequency_plot_panel._frequency_reference_mode_combo.setCurrentIndex(0)
         if hasattr(self._fit_panel, "clear"):
             self._fit_panel.clear()
         else:

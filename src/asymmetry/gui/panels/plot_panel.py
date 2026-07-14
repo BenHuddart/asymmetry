@@ -52,6 +52,7 @@ Entry points GUI callers use most: ``plot_datasets``/``plot_dataset``,
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -80,7 +81,12 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fourier.spectrum import reference_field_gauss
 from asymmetry.core.fourier.units import convert as convert_field_unit
-from asymmetry.core.fourier.units import gauss_to_mhz
+from asymmetry.core.fourier.units import (
+    gauss_to_mhz,
+    relative_shift_axis_label,
+    relative_shift_ppm,
+    shift_axis_label,
+)
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     available_background_modes,
@@ -131,6 +137,8 @@ from asymmetry.gui.widgets.rrf_controls import (
     rrf_draw_badge,
 )
 
+_LOGGER = logging.getLogger(__name__)
+
 # Metadata fields available for dataset labelling in the legend.
 _LABEL_FIELDS: list[tuple[str, str]] = [
     ("Run", "run"),
@@ -152,6 +160,12 @@ _FREQUENCY_X_UNIT_FIELD = {
     "field_tesla": "tesla",
 }
 
+#: The three x-axis transform modes for the frequency panel.
+_FREQUENCY_AXIS_MODES = ("absolute", "shift", "relative_ppm")
+
+#: The two reference-resolution modes for shift axes.
+_FREQUENCY_REFERENCE_MODES = ("run", "common")
+
 #: Display y-labels for a unit-area field distribution, keyed on the effective
 #: ``core.fourier.units`` field unit of the current x axis. The canonical MHz
 #: axis keeps the core's own p(ν) label; any unknown/dimensionless unit falls
@@ -170,11 +184,19 @@ _DENSITY_COLUMN_NAME = {
 
 # Self-describing x-column names for frequency-view ``.dat`` sidecars, keyed on
 # the panel's current display unit. The correlation (hyperfine-coupling) axis
-# names its column separately (``coupling_MHz``).
+# names its column separately (``coupling_MHz``); shift/relative axes name their
+# column from the mode (see ``_frequency_x_column_name``).
 _FREQUENCY_X_COLUMN_NAME = {
     "frequency_mhz": "frequency_MHz",
     "field_gauss": "field_G",
     "field_tesla": "field_T",
+}
+
+#: Shift-axis ``.dat`` x-column names, keyed on the display unit.
+_FREQUENCY_SHIFT_X_COLUMN_NAME = {
+    "frequency_mhz": "shift_MHz",
+    "field_gauss": "shift_G",
+    "field_tesla": "shift_T",
 }
 
 # GLE has no fill transparency: gleplot's writer drops fill_between's alpha and
@@ -285,8 +307,27 @@ class PlotPanel(QWidget):
         self._default_canvas_min_height = 360
         self._subplot_canvas_height_per_axis = 220
         self._current_frequency_x_unit = "frequency_mhz"
-        self._frequency_axis_relative_to_reference = False
+        #: Frequency x-axis transform mode: ``"absolute"`` (unit-converted data),
+        #: ``"shift"`` (x − x₀ in the selected unit), or ``"relative_ppm"``
+        #: ((x − x₀)/x₀ × 1e6, dimensionless). Replaces the old "X relative to
+        #: ref. field" checkbox, which only offset the limit boxes.
+        self._frequency_axis_mode = "absolute"
+        #: Reference selector: ``"run"`` (each dataset shifts by its OWN applied
+        #: field, so overlaid TF spectra align at zero) or ``"common"`` (every
+        #: dataset shifts by the shared spin value).
+        self._frequency_reference_mode = "run"
+        #: The ACTIVE dataset's resolved reference (MHz). Drives the limit boxes,
+        #: moments overlay, fit-range span, view-window inversion, and Larmor
+        #: marker — all active-dataset concepts. Per-dataset overlay *data* uses
+        #: each dataset's own reference instead (see
+        #: :meth:`_convert_frequency_axis_for_display`).
         self._frequency_reference_mhz: float | None = None
+        #: The user-entered "Common" reference (MHz); authoritative in Common
+        #: mode. Seeded once from the first field-bearing dataset so switching to
+        #: Common starts from a sensible value, then owned by the spin.
+        self._frequency_common_reference_mhz: float | None = None
+        #: Guards the missing-field fallback note so it is logged once per mode.
+        self._frequency_missing_reference_noted = False
         #: True when the active frequency dataset is a muoniated-radical
         #: correlation spectrum, whose x-axis is a hyperfine coupling (A_µ, MHz)
         #: and must not be field-converted by the MHz/G/T selector.
@@ -296,7 +337,8 @@ class PlotPanel(QWidget):
         #: restored when leaving it, so the user's MHz/G/T + relative choice
         #: survives the excursion.
         self._frequency_axis_unit_before_correlation = "frequency_mhz"
-        self._frequency_axis_relative_before_correlation = False
+        self._frequency_axis_mode_before_correlation = "absolute"
+        self._frequency_reference_mode_before_correlation = "run"
         self._frequency_x_limits_by_unit: dict[str, tuple[float, float]] = {}
         #: Per-mode y windows for unit-area density views (session-local): only
         #: populated when the density Jacobian differs between two modes, so a
@@ -471,6 +513,12 @@ class PlotPanel(QWidget):
             # untouched view reframes to each newly shown dataset. Cleared by
             # clear() (a blank/new view starts fresh).
             self._limits_user_locked = False
+            # Whether the most recent plot_dataset/plot_datasets draw first-paint
+            # framed the axes (as opposed to preserving an existing frame). Read
+            # by the frequency render path so it restores caller-preserved limits
+            # only when the draw did NOT reframe — a genuine first paint keeps its
+            # freshly computed smart framing instead of stale preserved defaults.
+            self._last_draw_reframed = False
             self._current_polarization_axis: str | None = None
             # Ordered projection specs ({"label", "tint"}) and the per-label tint
             # lookup used for frame-tinting subplots; driven by the chip bar.
@@ -694,16 +742,36 @@ class PlotPanel(QWidget):
             )
             row1.addWidget(self._frequency_x_unit_combo)
 
-            self._frequency_axis_relative_check = QCheckBox("X relative to ref. field")
-            self._frequency_axis_relative_check.setChecked(
-                self._frequency_axis_relative_to_reference
+            row1.addWidget(QLabel("Axis:"))
+            self._frequency_axis_mode_combo = QComboBox()
+            self._frequency_axis_mode_combo.addItem("Absolute", userData="absolute")
+            self._frequency_axis_mode_combo.addItem("Shift (x − x₀)", userData="shift")
+            self._frequency_axis_mode_combo.addItem("Relative shift (ppm)", userData="relative_ppm")
+            self._frequency_axis_mode_combo.setToolTip(
+                "Absolute: the measured frequency/field. Shift (x − x₀): each "
+                "spectrum minus its reference field, in the selected unit. "
+                "Relative shift (ppm): (x − x₀)/x₀ in parts per million."
             )
-            self._frequency_axis_relative_check.toggled.connect(
-                self._on_frequency_relative_check_toggled
+            self._frequency_axis_mode_combo.currentIndexChanged.connect(
+                self._on_frequency_axis_mode_changed
             )
-            row1.addWidget(self._frequency_axis_relative_check)
+            row1.addWidget(self._frequency_axis_mode_combo)
 
-            row1.addWidget(QLabel("Reference:"))
+            row1.addWidget(QLabel("Ref.:"))
+            self._frequency_reference_mode_combo = QComboBox()
+            self._frequency_reference_mode_combo.addItem("Run field", userData="run")
+            self._frequency_reference_mode_combo.addItem("Common", userData="common")
+            self._frequency_reference_mode_combo.setToolTip(
+                "Run field: each spectrum shifts by its own applied field, so "
+                "spectra measured at different fields overlay aligned at zero. "
+                "Common: every spectrum shifts by the value in the box."
+            )
+            self._frequency_reference_mode_combo.setEnabled(False)
+            self._frequency_reference_mode_combo.currentIndexChanged.connect(
+                self._on_frequency_reference_mode_changed
+            )
+            row1.addWidget(self._frequency_reference_mode_combo)
+
             self._frequency_reference_spin = NoScrollDoubleSpinBox()
             self._frequency_reference_spin.setRange(0.0, 1_000_000.0)
             self._frequency_reference_spin.setDecimals(2)
@@ -718,6 +786,22 @@ class PlotPanel(QWidget):
             self._frequency_reference_spin.setEnabled(False)
             self._frequency_reference_spin.editingFinished.connect(
                 self._on_frequency_reference_spin_committed
+            )
+            # Arrow clicks and wheel steps fire valueChanged but not
+            # editingFinished until focus leaves, so without this the plot
+            # ignores stepping — commit through a short single-shot debounce
+            # (the fourier_panel settings-debounce idiom). editingFinished
+            # (Enter / focus-out) still commits immediately; the commit is
+            # idempotent so both paths firing for one edit is harmless.
+            # Parented so it dies with the panel.
+            self._frequency_reference_debounce = QTimer(self)
+            self._frequency_reference_debounce.setSingleShot(True)
+            self._frequency_reference_debounce.setInterval(300)
+            self._frequency_reference_debounce.timeout.connect(
+                self._on_frequency_reference_spin_committed
+            )
+            self._frequency_reference_spin.valueChanged.connect(
+                self._on_frequency_reference_spin_stepped
             )
             row1.addWidget(self._frequency_reference_spin)
 
@@ -932,14 +1016,23 @@ class PlotPanel(QWidget):
         self,
         *,
         unit: str | None = None,
-        relative: bool | None = None,
+        mode: str | None = None,
     ) -> str:
-        """Return a stable storage key for frequency x-limit display modes."""
+        """Return a stable storage key for frequency x-limit display modes.
+
+        The dimensionless ppm axis is unit-independent, so it keys on the mode
+        alone; absolute/shift axes key on ``unit:mode`` so each unit + transform
+        keeps its own stashed window.
+        """
+        resolved_mode = self._frequency_axis_mode if mode is None else str(mode)
+        if resolved_mode == "relative_ppm":
+            return "relative_ppm"
         resolved_unit = self._current_frequency_x_unit if unit is None else str(unit)
-        resolved_relative = (
-            self._frequency_axis_relative_to_reference if relative is None else bool(relative)
-        )
-        return f"{resolved_unit}:{'relative' if resolved_relative else 'absolute'}"
+        return f"{resolved_unit}:{resolved_mode}"
+
+    def _is_frequency_shift_mode(self) -> bool:
+        """Return True when the frequency axis shows a reference-shifted quantity."""
+        return self._frequency_axis_mode in ("shift", "relative_ppm")
 
     def _frequency_reference_for_dataset(self, dataset: MuonDataset | None) -> float | None:
         """Return the applied-field reference frequency in MHz for *dataset*.
@@ -955,8 +1048,28 @@ class PlotPanel(QWidget):
             return None
         return field_gauss * self._mhz_per_gauss()
 
+    def _resolve_reference_mhz_for_dataset(self, dataset: MuonDataset | None) -> float | None:
+        """Return the reference (MHz) that *dataset*'s DATA should shift about.
+
+        ``"run"`` reference mode uses the dataset's own applied field (the
+        headline: different-field spectra align at zero), falling back to the
+        common value when the dataset carries no field. ``"common"`` mode uses
+        the shared spin value for every dataset. Returns ``None`` when no usable
+        reference exists (the caller draws the trace untransformed and notes it).
+        """
+        if self._frequency_reference_mode == "common":
+            return self._frequency_common_reference_mhz
+        run_reference = self._frequency_reference_for_dataset(dataset)
+        if run_reference is not None:
+            return run_reference
+        return self._frequency_common_reference_mhz
+
+    def _active_reference_mhz(self) -> float:
+        """Return the active dataset's resolved reference in MHz (0 when unset)."""
+        return float(self._frequency_reference_mhz or 0.0)
+
     def _display_frequency_reference(self, *, unit: str | None = None) -> float:
-        """Return the current frequency reference in the requested display unit."""
+        """Return the active-dataset frequency reference in the requested unit."""
         reference_mhz = self._frequency_reference_mhz
         if reference_mhz is None:
             return 0.0
@@ -965,11 +1078,16 @@ class PlotPanel(QWidget):
         return float(convert_field_unit(reference_mhz, "mhz", field_unit))
 
     def _display_x_label(self) -> str:
-        """Return the x-axis label for the current display unit."""
+        """Return the x-axis label for the current display mode/unit."""
         if not self._is_frequency_plot_panel():
             return "Time (µs)"
         if self._frequency_axis_is_correlation:
             return self._frequency_correlation_x_label
+        if self._frequency_axis_mode == "relative_ppm":
+            return relative_shift_axis_label()
+        field_unit = _FREQUENCY_X_UNIT_FIELD.get(self._current_frequency_x_unit, "mhz")
+        if self._frequency_axis_mode == "shift":
+            return shift_axis_label(field_unit)
         return {
             "field_gauss": "Field (G)",
             "field_tesla": "Field (T)",
@@ -979,6 +1097,8 @@ class PlotPanel(QWidget):
         """Return the compact unit suffix for the x-limit controls."""
         if not self._is_frequency_plot_panel():
             return "µs"
+        if self._frequency_axis_mode == "relative_ppm":
+            return "ppm"
         return {
             "field_gauss": "G",
             "field_tesla": "T",
@@ -1009,15 +1129,62 @@ class PlotPanel(QWidget):
             return "%"
         return "a.u."
 
-    def _convert_frequency_axis_for_display(self, x_values) -> np.ndarray:
-        """Convert canonical MHz axis data into the selected absolute display unit."""
+    def _note_missing_reference(self, mode: str) -> None:
+        """Log the missing-field fallback once, so a trace is never dropped silently."""
+        if self._frequency_missing_reference_noted:
+            return
+        self._frequency_missing_reference_noted = True
+        _LOGGER.info(
+            "Frequency %s axis: no applied-field reference for a displayed "
+            "spectrum; drawing it untransformed (absolute) instead.",
+            mode,
+        )
+
+    def _convert_frequency_axis_for_display(
+        self, x_values, dataset: MuonDataset | None = None
+    ) -> np.ndarray:
+        """Convert canonical MHz axis data into the current display mode/unit.
+
+        Per dataset: in a shift mode each trace shifts about *its own* resolved
+        reference (``dataset``), so overlaid spectra measured at different fields
+        line up at zero. ``dataset=None`` falls back to the active dataset's
+        reference (used by single-trace and fit-curve conversions). A dataset
+        with no usable reference in a shift mode is drawn untransformed (absolute
+        display) with a one-time note rather than dropped or crashed.
+        """
         arr = np.asarray(x_values, dtype=float)
         if not self._is_frequency_plot_panel() or self._frequency_axis_is_correlation:
             return arr
         field_unit = _FREQUENCY_X_UNIT_FIELD.get(self._current_frequency_x_unit, "mhz")
+
+        if self._frequency_axis_mode == "absolute":
+            if field_unit == "mhz":
+                return arr
+            return np.asarray(convert_field_unit(arr, "mhz", field_unit), dtype=float)
+
+        reference_mhz = (
+            self._active_reference_mhz()
+            if dataset is None
+            else self._resolve_reference_mhz_for_dataset(dataset)
+        )
+
+        if self._frequency_axis_mode == "relative_ppm":
+            if reference_mhz is None or reference_mhz <= 0.0:
+                self._note_missing_reference("relative")
+                # No valid reference: fall back to the absolute display value.
+                if field_unit == "mhz":
+                    return arr
+                return np.asarray(convert_field_unit(arr, "mhz", field_unit), dtype=float)
+            return np.asarray(relative_shift_ppm(arr, float(reference_mhz)), dtype=float)
+
+        # Shift (x − x₀) mode.
+        if reference_mhz is None:
+            self._note_missing_reference("shift")
+            reference_mhz = 0.0
+        shifted = arr - float(reference_mhz)
         if field_unit == "mhz":
-            return arr
-        return np.asarray(convert_field_unit(arr, "mhz", field_unit), dtype=float)
+            return shifted
+        return np.asarray(convert_field_unit(shifted, "mhz", field_unit), dtype=float)
 
     @staticmethod
     def _is_unit_area_dataset(dataset: MuonDataset | None) -> bool:
@@ -1087,22 +1254,17 @@ class PlotPanel(QWidget):
         return _DENSITY_YLABELS.get(field_unit, y_label)
 
     def _convert_frequency_axis_limit_to_control_value(self, value: float) -> float:
-        """Convert one absolute axis x-limit into the toolbar control value."""
-        if not self._is_frequency_plot_panel():
-            return float(value)
-        control_value = float(value)
-        if self._frequency_axis_relative_to_reference:
-            control_value -= self._display_frequency_reference(unit=self._current_frequency_x_unit)
-        return control_value
+        """Convert one plotted axis x-limit into the toolbar control value.
+
+        The plotted axis is now always the display axis (shift/ppm data is
+        genuinely transformed, not offset behind the scenes), so the control
+        value equals the axis value in every mode — an identity mapping.
+        """
+        return float(value)
 
     def _convert_frequency_control_value_to_axis_limit(self, value: float) -> float:
-        """Convert one toolbar x-limit value into the absolute plotted axis value."""
-        if not self._is_frequency_plot_panel():
-            return float(value)
-        axis_value = float(value)
-        if self._frequency_axis_relative_to_reference:
-            axis_value += self._display_frequency_reference(unit=self._current_frequency_x_unit)
-        return axis_value
+        """Convert one toolbar x-limit value into the plotted axis value (identity)."""
+        return float(value)
 
     def _convert_display_limit_between_units(
         self,
@@ -1125,14 +1287,27 @@ class PlotPanel(QWidget):
         value: float,
         *,
         unit: str,
-        relative: bool,
+        mode: str,
+        reference_mhz: float | None = None,
     ) -> float:
-        """Convert one displayed x value back into canonical absolute MHz."""
+        """Convert one displayed x value (active-dataset frame) back to canonical MHz.
+
+        Defaults to the ACTIVE dataset's reference — the limit boxes, moments
+        overlay, fit-range span, and view window are all per-active-run
+        concepts. An explicit *reference_mhz* overrides it, so a reference
+        change can convert the same window through the OLD and NEW references
+        deterministically (see :meth:`_apply_frequency_reference_change`).
+        """
+        ref = self._active_reference_mhz() if reference_mhz is None else float(reference_mhz)
+        if mode == "relative_ppm":
+            if ref <= 0.0:
+                return float(value)
+            return ref * (1.0 + float(value) / 1.0e6)
         canonical = self._convert_display_limit_between_units(
             value, from_unit=unit, to_unit="frequency_mhz"
         )
-        if relative:
-            canonical += self._display_frequency_reference(unit="frequency_mhz")
+        if mode == "shift":
+            canonical += ref
         return canonical
 
     def _convert_canonical_mhz_to_display_limit(
@@ -1140,12 +1315,22 @@ class PlotPanel(QWidget):
         value: float,
         *,
         unit: str,
-        relative: bool,
+        mode: str,
+        reference_mhz: float | None = None,
     ) -> float:
-        """Convert one canonical absolute MHz value into the current display mode."""
+        """Convert one canonical absolute MHz value into the current display mode.
+
+        *reference_mhz* overrides the active-dataset reference exactly as in
+        :meth:`_convert_display_limit_to_canonical_mhz`.
+        """
+        ref = self._active_reference_mhz() if reference_mhz is None else float(reference_mhz)
+        if mode == "relative_ppm":
+            if ref <= 0.0:
+                return float(value)
+            return (float(value) - ref) / ref * 1.0e6
         display_value = float(value)
-        if relative:
-            display_value -= self._display_frequency_reference(unit="frequency_mhz")
+        if mode == "shift":
+            display_value -= ref
         return self._convert_display_limit_between_units(
             display_value,
             from_unit="frequency_mhz",
@@ -1161,114 +1346,232 @@ class PlotPanel(QWidget):
         self._set_limit_field_value(self._y_min, float(y_min))
         self._set_limit_field_value(self._y_max, float(y_max))
 
-    def set_frequency_axis_relative_to_reference(self, enabled: bool) -> None:
-        """Toggle between absolute and reference-relative frequency axes."""
+    def set_frequency_axis_mode(self, mode: str) -> None:
+        """Set the frequency x-axis transform mode programmatically.
+
+        *mode* is one of ``"absolute"``, ``"shift"``, or ``"relative_ppm"``.
+        """
         if not self._is_frequency_plot_panel():
             return
-        self._switch_frequency_axis_display(relative=bool(enabled))
-        if hasattr(self, "_frequency_axis_relative_check"):
-            prev = self._frequency_axis_relative_check.blockSignals(True)
-            self._frequency_axis_relative_check.setChecked(
-                bool(self._frequency_axis_relative_to_reference)
-            )
-            self._frequency_axis_relative_check.blockSignals(prev)
+        resolved = str(mode) if str(mode) in _FREQUENCY_AXIS_MODES else "absolute"
+        self._switch_frequency_axis_display(mode=resolved)
+        self._sync_frequency_axis_controls()
+
+    def frequency_axis_mode(self) -> str:
+        """Return the current frequency x-axis transform mode."""
+        return self._frequency_axis_mode
 
     def is_frequency_axis_relative_to_reference(self) -> bool:
-        """Return whether the frequency x axis is shown relative to the field."""
-        return bool(self._frequency_axis_relative_to_reference)
+        """Return whether the frequency x axis is a reference-shifted axis.
 
-    def _on_frequency_relative_check_toggled(self, checked: bool) -> None:
-        """Enable/disable the reference spin and apply the axis change."""
-        if hasattr(self, "_frequency_reference_spin"):
-            self._frequency_reference_spin.setEnabled(checked)
-        self.set_frequency_axis_relative_to_reference(checked)
+        True for both shift modes (``"shift"`` and ``"relative_ppm"``); the
+        phase-estimation window logic narrows around the reference whenever the
+        view is reference-shifted, so this stays a single predicate.
+        """
+        return self._is_frequency_shift_mode()
+
+    def _on_frequency_axis_mode_changed(self, _index: int) -> None:
+        """Apply the axis-mode combo selection with a single redraw."""
+        if not self._is_frequency_plot_panel() or not hasattr(self, "_frequency_axis_mode_combo"):
+            return
+        new_mode = str(self._frequency_axis_mode_combo.currentData() or "absolute")
+        self._switch_frequency_axis_display(mode=new_mode)
+        self._sync_frequency_axis_controls()
+
+    def _on_frequency_reference_mode_changed(self, _index: int) -> None:
+        """Apply the reference-mode combo selection (run field / common)."""
+        if not self._is_frequency_plot_panel() or not hasattr(
+            self, "_frequency_reference_mode_combo"
+        ):
+            return
+        new_mode = str(self._frequency_reference_mode_combo.currentData() or "run")
+        if new_mode not in _FREQUENCY_REFERENCE_MODES:
+            new_mode = "run"
+        old_reference = self._frequency_reference_mhz
+        self._frequency_reference_mode = new_mode
+        # Re-resolve the active reference under the new mode, then re-anchor the
+        # view and redraw so the shift-space data and the limit boxes follow.
+        self._frequency_missing_reference_noted = False
+        self._set_frequency_reference_from_dataset(self._current_dataset)
+        self._sync_frequency_axis_controls()
+        self._apply_frequency_reference_change(old_reference)
+
+    def _on_frequency_reference_spin_stepped(self, _value: float) -> None:
+        """Debounce arrow/wheel steps on the reference spin into a commit.
+
+        ``valueChanged`` also fires for programmatic ``setValue`` calls, but the
+        only such writer (:meth:`_set_frequency_reference_from_dataset`) wraps
+        its write in a ``QSignalBlocker`` and stops any pending debounce, so a
+        dataset sync can never trigger a commit from here.
+        """
+        if not hasattr(self, "_frequency_reference_debounce"):
+            return
+        self._frequency_reference_debounce.start()
 
     def _on_frequency_reference_spin_committed(self) -> None:
-        """Apply a user-supplied reference field override on editing commit."""
+        """Apply a user-supplied common-reference field (Enter, focus-out, or debounce)."""
         if not hasattr(self, "_frequency_reference_spin"):
             return
-        value_gauss = self._frequency_reference_spin.value()
-        self._frequency_reference_mhz = float(value_gauss) * self._mhz_per_gauss()
-        if self._frequency_axis_relative_to_reference:
-            self._switch_frequency_axis_display(force=True)
+        if hasattr(self, "_frequency_reference_debounce"):
+            self._frequency_reference_debounce.stop()
+        value_gauss = float(self._frequency_reference_spin.value())
+        # Idempotent: the debounce and editingFinished can both fire for one
+        # edit — skip when the value already matches within the spin's 2-dp
+        # resolution, so the second arrival cannot double-redraw.
+        if self._frequency_common_reference_mhz is not None:
+            current_gauss = self._frequency_common_reference_mhz / self._mhz_per_gauss()
+            if abs(value_gauss - current_gauss) < 0.005:
+                return
+        old_reference = self._frequency_reference_mhz
+        self._frequency_common_reference_mhz = value_gauss * self._mhz_per_gauss()
+        if self._frequency_reference_mode == "common":
+            self._frequency_reference_mhz = self._frequency_common_reference_mhz
+            self._frequency_missing_reference_noted = False
+            self._apply_frequency_reference_change(old_reference)
+
+    def _apply_frequency_reference_change(self, old_reference_mhz: float | None) -> None:
+        """Re-anchor the shift-space view after the effective reference changed.
+
+        The plotted data re-shifts by the new reference, so holding the old
+        x-window would show DIFFERENT physical frequencies — with a zoomed
+        window the trace exits the view entirely and the change reads as "does
+        nothing" or "loses traces". Instead the current window is converted to
+        canonical absolute MHz with the OLD active reference and back into
+        display space with the NEW one, so the view keeps showing the same
+        physical frequencies; the per-``unit:mode`` limit stash entry is
+        invalidated because its stored window belonged to the old reference.
+
+        In Run-field mode the per-trace references differ, so the window can
+        only follow one anchor — the ACTIVE dataset's reference (the same
+        anchor the limit boxes and view-window inversion use); overlay members
+        re-anchor relative to it. Called only when the reference state changed;
+        in absolute mode the reference is display-irrelevant, so this is a
+        no-op (no window work, no redraw).
+        """
+        if not self._is_frequency_plot_panel() or not self._is_frequency_shift_mode():
+            return
+        old_ref = float(old_reference_mhz or 0.0)
+        new_ref = self._active_reference_mhz()
+        if old_ref != new_ref:
+            unit = self._current_frequency_x_unit
+            mode = self._frequency_axis_mode
+            x_min, x_max, y_min, y_max = self.get_view_limits()
+            canonical_lo = self._convert_display_limit_to_canonical_mhz(
+                float(x_min), unit=unit, mode=mode, reference_mhz=old_ref
+            )
+            canonical_hi = self._convert_display_limit_to_canonical_mhz(
+                float(x_max), unit=unit, mode=mode, reference_mhz=old_ref
+            )
+            new_x_min = self._convert_canonical_mhz_to_display_limit(
+                canonical_lo, unit=unit, mode=mode, reference_mhz=new_ref
+            )
+            new_x_max = self._convert_canonical_mhz_to_display_limit(
+                canonical_hi, unit=unit, mode=mode, reference_mhz=new_ref
+            )
+            # The stashed window for this unit:mode belonged to the old
+            # reference; drop it so a later mode round-trip restores the
+            # re-anchored window (re-stashed on switch-away), not the stale one.
+            self._frequency_x_limits_by_unit.pop(self._frequency_limit_mode_key(), None)
+            self._set_view_limits_fields(new_x_min, new_x_max, y_min, y_max)
+        # Redraw even when the active reference is unchanged: a Run↔Common
+        # switch re-shifts overlay members whose own fields differ from the
+        # active one, so the traces move although the window does not.
+        if self.has_plot_content():
+            self._redraw_current_view()
+        else:
+            self._apply_axis_labels(*self._default_axis_labels())
+            self._apply_limits()
 
     def get_frequency_view_window_mhz(
         self,
         *,
         reference_dataset: MuonDataset | None = None,
     ) -> tuple[float, float] | None:
-        """Return the current frequency-view x window in canonical absolute MHz."""
+        """Return the current frequency-view x window in canonical absolute MHz.
+
+        The window is inverted through the ACTIVE dataset's resolved reference —
+        the phase-estimation window this feeds is a per-active-run concept, so an
+        explicit *reference_dataset* (when the caller knows the active run)
+        overrides the stored active reference.
+        """
         if not self._is_frequency_plot_panel() or not self._has_mpl:
             return None
 
         x_min, x_max, _y_min, _y_max = self.get_view_limits()
+
+        # Temporarily adopt the caller's reference dataset (if any) so the
+        # active-reference-based inversion resolves the intended run.
         reference_mhz = self._frequency_reference_mhz
         if reference_dataset is not None:
-            dataset_reference = self._frequency_reference_for_dataset(reference_dataset)
+            dataset_reference = self._resolve_reference_mhz_for_dataset(reference_dataset)
             if dataset_reference is not None:
                 reference_mhz = dataset_reference
-        if reference_mhz is None:
-            reference_mhz = 0.0
 
-        def _to_absolute_mhz(value: float) -> float:
-            absolute = self._convert_display_limit_between_units(
-                value,
-                from_unit=self._current_frequency_x_unit,
-                to_unit="frequency_mhz",
+        saved_reference = self._frequency_reference_mhz
+        self._frequency_reference_mhz = reference_mhz
+        try:
+            lo = self._convert_display_limit_to_canonical_mhz(
+                float(x_min), unit=self._current_frequency_x_unit, mode=self._frequency_axis_mode
             )
-            if self._frequency_axis_relative_to_reference:
-                absolute += float(reference_mhz)
-            return float(absolute)
-
-        lo = _to_absolute_mhz(float(x_min))
-        hi = _to_absolute_mhz(float(x_max))
+            hi = self._convert_display_limit_to_canonical_mhz(
+                float(x_max), unit=self._current_frequency_x_unit, mode=self._frequency_axis_mode
+            )
+        finally:
+            self._frequency_reference_mhz = saved_reference
         return (lo, hi) if lo <= hi else (hi, lo)
 
     def _switch_frequency_axis_display(
         self,
         *,
         unit: str | None = None,
-        relative: bool | None = None,
+        mode: str | None = None,
         force: bool = False,
     ) -> None:
-        """Switch frequency-axis display mode with a single redraw."""
+        """Switch frequency-axis display unit/mode with a single redraw.
+
+        Each ``unit:mode`` pair keeps its own stashed x-window, so switching back
+        and forth restores each view's limits. When no stash exists, the current
+        window is converted through canonical MHz into the new mode.
+        """
         if not self._is_frequency_plot_panel():
             return
 
         old_unit = self._current_frequency_x_unit
-        old_relative = self._frequency_axis_relative_to_reference
+        old_mode = self._frequency_axis_mode
         new_unit = old_unit if unit is None else str(unit)
-        new_relative = old_relative if relative is None else bool(relative)
-        if not force and new_unit == old_unit and new_relative == old_relative:
+        new_mode = old_mode if mode is None else str(mode)
+        if new_mode not in _FREQUENCY_AXIS_MODES:
+            new_mode = "absolute"
+        if not force and new_unit == old_unit and new_mode == old_mode:
             return
 
         current_x_min, current_x_max, current_y_min, current_y_max = self.get_view_limits()
-        old_key = self._frequency_limit_mode_key(unit=old_unit, relative=old_relative)
+        old_key = self._frequency_limit_mode_key(unit=old_unit, mode=old_mode)
         self._frequency_x_limits_by_unit[old_key] = (float(current_x_min), float(current_x_max))
 
-        new_key = self._frequency_limit_mode_key(unit=new_unit, relative=new_relative)
+        new_key = self._frequency_limit_mode_key(unit=new_unit, mode=new_mode)
         if new_key in self._frequency_x_limits_by_unit:
             new_x_min, new_x_max = self._frequency_x_limits_by_unit[new_key]
         else:
             canonical_min = self._convert_display_limit_to_canonical_mhz(
                 current_x_min,
                 unit=old_unit,
-                relative=old_relative,
+                mode=old_mode,
             )
             canonical_max = self._convert_display_limit_to_canonical_mhz(
                 current_x_max,
                 unit=old_unit,
-                relative=old_relative,
+                mode=old_mode,
             )
             new_x_min = self._convert_canonical_mhz_to_display_limit(
                 canonical_min,
                 unit=new_unit,
-                relative=new_relative,
+                mode=new_mode,
             )
             new_x_max = self._convert_canonical_mhz_to_display_limit(
                 canonical_max,
                 unit=new_unit,
-                relative=new_relative,
+                mode=new_mode,
             )
 
         # A displayed unit-area density is rescaled by the dν/dB Jacobian when
@@ -1296,7 +1599,7 @@ class PlotPanel(QWidget):
                 new_y_max *= ratio
 
         self._current_frequency_x_unit = new_unit
-        self._frequency_axis_relative_to_reference = new_relative
+        self._frequency_axis_mode = new_mode
         self._set_view_limits_fields(new_x_min, new_x_max, new_y_min, new_y_max)
 
         if self.has_plot_content():
@@ -1714,9 +2017,11 @@ class PlotPanel(QWidget):
         # the next redraw's ``_apply_auto_limits_if_enabled`` reframes the gesture
         # straight back to the data extent (the reported friction). Programmatic
         # limit changes from auto-framing or field edits run with nav mode
-        # ``"none"`` and are deliberately left alone. Unlike a field edit we do
-        # not set ``_limits_user_locked``, so a later run/polarization switch
-        # still reframes the new content sensibly.
+        # ``"none"`` and are deliberately left alone. The lock itself is set at
+        # gesture end (``_on_canvas_button_release`` with a nav tool armed), so
+        # a completed zoom/pan holds its window across later run/polarization
+        # switches exactly like a typed limit; re-enabling Auto X/Y is the
+        # explicit escape hatch that releases it.
         if self._current_navigation_mode() != "none":
             self._clear_auto_limit_toggles()
         if not self._viewport_refresh_in_progress:
@@ -2325,7 +2630,12 @@ class PlotPanel(QWidget):
 
         The RRF display trims the filter-edge region off the drawn arrays;
         seeding the fit range from those would silently exclude raw early-time
-        bins from fits that always consume raw data.
+        bins from fits that always consume raw data. The seed is returned in the
+        canonical storage unit (time µs, or canonical frequency MHz) — NOT the
+        display unit — because ``_fit_x_min``/``_fit_x_max`` are stored canonical
+        and the drawing helpers convert them to the display axis themselves.
+        Applying the display transform here would store a shift/field value as if
+        it were canonical MHz.
         """
         lows: list[float] = []
         highs: list[float] = []
@@ -2333,7 +2643,7 @@ class PlotPanel(QWidget):
             base = self.get_analysis_dataset(dataset)
             if base is None:
                 continue
-            tt = self._convert_frequency_axis_for_display(np.asarray(base.time, dtype=float))
+            tt = np.asarray(base.time, dtype=float)
             tt = tt[np.isfinite(tt)]
             if tt.size:
                 lows.append(float(tt.min()))
@@ -2600,11 +2910,11 @@ class PlotPanel(QWidget):
         ``draw_zero_line`` uses in ``styles/plots.py`` — rather than
         ``axvline``, so the marker can never perturb ``dataLim``/autoscale
         regardless of when it is drawn relative to ``_apply_limits``. The x
-        position is derived exactly like ``_frequency_field_upper_bound``'s
-        framing math (reference field in Gauss → MHz → active display unit via
-        ``_convert_frequency_axis_for_display``), so it lands in the same
-        coordinate system the plotted spectrum itself uses — display-unit
-        conversion only, never reference-shifted.
+        position runs the expected line through the SAME per-dataset display
+        transform the spectrum uses (``_convert_frequency_axis_for_display`` with
+        this dataset), so in a shift mode it lands at ~0 for the run's own field
+        and in absolute mode at the field-converted line — always co-located with
+        the plotted spectrum.
         """
         if not self._has_mpl or self._frequency_axis_is_correlation:
             return
@@ -2614,7 +2924,7 @@ class PlotPanel(QWidget):
         expected_mhz = float(gauss_to_mhz(field_gauss))
         if not np.isfinite(expected_mhz) or expected_mhz <= 0.0:
             return
-        x = float(self._convert_frequency_axis_for_display(np.array([expected_mhz]))[0])
+        x = float(self._convert_frequency_axis_for_display(np.array([expected_mhz]), dataset)[0])
         if not np.isfinite(x):
             return
 
@@ -2646,15 +2956,41 @@ class PlotPanel(QWidget):
         )
 
     def _set_frequency_reference_from_dataset(self, dataset: MuonDataset | None) -> None:
-        """Update the reference frequency used by relative frequency displays."""
+        """Resolve the ACTIVE dataset's reference for the current reference mode.
+
+        Run mode: the active dataset's own applied field (fall back to the common
+        value when it carries none). Common mode: the shared spin value is
+        authoritative and is NOT overwritten from the dataset — so browsing to a
+        different run cannot clobber the user's common reference. The common value
+        is seeded once from the first field-bearing dataset so switching to Common
+        starts from a sensible number.
+        """
         if not self._is_frequency_plot_panel():
             return
-        self._frequency_reference_mhz = self._frequency_reference_for_dataset(dataset)
         self._update_correlation_axis_state(dataset)
+        dataset_reference = self._frequency_reference_for_dataset(dataset)
+        if self._frequency_common_reference_mhz is None and dataset_reference is not None:
+            self._frequency_common_reference_mhz = dataset_reference
+
+        if self._frequency_reference_mode == "common":
+            self._frequency_reference_mhz = self._frequency_common_reference_mhz
+        else:
+            self._frequency_reference_mhz = (
+                dataset_reference
+                if dataset_reference is not None
+                else self._frequency_common_reference_mhz
+            )
+
+        # Reflect the common value in the spin (disabled outside Common mode).
+        # The blocker keeps this programmatic write from firing valueChanged
+        # (and thus the step-debounce), and any debounce already pending from a
+        # user step is cancelled — a dataset sync must never commit a reference.
         if hasattr(self, "_frequency_reference_spin"):
+            if hasattr(self, "_frequency_reference_debounce"):
+                self._frequency_reference_debounce.stop()
             gauss = (
-                self._frequency_reference_mhz / self._mhz_per_gauss()
-                if self._frequency_reference_mhz is not None
+                self._frequency_common_reference_mhz / self._mhz_per_gauss()
+                if self._frequency_common_reference_mhz is not None
                 else 0.0
             )
             with QSignalBlocker(self._frequency_reference_spin):
@@ -2667,7 +3003,7 @@ class PlotPanel(QWidget):
         coupling A_µ (MHz), not γ_µ·B, so the MHz/G/T field selector and the
         applied-field reference are meaningless: they are forced to a plain MHz
         absolute axis and disabled, and the axis keeps its own label from the
-        dataset metadata. On entry the user's unit + relative-reference choice is
+        dataset metadata. On entry the user's unit + axis/reference mode is
         stashed and on exit it is restored, so toggling the correlation mode does
         not silently discard (or persist) the wrong field-unit view.
 
@@ -2692,44 +3028,54 @@ class PlotPanel(QWidget):
         if is_correlation:
             # Entering: stash the field-unit view and force a plain MHz axis.
             self._frequency_axis_unit_before_correlation = self._current_frequency_x_unit
-            self._frequency_axis_relative_before_correlation = (
-                self._frequency_axis_relative_to_reference
-            )
+            self._frequency_axis_mode_before_correlation = self._frequency_axis_mode
+            self._frequency_reference_mode_before_correlation = self._frequency_reference_mode
             self._frequency_axis_is_correlation = True
             self._current_frequency_x_unit = "frequency_mhz"
-            self._frequency_axis_relative_to_reference = False
+            self._frequency_axis_mode = "absolute"
         else:
             # Leaving: restore the stashed field-unit view.
             self._frequency_axis_is_correlation = False
             self._current_frequency_x_unit = self._frequency_axis_unit_before_correlation
-            self._frequency_axis_relative_to_reference = (
-                self._frequency_axis_relative_before_correlation
-            )
+            self._frequency_axis_mode = self._frequency_axis_mode_before_correlation
+            self._frequency_reference_mode = self._frequency_reference_mode_before_correlation
         self._sync_frequency_axis_controls()
 
     def _sync_frequency_axis_controls(self) -> None:
-        """Push the current unit / relative state onto the frequency-view widgets.
+        """Push the current unit / axis-mode / reference state onto the widgets.
 
-        Keeps the unit combo, the relative-reference checkbox, and the reference
-        spin coherent with the backing state, and disables them while a
-        correlation (coupling) axis is shown.
+        Keeps the unit combo, the axis-mode combo, the reference-mode combo, and
+        the reference spin coherent with the backing state, and disables them per
+        the mode: the unit combo is meaningless in ppm mode; the reference
+        selector applies only in shift modes; the common spin applies only in
+        Common + shift mode. Everything is disabled while a correlation (coupling)
+        axis is shown.
         """
         is_correlation = self._frequency_axis_is_correlation
+        is_shift = self._is_frequency_shift_mode()
+        is_ppm = self._frequency_axis_mode == "relative_ppm"
         if hasattr(self, "_frequency_x_unit_combo"):
             with QSignalBlocker(self._frequency_x_unit_combo):
                 idx = self._frequency_x_unit_combo.findData(self._current_frequency_x_unit)
                 if idx >= 0:
                     self._frequency_x_unit_combo.setCurrentIndex(idx)
-            self._frequency_x_unit_combo.setEnabled(not is_correlation)
-        if hasattr(self, "_frequency_axis_relative_check"):
-            with QSignalBlocker(self._frequency_axis_relative_check):
-                self._frequency_axis_relative_check.setChecked(
-                    self._frequency_axis_relative_to_reference
-                )
-            self._frequency_axis_relative_check.setEnabled(not is_correlation)
+            # ppm is dimensionless, so the unit selector is inert there.
+            self._frequency_x_unit_combo.setEnabled(not is_correlation and not is_ppm)
+        if hasattr(self, "_frequency_axis_mode_combo"):
+            with QSignalBlocker(self._frequency_axis_mode_combo):
+                idx = self._frequency_axis_mode_combo.findData(self._frequency_axis_mode)
+                if idx >= 0:
+                    self._frequency_axis_mode_combo.setCurrentIndex(idx)
+            self._frequency_axis_mode_combo.setEnabled(not is_correlation)
+        if hasattr(self, "_frequency_reference_mode_combo"):
+            with QSignalBlocker(self._frequency_reference_mode_combo):
+                idx = self._frequency_reference_mode_combo.findData(self._frequency_reference_mode)
+                if idx >= 0:
+                    self._frequency_reference_mode_combo.setCurrentIndex(idx)
+            self._frequency_reference_mode_combo.setEnabled(not is_correlation and is_shift)
         if hasattr(self, "_frequency_reference_spin"):
             self._frequency_reference_spin.setEnabled(
-                not is_correlation and self._frequency_axis_relative_to_reference
+                not is_correlation and is_shift and self._frequency_reference_mode == "common"
             )
 
     def update_frequency_reference(self, dataset: MuonDataset | None) -> None:
@@ -2790,6 +3136,17 @@ class PlotPanel(QWidget):
             float(self._y_min.value()),
             float(self._y_max.value()),
         )
+
+    def view_reframed_on_last_draw(self) -> bool:
+        """Whether the most recent plot draw first-paint framed the axes.
+
+        Lets a caller that re-applies preserved limits after a draw (the
+        frequency render path) tell a same-content recompute — which must keep
+        the user's window — apart from a genuine first paint, whose freshly
+        computed smart framing must survive rather than be overwritten by stale
+        preserved defaults.
+        """
+        return bool(self._last_draw_reframed)
 
     def set_view_limits(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
         """Apply x/y limits through the existing toolbar-backed controls."""
@@ -3500,7 +3857,7 @@ class PlotPanel(QWidget):
             if analysis_dataset is None:
                 continue
 
-            time = self._convert_frequency_axis_for_display(analysis_dataset.time)
+            time = self._convert_frequency_axis_for_display(analysis_dataset.time, dataset)
             asymmetry = analysis_dataset.asymmetry
             error = analysis_dataset.error
             low_count_mask = self._low_count_mask_for_dataset(
@@ -4212,10 +4569,12 @@ class PlotPanel(QWidget):
 
         # Each trace's display x-axis and y values (density Jacobian applied for
         # unit-area spectra), computed once and shared by the Δ resolution, the
-        # first-paint framing, and the draw loop.
+        # first-paint framing, and the draw loop. The source dataset is passed so
+        # a shift-mode overlay shifts each trace about ITS OWN reference (the
+        # alignment point).
         display_times = [
-            self._convert_frequency_axis_for_display(analysis.time)
-            for _, analysis in display_entries
+            self._convert_frequency_axis_for_display(analysis.time, source_dataset)
+            for source_dataset, analysis in display_entries
         ]
         display_values = [
             self._convert_frequency_values_for_display(analysis.asymmetry, dataset)
@@ -4429,6 +4788,7 @@ class PlotPanel(QWidget):
             self._fit_x_max = None
             reframed = False
 
+        self._last_draw_reframed = reframed
         self._draw_fit_range_artists()
         self._apply_limits(schedule_viewport_refresh=reframed)
         self._apply_auto_limits_if_enabled()
@@ -4556,7 +4916,7 @@ class PlotPanel(QWidget):
         if not self._has_plottable_samples(analysis_dataset):
             self._render_empty_plot_state(alpha_text=self._single_dataset_alpha_label_text(dataset))
             return
-        time = self._convert_frequency_axis_for_display(analysis_dataset.time)
+        time = self._convert_frequency_axis_for_display(analysis_dataset.time, dataset)
         asymmetry = self._convert_frequency_values_for_display(analysis_dataset.asymmetry, dataset)
         error = self._convert_frequency_values_for_display(analysis_dataset.error, dataset)
         low_count_mask = self._low_count_mask_for_dataset(
@@ -4692,9 +5052,17 @@ class PlotPanel(QWidget):
         if self._fit_x_min is None or self._fit_x_max is None:
             seed = self._raw_fit_seed_range([dataset])
             if seed is None:
-                seed = (float(time.min()), float(time.max()))
+                # Fall back to the canonical (untransformed) analysis axis, not
+                # the display-converted ``time`` — the seed is stored canonical.
+                canonical = np.asarray(analysis_dataset.time, dtype=float)
+                canonical = canonical[np.isfinite(canonical)]
+                if canonical.size:
+                    seed = (float(canonical.min()), float(canonical.max()))
+                else:
+                    seed = (float(time.min()), float(time.max()))
             self._fit_x_min, self._fit_x_max = seed
 
+        self._last_draw_reframed = reframed
         self._draw_fit_range_artists()
 
         # Apply the limits; a reframe re-decimates for the window just applied.
@@ -4838,11 +5206,15 @@ class PlotPanel(QWidget):
     def _on_auto_x_button_clicked(self, checked: bool) -> None:
         """Apply auto X immediately when the toggle is enabled."""
         if checked:
+            # Turning an Auto toggle ON is the explicit "always follow the data"
+            # escape hatch: release any manual frame lock so reframing resumes.
+            self._limits_user_locked = False
             self._auto_x_limits()
 
     def _on_auto_y_button_clicked(self, checked: bool) -> None:
         """Apply auto Y immediately when the toggle is enabled."""
         if checked:
+            self._limits_user_locked = False
             self._auto_y_limits()
 
     def _draw_annotations(self) -> None:
@@ -4880,6 +5252,20 @@ class PlotPanel(QWidget):
         t = time[finite]
         x_min = float(np.min(t))
         x_max = float(np.max(t))
+
+        # Shift/ppm axes are already reference-centred: the physics of interest
+        # sits near 0, so frame the transformed data extent directly (the
+        # absolute-mode peak/field/centred heuristics assume an un-shifted axis
+        # and are skipped). Make the window symmetric about 0 when 0 lies inside
+        # the extent, so a paramagnetic shift reads at a glance.
+        if self._is_frequency_plot_panel() and self._is_frequency_shift_mode():
+            pad = (x_max - x_min) * 0.05 if x_max > x_min else max(abs(x_min) * 0.05, 1e-6)
+            lower = x_min - pad
+            upper = x_max + pad
+            if lower <= 0.0 <= upper:
+                half = max(abs(lower), abs(upper))
+                lower, upper = -half, half
+            return (lower, upper)
 
         # Correlation-axis frequency mode is a coupling coordinate, not a Larmor
         # spectrum, so dominant-peak framing is not meaningful there.
@@ -5142,6 +5528,20 @@ class PlotPanel(QWidget):
         finite_mask = np.isfinite(self._last_plot_time)
         if not np.any(finite_mask):
             return
+
+        # On a frequency spectrum, "Auto X" should frame the line sensibly (the
+        # dominant non-DC peak / field-derived window), not span the full Nyquist
+        # range where a high-TF Larmor line is squashed to sub-pixel by the DC
+        # peak. Delegate to the same smart framing used on first paint; it already
+        # returns control-value units and skips correlation axes. Fall back to the
+        # raw padded span when it declines (e.g. correlation axis, no finite data).
+        if self._is_frequency_plot_panel() and self._last_plot_asymmetry is not None:
+            smart = self._default_x_limits(self._last_plot_time, self._last_plot_asymmetry)
+            if smart is not None:
+                self._x_min.setValue(smart[0])
+                self._x_max.setValue(smart[1])
+                self._apply_limits(schedule_viewport_refresh=True)
+                return
 
         time = self._last_plot_time[finite_mask]
         x_min = float(np.min(time))
@@ -5455,7 +5855,7 @@ class PlotPanel(QWidget):
             if analysis_dataset is None:
                 continue
 
-            time = self._convert_frequency_axis_for_display(analysis_dataset.time)
+            time = self._convert_frequency_axis_for_display(analysis_dataset.time, dataset)
             asymmetry = self._convert_frequency_values_for_display(
                 analysis_dataset.asymmetry, dataset
             )
@@ -6019,12 +6419,12 @@ class PlotPanel(QWidget):
         if self._moments_window_mhz is None:
             return None
         unit = self._current_frequency_x_unit
-        relative = self._frequency_axis_relative_to_reference
+        mode = self._frequency_axis_mode
         lo = self._convert_canonical_mhz_to_display_limit(
-            self._moments_window_mhz[0], unit=unit, relative=relative
+            self._moments_window_mhz[0], unit=unit, mode=mode
         )
         hi = self._convert_canonical_mhz_to_display_limit(
-            self._moments_window_mhz[1], unit=unit, relative=relative
+            self._moments_window_mhz[1], unit=unit, mode=mode
         )
         return (min(lo, hi), max(lo, hi))
 
@@ -6100,10 +6500,15 @@ class PlotPanel(QWidget):
             return
         if event.xdata is None or self._moments_window_mhz is None:
             return
+        # ppm ↔ MHz inversion needs a positive reference; without one the drag
+        # cannot map back to canonical MHz, so ignore it rather than corrupt the
+        # stored window (the handles stay put until a reference is available).
+        if self._frequency_axis_mode == "relative_ppm" and self._active_reference_mhz() <= 0.0:
+            return
         canonical = self._convert_display_limit_to_canonical_mhz(
             float(event.xdata),
             unit=self._current_frequency_x_unit,
-            relative=self._frequency_axis_relative_to_reference,
+            mode=self._frequency_axis_mode,
         )
         lo, hi = self._moments_window_mhz
         if self._active_moments_handle == "min":
@@ -6120,20 +6525,16 @@ class PlotPanel(QWidget):
 
         ``_fit_x_min``/``_fit_x_max`` are stored in canonical absolute MHz (the
         fit spinbox and ``get_fit_dataset`` both work in MHz); the frequency
-        axis may be showing field or relative-to-reference units, so convert
-        each endpoint for drawing/hit-testing exactly as the moments overlay
-        does in :meth:`_moments_window_display`.
+        axis may be showing field or shift units, so convert each endpoint for
+        drawing/hit-testing exactly as the moments overlay does in
+        :meth:`_moments_window_display`.
         """
         if self._fit_x_min is None or self._fit_x_max is None:
             return None
         unit = self._current_frequency_x_unit
-        relative = self._frequency_axis_relative_to_reference
-        lo = self._convert_canonical_mhz_to_display_limit(
-            self._fit_x_min, unit=unit, relative=relative
-        )
-        hi = self._convert_canonical_mhz_to_display_limit(
-            self._fit_x_max, unit=unit, relative=relative
-        )
+        mode = self._frequency_axis_mode
+        lo = self._convert_canonical_mhz_to_display_limit(self._fit_x_min, unit=unit, mode=mode)
+        hi = self._convert_canonical_mhz_to_display_limit(self._fit_x_max, unit=unit, mode=mode)
         return lo, hi
 
     def _draw_fit_range_artists(self) -> None:
@@ -6320,12 +6721,17 @@ class PlotPanel(QWidget):
             self._drag_started = True
             new_value = float(event.xdata)
             # The frequency range is stored in canonical MHz, but the cursor is
-            # in the displayed field/relative unit — convert back before storing.
+            # in the displayed field/shift unit — convert back before storing.
             if self._is_frequency_plot_panel():
+                if (
+                    self._frequency_axis_mode == "relative_ppm"
+                    and self._active_reference_mhz() <= 0.0
+                ):
+                    return  # No reference to invert ppm → MHz; ignore the drag.
                 new_value = self._convert_display_limit_to_canonical_mhz(
                     new_value,
                     unit=self._current_frequency_x_unit,
-                    relative=self._frequency_axis_relative_to_reference,
+                    mode=self._frequency_axis_mode,
                 )
             if self._active_fit_handle == "min":
                 self._set_fit_range(new_value, self._fit_x_max, emit_signal=True, redraw=True)
@@ -6441,6 +6847,13 @@ class PlotPanel(QWidget):
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""
         if self._current_navigation_mode() != "none":
+            # A completed pan/zoom gesture is the user choosing a window, exactly
+            # like typing in a limit field: take control of the frame so later
+            # content switches and recomputes hold it instead of reframing over
+            # it. Only interactive gestures reach here — programmatic set_xlim
+            # routes through the xlim_changed callback (_on_axis_limits_changed),
+            # never button_release — so this never fires on a draw-driven change.
+            self._limits_user_locked = True
             return
 
         if self._active_fit_handle is not None:
@@ -6672,7 +7085,7 @@ class PlotPanel(QWidget):
         # Redraw current view while preserving multi-selection overlays.
         self._redraw_current_view()
 
-    def clear(self, *, message: str | None = None) -> None:
+    def clear(self, *, message: str | None = None, preserve_view_state: bool = False) -> None:
         """Clear the plot and reset stored data.
 
         When *message* is given, draw it as a centred grey placeholder over the
@@ -6681,6 +7094,15 @@ class PlotPanel(QWidget):
         panel passes a message to prompt the user to compute a spectrum (an FFT
         is computed on demand, never automatically); every other caller leaves
         *message* ``None`` and gets an unchanged blank plot.
+
+        *preserve_view_state* keeps the frame latches (``_limits_initialized``,
+        ``_limits_user_locked``, ``_framed_identity``) rather than resetting
+        them. It is for *transient* empty states — browsing past an uncomputed
+        run, or an empty-spectrum render — where the blank is momentary and the
+        user's chosen window must survive to the next compute. Genuine teardown
+        (project close/new, dataset removal) leaves it ``False`` so a fresh view
+        reframes from scratch. It does not touch the spin *fields*, which clear()
+        never reset; callers re-apply the preserved limits explicitly.
         """
         if self._has_mpl:
             self._set_canvas_minimum_height_for_axes(1)
@@ -6704,9 +7126,10 @@ class PlotPanel(QWidget):
             self._fit_components_by_key = {}
             self._fit_metadata = {}
             self._fit_metadata_by_key = {}
-            self._limits_initialized = False
-            self._limits_user_locked = False
-            self._framed_identity = None
+            if not preserve_view_state:
+                self._limits_initialized = False
+                self._limits_user_locked = False
+                self._framed_identity = None
             self._last_plot_time = None
             self._last_plot_asymmetry = None
             self._last_plot_error = None
@@ -7000,10 +7423,15 @@ class PlotPanel(QWidget):
             # uses so the recorded unit can never disagree with the plotted x.
             if is_frequency:
                 x_label, y_label = self._axis_labels_for_dataset(dataset, None)
-                payload["x_display"] = self._convert_frequency_axis_for_display(analysis.time)
+                # Per-dataset x transform: a shift-mode overlay exports each trace
+                # shifted about its OWN reference, mirroring the on-screen render.
+                payload["x_display"] = self._convert_frequency_axis_for_display(
+                    analysis.time, dataset
+                )
                 payload["x_label"] = x_label
                 payload["y_label"] = y_label
                 payload["x_unit"] = self._current_frequency_x_unit
+                payload["axis_mode"] = self._frequency_axis_mode
                 # A unit-area density exports on its displayed footing: y values,
                 # errors, and fit/component curves all carry the same dν/dB
                 # Jacobian the on-screen render applies, and the sidecar names
@@ -7036,7 +7464,6 @@ class PlotPanel(QWidget):
                     )
                     payload["density_unit"] = effective_unit
                 payload["is_correlation"] = bool(self._frequency_axis_is_correlation)
-                payload["relative_to_reference"] = bool(self._frequency_axis_relative_to_reference)
                 reference_gauss = reference_field_gauss(run, dataset)
                 if reference_gauss is not None:
                     payload["reference_field_gauss"] = float(reference_gauss)
@@ -7047,7 +7474,9 @@ class PlotPanel(QWidget):
                     and isinstance(dataset.metadata[key], (str, int, float, bool))
                 }
                 if fit_payload is not None:
-                    fit_payload["x_display"] = self._convert_frequency_axis_for_display(t_fit)
+                    fit_payload["x_display"] = self._convert_frequency_axis_for_display(
+                        t_fit, dataset
+                    )
             # Mirror the waterfall stack the current render actually drew: the
             # offset comes from the per-dataset draw record, never from the
             # checkbox, so a non-stacked view (single run, grouped subplots,
@@ -7292,9 +7721,11 @@ class PlotPanel(QWidget):
             f.write("!\n")
             if payload.get("domain") == "frequency":
                 x_unit = str(payload.get("x_unit", "frequency_mhz"))
-                x_column = _FREQUENCY_X_COLUMN_NAME.get(x_unit, "frequency_MHz")
-                if payload.get("is_correlation"):
-                    x_column = "coupling_MHz"
+                x_column = self._frequency_x_column_name(
+                    x_unit,
+                    str(payload.get("axis_mode", "absolute")),
+                    bool(payload.get("is_correlation")),
+                )
                 x_display = fit.get("x_display")
                 x_fit = (
                     np.asarray(x_display, dtype=float)
@@ -7553,6 +7984,17 @@ class PlotPanel(QWidget):
                     continue
                 f.write(f"{tf:.10g} {float(y_val):.10g} {float(e_val):.10g}\n")
 
+    @staticmethod
+    def _frequency_x_column_name(x_unit: str, axis_mode: str, is_correlation: bool) -> str:
+        """Return the self-describing ``.dat`` x-column name for the display mode."""
+        if is_correlation:
+            return "coupling_MHz"
+        if axis_mode == "relative_ppm":
+            return "relative_shift_ppm"
+        if axis_mode == "shift":
+            return _FREQUENCY_SHIFT_X_COLUMN_NAME.get(x_unit, "shift_MHz")
+        return _FREQUENCY_X_COLUMN_NAME.get(x_unit, "frequency_MHz")
+
     def _write_frequency_data_body(
         self,
         f,
@@ -7587,11 +8029,18 @@ class PlotPanel(QWidget):
         )
 
         x_unit = str(payload.get("x_unit", "frequency_mhz"))
+        axis_mode = str(payload.get("axis_mode", "absolute"))
         is_correlation = bool(payload.get("is_correlation"))
-        x_column = _FREQUENCY_X_COLUMN_NAME.get(x_unit, "frequency_MHz")
+        x_column = self._frequency_x_column_name(x_unit, axis_mode, is_correlation)
+        # Shift/ppm columns are not self-describing on their own (they need the
+        # reference), so always keep the canonical frequency_MHz column beside
+        # them; absolute field columns keep it only when the unit differs from MHz.
         if is_correlation:
-            x_column = "coupling_MHz"
-        include_mhz = x_unit in ("field_gauss", "field_tesla") and not is_correlation
+            include_mhz = False
+        elif axis_mode in ("shift", "relative_ppm"):
+            include_mhz = True
+        else:
+            include_mhz = x_unit in ("field_gauss", "field_tesla")
 
         x_label = str(payload.get("x_label") or self._display_x_label())
         y_label = str(payload.get("y_label") or "FFT (%)")
@@ -7623,6 +8072,7 @@ class PlotPanel(QWidget):
                 f.write(f"!  {key}: {fourier_metadata[key]}\n")
         f.write(f"!  Display mode: {y_label}\n")
         f.write(f"!  X unit: {x_unit}\n")
+        f.write(f"!  Axis mode: {axis_mode}\n")
         if density_unit is not None:
             f.write(
                 f"!  Density unit: {_DENSITY_COLUMN_NAME.get(str(density_unit), str(density_unit))}\n"
@@ -7630,9 +8080,6 @@ class PlotPanel(QWidget):
         reference_gauss = payload.get("reference_field_gauss")
         if reference_gauss is not None:
             f.write(f"!  Reference field: {float(reference_gauss):.4g} G\n")
-        f.write(
-            f"!  X relative to reference: {bool(payload.get('relative_to_reference', False))}\n"
-        )
         f.write("! END OF FOURIER INFORMATION\n")
 
         column_names = [x_column, amplitude_column, "error"]
@@ -8171,9 +8618,12 @@ class PlotPanel(QWidget):
 
         if self._is_frequency_plot_panel():
             state["frequency_x_unit"] = self._current_frequency_x_unit
-            state["frequency_axis_relative_to_reference"] = bool(
-                self._frequency_axis_relative_to_reference
-            )
+            state["frequency_axis_mode"] = self._frequency_axis_mode
+            state["frequency_reference_mode"] = self._frequency_reference_mode
+            if self._frequency_common_reference_mhz is not None:
+                state["frequency_common_reference_mhz"] = float(
+                    self._frequency_common_reference_mhz
+                )
             state["frequency_x_limits_by_unit"] = {
                 unit: [float(limits[0]), float(limits[1])]
                 for unit, limits in self._frequency_x_limits_by_unit.items()
@@ -8329,23 +8779,28 @@ class PlotPanel(QWidget):
         self._refresh_log_counts_visibility()
 
         if self._is_frequency_plot_panel():
+            # Valid per-mode limit-stash keys: absolute/shift keyed on unit, ppm
+            # unit-independent. Bare-unit keys are a pre-mode legacy shape; the
+            # ``:relative`` keys are the retired old relative axis (view state,
+            # discarded — new limits reframe cleanly).
+            valid_stash_keys = {
+                "frequency_mhz",
+                "field_gauss",
+                "field_tesla",
+                "frequency_mhz:absolute",
+                "field_gauss:absolute",
+                "field_tesla:absolute",
+                "frequency_mhz:shift",
+                "field_gauss:shift",
+                "field_tesla:shift",
+                "relative_ppm",
+            }
             self._frequency_x_limits_by_unit = {}
             raw_limits_by_unit = state.get("frequency_x_limits_by_unit", {})
             if isinstance(raw_limits_by_unit, dict):
                 for raw_unit, raw_limits in raw_limits_by_unit.items():
                     if (
-                        raw_unit
-                        not in {
-                            "frequency_mhz",
-                            "field_gauss",
-                            "field_tesla",
-                            "frequency_mhz:absolute",
-                            "frequency_mhz:relative",
-                            "field_gauss:absolute",
-                            "field_gauss:relative",
-                            "field_tesla:absolute",
-                            "field_tesla:relative",
-                        }
+                        raw_unit not in valid_stash_keys
                         or not isinstance(raw_limits, (list, tuple))
                         or len(raw_limits) != 2
                     ):
@@ -8361,21 +8816,31 @@ class PlotPanel(QWidget):
             if restored_unit not in {"frequency_mhz", "field_gauss", "field_tesla"}:
                 restored_unit = "frequency_mhz"
             self._current_frequency_x_unit = restored_unit
-            self._frequency_axis_relative_to_reference = bool(
-                state.get("frequency_axis_relative_to_reference", False)
-            )
-            if hasattr(self, "_frequency_x_unit_combo"):
-                idx = self._frequency_x_unit_combo.findData(restored_unit)
-                if idx >= 0:
-                    previous = self._frequency_x_unit_combo.blockSignals(True)
-                    self._frequency_x_unit_combo.setCurrentIndex(idx)
-                    self._frequency_x_unit_combo.blockSignals(previous)
-            if hasattr(self, "_frequency_axis_relative_check"):
-                prev = self._frequency_axis_relative_check.blockSignals(True)
-                self._frequency_axis_relative_check.setChecked(
-                    self._frequency_axis_relative_to_reference
-                )
-                self._frequency_axis_relative_check.blockSignals(prev)
+
+            # Axis mode: prefer the new key; migrate a legacy relative boolean
+            # (schema < 16, or a defensive read) to "shift" + "common" reference.
+            restored_mode = state.get("frequency_axis_mode")
+            restored_reference_mode = state.get("frequency_reference_mode")
+            if restored_mode is None:
+                legacy_relative = bool(state.get("frequency_axis_relative_to_reference", False))
+                restored_mode = "shift" if legacy_relative else "absolute"
+                if legacy_relative and restored_reference_mode is None:
+                    restored_reference_mode = "common"
+            if str(restored_mode) not in _FREQUENCY_AXIS_MODES:
+                restored_mode = "absolute"
+            self._frequency_axis_mode = str(restored_mode)
+            if str(restored_reference_mode) not in _FREQUENCY_REFERENCE_MODES:
+                restored_reference_mode = "run"
+            self._frequency_reference_mode = str(restored_reference_mode)
+
+            common_reference = state.get("frequency_common_reference_mhz")
+            if common_reference is not None:
+                try:
+                    self._frequency_common_reference_mhz = float(common_reference)
+                except (TypeError, ValueError):
+                    self._frequency_common_reference_mhz = None
+
+            self._sync_frequency_axis_controls()
             self._apply_axis_labels(
                 *self._axis_labels_for_dataset(dataset, self._current_polarization_axis)
             )

@@ -728,7 +728,8 @@ class FourierPanel(QWidget):
         self._fft_btn = self._action_footer.add_primary("Compute FFT")
         self._fft_btn.setToolTip(
             "Compute FFTs for every run selected in the Data Browser using the "
-            "current settings. Each run keeps its own groups and phases."
+            "current settings. The Groups table's enabled groups apply to every "
+            "run; phases stay per-run."
         )
         return self._action_footer
 
