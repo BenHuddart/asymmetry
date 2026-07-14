@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.fourier.units import (
+    PPM_SCALE,
     FieldUnit,
     axis_label,
     convert,
@@ -14,6 +15,10 @@ from asymmetry.core.fourier.units import (
     gauss_to_tesla,
     mhz_to_gauss,
     mhz_to_tesla,
+    relative_shift_axis_label,
+    relative_shift_ppm,
+    shift_axis_label,
+    shift_from_reference,
     tesla_to_mhz,
 )
 from asymmetry.core.utils.constants import (
@@ -70,6 +75,50 @@ def test_converters_are_array_friendly() -> None:
     out = mhz_to_gauss(arr)
     assert out.shape == arr.shape
     np.testing.assert_allclose(gauss_to_mhz(out), arr, atol=1e-12)
+
+
+def test_shift_from_reference_subtracts_reference() -> None:
+    values = np.array([10.0, 20.0, 30.0])
+    np.testing.assert_allclose(shift_from_reference(values, 20.0), [-10.0, 0.0, 10.0])
+    # Scalar input works and the shift is zero at the reference itself.
+    assert float(shift_from_reference(20.0, 20.0)) == pytest.approx(0.0)
+
+
+def test_shift_converts_linearly_to_field() -> None:
+    # ν − ν₀ in MHz is B − B₀ once unit-converted (the γ factor is linear).
+    ref_mhz = gauss_to_mhz(1000.0)
+    line_mhz = gauss_to_mhz(1005.0)
+    shift_mhz = shift_from_reference(line_mhz, float(ref_mhz))
+    assert float(convert(shift_mhz, "mhz", "gauss")) == pytest.approx(5.0)
+
+
+def test_relative_shift_ppm() -> None:
+    ref = 100.0
+    # (101 − 100)/100 = 0.01 → 10000 ppm.
+    assert float(relative_shift_ppm(101.0, ref)) == pytest.approx(0.01 * PPM_SCALE)
+    np.testing.assert_allclose(
+        relative_shift_ppm(np.array([100.0, 100.001]), ref),
+        [0.0, 0.001 / 100.0 * PPM_SCALE],
+    )
+    # Dimensionless: reading the same physical shift as fields gives the same ppm.
+    ref_mhz = gauss_to_mhz(1000.0)
+    line_mhz = gauss_to_mhz(1001.0)
+    assert float(relative_shift_ppm(line_mhz, float(ref_mhz))) == pytest.approx(
+        float(relative_shift_ppm(1001.0, 1000.0))
+    )
+
+
+@pytest.mark.parametrize("bad_ref", [0.0, -1.0, float("nan"), float("inf")])
+def test_relative_shift_ppm_rejects_non_positive_reference(bad_ref: float) -> None:
+    with pytest.raises(ValueError, match="positive and finite"):
+        relative_shift_ppm(1.0, bad_ref)
+
+
+def test_shift_axis_labels() -> None:
+    assert shift_axis_label("mhz") == "Frequency shift ν − ν₀ (MHz)"
+    assert shift_axis_label(FieldUnit.GAUSS) == "Field shift B − B₀ (G)"
+    assert shift_axis_label("tesla") == "Field shift B − B₀ (T)"
+    assert relative_shift_axis_label() == "Relative shift (B − B₀)/B₀ (ppm)"
 
 
 @pytest.mark.parametrize("bad_ratio", [0.0, -1.0, float("nan"), float("inf")])

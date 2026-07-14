@@ -592,6 +592,37 @@ A precession line at frequency ν corresponds to a local field B through
 Tesla) without recomputing — handy when the science is a field distribution
 (a vortex lattice, an internal-field spread) rather than a frequency.
 
+Shift axes
+~~~~~~~~~~~
+
+Next to **X Units** is an **Axis:** selector with three modes that transform the
+plotted spectrum itself (not just the axis labels):
+
+- **Absolute** — the measured frequency/field, in the selected **X Units**.
+- **Shift (x − x₀)** — each spectrum minus its reference field, shown in the
+  selected unit (MHz, G, or T; the Larmor relation is linear, so a frequency
+  shift is a field shift once unit-converted). The axis is labelled, for example,
+  ``Field shift B − B₀ (G)``.
+- **Relative shift (ppm)** — the dimensionless fractional shift
+  (x − x₀)/x₀ × 10⁶, in parts per million (identical for frequency and field, so
+  the **X Units** selector is inert here). The axis is labelled
+  ``Relative shift (B − B₀)/B₀ (ppm)``.
+
+The **Ref.:** selector (enabled in the shift modes) chooses the reference x₀:
+
+- **Run field** (the default) — each spectrum uses **its own** applied field from
+  the run/dataset metadata. This is the point of the feature: overlay several
+  transverse-field runs measured at *different* applied fields and, in
+  **Shift (x − x₀)**, every line snaps to zero shift so a paramagnetic or Knight
+  shift between them reads at a glance. A run with no field metadata is drawn
+  untransformed (at its absolute position) and a note is logged, rather than
+  dropped.
+- **Common** — every spectrum shifts by the single value in the Gauss box, seeded
+  from the active run's field and freely overridable.
+
+The reference field is not fitted here; the shift axes are a display transform for
+reading and overlaying spectra.
+
 Calibration: phases, deadtime, and ZF/LF mode
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -976,11 +1007,10 @@ view, so the cue is always where you are looking. The current x-range is
 preserved across the switch. (The MaxEnt spectrum tab is unchanged: it is
 compute-on-demand, with its own *"No MaxEnt spectrum computed…"* prompt.)
 
-The frequency viewer keeps canonical FFT x-data in absolute MHz or Gauss on the
-axis itself. The main toolbar also provides an ``FFT X relative to field``
-toggle, which recentres the x-limit controls around the applied
-field/frequency of the selected run while leaving the plotted tick labels in
-absolute units.
+The frequency viewer stores canonical FFT x-data in absolute MHz; the **X
+Units** and **Axis:** selectors above the plot choose how it is displayed
+(absolute, shift, or ppm — see *Shift axes* above). In the shift modes the plot,
+the tick labels, and the x-limit boxes all share one reference-shifted scale.
 
 Exporting the spectrum
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -991,20 +1021,21 @@ data (text)…`` (the sidecar files alone). On the frequency tab both mirror wha
 is on screen rather than the time-domain idiom:
 
 - **Display units and window.** The x column and the exported axis window are
-  written in the current display unit — MHz, Field (G), or Field (T) — and, with
-  ``FFT X relative to field`` on, in the same reference-shifted window the
-  toolbar shows. Real axis titles (for example ``Field (G)`` and
-  ``FFT Magnitude (a.u.)``) replace the time-domain labels.
+  written in the current display mode — MHz, Field (G/T), a shift (``shift_G``…),
+  or ``relative_shift_ppm`` — matching the on-screen axis. Real axis titles (for
+  example ``Field shift B − B₀ (G)`` and ``FFT Magnitude (a.u.)``) replace the
+  time-domain labels.
 - **Line and band.** A spectrum draws as a solid piecewise-linear line plus a
   light shaded ±1σ band behind it, matching the screen (GLE has no fill
   transparency, so the band compiles as a light tint of the series colour);
   the band is omitted when the spectrum carries no per-point errors.
 - **Self-describing sidecars.** Each ``.dat`` names its columns in the header
-  (for example ``field_G  amplitude  error  frequency_MHz``) and keeps the
+  (for example ``shift_G  amplitude  error  frequency_MHz``) and keeps the
   canonical ``frequency_MHz`` axis as a trailing column whenever the display
-  unit is not MHz, so the raw spectrum is always recoverable. A
-  ``START OF FOURIER INFORMATION`` block records the display mode, apodisation
-  and zero-pad settings, the reference field, and the relative-axis flag.
+  differs from absolute MHz — including every shift/ppm export — so the raw
+  spectrum is always recoverable. A ``START OF FOURIER INFORMATION`` block
+  records the display mode, apodisation and zero-pad settings, the axis mode, and
+  each spectrum's own reference field.
 
 References
 ----------

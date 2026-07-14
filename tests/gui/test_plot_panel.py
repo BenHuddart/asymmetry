@@ -866,7 +866,7 @@ class TestPlotPanel:
             panel.deleteLater()
 
     def test_frequency_field_seed_skipped_on_relative_axis(self, qapp: QApplication) -> None:
-        """On the reference-relative axis the expected line sits at ~0 — no seed."""
+        """On a shift axis the expected line sits at ~0 — no field-upper seed."""
         panel = PlotPanel(domain="frequency")
         try:
             if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -880,7 +880,7 @@ class TestPlotPanel:
             )
             panel._current_dataset = ds
             panel._current_datasets = [ds]
-            panel._frequency_axis_relative_to_reference = True
+            panel._frequency_axis_mode = "shift"
             assert panel._frequency_field_upper_bound(ds.time) is None
         finally:
             panel.close()
@@ -990,8 +990,61 @@ class TestPlotPanel:
             freqs = np.linspace(0.0, 1300.0, 13001)
             values = np.ones_like(freqs)
             values[8130] = 5.0e3
-            panel._frequency_axis_relative_to_reference = True
+            panel._frequency_axis_mode = "shift"
             assert panel._frequency_centered_window(freqs, values) is None
+        finally:
+            panel.close()
+            panel.deleteLater()
+
+    def test_interactive_zoom_in_shift_mode_drops_toggles_and_locks(
+        self, qapp: QApplication
+    ) -> None:
+        """The #254 gesture contract holds unchanged on a shift axis.
+
+        The shift-mode plotted axis IS the display axis (identity limit-box
+        mapping), so a rubber-band zoom while a shift mode is active must behave
+        exactly like absolute mode: the mid-drag limit callback drops the Auto
+        toggles, button release sets ``_limits_user_locked``, and the zoomed
+        shift-space window survives the next auto-limits pass.
+        """
+        panel = PlotPanel(domain="frequency")
+        try:
+            if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+                pytest.skip("matplotlib not available")
+
+            center = 100.0 * 135.538817 * 1.0e-4
+            ds = MuonDataset(
+                time=np.linspace(center - 3.0, center + 3.0, 61),
+                asymmetry=np.exp(
+                    -((np.linspace(center - 3.0, center + 3.0, 61) - center) ** 2) / 0.18
+                ),
+                error=np.zeros(61),
+                metadata={"run_number": 6401, "field": 100.0, "plot_domain": "frequency"},
+            )
+            panel.set_frequency_axis_mode("shift")
+            panel.plot_dataset(ds)
+            panel._auto_x_btn.setChecked(True)
+            panel._auto_y_btn.setChecked(True)
+
+            panel._zoom_btn.click()
+            assert panel._current_navigation_mode() == "zoom"
+            panel._ax.set_xlim(-0.5, 0.5)
+            panel._canvas.draw()
+
+            # Mid-drag: toggles drop; lock waits for the gesture end.
+            assert not panel._auto_x_btn.isChecked()
+            assert not panel._auto_y_btn.isChecked()
+            assert panel._limits_user_locked is False
+
+            panel._on_canvas_button_release(SimpleNamespace(button=1))
+            assert panel._limits_user_locked is True
+
+            # The zoomed shift-space window survives the auto-limits pass, and
+            # the limit boxes read the same (identity) shift values.
+            panel._apply_auto_limits_if_enabled()
+            assert panel._ax.get_xlim() == pytest.approx((-0.5, 0.5))
+            assert panel._x_min.value() == pytest.approx(-0.5)
+            assert panel._x_max.value() == pytest.approx(0.5)
         finally:
             panel.close()
             panel.deleteLater()

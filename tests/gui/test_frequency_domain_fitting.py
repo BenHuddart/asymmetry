@@ -362,7 +362,7 @@ def test_frequency_fit_range_drag_converts_field_units_to_mhz(qapp) -> None:
 
     # Drag the min handle to the Gauss position for 2.5 MHz; it must store MHz.
     gauss_2p5 = panel._convert_canonical_mhz_to_display_limit(
-        2.5, unit="field_gauss", relative=False
+        2.5, unit="field_gauss", mode="absolute"
     )
     panel._active_fit_handle = "min"
     panel._on_canvas_motion_notify(SimpleNamespace(xdata=gauss_2p5, inaxes=panel._ax))

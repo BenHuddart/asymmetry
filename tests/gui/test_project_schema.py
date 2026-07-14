@@ -225,7 +225,52 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 15
+        assert CURRENT_SCHEMA_VERSION == 16
+
+    def test_v15_migrates_to_v16_frequency_axis_mode(self):
+        # v16 replaces the frequency relative-axis boolean with a real axis mode
+        # + reference mode. The old flag ON → shift about a common reference; the
+        # retired ``:relative`` limit-stash keys are dropped.
+        state = {
+            "schema_version": 15,
+            "datasets": [],
+            "plot_state": {
+                "frequency_plot_state": {
+                    "plot_panel_domain": "frequency",
+                    "frequency_x_unit": "field_gauss",
+                    "frequency_axis_relative_to_reference": True,
+                    "frequency_x_limits_by_unit": {
+                        "field_gauss:absolute": [0.0, 100.0],
+                        "field_gauss:relative": [-50.0, 50.0],
+                    },
+                }
+            },
+        }
+        result = migrate_to_current(state)
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
+        freq = result["plot_state"]["frequency_plot_state"]
+        assert freq["frequency_axis_mode"] == "shift"
+        assert freq["frequency_reference_mode"] == "common"
+        assert "frequency_axis_relative_to_reference" not in freq
+        # The retired :relative stash key is dropped; the absolute one is kept.
+        assert "field_gauss:relative" not in freq["frequency_x_limits_by_unit"]
+        assert "field_gauss:absolute" in freq["frequency_x_limits_by_unit"]
+
+    def test_v15_migrates_to_v16_absolute_default_when_flag_off(self):
+        state = {
+            "schema_version": 15,
+            "datasets": [],
+            "plot_state": {
+                "frequency_plot_state": {
+                    "plot_panel_domain": "frequency",
+                    "frequency_x_unit": "frequency_mhz",
+                }
+            },
+        }
+        result = migrate_to_current(state)
+        freq = result["plot_state"]["frequency_plot_state"]
+        assert freq["frequency_axis_mode"] == "absolute"
+        assert freq["frequency_reference_mode"] == "run"
 
     def test_v13_migrates_to_v14_adds_waterfall_defaults(self):
         # v14 adds a per-plot-panel waterfall block, disabled/auto by default,

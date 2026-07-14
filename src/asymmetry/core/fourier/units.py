@@ -150,6 +150,52 @@ def axis_label(unit: FieldUnit | str) -> str:
     }[FieldUnit.coerce(unit)]
 
 
+#: Scale factor turning a dimensionless fractional shift into parts-per-million,
+#: matching the Knight-shift ppm convention in ``core.fitting.knight_shift``.
+PPM_SCALE = 1.0e6
+
+
+def shift_from_reference(x_mhz: ArrayLike, reference_mhz: float) -> NDArray[np.float64]:
+    """Return the absolute shift ``x − x₀`` (in MHz) about a reference.
+
+    The Larmor relation ν = γ B / 2π is linear, so the MHz shift converts to a
+    field shift (Gauss / Tesla) by the same :func:`convert` scaling downstream —
+    a ``ν − ν₀`` in MHz is a ``B − B₀`` in field once unit-converted.
+    """
+    return np.asarray(x_mhz, dtype=float) - float(reference_mhz)
+
+
+def relative_shift_ppm(x_mhz: ArrayLike, reference_mhz: float) -> NDArray[np.float64]:
+    """Return the fractional shift ``(x − x₀)/x₀`` in ppm about a reference.
+
+    The result is dimensionless (identical whether *x* and *reference* are read
+    as frequencies or fields, since the γ factor cancels), scaled to
+    parts-per-million by :data:`PPM_SCALE`. This mirrors the Knight-shift
+    fractional convention (Blundell et al., *Muon Spectroscopy*, OUP 2022,
+    §5.6). *reference_mhz* is a denominator, so a non-positive or non-finite
+    reference is rejected — the caller (GUI) checks first and routes a missing
+    reference to its untransformed fallback rather than emitting ``inf``/``nan``.
+    """
+    ref = float(reference_mhz)
+    if not np.isfinite(ref) or ref <= 0.0:
+        raise ValueError(f"reference_mhz must be positive and finite for a ppm shift, got {ref!r}.")
+    return (np.asarray(x_mhz, dtype=float) - ref) / ref * PPM_SCALE
+
+
+def shift_axis_label(unit: FieldUnit | str) -> str:
+    """Return a plot-axis label for an absolute-shift (``x − x₀``) axis."""
+    return {
+        FieldUnit.MHZ: "Frequency shift ν − ν₀ (MHz)",
+        FieldUnit.GAUSS: "Field shift B − B₀ (G)",
+        FieldUnit.TESLA: "Field shift B − B₀ (T)",
+    }[FieldUnit.coerce(unit)]
+
+
+def relative_shift_axis_label() -> str:
+    """Return the plot-axis label for the dimensionless ppm relative-shift axis."""
+    return "Relative shift (B − B₀)/B₀ (ppm)"
+
+
 def frequency_resolution_mhz(bin_width_us: float, n_spectrum_points: int) -> float:
     """Return the spectrum frequency resolution 1/(2·Δt·N) in MHz.
 
