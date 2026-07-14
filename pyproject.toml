@@ -37,13 +37,14 @@ gui = [
     "PySide6>=6.5,<6.11",
     "matplotlib>=3.7,<3.11",
 ]
-# Tag-pinned: v1.6.1 carries the editor embedding API the in-app GLE figure
-# editor requires (v1.6.0) plus the parser fix for unquoted data filenames
-# with digits/hyphens/paths — without it the editor's preview fails on
-# exported figures whose sidecar names start with a run number. Asymmetry
-# feature-detects, so an older gleplot degrades to the static preview — but
-# builds should be reproducible, so pin the tag and bump deliberately.
-gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git@v1.6.1"]
+# Tag-pinned: v1.7.0 adds the per-series ``offset=`` API used to stack a
+# waterfall overlay in the GLE script (a ``let``) instead of baking it into the
+# exported .dat/.fit data; it builds on v1.6's editor embedding API and the
+# unquoted-filename parser fix. Asymmetry feature-detects the offset support, so
+# an older gleplot still works (it falls back to baking the offset into the
+# written data) — but builds should be reproducible, so pin the tag and bump
+# deliberately.
+gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git@v1.7.0"]
 hdf5 = ["h5py>=3.8,<4"]
 hdf4 = ["pyhdf>=0.10,<1"]  # legacy ISIS muon NeXus v1 in an HDF4 container
 root = ["uproot>=5.0,<6"]
