@@ -1578,15 +1578,6 @@ class MainWindow(QMainWindow):
             return
         self._apply_bunch_factor_to_context(bunch_factor)
 
-    def _set_frequency_axis_relative_check(self, enabled: bool) -> None:
-        """Synchronize the frequency-axis checkbox without re-entry."""
-        check = getattr(self, "_frequency_axis_relative_check", None)
-        if check is None:
-            return
-        previous = check.blockSignals(True)
-        check.setChecked(bool(enabled))
-        check.blockSignals(previous)
-
     def _on_plot_view_limits_changed(
         self,
         x_min: float,
@@ -1651,9 +1642,6 @@ class MainWindow(QMainWindow):
         self._plot_workspace.active_domain_changed.connect(self._on_plot_workspace_domain_changed)
         if hasattr(self._plot_workspace, "active_view_changed"):
             self._plot_workspace.active_view_changed.connect(self._on_plot_workspace_view_changed)
-        self._frequency_axis_relative_check = getattr(
-            self._frequency_plot_panel, "_frequency_axis_relative_check", None
-        )
         self.setCentralWidget(self._plot_workspace)
 
         # Left dock — data browser / logbook
@@ -15213,8 +15201,10 @@ class MainWindow(QMainWindow):
         self._plot_workspace.clear()
         if hasattr(self._frequency_plot_panel, "_frequency_x_unit_combo"):
             self._frequency_plot_panel._frequency_x_unit_combo.setCurrentIndex(0)
-        if hasattr(self._frequency_plot_panel, "set_frequency_axis_relative_to_reference"):
-            self._frequency_plot_panel.set_frequency_axis_relative_to_reference(False)
+        if hasattr(self._frequency_plot_panel, "set_frequency_axis_mode"):
+            self._frequency_plot_panel.set_frequency_axis_mode("absolute")
+        if hasattr(self._frequency_plot_panel, "_frequency_reference_mode_combo"):
+            self._frequency_plot_panel._frequency_reference_mode_combo.setCurrentIndex(0)
         if hasattr(self._fit_panel, "clear"):
             self._fit_panel.clear()
         else:
