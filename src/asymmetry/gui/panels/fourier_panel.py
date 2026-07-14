@@ -379,6 +379,7 @@ class FourierPanel(QWidget):
         for check in (
             self._subtract_average_signal_check,
             self._estimate_average_error_check,
+            self._unit_area_check,
             self._use_phase_table_check,
             self._pulse_comp_check,
             self._exclude_enabled_check,
@@ -637,6 +638,19 @@ class FourierPanel(QWidget):
         self._estimate_average_error_check.setText("Average errors")
         self._estimate_average_error_check.setToolTip("Estimate errors for averaged spectra.")
         fft_settings_form.addRow(self._estimate_average_error_check)
+
+        # Display normalisation: present the calibrated magnitude spectrum as a
+        # field distribution p(ν) integrating to 1 (noise floor fitted and
+        # subtracted first). Magnitude-family displays only; refused with a note
+        # for phase/real displays or a spectrum that is pure noise.
+        self._unit_area_check = QCheckBox("Unit area (field distribution)")
+        self._unit_area_check.setToolTip(
+            "Present the magnitude spectrum as a field distribution p(ν) that "
+            "integrates to 1: the noise floor is fitted and subtracted, then the "
+            "residual is normalised to unit area. Applies to the Magnitude, "
+            "(Power)^1/2 and Power displays."
+        )
+        fft_settings_form.addRow(self._unit_area_check)
 
         self._average_summary_label = QLabel("")
         self._average_summary_label.setWordWrap(True)
@@ -1496,6 +1510,9 @@ class FourierPanel(QWidget):
             "phase_degrees": self._phase_value(),
             "t0_offset_us": self._t0_offset_value(),
             "display": self._current_display_mode(),
+            "display_normalisation": (
+                "unit_area" if self._unit_area_check.isChecked() else "calibrated"
+            ),
             "subtract_average_signal": self._subtract_average_signal_check.isChecked(),
             "auto_phase_method": self._auto_method_combo.currentText(),
             "use_phase_table": self._use_phase_table_check.isChecked(),
@@ -1563,6 +1580,9 @@ class FourierPanel(QWidget):
                 t0_offset_us = 0.0
             self._t0_offset_spin.setText(self._format_float_text(t0_offset_us))
             self._set_display_mode(state.get("display", "(Power)^1/2"))
+            self._unit_area_check.setChecked(
+                str(state.get("display_normalisation", "calibrated")).lower() == "unit_area"
+            )
             self._subtract_average_signal_check.setChecked(
                 bool(state.get("subtract_average_signal", True))
             )

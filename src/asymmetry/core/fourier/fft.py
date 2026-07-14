@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -67,22 +69,21 @@ def _normalize_phase_degrees(value: float) -> float:
     return wrapped
 
 
-def _subtract_average_signal(
+def _weighted_average_signal(
     signal: NDArray[np.float64],
     error: NDArray[np.float64] | None = None,
-) -> NDArray[np.float64]:
-    """Return ``signal`` with its WiMDA-style average removed.
+) -> float:
+    """Return the WiMDA-style error-weighted mean of *signal* over finite bins.
 
-    WiMDA subtracts an error-weighted average before filtering and FFT. Its
-    implementation uses weights proportional to ``1 / error``. When no usable
-    errors are available, fall back to the finite arithmetic mean.
+    WiMDA weights each bin by ``1 / error`` (proportional to counts) when usable
+    errors are available; otherwise it falls back to the finite arithmetic mean.
+    Returns NaN only when the signal has no finite samples at all.
     """
-    values = np.asarray(signal, dtype=np.float64).copy()
+    values = np.asarray(signal, dtype=np.float64)
     finite_mask = np.isfinite(values)
     if not np.any(finite_mask):
-        return values
+        return float("nan")
 
-    average = 0.0
     if error is not None:
         err = np.asarray(error, dtype=np.float64)
         if err.shape == values.shape:
@@ -91,16 +92,45 @@ def _subtract_average_signal(
             weights[valid_weights] = 1.0 / err[valid_weights]
             weight_sum = float(np.sum(weights[valid_weights], dtype=np.float64))
             if weight_sum > 0.0:
-                average = float(np.sum(weights * values, dtype=np.float64) / weight_sum)
-            else:
-                average = float(np.mean(values[finite_mask], dtype=np.float64))
-        else:
-            average = float(np.mean(values[finite_mask], dtype=np.float64))
-    else:
-        average = float(np.mean(values[finite_mask], dtype=np.float64))
+                return float(np.sum(weights * values, dtype=np.float64) / weight_sum)
+    return float(np.mean(values[finite_mask], dtype=np.float64))
 
-    values[finite_mask] -= average
+
+def _subtract_average_signal(
+    signal: NDArray[np.float64],
+    error: NDArray[np.float64] | None = None,
+) -> NDArray[np.float64]:
+    """Return ``signal`` with its WiMDA-style average removed.
+
+    WiMDA subtracts an error-weighted average before filtering and FFT (see
+    :func:`_weighted_average_signal`).
+    """
+    values = np.asarray(signal, dtype=np.float64).copy()
+    finite_mask = np.isfinite(values)
+    if not np.any(finite_mask):
+        return values
+    values[finite_mask] -= _weighted_average_signal(values, error)
     return values
+
+
+@dataclass
+class PreparedFFTSignal:
+    """Preprocessed FFT time-domain input plus the calibration it enables.
+
+    ``window_sum`` is the coherent gain of the apodisation actually applied over
+    the ``n`` populated (unpadded) samples — ``Σ wₙ`` — used by the amplitude
+    calibration (``2 / Σw``); with no apodisation it is exactly ``n``. When
+    fractional footing runs, ``fractional_baseline`` records the error-weighted
+    baseline ``N₀`` the signal was divided by, and ``fractional_applied`` is
+    true; the degenerate guard (non-positive/non-finite baseline) leaves the
+    signal on its raw footing with ``fractional_applied`` false.
+    """
+
+    signal: NDArray[np.float64]
+    dt: float
+    window_sum: float
+    fractional_baseline: float | None = None
+    fractional_applied: bool = False
 
 
 def prepare_fft_time_signal(
@@ -112,13 +142,20 @@ def prepare_fft_time_signal(
     subtract_average_signal: bool = True,
     filter_start_us: float = 0.0,
     filter_time_constant_us: float = 1.5,
-) -> tuple[NDArray[np.float64], float]:
-    """Return the preprocessed real time-domain signal and its bin width.
+    fractional: bool = False,
+) -> PreparedFFTSignal:
+    """Return the preprocessed real time-domain signal and its calibration.
 
-    Applies the time crop, WiMDA-style average subtraction, and the apodisation
-    filter/window — the exact preprocessing :func:`fft_complex_asymmetry` feeds to
-    the FFT, so an all-poles (Burg) estimate can share the same input.  Returns
-    ``(signal, dt_us)``.
+    Applies (in order) the time crop, optional fractional footing, WiMDA-style
+    average subtraction, and the apodisation filter/window — the exact
+    preprocessing :func:`fft_complex_asymmetry` feeds to the FFT, so an all-poles
+    (Burg) estimate can share the same input.
+
+    When ``fractional`` is set the signal (a lifetime-corrected count scale) and
+    its error are divided by the error-weighted baseline ``N₀`` so a
+    ``N₀·(1 + A·cos)`` signal becomes ``1 + A·cos``; the subsequent average
+    subtraction then removes the residual DC, leaving ``A·cos``.  This puts the
+    spectrum on a fractional-asymmetry footing invariant to counting statistics.
     """
     ds = dataset.time_range(t_min, t_max) if (t_min is not None or t_max is not None) else dataset
 
@@ -126,22 +163,47 @@ def prepare_fft_time_signal(
     error = np.asarray(ds.error, dtype=np.float64) if ds.error is not None else None
     dt = np.mean(np.diff(ds.time)) if len(ds.time) > 1 else 1.0
 
+    fractional_baseline: float | None = None
+    fractional_applied = False
+    if fractional:
+        baseline = _weighted_average_signal(signal, error)
+        if np.isfinite(baseline) and baseline > 0.0:
+            signal = signal / baseline
+            if error is not None:
+                error = error / baseline
+            fractional_baseline = float(baseline)
+            fractional_applied = True
+        # Degenerate baseline (empty/zero/negative mean): fall back to the raw
+        # footing rather than dividing by ~0. The caller stamps a note.
+
     if subtract_average_signal:
         signal = _subtract_average_signal(signal, error)
 
     window_key = str(window).strip().lower()
+    times = np.asarray(ds.time, dtype=np.float64)
     if window_key in {"none", "gaussian", "lorentzian"}:
-        signal = apply_fft_filter(
-            signal,
-            np.asarray(ds.time, dtype=np.float64),
+        weights = apply_fft_filter(
+            np.ones_like(signal),
+            times,
             mode=window_key,
             start_time_us=float(filter_start_us),
             time_constant_us=float(filter_time_constant_us),
         )
+        signal = signal * weights
     elif window_key != "none":
-        signal = apply_window(signal, window_key)
+        weights = apply_window(np.ones_like(signal), window_key)
+        signal = signal * weights
+    else:  # pragma: no cover - "none" is handled by the filter branch above
+        weights = np.ones_like(signal)
 
-    return signal, float(dt)
+    window_sum = float(np.sum(weights, dtype=np.float64))
+    return PreparedFFTSignal(
+        signal=signal,
+        dt=float(dt),
+        window_sum=window_sum,
+        fractional_baseline=fractional_baseline,
+        fractional_applied=fractional_applied,
+    )
 
 
 def fft_complex_asymmetry(
@@ -155,6 +217,9 @@ def fft_complex_asymmetry(
     subtract_average_signal: bool = True,
     filter_start_us: float = 0.0,
     filter_time_constant_us: float = 1.5,
+    fractional: bool = False,
+    amplitude_calibration: bool = False,
+    diagnostics: dict | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
     """Compute the phase-rotated complex FFT of the asymmetry signal.
 
@@ -183,13 +248,28 @@ def fft_complex_asymmetry(
     filter_time_constant_us
         WiMDA-style filter time constant in microseconds for ``"gaussian"`` and
         ``"lorentzian"`` FFT filtering.
+    fractional
+        When true, put the signal on a fractional-asymmetry footing by dividing
+        it (and its error) by the error-weighted baseline before averaging and
+        the FFT (see :func:`prepare_fft_time_signal`).
+    amplitude_calibration
+        When true, multiply the complex spectrum by the coherent-gain / percent
+        factor ``100 · 2 / Σw`` (``Σw`` the apodisation coherent gain over the
+        unpadded samples), so a pure cosine of fractional amplitude ``A`` peaks
+        at ``100·A`` in the magnitude spectrum — invariant to counting
+        statistics, window length, apodisation, and zero padding.
+    diagnostics
+        Optional mutable dict; when supplied it is populated with the
+        ``window_sum``, ``fractional_baseline``, ``fractional_applied`` and
+        ``amplitude_calibrated`` used, so callers can stamp provenance/guard
+        notes without a second pass.
 
     Returns
     -------
     frequencies, spectrum
         Frequency axis (MHz) and the complex, optionally phase-rotated spectrum.
     """
-    signal, dt = prepare_fft_time_signal(
+    prepared = prepare_fft_time_signal(
         dataset,
         window=window,
         t_min=t_min,
@@ -197,7 +277,9 @@ def fft_complex_asymmetry(
         subtract_average_signal=subtract_average_signal,
         filter_start_us=filter_start_us,
         filter_time_constant_us=filter_time_constant_us,
+        fractional=fractional,
     )
+    signal, dt = prepared.signal, prepared.dt
 
     n = len(signal)
     n_padded = n * max(padding_factor, 1)
@@ -205,9 +287,25 @@ def fft_complex_asymmetry(
     spectrum = np.fft.rfft(signal, n=n_padded)
     freqs = np.fft.rfftfreq(n_padded, d=dt)  # MHz (since dt is in µs)
 
+    # Coherent-gain / length / percent calibration is a single positive real
+    # scalar, so it commutes with the phase rotation and leaves every phase and
+    # angle-derived display mode correct.  Σw is taken over the unpadded samples
+    # (zero-padding contributes nothing), so the calibrated peak height is
+    # independent of the padding factor and the time-window length.  The DC and
+    # Nyquist bins strictly carry a 1/Σw one-sided gain rather than 2/Σw, but DC
+    # is removed by the average subtraction and test tones avoid Nyquist.
+    if amplitude_calibration and prepared.window_sum > 0.0:
+        spectrum = spectrum * (100.0 * 2.0 / prepared.window_sum)
+
     if phase_degrees or t0_offset_us:
         phase = np.deg2rad(float(phase_degrees)) + 2.0 * np.pi * freqs * float(t0_offset_us)
         spectrum = spectrum * np.exp(-1j * phase)
+
+    if diagnostics is not None:
+        diagnostics["window_sum"] = prepared.window_sum
+        diagnostics["fractional_baseline"] = prepared.fractional_baseline
+        diagnostics["fractional_applied"] = prepared.fractional_applied
+        diagnostics["amplitude_calibrated"] = bool(amplitude_calibration)
 
     return freqs, spectrum
 
@@ -223,6 +321,8 @@ def fft_asymmetry(
     subtract_average_signal: bool = True,
     filter_start_us: float = 0.0,
     filter_time_constant_us: float = 1.5,
+    fractional: bool = False,
+    amplitude_calibration: bool = False,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Compute the FFT of the asymmetry signal.
 
@@ -269,6 +369,8 @@ def fft_asymmetry(
         subtract_average_signal=subtract_average_signal,
         filter_start_us=filter_start_us,
         filter_time_constant_us=filter_time_constant_us,
+        fractional=fractional,
+        amplitude_calibration=amplitude_calibration,
     )
 
     return freqs, spectrum.real, np.abs(spectrum)

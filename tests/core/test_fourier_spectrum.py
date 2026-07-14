@@ -51,6 +51,11 @@ def _golden_average(run: Run, config: GroupSpectrumConfig) -> np.ndarray:
             window=config.window,
             padding_factor=config.padding,
             subtract_average_signal=config.subtract_average_signal,
+            # "(Power)^1/2" is a canonical (non-derived) mode, so the shared core
+            # applies the fractional footing + percent amplitude calibration; the
+            # inline replica must do the same to stay a self-consistency pin.
+            fractional=True,
+            amplitude_calibration=True,
         )
         values.append(fourier_display_values(spectrum, display=config.display))
     averaged, _err = average_fourier_display_values(values, estimate_error=False)

@@ -434,7 +434,7 @@ class TestMainWindowFourier:
         assert mainwindow._plot_workspace.active_domain() == "frequency"
         assert plotted.metadata["plot_domain"] == "frequency"
         assert plotted.metadata["x_label"] == "Frequency (MHz)"
-        assert plotted.metadata["y_label"] == "FFT (Power)^1/2 (a.u.)"
+        assert plotted.metadata["y_label"] == "FFT (Power)^1/2 (%)"
         assert plotted.metadata["fourier_group_output"] == "average"
         assert plotted.metadata["group_ids"] == [1, 2]
 

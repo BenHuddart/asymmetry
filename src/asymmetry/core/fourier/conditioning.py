@@ -32,6 +32,7 @@ Three steps, applied in WiMDA's order (compensation → baseline → exclusions)
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -42,6 +43,18 @@ from asymmetry.core.maxent.pulse import pulse_amplitude_phase
 
 #: Baseline estimator modes accepted by :func:`apply_spectrum_conditioning`.
 BASELINE_MODES = ("none", "sigma_clip", "wimda")
+
+#: Robust noise-floor block count for the unit-area estimator: the spectrum is
+#: split into this many frequency blocks and a σ-clipped median floor is fitted
+#: per block, so a slowly-varying (coloured) floor is tracked rather than
+#: assumed flat.  Capped so short spectra keep several bins per block.
+_UNIT_AREA_FLOOR_BLOCKS = 8
+#: σ-clip half-width for the per-block floor estimate.
+_UNIT_AREA_FLOOR_KAPPA = 2.0
+#: Significance multiple ``k``: the floor-subtracted area must exceed ``k`` times
+#: its noise scatter ``σ_area = σ_floor·√N·Δν`` for unit-area to be applied,
+#: refusing to normalise pure noise (whose true integral is ~0).
+_UNIT_AREA_SIGNIFICANCE_K = 5.0
 
 
 def sigma_clip_baseline(
@@ -130,6 +143,106 @@ def pulse_compensation_gain(
         cut = order[first_node_pos:]
         gain[cut] = 0.0
     return gain
+
+
+def _block_median_floor(
+    values: NDArray[np.float64], *, kappa: float
+) -> tuple[NDArray[np.float64], float]:
+    """Return a per-bin robust noise floor and the overall inlier scatter.
+
+    The spectrum is split into up to :data:`_UNIT_AREA_FLOOR_BLOCKS` contiguous
+    frequency blocks; each block's floor is the σ-clipped median of its values
+    (:func:`sigma_clip_baseline` with ``location="median"``), assigned to every
+    bin of that block — a piecewise-constant floor tolerant of a slowly-varying
+    (coloured) continuum.  The returned scatter ``σ_floor`` is the σ-clipped
+    width over the whole spectrum, used by the significance guard.
+    """
+    n = values.size
+    if n == 0:
+        return np.zeros(0, dtype=np.float64), 0.0
+    n_blocks = int(min(_UNIT_AREA_FLOOR_BLOCKS, max(1, n)))
+    edges = np.linspace(0, n, n_blocks + 1, dtype=int)
+    floor = np.zeros(n, dtype=np.float64)
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        if hi <= lo:
+            continue
+        block_floor, _sigma = sigma_clip_baseline(
+            values[lo:hi], kappa=kappa, max_iter=10, location="median"
+        )
+        floor[lo:hi] = block_floor
+    _loc, sigma = sigma_clip_baseline(values, kappa=kappa, max_iter=10, location="median")
+    return floor, float(sigma)
+
+
+@dataclass
+class UnitAreaResult:
+    """Outcome of a unit-area (field-distribution) normalisation attempt."""
+
+    #: Normalised density spectrum when ``applied``; the input unchanged otherwise.
+    display: NDArray[np.float64]
+    error: NDArray[np.float64]
+    applied: bool
+    #: Floor-subtracted integral ``Σ residual·Δν`` (the pre-normalisation area).
+    area: float = 0.0
+    #: Noise scatter of that area used by the significance guard.
+    area_sigma: float = 0.0
+    #: Human-readable reason unit-area was refused (``""`` when applied).
+    reason: str = ""
+
+
+def unit_area_normalise(
+    freqs_mhz: ArrayLike,
+    display: ArrayLike,
+    error: ArrayLike | None = None,
+    *,
+    kappa: float = _UNIT_AREA_FLOOR_KAPPA,
+    significance_k: float = _UNIT_AREA_SIGNIFICANCE_K,
+) -> UnitAreaResult:
+    """Present a magnitude spectrum as a field distribution ``p(ν)``.
+
+    A robust noise floor (:func:`_block_median_floor`) is fitted and subtracted;
+    the residual is integrated **unclipped** over the full one-sided range (so
+    noise integrates to ~0 and the result is range-independent by construction),
+    and the floor-subtracted spectrum and its error are divided by that area so
+    ``∫ p dν = 1`` numerically on the MHz grid.
+
+    A significance guard refuses the normalisation when the area does not exceed
+    ``significance_k`` times its noise scatter ``σ_area = σ_floor·√N·Δν`` (or is
+    non-positive) — a pure-noise spectrum keeps its calibrated scale and reports
+    the reason instead of being blown up by division by a near-zero area.
+    """
+    freqs = np.asarray(freqs_mhz, dtype=np.float64)
+    values = np.asarray(display, dtype=np.float64).copy()
+    errors = (
+        np.asarray(error, dtype=np.float64).copy() if error is not None else np.zeros_like(values)
+    )
+    n = values.size
+    if n < 2:
+        return UnitAreaResult(values, errors, False, reason="the spectrum has too few bins")
+
+    diffs = np.diff(freqs[np.isfinite(freqs)])
+    bin_width = float(np.median(diffs)) if diffs.size else 0.0
+    if not np.isfinite(bin_width) or bin_width <= 0.0:
+        return UnitAreaResult(values, errors, False, reason="the frequency grid is degenerate")
+
+    floor, sigma = _block_median_floor(values, kappa=kappa)
+    residual = values - floor
+    area = float(np.sum(residual, dtype=np.float64) * bin_width)
+    area_sigma = float(sigma) * math.sqrt(float(n)) * bin_width
+
+    if not np.isfinite(area) or area <= 0.0 or area <= float(significance_k) * area_sigma:
+        return UnitAreaResult(
+            values,
+            errors,
+            False,
+            area=area,
+            area_sigma=area_sigma,
+            reason="the integrated signal is not significant above the noise floor",
+        )
+
+    density = residual / area
+    density_error = errors / area
+    return UnitAreaResult(density, density_error, True, area=area, area_sigma=area_sigma)
 
 
 @dataclass

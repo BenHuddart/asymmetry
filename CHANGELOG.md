@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Unit-area (field-distribution) FFT display.** A new *Unit area (field
+  distribution)* option in the Fourier panel's FFT settings presents a
+  magnitude-family spectrum as a field distribution `p(ν)` that integrates to
+  one: the noise floor is fitted (a σ-clipped block median) and subtracted, and
+  the residual is normalised to unit area over the full frequency range
+  (range-independent by construction). A significance guard refuses the
+  normalisation for a pure-noise spectrum, keeping the calibrated scale and
+  noting why. Applies to the Magnitude, (Power)^1/2 and Power displays. The
+  displayed density follows the x-axis unit: in a field view the curve, its
+  error band, fit overlays, and the y view window carry the constant dν/dB
+  Jacobian — labelled `p(B) (1/G)` / `(1/T)` and integrating to one per
+  displayed unit — and exports name the y column per unit (`density_per_G`
+  etc.).
 - **Field-shift axes for the frequency view.** A new **Axis:** selector above
   the spectrum offers three x-axis modes that genuinely transform the plotted
   data: **Absolute** (today's measured frequency/field), **Shift (x − x₀)** (each
@@ -27,6 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **FFT amplitudes are now calibrated to fractional asymmetry in percent.** The
+  grouped FFT previously plotted raw, unnormalised count-scale amplitudes whose
+  height depended on the counting statistics, the length of the time window, and
+  the apodisation. The spectrum is now put on a fractional footing (each group's
+  signal divided by its error-weighted baseline) and coherent-gain corrected
+  (`× 2/Σw`), so a pure cosine of fractional asymmetry amplitude *A* peaks at
+  `100·A` — invariant to count level, window length, apodisation choice, and
+  zero padding. Y-axis labels read `(%)` (`(%²)` for Power); a relaxing line
+  reads below `100·A` because damping trades peak height for area. Spectra
+  computed before this change are flagged stale so they recompute onto the new
+  scale.
 - **The frequency toolbar's "X relative to ref. field" checkbox is replaced by
   the Axis/Ref. selectors above.** The old checkbox only offset the x-limit
   entry boxes while leaving the plotted curve and ticks in absolute units, so

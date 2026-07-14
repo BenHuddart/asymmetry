@@ -166,6 +166,22 @@ _FREQUENCY_AXIS_MODES = ("absolute", "shift", "relative_ppm")
 #: The two reference-resolution modes for shift axes.
 _FREQUENCY_REFERENCE_MODES = ("run", "common")
 
+#: Display y-labels for a unit-area field distribution, keyed on the effective
+#: ``core.fourier.units`` field unit of the current x axis. The canonical MHz
+#: axis keeps the core's own p(ν) label; any unknown/dimensionless unit falls
+#: back to it too (factor 1 — the honest label).
+_DENSITY_YLABELS = {
+    "gauss": "Field distribution p(B) (1/G)",
+    "tesla": "Field distribution p(B) (1/T)",
+}
+
+#: Export y-column names for a unit-area density, keyed like above.
+_DENSITY_COLUMN_NAME = {
+    "mhz": "density_per_MHz",
+    "gauss": "density_per_G",
+    "tesla": "density_per_T",
+}
+
 # Self-describing x-column names for frequency-view ``.dat`` sidecars, keyed on
 # the panel's current display unit. The correlation (hyperfine-coupling) axis
 # names its column separately (``coupling_MHz``); shift/relative axes name their
@@ -324,6 +340,10 @@ class PlotPanel(QWidget):
         self._frequency_axis_mode_before_correlation = "absolute"
         self._frequency_reference_mode_before_correlation = "run"
         self._frequency_x_limits_by_unit: dict[str, tuple[float, float]] = {}
+        #: Per-mode y windows for unit-area density views (session-local): only
+        #: populated when the density Jacobian differs between two modes, so a
+        #: revisited mode restores its exact y window instead of re-quantizing.
+        self._frequency_y_limits_by_unit: dict[str, tuple[float, float]] = {}
         #: Optional ``(run_number, time_us, signal)`` diamagnetic-fit overlay for
         #: the time view; only drawn when the displayed run matches ``run_number``.
         self._diamagnetic_overlay: tuple[int | None, np.ndarray, np.ndarray] | None = None
@@ -1085,11 +1105,29 @@ class PlotPanel(QWidget):
         }.get(self._current_frequency_x_unit, "MHz")
 
     def _display_y_unit_suffix(self, y_label: str | None = None) -> str:
-        """Return the compact unit suffix for the y-limit controls."""
+        """Return the compact unit suffix for the y-limit controls.
+
+        Derived from the dataset's own y-label so the calibrated percent scale
+        ("%", "%²"), the phase-spectrum degrees ("deg"), the unit-area field
+        distribution ("1/MHz"), and any residual arbitrary-unit derived modes
+        ("a.u.") each read correctly.
+        """
         if not self._is_frequency_plot_panel():
             return "%"
         text = str(y_label or "").strip().lower()
-        return "deg" if "deg" in text else "a.u."
+        if "1/g" in text:
+            return "1/G"
+        if "1/t" in text:
+            return "1/T"
+        if "1/mhz" in text or "(1/" in text:
+            return "1/MHz"
+        if "deg" in text:
+            return "deg"
+        if "%²" in text or "%^2" in text:
+            return "%²"
+        if "%" in text:
+            return "%"
+        return "a.u."
 
     def _note_missing_reference(self, mode: str) -> None:
         """Log the missing-field fallback once, so a trace is never dropped silently."""
@@ -1147,6 +1185,73 @@ class PlotPanel(QWidget):
         if field_unit == "mhz":
             return shifted
         return np.asarray(convert_field_unit(shifted, "mhz", field_unit), dtype=float)
+
+    @staticmethod
+    def _is_unit_area_dataset(dataset: MuonDataset | None) -> bool:
+        """Return whether *dataset* is a unit-area (field-distribution) spectrum."""
+        if dataset is None:
+            return False
+        metadata = getattr(dataset, "metadata", None)
+        return (
+            isinstance(metadata, dict)
+            and metadata.get("fourier_display_normalisation") == "unit_area"
+        )
+
+    def _density_factor_for_unit(self, dataset: MuonDataset | None, x_unit: str) -> float:
+        """Return the dν/dB density Jacobian for *dataset* under x-unit token *x_unit*.
+
+        A unit-area spectrum is canonically p(ν) in 1/MHz; when the x axis
+        displays a field unit the density is rescaled by the constant
+        ``dν/dB = 1 / convert(1 MHz → unit)`` so the on-screen curve integrates
+        to 1 per displayed x unit (1/G, 1/T). Everything else — calibrated
+        spectra, the canonical MHz axis, the correlation axis, and any
+        unknown/dimensionless unit token (defensive; a merged relative-ppm mode
+        resolves here to the factor-1 ``(1/MHz)`` fallback) — returns 1.
+        """
+        if (
+            not self._is_frequency_plot_panel()
+            or self._frequency_axis_is_correlation
+            or not self._is_unit_area_dataset(dataset)
+        ):
+            return 1.0
+        field_unit = _FREQUENCY_X_UNIT_FIELD.get(str(x_unit), "mhz")
+        if field_unit == "mhz":
+            return 1.0
+        per_unit = float(convert_field_unit(1.0, "mhz", field_unit))
+        if not np.isfinite(per_unit) or per_unit <= 0.0:
+            return 1.0
+        return 1.0 / per_unit
+
+    def _frequency_density_display_factor(self, dataset: MuonDataset | None) -> float:
+        """The density Jacobian for *dataset* under the CURRENT x display unit."""
+        return self._density_factor_for_unit(dataset, self._current_frequency_x_unit)
+
+    def _convert_frequency_values_for_display(
+        self, values, dataset: MuonDataset | None
+    ) -> np.ndarray:
+        """Companion of :meth:`_convert_frequency_axis_for_display` for y data.
+
+        Applied at every y-render site that draws frequency-spectrum values
+        (line, ±1σ band, fit overlays, autoscale frames, exports) so the
+        displayed density and its uncertainties all carry the same Jacobian; a
+        factor of 1 returns the input array unscaled (no copy).
+        """
+        arr = np.asarray(values, dtype=float)
+        factor = self._frequency_density_display_factor(dataset)
+        if factor == 1.0:
+            return arr
+        return arr * factor
+
+    def _density_display_ylabel(self, dataset: MuonDataset | None, y_label: str) -> str:
+        """Return *y_label* adjusted to the displayed unit for unit-area spectra."""
+        if (
+            not self._is_unit_area_dataset(dataset)
+            or not self._is_frequency_plot_panel()
+            or self._frequency_axis_is_correlation
+        ):
+            return y_label
+        field_unit = _FREQUENCY_X_UNIT_FIELD.get(self._current_frequency_x_unit, "mhz")
+        return _DENSITY_YLABELS.get(field_unit, y_label)
 
     def _convert_frequency_axis_limit_to_control_value(self, value: float) -> float:
         """Convert one plotted axis x-limit into the toolbar control value.
@@ -1469,9 +1574,33 @@ class PlotPanel(QWidget):
                 mode=new_mode,
             )
 
+        # A displayed unit-area density is rescaled by the dν/dB Jacobian when
+        # the x unit changes; the y-limit fields track it so the view window
+        # stays on the same physical slice of the distribution. Mirroring the
+        # x machinery above, a per-mode stash restores a previously visited
+        # mode's y window exactly (the 3-decimal limit fields would otherwise
+        # quantize a converted-back value); an unvisited mode converts by the
+        # factor ratio. Keyed off the same label-driving dataset as the axis
+        # labels; for calibrated spectra both factors are 1 and the y window
+        # carries through untouched (no stash entry).
+        new_y_min, new_y_max = float(current_y_min), float(current_y_max)
+        density_dataset = (
+            self._current_datasets[0] if self._current_datasets else self._current_dataset
+        )
+        factor_old = self._density_factor_for_unit(density_dataset, old_unit)
+        factor_new = self._density_factor_for_unit(density_dataset, new_unit)
+        if factor_new != factor_old:
+            self._frequency_y_limits_by_unit[old_key] = (new_y_min, new_y_max)
+            if new_key in self._frequency_y_limits_by_unit:
+                new_y_min, new_y_max = self._frequency_y_limits_by_unit[new_key]
+            elif factor_old > 0.0:
+                ratio = factor_new / factor_old
+                new_y_min *= ratio
+                new_y_max *= ratio
+
         self._current_frequency_x_unit = new_unit
         self._frequency_axis_mode = new_mode
-        self._set_view_limits_fields(new_x_min, new_x_max, current_y_min, current_y_max)
+        self._set_view_limits_fields(new_x_min, new_x_max, new_y_min, new_y_max)
 
         if self.has_plot_content():
             self._redraw_current_view()
@@ -2541,6 +2670,9 @@ class PlotPanel(QWidget):
                 raw_y_label = dataset.metadata.get("y_label")
                 if isinstance(raw_y_label, str) and raw_y_label.strip():
                     y_label = raw_y_label
+            # The metadata label stays canonical (1/MHz); a unit-area density is
+            # relabelled per the displayed x unit at display time only.
+            y_label = self._density_display_ylabel(dataset, y_label)
             return self._display_x_label(), y_label
         if dataset is not None and isinstance(dataset.metadata, dict):
             x_label = dataset.metadata.get("x_label")
@@ -4435,12 +4567,22 @@ class PlotPanel(QWidget):
                 continue
             display_entries.append((dataset, analysis_dataset))
 
-        # Each trace's display x-axis, computed once and shared by the Δ
-        # resolution and the draw loop. Pass the source dataset so a shift-mode
-        # overlay shifts each trace about ITS OWN reference (the alignment point).
+        # Each trace's display x-axis and y values (density Jacobian applied for
+        # unit-area spectra), computed once and shared by the Δ resolution, the
+        # first-paint framing, and the draw loop. The source dataset is passed so
+        # a shift-mode overlay shifts each trace about ITS OWN reference (the
+        # alignment point).
         display_times = [
             self._convert_frequency_axis_for_display(analysis.time, source_dataset)
             for source_dataset, analysis in display_entries
+        ]
+        display_values = [
+            self._convert_frequency_values_for_display(analysis.asymmetry, dataset)
+            for dataset, analysis in display_entries
+        ]
+        display_errors = [
+            self._convert_frequency_values_for_display(analysis.error, dataset)
+            for dataset, analysis in display_entries
         ]
 
         # Decide the x-window this render will show BEFORE resolving Δ, so the
@@ -4454,9 +4596,8 @@ class PlotPanel(QWidget):
         if not self._limits_initialized:
             frame_times: list[np.ndarray] = []
             frame_raw: list[np.ndarray] = []
-            for (_, analysis), time in zip(display_entries, display_times):
-                raw = analysis.asymmetry
-                finite = np.isfinite(time) & np.isfinite(raw) & np.isfinite(analysis.error)
+            for time, raw, err in zip(display_times, display_values, display_errors):
+                finite = np.isfinite(time) & np.isfinite(raw) & np.isfinite(err)
                 if np.any(finite):
                     frame_times.append(time[finite])
                     frame_raw.append(raw[finite])
@@ -4480,7 +4621,7 @@ class PlotPanel(QWidget):
         # export path mirrors this render exactly.
         waterfall_delta = self._resolve_waterfall_delta(
             datasets,
-            [analysis.asymmetry for _, analysis in display_entries],
+            display_values,
             x_arrays=display_times,
             x_window=(window_lo, window_hi),
         )
@@ -4495,13 +4636,13 @@ class PlotPanel(QWidget):
                 period_color_counts[period_color] = variant_idx + 1
 
             time = display_times[i]
-            raw_asymmetry = analysis_dataset.asymmetry
+            raw_asymmetry = display_values[i]
             offset = 0.0 if waterfall_delta is None else float(i * waterfall_delta)
             if waterfall_delta is not None:
                 self._waterfall_drawn_offsets[id(dataset)] = offset
             # Offset is a display transform only: shift a copy, never the source.
             asymmetry = raw_asymmetry + offset if offset else raw_asymmetry
-            error = analysis_dataset.error
+            error = display_errors[i]
             low_count_mask = self._low_count_mask_for_dataset(
                 analysis_dataset,
                 source_dataset=dataset,
@@ -4568,7 +4709,8 @@ class PlotPanel(QWidget):
                     variant_index=i,
                     fit_label=fit_label,
                 )
-                y_fit_shifted = y_fit + offset if offset else y_fit
+                y_fit_display = self._convert_frequency_values_for_display(y_fit, dataset)
+                y_fit_shifted = y_fit_display + offset if offset else y_fit_display
                 self._ax.plot(
                     t_fit, y_fit_shifted, "-", color=fit_color, linewidth=2, label="_nolegend_"
                 )
@@ -4775,8 +4917,8 @@ class PlotPanel(QWidget):
             self._render_empty_plot_state(alpha_text=self._single_dataset_alpha_label_text(dataset))
             return
         time = self._convert_frequency_axis_for_display(analysis_dataset.time, dataset)
-        asymmetry = analysis_dataset.asymmetry
-        error = analysis_dataset.error
+        asymmetry = self._convert_frequency_values_for_display(analysis_dataset.asymmetry, dataset)
+        error = self._convert_frequency_values_for_display(analysis_dataset.error, dataset)
         low_count_mask = self._low_count_mask_for_dataset(
             analysis_dataset,
             source_dataset=dataset,
@@ -4860,7 +5002,10 @@ class PlotPanel(QWidget):
             )
             self._ax.plot(
                 t_fit,
-                y_fit,
+                # Fit curves are stored on the canonical footing; a unit-area
+                # density view rescales them by the same displayed Jacobian as
+                # the spectrum itself.
+                self._convert_frequency_values_for_display(y_fit, dataset),
                 "-",
                 color=fit_color,
                 linewidth=2,
@@ -5711,8 +5856,10 @@ class PlotPanel(QWidget):
                 continue
 
             time = self._convert_frequency_axis_for_display(analysis_dataset.time, dataset)
-            asymmetry = analysis_dataset.asymmetry
-            error = analysis_dataset.error
+            asymmetry = self._convert_frequency_values_for_display(
+                analysis_dataset.asymmetry, dataset
+            )
+            error = self._convert_frequency_values_for_display(analysis_dataset.error, dataset)
             low_mask = self._low_count_mask_for_dataset(
                 analysis_dataset,
                 source_dataset=dataset,
@@ -6295,7 +6442,14 @@ class PlotPanel(QWidget):
         span, left_line, right_line = draw_fit_range_span(self._ax, window[0], window[1])
         self._moments_span_artists.extend([span, left_line, right_line])
         if self._moments_peak_amp is not None and self._moments_cutoff_fraction > 0.0:
-            level = self._moments_peak_amp * self._moments_cutoff_fraction
+            # peak_amplitude arrives on the canonical footing (the W15 accessor
+            # hands the moments feature canonical values); the axis may carry
+            # the unit-area density Jacobian, so convert the drawn level.
+            level = (
+                self._moments_peak_amp
+                * self._moments_cutoff_fraction
+                * self._frequency_density_display_factor(self.current_frequency_dataset())
+            )
             cutoff_line = self._ax.axhline(
                 level, color=right_line.get_color(), alpha=0.45, linestyle=":", linewidth=1.2
             )
@@ -7278,6 +7432,37 @@ class PlotPanel(QWidget):
                 payload["y_label"] = y_label
                 payload["x_unit"] = self._current_frequency_x_unit
                 payload["axis_mode"] = self._frequency_axis_mode
+                # A unit-area density exports on its displayed footing: y values,
+                # errors, and fit/component curves all carry the same dν/dB
+                # Jacobian the on-screen render applies, and the sidecar names
+                # the column per the displayed unit (density_per_G etc.).
+                if self._is_unit_area_dataset(dataset):
+                    payload["data"] = {
+                        "t": analysis.time,
+                        "y": self._convert_frequency_values_for_display(
+                            analysis.asymmetry, dataset
+                        ),
+                        "err": self._convert_frequency_values_for_display(analysis.error, dataset),
+                    }
+                    if fit_payload is not None:
+                        fit_payload["y"] = self._convert_frequency_values_for_display(
+                            fit_payload["y"], dataset
+                        )
+                    payload["components"] = [
+                        {
+                            "name": component["name"],
+                            "y": self._convert_frequency_values_for_display(
+                                component["y"], dataset
+                            ),
+                        }
+                        for component in payload["components"]
+                    ]
+                    effective_unit = (
+                        "mhz"
+                        if self._frequency_axis_is_correlation
+                        else _FREQUENCY_X_UNIT_FIELD.get(self._current_frequency_x_unit, "mhz")
+                    )
+                    payload["density_unit"] = effective_unit
                 payload["is_correlation"] = bool(self._frequency_axis_is_correlation)
                 reference_gauss = reference_field_gauss(run, dataset)
                 if reference_gauss is not None:
@@ -7469,7 +7654,7 @@ class PlotPanel(QWidget):
             ax.set_ylabel(
                 self._sanitize_gle_text(
                     self._strip_matplotlib_math(frequency_payload.get("y_label")),
-                    fallback="FFT (a.u.)",
+                    fallback="FFT (%)",
                 )
             )
         else:
@@ -7547,7 +7732,13 @@ class PlotPanel(QWidget):
                     if x_display is not None
                     else self._convert_frequency_axis_for_display(t_fit)
                 )
-                f.write(f"! {x_column}  amplitude_fit\n")
+                density_unit = payload.get("density_unit")
+                y_fit_column = (
+                    f"{_DENSITY_COLUMN_NAME.get(str(density_unit), 'density_per_MHz')}_fit"
+                    if density_unit is not None
+                    else "amplitude_fit"
+                )
+                f.write(f"! {x_column}  {y_fit_column}\n")
             else:
                 x_fit = t_fit
                 f.write("! time  asymmetry_fit\n")
@@ -7852,7 +8043,19 @@ class PlotPanel(QWidget):
             include_mhz = x_unit in ("field_gauss", "field_tesla")
 
         x_label = str(payload.get("x_label") or self._display_x_label())
-        y_label = str(payload.get("y_label") or "FFT (a.u.)")
+        y_label = str(payload.get("y_label") or "FFT (%)")
+        # A unit-area field distribution is a density in the displayed x unit
+        # (the payload carries the exported Jacobian's unit), so name its column
+        # distinctly from an amplitude spectrum. The label sniff is a fallback
+        # for payloads without the explicit key.
+        density_unit = payload.get("density_unit")
+        if density_unit is None and "1/mhz" in y_label.lower():
+            density_unit = "mhz"
+        amplitude_column = (
+            _DENSITY_COLUMN_NAME.get(str(density_unit), "density_per_MHz")
+            if density_unit is not None
+            else "amplitude"
+        )
 
         f.write("! START OF DATA SET INFORMATION\n")
         f.write(f"!  Datarow: ({x_label}) (Amplitude) (Error)\n")
@@ -7870,12 +8073,16 @@ class PlotPanel(QWidget):
         f.write(f"!  Display mode: {y_label}\n")
         f.write(f"!  X unit: {x_unit}\n")
         f.write(f"!  Axis mode: {axis_mode}\n")
+        if density_unit is not None:
+            f.write(
+                f"!  Density unit: {_DENSITY_COLUMN_NAME.get(str(density_unit), str(density_unit))}\n"
+            )
         reference_gauss = payload.get("reference_field_gauss")
         if reference_gauss is not None:
             f.write(f"!  Reference field: {float(reference_gauss):.4g} G\n")
         f.write("! END OF FOURIER INFORMATION\n")
 
-        column_names = [x_column, "amplitude", "error"]
+        column_names = [x_column, amplitude_column, "error"]
         if include_mhz:
             column_names.append("frequency_MHz")
         f.write("! " + "  ".join(column_names) + "\n")
