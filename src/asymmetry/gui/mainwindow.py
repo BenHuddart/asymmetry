@@ -7895,6 +7895,7 @@ class MainWindow(QMainWindow):
         background_reference_cache: dict = {}
         magnitudes: list[np.ndarray] = []
         freqs: np.ndarray | None = None
+        padding_factor = max(4, int(state.get("padding", 1)))
         for group_id in selected_group_ids:
             group_dataset = build_group_signal_dataset(
                 dataset.run,
@@ -7907,7 +7908,7 @@ class MainWindow(QMainWindow):
             group_freqs, spectrum = fft_complex_asymmetry(
                 group_dataset,
                 window="none",
-                padding_factor=max(4, int(state.get("padding", 1))),
+                padding_factor=padding_factor,
                 phase_degrees=0.0,
                 t0_offset_us=0.0,
                 subtract_average_signal=True,
@@ -7921,12 +7922,19 @@ class MainWindow(QMainWindow):
             dataset, freqs, plot_window=plot_window
         )
         window_kind = "gaussian" if str(state.get("window")) == "gaussian" else "lorentzian"
+        # freqs is the zero-padded axis: the unpadded (intrinsic) bin spacing
+        # is padding_factor x wider, since padding multiplies the transform
+        # length without changing the underlying record length (module
+        # docstring in core/fourier/apodisation.py).
+        bin_width = float(np.median(np.diff(freqs))) if freqs.size > 1 else 0.0
+        intrinsic_resolution_mhz = bin_width * padding_factor if bin_width > 0.0 else None
         return suggest_matched_apodisation(
             freqs,
             averaged_magnitude,
             window=window_kind,
             min_frequency_mhz=min_frequency,
             max_frequency_mhz=max_frequency,
+            intrinsic_resolution_mhz=intrinsic_resolution_mhz,
         )
 
     def _on_suggest_apodisation(self) -> None:
