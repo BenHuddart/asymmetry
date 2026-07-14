@@ -121,6 +121,7 @@ from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.gle_export import (
     GleExportBuild,
     dedup_export_token,
+    gle_offset_supported,
     run_gle_export,
     safe_file_token,
     show_export_result_dialog,
@@ -7529,6 +7530,11 @@ class PlotPanel(QWidget):
         """Draw export payloads on a provided axis with axis-specific naming."""
         is_multi = len(payloads) > 1
         axis_suffix = self._export_axis_suffix(axis_key)
+        # gleplot ≥ 1.7 stacks a waterfall offset in the GLE script (``offset=``
+        # -> ``let``), keeping the written .dat/.fit values raw. Older gleplot
+        # has no such knob, so fall back to baking the offset into the arrays
+        # (and the sidecar writers) so the plot still matches the data.
+        offset_in_gle = gle_offset_supported()
 
         for i, payload in enumerate(payloads):
             label_text = payload.get("label", f"dataset_{i}")
@@ -7555,11 +7561,15 @@ class PlotPanel(QWidget):
             y_err = data.get("err")
             t_fit = fit.get("t")
             y_fit = fit.get("y")
-            # Mirror the on-screen waterfall stack; 0.0 (absent) leaves y as-is.
+            # Mirror the on-screen waterfall stack. With modern gleplot the
+            # offset is handed to the plot calls (``gle_offset`` below) and
+            # applied in the GLE script; against older gleplot we bake it into
+            # the arrays here. 0.0 (absent) leaves y as-is either way.
             offset = float(payload.get("waterfall_offset", 0.0))
-            if offset and y_data is not None:
+            gle_offset = offset if offset_in_gle else 0.0
+            if offset and not offset_in_gle and y_data is not None:
                 y_data = np.asarray(y_data, dtype=float) + offset
-            if offset and y_fit is not None:
+            if offset and not offset_in_gle and y_fit is not None:
                 y_fit = np.asarray(y_fit, dtype=float) + offset
 
             dat_path = gle_path.parent / f"{token}.dat"
@@ -7583,6 +7593,7 @@ class PlotPanel(QWidget):
                         color=data_color,
                         linewidth=1.2,
                         label=data_label,
+                        offset=gle_offset,
                         data_name=token,
                     )
                     if y_err is not None:
@@ -7598,6 +7609,7 @@ class PlotPanel(QWidget):
                                 color=band_color,
                                 alpha=0.25,
                                 label=None,
+                                offset=gle_offset,
                                 data_name=f"{token}_band",
                             )
                 else:
@@ -7611,12 +7623,13 @@ class PlotPanel(QWidget):
                         markersize=4,
                         capsize=2,
                         label=data_label,
+                        offset=gle_offset,
                         data_name=token,
                     )
 
             fit_path = gle_path.parent / f"{token}.fit"
             if t_fit is not None and y_fit is not None:
-                self._write_fit_file(fit_path, payload)
+                self._write_fit_file(fit_path, payload, bake_waterfall_offset=not offset_in_gle)
                 written_files.append(fit_path)
 
                 fit_label = fit.get("label", "Fit")
@@ -7634,6 +7647,7 @@ class PlotPanel(QWidget):
                     color=fit_color,
                     linewidth=1.6,
                     label=fit_label,
+                    offset=gle_offset,
                     data_name=f"{token}_fit",
                 )
 
@@ -7677,12 +7691,24 @@ class PlotPanel(QWidget):
             style_legend(ax.legend(loc="best"))
 
     def _write_fit_file(
-        self, fit_path: Path, payload: dict, *, x_range: tuple[float, float] | None = None
+        self,
+        fit_path: Path,
+        payload: dict,
+        *,
+        x_range: tuple[float, float] | None = None,
+        bake_waterfall_offset: bool = True,
     ) -> None:
         """Write a .fit file with fit-curve data and metadata header.
 
         ``x_range`` optionally restricts the written rows to ``[lo, hi]``;
         ``None`` (the GLE-export default) writes the whole curve.
+
+        ``bake_waterfall_offset`` adds the payload's waterfall offset to the
+        written curve. The plain-text export leaves it ``True`` (the text is the
+        final artifact, so it must carry the stack). The GLE export passes
+        ``False`` when the installed gleplot applies the offset in the script
+        (``let``) instead, keeping the sidecar values raw. The header records
+        the offset either way.
         """
         fit = payload.get("fit") or {}
         t_fit = fit.get("t")
@@ -7692,7 +7718,7 @@ class PlotPanel(QWidget):
 
         # Match the drawn fit curve's waterfall offset (see _write_data_file).
         waterfall_offset = float(payload.get("waterfall_offset", 0.0))
-        if waterfall_offset:
+        if waterfall_offset and bake_waterfall_offset:
             y_fit = np.asarray(y_fit, dtype=float) + waterfall_offset
 
         meta = payload.get("fit_metadata") or {}
@@ -7757,6 +7783,7 @@ class PlotPanel(QWidget):
         label_text: object | None = None,
         x_range: tuple[float, float] | None = None,
         axis_key: str | None = None,
+        bake_waterfall_offset: bool = True,
     ) -> None:
         """Write a .dat file with spectra data and metadata header.
 
@@ -7765,6 +7792,12 @@ class PlotPanel(QWidget):
         point. ``axis_key`` identifies the projection (``P_x``/``P_y``/``P_z``)
         for vector exports so the file records which polarization component it
         holds rather than a generic asymmetry label.
+
+        ``bake_waterfall_offset`` adds the payload's waterfall offset to the
+        written asymmetry. The plain-text export leaves it ``True`` (the text is
+        the final artifact); the GLE export passes ``False`` when the installed
+        gleplot applies the offset in the script (``let``) instead, keeping the
+        written values raw. The header records the offset either way.
         """
         data = payload.get("data") or {}
         t_data = data.get("t")
@@ -7774,10 +7807,11 @@ class PlotPanel(QWidget):
             return
 
         # Mirror the on-screen waterfall stack: the written asymmetry carries the
-        # per-trace offset, recorded in a header line so the raw values remain
-        # recoverable. 0.0 (absent) leaves the data untouched.
+        # per-trace offset (unless GLE applies it in-script), recorded in a
+        # header line so the raw values remain recoverable. 0.0 (absent) leaves
+        # the data untouched.
         waterfall_offset = float(payload.get("waterfall_offset", 0.0))
-        if waterfall_offset:
+        if waterfall_offset and bake_waterfall_offset:
             y_data = np.asarray(y_data, dtype=float) + waterfall_offset
 
         display_label = label_text if label_text is not None else payload.get("label", "dataset")
@@ -8504,8 +8538,18 @@ class PlotPanel(QWidget):
 
         # Ensure our sidecar .dat files retain metadata headers even when
         # gleplot generates/overwrites data_name-matched data files on save.
+        # These sidecars stay raw when gleplot applies the waterfall offset in
+        # the script (``let``); against older gleplot the offset is baked here
+        # so the file matches the drawn stack.
+        bake_offset = not gle_offset_supported()
         for dat_path, payload, label_text, axis_key in dat_writes:
-            self._write_data_file(dat_path, payload, label_text=label_text, axis_key=axis_key)
+            self._write_data_file(
+                dat_path,
+                payload,
+                label_text=label_text,
+                axis_key=axis_key,
+                bake_waterfall_offset=bake_offset,
+            )
 
         return GleExportBuild(files=written_files)
 
