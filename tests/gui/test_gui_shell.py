@@ -162,9 +162,10 @@ class _StubPlotPanel(QWidget):
     def set_fit_range(self, x_min, x_max):
         return
 
-    def clear(self, *, message=None):
+    def clear(self, *, message=None, preserve_view_state=False):
         self.last_plotted_dataset = None
         self.last_clear_message = message
+        self.last_clear_preserve_view_state = preserve_view_state
         return
 
 
