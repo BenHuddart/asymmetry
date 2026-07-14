@@ -81,6 +81,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Matched-apodisation "Suggest from data" now finds lines buried below the
+  raw noise floor.** `suggest_matched_apodisation` only ever matched a filter
+  to the dominant *raw* peak of the unapodised power spectrum, so a genuinely
+  present line whose late-time noise is amplified by the lifetime correction
+  (an un-windowed, deadtime-corrected record) stayed below that threshold and
+  the suggester reported "No clear line to match — leave apodisation off" —
+  precisely the advice that kept the line invisible. Detection is now
+  two-stage: the existing raw-prominence check runs first and behaves exactly
+  as before when it fires, and only when it fails does a new fallback smooth
+  the power spectrum across a range of candidate linewidths and keep the
+  width with the highest robust (median/MAD, peak-excluded) signal-to-noise.
+  The scanned widths are anchored to the spectrum's real frequency resolution
+  (from the caller, or otherwise estimated from the spectrum's own
+  autocorrelation) rather than the zero-padded display grid, so the scan
+  cannot smooth within a single resolution element and mistake a heavily
+  padded spectrum's padding-correlated noise for a line. The smoothing
+  kernel's own width is deconvolved from the measured linewidth
+  (linearly for Lorentzian, in quadrature for Gaussian) before it is used to
+  derive the matched time constant, and the existing resolution-limited guard
+  now applies to that deconvolved width.
 - **Plot limits no longer reset themselves on the frequency view.** Computing
   or recomputing a spectrum could silently reframe the plot: a same-run
   recompute reset the vertical zoom (only the horizontal window was kept),
