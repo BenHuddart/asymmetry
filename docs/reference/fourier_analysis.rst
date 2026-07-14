@@ -287,6 +287,74 @@ and positive as possible without a supplied reference phase.
    trivial zero-spectrum solution is given a large cost so the optimiser
    avoids it.
 
+Normalisation
+~~~~~~~~~~~~~
+
+FFT amplitudes are **calibrated to fractional asymmetry, displayed in percent**:
+a pure cosine of fractional amplitude :math:`A` peaks at :math:`100\,A` in the
+magnitude spectrum. The calibration makes the peak height a physical quantity,
+invariant to counting statistics, the length of the time window, the choice of
+apodisation, and zero padding. Two steps produce it, applied to every canonical
+display channel (``(Power)^1/2``, ``Cos``, ``Sin``, ``Phase``, magnitude, real,
+imaginary; ``Power`` is their square, in :math:`\%^2`):
+
+* **Fractional footing.** Each detector group's lifetime-corrected count signal
+  :math:`N_0\,(1 + A\cos\dots)` is divided by its error-weighted baseline
+  :math:`N_0` before the average subtraction, turning counts into the
+  dimensionless asymmetry :math:`A\cos\dots`. A degenerate (non-positive)
+  baseline falls back to the raw footing rather than dividing by zero, and the
+  spectrum is stamped accordingly.
+* **Coherent-gain correction.** The complex spectrum is multiplied by
+  :math:`100 \times 2/\Sigma w`, where :math:`\Sigma w` is the coherent gain of
+  the apodisation actually applied — the sum of the window/filter weights over
+  the populated (unpadded) samples, equal to the sample count when no
+  apodisation is used [7]_. Dividing out :math:`\Sigma w` removes the window's
+  amplitude loss, so an unrelaxed line reads at :math:`100\,A` whatever window
+  is chosen; the factor of two is the one-sided (rfft) convention. Zero padding
+  contributes only zeros to :math:`\Sigma w`, so it leaves the peak height
+  unchanged (it only sinc-interpolates the line shape). The DC and Nyquist bins
+  strictly carry a one-sided gain of :math:`1/\Sigma w` rather than
+  :math:`2/\Sigma w`; DC is already removed by the average subtraction, so this
+  affects only a Nyquist-frequency line, which the calibration does not target.
+
+A **relaxing** line reads *below* :math:`100\,A`: damping spreads the line over
+many bins, so the calibrated **peak height** falls even though the calibrated
+**area** is preserved. Read peak amplitudes from an FFT only for weakly damped
+lines; otherwise fit the spectrum or integrate the area.
+
+A recipe recorded before this calibration existed is flagged stale on load
+(the *displayed FFT is out of sync* banner), inviting a recompute onto the new
+scale.
+
+Unit-area field distribution
+++++++++++++++++++++++++++++
+
+Ticking **Unit area (field distribution)** in *FFT settings* presents a
+magnitude-family spectrum as a field distribution :math:`p(\nu)` that integrates
+to one — the density of internal fields sampled by the muon [6]_. The noise
+floor is fitted (a σ-clipped block median, tolerant of a slowly varying
+continuum) and subtracted; the residual is integrated **unclipped** over the
+full one-sided range — so the noise integrates to approximately zero and the
+result is independent of where the frequency window is drawn — and the spectrum
+is divided by that area so :math:`\int p\,\mathrm{d}\nu = 1` on the MHz grid. A
+significance guard refuses the normalisation when the floor-subtracted area does
+not exceed five times its noise scatter (a pure-noise spectrum keeps its
+calibrated percent scale and is stamped with the reason). The option applies to
+the ``Magnitude``, ``(Power)^1/2`` and ``Power`` displays only; on a phase or
+real display it is ignored with a note.
+
+The displayed density follows the x-axis unit: with the x axis in a field unit
+the curve, its error band, and any fit overlay are rescaled by the constant
+:math:`\mathrm{d}\nu/\mathrm{d}B` Jacobian, so the label reads
+``Field distribution p(B) (1/G)`` (or ``(1/T)``) and the on-screen curve
+integrates to one per displayed unit; the y view window converts with it.
+Exports mirror the display, naming the y column per unit
+(``density_per_MHz`` / ``density_per_G`` / ``density_per_T``) and recording it
+in the sidecar header. The stored spectrum itself stays canonical —
+:math:`p(\nu)` in ``1/MHz`` — and a dimensionless axis mode (such as a relative
+shift in ppm, whose Jacobian would be per-dataset) falls back to the canonical
+``(1/MHz)`` label with no rescaling.
+
 Maximum entropy method
 -----------------------
 
@@ -1105,6 +1173,8 @@ References
 
 .. [6] S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
    *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), §15.5.
+
+.. [7] F. J. Harris, Proc. IEEE **66**, 51 (1978).
 
 The ``phaseOptReal`` entropy phase optimiser reproduces the
 ``PFTPhaseCorrection`` routine of musrfit (A. Suter and B. M. Wojek,
