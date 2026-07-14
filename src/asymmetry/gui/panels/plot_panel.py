@@ -451,6 +451,12 @@ class PlotPanel(QWidget):
             # untouched view reframes to each newly shown dataset. Cleared by
             # clear() (a blank/new view starts fresh).
             self._limits_user_locked = False
+            # Whether the most recent plot_dataset/plot_datasets draw first-paint
+            # framed the axes (as opposed to preserving an existing frame). Read
+            # by the frequency render path so it restores caller-preserved limits
+            # only when the draw did NOT reframe — a genuine first paint keeps its
+            # freshly computed smart framing instead of stale preserved defaults.
+            self._last_draw_reframed = False
             self._current_polarization_axis: str | None = None
             # Ordered projection specs ({"label", "tint"}) and the per-label tint
             # lookup used for frame-tinting subplots; driven by the chip bar.
@@ -1585,9 +1591,11 @@ class PlotPanel(QWidget):
         # the next redraw's ``_apply_auto_limits_if_enabled`` reframes the gesture
         # straight back to the data extent (the reported friction). Programmatic
         # limit changes from auto-framing or field edits run with nav mode
-        # ``"none"`` and are deliberately left alone. Unlike a field edit we do
-        # not set ``_limits_user_locked``, so a later run/polarization switch
-        # still reframes the new content sensibly.
+        # ``"none"`` and are deliberately left alone. The lock itself is set at
+        # gesture end (``_on_canvas_button_release`` with a nav tool armed), so
+        # a completed zoom/pan holds its window across later run/polarization
+        # switches exactly like a typed limit; re-enabling Auto X/Y is the
+        # explicit escape hatch that releases it.
         if self._current_navigation_mode() != "none":
             self._clear_auto_limit_toggles()
         if not self._viewport_refresh_in_progress:
@@ -2658,6 +2666,17 @@ class PlotPanel(QWidget):
             float(self._y_min.value()),
             float(self._y_max.value()),
         )
+
+    def view_reframed_on_last_draw(self) -> bool:
+        """Whether the most recent plot draw first-paint framed the axes.
+
+        Lets a caller that re-applies preserved limits after a draw (the
+        frequency render path) tell a same-content recompute — which must keep
+        the user's window — apart from a genuine first paint, whose freshly
+        computed smart framing must survive rather than be overwritten by stale
+        preserved defaults.
+        """
+        return bool(self._last_draw_reframed)
 
     def set_view_limits(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
         """Apply x/y limits through the existing toolbar-backed controls."""
@@ -4288,6 +4307,7 @@ class PlotPanel(QWidget):
             self._fit_x_max = None
             reframed = False
 
+        self._last_draw_reframed = reframed
         self._draw_fit_range_artists()
         self._apply_limits(schedule_viewport_refresh=reframed)
         self._apply_auto_limits_if_enabled()
@@ -4551,6 +4571,7 @@ class PlotPanel(QWidget):
                 seed = (float(time.min()), float(time.max()))
             self._fit_x_min, self._fit_x_max = seed
 
+        self._last_draw_reframed = reframed
         self._draw_fit_range_artists()
 
         # Apply the limits; a reframe re-decimates for the window just applied.
@@ -4694,11 +4715,15 @@ class PlotPanel(QWidget):
     def _on_auto_x_button_clicked(self, checked: bool) -> None:
         """Apply auto X immediately when the toggle is enabled."""
         if checked:
+            # Turning an Auto toggle ON is the explicit "always follow the data"
+            # escape hatch: release any manual frame lock so reframing resumes.
+            self._limits_user_locked = False
             self._auto_x_limits()
 
     def _on_auto_y_button_clicked(self, checked: bool) -> None:
         """Apply auto Y immediately when the toggle is enabled."""
         if checked:
+            self._limits_user_locked = False
             self._auto_y_limits()
 
     def _draw_annotations(self) -> None:
@@ -4998,6 +5023,20 @@ class PlotPanel(QWidget):
         finite_mask = np.isfinite(self._last_plot_time)
         if not np.any(finite_mask):
             return
+
+        # On a frequency spectrum, "Auto X" should frame the line sensibly (the
+        # dominant non-DC peak / field-derived window), not span the full Nyquist
+        # range where a high-TF Larmor line is squashed to sub-pixel by the DC
+        # peak. Delegate to the same smart framing used on first paint; it already
+        # returns control-value units and skips correlation axes. Fall back to the
+        # raw padded span when it declines (e.g. correlation axis, no finite data).
+        if self._is_frequency_plot_panel() and self._last_plot_asymmetry is not None:
+            smart = self._default_x_limits(self._last_plot_time, self._last_plot_asymmetry)
+            if smart is not None:
+                self._x_min.setValue(smart[0])
+                self._x_max.setValue(smart[1])
+                self._apply_limits(schedule_viewport_refresh=True)
+                return
 
         time = self._last_plot_time[finite_mask]
         x_min = float(np.min(time))
@@ -6288,6 +6327,13 @@ class PlotPanel(QWidget):
     def _on_canvas_button_release(self, event) -> None:
         """End drag and open numeric editor on click without drag."""
         if self._current_navigation_mode() != "none":
+            # A completed pan/zoom gesture is the user choosing a window, exactly
+            # like typing in a limit field: take control of the frame so later
+            # content switches and recomputes hold it instead of reframing over
+            # it. Only interactive gestures reach here — programmatic set_xlim
+            # routes through the xlim_changed callback (_on_axis_limits_changed),
+            # never button_release — so this never fires on a draw-driven change.
+            self._limits_user_locked = True
             return
 
         if self._active_fit_handle is not None:
@@ -6519,7 +6565,7 @@ class PlotPanel(QWidget):
         # Redraw current view while preserving multi-selection overlays.
         self._redraw_current_view()
 
-    def clear(self, *, message: str | None = None) -> None:
+    def clear(self, *, message: str | None = None, preserve_view_state: bool = False) -> None:
         """Clear the plot and reset stored data.
 
         When *message* is given, draw it as a centred grey placeholder over the
@@ -6528,6 +6574,15 @@ class PlotPanel(QWidget):
         panel passes a message to prompt the user to compute a spectrum (an FFT
         is computed on demand, never automatically); every other caller leaves
         *message* ``None`` and gets an unchanged blank plot.
+
+        *preserve_view_state* keeps the frame latches (``_limits_initialized``,
+        ``_limits_user_locked``, ``_framed_identity``) rather than resetting
+        them. It is for *transient* empty states — browsing past an uncomputed
+        run, or an empty-spectrum render — where the blank is momentary and the
+        user's chosen window must survive to the next compute. Genuine teardown
+        (project close/new, dataset removal) leaves it ``False`` so a fresh view
+        reframes from scratch. It does not touch the spin *fields*, which clear()
+        never reset; callers re-apply the preserved limits explicitly.
         """
         if self._has_mpl:
             self._set_canvas_minimum_height_for_axes(1)
@@ -6551,9 +6606,10 @@ class PlotPanel(QWidget):
             self._fit_components_by_key = {}
             self._fit_metadata = {}
             self._fit_metadata_by_key = {}
-            self._limits_initialized = False
-            self._limits_user_locked = False
-            self._framed_identity = None
+            if not preserve_view_state:
+                self._limits_initialized = False
+                self._limits_user_locked = False
+                self._framed_identity = None
             self._last_plot_time = None
             self._last_plot_asymmetry = None
             self._last_plot_error = None

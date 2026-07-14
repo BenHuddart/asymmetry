@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Plot limits no longer reset themselves on the frequency view.** Computing
+  or recomputing a spectrum could silently reframe the plot: a same-run
+  recompute reset the vertical zoom (only the horizontal window was kept),
+  browsing onto a run with no spectrum forfeited a typed window, the first FFT
+  overwrote its own freshly framed view with the pre-compute defaults, and a
+  pan/zoom gesture — unlike typing — was not treated as a deliberate view
+  choice, so it was reframed away on the next redraw. A recompute now never
+  reframes; only a genuine content change (a different run, domain, or view
+  mode) reframes, and never once you have chosen a window by typing or by
+  pan/zoom. The same latching protects the time-domain view, so a zoomed
+  time-domain window survives run switches too. Toggling **Auto X** or **Auto
+  Y** on remains the explicit "always follow the data" escape hatch and now
+  releases any manual lock. On the frequency view **Auto X** frames the
+  spectrum sensibly (the dominant line / field-derived window) instead of
+  snapping to the full Nyquist span.
 - **Frequency-view (FFT/MaxEnt) GLE and text export now mirror the screen.**
   Exporting a frequency-domain spectrum reused the time-domain export path
   verbatim, so the output was wrong in several ways: the axis window was taken
@@ -35,7 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   straight back to the full data extent, because the next redraw re-applied
   the still-active auto-scaling. An interactive zoom/pan now turns off both
   toggles — the same way typing a limit value already did — so the framing you
-  dragged to is kept. Switching runs still reframes the new data as before.
+  dragged to is kept (and, per the entry above, held across run switches until
+  you re-enable Auto X/Y).
 
 ## [0.12.1] - 2026-07-13
 

@@ -298,7 +298,10 @@ Control the plot range using the spinboxes at the top:
 * Click **Auto Y** to auto-scale the Y axis only
 
 Auto-Y uses points inside the currently selected X range and prefers reliable
-foreground points (excluding undefined/low-confidence bins when available).
+foreground points (excluding undefined/low-confidence bins when available). On
+the Frequency-domain plot, **Auto X** frames the spectrum sensibly — the
+dominant line, or the field-derived Larmor window — rather than the full
+Nyquist span.
 
 **Auto X** and **Auto Y** stay active until you take manual control of the
 view: typing a limit value turns off that axis's auto-scaling, and a **Zoom**
@@ -306,8 +309,15 @@ or **Pan** gesture turns off both so the framing you dragged to is kept
 instead of snapping back to the data extent. Re-enable either at any time by
 clicking its button again.
 
-Default limits automatically adjust to fit the data including error bars, 
+Default limits automatically adjust to fit the data including error bars,
 with 5% padding.
+
+Once you choose a window — by typing a limit, or by panning or zooming — that
+window is held: recomputing a spectrum, browsing onto a run with no spectrum,
+and switching runs all keep it, so you can compare the same window across a run
+series. Toggling **Auto X** or **Auto Y** on is the explicit "follow the data"
+escape hatch: it releases the held window for that axis and re-scales on every
+redraw until you toggle it off.
 
 Dense-data display (decimation)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
