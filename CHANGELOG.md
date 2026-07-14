@@ -16,7 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the residual is normalised to unit area over the full frequency range
   (range-independent by construction). A significance guard refuses the
   normalisation for a pure-noise spectrum, keeping the calibrated scale and
-  noting why. Applies to the Magnitude, (Power)^1/2 and Power displays.
+  noting why. Applies to the Magnitude, (Power)^1/2 and Power displays. The
+  displayed density follows the x-axis unit: in a field view the curve, its
+  error band, fit overlays, and the y view window carry the constant dν/dB
+  Jacobian — labelled `p(B) (1/G)` / `(1/T)` and integrating to one per
+  displayed unit — and exports name the y column per unit (`density_per_G`
+  etc.).
 
 ### Changed
 

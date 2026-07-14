@@ -343,12 +343,17 @@ calibrated percent scale and is stamped with the reason). The option applies to
 the ``Magnitude``, ``(Power)^1/2`` and ``Power`` displays only; on a phase or
 real display it is ignored with a note.
 
-The density is kept on its canonical per-MHz footing
-(:math:`p(\nu)` in ``1/MHz``) in every displayed x unit; the constant
-:math:`\mathrm{d}\nu/\mathrm{d}B` Jacobian that would re-express it as
-:math:`p(B)` in ``1/G`` or ``1/T`` is deliberately not applied, so switching the
-x axis to a field unit rescales only the axis, never the displayed density.
-Exports name the y column ``density_per_MHz`` accordingly.
+The displayed density follows the x-axis unit: with the x axis in a field unit
+the curve, its error band, and any fit overlay are rescaled by the constant
+:math:`\mathrm{d}\nu/\mathrm{d}B` Jacobian, so the label reads
+``Field distribution p(B) (1/G)`` (or ``(1/T)``) and the on-screen curve
+integrates to one per displayed unit; the y view window converts with it.
+Exports mirror the display, naming the y column per unit
+(``density_per_MHz`` / ``density_per_G`` / ``density_per_T``) and recording it
+in the sidecar header. The stored spectrum itself stays canonical —
+:math:`p(\nu)` in ``1/MHz`` — and a dimensionless axis mode (such as a relative
+shift in ppm, whose Jacobian would be per-dataset) falls back to the canonical
+``(1/MHz)`` label with no rescaling.
 
 Maximum entropy method
 -----------------------
