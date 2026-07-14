@@ -101,6 +101,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (linearly for Lorentzian, in quadrature for Gaussian) before it is used to
   derive the matched time constant, and the existing resolution-limited guard
   now applies to that deconvolved width.
+- **Bundled gleplot bumped to v1.6.1.** The in-app GLE figure editor's live
+  preview failed ("GLE error" on the `data` line) on exported figures whose
+  sidecar data files are named from a leading run number (e.g.
+  `20_main.dat`): gleplot's parser split a digit-led filename after the
+  digits and looked for a truncated file. gleplot v1.6.1 parses unquoted
+  filenames with digits, hyphens, or path separators correctly; the `gle`
+  extra now pins that tag so packaged builds carry the fix.
 - **Plot limits no longer reset themselves on the frequency view.** Computing
   or recomputing a spectrum could silently reframe the plot: a same-run
   recompute reset the vertical zoom (only the horizontal window was kept),
