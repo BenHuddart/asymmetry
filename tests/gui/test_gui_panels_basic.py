@@ -101,7 +101,8 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
     assert panel._fft_btn.text() == "Compute FFT"
     assert panel._fft_btn.toolTip() == (
         "Compute FFTs for every run selected in the Data Browser using the "
-        "current settings. Each run keeps its own groups and phases."
+        "current settings. The Groups table's enabled groups apply to every "
+        "run; phases stay per-run."
     )
     # The one-button consolidation removed the separate selection actions.
     assert not hasattr(panel, "_compute_for_selection_btn")

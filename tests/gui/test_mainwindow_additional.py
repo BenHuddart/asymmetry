@@ -1323,6 +1323,129 @@ class TestMainWindowFourier:
         rendered = mainwindow._frequency_plot_panel._current_datasets
         assert {int(d.run_number) for d in rendered} == {8884, 8885}
 
+    def test_compute_fft_applies_panel_groups_to_every_target_phases_stay_per_run(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The live table's enabled groups propagate; phases remain per-run.
+
+        Run B has the opposite stored inclusion and its own stored phases.
+        After a selection-scoped Compute FFT with only group 1 enabled in the
+        live table, BOTH recipes must enable exactly {1}, with each recipe's
+        phase for group 1 coming from that run's own phase table — and run
+        B's stored inclusion must be rewritten to match its new recipe while
+        its stored phases survive.
+        """
+        ds_a = _make_fourier_ready_dataset(8890, with_grouping=True)
+        ds_b = _make_fourier_ready_dataset(8891, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_a)
+        mainwindow._data_browser.add_dataset(ds_b)
+        mainwindow._fourier_group_phase_state_by_run[8891] = {
+            "group_enabled_table": {1: False, 2: True},
+            "group_phase_table": {1: 33.0, 2: 5.0},
+        }
+        mainwindow._on_dataset_selected(8890)
+        panel = mainwindow._fourier_panel
+        panel._phase_mode_radio.setChecked(True)  # phase-corrected display
+        panel._use_phase_table_check.setChecked(True)
+        panel.set_group_enabled({1: True, 2: False})
+        panel.set_group_phases({1: 11.0})
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds_a, ds_b])
+
+        _compute_fourier_sync(mainwindow)
+
+        config_a = mainwindow._project_model.representation(
+            8890, RepresentationType.FREQ_FFT
+        ).recipe["fourier_config"]
+        config_b = mainwindow._project_model.representation(
+            8891, RepresentationType.FREQ_FFT
+        ).recipe["fourier_config"]
+        assert config_a["selected_group_ids"] == [1]
+        assert config_b["selected_group_ids"] == [1]
+        # Phases stay per-run: A from the live table, B from ITS stored table.
+        assert config_a["group_phase_degrees"] == {1: 11.0}
+        assert config_b["group_phase_degrees"] == {1: 33.0}
+        # Rule 3: B's stored inclusion now matches its recipe; phases survive.
+        stored_b = mainwindow._fourier_group_phase_state_by_run[8891]
+        assert stored_b["group_enabled_table"] == {1: True, 2: False}
+        assert stored_b["group_phase_table"] == {1: 33.0, 2: 5.0}
+
+    def test_compute_fft_skips_target_with_no_enabled_group_overlap(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A target whose groups miss the enabled set entirely is skipped+counted."""
+        ds_a = _make_fourier_ready_dataset(8892, with_grouping=True)  # groups {1, 2}
+        ds_b = _make_fourier_ready_dataset(8893, with_grouping=True)
+        assert ds_b.run is not None
+        # Re-key run B's groups to {3, 4}: disjoint from the live table's ids.
+        ds_b.run.grouping["groups"] = {3: [1], 4: [2]}
+        ds_b.run.grouping["group_names"] = {3: "Up", 4: "Down"}
+        mainwindow._data_browser.add_dataset(ds_a)
+        mainwindow._data_browser.add_dataset(ds_b)
+        mainwindow._on_dataset_selected(8892)
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds_a, ds_b])
+
+        _compute_fourier_sync(mainwindow)
+
+        assert 8892 in mainwindow._frequency_spectra_by_run
+        assert 8893 not in mainwindow._frequency_spectra_by_run
+        message = mainwindow.statusBar().currentMessage()
+        assert "Computed 1 spectrum" in message
+        assert "(1 skipped)" in message
+
+    def test_propagated_inclusion_shows_in_table_without_stale_banner(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Visiting a propagated target shows the new inclusion, in sync.
+
+        Without the stored-state rewrite, selecting run B after the compute
+        would restore its OLD inclusion into the Groups table and the
+        staleness check would immediately flag the fresh spectrum.
+        """
+        ds_a = _make_fourier_ready_dataset(8894, with_grouping=True)
+        ds_b = _make_fourier_ready_dataset(8895, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_a)
+        mainwindow._data_browser.add_dataset(ds_b)
+        mainwindow._fourier_group_phase_state_by_run[8895] = {
+            "group_enabled_table": {1: False, 2: True},
+            "group_phase_table": {},
+        }
+        mainwindow._on_dataset_selected(8894)
+        mainwindow._fourier_panel.set_group_enabled({1: True, 2: False})
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds_a, ds_b])
+        _compute_fourier_sync(mainwindow)
+
+        mainwindow._on_dataset_selected(8895)
+
+        assert mainwindow._fourier_panel.group_enabled_table() == {1: True, 2: False}
+        assert mainwindow._fourier_panel.is_stale() is False
+
+    def test_compute_on_view_seeding_still_uses_the_runs_own_stored_groups(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Regression: implicit seeding keeps per-run inclusion, not the live table.
+
+        Only the explicit Compute FFT propagates the panel's enabled groups;
+        a never-computed run reached through compute-on-view must still seed
+        its recipe from ITS OWN stored/default inclusion.
+        """
+        ds_active = self._compute_run_fft(mainwindow, 8896)
+        ds_seed = _make_fourier_ready_dataset(8897, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_seed)
+        mainwindow._fourier_group_phase_state_by_run[8897] = {
+            "group_enabled_table": {1: False, 2: True},
+            "group_phase_table": {},
+        }
+        # Live table (active run 8896) has both groups enabled — the seed
+        # below must NOT pick that up.
+        assert mainwindow._fourier_panel.group_enabled_table() == {1: True, 2: True}
+        assert ds_active is not ds_seed
+
+        target = mainwindow._seed_fft_recipe_for_view(8897)
+
+        assert target is not None
+        recipe = mainwindow._project_model.representation(8897, RepresentationType.FREQ_FFT).recipe
+        assert recipe["fourier_config"]["selected_group_ids"] == [2]
+
     def test_switching_to_batch_subtab_refreshes_fit_block_state(
         self, mainwindow: MainWindow
     ) -> None:

@@ -6283,6 +6283,30 @@ class MainWindow(QMainWindow):
             return
         self._fourier_group_phase_state_by_run[run_number] = self._fourier_panel.group_phase_state()
 
+    def _propagate_fourier_inclusion_to_stored_state(
+        self,
+        run_number: int,
+        dataset: MuonDataset,
+        selected_group_ids: list[int],
+    ) -> None:
+        """Set a run's stored Groups-table inclusion to match a just-stamped recipe.
+
+        An explicit selection-scoped Compute FFT applies the live table's
+        enabled groups to every target; without this, visiting a target run
+        later would restore its OLD stored inclusion into the table and the
+        staleness check would immediately flag the fresh spectrum ("included
+        groups changed"). Only the inclusion flags are rewritten — stored
+        phases and auto-filled markers are preserved (phases stay per-run).
+        """
+        selected = {int(group_id) for group_id in selected_group_ids}
+        group_names = self._fourier_group_names_for_dataset(dataset)
+        stored = self._fourier_group_phase_state_by_run.get(int(run_number))
+        stored = dict(stored) if isinstance(stored, dict) else {}
+        stored["group_enabled_table"] = {
+            int(group_id): int(group_id) in selected for group_id in group_names
+        }
+        self._fourier_group_phase_state_by_run[int(run_number)] = stored
+
     def _estimate_dataset_fourier_phase(
         self, dataset: MuonDataset, state: dict, *, plot_window=_VIEW_FROM_WIDGET
     ) -> float:
@@ -7993,13 +8017,18 @@ class MainWindow(QMainWindow):
         alone when nothing else is selected), and the button's dynamic label
         (``"Compute FFT (N runs)"``) shows that scope before the click. Each
         target's config comes from :meth:`_candidate_fourier_config` — the
-        live panel state, with each run keeping its own groups and phases (the
-        active run from the live table, others from their stored per-run state
-        or defaults) — and is stamped as the run's recipe with its own
-        grouping digest. The spectra themselves come from the shared
+        live panel state, with the live Groups table's ENABLED GROUPS applied
+        to every target (intersected with each run's own available groups; an
+        empty intersection skips-and-counts the run) while PHASES stay
+        per-run (the active run from the live table, others from their stored
+        per-run state or defaults) — and is stamped as the run's recipe with
+        its own grouping digest, the stored Groups-table inclusion updated to
+        match. The spectra themselves come from the shared
         ``FrequencyFFT.compute`` (``compute_average_group_spectrum``), the
         same core the recipe recompute uses, so an explicit compute and a
-        recipe recompute are identical by construction.
+        recipe recompute are identical by construction. The implicit
+        compute-on-view seeding and overlay auto-compute keep their per-run
+        stored inclusion — only this explicit action propagates the panel's.
 
         Computation runs off the GUI thread through the shared batch machinery
         (:meth:`_ensure_frequency_spectra_for_runs_async`) as one background
@@ -8033,6 +8062,15 @@ class MainWindow(QMainWindow):
             self._store_maxent_panel_state_for_dataset(self._current_dataset)
             self._sync_fourier_panel_for_dataset(self._current_dataset)
 
+        # The live Groups table's enabled ids apply to EVERY run in the
+        # selection (intersected per target with that run's own available
+        # groups); phases stay per-run. Read once, after the re-sync above.
+        enabled_group_ids = {
+            int(group_id)
+            for group_id, enabled in self._fourier_panel.group_enabled_table().items()
+            if enabled
+        }
+
         cache = self._frequency_cache(RepresentationType.FREQ_FFT)
         pending, failures = self._ensure_recompute_tracking()
         run_numbers: list[int] = []
@@ -8042,7 +8080,7 @@ class MainWindow(QMainWindow):
             if run is None or not run.histograms:
                 skipped += 1
                 continue
-            config = self._candidate_fourier_config(dataset)
+            config = self._candidate_fourier_config(dataset, enabled_group_ids=enabled_group_ids)
             if not config.selected_group_ids:
                 skipped += 1
                 continue
@@ -8060,6 +8098,12 @@ class MainWindow(QMainWindow):
             key = (run_number, RepresentationType.FREQ_FFT)
             pending.discard(key)
             failures.discard(key)
+            # The stored Groups-table inclusion follows what was just
+            # computed, so visiting this run later shows a table consistent
+            # with its recipe (no instant stale banner). Phases are preserved.
+            self._propagate_fourier_inclusion_to_stored_state(
+                run_number, dataset, config.selected_group_ids
+            )
             run_numbers.append(run_number)
 
         if not run_numbers:
@@ -8156,7 +8200,12 @@ class MainWindow(QMainWindow):
             enabled = self._default_group_enabled_table(dataset, group_names)
         return [group_id for group_id in group_names if enabled.get(int(group_id), True)]
 
-    def _candidate_fourier_config(self, dataset: MuonDataset) -> GroupSpectrumConfig:
+    def _candidate_fourier_config(
+        self,
+        dataset: MuonDataset,
+        *,
+        enabled_group_ids: set[int] | None = None,
+    ) -> GroupSpectrumConfig:
         """Return the config an explicit Compute FFT would use right now.
 
         GUI-thread only. Mirrors :meth:`_on_compute_fourier`'s snapshotting —
@@ -8166,18 +8215,31 @@ class MainWindow(QMainWindow):
         Comparing the *resolved* window means a time-view fit-range wiggle that
         the good-statistics tail cap absorbs does not read as a difference.
 
-        The live Groups table describes only the ACTIVE run; for any other
-        dataset (overlay auto-compute) group inclusion and phases resolve from
-        that run's stored state / defaults instead.
+        Group inclusion: by default (``enabled_group_ids=None``) the live
+        Groups table describes only the ACTIVE run; for any other dataset
+        (overlay auto-compute, compute-on-view seeding, the staleness
+        candidate) inclusion and phases resolve from that run's stored state /
+        defaults instead. An explicit Compute FFT instead passes the live
+        table's enabled ids as ``enabled_group_ids``, which then applies to
+        THIS dataset as override ∩ its own available groups — propagating the
+        panel's inclusion to every selected run. Phases are always resolved
+        per-run for whichever ids end up selected.
         """
         state = self._fourier_panel.get_state()
         display = str(state.get("display", "(Power)^1/2"))
         is_active_run = dataset is self._current_dataset
-        selected_group_ids = (
-            self._selected_fourier_group_ids(dataset)
-            if is_active_run
-            else self._fourier_group_ids_for_dataset(dataset)
-        )
+        if enabled_group_ids is not None:
+            selected_group_ids = [
+                int(group_id)
+                for group_id in self._fourier_group_names_for_dataset(dataset)
+                if int(group_id) in enabled_group_ids
+            ]
+        else:
+            selected_group_ids = (
+                self._selected_fourier_group_ids(dataset)
+                if is_active_run
+                else self._fourier_group_ids_for_dataset(dataset)
+            )
         t_min_us, t_max_us = self._current_fourier_time_window_us()
         t_min_us, t_max_us = self._fourier_time_window_excluding_tail(dataset, t_min_us, t_max_us)
         group_phase_degrees: dict[int, float] = {}

@@ -915,18 +915,26 @@ single run, ``Compute FFT (3 runs)`` when three runs are in scope — and its
 tooltip reads:
 
    Compute FFTs for every run selected in the Data Browser using the current
-   settings. Each run keeps its own groups and phases.
+   settings. The Groups table's enabled groups apply to every run; phases
+   stay per-run.
 
 Every run in scope is recomputed from the CURRENT panel state — apodisation,
-padding, display mode, phase mode, and conditioning. Group inclusion and
-phases stay per-run: the active run's come from the live ``Groups`` table,
-and every other run's from its own stored per-run state (or its grouping's
-own inclusion default). Runs with no enabled detector groups are skipped and
+padding, display mode, phase mode, and conditioning. The ``Groups`` table's
+**enabled groups apply to every run in the selection**, intersected with
+each run's own available groups — a series computes with one consistent
+group inclusion, and each target's stored ``Groups`` table is updated to
+match, so visiting it later shows the propagated inclusion, in sync with its
+spectrum. **Phases stay per-run**: each run's phase values come from its own
+stored phase table (or defaults). A run whose groups have no overlap with
+the enabled set — or that has no detector groups at all — is skipped and
 reported in the status line (*"Computed <n> spectra (<m> skipped)."* — the
-skipped count appears only when runs were skipped). Computation runs off the
-GUI thread, and on completion the central workspace switches to the
-Frequency-domain view and renders the result — the active run's spectrum, or
-the full overlay when the Overlay toggle is on with several runs selected.
+skipped count appears only when runs were skipped). The implicit
+compute-on-view fill and the overlay auto-compute are unchanged: they keep
+each run's own stored inclusion; only the explicit button propagates the
+panel's. Computation runs off the GUI thread, and on completion the central
+workspace switches to the Frequency-domain view and renders the result — the
+active run's spectrum, or the full overlay when the Overlay toggle is on
+with several runs selected.
 
 This consolidation replaces an earlier **Apply to selection** affordance that
 copied the active run's already-computed recipe onto the other selected runs

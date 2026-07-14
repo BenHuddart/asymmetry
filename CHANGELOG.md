@@ -18,10 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computes every run selected in the Data Browser (the active run alone when
   nothing else is selected), and its label shows the scope before you click —
   "Compute FFT (3 runs)" for a three-run selection. Every target's
-  configuration is read from the panel as it stands right now, each run keeps
-  its own groups and phases, the whole selection computes asynchronously, and
-  on completion the workspace switches to the frequency view and renders the
-  result (the overlay, when Overlay mode is on). A new banner also flags when
+  configuration is read from the panel as it stands right now: the Groups
+  table's enabled groups apply to every run in the selection (intersected
+  with each run's own available groups, and each target's stored Groups
+  table is updated to match), while phases stay per-run. The whole selection
+  computes asynchronously, and on completion the workspace switches to the
+  frequency view and renders the result (the overlay, when Overlay mode is
+  on). A new banner also flags when
   an active overlay mixes spectra computed under different settings,
   independent of the existing out-of-date indicator. The MaxEnt panel's
   "Apply to selection" is unchanged.
