@@ -811,7 +811,9 @@ never-computed run picks up a fresh spectrum as you select it. ``Compute FFT``,
 pinned in the action footer at the bottom of the Fourier panel (always visible,
 outside the scrolling settings area), remains the explicit way to re-run the
 transform after you change a setting — auto-compute only ever fills a genuinely
-empty spectrum, it never overwrites one you have already computed.
+empty spectrum, it never overwrites one you have already computed. The button
+acts on the full Data-Browser selection and its label counts the scope (see
+`Computing for a selection`_).
 
 A **multi-run overlay** extends the same idea to a selection: toggling Overlay
 with several runs selected auto-computes every member that has no spectrum yet,
@@ -933,6 +935,57 @@ view."*) and, if the Frequency-domain tab is the active view, recomputes it
 immediately rather than leaving the stale banner up. There is nothing to
 refresh by hand here — the next view of the run gets a fresh spectrum against
 the new grouping automatically.
+
+Computing for a selection
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Compute FFT`` is **selection-scoped**: it computes every run selected in
+the Data Browser, or the active run alone when nothing else is selected. The
+button's label shows that scope before you click — ``Compute FFT`` for a
+single run, ``Compute FFT (3 runs)`` when three runs are in scope — and its
+tooltip reads:
+
+   Compute FFTs for every run selected in the Data Browser using the current
+   settings. The Groups table's enabled groups apply to every run; phases
+   stay per-run.
+
+Every run in scope is recomputed from the CURRENT panel state — apodisation,
+padding, display mode, phase mode, and conditioning. The ``Groups`` table's
+**enabled groups apply to every run in the selection**, intersected with
+each run's own available groups — a series computes with one consistent
+group inclusion, and each target's stored ``Groups`` table is updated to
+match, so visiting it later shows the propagated inclusion, in sync with its
+spectrum. **Phases stay per-run**: each run's phase values come from its own
+stored phase table (or defaults). A run whose groups have no overlap with
+the enabled set — or that has no detector groups at all — is skipped and
+reported in the status line (*"Computed <n> spectra (<m> skipped)."* — the
+skipped count appears only when runs were skipped). The implicit
+compute-on-view fill and the overlay auto-compute are unchanged: they keep
+each run's own stored inclusion; only the explicit button propagates the
+panel's. Computation runs off the GUI thread, and on completion the central
+workspace switches to the Frequency-domain view and renders the result — the
+active run's spectrum, or the full overlay when the Overlay toggle is on
+with several runs selected.
+
+This consolidation replaces an earlier **Apply to selection** affordance that
+copied the active run's already-computed recipe onto the other selected runs
+without reading the live panel state, so a setting changed after the last
+``Compute FFT`` was silently left out, and did not re-render the view. That
+compute-once-copy-around model is gone: ``Compute FFT`` always reads the
+panel as it stands now and always acts on the scope its label names.
+
+Because overlay members can be computed independently — one earlier under
+different settings, one auto-filled by the overlay itself — they can drift
+out of alignment with each other. When an active overlay mixes spectra
+computed under different settings, the panel raises a second banner,
+independent of the out-of-date indicator below::
+
+   Overlaid spectra use different settings — Compute FFT to unify.
+
+The comparison is cheap (stored recipe dictionaries only, no recomputation)
+and only looks at the runs actually in the overlay; a ``Compute FFT`` with
+the mismatched runs selected recomputes them all under one configuration and
+clears the banner.
 
 Fitting the displayed spectrum
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
