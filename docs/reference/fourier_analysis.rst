@@ -72,11 +72,13 @@ Asymmetry currently exposes two Fourier workflows:
 * the desktop GUI uses a WiMDA-style grouped-detector workflow that rebuilds a
   grouped count signal for each included detector group before taking the FFT
 
-In the GUI, the frequency-domain plot always shows the average of the
-currently included groups rather than separate per-group spectra. Each loaded
-dataset keeps its own Fourier phase-table state, so changing runs restores the
-phase values, included groups, and auto-estimated markers associated with that
-run.
+In the GUI, the frequency-domain plot transforms one of two signal sources
+(see `Signal source`_): by default, the average of the currently included
+groups rather than separate per-group spectra; or, for a single
+forward/backward detector pair, the run's forward−backward asymmetry directly.
+Each loaded dataset keeps its own Fourier phase-table state, so changing runs
+restores the phase values, included groups, and auto-estimated markers
+associated with that run.
 
 Notation
 --------
@@ -115,6 +117,47 @@ spectrum.
    plt.xlabel(r"$\\nu$ (MHz)")
    plt.ylabel(r"$|\\mathcal{F}|$")
    plt.show()
+
+Signal source
+~~~~~~~~~~~~~
+
+The Fourier panel's ``FFT Phase Mode`` section starts with a **Signal
+source** choice — which time-domain signal is transformed, before any of the
+apodisation or phase-mode controls below are applied:
+
+* ``Grouped average`` (the default) — *"Average of each detector group's
+  lifetime-corrected FFT."* This is the WiMDA-style workflow the rest of this
+  page describes: rebuild each included group's signal, FFT it, and average
+  the results.
+* ``F−B asymmetry`` — *"FFT of the forward−backward asymmetry signal (as
+  plotted in the time domain) — cleaner for a single detector pair."* Rather
+  than averaging every group's own FFT, this transforms the single
+  forward−backward asymmetry curve directly — exactly the signal the
+  time-domain plot shows, built with the same grouping and α. Deadtime
+  correction is **not** applied on this path, matching the time-domain plot
+  (the grouped-average path does apply it to each group's count signal before
+  the transform).
+
+For a run with just one forward/backward detector pair, ``F−B asymmetry``
+gives markedly better peak-to-floor contrast than ``Grouped average``: on a
+real GPS zero-field run, switching to F−B asymmetry raised the contrast by
+roughly a factor of five, where averaging every detector group's own FFT
+buried the line under the other groups' baselines. With several detector
+groups, though, ``Grouped average`` remains the workflow to use — averaging
+genuinely independent group spectra is what suppresses their uncorrelated
+noise.
+
+Switching source flags the displayed spectrum out of date, and the ``Groups``
+include/phase table becomes inert (and is disabled, not hidden, so the values
+survive a switch back) in F−B mode, since a single already-combined curve is
+being transformed — the per-group table cannot affect it. Grouping and α
+changes still flag the spectrum out of date in F−B mode, because they change
+the underlying forward−backward curve; the global ``Phase`` field and
+``t0 Offset (μs)`` still apply in the phase-correcting display modes either
+way. The two sources are also distinguished in overlays: a spectrum computed
+from F−B asymmetry is labelled ``<run> F−B`` rather than ``<run> Average``, so
+a multi-run overlay's legend (`GUI Fourier workflow`_) shows at a glance which
+runs used which source.
 
 Filter / apodisation
 ~~~~~~~~~~~~~~~~~~~~
@@ -195,8 +238,9 @@ How the GUI FFT is built
 The docked Fourier workflow in the desktop application is intentionally more
 specific than the low-level API:
 
-* the FFT input is the grouped detector-count signal, not the forward/backward
-  asymmetry trace
+* by default (``Grouped average``) the FFT input is the grouped detector-count
+  signal, not the forward/backward asymmetry trace; the ``F−B asymmetry``
+  `Signal source`_ transforms that asymmetry trace instead
 * the grouped signal is rebuilt from the current grouping and current bunching
   factor every time the transform is computed
 * grouped-count inputs are corrected for the muon lifetime envelope before the
@@ -956,6 +1000,14 @@ Runs that cannot compute — no detector groups, or a transform that fails — a
 skipped and reported in the status line: *"Overlaying <n> runs; <m> selected
 run(s) could not be computed — check their detector grouping and the log."*
 
+The overlay's legend takes its labels from the plot panel's own ``Label:``
+combo — the same metadata-field picker the time-domain view uses — so a run
+number, field, temperature, or comment identifies each trace. Choosing
+``Temperature (K)``, for example, renders each entry as its value alone (for
+example ``3.24 K``), which is the natural way to compare, say, an ordered run
+against a paramagnetic one and read the line broadening between them directly
+off the legend.
+
 Once several spectra are overlaid, **Waterfall** stacks each one onto its own
 vertical offset so nearby lines stay resolved instead of overlapping —
 see :ref:`waterfall stacking <waterfall-stacking>` for the shared control (it
@@ -1131,6 +1183,11 @@ fits send ``nu0`` and ``fwhm`` values, plus derived ``B0`` and ``Bwid`` field
 equivalents, to the **Parameters** dock for trend analysis.  See
 :doc:`frequency_domain_fitting` for the full workflow.
 
+A single-run fit needs a single spectrum, so fitting is blocked while an
+`overlay <GUI Fourier workflow>`_ is active: the Fit dock disables and reports
+*"Multiple spectra overlaid — select a single run to fit in the frequency
+domain."* Untick **Overlay** (or select just one run) to fit again.
+
 Phase estimation workflow
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1151,14 +1208,16 @@ The phase colour cues in the table are also meaningful:
 * green: the phase value was auto-estimated for the current dataset via
   ``Fill Phase Estimates``
 
-Asymmetry now makes two explicit design decisions for this workflow:
+Asymmetry makes two explicit design decisions for this workflow, in the
+default ``Grouped average`` `Signal source`_:
 
-* Fourier transforms always use grouped detector-count signals rather than the
-  FB asymmetry trace as the input source.
-* The frequency-domain plot always shows the average of the currently included
+* Fourier transforms use grouped detector-count signals rather than the FB
+  asymmetry trace as the input source. (The ``F−B asymmetry`` signal source is
+  the deliberate exception — see `Signal source`_.)
+* The frequency-domain plot shows the average of the currently included
   groups rather than separate per-group spectra.
 
-The FFT therefore always uses the current grouped/bunched data definition. The
+The FFT therefore uses the current grouped/bunched data definition. The
 grouped detector-count signal is rebuilt with the current bunching factor
 before the transform, and that grouped count signal is lifetime-corrected
 before the later subtract-average and filter stages. The FFT bandwidth and
