@@ -159,10 +159,19 @@ excludes cosmetics/alpha — the reuse candidate for the staleness digest.
    Known cosmetic: a good window extending into the fully-decayed tail lets the
    α=1 ghost blow the Y-scale (real windows trim it; same exposure as the
    pre-existing single-curve preview) — clamp Y to the α̂ curve if it bites.
-4. **Modal-body lift spike + inline the sections** (one modal per commit;
-   Background first — synchronous, 412 lines — to validate a modal body lifts
-   into an embeddable `QWidget` before replicating). Retire each modal, migrate
-   its tests, update the scenario. Order: Background → Deadtime → α.
+4. **Inline the sections** (one modal per commit) — IN PROGRESS.
+   - **Background — DONE.** `BackgroundSectionWidget` (`background_section.py`)
+     hosts the mode combo + status + reference picker inline in the Corrections
+     panel; `BackgroundDialog` and its off-thread group-summation preview
+     machinery retired. The dialog keeps `_background_mode`/`_background_run_payload`
+     as the source of truth (the section writes them via a `changed` signal), so
+     `_current_grouping_payload` is unchanged. Tests migrated to the section +
+     new `test_background_section.py`. Minor deferred: the inline status drops the
+     live tail-fit rate readout (the unified preview shows the subtraction). This
+     confirmed the lift is a clean re-hosting — the pattern for the next two.
+   - **Deadtime — next** (`deadtime_dialog.py`, synchronous, per-detector table +
+     Cal). Then **α** (`alpha_calibration_dialog.py`, the largest — the overlay
+     preview already exists to drive; update the screenshot scenario).
 5. **Diagnostic per-stage toggles** (preview-only). **Trap:** they must write to
    the preview request only, never the persisted grouping payload — otherwise
    they silently change real reductions (the exact bug class PR 1 fixed).
