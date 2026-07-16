@@ -26,7 +26,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
-from asymmetry.core.io.periods import combine_mapped_periods
+from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
 from asymmetry.core.transform import apply_grouping, compute_asymmetry
 
 try:  # optional dependency
@@ -1172,11 +1172,11 @@ class NexusLoader(BaseLoader):
     def _encode_period_run_number(self, run_number: int, period_idx: int) -> int:
         """Encode a stable unique run number for a specific period row.
 
-        The data browser key is integer-based. For multi-period files we keep
-        the user-facing label as ``run/period`` while encoding a unique integer
-        key that avoids clashes with single-period runs.
+        Delegates to :func:`asymmetry.core.io.periods.encode_period_run_number`
+        so the loader's list path and the scriptable ``select_period`` reducer
+        share one encoding scheme.
         """
-        return int(run_number) * 1000 + int(period_idx)
+        return encode_period_run_number(run_number, period_idx)
 
     def _extract_tree(self, node: Any) -> Any:
         """Recursively extract NeXus group/dataset content into plain Python types."""

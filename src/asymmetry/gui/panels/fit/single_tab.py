@@ -14,6 +14,7 @@ tab for project persistence.
 
 import copy
 import functools
+import html
 from collections.abc import Callable
 
 import numpy as np
@@ -69,6 +70,7 @@ from asymmetry.gui.styles.widgets import (
     fit_quality_tooltip,
     make_section_header,
     success_html,
+    warning_html,
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.panel_section import PanelSection
@@ -81,6 +83,7 @@ from .tab_base import (
     _apply_domain_mismatch_warning,
     _fit_curve_sample_count,
     _fit_domain_mismatch_message,
+    _fit_result_is_usable,
     _fit_success_html,
     _fit_summary,
     _fit_warnings_html,
@@ -1010,6 +1013,61 @@ class SingleFitTab(FitTabBase):
         """Block (with a live event loop) until the launched fit completes."""
         return _wait_for_fit_thread(self, timeout_ms)
 
+    def _show_flagged_single_fit(
+        self, result, dataset, model, model_generation, *, rrf_offsets=None
+    ) -> None:
+        """Surface a converged-but-flagged single fit without recording it.
+
+        MINUIT sometimes returns a perfectly usable minimum yet sets
+        ``success=False`` (an invalid-minimum / at-limit flag). Silently drawing
+        nothing left the user with no feedback; instead show the χ² and the
+        minimiser's message, and draw the fit curve **greyed** via the preview
+        overlay so its shape can be judged. The fit is deliberately not recorded
+        (no ``fit_completed``, no ``_last_fit_result``), so it never becomes a
+        seed or a persisted slot — the user refines and refits to keep it.
+        """
+        detail = f"χ²/ν = {result.reduced_chi_squared:.4f} · {html.escape(str(result.message))}"
+        guidance = (
+            "Curve shown in grey for inspection — not recorded. Adjust the seeds, "
+            "bounds, or model and refit to keep it."
+        )
+        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
+        self._result_label.setText(
+            warning_html("⚠ Fit did not fully converge")
+            + f'<br><span style="color:{tokens.TEXT_MUTED};">{detail}</span>'
+            + f'<br><span style="color:{tokens.TEXT_MUTED};"><i>{guidance}</i></span>'
+        )
+        self._result_label.setToolTip("")
+
+        # Only overlay the curve when the panel still shows the model and run the
+        # fit ran on — otherwise the user navigated away mid-fit and drawing it
+        # would land on the wrong plot (mirrors the success path's freshness gate).
+        model_unchanged = (
+            self._composite_model is model and self._model_generation == model_generation
+        )
+        if not (model_unchanged and self._current_dataset is dataset):
+            return
+
+        if rrf_offsets:
+            # Shift the fitted δν back to the lab frame so the greyed curve is
+            # drawn at the true precession frequency on the raw data.
+            result.parameters = _shift_rrf_parameters(result.parameters, rrf_offsets, sign=+1)
+
+        param_dict = {parameter.name: parameter.value for parameter in result.parameters}
+        n_samples = _fit_curve_sample_count(
+            self._composite_model,
+            param_dict,
+            float(dataset.time.min()),
+            float(dataset.time.max()),
+        )
+        t_fit = np.linspace(dataset.time.min(), dataset.time.max(), n_samples)
+        y_fit = self._composite_model.function(t_fit, **param_dict)
+        component_curves = self._composite_model.evaluate_components(
+            t_fit, additive_only=True, **param_dict
+        )
+        # Reuse the preview overlay (greyed, un-recorded) to draw the flagged curve.
+        self.preview_requested.emit(object(), (t_fit, y_fit), component_curves)
+
     def _apply_single_fit_result(
         self,
         result,
@@ -1026,8 +1084,17 @@ class SingleFitTab(FitTabBase):
         self._fit_worker = None
 
         if not result.success:
-            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-            self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
+            if _fit_result_is_usable(result):
+                # Converged to a plottable minimum but MINUIT flagged it (e.g. a
+                # degenerate baseline). Show the curve greyed + explain, rather
+                # than silently drawing nothing. Not recorded — "Add to
+                # Series"/pull-diagnostic stay disabled until the user refines it.
+                self._show_flagged_single_fit(
+                    result, dataset, model, model_generation, rrf_offsets=rrf_offsets
+                )
+            else:
+                self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
+                self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
             return
 
         # The engine fitted the rotating-frame offsets δν; shift the result back

@@ -572,6 +572,13 @@ class PlotPanel(QWidget):
             self._active_annotation_idx: int | None = None
             self._annotation_drag_started = False
 
+            # Persistent frequency-domain decorations that must survive a replot
+            # (the show-time render clears the axis and recomputes the x-label, so
+            # markers/labels drawn straight onto the axis are otherwise wiped —
+            # see set_custom_x_axis_label / add_persistent_frequency_marker).
+            self._custom_x_axis_label: str | None = None
+            self._persistent_frequency_markers: list[dict] = []
+
             # Cached arrays from the most recently plotted analysis dataset.
             self._last_plot_time = None
             self._last_plot_asymmetry = None
@@ -1694,6 +1701,10 @@ class PlotPanel(QWidget):
 
     def _apply_axis_labels(self, x_label: str, y_label: str) -> None:
         """Apply axis labels and keep the limit-unit helpers in sync."""
+        # A pinned custom x-label wins over the recomputed one so it is not wiped
+        # by the show-time replot (see set_custom_x_axis_label).
+        if self._custom_x_axis_label is not None:
+            x_label = self._custom_x_axis_label
         self._ax.set_xlabel(x_label)
         self._ax.set_ylabel(y_label)
         self._apply_x_axis_decimation_indicator(self._ax)
@@ -3280,6 +3291,55 @@ class PlotPanel(QWidget):
             self.plot_dataset(self._current_dataset)
         elif self._current_datasets:
             self.plot_dataset(self._current_datasets[-1])
+
+    def set_custom_x_axis_label(self, label: str | None) -> None:
+        """Pin (or clear) a custom x-axis label that survives replots.
+
+        A replot recomputes and overwrites the x-axis label, so a caller that
+        wants a bespoke label — for example a Fourier annotation workflow
+        labelling a hyperfine-coupling axis — pins it here. It is re-applied
+        after every render (including the show-time replot) instead of being
+        wiped. Pass ``None`` to restore the computed label.
+        """
+        self._custom_x_axis_label = str(label) if label is not None else None
+        if not self._has_mpl:
+            return
+        if self.has_plot_content():
+            self._redraw_current_view()
+        else:
+            # No data yet: reflect the pinned/cleared label immediately so a
+            # caller that annotates before plotting still sees it.
+            self._apply_axis_labels(*self._default_axis_labels())
+            self._canvas.draw_idle()
+
+    def add_persistent_frequency_marker(self, freq_mhz: float, label: str = "") -> None:
+        """Pin a vertical frequency-line marker that survives replots.
+
+        ``freq_mhz`` is a canonical (absolute) frequency in MHz; it is
+        display-unit converted at draw time so the marker tracks the active axis
+        unit. The marker is recreated on every render, so — unlike a one-off
+        ``axvline`` drawn straight onto the axis — it is not wiped by the
+        show-time replot. Use for Fourier line labels (ν₁, ν₂, A_µ, γ_μ·B).
+        """
+        freq = float(freq_mhz)
+        if not np.isfinite(freq):
+            return
+        self._persistent_frequency_markers.append({"freq_mhz": freq, "label": str(label or "")})
+        if not self._has_mpl:
+            return
+        if self.has_plot_content():
+            self._redraw_current_view()
+        else:
+            self._draw_persistent_frequency_markers()
+            self._canvas.draw_idle()
+
+    def clear_persistent_frequency_markers(self) -> None:
+        """Remove every pinned frequency-line marker and redraw."""
+        if not self._persistent_frequency_markers:
+            return
+        self._persistent_frequency_markers = []
+        if self._has_mpl and self.has_plot_content():
+            self._redraw_current_view()
 
     def _emit_view_limits_changed(self) -> None:
         """Broadcast the current view limits to external UI owners."""
@@ -5296,9 +5356,55 @@ class PlotPanel(QWidget):
             self._limits_user_locked = False
             self._auto_y_limits()
 
+    def _draw_persistent_frequency_markers(self) -> None:
+        """Redraw the pinned frequency-line markers on the active axis.
+
+        Vertical marker + optional label for each pinned frequency (stored in
+        canonical MHz). Built with ``add_artist`` + a ``get_xaxis_transform``
+        idiom — identical to :meth:`_draw_expected_larmor_marker` — so the
+        marker spans the axes height, never perturbs ``dataLim``/autoscale, and
+        (unlike a one-off ``axvline``) is recreated on every render, surviving
+        the show-time replot. The x position is display-unit converted so it
+        tracks the active frequency/field axis unit.
+        """
+        if not self._has_mpl or not self._persistent_frequency_markers:
+            return
+        from matplotlib import lines as mlines
+
+        transform = self._ax.get_xaxis_transform(which="grid")
+        for marker in self._persistent_frequency_markers:
+            x = float(self._convert_frequency_axis_for_display(np.array([marker["freq_mhz"]]))[0])
+            if not np.isfinite(x):
+                continue
+            line = mlines.Line2D(
+                [x, x],
+                [0.0, 1.0],
+                transform=transform,
+                color=tokens.ACCENT,
+                alpha=0.7,
+                linestyle="--",
+                linewidth=1.0,
+                zorder=1,
+            )
+            line.set_label("_nolegend_")
+            self._ax.add_artist(line)
+            label = str(marker.get("label") or "")
+            if label:
+                self._ax.annotate(
+                    label,
+                    xy=(x, 0.96),
+                    xycoords=transform,
+                    ha="left",
+                    va="top",
+                    fontsize=8,
+                    color=tokens.ACCENT,
+                    zorder=5,
+                )
+
     def _draw_annotations(self) -> None:
         """Recreate annotation artists on the active axis."""
         rrf_draw_badge(self, self._ax)
+        self._draw_persistent_frequency_markers()
         for ann in self._annotations:
             artist = self._ax.text(
                 ann["x"],
@@ -7222,6 +7328,8 @@ class PlotPanel(QWidget):
             self._annotations = self._default_annotations
             self._active_annotation_idx = None
             self._annotation_drag_started = False
+            self._custom_x_axis_label = None
+            self._persistent_frequency_markers = []
             self._fit_x_min = None
             self._fit_x_max = None
             self._fit_span_artists = []

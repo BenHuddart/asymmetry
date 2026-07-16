@@ -35,6 +35,33 @@ def test_transverse_token_without_field_is_still_candidate() -> None:
     assert verdict.field_gauss is None
 
 
+def test_structured_tf_state_without_direction_or_field_is_candidate() -> None:
+    """A loader that records the ``TF`` field-state code but leaves
+    ``field_direction`` and ``field`` unset (field_gauss=None) must still be
+    highlighted — the EMU-metadata gap the corpus LLZ sweep flagged."""
+    verdict = classify_tf_calibration_run({"field_state": "TF"})
+    assert verdict.is_candidate
+    assert verdict.field_gauss is None
+
+
+def test_magnetic_field_state_alias_is_recognised() -> None:
+    verdict = classify_tf_calibration_run({"magnetic_field_state": "tf", "field": 20.0})
+    assert verdict.is_candidate
+    assert verdict.field_gauss == pytest.approx(20.0)
+
+
+def test_longitudinal_field_state_vetoes() -> None:
+    verdict = classify_tf_calibration_run({"field_state": "LF", "title": "wTF sample"})
+    assert not verdict.is_candidate
+    assert "longitudinal" in verdict.reason
+
+
+def test_zero_field_state_vetoes() -> None:
+    verdict = classify_tf_calibration_run({"field_state": "ZF"})
+    assert not verdict.is_candidate
+    assert "zero field" in verdict.reason
+
+
 def test_field_magnitude_alone_is_not_a_candidate() -> None:
     """A field in the window with no transverse evidence must not be flagged —
     the magnitude alone is ambiguous (the loaders' field-geometry policy)."""

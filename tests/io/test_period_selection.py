@@ -19,6 +19,7 @@ from asymmetry.core.io.periods import (
     GREEN_INDEX,
     RED_INDEX,
     combine_period_asymmetry,
+    encode_period_run_number,
     resolve_period_index,
     select_period_histograms,
 )
@@ -221,6 +222,24 @@ def test_select_period_preserves_provenance():
     # internal period bookkeeping stripped from the per-period grouping
     assert "period_histograms" not in green.run.grouping
     assert "period_reduced" not in green.run.grouping
+
+
+def test_select_period_assigns_distinct_run_numbers():
+    # Both periods share the source run's number, so a run-number-keyed data
+    # browser would collapse them. select_period must hand each period a
+    # distinct encoded key while preserving the true source run number.
+    combined = _combined_two_period()
+    red = select_period(combined, "red")
+    green = select_period(combined, "green")
+
+    assert red.run.run_number != green.run.run_number
+    assert red.run.run_number == encode_period_run_number(12345, 1)
+    assert green.run.run_number == encode_period_run_number(12345, 2)
+    # the true source run is still recoverable, and the display label unchanged
+    assert red.metadata["source_run_number"] == 12345
+    assert green.metadata["source_run_number"] == 12345
+    assert red.run_label == "12345/1"
+    assert green.run_label == "12345/2"
 
 
 def test_select_period_returns_copies():

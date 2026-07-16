@@ -89,6 +89,17 @@ def test_positive_definite_params_keep_zero_lower_bound() -> None:
         assert get_param_info(name).default_min == 0.0, name
 
 
+def test_indexed_gaussian_width_keeps_zero_lower_bound() -> None:
+    # A Gaussian/Kubo-Toyabe width enters the model squared, so an unbounded
+    # minimiser can flip its sign at identical chi-squared. In a real composite
+    # the width parameter is index-suffixed (``sigma_1`` / ``Delta_1``); the 0
+    # floor that removes the sign degeneracy must survive that suffixing so the
+    # GUI parameter table seeds COL_MIN = 0 for it. Regression for the TRSB
+    # (Re6Zr) Gaussian-KT / rotating-Gaussian fits.
+    for name in ("sigma_1", "sigma_2", "Delta_1", "Delta_3"):
+        assert get_param_info(name).default_min == 0.0, name
+
+
 def test_get_param_info_indexed_parameter_preserves_formats() -> None:
     info = get_param_info("A0_2")
     assert info.plain == "A0_2"

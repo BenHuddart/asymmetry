@@ -59,6 +59,7 @@ __all__ = [
     "build_rf_difference_scan",
     "combine_mapped_periods",
     "combine_period_asymmetry",
+    "encode_period_run_number",
     "normalise_period_mapping",
     "period_count",
     "period_labels",
@@ -72,6 +73,22 @@ __all__ = [
 RED_INDEX = 0
 #: Histogram index of the second ("green") period in a two-period file.
 GREEN_INDEX = 1
+
+
+def encode_period_run_number(run_number: int, period_number: int) -> int:
+    """Return a stable, unique integer run-number key for one period row.
+
+    The data browser keys datasets by integer run number, so the two periods
+    of a run must not share the source run's number or the second add would
+    overwrite (collapse) the first. This encodes ``run * 1000 + period`` — the
+    same scheme the loader's 3+-period list path uses in
+    ``NeXusReader._encode_period_run_number`` — while the user-facing
+    ``run/period`` label and the true ``source_run_number`` are carried in
+    metadata. Real ISIS/PSI run numbers are well under 1000×, so the encoded
+    keys never clash with single-period runs.
+    """
+    return int(run_number) * 1000 + int(period_number)
+
 
 # Friendly labels accepted for the two-period red/green case (lower-cased).
 _RG_LABEL_INDEX: dict[str, int] = {
@@ -246,6 +263,12 @@ def _build_period_dataset(combined: MuonDataset, index: int) -> MuonDataset:
 
     metadata = dict(combined.metadata)
     source_run = metadata.get("source_run_number", metadata.get("run_number", 0))
+    # Each period gets its own encoded run-number key so both survive in the
+    # run-number-keyed data browser (otherwise the second add collapses the
+    # first). The source run and the friendly run/period label stay in metadata.
+    period_run_number = encode_period_run_number(source_run, index + 1)
+    metadata["run_number"] = period_run_number
+    metadata["source_run_number"] = source_run
     metadata["period_number"] = index + 1
     metadata["period_count"] = count
     metadata["run_label"] = f"{source_run}/{index + 1}"
@@ -253,7 +276,7 @@ def _build_period_dataset(combined: MuonDataset, index: int) -> MuonDataset:
         metadata["period_label"] = period_labels(combined)[index]
 
     run = Run(
-        run_number=combined.run.run_number,
+        run_number=period_run_number,
         histograms=histograms,
         metadata=metadata,
         grouping=period_grouping,
