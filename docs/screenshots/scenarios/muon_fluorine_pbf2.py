@@ -78,7 +78,7 @@ class MuonFluorinePbf2Scenario(Scenario):
         # The fit runs on a worker thread; block (with a live event loop)
         # until it lands so the screenshot captures the converged parameters
         # rather than the transient "Fitting…" state (mirrors
-        # euo_fit_oscillatory.py). The wait is bounded, so a stalled fit
+        # the corpus euo_ordering.py scenarios). The wait is bounded, so a stalled fit
         # cannot wedge the capture indefinitely.
         single_tab.wait_for_fit()
 

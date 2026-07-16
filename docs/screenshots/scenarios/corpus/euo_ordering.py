@@ -7,8 +7,7 @@ the spec: S. J. Blundell *et al.*, "Phase transition in the localized
 ferromagnet EuO probed by µSR," Phys. Rev. B **81**, 092407 (2010). See the
 example's ``GROUND_TRUTH.md``.
 
-These are the *real-data* counterparts to the synthetic ``euo_fit_oscillatory``
-/ ``temperature_trend_fit`` scenarios: below T_C ≈ 69 K a single spontaneous
+These replaced the retired synthetic EuO archetype scenarios: below T_C ≈ 69 K a single spontaneous
 zero-field precession develops in the transverse Forward/Back detector pair;
 its frequency ν(T) is the magnetic order parameter, ν(0) ≈ 30 MHz
 (B_µ(0) ≈ 0.22 T). Fitting ν(T) with the phenomenological order-parameter

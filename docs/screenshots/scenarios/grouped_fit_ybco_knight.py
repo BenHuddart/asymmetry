@@ -101,7 +101,7 @@ class GroupedFitYbcoKnightScenario(Scenario):
 
         # Run the real grouped time-domain fit synchronously (worker thread,
         # blocked on with a live event loop so the capture is deterministic —
-        # mirrors euo_fit_oscillatory.py). The per-group nuisances and shared
+        # mirrors the corpus euo_ordering.py scenarios). The per-group nuisances and shared
         # field parameter already auto-seed from the run's own counts/applied
         # field when the table was built above, so a single fit call
         # converges and the parameter table reads as a completed workflow
