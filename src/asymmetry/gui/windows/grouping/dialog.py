@@ -59,7 +59,6 @@ from asymmetry.core.instrument import (
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
-    DeadtimePolicy,
     GroupingProfile,
     ProfileFingerprint,
     T0Policy,
@@ -92,10 +91,9 @@ from asymmetry.gui.windows.grouping.background_section import (
     BackgroundReferenceRunCandidate,
     BackgroundSectionWidget,
 )
-from asymmetry.gui.windows.grouping.deadtime_dialog import (
-    DeadtimeDialog,
+from asymmetry.gui.windows.grouping.deadtime_section import (
+    DeadtimeSectionWidget,
     DeadtimeSourceRun,
-    deadtime_status_text,
 )
 from asymmetry.gui.windows.grouping.format import (
     ALPHA_METHOD_ITEMS as _ALPHA_METHOD_ITEMS,
@@ -541,18 +539,11 @@ class GroupingDialog(QDialog):
             else None
         )
 
-        self._deadtime_status_row = QWidget()
-        deadtime_status_layout = QHBoxLayout(self._deadtime_status_row)
-        deadtime_status_layout.setContentsMargins(0, 0, 0, 0)
-        self._deadtime_status_label = QLabel("")
-        self._deadtime_status_label.setWordWrap(True)
-        deadtime_status_layout.addWidget(self._deadtime_status_label, stretch=1)
-        self._deadtime_configure_btn = QPushButton("Configure…")
-        self._deadtime_configure_btn.setAutoDefault(False)
-        self._deadtime_configure_btn.setDefault(False)
-        self._deadtime_configure_btn.clicked.connect(self._on_configure_deadtime)
-        deadtime_status_layout.addWidget(self._deadtime_configure_btn)
-        self._update_deadtime_status()
+        # Inline deadtime controls (the retired DeadtimeDialog's body) live in the
+        # Corrections section; the dialog keeps the _deadtime_* state as the source
+        # of truth the payload reads (the section folds edits back via `changed`).
+        self._deadtime_section = DeadtimeSectionWidget()
+        self._deadtime_section.changed.connect(self._on_deadtime_changed)
 
         payload = grouping.get("background_run")
         self._background_run_payload: dict[str, Any] | None = (
@@ -688,7 +679,6 @@ class GroupingDialog(QDialog):
         form.addRow("Binning", binning_row_widget)
         self._on_binning_mode_changed()
         form.addRow("Exclude Detectors", self._exclude_edit)
-        form.addRow("Deadtime", self._deadtime_status_row)
         self._map_periods_btn = QPushButton("Map periods…")
         self._map_periods_btn.setAutoDefault(False)
         self._map_periods_btn.setDefault(False)
@@ -726,12 +716,17 @@ class GroupingDialog(QDialog):
             expanded=True,
             hint="Deadtime, background and α — configured and previewed together.",
         )
+        deadtime_label = QLabel("Deadtime correction")
+        deadtime_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._corrections_section.addWidget(deadtime_label)
+        self._corrections_section.addWidget(self._deadtime_section)
         background_label = QLabel("Background subtraction")
         background_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._corrections_section.addWidget(background_label)
         self._corrections_section.addWidget(self._background_section)
         scroll_layout.addWidget(self._corrections_section)
         scroll_layout.addStretch()
+        self._update_deadtime_status()
         self._update_background_status()
 
         self._right_scroll = QScrollArea()
@@ -2183,37 +2178,33 @@ class GroupingDialog(QDialog):
         self._update_deadtime_status()
 
     def _update_deadtime_status(self) -> None:
-        """Refresh the compact deadtime status row from the current state."""
-        self._deadtime_status_label.setText(
-            deadtime_status_text(self._deadtime_policy_from_state())
+        """Re-seed the inline deadtime section from the current draft state."""
+        grouping = (
+            self._run.grouping
+            if self._run is not None and isinstance(self._run.grouping, dict)
+            else {}
         )
-
-    def _deadtime_policy_from_state(self) -> DeadtimePolicy:
-        """Build the :class:`DeadtimePolicy` the status row / dialog reflect."""
-        mode = self._deadtime_mode
-        if mode == "off":
-            return DeadtimePolicy(mode="off")
-        if mode == "file":
-            return DeadtimePolicy(mode="from_file")
-        if mode == "manual":
-            return DeadtimePolicy(
-                mode="manual",
-                values=list(self._deadtime_manual_values_us),
-                method=self._deadtime_manual_method,
-                source_run=self._deadtime_source_run,
-            )
-        return DeadtimePolicy(
-            mode="estimate",
+        peak_rates, bin_width_us, good_frames = self._deadtime_peak_rates(grouping)
+        reference_run_number = (
+            int(self._reference_dataset.run_number) if self._reference_dataset is not None else None
+        )
+        self._deadtime_section.configure(
+            n_detectors=len(self._run.histograms) if self._run is not None else 0,
+            mode=self._deadtime_mode,
+            file_values_us=self._reference_file_deadtime_values(grouping),
+            manual_values_us=list(self._deadtime_manual_values_us),
+            manual_method=self._deadtime_manual_method,
             estimated_us=self._deadtime_estimated_us,
-            source_run=self._deadtime_source_run,
+            source_run=self._deadtime_source_run or reference_run_number,
+            source_runs=self._deadtime_source_runs(),
+            reference_run_number=reference_run_number,
+            peak_rates_per_us=peak_rates,
+            bin_width_us=bin_width_us,
+            good_frames=good_frames,
         )
 
-    def _on_configure_deadtime(self) -> None:
-        """Open the deadtime dialog, seeded from the current state."""
-        n_detectors = len(self._run.histograms) if self._run is not None else 0
-        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-        file_values = self._reference_file_deadtime_values(grouping)
-
+    def _deadtime_source_runs(self) -> list[DeadtimeSourceRun]:
+        """Candidate source runs (of the fingerprint) for Cal/Estimate."""
         source_runs: list[DeadtimeSourceRun] = []
         for ds in self._fingerprint_datasets():
             if ds.run is None or not ds.run.histograms:
@@ -2231,7 +2222,10 @@ class GroupingDialog(QDialog):
                     good_frames=good_frames,
                 )
             )
+        return source_runs
 
+    def _deadtime_peak_rates(self, grouping: dict[str, Any]) -> tuple[list[float], float, float]:
+        """Per-detector peak early-time rate, bin width and good frames (summary line)."""
         peak_rates: list[float] = []
         bin_width_us = 0.0
         good_frames = 1.0
@@ -2245,26 +2239,11 @@ class GroupingDialog(QDialog):
                 counts = np.asarray(hist.counts, dtype=np.float64)
                 peak = float(np.max(counts)) if counts.size else 0.0
                 peak_rates.append(peak / bin_width_us if bin_width_us > 0.0 else 0.0)
+        return peak_rates, bin_width_us, good_frames
 
-        dlg = DeadtimeDialog(
-            n_detectors=n_detectors,
-            mode=self._deadtime_mode,
-            file_values_us=file_values,
-            manual_values_us=list(self._deadtime_manual_values_us),
-            manual_method=self._deadtime_manual_method,
-            estimated_us=self._deadtime_estimated_us,
-            source_run=self._deadtime_source_run or int(self._reference_dataset.run_number),
-            source_runs=source_runs,
-            reference_run_number=int(self._reference_dataset.run_number),
-            peak_rates_per_us=peak_rates,
-            bin_width_us=bin_width_us,
-            good_frames=good_frames,
-            parent=self,
-        )
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        policy = dlg.get_policy()
+    def _on_deadtime_changed(self) -> None:
+        """Fold an inline deadtime-section edit back into the draft + preview."""
+        policy = self._deadtime_section.get_policy()
         self._deadtime_mode = policy.mode if policy.mode != "from_file" else "file"
         if policy.mode == "manual":
             self._deadtime_manual_values_us = list(policy.values)
@@ -2273,7 +2252,6 @@ class GroupingDialog(QDialog):
         elif policy.mode == "estimate":
             self._deadtime_estimated_us = policy.estimated_us
             self._deadtime_source_run = policy.source_run
-        self._update_deadtime_status()
         self._mark_dirty()
         self._refresh_preview()
         self._refresh_alpha_staleness()

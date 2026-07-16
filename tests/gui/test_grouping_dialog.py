@@ -443,7 +443,9 @@ def test_file_deadtime_status_reflects_reference_run(qapp: QApplication) -> None
     dialog._update_deadtime_status()
 
     assert dialog._reference_file_deadtime_values() == pytest.approx([0.011, 0.022])
-    assert dialog._deadtime_status_label.text() == "Deadtime: from file"
+    # The inline section reflects "from file" mode with the run's file values.
+    assert dialog._deadtime_section._current_mode() == "file"
+    assert dialog._deadtime_section._display_values() == pytest.approx([0.011, 0.022])
 
 
 def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
