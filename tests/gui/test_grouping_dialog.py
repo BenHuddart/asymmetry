@@ -1496,20 +1496,12 @@ def test_format_value_with_uncertainty() -> None:
     assert fmt(1.3, 0.0995) == "1.30(10)"
 
 
-def test_tail_fit_mode_shows_preview_status(qapp: QApplication) -> None:
+def test_tail_fit_mode_shows_status_in_section(qapp: QApplication) -> None:
     dataset = _dataset_with_histograms()
-    # Long histograms so the tail fit has a usable window.
-    rng = np.random.default_rng(0)
-    counts = rng.poisson(np.full(400, 50.0)).astype(float)
-    dataset.run.histograms = [
-        Histogram(counts=counts, bin_width=0.016),
-        Histogram(counts=counts * 0.8, bin_width=0.016),
-    ]
-    dataset.run.grouping["last_good_bin"] = 399
     dialog = GroupingDialog([dataset])
     dialog._background_mode = "tail_fit"
     dialog._update_background_status()
-    assert "Tail-fit background" in dialog._background_status_label.text()
+    assert "tail fit" in dialog._background_section._status_label.text().lower()
     result = dialog.get_grouping_result()
     assert result["background_mode"] == "tail_fit"
     assert result["background_correction"] is True
@@ -1522,150 +1514,25 @@ def test_background_run_payload_round_trips(qapp: QApplication) -> None:
     dataset.run.grouping["background_run"] = {"run_number": 9001, "source_file": "/tmp/x.nxs"}
     dialog = GroupingDialog([dataset])
     assert dialog._current_background_mode() == "reference_run"
-    dialog._update_background_status()
     result = dialog.get_grouping_result()
     assert result["background_run"]["run_number"] == 9001
-    assert "9001" in dialog._background_status_label.text()
+    # The inline section reflects the reference-run selection.
+    assert "9001" in dialog._background_section._status_label.text()
 
 
-# ---------------------------------------------------------------------------
-# Background Configure… grouping runs off-thread (B4)
-# ---------------------------------------------------------------------------
-
-
-def test_configure_background_groups_off_thread_and_opens_with_arrays(
-    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The forward/backward preview arrays are grouped off the GUI thread, and
-    BackgroundDialog opens seeded with exactly those arrays."""
-    call_threads: list[int] = []
-    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
-
-    def spy(histograms, indices):
-        call_threads.append(threading.get_ident())
-        return real_apply_grouping(histograms, indices)
-
-    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", spy)
-
-    captured: dict[str, object] = {}
-
-    class _FakeBackgroundDialog:
-        def __init__(self, **kwargs) -> None:
-            captured.update(kwargs)
-
-        def exec(self) -> int:
-            return QDialog.DialogCode.Rejected  # cancel; only the inputs matter here
-
-    monkeypatch.setattr(grouping_dialog_dialog_module, "BackgroundDialog", _FakeBackgroundDialog)
-
+def test_background_section_change_updates_mode_and_marks_dirty(qapp: QApplication) -> None:
+    """Editing the inline background mode updates the draft + re-previews."""
     dataset = _dataset_with_histograms()
     dialog = GroupingDialog([dataset])
-    gui_thread = threading.get_ident()
-
-    assert dialog._background_configure_btn.isEnabled()
-    dialog._on_configure_background()
-    _wait_until(lambda: "preview" in captured)
-    assert not any(t == gui_thread for t in call_threads), "apply_grouping ran on the GUI thread"
-    assert call_threads  # apply_grouping was actually called (twice: forward + backward)
-
-    _wait_until(lambda: dialog._tasks.active_count == 0)
-    assert dialog._background_configure_btn.isEnabled()
-
-    preview = captured["preview"]
-    assert preview is not None
-    forward_counts, backward_counts, bin_width, _t0_bin, _last_good = preview
-    assert forward_counts.tolist() == [100.0, 100.0, 100.0, 100.0]
-    assert backward_counts.tolist() == [50.0, 50.0, 50.0, 50.0]
-    assert bin_width == pytest.approx(0.01)
-
-
-def test_configure_background_mid_flight_close_does_not_crash(
-    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Closing the grouping dialog while the background grouping is still
-    running cancels and joins the worker instead of aborting the process."""
-    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
-    release = threading.Event()
-
-    def blocked_apply_grouping(histograms, indices):
-        release.wait(timeout=5.0)
-        return real_apply_grouping(histograms, indices)
-
-    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", blocked_apply_grouping)
-
-    dataset = _dataset_with_histograms()
-    dialog = GroupingDialog([dataset])
-    dialog._on_configure_background()
-    assert dialog._tasks.active_count == 1
-    assert not dialog._background_configure_btn.isEnabled()
-
-    # Let the blocked worker proceed shortly after, so the shutdown's bounded
-    # wait does not have to wait out its full timeout.
-    threading.Timer(0.2, release.set).start()
-
-    # Close mid-flight: done() -> _teardown_workers() -> self._tasks.shutdown()
-    # must cancel + join the worker cleanly.
-    dialog.reject()
-
-    for _ in range(50):
-        qapp.processEvents()
-    assert dialog._tasks.active_count == 0
-
-
-def test_configure_background_parent_destruction_does_not_crash(
-    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Destroying the grouping dialog (no close()) mid background-grouping is safe.
-
-    The background-configure preview grouping runs on the dialog's own
-    ``TaskRunner``. The ``tests/conftest.py`` teardown fixture and any
-    ``deleteLater``-based reap destroy the dialog through C++ destruction rather
-    than ``close()``/``done()``, so ``_teardown_workers``/``shutdown()`` never
-    runs. With the worker gated mid-flight, the ``TaskRunner`` destroyed-safety-net
-    must park the still-running thread in the reaper instead of aborting.
-    """
-    from PySide6.QtCore import QEvent
-
-    from asymmetry.gui import tasks as tasks_mod
-
-    release = threading.Event()
-    entered = threading.Event()
-    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
-
-    def gated(histograms, indices):
-        entered.set()
-        release.wait(timeout=5.0)
-        return real_apply_grouping(histograms, indices)
-
-    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", gated)
-
-    dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog._on_configure_background()
-    _wait_until(lambda: entered.is_set())  # worker inside apply_grouping -> running
-    assert dialog._tasks.active_count == 1
-
-    # The reaper is process-global and shared across the whole xdist worker:
-    # a *previous* test's deferred deletes can drain during this test's event
-    # pump and park (or unpark) their own orphans concurrently, so an exact
-    # global count is racy under test reordering. Track this dialog's worker
-    # thread by identity instead (same discipline as the spawn-pool reaper
-    # fix in tests/core/test_process_pool.py).
-    worker_thread = dialog._tasks._live[0][0]
-
-    def _parked() -> bool:
-        reaper = tasks_mod._orphan_reaper
-        return reaper is not None and any(t is worker_thread for t, _ in reaper._threads)
-
-    # Destroy WITHOUT close()/done(): deleteLater + a DeferredDelete drain.
-    dialog.deleteLater()
-    del dialog
-    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
-    qapp.processEvents()
-
-    _wait_until(_parked)  # worker parked in the reaper, not aborted
-
-    release.set()
-    _wait_until(lambda: not _parked())
+    assert dialog._current_background_mode() == "none"
+    section = dialog._background_section
+    idx = section._mode_combo.findData("range")
+    assert idx >= 0
+    section._mode_combo.setCurrentIndex(idx)  # fires changed → _on_background_changed
+    assert dialog._current_background_mode() == "range"
+    result = dialog.get_grouping_result()
+    assert result["background_mode"] == "range"
+    assert result["background_correction"] is True
 
 
 def test_alpha_child_dialog_survives_grouping_dialog_destruction(
