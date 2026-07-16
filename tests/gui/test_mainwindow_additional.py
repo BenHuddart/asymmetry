@@ -1649,6 +1649,33 @@ class TestMainWindowFourier:
         assert len(rendered) == 1
         assert int(rendered[0].run_number) == 8836
 
+    def test_frequency_overlay_retoggle_restores_view_limits(self, mainwindow: MainWindow) -> None:
+        # Toggling Overlay off and back on with the same run selection must not
+        # discard a manually-set view window: the overlay used to always
+        # auto-range on re-enable because the panel treats an overlay <->
+        # single-run transition as brand-new plotted content.
+        ds1 = self._compute_run_fft(mainwindow, 8890)
+        ds2 = self._compute_run_fft(mainwindow, 8891)  # becomes active; domain -> frequency
+        panel = mainwindow._frequency_plot_panel
+
+        mainwindow._data_browser.get_selected_datasets = lambda: [ds1, ds2]
+        panel.set_overlay_enabled(True)
+        mainwindow._on_frequency_overlay_toggled(True)
+        assert len(panel._current_datasets) == 2
+
+        panel.set_view_limits(810.0, 817.0, -0.5, 0.5)
+        expected = panel.get_view_limits()
+
+        panel.set_overlay_enabled(False)
+        mainwindow._on_frequency_overlay_toggled(False)
+        assert len(panel._current_datasets) == 1
+
+        panel.set_overlay_enabled(True)
+        mainwindow._on_frequency_overlay_toggled(True)
+        assert len(panel._current_datasets) == 2
+
+        assert panel.get_view_limits() == expected
+
     def test_frequency_overlay_blocks_single_fit(self, mainwindow: MainWindow, monkeypatch) -> None:
         # A multi-run overlay has no single fit target (binding to one overlaid
         # run would silently mis-attribute the result), so single fitting is
