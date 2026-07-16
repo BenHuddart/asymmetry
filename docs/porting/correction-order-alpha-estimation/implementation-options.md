@@ -110,6 +110,56 @@ Performance — a non-problem with staged caching (already this codebase's idiom
 Splitting keeps the correctness fix reviewable and lets the UI change land
 behind it. If a single PR is preferred, land A2 + B2 together and drop A1.
 
+## PR 2 build plan (unified Corrections panel — chosen 2026-07-16)
+
+Ben chose the full unified panel (B2). It is a **multi-commit, likely
+multi-session** build; the branch carries a partial panel between increments.
+Each step below is an individually-green commit.
+
+**Retirement inventory (verified 2026-07-16).** `DeadtimeDialog`,
+`BackgroundDialog` and `AlphaCalibrationDialog` are launched **only** from
+`grouping/dialog.py` (`:2272`, `:2424`, `:3488`) — no external callers, so
+retiring them touches only the grouping dialog. Dedicated tests to migrate:
+`tests/gui/test_deadtime_dialog.py`, `test_background_dialog.py`,
+`test_alpha_calibration_dialog.py`. Screenshot scenario to retarget:
+`docs/screenshots/scenarios/alpha_calibration_dialog.py` (the only one).
+
+**Foundations to reuse.** `PanelSection(collapsible=True, expanded=…, hint=,
+settings_key=)` with `.set_title_suffix` (the collapsed summary chip),
+`.body_layout`, `toggled` (`gui/widgets/panel_section.py`); `ActionFooter`;
+`make_warning_banner(text, severity="warn")` (`styles/widgets.py:554`) for the
+staleness badge; `GroupingPreviewPane` (off-thread `TaskRunner`, 300 ms debounce,
+generation counter, **no caching today**); `fourier_grouping_digest(run)`
+(`core/fourier/spectrum.py:307`) covers the deadtime+background+groups keys and
+excludes cosmetics/alpha — the reuse candidate for the staleness digest.
+
+**Sequence (each a green commit):**
+
+1. **Staleness badge** (smallest, highest correctness value; lands first). Stamp
+   a digest of the deadtime+background settings a calibrated α was measured under
+   into the α provenance (`alpha_correction_digest`, same provenance move as PR
+   1). Show a `make_warning_banner` in the grouping dialog when the current
+   corrections differ from that digest and the α is `calibrated`
+   ("α estimated under different corrections — re-estimate"); clear on
+   re-calibrate. Closes the calibration-drift failure mode without any layout
+   change.
+2. **Layout scaffold.** The right pane has no `QScrollArea` and a fixed 560 px
+   height; four sections + preview won't fit. Add a scroll area and an empty
+   Corrections `PanelSection` container, no behaviour change, tests green.
+3. **Preview unification + staged caching.** Drive the shared `GroupingPreviewPane`
+   from the α section with an α=1↔α̂ overlay; add staged caching (deadtime-corrected
+   grouped counts keyed on `(histogram-content digest, τ table, grouping, t0)`, the
+   background op cheap on top) so the corrected preview stays snappy on large
+   detector counts — this is where PR 1's deferred perf cost comes due. Add the
+   numeric centring readout.
+4. **Modal-body lift spike + inline the sections** (one modal per commit;
+   Background first — synchronous, 412 lines — to validate a modal body lifts
+   into an embeddable `QWidget` before replicating). Retire each modal, migrate
+   its tests, update the scenario. Order: Background → Deadtime → α.
+5. **Diagnostic per-stage toggles** (preview-only). **Trap:** they must write to
+   the preview request only, never the persisted grouping payload — otherwise
+   they silently change real reductions (the exact bug class PR 1 fixed).
+
 ## Docs / provenance obligations
 
 - Record the WiMDA fidelity divergence in this study's `README.md` decision log

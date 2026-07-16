@@ -13,6 +13,8 @@ module so the historical module API is unchanged after the package split.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
@@ -79,7 +81,11 @@ from asymmetry.core.transform import (
 )
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
-from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout
+from asymmetry.gui.styles.widgets import (
+    apply_param_table_style,
+    clear_layout,
+    make_warning_banner,
+)
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 from asymmetry.gui.windows.grouping.background_dialog import (
     BackgroundDialog,
@@ -305,6 +311,12 @@ class GroupingDialog(QDialog):
         # (alpha, alpha_error, reference_run). Used to attach provenance to
         # the payload only while the spin still holds the estimated value.
         self._alpha_estimate_state: dict[str, tuple[float, float | None, int]] = {}
+        # Digest of the deadtime + background settings a calibrated alpha was
+        # measured under. When the corrections later change, the calibrated alpha
+        # no longer balances the reduced (corrected) asymmetry — the staleness
+        # banner flags that. ``None`` until an alpha is calibrated in this session
+        # or re-seeded from a saved payload's ``alpha_correction_digest``.
+        self._alpha_correction_digest: str | None = None
 
         root = QVBoxLayout(self)
         root.setSpacing(6)
@@ -702,10 +714,17 @@ class GroupingDialog(QDialog):
         alpha_row.addWidget(self._alpha_provenance_label, stretch=1)
         form.addRow(self._alpha_row_label, self._single_alpha_widget)
         form.addRow("", self._alpha_result_label)
+        # Staleness banner: shown when the deadtime/background corrections change
+        # after α was calibrated (α no longer centres the corrected asymmetry).
+        self._alpha_stale_banner = make_warning_banner("", severity="warn")
+        self._alpha_stale_banner.setVisible(False)
+        form.addRow("", self._alpha_stale_banner)
         # A hand-edit of the alpha spin clears calibration provenance → "manual".
         self._alpha_spin.valueChanged.connect(self._on_alpha_spin_edited)
         self._reseed_alpha_provenance_from_grouping(grouping)
         self._refresh_alpha_provenance_label()
+        # Note: the initial staleness check runs at the end of __init__, once the
+        # whole form exists (_correction_digest reads the full payload).
 
         # Vector alpha widget: one row per declared projection. The rows are
         # built dynamically (see :meth:`_rebuild_vector_alpha_table`) because the
@@ -802,6 +821,7 @@ class GroupingDialog(QDialog):
         self._connect_dirty_tracking()
         self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()
+        self._refresh_alpha_staleness()
         self._connect_preview_refresh()
         self._refresh_preview()
 
@@ -1929,9 +1949,11 @@ class GroupingDialog(QDialog):
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
         self._set_alpha_method(str(grouping.get("alpha_method", "diamagnetic")))
         self._alpha_estimate_state.clear()
+        self._alpha_correction_digest = None
         self._reseed_alpha_provenance_from_grouping(grouping)
         self._alpha_result_label.setText("")
         self._refresh_alpha_provenance_label()
+        self._refresh_alpha_staleness()
         max_bin = self._max_bin_index_for_reference_dataset()
         index_base = self._bin_index_base(grouping)
         self._t0_spin.setRange(index_base, max_bin + index_base)
@@ -2299,6 +2321,7 @@ class GroupingDialog(QDialog):
         self._update_deadtime_status()
         self._mark_dirty()
         self._refresh_preview()
+        self._refresh_alpha_staleness()
 
     def _on_configure_background(self) -> None:
         """Gather the cheap context synchronously; group F/B off-thread if needed.
@@ -2444,6 +2467,7 @@ class GroupingDialog(QDialog):
         self._update_background_status()
         self._mark_dirty()
         self._refresh_preview()
+        self._refresh_alpha_staleness()
 
     def _available_background_modes(self) -> tuple[str, ...]:
         metadata: dict[str, Any] = {}
@@ -3534,6 +3558,10 @@ class GroupingDialog(QDialog):
             finally:
                 self._suppress_alpha_provenance_reset = False
             self._refresh_alpha_provenance_label()
+        # α is now measured under the current corrections; stamp their digest so
+        # a later deadtime/background change re-raises the staleness banner.
+        self._alpha_correction_digest = self._correction_digest()
+        self._refresh_alpha_staleness()
         self._record_calibration_result_label(slot, policy)
         self._mark_dirty()
 
@@ -3554,7 +3582,9 @@ class GroupingDialog(QDialog):
             return
         self._alpha_estimate_state.pop("single", None)
         self._alpha_estimate_state.pop("P_z", None)
+        self._alpha_correction_digest = None
         self._refresh_alpha_provenance_label()
+        self._refresh_alpha_staleness()
 
     def _reseed_alpha_provenance_from_grouping(self, grouping: dict[str, Any]) -> None:
         """Re-seed ``_alpha_estimate_state['single']`` from a resolved payload.
@@ -3581,6 +3611,72 @@ class GroupingDialog(QDialog):
             error_val,
             run,
         )
+        digest = grouping.get("alpha_correction_digest")
+        self._alpha_correction_digest = str(digest) if digest is not None else None
+
+    #: Grouping keys whose change means a calibrated α no longer centres the
+    #: corrected asymmetry (the deadtime + background correction surface).
+    _CORRECTION_DIGEST_DEADTIME_KEYS = (
+        "deadtime_mode",
+        "deadtime_method",
+        "dead_time_us",
+        "deadtime_estimated_us",
+    )
+    _CORRECTION_DIGEST_BACKGROUND_KEYS = (
+        "background_mode",
+        "background_fixed_values",
+        "background_ranges",
+        "background_range",
+        "background_run",
+    )
+
+    def _correction_digest(self) -> str:
+        """Stable digest of the *effective* deadtime + background settings.
+
+        Only the enabled corrections contribute, so an ``off`` deadtime with
+        stale table values digests the same as a plain ``off`` — the banner fires
+        on a change that would actually move the corrected counts, not on inert
+        edits.
+        """
+        payload = self._current_grouping_payload()
+        surface: dict[str, Any] = {}
+        if payload.get("deadtime_correction"):
+            surface["deadtime"] = {
+                key: payload.get(key)
+                for key in self._CORRECTION_DIGEST_DEADTIME_KEYS
+                if payload.get(key) is not None
+            }
+        if payload.get("background_correction"):
+            surface["background"] = {
+                key: payload.get(key)
+                for key in self._CORRECTION_DIGEST_BACKGROUND_KEYS
+                if payload.get(key) is not None
+            }
+        blob = json.dumps(surface, sort_keys=True, default=str)
+        return hashlib.sha1(blob.encode()).hexdigest()[:16]
+
+    def _alpha_is_calibrated(self) -> bool:
+        """True when the single α spin still holds a calibrated estimate."""
+        recorded = self._alpha_estimate_state.get("single") or self._alpha_estimate_state.get("P_z")
+        if recorded is None:
+            return False
+        return abs(recorded[0] - float(self._alpha_spin.value())) < 1e-9
+
+    def _refresh_alpha_staleness(self) -> None:
+        """Show the banner when corrections changed since α was calibrated."""
+        if not hasattr(self, "_alpha_stale_banner"):
+            return
+        stale = (
+            self._alpha_is_calibrated()
+            and self._alpha_correction_digest is not None
+            and self._alpha_correction_digest != self._correction_digest()
+        )
+        if stale:
+            self._alpha_stale_banner.setText(
+                "α was calibrated under different deadtime/background corrections — "
+                "re-estimate so it centres the corrected asymmetry."
+            )
+        self._alpha_stale_banner.setVisible(stale)
 
     def _refresh_alpha_provenance_label(self) -> None:
         """Reflect the single alpha's provenance ("calibrated …" or "manual")."""
@@ -3699,6 +3795,10 @@ class GroupingDialog(QDialog):
             if recorded[1] is not None:
                 alpha_provenance["alpha_error"] = float(recorded[1])
             alpha_provenance["alpha_reference_run"] = int(recorded[2])
+            # Persist the corrections α was measured under so the staleness
+            # banner can fire on reopen, not just within this session.
+            if self._alpha_correction_digest is not None:
+                alpha_provenance["alpha_correction_digest"] = self._alpha_correction_digest
 
         return (
             {

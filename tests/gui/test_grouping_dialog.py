@@ -305,6 +305,43 @@ def test_estimate_alpha_updates_spinbox(
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
 
 
+def test_alpha_staleness_banner_tracks_correction_changes(qapp: QApplication) -> None:
+    """The banner fires when deadtime/background change after α was calibrated."""
+    from asymmetry.core.project.profiles import AlphaPolicy
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    banner = dialog._alpha_stale_banner
+    assert banner.isHidden()  # fresh dialog: no calibrated α
+
+    policy = AlphaPolicy(
+        mode="calibrated", value=1.23, method="diamagnetic", error=0.01, source_run=1
+    )
+    dialog._apply_calibrated_policy("single", dialog._alpha_spin, policy)
+    assert dialog._alpha_is_calibrated()
+    assert dialog._alpha_correction_digest is not None
+    assert banner.isHidden()  # digests match right after calibration
+
+    # Change a correction → α no longer centres the corrected asymmetry.
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+    assert not banner.isHidden()
+
+    # The digest is persisted into provenance so the badge survives a reopen.
+    assert "alpha_correction_digest" in dialog._current_grouping_payload()
+
+    # Re-calibrating under the new corrections clears the banner.
+    dialog._apply_calibrated_policy("single", dialog._alpha_spin, policy)
+    assert banner.isHidden()
+
+    # A manual α edit drops calibration provenance and hides the banner.
+    dialog._background_mode = "reference_run"
+    dialog._refresh_alpha_staleness()
+    assert not banner.isHidden()
+    dialog._alpha_spin.setValue(1.99)
+    assert banner.isHidden()
+    assert dialog._alpha_correction_digest is None
+
+
 def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
