@@ -1179,7 +1179,33 @@
       "tests_path": "tests/io/test_root_loader.py",
       "src_path": "src/asymmetry/core/io/root.py",
       "updated": "2026-07-13",
-      "notes": "PSI's 2026 FLAME DAQ writes MusrRoot RunHeader as nested TDirectorys of labelled, globally-numbered TObjString leaves ('NNN - Label: Value -@type'), per musrfit's 2025 TDirectory commit series (e38fa479 skeleton, 7e28402e infrastructure, 4917e5c7 reader, ea646e01 MusrRoot v2.0, df7b8433 PRunDataHandler::ReadRootFile TDirectory+TFolder, dbbaf554 unrelated XML-schema DOI move). RootLoader already detected the TDirectory layout but never decoded the per-leaf encoding, so such files loaded with blank title, 0.0 temperature/field, a filename-guessed run number, and verbose histogram-title detector labels. Fix decodes each leaf with the existing _parse_musrroot_string regex (verified to match musrfit's first-'-'/first-':'/last-' -@' delimiter semantics, internal hyphens preserved), keyed on label (NNN is a single counter shared across all subfolders, so numbering is non-contiguous per subfolder and must never be used as a key); encoded-vs-clean discrimination uses the TKey name, since clean payloads like dates false-parse. Asymmetry-specific divergences: RunSummary (free text; musrfit ignores this block — its ring-anode-HV mining reads the legacy LEM run summary, not MusrRoot's) is attached verbatim as metadata['musrroot_run_summary'] provenance rather than discarded; instrument matching is now case-insensitive (FLAME writes lowercase 'flame'); a backward-compatible 'Label: Value' clean-form fallback is accepted for synthetic fixtures. Legacy TFolder MusrRoot and pre-2011 LEM ROOT are unaffected. Validation is synthetic encoded fixtures (no real PSI data committed); a 2026 FLAME commissioning-era file was checked locally only, and no path/filename/run number/sample/proposal detail from it appears anywhere in this repository."
+      "notes": "PSI's 2026 FLAME DAQ writes MusrRoot RunHeader as nested TDirectorys of labelled, globally-numbered TObjString leaves ('NNN - Label: Value -@type'), per musrfit's 2025 TDirectory commit series (e38fa479 skeleton, 7e28402e infrastructure, 4917e5c7 reader, ea646e01 MusrRoot v2.0, df7b8433 PRunDataHandler::ReadRootFile TDirectory+TFolder, dbbaf554 unrelated XML-schema DOI move). RootLoader already detected the TDirectory layout but never decoded the per-leaf encoding, so such files loaded with blank title, 0.0 temperature/field, a filename-guessed run number, and verbose histogram-title detector labels. Fix decodes each leaf with the existing _parse_musrroot_string regex (verified to match musrfit's first-'-'/first-':'/last-' -@' delimiter semantics, internal hyphens preserved), keyed on label (NNN is a single counter shared across all subfolders, so numbering is non-contiguous per subfolder and must never be used as a key); encoded-vs-clean discrimination uses the TKey name, since clean payloads like dates false-parse. Asymmetry-specific divergences: RunSummary (free text; musrfit ignores this block \u2014 its ring-anode-HV mining reads the legacy LEM run summary, not MusrRoot's) is attached verbatim as metadata['musrroot_run_summary'] provenance rather than discarded; instrument matching is now case-insensitive (FLAME writes lowercase 'flame'); a backward-compatible 'Label: Value' clean-form fallback is accepted for synthetic fixtures. Legacy TFolder MusrRoot and pre-2011 LEM ROOT are unaffected. Validation is synthetic encoded fixtures (no real PSI data committed); a 2026 FLAME commissioning-era file was checked locally only, and no path/filename/run number/sample/proposal detail from it appears anywhere in this repository."
+    },
+    {
+      "slug": "correction-order-alpha-estimation",
+      "feature_name": "Correction order vs. alpha estimation (deadtime + background before the wTF alpha estimate; unified corrected preview)",
+      "status": "study",
+      "path": "docs/porting/correction-order-alpha-estimation",
+      "depends_on": [
+        "data-reduction-parity",
+        "deadtime-correction"
+      ],
+      "references": [
+        "WiMDA",
+        "Mantid",
+        "musrfit"
+      ],
+      "docs": {
+        "readme": "docs/porting/correction-order-alpha-estimation/README.md",
+        "comparison": "docs/porting/correction-order-alpha-estimation/comparison.md",
+        "implementation_options": "docs/porting/correction-order-alpha-estimation/implementation-options.md",
+        "test_data": "docs/porting/correction-order-alpha-estimation/test-data.md",
+        "verification_plan": "docs/porting/correction-order-alpha-estimation/verification-plan.md"
+      },
+      "tests_path": null,
+      "src_path": null,
+      "updated": "2026-07-16",
+      "notes": "Physics bug + WiMDA fidelity divergence: alpha is estimated on raw grouped counts while the reduction applies deadtime+background first, so a calibrated alpha does not centre the background-subtracted wTF asymmetry. Approved direction (domain consult + reference cross-check): estimate alpha on deadtime-corrected -> t0-aligned -> grouped -> background-subtracted counts (one step before binned_fb_asymmetry), for all three methods; reference-run background pre-corrected before scaling. UI direction: unify to a single corrected-reduction preview (Corrections panel) with staleness badge, retiring the deadtime/background/alpha modals."
     }
   ]
 }
