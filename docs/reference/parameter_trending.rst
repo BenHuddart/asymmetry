@@ -141,6 +141,116 @@ column** (:ref:`logbook-columns`). Custom columns hold free-form text, so when
 one is the x-axis each value is coerced to a number and runs whose value is empty
 or non-numeric are dropped, with a note reporting how many were skipped.
 
+.. _trend-axis-transforms:
+
+Axis transforms
+---------------
+
+Some of the most common µSR presentations are *linearisations* of a curved
+trend: the **Redfield** analysis plots :math:`1/\lambda` against
+:math:`(\mu_0 H)^2` so a straight line's slope and intercept give the
+fluctuation rate and field width; the **Arrhenius** analysis plots
+:math:`\ln\lambda` against :math:`1/T` so the slope is an activation energy.
+The collapsible **Axis transforms** section (below the Y-parameter list)
+applies such a transform to either axis independently.
+
+.. image:: /_generated/screenshots/parameter_trending_redfield.png
+   :alt: The trending panel showing a Redfield linearisation — 1/λ versus B² with a straight-line Linear fit
+   :width: 100%
+
+*A Redfield linearisation of a longitudinal-field* :math:`\lambda(B)` *scan:*
+*the Y axis transformed to* ``1/x  (reciprocal)`` *and the X axis to*
+``x²  (square)`` *turn the three-regime* :math:`\lambda(B)` *falloff into a*
+*straight line, and a* ``Linear`` *model fit on the transformed plateau gives*
+*the Redfield slope and intercept. The high-field saturated point is excluded*
+*from the trend, so it sits off the line.*
+
+Each axis has its own chooser — **X:** and **Y:** — offering ``None``,
+``1/x  (reciprocal)``, ``x²  (square)``, ``ln x``, ``log₁₀ x``, ``√x`` and
+``Custom…``. Choosing ``Custom…`` opens a small **Custom X transform** /
+**Custom Y transform** dialog with one field, *Expression in x:* (placeholder
+``e.g. 1000/x``); the expression is validated live and previewed on a
+representative data value. The accepted expression then labels the combo item
+itself, and the last-used custom expression is remembered per axis.
+
+The transform is applied at the point where the panel assembles its data, so it
+governs the plotted points, the propagated error bars **and the trend fit**:
+fitting a ``Linear`` model with the axes transformed to :math:`1/\lambda`
+versus :math:`(\mu_0 H)^2` *is* the Redfield line, and its slope/intercept are
+read straight from the :ref:`model-fit dialog <trend-model-fit-dialog>`. A point
+whose transform is undefined (``1/0``, ``ln`` of a non-positive value) is dropped,
+and the count surfaces on the trend-provenance line beneath the plot
+("⚠ 1 dropped by transform"). Changing a transform strands an existing trend fit
+in the previous coordinate: its curve is hidden and its **Model Fit** button
+changes to **Model Fit ⚠** until you re-fit under the new axes.
+
+The **field** axis is labelled in gauss (the loaders' native field unit), so a
+transform squares or inverts that unit accordingly (``B² (G²)``); a dataset held
+in tesla should be trended via a custom column carrying its own unit.
+
+A transform is distinct from the **log** axis-scale checkbox next to the **X:**
+selector (and the per-parameter **log** checkbox in the Y-parameter list): those
+change the axis *tick spacing* while leaving the numbers alone, whereas the
+transform changes the plotted values (which is what a straight-line Arrhenius fit
+needs). To keep the two from compounding, selecting ``ln x`` / ``log₁₀ x`` on an
+axis disables that axis's ``log`` checkbox until the transform is cleared.
+
+.. note::
+
+   **Arrhenius on a plateau needs the baseline subtracted first.** A rate that
+   plateaus at low :math:`T` and only activates above some threshold — e.g. a
+   hop rate :math:`\nu(T) = \nu_0\,e^{-E_a/k_BT} + c` with a residual :math:`c`
+   — is *not* linearised by the plain ``ln`` preset, because
+   :math:`\ln(\nu_0 e^{-E_a/k_BT}+c)` is not linear in :math:`1/T`; fitting it
+   returns an activation energy biased low. Subtract the plateau first with a
+   ``Custom…`` expression, e.g. ``log(x - 0.274)`` with the plateau value read
+   off the low-:math:`T` end, so :math:`\ln(\nu-c)` is straight. (The plainer
+   route is to skip the linearisation and fit an ``Arrhenius`` model in raw
+   coordinates directly.)
+
+.. note::
+
+   Error bars in transformed space are propagated to **first order**
+   (:math:`\sigma_{f(x)} \approx |f'(x)|\,\sigma_x`) and drawn symmetric. This is
+   standard and accurate when the relative error is small; where it is large
+   (a low-signal point under ``ln`` or ``1/x``) the true interval is
+   asymmetric, so read such error bars as indicative.
+
+**Exports under a transform.** ``Export TSV`` keeps every raw column (the durable
+record) and *appends* the transformed columns that match the on-screen axes,
+with ``# X transform`` / ``# Y transform`` provenance comments; with several
+series overlaid it gains a leading ``Series`` column and writes every selected
+series. ``Export to GLE`` likewise appends transformed columns (and points its
+plot and fitted curve at them, so the figure matches the screen), but currently
+writes only the **active** series — it warns and names that series; export the
+others separately, or use TSV.
+
+.. _trend-series-overlay:
+
+Overlaying several series
+-------------------------
+
+The series buttons above the plot are multi-select: **Shift+click** a second
+series to overlay it on the first (the same selection also arms a joint
+`Cross-Group Fitting`_). Overlaid series are
+distinguished by colour, with a legend of their names — the natural way to
+compare, say, :math:`\sigma(T)` measured at two applied fields, or the same
+observable across two samples. When more than one parameter is also selected,
+each parameter takes a distinct marker shape so colour stays free to encode the
+series; the twin-axis layout is used only for a single series. Model-fit trend
+curves are drawn for the active (last-clicked) series — flagged ``(active)`` in
+the legend — which retains ownership of the parameter table, composites, and the
+model-fit controls.
+
+.. image:: /_generated/screenshots/parameter_trending_overlay.png
+   :alt: The trending panel overlaying σ(T) at 400 G and 200 G as two colour-coded series
+   :width: 100%
+
+*Two* :math:`\sigma(T)` *series — a 400 G and a 200 G transverse-field scan —*
+*overlaid on one axis. Colour encodes the series (legend top-right, the active*
+*series flagged), and the 200 G plateau sitting below the 400 G one is the*
+*pancake-vortex field dependence of the London second moment.*
+
 Representation-aware trending
 ------------------------------
 
@@ -223,9 +333,10 @@ abscissa: the pool is drawn from ``component_names_for_x`` and filtered by each
 component's declared scope, so a temperature axis never lists a field-only form
 and vice versa. The registry (grouped by the context that offers them) is:
 
-* **Any axis** (``common``) — ``Constant``, ``Linear``, and the general
-  fifth-order ``Polynomial``; ``PowerLaw`` and its quadrature-background variant
-  ``PowerLawQuadBG``; and ``ExponentialDecay``.
+* **Any axis** (``common``) — ``Constant``, ``Linear``, ``Quadratic``
+  (:math:`c_0 + c_1 x + c_2 x^2`, the plain parabola — e.g. a steering-curve
+  minimum), and the general fifth-order ``Polynomial``; ``PowerLaw`` and its
+  quadrature-background variant ``PowerLawQuadBG``; and ``ExponentialDecay``.
 * **Temperature axis** — ``Arrhenius`` (thermal activation), ``OrderParameter``
   (a magnetic order parameter vanishing at :math:`T_c`), ``CriticalDivergence``
   (a rate diverging at :math:`T_c`), and the superconducting gap models

@@ -180,6 +180,23 @@ _NON_NEGATIVE_PARAMS = {"D", "D_2D", "D_nD", "D_perp", "lambda_BG", "lambda_0D",
 _STRICTLY_POSITIVE_PARAMS = {"tau", "B0", "Bwid", "nu", "m"}
 _POSITIVE_EPS = 1e-12
 
+# The fixed-degree polynomial family reads as one group in *degree* order
+# (Linear, Quadratic, Cubic, …) rather than scattered alphabetically. Aliasing
+# each to ``Polynomial <n>`` sorts them together, in degree order, at the
+# family's alphabetical position; every other component keeps its own name.
+_POLY_DEGREE_ALIAS = {
+    "Linear": "Polynomial 1",
+    "Quadratic": "Polynomial 2",
+    "Cubic": "Polynomial 3",
+    "Quartic": "Polynomial 4",
+    "Quintic": "Polynomial 5",
+    "Sextic": "Polynomial 6",
+}
+
+
+def _component_sort_key(name: str) -> str:
+    return _POLY_DEGREE_ALIAS.get(name, name)
+
 
 def _base_param_name(name: str) -> str:
     match = re.match(r"^(.+)_\d+$", name)
@@ -455,7 +472,7 @@ class ParameterModelBuilderDialog(FunctionBuilderDialog):
         parent: QWidget | None = None,
         initial_model: ParameterCompositeModel | None = None,
     ) -> None:
-        self._component_pool = sorted(component_pool)
+        self._component_pool = sorted(component_pool, key=_component_sort_key)
         # A live set (not a frozen snapshot): both the model parser and the
         # expression parser below capture *this same object*, so a component
         # authored mid-session via _create_user_function (which does
