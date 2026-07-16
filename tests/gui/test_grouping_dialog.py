@@ -305,6 +305,20 @@ def test_estimate_alpha_updates_spinbox(
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
 
 
+def test_right_pane_scrolls_with_corrections_container(qapp: QApplication) -> None:
+    """The form + Corrections container scroll; the live preview stays pinned."""
+    from PySide6.QtWidgets import QScrollArea
+
+    from asymmetry.gui.widgets.panel_section import PanelSection
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    assert isinstance(dialog._right_scroll, QScrollArea)
+    assert dialog._right_scroll.widgetResizable()
+    assert isinstance(dialog._corrections_section, PanelSection)
+    # The preview pane is a sibling of the scroll area (pinned), not inside it.
+    assert dialog._preview_pane.parent() is not dialog._right_scroll.widget()
+
+
 def test_alpha_staleness_banner_tracks_correction_changes(qapp: QApplication) -> None:
     """The banner fires when deadtime/background change after α was calibrated."""
     from asymmetry.core.project.profiles import AlphaPolicy

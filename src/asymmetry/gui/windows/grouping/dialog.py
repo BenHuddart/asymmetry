@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QSplitter,
     QTableWidget,
@@ -87,6 +89,7 @@ from asymmetry.gui.styles.widgets import (
     make_warning_banner,
 )
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
+from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.windows.grouping.background_dialog import (
     BackgroundDialog,
     BackgroundReferenceRunCandidate,
@@ -782,8 +785,34 @@ class GroupingDialog(QDialog):
         form.addRow(self._period_mode_label, period_row_widget)
         self._update_map_periods_visibility()
 
-        right_layout.addLayout(form)
-        right_layout.addStretch()
+        # The form and the (initially empty) unified Corrections container scroll
+        # together, so the growing correction sections added in later steps fit
+        # the fixed dialog height; the live preview stays pinned below the scroll
+        # area. See docs/porting/correction-order-alpha-estimation
+        # (implementation-options.md, PR 2 build plan).
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(8)
+        scroll_layout.addLayout(form)
+
+        # Empty container for the unified Corrections panel. Later steps move the
+        # deadtime / background / α controls into this section; for now it is a
+        # collapsed placeholder so the scaffold is a no-op on behaviour.
+        self._corrections_section = PanelSection(
+            "Corrections",
+            collapsible=True,
+            expanded=False,
+            hint="Deadtime, background and α — configured and previewed together.",
+        )
+        scroll_layout.addWidget(self._corrections_section)
+        scroll_layout.addStretch()
+
+        self._right_scroll = QScrollArea()
+        self._right_scroll.setWidgetResizable(True)
+        self._right_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._right_scroll.setWidget(scroll_content)
+        right_layout.addWidget(self._right_scroll, stretch=1)
 
         # Live asymmetry preview of the preview run under the current draft.
         # Fixed-height so it never fights the form for space; it reduces off the
