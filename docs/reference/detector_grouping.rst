@@ -238,6 +238,38 @@ The grouping payload stores:
 These settings are persisted in project files, as grouping profiles (schema
 v12), and in instrument presets.
 
+.. _Transverse-field grouping hint:
+
+Transverse-field grouping hint
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A transverse precession cancels when the forward/backward grouping sums over
+detectors that see it in phase — HiFi's two longitudinal rings, or a
+spin-rotated PSI GPS run reduced on its default Forward/Back pair. The
+longitudinal default then produces a flat, noise-only asymmetry, and the run
+can look empty even though the signal is there in the raw counts on a different
+detector pairing.
+
+To keep that from reading as "no signal", a run whose field geometry is
+transverse but whose current grouping is not the recommended transverse preset
+shows a dismissable amber bar across the top of both the time-domain and
+Fourier plots:
+
+   *Transverse-field run: the current grouping washes out the precession.*
+   *Open Grouping… and apply ‘<preset>’.*
+
+The named preset is the instrument's recommended transverse arrangement —
+``Transverse (Vector)`` on HiFi and MuSR, ``Spin-rotated (B+U/F+D)`` on PSI GPS,
+``Per-octant`` on HAL-9500. **Open Grouping…** is a link that opens the Grouping
+window on the current run so you can apply it; the same nudge also appears inside
+the Grouping window itself, pointing at the Detector Layout editor. Applying the
+recommended preset clears the bar automatically. The **✕** dismisses it for that
+run only — a different transverse run still nudges, and a re-displayed dismissed
+run stays quiet.
+
+The recommendation is advisory: it is derived purely from the run's recorded
+field geometry (``field_direction``) and never changes a grouping on its own.
+
 .. _Editing target follows selection:
 
 Editing target follows selection

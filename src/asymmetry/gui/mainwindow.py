@@ -164,6 +164,7 @@ from asymmetry.core.instrument import (
     PROJECTION_TINTS,
     TRANSVERSE_PROJECTION_TINTS,
     derive_projection_pairs,
+    recommend_grouping_preset_for_run,
 )
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
@@ -722,6 +723,12 @@ class MainWindow(QMainWindow):
         self._settings = QSettings()
         self._last_open_dir = self._settings.value("io/last_open_dir", "", str)
         self._current_dataset = None  # Track currently selected dataset
+        #: Transverse-field grouping-hint dismissal state. ``_dismissed_grouping_hints``
+        #: holds ``(run_number, recommended_preset)`` keys the user has closed so
+        #: the nudge stays hidden for that run; ``_active_grouping_hint_key`` is
+        #: the key currently shown (what a dismiss click records).
+        self._dismissed_grouping_hints: set[tuple[int, str]] = set()
+        self._active_grouping_hint_key: tuple[int, str] | None = None
         self._current_project_path: str | None = None  # Path of currently open project
         # Unsaved-changes guard: _dirty tracks whether the session holds work
         # not yet written to a project file. Mutating user actions set it via
@@ -1893,6 +1900,12 @@ class MainWindow(QMainWindow):
                 )
         if hasattr(self._plot_panel, "cursor_coords_changed"):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
+        # Transverse-field grouping nudge (both domains): the link opens the
+        # grouping dialog for the current run; the ✕ records a per-run dismissal.
+        for _panel in (self._plot_panel, self._frequency_plot_panel):
+            if hasattr(_panel, "grouping_hint_requested"):
+                _panel.grouping_hint_requested.connect(self._on_grouping_hint_requested)
+                _panel.grouping_hint_dismissed.connect(self._on_grouping_hint_dismissed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
             self._fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         if hasattr(self._fit_panel, "tab_changed"):
@@ -2694,6 +2707,74 @@ class MainWindow(QMainWindow):
 
         return updated
 
+    def _update_grouping_hint(self) -> None:
+        """Surface the transverse-field grouping nudge on the plot/Fourier panels.
+
+        Mirrors the grouping dialog's hint but on the surfaces the user actually
+        watches: when the current run is transverse-field yet still on a grouping
+        that cancels the precession, both plot panels show a dismissable bar
+        pointing at the grouping dialog. The decision lives in core
+        (:func:`recommend_grouping_preset_for_run`); this only formats the
+        message and honours per-run dismissal
+        (``_dismissed_grouping_hints``, keyed by run + recommended preset).
+
+        Called from the render chokepoints (time render + frequency sync) so the
+        nudge tracks the displayed run and clears itself the moment the run is
+        regrouped onto the recommended preset.
+        """
+        dataset = self._current_dataset
+        recommended: str | None = None
+        run_key: tuple[int, str] | None = None
+        # The nudge is per-run and its wording ("the current grouping") is
+        # singular, so only surface it when exactly one run is displayed. An
+        # overlay leaves ``_current_dataset`` pointing at one (possibly stale)
+        # member, so keying off it alone would attribute the hint to a run that
+        # is not on screen.
+        distinct_runs = {
+            int(ds.run_number)
+            for ds in self._selected_or_current_datasets()
+            if ds is not None and ds.run is not None
+        }
+        if dataset is not None and dataset.run is not None and len(distinct_runs) <= 1:
+            grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
+            try:
+                recommended = recommend_grouping_preset_for_run(
+                    n_histograms=len(dataset.run.histograms),
+                    metadata=dataset.metadata,
+                    source_file=dataset.run.source_file,
+                    current_preset=grouping.get("grouping_preset"),
+                )
+            except Exception:
+                recommended = None
+            if recommended is not None:
+                run_key = (int(dataset.run_number), recommended)
+
+        if run_key is None or run_key in self._dismissed_grouping_hints:
+            text: str | None = None
+        else:
+            text = (
+                "Transverse-field run: the current grouping washes out the "
+                'precession. <a href="#grouping">Open Grouping…</a> and apply '
+                f"‘{recommended}’."
+            )
+        self._active_grouping_hint_key = run_key if text else None
+        for panel in (self._plot_panel, self._frequency_plot_panel):
+            if hasattr(panel, "set_grouping_hint"):
+                panel.set_grouping_hint(text)
+
+    def _on_grouping_hint_requested(self) -> None:
+        """Open the grouping dialog for the current run from the panel hint."""
+        self._on_grouping_current()
+
+    def _on_grouping_hint_dismissed(self) -> None:
+        """Record the current run's grouping-hint dismissal and hide the bar."""
+        if self._active_grouping_hint_key is not None:
+            self._dismissed_grouping_hints.add(self._active_grouping_hint_key)
+        self._active_grouping_hint_key = None
+        for panel in (self._plot_panel, self._frequency_plot_panel):
+            if hasattr(panel, "set_grouping_hint"):
+                panel.set_grouping_hint(None)
+
     def _render_current_selection_plot(self) -> None:
         """Render current single/multi selection using active polarization settings."""
         started_at = time.perf_counter()
@@ -2783,6 +2864,7 @@ class MainWindow(QMainWindow):
             render_mode = "single"
             self._plot_panel.plot_dataset(targets[0])
         finally:
+            self._update_grouping_hint()
             self._log_perf_event(
                 "selection_plot",
                 started_at,
@@ -7532,11 +7614,13 @@ class MainWindow(QMainWindow):
             run_numbers = self._selected_frequency_run_numbers()
             if len(run_numbers) > 1:
                 self._render_frequency_overlay(run_numbers)
+                self._update_grouping_hint()
                 return
         run_number = (
             None if self._current_dataset is None else int(self._current_dataset.run_number)
         )
         self._sync_frequency_plot_for_run(run_number)
+        self._update_grouping_hint()
 
     def _on_frequency_overlay_toggled(self, _enabled: bool) -> None:
         """Re-render the frequency view when the overlay toggle changes."""
@@ -15178,6 +15262,11 @@ class MainWindow(QMainWindow):
         self._maxent_state_by_run = {}
         self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
+        # Grouping-hint dismissals are keyed by run number, which is a per-
+        # experiment counter; carrying them into a new project would silently
+        # pre-suppress the nudge on an unrelated run that happens to reuse the id.
+        self._dismissed_grouping_hints.clear()
+        self._active_grouping_hint_key = None
         self._fourier_included_seeded.clear()
         if hasattr(self._fourier_panel, "set_stale"):
             self._fourier_panel.set_stale(None)
