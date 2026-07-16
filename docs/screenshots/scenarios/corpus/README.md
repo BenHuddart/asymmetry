@@ -88,3 +88,22 @@ Each example ships `NOTES_<slug>.md` alongside its module:
 - fitted values vs ground-truth targets (a small table),
 - feature-demonstration opportunities spotted (even ones you didn't capture),
 - problems hit (loader quirks, fit instabilities, UI gaps) — honestly.
+
+## CI corpus provisioning
+
+The docs deploy build provisions the corpus from a **GitHub release asset** on
+the (private) corpus repository `BenHuddart/wimda-muon-school-corpus`:
+
+- `tools/package_corpus.py --corpus "<root>" --version <YYYY.MM.DD>` builds the
+  CI archive (`dist/wimda-corpus-<version>.tar.zst`, ~272 MB): data files,
+  logbooks, ground truths and reference outputs; no papers/guides/duplicates.
+- Publish it (with its `.sha256`) as release `v<version>` on the corpus repo,
+  then bump `CORPUS_VERSION` in `.github/workflows/docs-pages.yml`.
+- The workflow needs a `CORPUS_REPO_TOKEN` repo secret (fine-grained PAT with
+  read access to the corpus repo's releases). Without it — e.g. on forks — the
+  build falls back to `--stubs` placeholders and stays green. The extracted
+  corpus is cached (`actions/cache`) keyed on the version, so the download is
+  paid once per corpus bump.
+- Capture runs one process per scenario module (`--list-modules` / `--module`)
+  to stay inside the per-process watchdog; `--stubs-missing` then fills any
+  hole so the built site is always image-complete.

@@ -26,6 +26,7 @@ New users should start with :doc:`calibration_grouping_emu`.
    alc_scan_tcnq
    temperature_scan_magnetism
    global_fit_ionic_motion
+   fmuf_entangled_states
    knight_shift_angle
    superconductor_penetration_depth
    lf_decoupling_dynamics
@@ -63,6 +64,10 @@ Quick chooser
        solid electrolyte (real Li₇La₃Zr₂O₁₂ data)
      - Global (batch) fit with shared parameters, Keren model, axis
        transforms, Arrhenius trend
+   * - :doc:`fmuf_entangled_states`
+     - Identify an F–µ–F entangled state and measure the muon–fluorine
+       bond length (real PTFE data)
+     - FmuF models, ZF beating signature, sub-MHz FFT
    * - :doc:`knight_shift_angle`
      - Find the muon site from the angle dependence of the Knight
        shift in a rotated single crystal

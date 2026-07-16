@@ -83,30 +83,69 @@ def _import_corpus_scenarios() -> dict:
     return {name: s for name, s in registered_scenarios().items() if name.startswith("corpus_")}
 
 
+def _module_of(scenario) -> str:
+    """Return the scenario's defining module basename (e.g. ``euo_ordering``)."""
+    return type(scenario).__module__.rsplit(".", 1)[-1]
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    # ``--stubs`` is corpus-capture-only, so it is handled here rather than in the
-    # shared ``_parse_args``. Strip it before delegating to the standard parser.
+    # ``--stubs``, ``--stubs-missing``, ``--list-modules`` and ``--module`` are
+    # corpus-capture-only, so they are handled here rather than in the shared
+    # ``_parse_args``.
     stubs = "--stubs" in raw_argv
-    parsed_argv = [a for a in raw_argv if a != "--stubs"]
+    stubs_missing = "--stubs-missing" in raw_argv
+    list_modules = "--list-modules" in raw_argv
+    module_filter: str | None = None
+    parsed_argv: list[str] = []
+    skip_next = False
+    for i, arg in enumerate(raw_argv):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in ("--stubs", "--stubs-missing", "--list-modules"):
+            continue
+        if arg == "--module":
+            if i + 1 >= len(raw_argv):
+                print("--module requires a module name", file=sys.stderr)
+                return 2
+            module_filter = raw_argv[i + 1]
+            skip_next = True
+            continue
+        parsed_argv.append(arg)
 
     args = _parse_args(parsed_argv)
+
+    if list_modules:
+        # One module name per line — CI iterates these to keep each capture
+        # process inside the watchdog budget. No Qt boot needed.
+        scenarios = _import_corpus_scenarios()
+        for module in sorted({_module_of(s) for s in scenarios.values()}):
+            print(module)
+        return 0
     if args.check_refs:
         print("capture_corpus has no --check-refs (corpus scenarios are unpublished).")
         return 2
     if args.out == Path("docs/_generated/screenshots"):
         args.out = Path("docs/_generated/corpus_screenshots")
 
-    if stubs:
+    if stubs or stubs_missing:
         # Placeholder path: no corpus, no Qt boot, no fit backend needed. The
         # scenario modules import cleanly (corpus data is resolved lazily at
         # capture time), so registration alone gives us every scenario name.
+        # ``--stubs-missing`` writes placeholders only where no PNG exists,
+        # so a partially-successful capture sweep keeps its real renders.
         scenarios = _import_corpus_scenarios()
         names = list(args.only) if args.only else list(scenarios)
         unknown = [n for n in names if n not in scenarios]
         if unknown:
             print(f"Unknown corpus scenarios: {', '.join(unknown)}", file=sys.stderr)
             return 2
+        if stubs_missing:
+            names = [n for n in names if not (args.out / f"{n}.png").exists()]
+            if not names:
+                print("[corpus-screenshots] no missing renders; nothing to stub", flush=True)
+                return 0
         return _write_stubs(names, args.out)
 
     _start_watchdog()
@@ -124,7 +163,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{name}\t{first}")
         return 0
 
-    if args.only:
+    if module_filter is not None:
+        selected = {name: s for name, s in scenarios.items() if _module_of(s) == module_filter}
+        if not selected:
+            known = sorted({_module_of(s) for s in scenarios.values()})
+            print(f"Unknown corpus module: {module_filter}", file=sys.stderr)
+            print(f"Known: {', '.join(known)}", file=sys.stderr)
+            return 2
+    elif args.only:
         unknown = [n for n in args.only if n not in scenarios]
         if unknown:
             print(f"Unknown corpus scenarios: {', '.join(unknown)}", file=sys.stderr)
