@@ -23,7 +23,7 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fourier.burg import burg_spectrum
-from asymmetry.core.fourier.conditioning import apply_spectrum_conditioning
+from asymmetry.core.fourier.conditioning import apply_spectrum_conditioning, unit_area_normalise
 from asymmetry.core.fourier.correlation import DEFAULT_CORR_ORDER, correlation_spectrum
 from asymmetry.core.fourier.diamag import fit_and_subtract_diamagnetic
 from asymmetry.core.fourier.fft import (
@@ -47,26 +47,35 @@ from asymmetry.core.utils.coerce import optional_float
 #: Minimum applied field (Gauss) for a diamagnetic fit to be attempted.
 _MIN_DIAMAG_FIELD_GAUSS = 5.0
 
+# Calibrated modes read as a fractional asymmetry amplitude in percent (a pure
+# cosine of amplitude A peaks at 100·A); Power is that amplitude squared (%²).
+# The derived modes (phaseOptReal, Burg, correlation) keep their arbitrary-unit
+# footing — the amplitude calibration is not applied to them (see
+# ``compute_average_group_spectrum``); the phase spectrum stays in degrees.
 _YLABELS: dict[str, str] = {
-    "cos": "FFT Cos (a.u.)",
-    "imaginary": "FFT Imaginary (a.u.)",
-    "magnitude": "FFT Magnitude (a.u.)",
-    "phase_corrected": "FFT Phase-Corrected (a.u.)",
+    "cos": "FFT Cos (%)",
+    "imaginary": "FFT Imaginary (%)",
+    "magnitude": "FFT Magnitude (%)",
+    "phase_corrected": "FFT Phase-Corrected (%)",
     "phase_opt_real": "FFT phaseOptReal (a.u.)",
     "phase_spectrum": "FFT Phase Spectrum (deg)",
-    "power": "FFT Power (a.u.)",
-    "power_sqrt": "FFT (Power)^1/2 (a.u.)",
-    "real": "FFT Real (a.u.)",
-    "real_imag": "FFT Real + Imag (a.u.)",
+    "power": "FFT Power (%²)",
+    "power_sqrt": "FFT (Power)^1/2 (%)",
+    "real": "FFT Real (%)",
+    "real_imag": "FFT Real + Imag (%)",
     "burg": "Burg AR spectrum (a.u.)",
-    "sin": "FFT Sin (a.u.)",
+    "sin": "FFT Sin (%)",
     "correlation": "Radical correlation (a.u.)",
 }
+
+#: Y-axis label for the unit-area field-distribution display (density on the
+#: canonical MHz axis).
+UNIT_AREA_YLABEL = "Field distribution p(ν) (1/MHz)"
 
 
 def fourier_display_ylabel(display: str) -> str:
     """Return the y-axis label for a Fourier display mode."""
-    return _YLABELS.get(canonical_fourier_display_mode(display), "FFT (a.u.)")
+    return _YLABELS.get(canonical_fourier_display_mode(display), "FFT (%)")
 
 
 @dataclass
@@ -76,6 +85,16 @@ class GroupSpectrumConfig:
     display: str = "(Power)^1/2"
     window: str = "none"
     padding: int = 1
+    #: Amplitude normalisation of the spectrum.  ``"asymmetry_percent"`` is the
+    #: calibrated fractional-asymmetry-in-percent scale (a pure cosine of
+    #: amplitude A peaks at 100·A).  A recipe recorded before the calibration
+    #: existed round-trips as the ``"raw"`` sentinel (see :meth:`from_dict`), so
+    #: it flags as stale against a freshly-built config.
+    normalisation: str = "asymmetry_percent"
+    #: Display normalisation applied last, on the magnitude-family modes only.
+    #: ``"calibrated"`` keeps the percent amplitude; ``"unit_area"`` presents the
+    #: floor-subtracted spectrum as a field distribution p(ν) integrating to 1.
+    display_normalisation: str = "calibrated"
     filter_start_us: float = 0.0
     filter_time_constant_us: float = 1.5
     t0_offset_us: float = 0.0
@@ -122,6 +141,8 @@ class GroupSpectrumConfig:
             "display": self.display,
             "window": self.window,
             "padding": self.padding,
+            "normalisation": self.normalisation,
+            "display_normalisation": self.display_normalisation,
             "filter_start_us": self.filter_start_us,
             "filter_time_constant_us": self.filter_time_constant_us,
             "t0_offset_us": self.t0_offset_us,
@@ -166,6 +187,12 @@ class GroupSpectrumConfig:
             display=str(data.get("display", "(Power)^1/2")),
             window=str(data.get("window", "none")),
             padding=max(1, int(data.get("padding", 1))),
+            # A missing key is a pre-calibration recipe: map it to the "raw"
+            # sentinel so it differs from a freshly-built config's
+            # "asymmetry_percent" default and trips the staleness banner,
+            # inviting a recompute onto the new calibrated scale.
+            normalisation=str(data.get("normalisation", "raw")),
+            display_normalisation=str(data.get("display_normalisation", "calibrated")),
             filter_start_us=float(data.get("filter_start_us", 0.0)),
             filter_time_constant_us=float(data.get("filter_time_constant_us", 1.5)),
             t0_offset_us=float(data.get("t0_offset_us", 0.0)),
@@ -414,6 +441,12 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
     ):
         emit("display mode")
 
+    if current.normalisation != recorded.normalisation:
+        emit("amplitude normalisation")
+
+    if current.display_normalisation != recorded.display_normalisation:
+        emit("area normalisation")
+
     if not _floats_equal(current.t_min_us, recorded.t_min_us) or not _floats_equal(
         current.t_max_us, recorded.t_max_us
     ):
@@ -657,6 +690,12 @@ def compute_average_group_spectrum(
     # therefore skip post-FFT conditioning, which only makes sense on the
     # canonical averaged frequency spectrum.  New derived modes opt in here.
     is_derived_mode = is_entropy or is_burg or is_correlation
+    # The amplitude calibration (fractional footing + 2/Σw + percent) applies to
+    # the canonical averaged spectrum only.  The derived modes keep their own
+    # footing: entropy's negativity penalty would be silently reweighted, Burg's
+    # AR spectrum has no coherent-gain meaning, and correlation consumes a raw
+    # amplitude channel before its Breit–Rabi transform.
+    calibrate = not is_derived_mode
     # The correlation spectrum is built from a real amplitude channel sampled at
     # the Breit–Rabi pair frequencies; feed the FFT averaging an amplitude
     # display internally, then transform it after averaging.
@@ -677,6 +716,9 @@ def compute_average_group_spectrum(
     # successful subtraction.
     diamag_seed_fields: list[float | None] = []
     diamag_fit_failed = False
+    # When calibrating, count groups whose fractional footing hit the degenerate
+    # baseline guard so a partly-uncalibrated average can be disclosed.
+    fractional_guard_hits = 0
     average_freqs: np.ndarray | None = None
     first_group_dataset: MuonDataset | None = None
     selected_names: list[str] = []
@@ -718,7 +760,7 @@ def compute_average_group_spectrum(
         selected_names.append(names_by_group.get(group_id, f"Group {group_id}"))
 
         if is_burg:
-            signal, dt = prepare_fft_time_signal(
+            prepared = prepare_fft_time_signal(
                 group_dataset,
                 window=config.window,
                 t_min=config.t_min_us,
@@ -727,6 +769,7 @@ def compute_average_group_spectrum(
                 filter_start_us=config.filter_start_us,
                 filter_time_constant_us=config.filter_time_constant_us,
             )
+            signal, dt = prepared.signal, prepared.dt
             n_padded = len(signal) * max(config.padding, 1)
             burg_freqs = np.fft.rfftfreq(n_padded, d=dt)
             spec, best_order, hit_boundary = burg_spectrum(
@@ -748,6 +791,7 @@ def compute_average_group_spectrum(
             phase_degrees = float(config.group_phase_degrees.get(group_id, 0.0))
             group_t0_offset_us = config.t0_offset_us
 
+        fft_diagnostics: dict = {}
         freqs, spectrum = fft_complex_asymmetry(
             group_dataset,
             window=config.window,
@@ -759,7 +803,12 @@ def compute_average_group_spectrum(
             subtract_average_signal=config.subtract_average_signal,
             filter_start_us=config.filter_start_us,
             filter_time_constant_us=config.filter_time_constant_us,
+            fractional=calibrate,
+            amplitude_calibration=calibrate,
+            diagnostics=fft_diagnostics,
         )
+        if calibrate and not fft_diagnostics.get("fractional_applied", False):
+            fractional_guard_hits += 1
         if average_freqs is None:
             average_freqs = freqs
         if is_entropy:
@@ -848,6 +897,33 @@ def compute_average_group_spectrum(
                     average_freqs, averaged_imag, exclusion_ranges
                 )
 
+    # ── optional unit-area (field-distribution p(ν)) display normalisation ──
+    # The last display step, on the calibrated magnitude-family spectrum only:
+    # fit and subtract the noise floor, then normalise the residual to unit area
+    # so the curve reads as a field distribution.  Refused (with a stamped note)
+    # for phase/real displays or when the signal is not significant above noise.
+    unit_area_applied = False
+    unit_area_skipped_note = ""
+    want_unit_area = str(config.display_normalisation).lower() == "unit_area"
+    magnitude_family = canonical in {"magnitude", "power_sqrt", "power"}
+    if want_unit_area and not is_derived_mode:
+        if not magnitude_family:
+            unit_area_skipped_note = (
+                "unit-area normalisation applies to the magnitude, (Power)^1/2 "
+                "and Power displays only"
+            )
+        else:
+            unit_area = unit_area_normalise(average_freqs, averaged_display, averaged_error)
+            if unit_area.applied:
+                averaged_display = unit_area.display
+                averaged_error = unit_area.error
+                unit_area_applied = True
+                # The imaginary quadrature is not a density; drop it so a p(ν)
+                # view is not overlaid with an unnormalised Real+Imag channel.
+                averaged_imag = None
+            else:
+                unit_area_skipped_note = unit_area.reason
+
     if len(selected) == len(all_ids):
         run_label = f"{run.run_number} Average"
     else:
@@ -876,6 +952,19 @@ def compute_average_group_spectrum(
             "fourier_padding": int(config.padding),
         }
     )
+    # Amplitude-normalisation provenance: the calibrated modes read in percent;
+    # derived modes keep their raw footing.
+    metadata["fourier_normalisation"] = "asymmetry_percent" if calibrate else "raw"
+    if calibrate and fractional_guard_hits:
+        metadata["fourier_normalisation_degenerate"] = (
+            f"the fractional baseline was non-positive for {fractional_guard_hits} of "
+            f"{len(selected)} groups, which kept the raw (uncalibrated) footing"
+        )
+    if unit_area_applied:
+        metadata["fourier_display_normalisation"] = "unit_area"
+        metadata["y_label"] = UNIT_AREA_YLABEL
+    elif want_unit_area and unit_area_skipped_note:
+        metadata["fourier_unit_area_skipped"] = unit_area_skipped_note
     if is_correlation:
         # A_µ is a hyperfine coupling, not γ_µ·B — label it distinctly and flag
         # it so the frequency-plot field-unit selector (MHz/G/T) does not apply.
@@ -929,6 +1018,7 @@ def compute_average_group_spectrum(
 
 
 __all__ = [
+    "UNIT_AREA_YLABEL",
     "GroupSpectrumConfig",
     "compute_average_group_spectrum",
     "config_differences",

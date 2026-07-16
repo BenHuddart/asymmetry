@@ -54,7 +54,7 @@ def test_v15_bumps_version_and_defaults_group_kind():
         data_groups=[{"group_id": "grp-1", "name": "B = 60 G", "member_run_numbers": [1, 2]}]
     )
     result = migrate_to_current(state)
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 15
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 16
     assert result["data_groups"][0]["kind"] == "user"
 
 
@@ -108,7 +108,7 @@ def test_case_d_no_data_groups_block_migrates_clean():
     assert "data_groups" not in state
     result = migrate_to_current(state)
     validate(result)
-    assert result["schema_version"] == 15
+    assert result["schema_version"] == 16
     series = result["batches"][0]
     assert series["group_id"] is None
     assert series["last_fitted_members"] == [3, 4]

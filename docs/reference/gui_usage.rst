@@ -298,10 +298,26 @@ Control the plot range using the spinboxes at the top:
 * Click **Auto Y** to auto-scale the Y axis only
 
 Auto-Y uses points inside the currently selected X range and prefers reliable
-foreground points (excluding undefined/low-confidence bins when available).
+foreground points (excluding undefined/low-confidence bins when available). On
+the Frequency-domain plot, **Auto X** frames the spectrum sensibly — the
+dominant line, or the field-derived Larmor window — rather than the full
+Nyquist span.
 
-Default limits automatically adjust to fit the data including error bars, 
+**Auto X** and **Auto Y** stay active until you take manual control of the
+view: typing a limit value turns off that axis's auto-scaling, and a **Zoom**
+or **Pan** gesture turns off both so the framing you dragged to is kept
+instead of snapping back to the data extent. Re-enable either at any time by
+clicking its button again.
+
+Default limits automatically adjust to fit the data including error bars,
 with 5% padding.
+
+Once you choose a window — by typing a limit, or by panning or zooming — that
+window is held: recomputing a spectrum, browsing onto a run with no spectrum,
+and switching runs all keep it, so you can compare the same window across a run
+series. Toggling **Auto X** or **Auto Y** on is the explicit "follow the data"
+escape hatch: it releases the held window for that axis and re-scales on every
+redraw until you toggle it off.
 
 Dense-data display (decimation)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -394,12 +410,16 @@ against its own reference rather than the axis origin. Frequency-domain
 waterfalls stack the same way but skip the hairline, since a spectrum already
 sits on its own zero baseline.
 
-**Export to GLE** and the plain-text data/fit exports mirror the on-screen
-stack exactly: the written asymmetry (and any overlaid fit curve) carries the
-same per-trace offset that is drawn, and each file records a
-``waterfall offset:`` header line so the raw, unshifted values stay
-recoverable — subtract the header value from every row to get back the
-original trace.
+**Export to GLE** and the plain-text data/fit exports both reproduce the
+on-screen stack, but differ in *where* the offset lives. With ``gleplot`` >= 1.7
+the GLE export applies each per-trace offset in the GLE script itself (a GLE
+``let`` that shifts the trace at plot time), so the exported ``.dat``/``.fit``
+sidecars keep their raw, unshifted values — the stack is a property of the
+figure, not of the data, and the gleplot figure editor can retune it. Against
+older ``gleplot`` (and always for the plain-text export, which has no script to
+carry the offset) the offset is baked into the written column instead. Either
+way each file records a ``waterfall offset:`` header line documenting the
+applied shift.
 
 The waterfall setting — on/off and the manual Δ (or automatic, if left
 blank) — is saved per plot panel in the project file and restored on reopen.

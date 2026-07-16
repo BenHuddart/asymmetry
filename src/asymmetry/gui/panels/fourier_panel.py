@@ -287,6 +287,19 @@ class FourierPanel(QWidget):
         self._stale_banner.hide()
         layout.addWidget(self._stale_banner)
 
+        # Overlay-mismatch banner — a second, independent strip: an overlay
+        # can mix spectra computed under different settings even when the
+        # ACTIVE run's own displayed spectrum is perfectly in sync, so this
+        # cannot share state with _stale_banner above (both can be true at
+        # once). set_overlay_mismatch() toggles it; see MainWindow's
+        # _refresh_fourier_staleness / _fourier_overlay_mismatch.
+        self._overlay_mismatch_banner = make_warning_banner("", severity="warn")
+        self._overlay_mismatch_banner.setText(
+            "Overlaid spectra use different settings — Compute FFT to unify."
+        )
+        self._overlay_mismatch_banner.hide()
+        layout.addWidget(self._overlay_mismatch_banner)
+
         # Pinned action footer — the panel's primary action is "Compute FFT",
         # which previously sat at the bottom of the scroll content and was
         # unreachable at the default window size. The footer (background hint +
@@ -366,6 +379,7 @@ class FourierPanel(QWidget):
         for check in (
             self._subtract_average_signal_check,
             self._estimate_average_error_check,
+            self._unit_area_check,
             self._use_phase_table_check,
             self._pulse_comp_check,
             self._exclude_enabled_check,
@@ -625,6 +639,19 @@ class FourierPanel(QWidget):
         self._estimate_average_error_check.setToolTip("Estimate errors for averaged spectra.")
         fft_settings_form.addRow(self._estimate_average_error_check)
 
+        # Display normalisation: present the calibrated magnitude spectrum as a
+        # field distribution p(ν) integrating to 1 (noise floor fitted and
+        # subtracted first). Magnitude-family displays only; refused with a note
+        # for phase/real displays or a spectrum that is pure noise.
+        self._unit_area_check = QCheckBox("Unit area (field distribution)")
+        self._unit_area_check.setToolTip(
+            "Present the magnitude spectrum as a field distribution p(ν) that "
+            "integrates to 1: the noise floor is fitted and subtracted, then the "
+            "residual is normalised to unit area. Applies to the Magnitude, "
+            "(Power)^1/2 and Power displays."
+        )
+        fft_settings_form.addRow(self._unit_area_check)
+
         self._average_summary_label = QLabel("")
         self._average_summary_label.setWordWrap(True)
         fft_settings_form.addRow(
@@ -694,13 +721,31 @@ class FourierPanel(QWidget):
         # Read-only hint: the grouping's pre-FFT background correction is
         # inherited by the Fourier input (F3) and is otherwise invisible here.
         self.set_background_hint(None)
+        # ONE selection-scoped compute action: the primary button computes the
+        # full Data-Browser selection (the active run alone when nothing else
+        # is selected) and set_compute_scope() reflects the target count in
+        # its label, so the scope is visible before clicking.
         self._fft_btn = self._action_footer.add_primary("Compute FFT")
-        self._apply_to_selection_btn = self._action_footer.add_secondary("Apply to selection")
-        self._apply_to_selection_btn.setToolTip(
-            "Copy this run's Fourier settings to the other selected runs and "
-            "generate their spectra."
+        self._fft_btn.setToolTip(
+            "Compute FFTs for every run selected in the Data Browser using the "
+            "current settings. The Groups table's enabled groups apply to every "
+            "run; phases stay per-run."
         )
         return self._action_footer
+
+    def set_compute_scope(self, count: int) -> None:
+        """Reflect the compute target count in the primary button's label.
+
+        ``"Compute FFT"`` for a single-run scope; ``"Compute FFT (N runs)"``
+        when the Data-Browser selection puts N > 1 runs in scope — the button
+        always computes the full selection, and the label makes that scope
+        visible before clicking.
+        """
+        try:
+            count = int(count)
+        except (TypeError, ValueError):
+            count = 1
+        self._fft_btn.setText("Compute FFT" if count <= 1 else f"Compute FFT ({count} runs)")
 
     # ── conditioning + exclusions sections ─────────────────────────────
 
@@ -1244,6 +1289,23 @@ class FourierPanel(QWidget):
         """Return whether the stale-spectrum banner is currently shown."""
         return not self._stale_banner.isHidden()
 
+    def set_overlay_mismatch(self, mismatched: bool) -> None:
+        """Show or hide the "overlay mixes settings" banner.
+
+        Independent of :meth:`set_stale`: an overlay can mix spectra computed
+        under different settings even when the active run's own displayed
+        spectrum is in sync with the live panel state, so the two banners
+        can be shown together.
+        """
+        if mismatched:
+            self._overlay_mismatch_banner.show()
+        else:
+            self._overlay_mismatch_banner.hide()
+
+    def is_overlay_mismatched(self) -> bool:
+        """Return whether the overlay-mismatch banner is currently shown."""
+        return not self._overlay_mismatch_banner.isHidden()
+
     # ── project state helpers ──────────────────────────────────────────
 
     def group_phase_table(self) -> dict[int, float]:
@@ -1448,6 +1510,9 @@ class FourierPanel(QWidget):
             "phase_degrees": self._phase_value(),
             "t0_offset_us": self._t0_offset_value(),
             "display": self._current_display_mode(),
+            "display_normalisation": (
+                "unit_area" if self._unit_area_check.isChecked() else "calibrated"
+            ),
             "subtract_average_signal": self._subtract_average_signal_check.isChecked(),
             "auto_phase_method": self._auto_method_combo.currentText(),
             "use_phase_table": self._use_phase_table_check.isChecked(),
@@ -1515,6 +1580,9 @@ class FourierPanel(QWidget):
                 t0_offset_us = 0.0
             self._t0_offset_spin.setText(self._format_float_text(t0_offset_us))
             self._set_display_mode(state.get("display", "(Power)^1/2"))
+            self._unit_area_check.setChecked(
+                str(state.get("display_normalisation", "calibrated")).lower() == "unit_area"
+            )
             self._subtract_average_signal_check.setChecked(
                 bool(state.get("subtract_average_signal", True))
             )

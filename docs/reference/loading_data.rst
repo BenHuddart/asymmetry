@@ -42,6 +42,15 @@ loaded runs to the same behaviour. The Get Info checkbox affects only the
 target run, making it useful for per-dataset overrides. Log-derived temperature
 values are shown with red text in the Data Browser.
 
+The applied field is read from the ``sample/magnetic_field`` header and stored
+in gauss, matching the convention the rest of Asymmetry (and the PSI and
+MusrRoot loaders) uses. Most ISIS files store the value in gauss with no unit,
+which is taken as-is. When the dataset carries a ``units`` attribute the loader
+honours it: ``T`` / ``tesla`` is converted by a factor of 10\ :sup:`4` and
+``mT`` / ``millitesla`` by a factor of 10. An absent, blank, gauss, or
+unrecognised unit is passed through unchanged — the loader never guesses a
+conversion the file did not declare.
+
 For NeXus good-data windows, Asymmetry treats integer bin metadata as
 canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
 ``first_good_time`` / ``last_good_time`` are present, they are used only as a
@@ -162,15 +171,34 @@ than inventing a new interpretation. In particular:
 
 * MusrRoot files are detected from ``RunHeader`` and ``hDecay%03d``
   histograms. Both the documented ``RunHeader`` ``TFolder`` layout and the
-  newer ``TDirectory`` layout are supported.
+  newer ``TDirectory`` layout are supported. musrfit added the
+  ``TDirectory``-based layout in a 2025 commit series, and the current
+  MusrRoot specification defines it as canonical (the ``TFolder`` streaming is
+  deprecated). PSI's 2026 FLAME DAQ writes this layout; other PSI bulk-µSR
+  instruments are expected to follow, since the layout is instrument-agnostic.
 * Histogram search follows musrfit's paths: ``histos/hDecay%03d`` for folder
   files and ``histos/DecayAnaModule/hDecay%03d`` for directory files.
 * ``RunInfo`` values such as run number, title, laboratory, instrument,
   sample, temperature, field, time resolution, number of histograms, and
-  red/green offsets are read from the header when present.
+  red/green offsets are read from the header when present. Instrument names
+  are matched case-insensitively (FLAME writes the lowercase ``flame``).
 * ``DetectorInfo`` entries provide detector labels, histogram numbers,
   per-detector ``t0`` bins, and detector-specific good-bin ranges when the
   file supplies them.
+* In the ``TDirectory`` layout, ``RunHeader`` and its subfolders
+  (``RunInfo``, ``DetectorInfo/DetectorNNN``, ``SampleEnvironmentInfo``,
+  ``MagneticFieldEnvironmentInfo``, ``BeamlineInfo``, ``RunSummary``) are
+  themselves ``TDirectory``\ s, and every leaf is a ``TObjString`` encoding
+  both its key name and its payload as ``"NNN - Label: Value -@type"`` (a
+  physical-quantity value carries an optional error, unit, set-point, and
+  free-text description, for example ``Time Resolution: 0.09765625 ns;
+  SiPM``). The ``NNN`` prefix is a single counter shared across every
+  subfolder, so numbering within one subfolder is not contiguous; Asymmetry
+  parses these entries by label, never by number. The free-text
+  ``RunSummary`` block — which musrfit itself does not read — is attached
+  verbatim to the loaded run as
+  ``metadata["musrroot_run_summary"]``, so it is preserved as provenance
+  rather than discarded.
 * MusrRoot slow-control histograms in ``histos/SCAnaModule`` are imported as
   plottable ``nexus_time_series`` logs. In particular, ``hSampleTemperature``
   is summarised as an average temperature in Get Info while the scalar

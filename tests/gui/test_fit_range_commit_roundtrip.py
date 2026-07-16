@@ -83,8 +83,8 @@ def test_global_spinbox_commit_emits_signal(tab: GlobalFitTab, qapp: QApplicatio
     emitted: list[tuple[float, float]] = []
     tab.fit_range_edit_committed.connect(lambda a, b: emitted.append((a, b)))
     tab.set_fit_range_display(0.10, 5.00)
+    # A programmatic setValue commits on its own (commit_on_set_value).
     tab._fit_range_min_spin.setValue(0.25)
-    tab._fit_range_min_spin.editingFinished.emit()
     qapp.processEvents()
     assert len(emitted) == 1
     assert abs(emitted[0][0] - 0.25) < 1e-6
@@ -96,7 +96,6 @@ def test_global_spinbox_commit_emits_both_bounds(tab: GlobalFitTab, qapp: QAppli
     tab.fit_range_edit_committed.connect(lambda a, b: emitted.append((a, b)))
     tab.set_fit_range_display(0.10, 5.00)
     tab._fit_range_max_spin.setValue(6.00)
-    tab._fit_range_max_spin.editingFinished.emit()
     qapp.processEvents()
     assert len(emitted) == 1
     assert abs(emitted[0][0] - 0.10) < 1e-6
@@ -132,3 +131,18 @@ def test_global_tab_spinbox_commit_updates_plot_fit_range(
     qapp.processEvents()
     lo, _hi = win._plot_panel.get_fit_range()
     assert lo is not None and abs(lo - 0.40) < 1e-3
+
+
+def test_global_tab_programmatic_setvalue_updates_plot_fit_range(
+    win: MainWindow, qapp: QApplication
+) -> None:
+    """Regression: a bare ``setValue`` on the Batch-tab range commits to the plot."""
+    win._plot_panel.set_fit_range(0.10, 5.00)
+    qapp.processEvents()
+    gt = _global_tab(win)
+    gt._fit_range_min_spin.setValue(0.40)
+    gt._fit_range_max_spin.setValue(6.25)
+    qapp.processEvents()
+    lo, hi = win._plot_panel.get_fit_range()
+    assert lo is not None and abs(lo - 0.40) < 1e-3
+    assert hi is not None and abs(hi - 6.25) < 1e-3

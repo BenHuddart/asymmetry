@@ -99,6 +99,30 @@ def test_fourier_panel_defaults(qapp: QApplication) -> None:
         panel._phase_table.horizontalHeader().sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
     )
     assert panel._fft_btn.text() == "Compute FFT"
+    assert panel._fft_btn.toolTip() == (
+        "Compute FFTs for every run selected in the Data Browser using the "
+        "current settings. The Groups table's enabled groups apply to every "
+        "run; phases stay per-run."
+    )
+    # The one-button consolidation removed the separate selection actions.
+    assert not hasattr(panel, "_compute_for_selection_btn")
+    assert not hasattr(panel, "_apply_to_selection_btn")
+    assert panel.is_overlay_mismatched() is False
+
+
+def test_fourier_compute_scope_label(qapp: QApplication) -> None:
+    """set_compute_scope reflects the compute target count in the button label."""
+    panel = FourierPanel()
+    assert panel._fft_btn.text() == "Compute FFT"
+
+    panel.set_compute_scope(3)
+    assert panel._fft_btn.text() == "Compute FFT (3 runs)"
+
+    panel.set_compute_scope(1)
+    assert panel._fft_btn.text() == "Compute FFT"
+
+    panel.set_compute_scope(0)
+    assert panel._fft_btn.text() == "Compute FFT"
 
 
 def test_fourier_compute_button_pinned_outside_scroll(qapp: QApplication) -> None:
@@ -607,44 +631,52 @@ def test_frequency_plot_panel_correlation_axis_locks_unit_selector(
         metadata={"run_number": 12, "plot_domain": "frequency", "y_label": "FFT Magnitude (a.u.)"},
     )
 
-    # The user is viewing a normal FFT in Field (G) with the relative axis on.
+    # The user is viewing a normal FFT in Field (G) with the shift axis on.
     panel.plot_dataset(ordinary)
     panel._frequency_x_unit_combo.setCurrentText("Field (G)")
-    panel._frequency_axis_relative_check.setChecked(True)
+    panel._frequency_axis_mode_combo.setCurrentText("Shift (x − x₀)")
     assert panel._current_frequency_x_unit == "field_gauss"
-    assert panel._frequency_axis_relative_to_reference is True
+    assert panel._frequency_axis_mode == "shift"
 
-    # Switching to a correlation spectrum locks the axis to MHz and disables the
-    # field-unit selector, the relative checkbox, and the reference spin.
+    # Switching to a correlation spectrum locks the axis to MHz absolute and
+    # disables the field-unit selector, the axis-mode combo, the reference-mode
+    # combo, and the reference spin.
     panel.plot_dataset(correlation)
     assert panel._ax.get_xlabel() == "Muon hyperfine coupling Aμ (MHz)"
     assert panel._frequency_axis_is_correlation is True
     assert panel._frequency_x_unit_combo.isEnabled() is False
-    assert panel._frequency_axis_relative_check.isEnabled() is False
-    # The relative-axis checkbox must reflect the forced-off backing flag.
-    assert panel._frequency_axis_relative_check.isChecked() is False
+    assert panel._frequency_axis_mode_combo.isEnabled() is False
+    assert panel._frequency_reference_mode_combo.isEnabled() is False
+    # The axis-mode combo must reflect the forced-absolute backing state.
+    assert panel._frequency_axis_mode_combo.currentData() == "absolute"
     assert panel._frequency_reference_spin.isEnabled() is False
 
-    # Switching back restores the user's Field (G) + relative selection exactly.
+    # Switching back restores the user's Field (G) + shift selection exactly.
     panel.plot_dataset(ordinary)
     assert panel._frequency_axis_is_correlation is False
     assert panel._frequency_x_unit_combo.isEnabled() is True
     assert panel._current_frequency_x_unit == "field_gauss"
-    assert panel._ax.get_xlabel() == "Field (G)"
-    assert panel._frequency_axis_relative_to_reference is True
-    assert panel._frequency_axis_relative_check.isChecked() is True
+    assert panel._ax.get_xlabel() == "Field shift B − B₀ (G)"
+    assert panel._frequency_axis_mode == "shift"
+    assert panel._frequency_axis_mode_combo.currentData() == "shift"
 
     # A project saved in this (restored) state persists the user's unit, not MHz.
     assert panel.get_state()["frequency_x_unit"] == "field_gauss"
+    assert panel.get_state()["frequency_axis_mode"] == "shift"
 
 
-def test_frequency_plot_panel_can_show_relative_field_axis(qapp: QApplication) -> None:
+def test_frequency_plot_panel_shift_axis_transforms_the_line_data(qapp: QApplication) -> None:
+    """Shift mode genuinely transforms the plotted x data, not just the boxes."""
     panel = PlotPanel(domain="frequency")
     if not getattr(panel, "_has_mpl", False):
         pytest.skip("matplotlib backend not available in this environment")
+    # Read the drawn samples verbatim (no min-max bucketing near the edges).
+    if hasattr(panel, "set_decimation_enabled"):
+        panel.set_decimation_enabled(False, redraw=False)
 
+    center = 100.0 * 135.538817 * 1.0e-4  # γ_μ·B(100 G) in MHz
     dataset = MuonDataset(
-        time=np.array([1.0, 1.5, 2.0]),
+        time=np.array([center - 1.0, center, center + 1.0]),
         asymmetry=np.array([1.0, 2.0, 1.5]),
         error=np.zeros(3, dtype=float),
         metadata={
@@ -655,21 +687,20 @@ def test_frequency_plot_panel_can_show_relative_field_axis(qapp: QApplication) -
         },
     )
 
+    # Choose the shift axis first, so the fresh frame spans the shifted extent
+    # symmetrically about 0 rather than inheriting the absolute field frame.
+    panel.set_frequency_axis_mode("shift")
     panel.plot_dataset(dataset)
-    abs_x_min, abs_x_max, _abs_y_min, _abs_y_max = panel.get_view_limits()
-    abs_axis_min, abs_axis_max = panel._ax.get_xlim()
-    panel.set_frequency_axis_relative_to_reference(True)
 
-    assert panel._ax.get_xlabel() == "Frequency (MHz)"
-    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
-    center = 100.0 * 135.538817 * 1.0e-4
-    assert x_min == pytest.approx(abs_x_min - center, abs=1e-3)
-    assert x_max == pytest.approx(abs_x_max - center, abs=1e-3)
-    assert panel._ax.get_xlim()[0] == pytest.approx(abs_axis_min, abs=1e-3)
-    assert panel._ax.get_xlim()[1] == pytest.approx(abs_axis_max, abs=1e-3)
+    # The plotted line itself is now the shifted spectrum: the peak at γ_μ·B
+    # sits at 0, and the axis label names the shift quantity.
+    assert panel._ax.get_xlabel() == "Frequency shift ν − ν₀ (MHz)"
+    spectrum = next(line for line in panel._ax.get_lines() if len(line.get_xdata()) == 3)
+    np.testing.assert_allclose(spectrum.get_xdata(), [-1.0, 0.0, 1.0], atol=1e-6)
 
 
-def test_frequency_plot_panel_relative_limits_drive_absolute_axis(qapp: QApplication) -> None:
+def test_frequency_plot_panel_shift_limit_boxes_are_the_axis(qapp: QApplication) -> None:
+    """In shift mode the limit boxes and the matplotlib axis share one scale."""
     panel = PlotPanel(domain="frequency")
     if not getattr(panel, "_has_mpl", False):
         pytest.skip("matplotlib backend not available in this environment")
@@ -687,16 +718,298 @@ def test_frequency_plot_panel_relative_limits_drive_absolute_axis(qapp: QApplica
     )
 
     panel.plot_dataset(dataset)
-    panel.set_frequency_axis_relative_to_reference(True)
+    panel.set_frequency_axis_mode("shift")
     panel.set_view_limits(-0.5, 0.25, 0.0, 3.0)
 
-    center = 100.0 * 135.538817 * 1.0e-4
     x_min, x_max, _y_min, _y_max = panel.get_view_limits()
-
+    # Identity mapping: the control values equal the plotted axis limits.
     assert x_min == pytest.approx(-0.5, abs=1e-6)
     assert x_max == pytest.approx(0.25, abs=1e-6)
-    assert panel._ax.get_xlim()[0] == pytest.approx(center - 0.5, abs=1e-3)
-    assert panel._ax.get_xlim()[1] == pytest.approx(center + 0.25, abs=1e-3)
+    assert panel._ax.get_xlim()[0] == pytest.approx(-0.5, abs=1e-6)
+    assert panel._ax.get_xlim()[1] == pytest.approx(0.25, abs=1e-6)
+
+
+def _freq_spectrum(run_number: int, field: float, center_mhz: float) -> MuonDataset:
+    """A synthetic spectrum peaked at *center_mhz* carrying *field* metadata."""
+    freq = np.linspace(center_mhz - 3.0, center_mhz + 3.0, 61)
+    amp = np.exp(-((freq - center_mhz) ** 2) / (2 * 0.3**2))
+    return MuonDataset(
+        time=freq,
+        asymmetry=amp,
+        error=np.zeros_like(freq),
+        metadata={
+            "run_number": run_number,
+            "plot_domain": "frequency",
+            "y_label": "FFT Magnitude (a.u.)",
+            "field": field,
+        },
+    )
+
+
+def _gamma_mhz(field_gauss: float) -> float:
+    return field_gauss * 135.538817 * 1.0e-4
+
+
+def test_frequency_shift_run_field_overlay_aligns_different_fields(qapp: QApplication) -> None:
+    """Two spectra at different fields overlay aligned at zero shift (Run field)."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+    if hasattr(panel, "set_decimation_enabled"):
+        panel.set_decimation_enabled(False, redraw=False)
+
+    ds_a = _freq_spectrum(101, field=100.0, center_mhz=_gamma_mhz(100.0))
+    ds_b = _freq_spectrum(102, field=200.0, center_mhz=_gamma_mhz(200.0))
+
+    def _peak_x(label: str) -> float:
+        line = next(ln for ln in panel._ax.get_lines() if ln.get_label() == label)
+        x = np.asarray(line.get_xdata())
+        y = np.asarray(line.get_ydata())
+        return float(x[int(np.argmax(y))])
+
+    panel.set_frequency_axis_mode("shift")
+    panel.set_view_limits(-4.0, 4.0, 0.0, 1.5)
+    panel.plot_datasets([ds_a, ds_b])
+
+    # Each trace shifts about its OWN field, so both peaks (max amp) land at ~0.
+    assert _peak_x("101") == pytest.approx(0.0, abs=1e-6)
+    assert _peak_x("102") == pytest.approx(0.0, abs=1e-6)
+
+    # In Common mode (shared reference = the 100 G run) the 200 G peak sits at
+    # its separation, not zero. Frame wide first so the redraw keeps every point.
+    panel.set_view_limits(-4.0, 20.0, 0.0, 1.5)
+    panel._frequency_reference_mode_combo.setCurrentText("Common")
+    panel._frequency_reference_spin.setValue(100.0)
+    panel._frequency_reference_spin.editingFinished.emit()
+    panel.plot_datasets([ds_a, ds_b])
+    assert _peak_x("101") == pytest.approx(0.0, abs=1e-6)
+    assert _peak_x("102") == pytest.approx(_gamma_mhz(200.0) - _gamma_mhz(100.0), abs=1e-3)
+
+
+def test_frequency_relative_ppm_mode_disables_unit_combo(qapp: QApplication) -> None:
+    """Relative ppm mode produces ppm values and disables the (dimensionless) unit combo."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    ref = _gamma_mhz(1000.0)
+    ds = _freq_spectrum(103, field=1000.0, center_mhz=ref)
+    panel.plot_dataset(ds)
+    panel.set_frequency_axis_mode("relative_ppm")
+
+    assert panel._frequency_x_unit_combo.isEnabled() is False
+    assert panel._display_x_unit_suffix() == "ppm"
+    # (x − ref)/ref × 1e6 for a point one linewidth above the reference.
+    x = ds.time
+    expected = (x - ref) / ref * 1.0e6
+    np.testing.assert_allclose(
+        panel._convert_frequency_axis_for_display(x, ds), expected, rtol=1e-6, atol=1e-3
+    )
+
+
+def test_frequency_shift_missing_field_falls_back_untransformed(qapp: QApplication, caplog) -> None:
+    """A field-less dataset draws untransformed in a shift mode, with a note."""
+    import logging
+
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    ds = MuonDataset(
+        time=np.array([10.0, 11.0, 12.0]),
+        asymmetry=np.array([1.0, 2.0, 1.0]),
+        error=np.zeros(3, dtype=float),
+        metadata={"run_number": 104, "plot_domain": "frequency", "y_label": "FFT (a.u.)"},
+    )
+    panel.set_frequency_axis_mode("relative_ppm")
+    with caplog.at_level(logging.INFO, logger="asymmetry.gui.panels.plot_panel"):
+        out = panel._convert_frequency_axis_for_display(ds.time, ds)
+    # No reference → absolute display values, not NaN, and a note was logged.
+    np.testing.assert_allclose(out, ds.time)
+    assert any("untransformed" in rec.message for rec in caplog.records)
+
+
+def test_frequency_axis_mode_limit_stash_round_trips(qapp: QApplication) -> None:
+    """Each unit:mode keeps its own x-window; switching back restores it."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    ds = _freq_spectrum(105, field=100.0, center_mhz=_gamma_mhz(100.0))
+    panel.plot_dataset(ds)
+
+    panel.set_frequency_axis_mode("absolute")
+    panel.set_view_limits(5.0, 25.0, 0.0, 1.5)
+    panel.set_frequency_axis_mode("shift")
+    panel.set_view_limits(-1.0, 1.0, 0.0, 1.5)
+
+    # Back to absolute restores its stashed window, not the shift one.
+    panel.set_frequency_axis_mode("absolute")
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    assert (x_min, x_max) == pytest.approx((5.0, 25.0))
+
+    panel.set_frequency_axis_mode("shift")
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    assert (x_min, x_max) == pytest.approx((-1.0, 1.0))
+
+
+def test_frequency_larmor_marker_sits_at_zero_in_shift_mode(qapp: QApplication) -> None:
+    """The γ_μ·B marker lands at 0 in a shift mode (the run's own field)."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    ds = _freq_spectrum(106, field=150.0, center_mhz=_gamma_mhz(150.0))
+    panel.set_frequency_axis_mode("shift")
+    panel.plot_dataset(ds)
+
+    # The marker is a vertical Line2D added at the expected-field x position.
+    verticals = [
+        line
+        for line in panel._ax.get_lines()
+        if len(line.get_xdata()) == 2 and line.get_xdata()[0] == line.get_xdata()[1]
+    ]
+    marker_xs = [float(line.get_xdata()[0]) for line in verticals]
+    assert any(x == pytest.approx(0.0, abs=1e-6) for x in marker_xs)
+
+
+def test_frequency_view_window_inverts_shift_mode_to_canonical_mhz(qapp: QApplication) -> None:
+    """The phase-window inversion returns canonical MHz in each axis mode."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+
+    ref = _gamma_mhz(100.0)
+    ds = _freq_spectrum(107, field=100.0, center_mhz=ref)
+    panel.plot_dataset(ds)
+
+    panel.set_frequency_axis_mode("shift")
+    panel.set_view_limits(-1.0, 1.0, 0.0, 1.5)
+    lo, hi = panel.get_frequency_view_window_mhz()
+    assert lo == pytest.approx(ref - 1.0, abs=1e-6)
+    assert hi == pytest.approx(ref + 1.0, abs=1e-6)
+
+    panel.set_frequency_axis_mode("relative_ppm")
+    panel.set_view_limits(-1.0e5, 1.0e5, 0.0, 1.5)  # ±10% in ppm
+    lo, hi = panel.get_frequency_view_window_mhz()
+    assert lo == pytest.approx(ref * 0.9, rel=1e-6)
+    assert hi == pytest.approx(ref * 1.1, rel=1e-6)
+
+
+def _spectrum_peak_x(panel: PlotPanel, label: str) -> float:
+    """Return the x position of the max-amplitude sample of the labelled line."""
+    line = next(ln for ln in panel._ax.get_lines() if ln.get_label() == label)
+    x = np.asarray(line.get_xdata())
+    y = np.asarray(line.get_ydata())
+    return float(x[int(np.argmax(y))])
+
+
+def test_frequency_reference_spin_steps_commit_via_debounce(qapp: QApplication) -> None:
+    """Arrow/wheel steps redraw promptly; programmatic syncs never commit."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+    if hasattr(panel, "set_decimation_enabled"):
+        panel.set_decimation_enabled(False, redraw=False)
+
+    ds = _freq_spectrum(108, field=3000.0, center_mhz=_gamma_mhz(3000.0))
+    panel.set_frequency_axis_mode("shift")
+    panel.plot_dataset(ds)  # seeds the common reference from the 3000 G field
+    panel._frequency_reference_mode_combo.setCurrentText("Common")
+    panel.set_view_limits(-4.0, 4.0, 0.0, 1.5)
+    assert _spectrum_peak_x(panel, "108") == pytest.approx(0.0, abs=1e-6)
+
+    # A step fires valueChanged (not editingFinished) — the debounce arms…
+    panel._frequency_reference_spin.setValue(2000.0)
+    assert panel._frequency_reference_debounce.isActive()
+    # …and its timeout commits: the data re-shifts by γ_μ·(3000 − 2000) G.
+    panel._frequency_reference_debounce.stop()
+    panel._frequency_reference_debounce.timeout.emit()
+    assert _spectrum_peak_x(panel, "108") == pytest.approx(_gamma_mhz(1000.0), abs=1e-3)
+    # Idempotent: a follow-up editingFinished for the same value is a no-op.
+    before = panel.get_view_limits()
+    panel._frequency_reference_spin.editingFinished.emit()
+    assert panel.get_view_limits() == pytest.approx(before)
+
+    # A programmatic dataset sync rewrites the spin without arming the debounce.
+    panel._set_frequency_reference_from_dataset(ds)
+    assert not panel._frequency_reference_debounce.isActive()
+
+
+def test_frequency_reference_mode_switch_keeps_physical_window(qapp: QApplication) -> None:
+    """Run→Common re-anchors the window to the same canonical MHz interval."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+    if hasattr(panel, "set_decimation_enabled"):
+        panel.set_decimation_enabled(False, redraw=False)
+
+    ds_a = _freq_spectrum(111, field=3000.0, center_mhz=_gamma_mhz(3000.0))
+    ds_b = _freq_spectrum(112, field=5000.0, center_mhz=_gamma_mhz(5000.0))
+    panel.set_frequency_axis_mode("shift")
+    panel.plot_datasets([ds_a, ds_b])  # active reference = ds_a's 3000 G
+    # Pre-set a Common value different from the active run's field (the spin
+    # commit stores it without redrawing while Run-field mode is selected).
+    panel._frequency_reference_spin.setValue(5000.0)
+    panel._on_frequency_reference_spin_committed()
+
+    panel.set_view_limits(-2.0, 2.0, 0.0, 1.5)
+    canonical_before = panel.get_frequency_view_window_mhz()
+
+    panel._frequency_reference_mode_combo.setCurrentText("Common")
+
+    # Same physical frequencies: the canonical window is unchanged, so the
+    # display window moved by the reference delta γ_μ·(3000 − 5000) G.
+    canonical_after = panel.get_frequency_view_window_mhz()
+    # The limit fields round to ~3 dp, so the round-trip is mm-precise, not exact.
+    assert canonical_after == pytest.approx(canonical_before, abs=5e-3)
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    delta = _gamma_mhz(3000.0) - _gamma_mhz(5000.0)
+    assert x_min == pytest.approx(-2.0 + delta, abs=5e-3)
+    assert x_max == pytest.approx(2.0 + delta, abs=5e-3)
+    # The active trace stays inside the view at its unchanged physical position.
+    peak = _spectrum_peak_x(panel, "111")
+    assert peak == pytest.approx(delta, abs=1e-3)
+    assert x_min <= peak <= x_max
+
+
+def test_frequency_common_value_change_shifts_data_and_window_together(
+    qapp: QApplication,
+) -> None:
+    """A new Common value moves the data and the window by the same delta."""
+    panel = PlotPanel(domain="frequency")
+    if not getattr(panel, "_has_mpl", False):
+        pytest.skip("matplotlib backend not available in this environment")
+    if hasattr(panel, "set_decimation_enabled"):
+        panel.set_decimation_enabled(False, redraw=False)
+
+    ds = _freq_spectrum(113, field=3000.0, center_mhz=_gamma_mhz(3000.0))
+    panel.set_frequency_axis_mode("shift")
+    panel.plot_dataset(ds)
+    panel._frequency_reference_mode_combo.setCurrentText("Common")
+    panel.set_view_limits(-2.0, 2.0, 0.0, 1.5)
+    assert _spectrum_peak_x(panel, "113") == pytest.approx(0.0, abs=1e-6)
+
+    panel._frequency_reference_spin.setValue(2000.0)
+    panel._on_frequency_reference_spin_committed()
+
+    # Data and window both moved by γ_μ·(3000 − 2000) G: the peak keeps its
+    # axis-relative position (window centre) instead of exiting the view.
+    delta = _gamma_mhz(1000.0)
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    assert x_min == pytest.approx(-2.0 + delta, abs=5e-3)
+    assert x_max == pytest.approx(2.0 + delta, abs=5e-3)
+    peak = _spectrum_peak_x(panel, "113")
+    assert peak == pytest.approx(delta, abs=1e-3)
+    assert peak - x_min == pytest.approx(2.0, abs=5e-3)
+
+    # The stash for this unit:mode was invalidated: a mode round-trip restores
+    # the re-anchored window, not the pre-change one.
+    panel.set_frequency_axis_mode("absolute")
+    panel.set_frequency_axis_mode("shift")
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    assert x_min == pytest.approx(-2.0 + delta, abs=5e-3)
+    assert x_max == pytest.approx(2.0 + delta, abs=5e-3)
 
 
 def test_plot_panel_basic_plot_fit_clear_flow(qapp: QApplication) -> None:

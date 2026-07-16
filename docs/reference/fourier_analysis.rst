@@ -173,10 +173,21 @@ window (the same window automatic phase estimation uses) is measured at half
 maximum, and the matched time constant follows from the line shape —
 ``τ = 1/(πΓ)`` for a Lorentzian of power-spectrum FWHM ``Γ``, with the
 equivalent (Dawson-corrected) relation for a Gaussian. If the ``Gaussian``
-filter mode is selected the match is Gaussian; otherwise Lorentzian. When no
-line clears the noise baseline, or the dominant line is resolution-limited
-(its width is the transform's, not the sample's), the status reads *"No clear
-line to match — leave apodisation off."* and nothing is filled.
+filter mode is selected the match is Gaussian; otherwise Lorentzian.
+
+Detection is two-stage. A cheap check first looks for a line that already
+towers over the raw spectrum's noise floor. A line that is genuinely present
+but sits below that — for example an un-windowed, lifetime-corrected record
+whose late-time noise is amplified by the deadtime/decay correction — can
+still be invisible in the raw spectrum while remaining detectable: the
+fallback search itself smooths the spectrum at a range of candidate
+linewidths (anchored to the spectrum's real frequency resolution, not the
+zero-padded display grid, so it cannot mistake padding-correlated noise for
+a line), so a line buried in an un-apodised spectrum's noise floor is still
+found. "No clear line" now means no line at any scanned width — only then,
+or when the dominant line is resolution-limited (its width is the
+transform's, not the sample's), does the status read *"No clear line to
+match — leave apodisation off."* and nothing is filled.
 
 How the GUI FFT is built
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -286,6 +297,74 @@ and positive as possible without a supplied reference phase.
    the real axis. This reproduces musrfit's ``PFTPhaseCorrection``; the
    trivial zero-spectrum solution is given a large cost so the optimiser
    avoids it.
+
+Normalisation
+~~~~~~~~~~~~~
+
+FFT amplitudes are **calibrated to fractional asymmetry, displayed in percent**:
+a pure cosine of fractional amplitude :math:`A` peaks at :math:`100\,A` in the
+magnitude spectrum. The calibration makes the peak height a physical quantity,
+invariant to counting statistics, the length of the time window, the choice of
+apodisation, and zero padding. Two steps produce it, applied to every canonical
+display channel (``(Power)^1/2``, ``Cos``, ``Sin``, ``Phase``, magnitude, real,
+imaginary; ``Power`` is their square, in :math:`\%^2`):
+
+* **Fractional footing.** Each detector group's lifetime-corrected count signal
+  :math:`N_0\,(1 + A\cos\dots)` is divided by its error-weighted baseline
+  :math:`N_0` before the average subtraction, turning counts into the
+  dimensionless asymmetry :math:`A\cos\dots`. A degenerate (non-positive)
+  baseline falls back to the raw footing rather than dividing by zero, and the
+  spectrum is stamped accordingly.
+* **Coherent-gain correction.** The complex spectrum is multiplied by
+  :math:`100 \times 2/\Sigma w`, where :math:`\Sigma w` is the coherent gain of
+  the apodisation actually applied — the sum of the window/filter weights over
+  the populated (unpadded) samples, equal to the sample count when no
+  apodisation is used [7]_. Dividing out :math:`\Sigma w` removes the window's
+  amplitude loss, so an unrelaxed line reads at :math:`100\,A` whatever window
+  is chosen; the factor of two is the one-sided (rfft) convention. Zero padding
+  contributes only zeros to :math:`\Sigma w`, so it leaves the peak height
+  unchanged (it only sinc-interpolates the line shape). The DC and Nyquist bins
+  strictly carry a one-sided gain of :math:`1/\Sigma w` rather than
+  :math:`2/\Sigma w`; DC is already removed by the average subtraction, so this
+  affects only a Nyquist-frequency line, which the calibration does not target.
+
+A **relaxing** line reads *below* :math:`100\,A`: damping spreads the line over
+many bins, so the calibrated **peak height** falls even though the calibrated
+**area** is preserved. Read peak amplitudes from an FFT only for weakly damped
+lines; otherwise fit the spectrum or integrate the area.
+
+A recipe recorded before this calibration existed is flagged stale on load
+(the *displayed FFT is out of sync* banner), inviting a recompute onto the new
+scale.
+
+Unit-area field distribution
+++++++++++++++++++++++++++++
+
+Ticking **Unit area (field distribution)** in *FFT settings* presents a
+magnitude-family spectrum as a field distribution :math:`p(\nu)` that integrates
+to one — the density of internal fields sampled by the muon [6]_. The noise
+floor is fitted (a σ-clipped block median, tolerant of a slowly varying
+continuum) and subtracted; the residual is integrated **unclipped** over the
+full one-sided range — so the noise integrates to approximately zero and the
+result is independent of where the frequency window is drawn — and the spectrum
+is divided by that area so :math:`\int p\,\mathrm{d}\nu = 1` on the MHz grid. A
+significance guard refuses the normalisation when the floor-subtracted area does
+not exceed five times its noise scatter (a pure-noise spectrum keeps its
+calibrated percent scale and is stamped with the reason). The option applies to
+the ``Magnitude``, ``(Power)^1/2`` and ``Power`` displays only; on a phase or
+real display it is ignored with a note.
+
+The displayed density follows the x-axis unit: with the x axis in a field unit
+the curve, its error band, and any fit overlay are rescaled by the constant
+:math:`\mathrm{d}\nu/\mathrm{d}B` Jacobian, so the label reads
+``Field distribution p(B) (1/G)`` (or ``(1/T)``) and the on-screen curve
+integrates to one per displayed unit; the y view window converts with it.
+Exports mirror the display, naming the y column per unit
+(``density_per_MHz`` / ``density_per_G`` / ``density_per_T``) and recording it
+in the sidecar header. The stored spectrum itself stays canonical —
+:math:`p(\nu)` in ``1/MHz`` — and a dimensionless axis mode (such as a relative
+shift in ppm, whose Jacobian would be per-dataset) falls back to the canonical
+``(1/MHz)`` label with no rescaling.
 
 Maximum entropy method
 -----------------------
@@ -646,6 +725,37 @@ A precession line at frequency ν corresponds to a local field B through
 Tesla) without recomputing — handy when the science is a field distribution
 (a vortex lattice, an internal-field spread) rather than a frequency.
 
+Shift axes
+~~~~~~~~~~~
+
+Next to **X Units** is an **Axis:** selector with three modes that transform the
+plotted spectrum itself (not just the axis labels):
+
+- **Absolute** — the measured frequency/field, in the selected **X Units**.
+- **Shift (x − x₀)** — each spectrum minus its reference field, shown in the
+  selected unit (MHz, G, or T; the Larmor relation is linear, so a frequency
+  shift is a field shift once unit-converted). The axis is labelled, for example,
+  ``Field shift B − B₀ (G)``.
+- **Relative shift (ppm)** — the dimensionless fractional shift
+  (x − x₀)/x₀ × 10⁶, in parts per million (identical for frequency and field, so
+  the **X Units** selector is inert here). The axis is labelled
+  ``Relative shift (B − B₀)/B₀ (ppm)``.
+
+The **Ref.:** selector (enabled in the shift modes) chooses the reference x₀:
+
+- **Run field** (the default) — each spectrum uses **its own** applied field from
+  the run/dataset metadata. This is the point of the feature: overlay several
+  transverse-field runs measured at *different* applied fields and, in
+  **Shift (x − x₀)**, every line snaps to zero shift so a paramagnetic or Knight
+  shift between them reads at a glance. A run with no field metadata is drawn
+  untransformed (at its absolute position) and a note is logged, rather than
+  dropped.
+- **Common** — every spectrum shifts by the single value in the Gauss box, seeded
+  from the active run's field and freely overridable.
+
+The reference field is not fitted here; the shift axes are a display transform for
+reading and overlaying spectra.
+
 Calibration: phases, deadtime, and ZF/LF mode
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -834,7 +944,9 @@ never-computed run picks up a fresh spectrum as you select it. ``Compute FFT``,
 pinned in the action footer at the bottom of the Fourier panel (always visible,
 outside the scrolling settings area), remains the explicit way to re-run the
 transform after you change a setting — auto-compute only ever fills a genuinely
-empty spectrum, it never overwrites one you have already computed.
+empty spectrum, it never overwrites one you have already computed. The button
+acts on the full Data-Browser selection and its label counts the scope (see
+`Computing for a selection`_).
 
 A **multi-run overlay** extends the same idea to a selection: toggling Overlay
 with several runs selected auto-computes every member that has no spectrum yet,
@@ -957,6 +1069,57 @@ immediately rather than leaving the stale banner up. There is nothing to
 refresh by hand here — the next view of the run gets a fresh spectrum against
 the new grouping automatically.
 
+Computing for a selection
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Compute FFT`` is **selection-scoped**: it computes every run selected in
+the Data Browser, or the active run alone when nothing else is selected. The
+button's label shows that scope before you click — ``Compute FFT`` for a
+single run, ``Compute FFT (3 runs)`` when three runs are in scope — and its
+tooltip reads:
+
+   Compute FFTs for every run selected in the Data Browser using the current
+   settings. The Groups table's enabled groups apply to every run; phases
+   stay per-run.
+
+Every run in scope is recomputed from the CURRENT panel state — apodisation,
+padding, display mode, phase mode, and conditioning. The ``Groups`` table's
+**enabled groups apply to every run in the selection**, intersected with
+each run's own available groups — a series computes with one consistent
+group inclusion, and each target's stored ``Groups`` table is updated to
+match, so visiting it later shows the propagated inclusion, in sync with its
+spectrum. **Phases stay per-run**: each run's phase values come from its own
+stored phase table (or defaults). A run whose groups have no overlap with
+the enabled set — or that has no detector groups at all — is skipped and
+reported in the status line (*"Computed <n> spectra (<m> skipped)."* — the
+skipped count appears only when runs were skipped). The implicit
+compute-on-view fill and the overlay auto-compute are unchanged: they keep
+each run's own stored inclusion; only the explicit button propagates the
+panel's. Computation runs off the GUI thread, and on completion the central
+workspace switches to the Frequency-domain view and renders the result — the
+active run's spectrum, or the full overlay when the Overlay toggle is on
+with several runs selected.
+
+This consolidation replaces an earlier **Apply to selection** affordance that
+copied the active run's already-computed recipe onto the other selected runs
+without reading the live panel state, so a setting changed after the last
+``Compute FFT`` was silently left out, and did not re-render the view. That
+compute-once-copy-around model is gone: ``Compute FFT`` always reads the
+panel as it stands now and always acts on the scope its label names.
+
+Because overlay members can be computed independently — one earlier under
+different settings, one auto-filled by the overlay itself — they can drift
+out of alignment with each other. When an active overlay mixes spectra
+computed under different settings, the panel raises a second banner,
+independent of the out-of-date indicator below::
+
+   Overlaid spectra use different settings — Compute FFT to unify.
+
+The comparison is cheap (stored recipe dictionaries only, no recomputation)
+and only looks at the runs actually in the overlay; a ``Compute FFT`` with
+the mismatched runs selected recomputes them all under one configuration and
+clears the banner.
+
 Fitting the displayed spectrum
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1030,11 +1193,35 @@ view, so the cue is always where you are looking. The current x-range is
 preserved across the switch. (The MaxEnt spectrum tab is unchanged: it is
 compute-on-demand, with its own *"No MaxEnt spectrum computed…"* prompt.)
 
-The frequency viewer keeps canonical FFT x-data in absolute MHz or Gauss on the
-axis itself. The main toolbar also provides an ``FFT X relative to field``
-toggle, which recentres the x-limit controls around the applied
-field/frequency of the selected run while leaving the plotted tick labels in
-absolute units.
+The frequency viewer stores canonical FFT x-data in absolute MHz; the **X
+Units** and **Axis:** selectors above the plot choose how it is displayed
+(absolute, shift, or ppm — see *Shift axes* above). In the shift modes the plot,
+the tick labels, and the x-limit boxes all share one reference-shifted scale.
+
+Exporting the spectrum
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+The plot toolbar's ``Export…`` menu offers ``Export to GLE…`` (a compiled
+figure with editable ``.gle`` script and data sidecars) and ``Export plotted
+data (text)…`` (the sidecar files alone). On the frequency tab both mirror what
+is on screen rather than the time-domain idiom:
+
+- **Display units and window.** The x column and the exported axis window are
+  written in the current display mode — MHz, Field (G/T), a shift (``shift_G``…),
+  or ``relative_shift_ppm`` — matching the on-screen axis. Real axis titles (for
+  example ``Field shift B − B₀ (G)`` and ``FFT Magnitude (a.u.)``) replace the
+  time-domain labels.
+- **Line and band.** A spectrum draws as a solid piecewise-linear line plus a
+  light shaded ±1σ band behind it, matching the screen (GLE has no fill
+  transparency, so the band compiles as a light tint of the series colour);
+  the band is omitted when the spectrum carries no per-point errors.
+- **Self-describing sidecars.** Each ``.dat`` names its columns in the header
+  (for example ``shift_G  amplitude  error  frequency_MHz``) and keeps the
+  canonical ``frequency_MHz`` axis as a trailing column whenever the display
+  differs from absolute MHz — including every shift/ppm export — so the raw
+  spectrum is always recoverable. A ``START OF FOURIER INFORMATION`` block
+  records the display mode, apodisation and zero-pad settings, the axis mode, and
+  each spectrum's own reference field.
 
 References
 ----------
@@ -1051,6 +1238,8 @@ References
 
 .. [6] S. J. Blundell, R. De Renzi, T. Lancaster, and F. L. Pratt,
    *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), §15.5.
+
+.. [7] F. J. Harris, Proc. IEEE **66**, 51 (1978).
 
 The ``phaseOptReal`` entropy phase optimiser reproduces the
 ``PFTPhaseCorrection`` routine of musrfit (A. Suter and B. M. Wojek,
