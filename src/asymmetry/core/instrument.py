@@ -41,6 +41,7 @@ __all__ = [
     "derive_projection_pairs",
     "get_instrument_layout",
     "recommend_grouping_preset",
+    "recommend_grouping_preset_for_run",
     "instrument_display_name",
     "instrument_choices_for",
     "variant_for_histograms",
@@ -1577,6 +1578,63 @@ def recommend_grouping_preset(layout: InstrumentLayout, field_direction: str | N
     # choice. Declaration order breaks ties within each tier.
     single_pair = [name for name in transverse if not layout.presets[name].projections]
     return (single_pair or transverse)[0]
+
+
+def recommend_grouping_preset_for_run(
+    *,
+    n_histograms: int,
+    metadata: dict | None,
+    source_file: str | None = None,
+    current_preset: str | None = None,
+) -> str | None:
+    """Recommend a transverse grouping preset for a *loaded run*, or ``None``.
+
+    A run-level convenience over :func:`recommend_grouping_preset`: it resolves
+    the run's instrument layout itself (via :func:`detect_instrument` +
+    :func:`variant_for_histograms`), asks for a transverse-field nudge, and then
+    suppresses the nudge when the run's *current* grouping already is the
+    recommended preset. Where the bare :func:`recommend_grouping_preset` is
+    layout-only and preset-agnostic, this folds in the run's field geometry and
+    current preset so a caller can decide in one call whether to surface the
+    "the current grouping washes out the precession" hint — used by the plot and
+    Fourier panels, which (unlike the grouping dialog) do not already hold a
+    resolved layout or the in-dialog draft preset name.
+
+    Parameters
+    ----------
+    n_histograms:
+        Number of detector histograms in the run (drives layout detection and
+        the BIN/ROOT variant choice).
+    metadata:
+        Run metadata; ``metadata["field_direction"]`` supplies the geometry and
+        the instrument-like keys drive :func:`detect_instrument`.
+    source_file:
+        Optional source path, a final instrument-detection hint.
+    current_preset:
+        The grouping preset already applied to the run
+        (``run.grouping["grouping_preset"]``), or ``None`` when unknown/custom.
+
+    Returns
+    -------
+    str or None
+        The name of a preset to recommend, or ``None`` when the run is not
+        transverse-field, no instrument layout resolves, the layout has no
+        suitable transverse preset, or ``current_preset`` already equals the
+        recommendation.
+    """
+    metadata = metadata if isinstance(metadata, dict) else {}
+    count = int(n_histograms or 0)
+    name = detect_instrument(count, metadata=metadata, source_file=source_file)
+    if not name:
+        return None
+    try:
+        layout = get_instrument_layout(variant_for_histograms(name, count))
+    except KeyError:
+        return None
+    recommended = recommend_grouping_preset(layout, metadata.get("field_direction"))
+    if recommended is None or recommended == current_preset:
+        return None
+    return recommended
 
 
 def instrument_display_name(name: str) -> str:
