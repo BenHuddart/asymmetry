@@ -17,7 +17,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QWidget
 
 from ..data import make_ag_lf_decoupling
-from ._base import Scenario, register, _process_events_for
+from ._base import Scenario, _process_events_for, register
 
 
 class GlobalFitWizardRunningScenario(Scenario):

@@ -351,6 +351,14 @@ steps. Use the period-selection API to pull out a single period as an ordinary
 ``MuonDataset`` with its own provenance (``t0``, good-bin window, grouping,
 temperature, field, per-period ``good_frames`` and deadtime):
 
+.. figure:: /_generated/screenshots/period_mapping_dialog.png
+   :alt: The Map Periods dialog assigning periods to the red and green sets.
+   :width: 70%
+
+   The **Map Periods** dialog (Grouping window ▸ **Map periods…**) assigns a
+   multi-period run's periods to the red and green sets; for two-period runs
+   the **RG Mode** radios in the Grouping window select the period directly.
+
 .. code-block:: python
 
    from asymmetry.core.io import load, select_period, period_count, period_labels
