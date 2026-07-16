@@ -18,7 +18,11 @@ flagged as a likely weak-TF calibration run when **either**
 * the loader classified its applied-field geometry as ``"Transverse"`` (the
   structured NeXus ``magnetic_field_state`` or an explicit ``TF``/``tra`` token
   in the PSI free text — see
-  :func:`asymmetry.core.io.base.field_direction_from_text`), **or**
+  :func:`asymmetry.core.io.base.field_direction_from_text`), or carries the
+  structured ``TF`` field-state code (``field_state``/``magnetic_field_state``)
+  the ISIS loaders set alongside it — consulting both hardens the classifier
+  against a loader path that records the state code but leaves the user-facing
+  ``field_direction`` (and the ``field`` magnitude) unset, **or**
 * the run title / comment carries an explicit transverse-field token
   (``TF``/``wTF``/``transverse``) — this catches runs whose structured geometry
   the loader could not populate,
@@ -105,19 +109,28 @@ def classify_tf_calibration_run(metadata: dict[str, Any] | None) -> TFCalibratio
     metadata = metadata if isinstance(metadata, dict) else {}
 
     direction = str(metadata.get("field_direction", "")).strip().lower()
+    # Structured TF/LF/ZF field-state code (the ISIS NeXus loaders set this from
+    # sample/magnetic_field_state). It is consulted on equal footing with
+    # field_direction so a run whose loader recorded the state code but left
+    # field_direction / field unset (field_gauss=None) is still highlighted.
+    state = str(metadata.get("field_state") or metadata.get("magnetic_field_state") or "")
+    state = state.strip().upper()
     title = metadata.get("title")
     comment = metadata.get("comment")
     field = _as_float(metadata.get("field"))
 
-    explicit_transverse = direction == "transverse" or _has_tf_text(title, comment)
-    explicit_other = direction in ("longitudinal", "zero field")
+    structured_transverse = direction == "transverse" or state == "TF"
+    structured_other = direction in ("longitudinal", "zero field") or state in ("LF", "ZF")
+    explicit_transverse = structured_transverse or _has_tf_text(title, comment)
 
     # An explicit non-transverse geometry vetoes the run outright, even if a
-    # stray "tf" appears in the sample text.
-    if explicit_other and not (direction == "transverse"):
+    # stray "tf" appears in the sample text — but a structured transverse marker
+    # (direction or state) always wins over a contradictory non-transverse one.
+    if structured_other and not structured_transverse:
+        label = direction or {"LF": "longitudinal", "ZF": "zero field"}.get(state, state.lower())
         return TFCalibrationVerdict(
             is_candidate=False,
-            reason=f"{direction} geometry — not a transverse-field calibration run",
+            reason=f"{label} geometry — not a transverse-field calibration run",
             field_gauss=field,
         )
 

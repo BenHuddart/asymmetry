@@ -534,6 +534,25 @@ def _fit_success_html(result) -> str:
     return success_html("Fit converged", detail=stats)
 
 
+def _fit_result_is_usable(result) -> bool:
+    """Whether a flagged (``success=False``) fit still produced an inspectable point.
+
+    MINUIT can converge to a perfectly plottable minimum yet set an
+    invalid-minimum flag — e.g. a degenerate additive baseline at low field,
+    where the reported λ/σ are fine but ``fmin.is_valid`` is ``False``. Such a
+    result carries finite parameter values and a finite χ², so the panel should
+    draw the curve (greyed) and explain the flag rather than silently refusing.
+    This distinguishes that case from a genuine failure (an import error or an
+    exception before minimisation) whose :class:`FitResult` has no parameters.
+    """
+    parameters = list(getattr(result, "parameters", None) or [])
+    if not parameters:
+        return False
+    if not all(np.isfinite(getattr(p, "value", np.nan)) for p in parameters):
+        return False
+    return bool(np.isfinite(getattr(result, "chi_squared", np.nan)))
+
+
 def _fit_warnings_html(result) -> str:
     """Return one warning row per advisory the engine emitted during the fit.
 
