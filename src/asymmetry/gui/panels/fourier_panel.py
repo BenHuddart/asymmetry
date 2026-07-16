@@ -307,6 +307,7 @@ class FourierPanel(QWidget):
         # visible at any scroll position.
         layout.addWidget(self._build_action_footer())
 
+        self._signal_fb_radio.toggled.connect(self._update_groups_enabled_for_source)
         self._use_phase_table_check.toggled.connect(self._update_phase_table_enabled)
         self._phase_table.itemChanged.connect(self._on_phase_table_item_changed)
         self._power_sqrt_radio.toggled.connect(self._update_phase_controls_enabled)
@@ -334,6 +335,7 @@ class FourierPanel(QWidget):
         self._filter_time_constant_edit.textEdited.connect(self._on_filter_time_constant_edited)
         self._update_phase_table_enabled(self._use_phase_table_check.isChecked())
         self._update_phase_controls_enabled()
+        self._update_groups_enabled_for_source()
         self._update_conditioning_suffix()
         self._update_diamag_suffix()
         self._update_exclusions_suffix()
@@ -343,6 +345,8 @@ class FourierPanel(QWidget):
         # self._moments_widget (its own state is namespaced separately and does
         # not affect the computed spectrum).
         for radio in (
+            self._signal_grouped_radio,
+            self._signal_fb_radio,
             self._power_sqrt_radio,
             self._phase_spectrum_radio,
             self._cos_radio,
@@ -416,6 +420,34 @@ class FourierPanel(QWidget):
     def _build_phase_mode_section(self) -> QWidget:
         """FFT Phase Mode — routine projections plus the advanced disclosure."""
         section, section_layout = make_section("FFT Phase Mode")
+
+        # ── Signal source ────────────────────────────────────────────────────
+        # Which time-domain signal is transformed. The grouped average (default)
+        # averages each detector group's lifetime-corrected FFT; F−B asymmetry
+        # transforms the single forward−backward asymmetry curve (as plotted in
+        # the time domain), cleaner for a single detector pair. The Groups
+        # section below is inert in F−B mode, so it is disabled there.
+        source_row = QWidget()
+        source_layout = QVBoxLayout(source_row)
+        source_layout.setContentsMargins(0, 0, 0, 4)
+        source_layout.setSpacing(2)
+        source_layout.addWidget(self._wrapping_label("Signal source:"))
+        self._signal_source_group = QButtonGroup(self)
+        self._signal_grouped_radio = QRadioButton("Grouped average")
+        self._signal_grouped_radio.setToolTip(
+            "Average of each detector group's lifetime-corrected FFT."
+        )
+        self._signal_fb_radio = QRadioButton("F−B asymmetry")
+        self._signal_fb_radio.setToolTip(
+            "FFT of the forward−backward asymmetry signal (as plotted in the "
+            "time domain) — cleaner for a single detector pair."
+        )
+        self._signal_grouped_radio.setChecked(True)
+        for button in (self._signal_grouped_radio, self._signal_fb_radio):
+            self._signal_source_group.addButton(button)
+            source_layout.addWidget(button)
+        section_layout.addWidget(source_row)
+
         grid_host = QWidget()
         phase_mode_layout = QGridLayout(grid_host)
         phase_mode_layout.setContentsMargins(0, 0, 0, 0)
@@ -1070,6 +1102,24 @@ class FourierPanel(QWidget):
     def _show_phase_mode_info(self) -> None:
         self._mode_info_dialog = show_fourier_mode_info_dialog(self)
 
+    def _current_signal_source(self) -> str:
+        """Return the selected FFT signal source key."""
+        if self._signal_fb_radio.isChecked():
+            return "fb_asymmetry"
+        return "grouped_average"
+
+    def _update_groups_enabled_for_source(self) -> None:
+        """Disable the inert Groups controls in F−B asymmetry mode.
+
+        In F−B mode a single forward−backward curve is transformed, so the
+        per-group include/phase table and the per-group-phase toggle cannot
+        affect the spectrum. Disabling them (not hiding) keeps their values for
+        a switch back to grouped average, while signalling they are inert.
+        """
+        grouped = self._current_signal_source() == "grouped_average"
+        self._phase_table.setEnabled(grouped)
+        self._use_phase_table_check.setEnabled(grouped and self._current_display_mode() == "Phase")
+
     def _current_display_mode(self) -> str:
         if self._phase_spectrum_radio.isChecked():
             return "Phase Spectrum"
@@ -1179,10 +1229,21 @@ class FourierPanel(QWidget):
             self._use_phase_table_check.isChecked() and not is_entropy_mode
         )
         self._update_phase_colors()
+        # Source gating is the final authority: the calls above re-enable the
+        # Groups controls per display mode, but F−B mode keeps them inert.
+        self._update_groups_enabled_for_source()
 
     def _update_phase_table_enabled(self, enabled: bool) -> None:
-        """Keep group selection active while gating phase-cell editing."""
-        self._phase_table.setEnabled(True)
+        """Keep group selection active while gating phase-cell editing.
+
+        The table's *enabled* state is owned by the signal-source gating
+        (:meth:`_update_groups_enabled_for_source`, which does not call back
+        here): every repopulation path lands in this method
+        (``set_group_definitions``, restore, mode toggles), so re-applying the
+        gating here keeps the table inert in F−B mode instead of a blanket
+        ``setEnabled(True)`` visually re-enabling it.
+        """
+        self._update_groups_enabled_for_source()
         phase_edit_enabled = bool(enabled) and self._current_display_mode() == "Phase"
         self._phase_table_updating = True
         try:
@@ -1510,6 +1571,7 @@ class FourierPanel(QWidget):
             "phase_degrees": self._phase_value(),
             "t0_offset_us": self._t0_offset_value(),
             "display": self._current_display_mode(),
+            "signal_source": self._current_signal_source(),
             "display_normalisation": (
                 "unit_area" if self._unit_area_check.isChecked() else "calibrated"
             ),
@@ -1580,6 +1642,10 @@ class FourierPanel(QWidget):
                 t0_offset_us = 0.0
             self._t0_offset_spin.setText(self._format_float_text(t0_offset_us))
             self._set_display_mode(state.get("display", "(Power)^1/2"))
+            # Default to grouped average when absent (old .asymp projects).
+            source = str(state.get("signal_source", "grouped_average"))
+            self._signal_fb_radio.setChecked(source == "fb_asymmetry")
+            self._signal_grouped_radio.setChecked(source != "fb_asymmetry")
             self._unit_area_check.setChecked(
                 str(state.get("display_normalisation", "calibrated")).lower() == "unit_area"
             )

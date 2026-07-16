@@ -399,3 +399,104 @@ def test_run_switch_reevaluates_banner(window) -> None:
     window._current_dataset = None
     window._sync_fourier_panel_for_dataset(None)
     assert window._fourier_panel.is_stale() is False
+
+
+# ── signal source (grouped average vs F−B asymmetry) ─────────────────────
+
+
+def test_signal_source_default_is_grouped_average(qapp) -> None:
+    panel = _scratch_panel()
+    assert panel._current_signal_source() == "grouped_average"
+    assert panel.get_state()["signal_source"] == "grouped_average"
+    # The grouped radio is the checked default; the Groups controls are enabled.
+    assert panel._signal_grouped_radio.isChecked() is True
+    assert panel._phase_table.isEnabled() is True
+
+
+def test_signal_source_get_restore_round_trip(qapp) -> None:
+    panel = _scratch_panel()
+    panel._signal_fb_radio.setChecked(True)
+    state = panel.get_state()
+    assert state["signal_source"] == "fb_asymmetry"
+
+    other = _scratch_panel()
+    other.restore_state(state)
+    assert other._current_signal_source() == "fb_asymmetry"
+    assert other._signal_fb_radio.isChecked() is True
+
+
+def test_restore_state_missing_signal_source_defaults_grouped(qapp) -> None:
+    panel = _scratch_panel()
+    panel._signal_fb_radio.setChecked(True)
+    # An old .asymp project has no signal_source key.
+    panel.restore_state({})
+    assert panel._current_signal_source() == "grouped_average"
+
+
+def test_fb_mode_disables_groups_controls(qapp) -> None:
+    panel = _scratch_panel()
+    panel._signal_fb_radio.setChecked(True)
+    assert panel._phase_table.isEnabled() is False
+    assert panel._use_phase_table_check.isEnabled() is False
+    # A table repopulation (the run re-sync after Compute FFT) must not
+    # visually re-enable the inert table while F−B stays selected.
+    panel.set_group_definitions({1: "Forw", 2: "Back"})
+    assert panel._phase_table.isEnabled() is False
+    # Switching back re-enables the group table.
+    panel._signal_grouped_radio.setChecked(True)
+    assert panel._phase_table.isEnabled() is True
+
+
+def test_fourier_config_from_state_carries_signal_source(window) -> None:
+    window, dataset = _computed_window(window)
+    window._fourier_panel._signal_fb_radio.setChecked(True)
+    config = window._candidate_fourier_config(dataset)
+    assert config.signal_source == "fb_asymmetry"
+
+
+def test_signal_source_switch_flags_stale(window) -> None:
+    window, _dataset = _computed_window(window)
+    assert window._fourier_panel.is_stale() is False
+
+    window._fourier_panel._signal_fb_radio.setChecked(True)
+    window._fourier_panel._settings_debounce.timeout.emit()
+    assert window._fourier_panel.is_stale() is True
+    assert "signal source" in window._fourier_panel._stale_banner.text()
+
+
+def test_fb_compute_proceeds_with_all_groups_deselected(window) -> None:
+    """Group selection gates the grouped source only; fb computes regardless."""
+    from PySide6.QtWidgets import QApplication
+
+    window, dataset = _computed_window(window)
+    run_number = int(dataset.run_number)
+
+    window._fourier_panel._signal_fb_radio.setChecked(True)
+    window._fourier_panel.set_group_enabled({1: False, 2: False})
+    window._on_compute_fourier()
+    wait_for(lambda: not window._fourier_compute_active, QApplication.instance(), timeout_s=15.0)
+
+    cached = window._cached_frequency_spectra(run_number, RepresentationType.FREQ_FFT)
+    assert cached
+    assert cached[0].metadata.get("fourier_signal_source") == "fb_asymmetry"
+
+
+def test_fb_phase_config_uses_global_spin_not_phase_table(window) -> None:
+    """A leftover use_phase_table tick from grouped mode must not leak into fb.
+
+    The table is disabled in fb mode, so the global Phase spin is the only
+    phase the user sees — the candidate config must carry it, not the first
+    (divergent) table value.
+    """
+    window, dataset = _computed_window(window)
+    panel = window._fourier_panel
+    panel._set_display_mode("Phase")
+    panel._phase_spin.setText("30")
+    panel.set_group_phases({1: 111.0, 2: -45.0})
+    panel._use_phase_table_check.setChecked(True)
+    panel._signal_fb_radio.setChecked(True)
+
+    config = window._candidate_fourier_config(dataset)
+    assert config.signal_source == "fb_asymmetry"
+    assert config.group_phase_degrees
+    assert set(config.group_phase_degrees.values()) == {30.0}

@@ -47,6 +47,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **F−B asymmetry as a Fourier signal source.** The Fourier panel's `FFT Phase
+  Mode` section gains a `Signal source` choice: the default `Grouped average`
+  (averages each detector group's own lifetime-corrected FFT) or the new
+  `F−B asymmetry`, which transforms the run's forward−backward asymmetry
+  curve directly — the same signal the time-domain plot shows, with the same
+  grouping and α (`GroupSpectrumConfig.signal_source="fb_asymmetry"`; deadtime
+  correction is not applied on this path, matching the time-domain plot). For
+  a single forward/backward detector pair this gives markedly better
+  peak-to-floor contrast than averaging every detector group — roughly 5× on
+  a real GPS zero-field run where the grouped average buried the line under
+  the other groups' baselines. The `Groups` include/phase table is inert (and
+  disabled) in F−B mode, and the resulting spectrum is labelled `<run> F−B` so
+  overlays distinguish the source.
 - **Pinned frequency-panel annotations that survive a replot.** The frequency
   `PlotPanel` gains `set_custom_x_axis_label(text)` and
   `add_persistent_frequency_marker(freq_mhz, label)` /
