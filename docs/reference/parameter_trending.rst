@@ -178,9 +178,15 @@ governs the plotted points, the propagated error bars **and the trend fit**:
 fitting a ``Linear`` model with the axes transformed to :math:`1/\lambda`
 versus :math:`(\mu_0 H)^2` *is* the Redfield line, and its slope/intercept are
 read straight from the :ref:`model-fit dialog <trend-model-fit-dialog>`. A point
-whose transform is undefined (``1/0``, ``ln`` of a non-positive value) is dropped
-like any other NaN. Changing a transform marks an existing trend fit for re-fit,
-since its curve lives in the previous coordinate.
+whose transform is undefined (``1/0``, ``ln`` of a non-positive value) is dropped,
+and the count surfaces on the trend-provenance line beneath the plot
+("⚠ 1 dropped by transform"). Changing a transform strands an existing trend fit
+in the previous coordinate: its curve is hidden and its **Model Fit** button
+changes to **Model Fit ⚠** until you re-fit under the new axes.
+
+The **field** axis is labelled in gauss (the loaders' native field unit), so a
+transform squares or inverts that unit accordingly (``B² (G²)``); a dataset held
+in tesla should be trended via a custom column carrying its own unit.
 
 A transform is distinct from the **log** axis-scale checkbox next to the **X:**
 selector (and the per-parameter **log** checkbox in the Y-parameter list): those

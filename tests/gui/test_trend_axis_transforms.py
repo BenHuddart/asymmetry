@@ -322,18 +322,6 @@ def test_gle_effective_columns_point_at_transformed(qapp):
 
 def test_gle_iter_skips_stale_transform_fits(qapp):
     panel = _panel_with_rows(_lambda_series([1.0, 2.0], [4.0, 2.0]))
-
-    class _StubResult:
-        success = True
-
-    class _StubRange:
-        result = _StubResult()
-
-    class _StubFit:
-        active = True
-        x_key = "field"
-        ranges = [_StubRange()]
-
     panel._model_fits["Lambda"] = _StubFit()
     # Recorded under identity → visible under identity.
     panel._model_fit_transform_sig["Lambda"] = panel._transform_signature()
@@ -361,6 +349,65 @@ def test_active_series_flagged_in_legend(qapp):
     labels = [t.get_text() for t in ax.get_legend().get_texts()]
     assert any(lbl.endswith("(active)") for lbl in labels)
     assert sum(lbl.endswith("(active)") for lbl in labels) == 1
+
+
+class _StubResult:
+    success = True
+
+
+class _StubRange:
+    result = _StubResult()
+
+
+class _StubFit:
+    active = True
+    x_key = "field"
+    ranges = [_StubRange()]
+
+
+def test_stale_fit_button_shows_warning_state(qapp):
+    panel = _panel_with_rows(_lambda_series([1.0, 2.0], [4.0, 2.0]))
+    panel._model_fits["Lambda"] = _StubFit()
+    panel._model_fit_transform_sig["Lambda"] = panel._transform_signature()
+    panel._refresh_model_fit_button_labels()
+    assert panel._y_controls["Lambda"].fit_button.text() == "Model Fit*"
+    # A transform the fit was not computed under → stale ⚠ state, not a bare star.
+    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    assert panel._y_controls["Lambda"].fit_button.text() == "Model Fit ⚠"
+    # Returning to the fit's transform clears the warning.
+    panel._set_axis_transform("x", AxisTransform.identity())
+    assert panel._y_controls["Lambda"].fit_button.text() == "Model Fit*"
+
+
+def test_transform_dropped_count(qapp):
+    rows = _lambda_series([0.0, 1.0, 2.0], [4.0, -1.0, 2.0])
+    panel = _panel_with_rows(rows)
+    # No transform → nothing dropped.
+    assert panel._transform_dropped_count(rows, "field", ["Lambda"]) == 0
+    # 1/x drops the zero-field point.
+    panel._x_transform = AxisTransform.preset("reciprocal")
+    assert panel._transform_dropped_count(rows, "field", ["Lambda"]) == 1
+    # ln y additionally drops the negative-λ point (distinct row) → 2 total.
+    panel._y_transform = AxisTransform.preset("log")
+    assert panel._transform_dropped_count(rows, "field", ["Lambda"]) == 2
+
+
+def test_provenance_reports_transform_drops(qapp):
+    rows = _lambda_series([0.0, 1.0], [4.0, 2.0])
+    panel = _panel_with_rows(rows)
+    panel._update_trend_provenance(rows, transform_dropped=1)
+    label = panel._trend_provenance_label
+    # The panel isn't shown in a headless test, so check the explicit-hidden flag
+    # (cleared by label.show()) rather than isVisible(), which needs a shown parent.
+    assert not label.isHidden()
+    assert "dropped by transform" in label.text()
+
+
+def test_component_sort_places_polynomials_by_degree():
+    from asymmetry.gui.panels.model_fit_dialog import _component_sort_key
+
+    ordered = sorted(["Cubic", "Arrhenius", "Linear", "Quadratic"], key=_component_sort_key)
+    assert ordered == ["Arrhenius", "Linear", "Quadratic", "Cubic"]
 
 
 def test_multi_series_draw_smoke(qapp):

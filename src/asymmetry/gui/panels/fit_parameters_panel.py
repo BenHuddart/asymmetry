@@ -696,7 +696,8 @@ class FitParametersPanel(QWidget):
         self._transforms_section.setObjectName("fit-parameters-transforms-section")
         self._transforms_section.set_hint(
             "Plot transformed values (e.g. 1/T, ln y) to linearise physics. "
-            "Error bars are propagated; the table and exports stay raw."
+            "Error bars are propagated; the table stays raw and exports carry "
+            "both raw and transformed columns."
         )
         transforms_form = QFormLayout()
         self._x_transform_combo = self._make_axis_transform_combo("x")
@@ -1626,8 +1627,17 @@ class FitParametersPanel(QWidget):
             # rename/sort/delete still read the user-facing label.
             is_stale = group.group_id in self._stale_series_ids
             button = QPushButton(f"{group.group_name} ⚠" if is_stale else group.group_name)
+            # Every pill teaches the overlay gesture; a stale one prepends its
+            # own warning to the same tooltip.
+            gesture = (
+                "Click to view this series · Shift+click to overlay it with the selected series."
+            )
             if is_stale:
-                button.setToolTip("Membership changed since last fit — re-run to refresh.")
+                button.setToolTip(
+                    "Membership changed since last fit — re-run to refresh.\n" + gesture
+                )
+            else:
+                button.setToolTip(gesture)
             button.setCheckable(True)
             button.clicked.connect(self._on_group_button_clicked)
             button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -3060,6 +3070,9 @@ class FitParametersPanel(QWidget):
         self._sync_axis_transform_combo(axis)
         self._apply_transform_log_guard()
         self._update_transform_suffix()
+        # A transform change can strand an existing fit in the old coordinate;
+        # relabel its button (Model Fit* → Model Fit ⚠) so the stale state shows.
+        self._refresh_model_fit_button_labels()
         self._refresh_plot()
 
     def _sync_axis_transform_combo(self, axis: str) -> None:
@@ -3579,8 +3592,18 @@ class FitParametersPanel(QWidget):
                 continue
             fit = self._model_fits.get(name)
             if fit is not None and fit.active and self._has_successful_fit_curve(fit):
-                controls.fit_button.setText("Model Fit*")
-                controls.fit_button.setToolTip("Model fit active")
+                if self._overlay_suppressed_for_transform(name):
+                    # The fit lives in a previous axis transform's coordinate, so
+                    # its curve is hidden and left out of the export — flag it
+                    # rather than leave a starred button over an empty plot.
+                    controls.fit_button.setText("Model Fit ⚠")
+                    controls.fit_button.setToolTip(
+                        "This fit was computed under a different axis transform — "
+                        "its curve is hidden. Re-fit to update it."
+                    )
+                else:
+                    controls.fit_button.setText("Model Fit*")
+                    controls.fit_button.setToolTip("Model fit active")
             else:
                 controls.fit_button.setText("Model Fit")
                 controls.fit_button.setToolTip("")
@@ -5163,15 +5186,37 @@ class FitParametersPanel(QWidget):
             return
         self._draw_plot()
 
-    def _update_trend_provenance(self, rows: list[_FitRow]) -> None:
-        """Summarise trend membership: contributors vs excluded / flagged (F5)."""
+    def _transform_dropped_count(self, rows: list[_FitRow], x_key: str, y_params: list[str]) -> int:
+        """Count rows a transform turns from finite into NaN (``1/0``, ``ln≤0``).
+
+        A point whose raw abscissa or plotted-parameter value is finite but whose
+        transformed value is not is silently omitted by matplotlib; this counts
+        them so the provenance line can say why some points vanished. Zero when no
+        transform is active."""
+        if self._x_transform.is_identity and self._y_transform.is_identity:
+            return 0
+        dropped: set[int] = set()
+        if not self._x_transform.is_identity:
+            raw_x = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
+            tx, _ = self._x_transform.apply(raw_x)
+            dropped.update(np.where(np.isfinite(raw_x) & ~np.isfinite(tx))[0].tolist())
+        if not self._y_transform.is_identity:
+            for name in y_params:
+                raw_y = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
+                ty, _ = self._y_transform.apply(raw_y)
+                dropped.update(np.where(np.isfinite(raw_y) & ~np.isfinite(ty))[0].tolist())
+        return len(dropped)
+
+    def _update_trend_provenance(self, rows: list[_FitRow], *, transform_dropped: int = 0) -> None:
+        """Summarise trend membership: contributors vs excluded / flagged (F5),
+        plus any points a transform dropped to NaN."""
         label = getattr(self, "_trend_provenance_label", None)
         if label is None:
             return
         total = len(rows)
         excluded = [r for r in rows if not r.include_in_trend]
         flagged = [r for r in rows if r.include_in_trend and r.quality_flags]
-        if not excluded and not flagged:
+        if not excluded and not flagged and not transform_dropped:
             label.hide()
             return
         parts = [f"{total - len(excluded)}/{total} members in trend"]
@@ -5180,11 +5225,15 @@ class FitParametersPanel(QWidget):
             parts.append(f"{len(excluded)} excluded ({names})")
         if flagged:
             parts.append(f"{len(flagged)} flagged")
+        if transform_dropped:
+            parts.append(f"⚠ {transform_dropped} dropped by transform")
         label.setText(" · ".join(parts))
         label.setToolTip(
             "Excluded points are ringed in grey and drop out of the trend model "
-            "fit; flagged points (warning diamonds) still contribute. Right-click "
-            "a point or use the table's Trend column to change this."
+            "fit; flagged points (warning diamonds) still contribute. Points "
+            "'dropped by transform' fall where the transform is undefined "
+            "(1/0, ln of ≤0). Right-click a point or use the table's Trend column "
+            "to change inclusion."
         )
         label.show()
 
@@ -5313,13 +5362,16 @@ class FitParametersPanel(QWidget):
         self, y_params: list[str], x_key: str, plot_mode: str, axes_by_tag: dict[str, object]
     ) -> None:
         rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
-        x_vals, x_err = self._apply_x_transform(
-            np.array([self._x_value(r, x_key) for r in rows], dtype=float),
-            self._x_error_array(rows, x_key),
-        )
+        raw_x = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
+        x_vals, x_err = self._apply_x_transform(raw_x, self._x_error_array(rows, x_key))
         x_label = self._transformed_x_axis_label(x_key)
-        self._update_custom_x_skip_note(x_key, x_vals)
-        self._update_trend_provenance(rows)
+        # The skip note reports genuine empty/non-numeric custom-x values, so it
+        # must see the *raw* abscissa — a transform-induced NaN (1/0, ln≤0) is a
+        # different cause, counted separately on the provenance line below.
+        self._update_custom_x_skip_note(x_key, raw_x)
+        self._update_trend_provenance(
+            rows, transform_dropped=self._transform_dropped_count(rows, x_key, y_params)
+        )
 
         if plot_mode == "Subplots" and len(y_params) > 1:
             num_params = len(y_params)
@@ -5494,7 +5546,10 @@ class FitParametersPanel(QWidget):
         multi_param = len(y_params) > 1
         markers = ["o", "s", "^", "D", "v", "P", "X", "*"]
         x_label = self._transformed_x_axis_label(x_key)
-        self._update_trend_provenance(self._rows)
+        self._update_trend_provenance(
+            self._rows,
+            transform_dropped=self._transform_dropped_count(self._rows, x_key, y_params),
+        )
         log_x = self._log_x_check.isChecked()
 
         if plot_mode == "Subplots" and multi_param:
@@ -5663,6 +5718,11 @@ class FitParametersPanel(QWidget):
         labels = self._custom_x_labels()
         if x_key in labels:
             return labels[x_key]
+        # The field axis is labelled in gauss by app convention (the loaders store
+        # field in gauss); a transform squares/inverts that unit accordingly
+        # (``B² (G²)``). A dataset carrying field in tesla should be trended via a
+        # custom column with its own unit. (Reading the true unit from the file's
+        # units attribute is a loader-side follow-up.)
         return {"field": "B (G)", "temperature": "T (K)", "run": "Run"}.get(x_key, "Run")
 
     def _x_axis_label_mpl(self, x_key: str) -> str:
@@ -5755,7 +5815,12 @@ class FitParametersPanel(QWidget):
             self._table_dialog = None
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Fitted Variable Parameters")
+        title = "Fitted Variable Parameters"
+        if not (self._x_transform.is_identity and self._y_transform.is_identity):
+            # The table always shows raw fitted values; the transform is a plot
+            # lens, so say so rather than let a user read the table as transformed.
+            title += " (raw values — transforms apply to the plot)"
+        dialog.setWindowTitle(title)
         dialog.resize(1000, 600)
         dialog.setModal(False)
 
