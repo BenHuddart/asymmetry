@@ -125,3 +125,14 @@ Re-tested commit 4a91420 on the real `corpus_maleic_arrhenius` panel (10 real
   the box, and the per-parameter `log` axis-scale checkbox is correctly greyed.
 - **Physics regression: none.** The clean monotone Linear fit is unchanged
   (E_a ≈ 7.3 kJ/mol — the lower-bound caveat of problem 3 still applies).
+
+## Rebase onto main (PR #264) — 2026-07-16 — dropped-Constant workaround RETAINED
+
+- **Kept `Osc·Exp + Exp` (no additive Constant).** #264 makes a converged-but-
+  flagged single fit draw **greyed** (and it is *not recorded* — Add-to-Series
+  and the pull diagnostic stay disabled). Reverting to the original
+  `Osc·Exp+Exp+Const` model would therefore now draw, but only as a greyed
+  "flagged" curve — strictly worse than the current **clean solid converged**
+  fit for a headline "converged Mu precession" render. Per the "equal-or-better"
+  gate, the workaround stays. (The physics is also better served by the sloping
+  Exp baseline than by a degenerate flat Constant at 2 G.)

@@ -5,4 +5,4 @@ Each module defines a single :class:`Scenario` subclass and registers it via
 :mod:`docs.screenshots.capture` so the CLI sees them.
 """
 
-from ._base import Scenario, registered_scenarios, register  # noqa: F401
+from ._base import Scenario, register, registered_scenarios  # noqa: F401

@@ -195,3 +195,17 @@ exponential fits + the injected Linear Redfield fit, Y→reciprocal, X→square)
   unit. Not a fit/physics problem — Δ/τ are unchanged.
 - **Physics regression: none.** Δ = 41.0 mT, τ = 929 ps (NOTES table 41.0/929;
   paper 40.6 mT/880 ps). Unchanged.
+
+## Rebase onto main (PR #262) — 2026-07-16 — tesla-storage workaround retired
+
+- **`corpus_plateau_redfield` now stores/plots field in GAUSS; the `B² (G²)`
+  label is correct.**
+  - *Before:* field was stored in **tesla** in the row dicts, so the X→square
+    transform yielded B² in T² while the panel's axis label (derived from the
+    registered gauss field unit) read `B² (G²)` — a mislabel.
+  - *After:* field is stored in gauss (`SCAN_FIELDS_T × 1e4`; #262 normalises
+    NeXus field to gauss natively — verified run 9044 → 10000 G), so the axis
+    reads correctly as **`B² (G²)`** with a 1e9 scale. `_build_redfield_linear_fit`
+    fits 1/λ vs B² in G² and `_redfield_from_line` uses γ_µ in µs⁻¹ G⁻¹.
+  - **Δ/τ unchanged (invariant held):** recomputed **Δ = 41.01 mT, τ = 929.0 ps**
+    (was Δ ≈ 41 mT, τ ≈ 0.93 ns) — the fit units cancel out of the physics.

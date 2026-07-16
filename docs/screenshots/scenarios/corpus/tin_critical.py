@@ -71,35 +71,64 @@ EXAMPLE = "Superconductivity/Critical fields in Sn"
 _DATA = "Superconductivity/Critical fields in Sn/Data/HIFI000%d.nxs"
 
 # Literature guidance (GROUND_TRUTH §10; Karl et al. PRB 99, 184515):
-_TC = 3.717          # K
-_BC0 = 306.0         # G  (≈ 30.6 mT)
-_GAMMA = 0.013554    # MHz/G  (muon)
+_TC = 3.717  # K
+_BC0 = 306.0  # G  (≈ 30.6 mT)
+_GAMMA = 0.013554  # MHz/G  (muon)
 
 # Applied fields present in the dataset (GROUND_TRUTH §3).
 _FIELDS = [20.0, 40.0, 80.0, 160.0]
 
 # Full run → (nominal T, applied B) grid (GROUND_TRUTH §3 table).
 _RUN_GRID: list[tuple[float, float]] = [
-    (1.0, 20), (1.0, 40), (1.0, 80), (1.0, 160),
-    (1.65, 20), (1.65, 40), (1.65, 80),
-    (1.75, 20), (1.75, 40), (1.75, 80),
-    (1.85, 20), (1.85, 40), (1.85, 80),
-    (1.95, 20), (1.95, 40), (1.95, 80),
-    (2.05, 20), (2.05, 40), (2.05, 80),
-    (2.15, 20), (2.15, 40), (2.15, 80),
-    (2.25, 20), (2.25, 40), (2.25, 80),
-    (2.35, 20), (2.35, 40), (2.35, 80),
+    (1.0, 20),
+    (1.0, 40),
+    (1.0, 80),
+    (1.0, 160),
+    (1.65, 20),
+    (1.65, 40),
+    (1.65, 80),
+    (1.75, 20),
+    (1.75, 40),
+    (1.75, 80),
+    (1.85, 20),
+    (1.85, 40),
+    (1.85, 80),
+    (1.95, 20),
+    (1.95, 40),
+    (1.95, 80),
+    (2.05, 20),
+    (2.05, 40),
+    (2.05, 80),
+    (2.15, 20),
+    (2.15, 40),
+    (2.15, 80),
+    (2.25, 20),
+    (2.25, 40),
+    (2.25, 80),
+    (2.35, 20),
+    (2.35, 40),
+    (2.35, 80),
     # 40 G temperature scan 91516–91529:
-    (1.6, 40), (1.7, 40), (1.8, 40), (1.9, 40), (2.0, 40), (2.1, 40), (2.2, 40),
-    (2.3, 40), (2.4, 40), (2.5, 40), (2.6, 40), (2.7, 40), (2.8, 40), (2.9, 40),
+    (1.6, 40),
+    (1.7, 40),
+    (1.8, 40),
+    (1.9, 40),
+    (2.0, 40),
+    (2.1, 40),
+    (2.2, 40),
+    (2.3, 40),
+    (2.4, 40),
+    (2.5, 40),
+    (2.6, 40),
+    (2.7, 40),
+    (2.8, 40),
+    (2.9, 40),
 ]
 
 # 40 G temperature scan (GROUND_TRUTH §3): run → nominal setpoint T.
-_SCAN_40G: list[tuple[int, float]] = [
-    (91516 + i, round(1.6 + 0.1 * i, 1)) for i in range(14)
-]
+_SCAN_40G: list[tuple[int, float]] = [(91516 + i, round(1.6 + 0.1 * i, 1)) for i in range(14)]
 
-_RUN_160G = 91491    # base T; B_app > B_c(T_real) ⇒ sample normal, clean line
+_RUN_160G = 91491  # base T; B_app > B_c(T_real) ⇒ sample normal, clean line
 
 
 def _hc(temp) -> np.ndarray:
@@ -145,7 +174,7 @@ def _transverse_asymmetry(run: int, ring: int = 2, shift: int = 0):
     idx = np.roll(np.where(grouping == ring)[0], shift)
     n = len(idx)
     left = counts[idx[: n // 2]].sum(0)
-    right = counts[idx[n // 2:]].sum(0)
+    right = counts[idx[n // 2 :]].sum(0)
     total = left + right
     with np.errstate(invalid="ignore", divide="ignore"):
         asym = np.where(total > 0, (left - right) / total, np.nan)
@@ -176,7 +205,7 @@ def _line_spectrum(run: int, f_min=0.15, f_max=3.2, n_f=900, t_min=0.15, t_max=1
             rolled = np.roll(idx, shift)
             n = len(rolled)
             left = counts[rolled[: n // 2]][:, mask].sum(0)
-            right = counts[rolled[n // 2:]][:, mask].sum(0)
+            right = counts[rolled[n // 2 :]][:, mask].sum(0)
             asym = (left - right) / (left + right)
             resid = asym - np.polyval(np.polyfit(tt, asym, 3), tt)
             amp = 2.0 * np.hypot(cos_m @ resid, sin_m @ resid) / len(tt)
@@ -192,9 +221,7 @@ def _peak(freqs: np.ndarray, amp: np.ndarray):
     if 0 < j < len(freqs) - 1:
         denom = amp[j - 1] - 2 * amp[j] + amp[j + 1]
         if denom != 0:
-            f_pk += float(
-                0.5 * (amp[j - 1] - amp[j + 1]) / denom * (freqs[1] - freqs[0])
-            )
+            f_pk += float(0.5 * (amp[j - 1] - amp[j + 1]) / denom * (freqs[1] - freqs[0]))
     floor = float(np.median(amp))
     mad = float(np.median(np.abs(amp - floor))) or 1e-12
     return f_pk, float(amp[j]), (float(amp[j]) - floor) / (1.4826 * mad)
@@ -263,73 +290,122 @@ class SnHcDomeScenario(CorpusScenario):
 
         # Guidance parabola H_c(T).
         tt = np.linspace(0.0, _TC, 400)
-        ax.plot(tt, _hc(tt), color="#1f77b4", lw=2.2, zorder=3,
-                label=r"$H_c(T)=B_c(0)\,[1-(T/T_c)^2]$  (guidance, Karl 2019)")
+        ax.plot(
+            tt,
+            _hc(tt),
+            color="#1f77b4",
+            lw=2.2,
+            zorder=3,
+            label=r"$H_c(T)=B_c(0)\,[1-(T/T_c)^2]$  (guidance, Karl 2019)",
+        )
         ax.fill_between(tt, 0.0, _hc(tt), color="#1f77b4", alpha=0.07, zorder=0)
-        ax.text(0.15, 270, "superconducting\n(Meissner / intermediate state)",
-                color="#1f77b4", fontsize=10, ha="left", va="center")
-        ax.text(3.08, 262, "normal", color="0.4", fontsize=10, ha="left",
-                va="center")
+        ax.text(
+            0.15,
+            270,
+            "superconducting\n(Meissner / intermediate state)",
+            color="#1f77b4",
+            fontsize=10,
+            ha="left",
+            va="center",
+        )
+        ax.text(3.08, 262, "normal", color="0.4", fontsize=10, ha="left", va="center")
 
         # T_c and B_c(0) anchors.
         ax.scatter([_TC], [0.0], s=55, color="#1f77b4", zorder=5)
-        ax.annotate(rf"$T_c={_TC:.3f}$ K", (_TC, 0.0), xytext=(_TC - 0.02, 18),
-                    ha="right", fontsize=10, color="#1f77b4")
+        ax.annotate(
+            rf"$T_c={_TC:.3f}$ K",
+            (_TC, 0.0),
+            xytext=(_TC - 0.02, 18),
+            ha="right",
+            fontsize=10,
+            color="#1f77b4",
+        )
         ax.axhline(_BC0, color="0.7", ls=":", lw=1.0)
-        ax.text(0.05, _BC0 + 4, rf"$B_c(0)={_BC0:.0f}$ G ($\approx$30.6 mT)",
-                fontsize=9, color="0.4")
+        ax.text(
+            0.05, _BC0 + 4, rf"$B_c(0)={_BC0:.0f}$ G ($\approx$30.6 mT)", fontsize=9, color="0.4"
+        )
 
         # Applied fields + their parabola-crossing temperatures.
         for field in _FIELDS:
             tc_field = _crossing_temperature(field)
             ax.axhline(field, color="0.6", ls="--", lw=0.8, alpha=0.6)
-            ax.text(0.05, field + 3, f"{field:.0f} G applied",
-                    fontsize=8, color="0.35")
-            ax.scatter([tc_field], [field], marker="v", s=55, color="#1f77b4",
-                       zorder=6, alpha=0.85)
+            ax.text(0.05, field + 3, f"{field:.0f} G applied", fontsize=8, color="0.35")
+            ax.scatter([tc_field], [field], marker="v", s=55, color="#1f77b4", zorder=6, alpha=0.85)
 
         # Dataset run coverage (nominal setpoint T, applied B).
         grid = np.array(_RUN_GRID, dtype=float)
-        ax.scatter(grid[:, 0], grid[:, 1], marker="o", s=22, facecolor="none",
-                   edgecolor="0.55", linewidths=0.8, zorder=4,
-                   label="corpus runs (nominal setpoint T, applied B)")
+        ax.scatter(
+            grid[:, 0],
+            grid[:, 1],
+            marker="o",
+            s=22,
+            facecolor="none",
+            edgecolor="0.55",
+            linewidths=0.8,
+            zorder=4,
+            label="corpus runs (nominal setpoint T, applied B)",
+        )
 
         # Measured intermediate-state line positions from the 40 G scan.
-        ax.plot(scan_t[inter], scan_b[inter], color="#d62728", lw=1.0,
-                alpha=0.6, zorder=6)
-        ax.scatter(scan_t[inter], scan_b[inter], marker="D", s=42,
-                   color="#d62728", zorder=7,
-                   label=r"measured $B_\mathrm{int}=B_c(T_\mathrm{real})$ "
-                         "(40 G scan, intermediate state)")
-        ax.scatter(scan_t[~inter], scan_b[~inter], marker="s", s=42,
-                   color="#7f7f7f", zorder=7,
-                   label="line at applied field (boundary crossed — normal)")
+        ax.plot(scan_t[inter], scan_b[inter], color="#d62728", lw=1.0, alpha=0.6, zorder=6)
+        ax.scatter(
+            scan_t[inter],
+            scan_b[inter],
+            marker="D",
+            s=42,
+            color="#d62728",
+            zorder=7,
+            label=r"measured $B_\mathrm{int}=B_c(T_\mathrm{real})$ "
+            "(40 G scan, intermediate state)",
+        )
+        ax.scatter(
+            scan_t[~inter],
+            scan_b[~inter],
+            marker="s",
+            s=42,
+            color="#7f7f7f",
+            zorder=7,
+            label="line at applied field (boundary crossed — normal)",
+        )
 
         # The thermometer-error arrow: observed crossing vs parabola crossing.
         y_arrow = 54.0
         ax.annotate(
-            "", xy=(t_cross_parab, y_arrow), xytext=(t_cross_nom, y_arrow),
+            "",
+            xy=(t_cross_parab, y_arrow),
+            xytext=(t_cross_nom, y_arrow),
             arrowprops=dict(arrowstyle="->", color="#d62728", lw=1.4),
         )
-        ax.text(0.5 * (t_cross_nom + t_cross_parab), y_arrow + 5,
-                rf"thermometer reads $\approx${t_cross_parab - t_cross_nom:.1f} K low",
-                color="#d62728", fontsize=9, ha="center", va="bottom")
+        ax.text(
+            0.5 * (t_cross_nom + t_cross_parab),
+            y_arrow + 5,
+            rf"thermometer reads $\approx${t_cross_parab - t_cross_nom:.1f} K low",
+            color="#d62728",
+            fontsize=9,
+            ha="center",
+            va="bottom",
+        )
 
         ax.set_xlim(0.0, 3.9)
         ax.set_ylim(0.0, 320)
         ax.set_xlabel("Temperature  T (K)   —   measured points at *nominal* setpoint T")
         ax.set_ylabel(r"Field  $B$  (G)")
-        ax.set_title("Critical fields in Sn — H_c(T) mapped by the "
-                     "intermediate-state line (40 G scan)")
+        ax.set_title(
+            "Critical fields in Sn — H_c(T) mapped by the intermediate-state line (40 G scan)"
+        )
         ax.legend(loc="upper right", frameon=True, fontsize=8)
         ax.grid(True, alpha=0.2)
         figure.text(
-            0.5, 0.015,
+            0.5,
+            0.015,
             "In the intermediate state the normal domains carry exactly B_c(T), so the measured line (red ◆) maps the phase boundary.\n"
             "Plotted at the nominal setpoint T it falls systematically left of the accepted parabola: inverting the parabola gives\n"
             f"T_real ≈ 2.73–3.40 K, i.e. the commissioning cryostat reads 0.7–1.1 K low (boundary crossing observed at nominal "
-            f"{t_cross_nom:.1f} K\nvs {t_cross_parab:.2f} K expected) — the guide's \"how much is the thermometer in error?\" question, answered from the data.",
-            color="0.35", fontsize=8, va="bottom", ha="center",
+            f'{t_cross_nom:.1f} K\nvs {t_cross_parab:.2f} K expected) — the guide\'s "how much is the thermometer in error?" question, answered from the data.',
+            color="0.35",
+            fontsize=8,
+            va="bottom",
+            ha="center",
         )
         return _save_figure(figure, ctx, self.name)
 
@@ -352,8 +428,7 @@ class SnIntermediateLinesScenario(CorpusScenario):
         from matplotlib.figure import Figure
 
         figure = Figure(figsize=(10.0, 7.6), dpi=120)
-        figure.subplots_adjust(left=0.09, right=0.97, top=0.95, bottom=0.07,
-                               hspace=0.32)
+        figure.subplots_adjust(left=0.09, right=0.97, top=0.95, bottom=0.07, hspace=0.32)
 
         # (a) Base-T field series: 20 / 80 / 160 G.
         ax1 = figure.add_subplot(2, 1, 1)
@@ -361,40 +436,58 @@ class SnIntermediateLinesScenario(CorpusScenario):
         for run, field in [(91488, 20), (91490, 80), (91491, 160)]:
             freqs, amp = _line_spectrum(run)
             f_pk, _, sig = _peak(freqs, amp)
-            ax1.plot(freqs / _GAMMA, amp * 100, color=colors[field], lw=1.2,
-                     label=f"{field} G applied — line at {f_pk / _GAMMA:.0f} G "
-                           f"({sig:.0f}σ)")
+            ax1.plot(
+                freqs / _GAMMA,
+                amp * 100,
+                color=colors[field],
+                lw=1.2,
+                label=f"{field} G applied — line at {f_pk / _GAMMA:.0f} G ({sig:.0f}σ)",
+            )
         ax1.axvline(140.0, color="0.5", ls=":", lw=1.0)
-        ax1.text(141.0, 1.30, r"$B_c(T_\mathrm{real})\approx$140 G",
-                 fontsize=9, color="0.35", va="top")
+        ax1.text(
+            141.0, 1.30, r"$B_c(T_\mathrm{real})\approx$140 G", fontsize=9, color="0.35", va="top"
+        )
         ax1.set_xlim(0, 235)
         ax1.set_ylim(0, 1.45)
         ax1.set_xlabel("Internal field  B (G)")
         ax1.set_ylabel("Line amplitude (%)")
         ax1.set_title(
             "Base T (nominal 1 K): 20 G and 80 G share the domain field "
-            "≈140 G = $B_c$; 160 G > $B_c$ → normal (line at applied field)")
+            "≈140 G = $B_c$; 160 G > $B_c$ → normal (line at applied field)"
+        )
         ax1.legend(loc="upper left", frameon=True, fontsize=9)
         ax1.grid(True, alpha=0.2)
 
         # (b) 40 G scan: stacked spectra, line marching down to 40 G.
         ax2 = figure.add_subplot(2, 1, 2)
-        subset = [(91516, 1.6), (91520, 2.0), (91524, 2.4), (91526, 2.6),
-                  (91527, 2.7), (91528, 2.8)]
+        subset = [
+            (91516, 1.6),
+            (91520, 2.0),
+            (91524, 2.4),
+            (91526, 2.6),
+            (91527, 2.7),
+            (91528, 2.8),
+        ]
         offset = 0.0
         step = 1.1
         for run, t_nom in subset:
             freqs, amp = _line_spectrum(run)
             f_pk, a_pk, _sig = _peak(freqs, amp)
             ax2.plot(freqs / _GAMMA, amp * 100 + offset, color="#1f77b4", lw=1.0)
-            ax2.scatter([f_pk / _GAMMA], [a_pk * 100 + offset + 0.12],
-                        marker="v", s=34, color="#d62728", zorder=5)
-            ax2.text(231, offset + 0.18, f"nominal {t_nom:.1f} K",
-                     fontsize=8.5, color="0.3", ha="right")
+            ax2.scatter(
+                [f_pk / _GAMMA],
+                [a_pk * 100 + offset + 0.12],
+                marker="v",
+                s=34,
+                color="#d62728",
+                zorder=5,
+            )
+            ax2.text(
+                231, offset + 0.18, f"nominal {t_nom:.1f} K", fontsize=8.5, color="0.3", ha="right"
+            )
             offset += step
         ax2.axvline(40.0, color="0.5", ls="--", lw=1.0)
-        ax2.text(42.0, offset + 0.75, "applied 40 G", fontsize=9, color="0.35",
-                 va="top")
+        ax2.text(42.0, offset + 0.75, "applied 40 G", fontsize=9, color="0.35", va="top")
         ax2.set_xlim(0, 235)
         ax2.set_ylim(-0.1, offset + 1.0)
         ax2.set_xlabel("Internal field  B (G)")
@@ -402,7 +495,8 @@ class SnIntermediateLinesScenario(CorpusScenario):
         ax2.set_title(
             "40 G temperature scan: the intermediate-state line (red ▼) marches "
             r"$B_c(T)\rightarrow B_\mathrm{app}$ and doubles in amplitude at the "
-            "crossing")
+            "crossing"
+        )
         ax2.grid(True, alpha=0.2)
         return _save_figure(figure, ctx, self.name)
 
@@ -441,47 +535,59 @@ class SnTransverseRecoveryScenario(CorpusScenario):
         def osc(t, A, f, phi, lam, c):  # noqa: N803 (physics symbol)
             return A * np.exp(-lam * t) * np.cos(2 * np.pi * f * t + phi) + c
 
-        popt, _ = curve_fit(
-            osc, tt, aa, p0=[0.03, 160 * _GAMMA, 0.0, 0.1, 0.0], maxfev=20000
-        )
+        popt, _ = curve_fit(osc, tt, aa, p0=[0.03, 160 * _GAMMA, 0.0, 0.1, 0.0], maxfev=20000)
         f_fit = abs(popt[1])
         b_fit = f_fit / _GAMMA
 
         figure = Figure(figsize=(10.0, 7.2), dpi=120)
-        figure.subplots_adjust(left=0.10, right=0.97, top=0.94, bottom=0.14,
-                               hspace=0.32)
+        figure.subplots_adjust(left=0.10, right=0.97, top=0.94, bottom=0.14, hspace=0.32)
         ax1 = figure.add_subplot(2, 1, 1)
         ax1.errorbar(
-            t_fb[good], a_fb[good] - np.nanmedian(a_fb[good]),
-            fmt=".", ms=3, color="#7f7f7f", alpha=0.7,
+            t_fb[good],
+            a_fb[good] - np.nanmedian(a_fb[good]),
+            fmt=".",
+            ms=3,
+            color="#7f7f7f",
+            alpha=0.7,
         )
         ax1.set_ylabel("F−B asymmetry\n(baseline-subtracted, %)")
         ax1.set_title(
             "Sn 160 G run 91491 — standard forward/backward grouping: "
-            "transverse precession cancelled (noise)")
+            "transverse precession cancelled (noise)"
+        )
         ax1.set_ylim(-4.5, 4.5)
         ax1.grid(True, alpha=0.2)
 
         ax2 = figure.add_subplot(2, 1, 2, sharex=ax1)
         ax2.plot(tt, aa, color="#1f77b4", lw=0.8, alpha=0.9, label="L/R regrouped")
         tf = np.linspace(tt.min(), tt.max(), 1000)
-        ax2.plot(tf, osc(tf, *popt), color="#d62728", lw=1.6,
-                 label=rf"fit: $f={f_fit:.3f}$ MHz $\Rightarrow$ {b_fit:.0f} G "
-                       rf"($B_\mathrm{{app}}=160$ G)")
+        ax2.plot(
+            tf,
+            osc(tf, *popt),
+            color="#d62728",
+            lw=1.6,
+            label=rf"fit: $f={f_fit:.3f}$ MHz $\Rightarrow$ {b_fit:.0f} G "
+            rf"($B_\mathrm{{app}}=160$ G)",
+        )
         ax2.set_xlabel("Time  t (µs)")
         ax2.set_ylabel("L/R asymmetry\n(mean-subtracted)")
         ax2.set_title(
             "Same raw counts, left/right (transverse) regrouping: "
-            "clean applied-field precession recovered")
+            "clean applied-field precession recovered"
+        )
         ax2.set_xlim(0.15, 8.0)
         ax2.legend(loc="upper right", frameon=True, fontsize=9)
         ax2.grid(True, alpha=0.2)
         figure.text(
-            0.5, 0.025,
+            0.5,
+            0.025,
             "The precession is present in the raw HIFI counts but the file's forward/backward ring grouping cancels it. The recovered\n"
             "line sits at the applied field because 160 G exceeds B_c(T_real) ≈ 140 G — the sample is fully normal in this run; the\n"
             "intermediate-state B_c line appears instead in the 20/80/40 G runs (see corpus_sn_intermediate_lines).",
-            color="0.35", fontsize=8, va="bottom", ha="center",
+            color="0.35",
+            fontsize=8,
+            va="bottom",
+            ha="center",
         )
         return _save_figure(figure, ctx, self.name)
 

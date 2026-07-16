@@ -515,7 +515,9 @@ def _build_arrhenius_line_fit(temps, nu, nu_err, baseline):
     y_vals, y_err = y_transform.apply(np.asarray(nu, float), np.asarray(nu_err, float))
     x_vals, _ = x_transform.apply(np.asarray(temps, float))
 
-    branch = (np.asarray(temps, float) >= ACTIVATED_MIN_T) & np.isfinite(y_vals) & np.isfinite(y_err)
+    branch = (
+        (np.asarray(temps, float) >= ACTIVATED_MIN_T) & np.isfinite(y_vals) & np.isfinite(y_err)
+    )
     x_b, y_b, e_b = x_vals[branch], y_vals[branch], y_err[branch]
 
     model = ParameterCompositeModel(["Linear"])

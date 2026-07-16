@@ -161,3 +161,19 @@ these 18 runs alone.
   config is still large — now routes to the log panel and proceeds under a
   headless (offscreen/minimal) QPA platform instead of hanging on the modal
   (`ASYMMETRY_SUPPRESS_WORKLOAD_WARNING` does the same on a display).
+
+## Rebase onto main (PR #265) — 2026-07-16 — in-window FFT overlay
+
+- **`corpus_kappacl_tf_fft` switched to the in-window multi-run FFT overlay
+  (#265); the "no in-window multi-run FFT overlay" product-gap note is CLOSED.**
+  - *Before:* a standalone `PlotPanel(domain="frequency")` +
+    `plot_datasets([para, ordered])` (both from the core grouped FFT), because
+    the main-window frequency panel rendered one run at a time and manual
+    matplotlib drawing onto it crashed on teardown.
+  - *After:* the real MainWindow flow — both 6 T runs (693, 686) in the browser,
+    each FFT computed once (cached), then the frequency plot's **Overlay** toggle
+    with **Label → Temperature (K)** draws them on one axis with a "50.66 K /
+    3.24 K" legend. Recapture renders better than the standalone (authentic UI,
+    temperature legend, browser context): ordered line at 813.59 MHz is depleted
+    (peak ≈ 19.6 vs para 22.5) and broadened, exactly the AFM story. Retired the
+    workaround.

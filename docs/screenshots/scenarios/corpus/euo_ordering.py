@@ -264,15 +264,18 @@ class EuoFftScenario(CorpusScenario):
         # The averaged grouped-FFT the panel computes is, over all five GPS
         # detectors, dominated by each detector's slowly-varying (lifetime-
         # corrected) baseline — low-frequency power that buries the small
-        # precession line. Restrict to the transverse Forward/Back pair (the
-        # only groups carrying the ZF spontaneous precession) and apply a
-        # Lorentzian apodisation (τ = 0.5 µs, matched to the ~0.3 µs coherence
-        # of the heavily damped signal) so the single line at ν ≈ 30 MHz stands
-        # clear — the frequency-domain analogue of Blundell 2010 Fig. 1(c).
+        # precession line. Transform the **F−B asymmetry** itself instead (the
+        # #265 "Signal source" radio): the forward−backward difference cancels
+        # the common baseline, so the single ZF precession line stands ~5× clearer
+        # than the restricted-pair grouped average did (PR #265 measured peak/floor
+        # 7.27 vs 1.50 on this exact run). A Lorentzian apodisation (τ = 0.5 µs,
+        # matched to the ~0.3 µs coherence of the heavily damped signal) sharpens
+        # the line at ν ≈ 30 MHz — the frequency-domain analogue of Blundell 2010
+        # Fig. 1(c). (In F−B mode the per-group include table is inert.)
         fp = window._fourier_panel
         fp._filter_lorentzian_radio.setChecked(True)
         fp._filter_time_constant_edit.setText("0.5")
-        fp.set_group_enabled({1: True, 2: True, 3: False, 4: False, 5: False})
+        fp._signal_fb_radio.setChecked(True)
         _process_events_for(milliseconds=40)
 
         freq_panel = window._frequency_plot_panel

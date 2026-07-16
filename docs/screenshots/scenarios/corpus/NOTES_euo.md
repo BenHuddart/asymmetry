@@ -136,3 +136,17 @@ the fit regime.
 and the render is clean and self-explanatory. Pair it with `corpus_euo_zf_fit`
 (the below-T_C oscillation that *produces* each ν point, f = 30.18 MHz) as the
 two-image story.
+
+## Rebase onto main (PR #265) — 2026-07-16 — FFT workaround retired
+
+- **`corpus_euo_fft` switched to the F−B asymmetry Fourier source (#265).**
+  - *Before:* restricted the grouped average to the transverse F/B pair
+    (`set_group_enabled({1,2 on; 3,4,5 off})`) + Lorentzian τ = 0.5 µs, to keep
+    each detector's lifetime baseline from burying the small ~30 MHz line.
+  - *After:* select the **Signal source → F−B asymmetry** radio
+    (`_fourier_panel._signal_fb_radio`), which transforms the forward−backward
+    difference directly, cancelling the common baseline. The line stands ~5×
+    clearer (PR #265 measured peak/floor 7.27 vs 1.50 on this exact run 2960);
+    the recapture shows a single clean peak at ν ≈ 30 MHz (peak ≈ 6.8, floor
+    ≈ 1). In F−B mode the per-group include table is inert, so the old
+    group-mask line is gone. Render is cleaner — retired the workaround.

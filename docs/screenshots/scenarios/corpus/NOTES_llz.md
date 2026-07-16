@@ -170,3 +170,15 @@ Re-tested commit 4a91420 on the real `corpus_llz_nu_arrhenius` panel
 - **Physics regression: none.** The activated-branch Linear fit is unchanged
   (E_a ≈ 0.222 eV; the Custom `log(ν−c)` baseline-subtract route is now also
   documented in `parameter_trending.rst`'s new Arrhenius-on-a-plateau note).
+
+## Rebase onto main (PR #264) — 2026-07-16 — TF classifier gap CLOSED
+
+- **`classify_tf_calibration_run` now recognises run 51315.** Its metadata on
+  current main carries `field_direction="Transverse"`, `field=20.0` G and
+  `field_state="TF"`, so the classifier returns `is_candidate=True` (structured
+  transverse evidence + field in the weak-TF window). The earlier "classifier
+  miss / minor gap" caveat is retired. No scenario-code change: the calibration
+  scenario builds `AlphaCalibrationDialog` on the single run 51315 directly
+  (`selected_run_number=...`), which is not a classifier-driven dropdown, so
+  there was no explicit-selection workaround to remove — the fix simply means
+  the run would auto-highlight in any multi-run calibration dropdown.

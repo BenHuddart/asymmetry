@@ -544,12 +544,19 @@ class LifeasBrmsTScenario(CorpusScenario):
                 b = _brms_from_lambda(lam)
                 ax.axhline(b, color=color, ls=":", lw=1.0, alpha=0.7)
                 ax.text(
-                    19.6, b, f"  λ_ab({sample}) = {lam:.0f} nm",
-                    color=color, fontsize=8, va="center", ha="left",
+                    19.6,
+                    b,
+                    f"  λ_ab({sample}) = {lam:.0f} nm",
+                    color=color,
+                    fontsize=8,
+                    va="center",
+                    ha="left",
                 )
             ax.axvline(16.0, color="C0", ls="--", lw=0.8, alpha=0.5)
             ax.axvline(12.0, color="C1", ls="--", lw=0.8, alpha=0.5)
-            ax.text(16.0, 2.02, r" $T_\mathrm{c}$=16 K", color="C0", fontsize=8, va="bottom", ha="left")
+            ax.text(
+                16.0, 2.02, r" $T_\mathrm{c}$=16 K", color="C0", fontsize=8, va="bottom", ha="left"
+            )
             ax.text(12.0, 2.02, r" 12 K", color="C1", fontsize=8, va="bottom", ha="right")
             ax.text(
                 0.015,

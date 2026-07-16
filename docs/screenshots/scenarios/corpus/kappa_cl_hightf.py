@@ -268,68 +268,74 @@ class KappaClTfFftScenario(CorpusScenario):
         "paramagnetic run (50.7 K, sharp)."
     )
     example = EXAMPLE
-    size = (1180, 760)
+    size = (1440, 880)
 
     def build(self) -> QWidget:
-        from asymmetry.core.fourier import (
-            GroupSpectrumConfig,
-            compute_average_group_spectrum,
-        )
-        from asymmetry.gui.panels.plot_panel import PlotPanel
+        from asymmetry.gui.mainwindow import MainWindow
 
-        # Both spectra through the identical core routine the Fourier panel
-        # drives (the average grouped FFT), so ordered and paramagnetic are
-        # directly comparable: strong Lorentzian apodisation (τ = 3 µs) matched
-        # to the long coherent HAL signal so the ~813 MHz line resolves. The
-        # 0.0244 ns binning puts the line well below the 20.5 GHz Nyquist — no
-        # rotating reference frame is needed.
-        def _spectrum(run_id, label):
-            ds = load_corpus_datasets([_rel(run_id)])[0]
-            run = ds.run
-            gids = list(run.grouping["groups"].keys())
-            cfg = GroupSpectrumConfig(
-                display="(Power)^1/2",
-                window="lorentzian",
-                filter_time_constant_us=3.0,
-                selected_group_ids=gids,
-                group_phase_degrees={g: 0.0 for g in gids},
-                exclusion_ranges=[],
-                t_min_us=0.0,
-                t_max_us=6.0,
-                subtract_average_signal=True,
-            )
-            spectrum = compute_average_group_spectrum(run, cfg)
-            # The overlay legend reads ``metadata['run_label']`` (see
-            # MuonDataset.run_label), so a physics label replaces "686 Average".
-            if isinstance(spectrum.metadata, dict):
-                spectrum.metadata["run_label"] = label
-            return spectrum
+        window = MainWindow()
+        window._on_fourier()
+        window.resizeDocks([window._dock_data_browser], [320], Qt.Orientation.Horizontal)
 
-        ordered = _spectrum(_ORDERED_6T, "3.2 K — ordered")
-        para = _spectrum(_PARA_6T, "50.7 K — paramagnetic")
+        # The real in-window multi-run FFT overlay (#265): both 6 T runs live in
+        # the browser, each FFT is computed once, then the frequency plot's
+        # Overlay toggle draws them on one axis with a temperature legend — the
+        # workflow the docs describe, replacing the old standalone-PlotPanel
+        # workaround. Strong Lorentzian apodisation (τ = 3 µs) matched to the long
+        # coherent HAL signal resolves the ~813 MHz line; the 0.0244 ns binning
+        # puts it well below the 20.5 GHz Nyquist (no rotating frame needed).
+        para = load_corpus_datasets([_rel(_PARA_6T)])[0]
+        ordered = load_corpus_datasets([_rel(_ORDERED_6T)])[0]
+        with window._data_browser.batch_updates():
+            window._data_browser.add_dataset(para)
+            window._data_browser.add_dataset(ordered)
 
-        # A real frequency-domain PlotPanel overlays the two spectra (the panel
-        # renders one run's FFT at a time inside the main window; a standalone
-        # frequency PlotPanel overlays the pair for the comparison figure).
-        panel = PlotPanel(domain="frequency")
-        panel.set_overlay_enabled(True)
-        panel.plot_datasets([para, ordered])
-        _process_events_for(milliseconds=150)
+        fp = window._fourier_panel
+        fp._filter_lorentzian_radio.setChecked(True)
+        fp._filter_time_constant_edit.setText("3.0")
+        _process_events_for(milliseconds=40)
 
-        # Peak values (para is the taller, sharper line) set a common Y so the
-        # ordered line's depletion + broadening reads on the same scale.
-        yd = []
-        for line in panel._figure.axes[0].get_lines():
+        window._on_domain_button_clicked("frequency")
+        _process_events_for(milliseconds=80)
+
+        # Compute each run's FFT once (caches it); ordered last so it is the
+        # active run when the overlay is toggled on.
+        for run in (_PARA_6T, _ORDERED_6T):
+            window._on_dataset_selected(run)
+            _process_events_for(milliseconds=80)
+            window._on_compute_fourier()
+            _wait_until(lambda: not window._frequency_recompute_active, timeout_ms=60000)
+            _process_events_for(milliseconds=120)
+
+        # Label the overlaid traces by measured temperature (3.2 K / 50.7 K).
+        freq_panel = window._frequency_plot_panel
+        combo = freq_panel._label_field_combo
+        combo.setCurrentIndex(combo.findData("temperature"))
+        _process_events_for(milliseconds=40)
+
+        # Select both runs and turn on Overlay — both spectra are cached, so the
+        # overlay renders immediately (no async wave).
+        window._data_browser._table.selectAll()
+        _process_events_for(milliseconds=40)
+        freq_panel.set_overlay_enabled(True, emit_signal=True)
+        _wait_until(lambda: not window._frequency_recompute_active, timeout_ms=60000)
+        _process_events_for(milliseconds=200)
+
+        # Peak (para is the taller, sharper line) sets a common Y so the ordered
+        # line's depletion + broadening reads on the same scale.
+        peak = 1.0
+        for line in freq_panel._figure.axes[0].get_lines():
             x = np.asarray(line.get_xdata(), dtype=float)
             y = np.asarray(line.get_ydata(), dtype=float)
             if x.size > 10:
                 band = (x > _CENTRE_6T_MHZ - 6) & (x < _CENTRE_6T_MHZ + 6)
                 if band.any():
-                    yd.append(float(np.nanmax(y[band])))
-        peak = max(yd) if yd else 1.0
-        panel.set_view_limits(_CENTRE_6T_MHZ - 4.0, _CENTRE_6T_MHZ + 4.0, -0.03 * peak, 1.10 * peak)
+                    peak = max(peak, float(np.nanmax(y[band])))
+        freq_panel.set_view_limits(
+            _CENTRE_6T_MHZ - 4.0, _CENTRE_6T_MHZ + 4.0, -0.03 * peak, 1.10 * peak
+        )
         _process_events_for(milliseconds=120)
-        return panel
+        return window
 
 
 # --------------------------------------------------------------------------- #

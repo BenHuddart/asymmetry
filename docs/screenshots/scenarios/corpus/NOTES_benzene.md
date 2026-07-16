@@ -125,3 +125,15 @@ consistency story.
   scans (D_µ) were not captured — single-dip/second-render opportunities left for
   a future pass; ring-proton was chosen for its clean two-dip render matching the
   reference `test.sel`.
+
+## Rebase onto main (PR #264) — 2026-07-16 — FFT annotations kept in settle()
+
+- **`corpus_benzene_hightf_fft` annotations stay in `settle()`.** #264's
+  persistent-marker API (`add_persistent_frequency_marker` /
+  `set_custom_x_axis_label`) survives the show-time replot, but it only covers
+  **vertical frequency markers**. This scenario's annotation set also includes
+  the `A_µ = ν₁ + ν₂` **axes-fraction summary box** and per-line text labels,
+  which the persistent API cannot carry — arbitrary `ax.annotate` artists are
+  still wiped by the replot. So drawing them in `settle()` (after the replot) is
+  still required; no simplification. Verified the recapture still shows all
+  annotations.

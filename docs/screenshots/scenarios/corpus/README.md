@@ -30,6 +30,13 @@ They will eventually run in CI with the corpus provisioned and
   **Always look at your rendered PNGs** (Read them as images) before calling
   a scenario done — empty plots, clipped panels, and mis-framed dialogs are
   the common failure modes.
+- **`--stubs` (no corpus needed).**
+  `.venv/bin/python -m docs.screenshots.capture_corpus --stubs` writes a small
+  uniform placeholder PNG (600×380, light grey, scenario name centred) for
+  every registered corpus scenario into the output dir. It needs neither the
+  corpus, Qt, nor a fit backend (PIL only), so a Sphinx build on a machine
+  without `ASYMMETRY_CORPUS_ROOT` (CI) never breaks on a missing corpus render.
+  Combine with `--only <names>` to stub a subset.
 
 ## What to capture per example
 

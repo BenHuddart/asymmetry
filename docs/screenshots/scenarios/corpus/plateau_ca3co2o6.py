@@ -50,6 +50,7 @@ _DATA = EXAMPLE + "/Data/HIFI0000%d.nxs"
 # Muon gyromagnetic ratio used by the paper (GT §6): γ_µ = 2π × 135.5 MHz/T,
 # i.e. 2π × 135.5 in units of µs⁻¹ T⁻¹.
 GAMMA_MU = 2.0 * np.pi * 135.5  # µs⁻¹ T⁻¹
+GAMMA_MU_GAUSS = GAMMA_MU / 1.0e4  # µs⁻¹ G⁻¹ (field stored/plotted in gauss)
 
 # Fit window for the per-run exponential (µs). The late-time bins get noisy as
 # the counts vanish (F–B asymmetry diverges past ~16 µs), so cap there.
@@ -146,19 +147,24 @@ def _lambda_of_field(runs):
 
 
 def _redfield_from_line(slope: float, intercept: float):
-    """Solve the linearised Redfield form for (Δ [T], τ [µs]).
+    """Solve the linearised Redfield form for (Δ [G], τ [µs]).
 
     λ⁻¹ = [1 + γ_µ²(µ₀H)²τ²] / (2γ_µ²Δ²τ)  ⇒
       intercept = 1/(2γ_µ²Δ²τ),  slope = τ/(2Δ²)  (GT §4).
     slope/intercept = γ_µ²τ² ⇒ τ = √(slope/intercept)/γ_µ; Δ = √(τ/(2·slope)).
+
+    Field is stored/plotted in **gauss** (the app's native ``B (G)`` axis), so
+    the line is fitted in B² [G²]: the slope is in µs G⁻², and γ_µ is taken in
+    µs⁻¹ G⁻¹. Δ comes out in gauss. The gauss and tesla forms give identical
+    Δ (in mT) and τ (in µs) — the fit units cancel out of the physics.
     """
-    tau = np.sqrt(slope / intercept) / GAMMA_MU  # µs
-    delta = np.sqrt(tau / (2.0 * slope))  # T
+    tau = np.sqrt(slope / intercept) / GAMMA_MU_GAUSS  # µs
+    delta = np.sqrt(tau / (2.0 * slope))  # G
     return delta, tau
 
 
-def _build_redfield_linear_fit(fields_t, lam, lam_err):
-    """Fit ``Linear`` to the *transformed* Redfield plateau (1/λ vs B², T units).
+def _build_redfield_linear_fit(fields_g, lam, lam_err):
+    """Fit ``Linear`` to the *transformed* Redfield plateau (1/λ vs B², G units).
 
     Reproduces exactly what the panel's Model-Fit dialog does once the axes are
     set to Y→``reciprocal`` and X→``square``: transform the (field, λ) arrays
@@ -167,6 +173,11 @@ def _build_redfield_linear_fit(fields_t, lam, lam_err):
     the core trend minimiser. Returns ``(ParameterModelFit, summary)``; the fit
     is tagged with ``x_key="field"`` so the panel samples its overlay in the
     same B² domain the scatter is drawn in.
+
+    *fields_g* are in **gauss** — the panel's native field unit (#262 normalises
+    NeXus field to gauss), so the X→square axis reads correctly as ``B² (G²)``.
+    The slope therefore comes out in µs G⁻²; :func:`_redfield_from_line` uses the
+    matching γ_µ in µs⁻¹ G⁻¹ so Δ/τ are unchanged from the old tesla path.
     """
     from asymmetry.core.fitting.axis_transforms import AxisTransform
     from asymmetry.core.fitting.parameter_models import (
@@ -177,7 +188,7 @@ def _build_redfield_linear_fit(fields_t, lam, lam_err):
     )
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-    x2, _ = AxisTransform.preset("square").apply(np.asarray(fields_t, dtype=float))
+    x2, _ = AxisTransform.preset("square").apply(np.asarray(fields_g, dtype=float))
     inv_lam, inv_err = AxisTransform.preset("reciprocal").apply(
         np.asarray(lam, dtype=float), np.asarray(lam_err, dtype=float)
     )
@@ -185,8 +196,9 @@ def _build_redfield_linear_fit(fields_t, lam, lam_err):
     model = ParameterCompositeModel(["Linear"])
     seed = ParameterSet(
         [
-            Parameter("m", value=0.27, min=0.0, max=10.0),  # slope τ/(2Δ²)  [µs T⁻²]
-            Parameter("b", value=0.45, min=0.0, max=5.0),  # intercept 1/(2γ²Δ²τ) [µs]
+            # slope τ/(2Δ²) [µs G⁻²] ≈ 0.27 µs T⁻² / 1e8; intercept 1/(2γ²Δ²τ) [µs].
+            Parameter("m", value=2.7e-9, min=0.0, max=1.0e-5),
+            Parameter("b", value=0.45, min=0.0, max=5.0),
         ]
     )
     result = fit_parameter_model(
@@ -204,7 +216,7 @@ def _build_redfield_linear_fit(fields_t, lam, lam_err):
         "slope_err": float(unc.get("m", 0.0)),
         "intercept": intercept,
         "intercept_err": float(unc.get("b", 0.0)),
-        "delta_mT": float(delta * 1e3),
+        "delta_mT": float(delta * 0.1),  # 1 G = 0.1 mT
         "tau_ps": float(tau * 1e6),
         "chi2r": float(result.reduced_chi_squared or 0.0),
     }
@@ -215,9 +227,7 @@ def _build_redfield_linear_fit(fields_t, lam, lam_err):
         parameters=result.parameters,
         result=result,
     )
-    fit = ParameterModelFit(
-        parameter_name="Lambda", x_key="field", ranges=[fit_range], active=True
-    )
+    fit = ParameterModelFit(parameter_name="Lambda", x_key="field", ranges=[fit_range], active=True)
     return fit, summary
 
 
@@ -441,15 +451,17 @@ class PlateauRedfieldScenario(CorpusScenario):
         included = list(_PLATEAU_RUNS)  # 9039–9050 (0.5–3.5 T), the plateau
         all_runs = sorted(set(included) | set(_REDFIELD_EXCLUDED), key=lambda r: SCAN_FIELDS_T[r])
         # One per-run exponential fit pass for every plotted point (ascending
-        # field, warm-started downward). NOTE: field is stored in **tesla** here
-        # (not the panel's native gauss) so the X→square transform yields B² in
-        # T² and the Redfield slope comes out in µs T⁻² — the physics units. See
-        # NOTES_plateau.md for the axis-unit caveat this exposes.
+        # field, warm-started downward). Field is stored in **gauss** — the
+        # panel's native "B (G)" axis (#262 normalises NeXus field to gauss) — so
+        # the X→square transform reads correctly as ``B² (G²)`` and the Redfield
+        # slope comes out in µs G⁻². Δ/τ are identical to the old tesla path
+        # (the fit units cancel out of the physics).
         fields_t, lam, lam_err = _lambda_of_field(all_runs)
+        fields_g = fields_t * 1.0e4
         incl_mask = np.array([r in included for r in all_runs])
 
         fit, self._fit_summary = _build_redfield_linear_fit(
-            fields_t[incl_mask], lam[incl_mask], lam_err[incl_mask]
+            fields_g[incl_mask], lam[incl_mask], lam_err[incl_mask]
         )
 
         batch_id = "plateau-redfield"
@@ -457,7 +469,7 @@ class PlateauRedfieldScenario(CorpusScenario):
             {
                 "run_number": run,
                 "run_label": f"{SCAN_FIELDS_T[run]:.1f} T",
-                "field": float(SCAN_FIELDS_T[run]),  # TESLA — see note above
+                "field": float(SCAN_FIELDS_T[run] * 1.0e4),  # gauss (native B axis)
                 "temperature": 15.0,
                 "values": {"Lambda": float(lam[i])},
                 "errors": {"Lambda": float(lam_err[i])},

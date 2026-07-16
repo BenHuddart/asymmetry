@@ -130,3 +130,11 @@ is the best single "what is photo-µSR" teaser.
 - **χ²/ν ≈ 2.7 ("poor")** on the light-ON single-exp fit — expected: the real
   spectrum has more structure than one exponential over 0–1 µs, but the fitted
   λ still matches the paper. Honest, not a bug.
+
+## Rebase onto main (#241/#264) — 2026-07-16 — good_frames fill retired
+
+- **Removed `_inject_real_good_frames`.** The loader now reads the true
+  per-period good-frame counts from `instrument/beam/frames_period` (#241,
+  re-confirmed under #264): `select_period(...)` yields **14055 / 14053** for
+  run 103277's red/green periods natively. The manual Beamlog even-split fill is
+  gone; the period-mapping dialog shows the real exposures without a workaround.

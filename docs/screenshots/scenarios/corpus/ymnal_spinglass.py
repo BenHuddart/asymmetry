@@ -229,7 +229,10 @@ class YmnalSpectraScenario(CorpusScenario):
         "T_g ≈ 88 K is approached (critical slowing-down)."
     )
     example = EXAMPLE
-    size = (1500, 920)
+    # Slightly smaller than the module default: the dense many-trace overlay
+    # otherwise renders ~610 KB, just over the 600 KB per-PNG budget locally
+    # (pyoxipng, which CI uses to shrink it, is not installed here).
+    size = (1400, 860)
 
     def build(self) -> QWidget:
         from asymmetry.gui.mainwindow import MainWindow

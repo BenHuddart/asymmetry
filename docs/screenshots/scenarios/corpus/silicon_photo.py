@@ -181,8 +181,11 @@ class SiPeriodMappingScenario(CorpusScenario):
         from asymmetry.gui.windows.period_mapping_dialog import PeriodMappingDialog
 
         combined = load(_rel(103277))
+        # The loader reads the true per-period good-frame counts from the NeXus
+        # ``instrument/beam/frames_period`` log (#241/#264), so each period
+        # dataset already carries its real exposure (14055 / 14053 for run
+        # 103277) — no manual Beamlog fill needed.
         periods = [select_period(combined, "red"), select_period(combined, "green")]
-        _inject_real_good_frames(combined, periods)
 
         dialog = PeriodMappingDialog(periods)
         dialog.resize(*self.size)
@@ -521,26 +524,6 @@ def _labelled_on_off(window, run: int):
     off_ds.run.run_number = window._data_browser.next_derived_run_number()
     off_ds.metadata["run_label"] = f"{run} laser OFF"
     return on_ds, off_ds
-
-
-def _inject_real_good_frames(combined, periods) -> None:
-    """Fill each period's good-frame count from the file's Beamlog.
-
-    The loader leaves ``grouping['good_frames'] = 1.0`` for period datasets, so
-    the mapping dialog would show a meaningless "1". The real per-period good
-    frames live in the NeXus ``Beamlog_Good_Frames_Total`` log; split evenly
-    across the two periods (they share beam exposure equally). Best-effort: on
-    any structural surprise the datasets are left untouched.
-    """
-    try:
-        nf = combined.metadata.get("nexus_fields", {})
-        total = float(nf["Beamlog_Good_Frames_Total"]["values"]["value"][-1])
-    except (KeyError, IndexError, TypeError, ValueError):
-        return
-    per = total / max(len(periods), 1)
-    for ds in periods:
-        if ds.run is not None and isinstance(ds.run.grouping, dict):
-            ds.run.grouping["good_frames"] = per
 
 
 def _select_axes(panel, *, y_param: str, x_key: str) -> None:

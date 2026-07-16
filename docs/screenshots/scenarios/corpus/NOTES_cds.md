@@ -144,3 +144,16 @@ extension, not shipped.
 - **Bonus:** the panel's built-in **γ_µ·B reference marker** (from the "Reference:
   100.00 G" field) lands at 1.355 MHz and sits just left of the observed 1.388 MHz
   central line — a free, honest illustration of the §7 calibration offset.
+
+## Rebase onto main (PR #249) — 2026-07-16 — MaxEnt triplet scenario added
+
+- **New `corpus_cds_maxent_triplet` (the MaxEnt super-resolution flagship).**
+  Supersedes the earlier "MaxEnt vs FFT — not attempted, delicate" note (§121).
+  Run 20721, a side-by-side standalone figure: left the raw program FFT (native
+  ~32 kHz bin, padding=1 — the triplet blurs into shoulders), right a MaxEnt
+  reconstruction over a **tight explicit window 0.9–1.9 MHz**, **binning ×4**,
+  **128-point grid**, **20 cycles** that resolves three clean lobes at
+  **1.27 / 1.39 / 1.51 MHz** (central Mu⁺ ± A/2). The field-derived auto window
+  (±300 G ≈ ±4 MHz) is far too wide at 100 G — an explicit window is essential
+  (README low-field lesson). χ²/N plateaus ≈ 4.5 on this high-statistics real
+  F/B run (README: expected on some real runs); the lobe centres are dead-on.
