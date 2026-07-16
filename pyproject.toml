@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asymmetry"
-version = "0.11.0"
+version = "0.13.0"
 description = "A Python library for muon-spin spectroscopy (μSR) data analysis"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,12 +37,14 @@ gui = [
     "PySide6>=6.5,<6.11",
     "matplotlib>=3.7,<3.11",
 ]
-# Tag-pinned: v1.6.0 is the first release with the editor embedding API
-# (gleplot.gui.open_editor) that the in-app GLE figure editor requires.
-# Asymmetry feature-detects, so an older gleplot degrades to the static
-# preview — but builds should be reproducible, so pin the tag and bump
+# Tag-pinned: v1.7.0 adds the per-series ``offset=`` API used to stack a
+# waterfall overlay in the GLE script (a ``let``) instead of baking it into the
+# exported .dat/.fit data; it builds on v1.6's editor embedding API and the
+# unquoted-filename parser fix. Asymmetry feature-detects the offset support, so
+# an older gleplot still works (it falls back to baking the offset into the
+# written data) — but builds should be reproducible, so pin the tag and bump
 # deliberately.
-gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git@v1.6.0"]
+gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git@v1.7.0"]
 hdf5 = ["h5py>=3.8,<4"]
 hdf4 = ["pyhdf>=0.10,<1"]  # legacy ISIS muon NeXus v1 in an HDF4 container
 root = ["uproot>=5.0,<6"]
@@ -139,8 +141,11 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/gui/test_grouped_batch_seeds_gui.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_fit_parameters_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_batch_trend_default_traps.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/gui/test_trend_axis_transforms.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_fit_panel_density.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_grouping_preview_pane.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/gui/test_grouping_hint_panel.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/gui/test_maxent_workload_warning.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/core/test_field_scan_fitting.py" = ["N803"]  # Physics parameter names (B0, Bwid)
 "tests/core/test_sc_vl_lineshape.py" = ["N803", "N806"]  # Physics parameter names (B0, Bc2)
 "tests/core/test_rf_musr_resonance.py" = ["N802", "N803"]  # Physics names (A_p in test ids; A_mu/BG args)

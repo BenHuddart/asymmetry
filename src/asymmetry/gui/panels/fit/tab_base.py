@@ -1821,9 +1821,16 @@ class FitTabBase(QWidget):
         and connects each ``editingFinished`` to
         ``self._on_fit_range_spinbox_committed``. The subclass owns the
         surrounding layout (mid/unit labels and their placement).
+
+        The fields opt into ``commit_on_set_value`` so a programmatic
+        ``setValue`` commits the range to the plot panel (the owner of the
+        fit-range state) exactly as a typed entry does — otherwise a driven
+        value change would display but never reach the fit. The display-mirror
+        (``set_fit_range_display`` -> ``_apply_fit_range_display``) blocks the
+        signal, so echoing the owner's value back stays silent.
         """
-        self._fit_range_min_spin = FloatLimitField()
-        self._fit_range_max_spin = FloatLimitField()
+        self._fit_range_min_spin = FloatLimitField(commit_on_set_value=True)
+        self._fit_range_max_spin = FloatLimitField(commit_on_set_value=True)
         self._fit_range_min_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
         self._fit_range_max_spin.editingFinished.connect(self._on_fit_range_spinbox_committed)
 

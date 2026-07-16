@@ -59,3 +59,74 @@ def test_transverse_field_on_hal_recommends_its_per_octant_default() -> None:
 
     rec_tf = recommend_grouping_preset(hal, "Transverse")
     assert rec_tf == "Per-octant"
+
+
+# ---------------------------------------------------------------------------
+# recommend_grouping_preset_for_run: run-level wrapper used by the plot/Fourier
+# panels. It resolves the instrument itself and suppresses the nudge when the
+# run already sits on the recommended preset.
+# ---------------------------------------------------------------------------
+
+
+def test_for_run_recommends_transverse_preset_on_hifi() -> None:
+    from asymmetry.core.instrument import recommend_grouping_preset_for_run
+
+    rec = recommend_grouping_preset_for_run(
+        n_histograms=64,
+        metadata={"instrument": "HIFI", "field_direction": "Transverse"},
+    )
+    assert rec == "Transverse (Vector)"
+
+
+def test_for_run_recommends_spin_rotated_preset_on_gps() -> None:
+    from asymmetry.core.instrument import recommend_grouping_preset_for_run
+
+    rec = recommend_grouping_preset_for_run(
+        n_histograms=5,
+        metadata={"facility": "PSI", "instrument": "GPS", "field_direction": "Transverse"},
+        current_preset="Longitudinal",
+    )
+    assert rec == "Spin-rotated (B+U/F+D)"
+
+
+def test_for_run_suppresses_nudge_when_already_on_recommended_preset() -> None:
+    from asymmetry.core.instrument import recommend_grouping_preset_for_run
+
+    rec = recommend_grouping_preset_for_run(
+        n_histograms=64,
+        metadata={"instrument": "HIFI", "field_direction": "Transverse"},
+        current_preset="Transverse (Vector)",
+    )
+    assert rec is None
+
+
+def test_for_run_no_nudge_for_longitudinal_geometry() -> None:
+    from asymmetry.core.instrument import recommend_grouping_preset_for_run
+
+    assert (
+        recommend_grouping_preset_for_run(
+            n_histograms=64,
+            metadata={"instrument": "HIFI", "field_direction": "Longitudinal"},
+        )
+        is None
+    )
+
+
+def test_for_run_no_nudge_when_instrument_unresolvable() -> None:
+    from asymmetry.core.instrument import recommend_grouping_preset_for_run
+
+    # No instrument-like metadata and an unknown histogram count: nothing to
+    # recommend rather than a wrong-instrument guess.
+    assert (
+        recommend_grouping_preset_for_run(
+            n_histograms=0,
+            metadata={"field_direction": "Transverse"},
+        )
+        is None
+    )
+
+
+def test_for_run_tolerates_missing_metadata() -> None:
+    from asymmetry.core.instrument import recommend_grouping_preset_for_run
+
+    assert recommend_grouping_preset_for_run(n_histograms=64, metadata=None) is None

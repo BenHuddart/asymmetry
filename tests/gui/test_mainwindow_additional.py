@@ -35,11 +35,13 @@ from tests._qt_helpers import wait_for
 
 
 def _compute_fourier_sync(window: MainWindow, timeout_s: float = 15.0) -> None:
-    """Run the now-async FFT compute and block until it lands.
+    """Run the async, selection-scoped Compute FFT and block until it lands.
 
-    ``_on_compute_fourier`` launches the averaged grouped FFT on the shared
-    TaskRunner; spin the event loop until the worker's completion callback
-    clears the busy flag (or returns immediately if validation short-circuited).
+    ``_on_compute_fourier`` launches its targets (Data-Browser selection ∪
+    active run) on the shared TaskRunner via
+    ``_ensure_frequency_spectra_for_runs_async``; spin the event loop until
+    the completion clears the busy flag (or return immediately if validation
+    short-circuited).
     """
     window._on_compute_fourier()
     wait_for(
@@ -432,7 +434,7 @@ class TestMainWindowFourier:
         assert mainwindow._plot_workspace.active_domain() == "frequency"
         assert plotted.metadata["plot_domain"] == "frequency"
         assert plotted.metadata["x_label"] == "Frequency (MHz)"
-        assert plotted.metadata["y_label"] == "FFT (Power)^1/2 (a.u.)"
+        assert plotted.metadata["y_label"] == "FFT (Power)^1/2 (%)"
         assert plotted.metadata["fourier_group_output"] == "average"
         assert plotted.metadata["group_ids"] == [1, 2]
 
@@ -1012,52 +1014,437 @@ class TestMainWindowFourier:
         # shutdown() cancelled, quit and joined every live worker thread.
         assert mainwindow._tasks.active_count == 0
 
-    def test_apply_fourier_settings_to_selected_runs(
+    def test_compute_fourier_for_selection_uses_live_settings_for_every_target(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """'Apply to selection' copies the FFT recipe to other selected runs."""
+        """Targets pick up the LIVE panel state, not a copied stored recipe.
+
+        The old "Apply to selection" copied the active run's STORED recipe,
+        so a panel edit made after the last Compute FFT was silently ignored.
+        The consolidated Compute FFT must reflect a post-compute edit in every
+        target's stamped recipe — including the active run, which the handler
+        always recomputes — and each target's OWN grouping digest.
+        """
         ds1 = _make_fourier_ready_dataset(8830, with_grouping=True)
         ds2 = _make_fourier_ready_dataset(8831, with_grouping=True)
         mainwindow._data_browser.add_dataset(ds1)
         mainwindow._data_browser.add_dataset(ds2)
         mainwindow._on_dataset_selected(8830)
         _compute_fourier_sync(mainwindow)
+        original_padding = mainwindow._project_model.representation(
+            8830, RepresentationType.FREQ_FFT
+        ).recipe["fourier_config"]["padding"]
+
+        # Edit a panel setting AFTER the prior compute — the regression this
+        # test guards against.
+        new_padding = int(original_padding) + 4
+        mainwindow._fourier_panel._padding_spin.setValue(new_padding)
+        mainwindow._fourier_panel._settings_debounce.timeout.emit()
+        assert mainwindow._fourier_panel.get_state()["padding"] == new_padding
 
         monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
-        mainwindow._on_apply_fourier_to_selection()
+        _compute_fourier_sync(mainwindow)
 
-        # The second run now has a generated spectrum and the same recipe.
-        assert 8831 in mainwindow._frequency_spectra_by_run
-        source_rep = mainwindow._project_model.representation(8830, RepresentationType.FREQ_FFT)
-        target_rep = mainwindow._project_model.representation(8831, RepresentationType.FREQ_FFT)
-        assert target_rep is not None
-        assert target_rep.recipe["fourier_config"] == source_rep.recipe["fourier_config"]
+        # Both targets — including the active run 8830 — recomputed under the
+        # new live padding, each stamped with its OWN grouping digest.
+        for run_number, dataset in ((8830, ds1), (8831, ds2)):
+            assert run_number in mainwindow._frequency_spectra_by_run
+            rep = mainwindow._project_model.representation(run_number, RepresentationType.FREQ_FFT)
+            assert rep is not None
+            assert rep.recipe["fourier_config"]["padding"] == new_padding
+            assert rep.recipe["grouping_digest"] == spectrum_module.fourier_grouping_digest(
+                dataset.run
+            )
 
-    def test_apply_fourier_to_selection_enables_batch_fit_without_selection_poke(
+    def test_compute_fourier_for_selection_enables_batch_fit_without_selection_poke(
         self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """F17: applying Fourier settings to a selection must refresh fit enable-state.
+        """F17: computing for a selection must refresh fit enable-state.
 
-        Regression: computing spectra for a selection (via "Apply to selection")
-        left "Run Batch Fit" stale-disabled until an unrelated browser-selection
-        change happened to trigger `_update_fit_block_state` (same class as the
-        PR #89 fix, mainwindow.py:_on_apply_fourier_to_selection).
+        Regression: computing spectra for a selection (via the old "Apply to
+        selection") left "Run Batch Fit" stale-disabled until an unrelated
+        browser-selection change happened to trigger `_update_fit_block_state`
+        (same class as the PR #89 fix). `_finish_compute_fourier_for_selection`
+        must keep calling it directly rather than relying on some other event.
         """
-        ds1 = _make_fourier_ready_dataset(8834, with_grouping=True)
-        ds2 = _make_fourier_ready_dataset(8835, with_grouping=True)
+        ds1 = _make_fourier_ready_dataset(8836, with_grouping=True)
+        ds2 = _make_fourier_ready_dataset(8837, with_grouping=True)
         mainwindow._data_browser.add_dataset(ds1)
         mainwindow._data_browser.add_dataset(ds2)
-        mainwindow._on_dataset_selected(8834)
+        mainwindow._on_dataset_selected(8836)
         mainwindow._on_domain_button_clicked("frequency")
-        _compute_fourier_sync(mainwindow)
 
         global_tab = mainwindow._fit_panel._global_tab
         assert global_tab._fit_btn.isEnabled() is False
 
         monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
-        mainwindow._on_apply_fourier_to_selection()
+        _compute_fourier_sync(mainwindow)
 
         assert global_tab._fit_btn.isEnabled() is True
+
+    def test_compute_fourier_for_selection_runs_asynchronously(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Targets compute through the async wave machinery, not a GUI-thread loop.
+
+        Immediately after the call, an uncomputed target must still be in
+        flight — a synchronous per-run loop (the old handler's approach)
+        would already have finished it by the time control returns.
+        """
+        ds1 = self._compute_run_fft(mainwindow, 8848)
+        ds2 = _make_fourier_ready_dataset(8849, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds2)
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+
+        mainwindow._on_compute_fourier()
+
+        assert (8849, RepresentationType.FREQ_FFT) in mainwindow._frequency_recompute_inflight
+        assert 8849 not in mainwindow._frequency_spectra_by_run
+
+        wait_for(
+            lambda: not mainwindow._frequency_recompute_active,
+            QApplication.instance(),
+            timeout_s=15.0,
+        )
+        assert 8849 in mainwindow._frequency_spectra_by_run
+
+    def test_compute_fourier_for_selection_rerenders_visible_view(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Completion re-renders the visible frequency view and updates status."""
+        ds1 = self._compute_run_fft(mainwindow, 8850)
+        ds2 = _make_fourier_ready_dataset(8851, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._plot_workspace.set_active_view("frequency")
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+
+        _compute_fourier_sync(mainwindow)
+
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert {int(d.run_number) for d in rendered} == {8850}  # overlay off by default
+        message = mainwindow.statusBar().currentMessage()
+        assert message.startswith("Computed 2 spectra")
+
+    def test_compute_fourier_from_time_view_switches_workspace_to_frequency(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An explicit compute from the time view lands ON the frequency view.
+
+        The old single-run contract, preserved by the consolidation for any N:
+        completion switches the central workspace to the frequency view (the
+        user asked for a spectrum — show it) and renders the active run's
+        fresh spectrum there. Passive syncs keep the hidden-panel deferral;
+        an explicit compute is the opposite case.
+        """
+        ds1 = self._compute_run_fft(mainwindow, 8852)
+        ds2 = _make_fourier_ready_dataset(8853, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        assert not mainwindow._frequency_domain_is_active()
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+
+        _compute_fourier_sync(mainwindow)
+
+        assert mainwindow._frequency_domain_is_active()
+        assert 8852 in mainwindow._frequency_spectra_by_run
+        assert 8853 in mainwindow._frequency_spectra_by_run
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert {int(d.run_number) for d in rendered} == {8852}  # overlay off, active run shown
+
+    def test_compute_fourier_view_not_stolen_when_active_run_left_targets(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Navigating away mid-compute keeps the workspace where the user went.
+
+        The old single-run contract ("only steal the view if the computed run
+        is still selected"), preserved: when the active run at completion was
+        not among the compute targets, the workspace stays on the time view
+        and the spectra just land in the cache.
+        """
+        ds1 = self._compute_run_fft(mainwindow, 8858)
+        ds_other = _make_fourier_ready_dataset(8859, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_other)
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1])
+
+        mainwindow._on_compute_fourier()
+        # The user selects a different run while the compute is in flight.
+        mainwindow._current_dataset = ds_other
+        wait_for(
+            lambda: not mainwindow._fourier_compute_active,
+            QApplication.instance(),
+            timeout_s=15.0,
+        )
+
+        assert not mainwindow._frequency_domain_is_active()
+        assert 8858 in mainwindow._frequency_spectra_by_run
+
+    def test_compute_fourier_for_selection_skips_and_counts_uncomputable_targets(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A selected run with no detector groups is skipped and reported."""
+        ds1 = self._compute_run_fft(mainwindow, 8854)
+        ds_no_groups = _make_fourier_ready_dataset(8855, with_grouping=False)
+        mainwindow._data_browser.add_dataset(ds_no_groups)
+        monkeypatch.setattr(
+            mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds_no_groups]
+        )
+
+        _compute_fourier_sync(mainwindow)
+
+        assert 8854 in mainwindow._frequency_spectra_by_run
+        assert 8855 not in mainwindow._frequency_spectra_by_run
+        message = mainwindow.statusBar().currentMessage()
+        assert "Computed 1 spectrum" in message
+        assert "(1 skipped)" in message
+
+    def test_overlay_mismatch_banner_shows_via_real_overlay_toggle_and_clears_on_unify(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The mismatch banner must appear from the real overlay-assembly path.
+
+        Toggling Overlay on with pre-computed, differently-configured runs
+        selected is the scenario the banner exists for — asserting it only
+        after manually calling ``_refresh_fourier_staleness()`` would prove
+        the comparison logic works without proving anything wires it up.
+        """
+        ds1 = self._compute_run_fft(mainwindow, 8856)
+        ds2 = self._compute_run_fft(mainwindow, 8857)  # becomes active; domain -> frequency
+        mainwindow._on_dataset_selected(8856)  # active run = 8856
+
+        # Give run 8857 a different padding than the active run's stored
+        # recipe BEFORE the overlay is ever assembled.
+        rep2 = mainwindow._project_model.representation(8857, RepresentationType.FREQ_FFT)
+        mismatched_config = dict(rep2.recipe["fourier_config"])
+        mismatched_config["padding"] = int(mismatched_config.get("padding", 1)) + 4
+        rep2.recipe["fourier_config"] = mismatched_config
+
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        # The real overlay_toggled signal handler — not a manual staleness call.
+        mainwindow._on_frequency_overlay_toggled(True)
+
+        assert mainwindow._frequency_overlay_active is True
+        assert mainwindow._fourier_panel.is_overlay_mismatched() is True
+
+        # A selection-scoped Compute FFT unifies both runs under the current live
+        # settings and re-renders the still-active overlay.
+        _compute_fourier_sync(mainwindow)
+        assert mainwindow._fourier_panel.is_overlay_mismatched() is False
+
+    def test_superseded_fourier_buttons_and_handlers_are_gone(self, mainwindow: MainWindow) -> None:
+        """One consolidated Compute FFT; the superseded actions are gone.
+
+        Both the original "Apply to selection" and the interim "Compute for
+        selection" are removed — Compute FFT is the single, selection-scoped
+        action. MaxEnt's "Apply to selection" is deliberately untouched.
+        """
+        assert not hasattr(mainwindow, "_on_apply_fourier_to_selection")
+        assert not hasattr(mainwindow, "_on_compute_fourier_for_selection")
+        assert not hasattr(mainwindow._fourier_panel, "_apply_to_selection_btn")
+        assert not hasattr(mainwindow._fourier_panel, "_compute_for_selection_btn")
+        assert mainwindow._fourier_panel._fft_btn.text() == "Compute FFT"
+        # MaxEnt keeps its own, semantically different, Apply to selection.
+        assert mainwindow._maxent_panel._apply_to_selection_btn.text() == "Apply to selection"
+
+    def test_compute_scope_label_tracks_selection(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The Compute FFT label shows the selection scope before clicking."""
+        ds1 = _make_fourier_ready_dataset(8880, with_grouping=True)
+        ds2 = _make_fourier_ready_dataset(8881, with_grouping=True)
+        ds3 = _make_fourier_ready_dataset(8882, with_grouping=True)
+        for ds in (ds1, ds2, ds3):
+            mainwindow._data_browser.add_dataset(ds)
+        mainwindow._on_dataset_selected(8880)
+        assert mainwindow._fourier_panel._fft_btn.text() == "Compute FFT"
+
+        # Three runs selected: the label names the full scope.
+        monkeypatch.setattr(
+            mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2, ds3]
+        )
+        mainwindow._update_selected_datasets()
+        assert mainwindow._fourier_panel._fft_btn.text() == "Compute FFT (3 runs)"
+
+        # Back to a single run: plain label.
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1])
+        mainwindow._update_selected_datasets()
+        assert mainwindow._fourier_panel._fft_btn.text() == "Compute FFT"
+
+        # One OTHER run selected + the active run = a 2-run scope (the union
+        # is what a click computes, so the label must count it).
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds2])
+        mainwindow._update_selected_datasets()
+        assert mainwindow._fourier_panel._fft_btn.text() == "Compute FFT (2 runs)"
+
+    def test_single_run_compute_fft_keeps_old_contract(self, mainwindow: MainWindow) -> None:
+        """Single-run parity: recipe recorded, spectrum rendered, workspace switched.
+
+        The consolidated selection-scoped handler must preserve the old
+        single-run Compute FFT contract end to end when only the active run
+        is in scope.
+        """
+        dataset = _make_fourier_ready_dataset(8883, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8883)
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+
+        _compute_fourier_sync(mainwindow)
+
+        rep = mainwindow._project_model.representation(8883, RepresentationType.FREQ_FFT)
+        assert rep is not None
+        assert rep.recipe.get("fourier_config")
+        assert rep.recipe.get("grouping_digest")
+        assert mainwindow._frequency_domain_is_active()
+        plotted = mainwindow._frequency_plot_panel._current_dataset
+        assert plotted is not None
+        assert int(plotted.run_number) == 8883
+        assert mainwindow.statusBar().currentMessage() == "Computed 1 spectrum."
+
+    def test_multi_run_compute_renders_overlay_when_enabled(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Overlay mode + multi-run scope: completion renders the overlay."""
+        ds1 = _make_fourier_ready_dataset(8884, with_grouping=True)
+        ds2 = _make_fourier_ready_dataset(8885, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds1)
+        mainwindow._data_browser.add_dataset(ds2)
+        mainwindow._on_dataset_selected(8884)
+        mainwindow._plot_workspace.set_active_view("fb_asymmetry")
+        mainwindow._frequency_plot_panel.set_overlay_enabled(True)
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds1, ds2])
+
+        _compute_fourier_sync(mainwindow)
+
+        assert 8884 in mainwindow._frequency_spectra_by_run
+        assert 8885 in mainwindow._frequency_spectra_by_run
+        assert mainwindow._frequency_domain_is_active()
+        assert mainwindow._frequency_overlay_active is True
+        rendered = mainwindow._frequency_plot_panel._current_datasets
+        assert {int(d.run_number) for d in rendered} == {8884, 8885}
+
+    def test_compute_fft_applies_panel_groups_to_every_target_phases_stay_per_run(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The live table's enabled groups propagate; phases remain per-run.
+
+        Run B has the opposite stored inclusion and its own stored phases.
+        After a selection-scoped Compute FFT with only group 1 enabled in the
+        live table, BOTH recipes must enable exactly {1}, with each recipe's
+        phase for group 1 coming from that run's own phase table — and run
+        B's stored inclusion must be rewritten to match its new recipe while
+        its stored phases survive.
+        """
+        ds_a = _make_fourier_ready_dataset(8890, with_grouping=True)
+        ds_b = _make_fourier_ready_dataset(8891, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_a)
+        mainwindow._data_browser.add_dataset(ds_b)
+        mainwindow._fourier_group_phase_state_by_run[8891] = {
+            "group_enabled_table": {1: False, 2: True},
+            "group_phase_table": {1: 33.0, 2: 5.0},
+        }
+        mainwindow._on_dataset_selected(8890)
+        panel = mainwindow._fourier_panel
+        panel._phase_mode_radio.setChecked(True)  # phase-corrected display
+        panel._use_phase_table_check.setChecked(True)
+        panel.set_group_enabled({1: True, 2: False})
+        panel.set_group_phases({1: 11.0})
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds_a, ds_b])
+
+        _compute_fourier_sync(mainwindow)
+
+        config_a = mainwindow._project_model.representation(
+            8890, RepresentationType.FREQ_FFT
+        ).recipe["fourier_config"]
+        config_b = mainwindow._project_model.representation(
+            8891, RepresentationType.FREQ_FFT
+        ).recipe["fourier_config"]
+        assert config_a["selected_group_ids"] == [1]
+        assert config_b["selected_group_ids"] == [1]
+        # Phases stay per-run: A from the live table, B from ITS stored table.
+        assert config_a["group_phase_degrees"] == {1: 11.0}
+        assert config_b["group_phase_degrees"] == {1: 33.0}
+        # Rule 3: B's stored inclusion now matches its recipe; phases survive.
+        stored_b = mainwindow._fourier_group_phase_state_by_run[8891]
+        assert stored_b["group_enabled_table"] == {1: True, 2: False}
+        assert stored_b["group_phase_table"] == {1: 33.0, 2: 5.0}
+
+    def test_compute_fft_skips_target_with_no_enabled_group_overlap(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A target whose groups miss the enabled set entirely is skipped+counted."""
+        ds_a = _make_fourier_ready_dataset(8892, with_grouping=True)  # groups {1, 2}
+        ds_b = _make_fourier_ready_dataset(8893, with_grouping=True)
+        assert ds_b.run is not None
+        # Re-key run B's groups to {3, 4}: disjoint from the live table's ids.
+        ds_b.run.grouping["groups"] = {3: [1], 4: [2]}
+        ds_b.run.grouping["group_names"] = {3: "Up", 4: "Down"}
+        mainwindow._data_browser.add_dataset(ds_a)
+        mainwindow._data_browser.add_dataset(ds_b)
+        mainwindow._on_dataset_selected(8892)
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds_a, ds_b])
+
+        _compute_fourier_sync(mainwindow)
+
+        assert 8892 in mainwindow._frequency_spectra_by_run
+        assert 8893 not in mainwindow._frequency_spectra_by_run
+        message = mainwindow.statusBar().currentMessage()
+        assert "Computed 1 spectrum" in message
+        assert "(1 skipped)" in message
+
+    def test_propagated_inclusion_shows_in_table_without_stale_banner(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Visiting a propagated target shows the new inclusion, in sync.
+
+        Without the stored-state rewrite, selecting run B after the compute
+        would restore its OLD inclusion into the Groups table and the
+        staleness check would immediately flag the fresh spectrum.
+        """
+        ds_a = _make_fourier_ready_dataset(8894, with_grouping=True)
+        ds_b = _make_fourier_ready_dataset(8895, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_a)
+        mainwindow._data_browser.add_dataset(ds_b)
+        mainwindow._fourier_group_phase_state_by_run[8895] = {
+            "group_enabled_table": {1: False, 2: True},
+            "group_phase_table": {},
+        }
+        mainwindow._on_dataset_selected(8894)
+        mainwindow._fourier_panel.set_group_enabled({1: True, 2: False})
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds_a, ds_b])
+        _compute_fourier_sync(mainwindow)
+
+        mainwindow._on_dataset_selected(8895)
+
+        assert mainwindow._fourier_panel.group_enabled_table() == {1: True, 2: False}
+        assert mainwindow._fourier_panel.is_stale() is False
+
+    def test_compute_on_view_seeding_still_uses_the_runs_own_stored_groups(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """Regression: implicit seeding keeps per-run inclusion, not the live table.
+
+        Only the explicit Compute FFT propagates the panel's enabled groups;
+        a never-computed run reached through compute-on-view must still seed
+        its recipe from ITS OWN stored/default inclusion.
+        """
+        ds_active = self._compute_run_fft(mainwindow, 8896)
+        ds_seed = _make_fourier_ready_dataset(8897, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_seed)
+        mainwindow._fourier_group_phase_state_by_run[8897] = {
+            "group_enabled_table": {1: False, 2: True},
+            "group_phase_table": {},
+        }
+        # Live table (active run 8896) has both groups enabled — the seed
+        # below must NOT pick that up.
+        assert mainwindow._fourier_panel.group_enabled_table() == {1: True, 2: True}
+        assert ds_active is not ds_seed
+
+        target = mainwindow._seed_fft_recipe_for_view(8897)
+
+        assert target is not None
+        recipe = mainwindow._project_model.representation(8897, RepresentationType.FREQ_FFT).recipe
+        assert recipe["fourier_config"]["selected_group_ids"] == [2]
 
     def test_switching_to_batch_subtab_refreshes_fit_block_state(
         self, mainwindow: MainWindow
@@ -1081,15 +1468,55 @@ class TestMainWindowFourier:
         mainwindow._fit_panel._tabs.setCurrentIndex(single_index)
         assert calls
 
-    def test_apply_fourier_to_selection_requires_prior_compute(
+    def test_compute_fourier_for_selection_computes_without_prior_compute(
         self, mainwindow: MainWindow
     ) -> None:
+        """Unlike the old "Apply to selection", no prior Compute FFT is required.
+
+        The old handler needed a source run's already-computed recipe to copy
+        ("Compute an FFT first, then apply it to the selection."). The new
+        handler builds each target's config from the live panel state, so an
+        empty/single-run selection with no prior compute still produces a
+        spectrum — equivalent to Compute FFT on the active run.
+        """
         dataset = _make_fourier_ready_dataset(8832, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8832)
-        # No FFT computed yet -> nothing to apply.
-        mainwindow._on_apply_fourier_to_selection()
-        assert 8832 not in mainwindow._frequency_spectra_by_run
+        # No FFT computed yet, and nothing selected in the Data Browser beyond
+        # the active run: falls back to the active run, like Compute FFT.
+        _compute_fourier_sync(mainwindow)
+        assert 8832 in mainwindow._frequency_spectra_by_run
+        rep = mainwindow._project_model.representation(8832, RepresentationType.FREQ_FFT)
+        assert rep is not None
+        assert rep.recipe.get("fourier_config")
+
+    def test_compute_fourier_for_selection_single_other_run_is_not_a_fallback(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One OTHER selected run plus the active run is a real 2-run compute.
+
+        Regression guard: the fallback ("only the active run") status note
+        must be judged from the FINAL target set (selection unioned with the
+        active run), not from the raw Data Browser selection size — a
+        single-run selection that differs from the active run still yields
+        two targets and must not be reported as a fallback.
+        """
+        ds_active = _make_fourier_ready_dataset(8838, with_grouping=True)
+        ds_other = _make_fourier_ready_dataset(8839, with_grouping=True)
+        mainwindow._data_browser.add_dataset(ds_active)
+        mainwindow._data_browser.add_dataset(ds_other)
+        mainwindow._on_dataset_selected(8838)  # active run = 8838
+
+        # The Data Browser selection holds exactly one run — 8839 — which is
+        # NOT the active run, so the union yields two targets.
+        monkeypatch.setattr(mainwindow._data_browser, "get_selected_datasets", lambda: [ds_other])
+        _compute_fourier_sync(mainwindow)
+
+        assert 8838 in mainwindow._frequency_spectra_by_run
+        assert 8839 in mainwindow._frequency_spectra_by_run
+        message = mainwindow.statusBar().currentMessage()
+        assert message.startswith("Computed 2 spectra")
+        assert "Only the active run was targeted" not in message
 
     def test_fourier_inclusion_seeded_from_grouping_default(self, mainwindow: MainWindow) -> None:
         # A group flagged excluded in the grouping (e.g. a HAL-9500 MV veto)
@@ -1731,27 +2158,22 @@ class TestMainWindowFourier:
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8811)
         _compute_fourier_sync(mainwindow)
-        abs_x_min, abs_x_max, _abs_y_min, _abs_y_max = (
-            mainwindow._frequency_plot_panel.get_view_limits()
-        )
-        abs_axis_min, abs_axis_max = mainwindow._frequency_plot_panel._ax.get_xlim()
+        panel = mainwindow._frequency_plot_panel
 
-        mainwindow._frequency_axis_relative_check.setChecked(True)
+        # Shift mode genuinely re-centres the axis on the run's reference field:
+        # the plotted x-limits move by γ_μ·B and the axis label names the shift.
+        abs_axis_min, abs_axis_max = panel._ax.get_xlim()
+        panel.set_frequency_axis_mode("shift")
 
-        x_min, x_max, _y_min, _y_max = mainwindow._frequency_plot_panel.get_view_limits()
         center = 100.0 * 135.538817 * 1.0e-4
-        plotted = mainwindow._frequency_plot_panel._current_dataset
-
-        assert plotted is not None
-        assert mainwindow._frequency_plot_panel._ax.get_xlabel() == "Frequency (MHz)"
-        assert x_min == pytest.approx(abs_x_min - center, abs=1e-3)
-        assert x_max == pytest.approx(abs_x_max - center, abs=1e-3)
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(
-            abs_axis_min, abs=1e-3
-        )
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(
-            abs_axis_max, abs=1e-3
-        )
+        assert panel._current_dataset is not None
+        assert panel._ax.get_xlabel() == "Frequency shift ν − ν₀ (MHz)"
+        # The plotted matplotlib axis itself is now shift-space (not a hidden
+        # absolute axis behind offset boxes).
+        shift_axis_min, shift_axis_max = panel._ax.get_xlim()
+        assert shift_axis_min == pytest.approx(abs_axis_min - center, abs=0.5)
+        assert shift_axis_max == pytest.approx(abs_axis_max - center, abs=0.5)
+        assert panel.is_frequency_axis_relative_to_reference() is True
 
     def test_frequency_phase_window_narrows_wide_relative_view(
         self,
@@ -1762,7 +2184,7 @@ class TestMainWindowFourier:
         mainwindow._on_dataset_selected(8813)
         _compute_fourier_sync(mainwindow)
 
-        mainwindow._frequency_axis_relative_check.setChecked(True)
+        mainwindow._frequency_plot_panel.set_frequency_axis_mode("shift")
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
         mainwindow._frequency_plot_panel.set_view_limits(-40.0, 40.0, y_min, y_max)
 
@@ -1779,23 +2201,139 @@ class TestMainWindowFourier:
         mainwindow._on_dataset_selected(8814)
         _compute_fourier_sync(mainwindow)
 
-        mainwindow._frequency_axis_relative_check.setChecked(True)
+        mainwindow._frequency_plot_panel.set_frequency_axis_mode("shift")
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
         mainwindow._frequency_plot_panel.set_view_limits(-0.75, 0.25, y_min, y_max)
 
         _compute_fourier_sync(mainwindow)
 
         x_min, x_max, _y_min, _y_max = mainwindow._frequency_plot_panel.get_view_limits()
-        center = 100.0 * 135.538817 * 1.0e-4
 
+        # Shift mode: the limit boxes ARE the plotted axis (identity mapping), so
+        # both the control values and the matplotlib xlim survive the recompute.
         assert x_min == pytest.approx(-0.75, abs=1e-6)
         assert x_max == pytest.approx(0.25, abs=1e-6)
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(
-            center - 0.75, abs=1e-3
-        )
-        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(
-            center + 0.25, abs=1e-3
-        )
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[0] == pytest.approx(-0.75, abs=1e-3)
+        assert mainwindow._frequency_plot_panel._ax.get_xlim()[1] == pytest.approx(0.25, abs=1e-3)
+
+    def test_frequency_typed_limits_survive_browsing_past_uncomputed_run(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """The exact user-reported scenario: typed limits survive a transient blank.
+
+        Plan-A #2: typing takes control of the frame; browsing onto a run with no
+        spectrum clears the plot only transiently (``preserve_view_state=True``),
+        so returning to the original run keeps the typed window rather than
+        reframing over it.
+        """
+        dataset = _make_fourier_ready_dataset(8890, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8890)
+        mainwindow._on_domain_button_clicked("frequency")
+        _compute_fourier_sync(mainwindow)
+
+        panel = mainwindow._frequency_plot_panel
+        # Type a deliberate window (drives the real user-lock path).
+        panel._x_min.setValue(1.5)
+        panel._x_max.setValue(3.5)
+        panel._y_min.setValue(-4.0)
+        panel._y_max.setValue(9.0)
+        panel._on_limit_fields_edited()
+        assert panel._limits_user_locked is True
+
+        # Browse onto a state with nothing to show (transient clear path) …
+        mainwindow._sync_frequency_plot_for_run(None)
+        # … then back to the original run: the typed window is intact.
+        mainwindow._sync_frequency_plot_for_run(8890)
+
+        assert panel.get_view_limits() == pytest.approx((1.5, 3.5, -4.0, 9.0))
+
+    def test_frequency_same_run_recompute_preserves_both_x_and_y(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """A same-run recompute must keep BOTH the X and the Y window (Plan-A #3).
+
+        Previously only X was re-applied and the plot's own Y was accepted, so a
+        recompute silently reset the vertical zoom.
+        """
+        dataset = _make_fourier_ready_dataset(8891, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8891)
+        mainwindow._on_domain_button_clicked("frequency")
+        _compute_fourier_sync(mainwindow)
+
+        panel = mainwindow._frequency_plot_panel
+        # A distinctive window that a fresh auto-frame would not reproduce.
+        panel.set_view_limits(2.0, 8.0, 5.0, 250.0)
+
+        _compute_fourier_sync(mainwindow)
+
+        assert panel.get_view_limits() == pytest.approx((2.0, 8.0, 5.0, 250.0))
+
+    def test_frequency_first_compute_frames_spectrum_not_precompute_defaults(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """The first compute frames the spectrum, not stale pre-compute fields (Plan-A #4).
+
+        On a genuine first paint the freshly computed smart framing must survive;
+        the caller-preserved limits captured from the pre-compute spin fields must
+        not be re-applied over it.
+        """
+        dataset = _make_fourier_ready_dataset(8892, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8892)
+        mainwindow._on_domain_button_clicked("frequency")
+
+        # Leftover, clearly-wrong window in the (empty-prompt) fields before compute.
+        panel = mainwindow._frequency_plot_panel
+        panel.set_view_limits(0.0, 999.0, -777.0, 777.0)
+
+        _compute_fourier_sync(mainwindow)
+
+        x_min, x_max, y_min, y_max = panel.get_view_limits()
+        # Framed to the data (Nyquist ~10 MHz; FFT magnitudes are ~1e7), not the
+        # stale 999 MHz / ±777 pre-compute window.
+        assert x_max < 100.0
+        assert (y_min, y_max) != pytest.approx((-777.0, 777.0))
+        assert y_max > 1000.0
+
+    def test_frequency_render_reframes_new_run_ignoring_carried_stale_limits(
+        self, mainwindow: MainWindow
+    ) -> None:
+        """A reframing draw ignores caller-preserved limits (Plan-A #4 discriminator).
+
+        When a transient ``preserve_view_state`` clear carries a stale frame latch
+        across a run switch and the next compute reframes to the new run, the
+        stale preserved window must NOT be restored — the render restores
+        preserved limits only when the draw did not reframe. This is the case a
+        naive "was the latch set before the draw?" check gets wrong.
+        """
+        dataset = _make_fourier_ready_dataset(8893, with_grouping=True)
+        mainwindow._data_browser.add_dataset(dataset)
+        mainwindow._on_dataset_selected(8893)
+        mainwindow._on_domain_button_clicked("frequency")
+        _compute_fourier_sync(mainwindow)
+
+        rep = RepresentationType.FREQ_FFT
+        spectra = mainwindow._frequency_spectra_from_cache(8893, rep)
+        assert spectra
+
+        # Reproduce the carried-stale-frame state a preserve_view_state clear
+        # during a run switch leaves: latch initialized for a DIFFERENT run,
+        # not locked, an out-of-range window still in the fields.
+        panel = mainwindow._frequency_plot_panel
+        panel.clear(preserve_view_state=True)
+        panel._limits_initialized = True
+        panel._limits_user_locked = False
+        panel._framed_identity = ("stale-other-run",)
+        panel.set_view_limits(50.0, 100.0, -5.0, 5.0)
+
+        # The completing compute passes the stale window as "preserved".
+        mainwindow._render_frequency_spectra(8893, rep, spectra, (50.0, 100.0), (-5.0, 5.0))
+
+        _x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+        # Reframed to the run's own spectrum (Nyquist ~10 MHz), not the stale 100.
+        assert x_max < 20.0
 
     @pytest.mark.timeout(300)
     def test_compute_maxent_uses_maxent_view_and_separate_cache(
@@ -1881,7 +2419,7 @@ class TestMainWindowFourier:
         mainwindow._fourier_panel._phase_mode_radio.setChecked(True)
         mainwindow._fourier_panel._use_phase_table_check.setChecked(True)
         mainwindow._fourier_panel.set_group_phases({1: 14.0, 2: -9.0}, auto_filled=True)
-        mainwindow._frequency_axis_relative_check.setChecked(True)
+        mainwindow._frequency_plot_panel.set_frequency_axis_mode("shift")
         _x_min, _x_max, y_min, y_max = mainwindow._frequency_plot_panel.get_view_limits()
         mainwindow._frequency_plot_panel.set_view_limits(-0.8, 0.4, y_min, y_max)
 
@@ -2466,7 +3004,9 @@ class TestMainWindowBasic:
         log_text = mainwindow._log_panel.to_plain_text()
         assert "PERF selection_plot:" in log_text
         assert "PERF dataset_selected:" in log_text
-        assert "PERF compute_fourier:" in log_text
+        # The consolidated selection-scoped Compute FFT runs through the shared
+        # batch recompute, whose perf event reports duration + run count.
+        assert "PERF batch_spectrum_recompute:" in log_text
 
     def test_perf_logging_reports_load_file_batches_when_enabled(
         self,
@@ -6206,6 +6746,65 @@ class TestReductionSettingsPersistence:
         mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert "binning_mode" not in dataset.run.grouping
+
+
+class TestPlotRangeSettingsNaNRecovery:
+    """A NaN persisted in the plot-range settings must never crash startup.
+
+    Regression: a session persisted ``plot/freq_y_min``/``plot/freq_y_max`` as
+    NaN at shutdown; every subsequent launch replayed them through
+    ``set_view_limits`` into ``Axes.set_ylim``, which raises ``ValueError:
+    Axis limits cannot be NaN or Inf`` before the window appeared — an
+    unrecoverable crash loop short of hand-editing the settings store.
+    """
+
+    def _seed_poisoned_settings(self) -> None:
+        settings = QSettings()
+        settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
+        settings.setValue("plot/time_x_min", 0.0)
+        settings.setValue("plot/time_x_max", 107520.0)
+        settings.setValue("plot/time_y_min", -96.278)
+        settings.setValue("plot/time_y_max", float("nan"))
+        settings.setValue("plot/freq_x_min", -0.025)
+        settings.setValue("plot/freq_x_max", 0.525)
+        settings.setValue("plot/freq_y_min", float("nan"))
+        settings.setValue("plot/freq_y_max", float("nan"))
+        settings.sync()
+
+    def test_startup_survives_nan_plot_ranges_and_falls_back_to_defaults(
+        self, qapp: QApplication
+    ) -> None:
+        self._seed_poisoned_settings()
+
+        window = MainWindow()  # must not raise
+
+        # Finite saved values are honoured; each NaN falls back to its default.
+        x_min, x_max, y_min, y_max = window._plot_panel.get_view_limits()
+        assert y_min == pytest.approx(-96.278)
+        assert y_max == pytest.approx(30.0)  # NaN -> time-panel default
+        x_min, x_max, y_min, y_max = window._frequency_plot_panel.get_view_limits()
+        assert (x_min, x_max) == pytest.approx((-0.025, 0.525))
+        assert (y_min, y_max) == pytest.approx((0.0, 10.0))  # NaN -> freq defaults
+
+    def test_close_event_never_persists_non_finite_limits(
+        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The write side is guarded too: a non-finite limit set is skipped,
+        keeping the previous session's good ranges in the store."""
+        settings = QSettings()
+        settings.setValue("plot/freq_y_min", 1.5)
+        settings.setValue("plot/freq_y_max", 7.5)
+        monkeypatch.setattr(
+            mainwindow._frequency_plot_panel,
+            "get_view_limits",
+            lambda: (0.0, 20.0, float("nan"), float("inf")),
+        )
+
+        mainwindow.close()
+
+        settings.sync()
+        assert float(settings.value("plot/freq_y_min", type=float)) == pytest.approx(1.5)
+        assert float(settings.value("plot/freq_y_max", type=float)) == pytest.approx(7.5)
 
 
 class TestRefitCoadded:

@@ -9,13 +9,17 @@ from numpy.typing import NDArray
 
 from asymmetry.core.fitting.models import _bounded_cache_get, _strong_collision_solve
 from asymmetry.core.fitting.muon_fluorine.dipolar import (
+    _PAIR_F1_F2,
+    _PAIR_ISO,
     _PAIR_ISO_FOUR,
+    _PAIR_MU_F1,
+    _PAIR_MU_F2,
+    _PAIR_TENSOR,
     _PAIR_TENSOR_FOUR,
     MUON_SIGMA_Z_FOUR_SPIN,
     MUON_SIGMA_Z_THREE_SPIN,
     omega_d_f_f_rad_per_us,
     omega_d_mu_f_rad_per_us,
-    three_spin_hamiltonian_rad_per_us,
 )
 
 _DEFAULT_NUM_BETA = 8
@@ -226,30 +230,34 @@ def _general_spectral_terms_cached(
     coupling_mu_f2 = omega_d_mu_f_rad_per_us(r2)
     coupling_f1_f2 = omega_d_f_f_rad_per_us(float(np.mean(d_f1_f2)))
 
-    frequencies_list: list[NDArray[np.float64]] = []
-    amplitudes_list: list[NDArray[np.float64]] = []
+    # Build all orientations' 8x8 Hamiltonians in one shot, mirroring the
+    # four-spin triangle path (`_triangle_spectral_terms_cached`): for each
+    # pair the coupling term is c * [iso - 3 (n.S_i)(n.S_j)] with n the
+    # per-orientation unit direction, so stacking the outer products n n^T
+    # over orientations turns the per-orientation Python loop into a single
+    # einsum against the precomputed (3, 3, 8, 8) pair tensors, followed by
+    # one batched eigh — ~4x faster per cache miss than the loop (this is the
+    # hot path of a fit, since every minimizer step changes the geometry and
+    # misses the cache).
+    n_orient = rotations.shape[0]
     dim = MUON_SIGMA_Z_THREE_SPIN.shape[0]
+    hamiltonians = np.zeros((n_orient, dim, dim), dtype=complex)
+    for coupling, n_vecs, pair in (
+        (coupling_mu_f1, n_mu_f1, _PAIR_MU_F1),
+        (coupling_mu_f2, n_mu_f2, _PAIR_MU_F2),
+        (coupling_f1_f2, n_f1_f2, _PAIR_F1_F2),
+    ):
+        outer = (n_vecs[:, :, None] * n_vecs[:, None, :]).reshape(n_orient, 9)
+        aniso = (outer @ _PAIR_TENSOR[pair].reshape(9, dim * dim)).reshape(n_orient, dim, dim)
+        hamiltonians += coupling * (_PAIR_ISO[pair][None, :, :] - 3.0 * aniso)
 
-    for idx, orient_weight in enumerate(orientation_weights):
-        hamiltonian = three_spin_hamiltonian_rad_per_us(
-            coupling_mu_f1,
-            coupling_mu_f2,
-            coupling_f1_f2,
-            n_mu_f1[idx],
-            n_mu_f2[idx],
-            n_f1_f2[idx],
-        )
-        evals, evecs = np.linalg.eigh(hamiltonian)
+    evals, evecs = np.linalg.eigh(hamiltonians)  # (n, 8), (n, 8, 8)
+    sigma_eig = evecs.conj().transpose(0, 2, 1) @ MUON_SIGMA_Z_THREE_SPIN @ evecs
+    transition_weights = (np.abs(sigma_eig) ** 2) / float(dim)  # (n, 8, 8)
+    omega_mn = (evals[:, :, None] - evals[:, None, :]).real
 
-        sigma_mu_z_eigenbasis = evecs.conj().T @ MUON_SIGMA_Z_THREE_SPIN @ evecs
-        transition_weights = (np.abs(sigma_mu_z_eigenbasis) ** 2) / float(dim)
-
-        omega_mn = (evals[:, None] - evals[None, :]).real
-        frequencies_list.append(omega_mn.ravel())
-        amplitudes_list.append((float(orient_weight) * transition_weights).ravel().real)
-
-    frequencies = np.concatenate(frequencies_list)
-    amplitudes = np.concatenate(amplitudes_list)
+    frequencies = omega_mn.reshape(-1)
+    amplitudes = (orientation_weights[:, None, None] * transition_weights).reshape(-1).real
 
     binned_frequencies = np.round(frequencies, decimals=_SPECTRUM_BIN_DECIMALS)
     unique_freq, inverse = np.unique(binned_frequencies, return_inverse=True)
