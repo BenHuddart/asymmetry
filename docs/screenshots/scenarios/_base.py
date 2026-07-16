@@ -13,9 +13,10 @@ mutate global Qt state themselves.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, ClassVar
+from typing import ClassVar
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, Qt, QTimer
 from PySide6.QtGui import QPixmap

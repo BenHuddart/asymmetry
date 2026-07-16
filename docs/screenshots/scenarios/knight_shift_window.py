@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QSplitter, QWidget
 
-from ._base import Scenario, register, _process_events_for
+from ._base import Scenario, _process_events_for, register
 
 
 def _build_snapshot():

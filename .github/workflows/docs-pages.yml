@@ -68,6 +68,12 @@ jobs:
         # still costs capture time on every full build).
         run: python -m docs.screenshots.capture --check-refs
 
+      - name: Write corpus screenshot stubs
+        # The PR smoke never has the muon-school corpus; labelled placeholder
+        # PNGs stand in for the corpus-driven renders so pages that embed them
+        # build image-complete (PIL only — no Qt, no corpus, seconds).
+        run: python -m docs.screenshots.capture_corpus --stubs
+
       - name: Build HTML docs (no screenshots)
         # Screenshots are not generated here; pages that embed generated images
         # tolerate their absence. -W would turn missing-image warnings into
@@ -82,10 +88,15 @@ jobs:
     name: Build Sphinx docs
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    # Outer guard: the in-process screenshot watchdog (faulthandler, ~8 min) and
-    # the step timeout below should both fire first; this bounds the whole job in
-    # case anything upstream/downstream of screenshots wedges too.
-    timeout-minutes: 30
+    # Outer guard: the in-process screenshot watchdog (faulthandler, ~8 min per
+    # capture process) and the step timeouts below should all fire first; this
+    # bounds the whole job in case anything upstream/downstream wedges too.
+    # Corpus capture runs one process per scenario module, so no single process
+    # approaches the watchdog even though the whole sweep takes tens of minutes.
+    timeout-minutes: 75
+    env:
+      CORPUS_VERSION: "2026.07.16"
+      CORPUS_REPO: "BenHuddart/wimda-muon-school-corpus"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -106,7 +117,38 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libegl1 libxkbcommon0 libdbus-1-3 fonts-dejavu-core
+            libegl1 libxkbcommon0 libdbus-1-3 fonts-dejavu-core zstd
+
+      - name: Restore corpus cache
+        id: corpus-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/wimda-corpus
+          key: wimda-corpus-${{ env.CORPUS_VERSION }}
+
+      - name: Download muon-school corpus
+        # The corpus lives as a release asset on a separate (private) repo.
+        # CORPUS_REPO_TOKEN is a fine-grained PAT with read access to that
+        # repo's releases; when it is absent (e.g. a fork), the step is
+        # skipped and the stubs fallback below keeps the build green.
+        if: steps.corpus-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.CORPUS_REPO_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "CORPUS_REPO_TOKEN not available; corpus renders will be stubs."
+            exit 0
+          fi
+          gh release download "v${CORPUS_VERSION}" \
+            --repo "$CORPUS_REPO" \
+            --pattern "wimda-corpus-${CORPUS_VERSION}.tar.zst*" \
+            --dir /tmp/corpus
+          (cd /tmp/corpus && sha256sum -c "wimda-corpus-${CORPUS_VERSION}.tar.zst.sha256")
+          mkdir -p ~/wimda-corpus
+          tar --use-compress-program=unzstd \
+            -xf "/tmp/corpus/wimda-corpus-${CORPUS_VERSION}.tar.zst" \
+            -C ~/wimda-corpus --strip-components=1
+          rm -rf /tmp/corpus
 
       - name: Generate GUI screenshots
         continue-on-error: true
@@ -117,6 +159,33 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m docs.screenshots.capture --out docs/_generated/screenshots
+
+      - name: Generate corpus screenshots
+        continue-on-error: true
+        # One capture process per scenario module keeps every process well
+        # inside the in-process watchdog; a wedged module loses only its own
+        # renders (the stubs pass below fills any hole). Skipped modules are
+        # visible in the log. Falls back to stubs-only when the corpus was not
+        # provisioned (no token / failed download).
+        timeout-minutes: 45
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          if [ ! -d ~/wimda-corpus/Basics ]; then
+            echo "Corpus not provisioned; writing stub renders only."
+          else
+            export ASYMMETRY_CORPUS_ROOT="$HOME/wimda-corpus"
+            for module in $(python -m docs.screenshots.capture_corpus --list-modules); do
+              echo "::group::corpus module ${module}"
+              python -m docs.screenshots.capture_corpus --module "${module}" || \
+                echo "::warning::corpus module ${module} failed; stubs will fill its renders"
+              echo "::endgroup::"
+            done
+          fi
+          # Fill any missing render (failed module, or no corpus at all) with a
+          # labelled placeholder so the built pages are image-complete. Existing
+          # real renders are never overwritten.
+          python -m docs.screenshots.capture_corpus --stubs-missing
 
       - name: Build HTML docs
         run: sphinx-build -d docs/_build/doctrees -b html docs docs/_build/html

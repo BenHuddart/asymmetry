@@ -28,7 +28,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from ..data import make_ybco_vortex_lattice
-from ._base import Scenario, register, _process_events_for
+from ._base import Scenario, _process_events_for, register
 
 
 def _raise_inspector_tab(window, tab_label: str) -> None:
@@ -136,6 +136,5 @@ class FourierTfScenario(Scenario):
 # Local import alias kept inside the module to avoid leaking constants from
 # the data layer to scenario imports elsewhere.
 from ..data.archetypes import GAMMA_MU_MHZ_PER_G  # noqa: E402
-
 
 register(FourierTfScenario())

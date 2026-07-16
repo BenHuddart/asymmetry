@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from ..data import make_pbf2_fmuf
-from ._base import Scenario, register, _process_events_for
+from ._base import Scenario, _process_events_for, register
 
 
 class MuonFluorinePbf2Scenario(Scenario):
@@ -78,7 +78,7 @@ class MuonFluorinePbf2Scenario(Scenario):
         # The fit runs on a worker thread; block (with a live event loop)
         # until it lands so the screenshot captures the converged parameters
         # rather than the transient "Fitting…" state (mirrors
-        # euo_fit_oscillatory.py). The wait is bounded, so a stalled fit
+        # the corpus euo_ordering.py scenarios). The wait is bounded, so a stalled fit
         # cannot wedge the capture indefinitely.
         single_tab.wait_for_fit()
 

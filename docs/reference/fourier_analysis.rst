@@ -429,6 +429,8 @@ the forward/adjoint contract of the full three-direction Skilling–Bryan search
 [2]_ but does not yet implement that search itself; it is available from both
 the core Python API and the desktop GUI.
 
+.. _maxent-caution:
+
 .. caution::
 
    **A MaxEnt spectrum is an estimate, not a measurement — do not over-read
@@ -678,10 +680,72 @@ MaxEnt rewards a tightly scoped problem. To resolve a clean precession line:
   refinement — the fit is over-iterating; **Restart** and run fewer cycles
   (or with fewer spectrum points) rather than pushing it further.
 
-As a worked example, the CdS shallow-donor TF 100 G run (run 20711) resolves
-the 1.38 MHz Mu\ :sup:`+` line — :math:`\gamma_\mu \cdot 100\,\text{G}` — with a
-frequency window capped a little above 1.38 MHz, a good time window, and a
-modest number of cycles and spectrum points.
+As a worked example, the CdS shallow-donor TF 100 G run at base temperature
+(run 20721, logged 5.175 K, 45.9 Mevents — the highest-statistics run, deepest
+in the neutral-muonium phase) resolves the diamagnetic Mu\ :sup:`+` Larmor line
+near 1.39 MHz (the muon Larmor frequency at 100 G, :math:`\gamma_\mu \cdot 100\,
+\text{G} \approx 1.36` MHz) with a frequency window capped a little above the
+line, a good time window, and a modest number of cycles and spectrum points.
+Tightening that window further and binning the raw histogram brings out the two
+faint Mu\ :sup:`0` satellites this cold run also carries — the super-resolution
+example below.
+
+Super-resolution: satellites the FFT cannot separate
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The clearest demonstration of what MaxEnt buys you is a splitting the FFT
+physically cannot separate. In a shallow-donor semiconductor the implanted muon
+captures an electron to form neutral muonium (Mu\ :sup:`0`), a light-hydrogen
+analogue whose weak hyperfine coupling splits the diamagnetic precession line
+into a **triplet**: a central Mu\ :sup:`+` line flanked by two Mu\ :sup:`0`
+satellites offset by half the hyperfine constant. In CdS at 100 G that splitting
+is only about 0.214 MHz [8]_ [9]_ — a few times the raw FFT bin of the EMU
+record (≈ 32 kHz over its 32 μs window), so close that the transform's own sinc
+side-lobes masquerade as structure and the three lines blur into a single lumpy
+shoulder.
+
+.. figure:: /_generated/corpus_screenshots/corpus_cds_maxent_triplet.png
+   :alt: Side-by-side program FFT and MaxEnt reconstruction of the CdS
+      shallow-donor TF 100 G base-temperature run 20721, showing the muonium
+      satellite triplet blurred by the FFT and resolved by MaxEnt
+   :width: 100%
+
+   The base-temperature CdS run (20721, logged 5.175 K, 45.9 Mevents, TF 100
+   G). *Left:* the program FFT — at its native ≈ 32 kHz bin, no zero padding —
+   renders the Mu\ :sup:`0` satellite triplet as an unreadable comb of
+   side-lobes about the central Mu\ :sup:`+` line. *Right:* a MaxEnt
+   reconstruction over a tight explicit window resolves three clean lobes at
+   1.27, 1.39, and 1.51 MHz — the central line and its two satellites. The
+   measured satellite splitting, ≈ 0.214 MHz, is the shallow-muonium hyperfine
+   constant. The reconstruction plateaus at χ²/N = 4.54 on this real
+   forward/backward run, yet the lobe centres land on the expected positions.
+
+The recipe is the tightly scoped one above, pushed to its limit:
+
+* **Set an explicit frequency window** — 0.9–1.9 MHz here. Uncheck ``Auto
+  window from field``: at 100 G the field-derived window spans several MHz, so
+  the reconstruction spends its amplitude budget on empty bins and blurs the
+  very lines you are trying to separate.
+* **Bin the raw histogram** (``Binning`` ×4). Combining time bins shortens the
+  design matrix and raises the counts per bin without touching the frequency
+  resolution, which the window sets.
+* **Keep the spectrum grid compact** — a 128-point grid across the narrow
+  window is enough to separate lines 0.1 MHz apart. This is a genuine
+  trade-off: too fine a grid lets the reconstruction ring, scattering spurious
+  ripple between the lobes, while too coarse a grid merges them, so the compact
+  grid is chosen deliberately rather than for speed.
+* **Run a modest number of cycles** (about 20) and watch the Diagnostics line
+  settle.
+
+Note the honest caveat printed on the figure. On this real, high-statistics
+forward/backward run the χ² per degree of freedom plateaus near 4.5 rather than
+falling to 1 — the error model and background handling of a genuine run set a
+floor the entropy estimator cannot beat, and a plateau above 1 is expected on
+several real runs even where the reconstruction is visibly correct. The
+:ref:`caution above <maxent-caution>` therefore applies with full force: read
+the **number and positions** of the three lines, which are robust, and measure
+the splitting with a frequency-domain fit (:doc:`frequency_domain_fitting`)
+rather than off the lobe heights.
 
 Reading the reconstruction overlay
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -929,6 +993,56 @@ reconstruction resolves the asymmetric line at higher effective resolution and
 carries the per-group phases, the per-bin errors, and — at a pulsed source — the
 pulse response through its forward model. Choose between them with the guidance
 above.
+
+High-field FFT and MaxEnt on HAL data
+-------------------------------------
+
+The same comparison plays out on real high-field data. The organic
+antiferromagnet κ-(BEDT-TTF)\ :sub:`2`\ Cu[N(CN)\ :sub:`2`]Cl was measured in
+transverse fields of 6 and 8 T on the HAL9500 spectrometer at PSI [10]_. At 6 T
+the diamagnetic Larmor line sits at 813 MHz (:math:`\gamma_\mu \cdot 6\,\text{T}`),
+and the raw HAL ``.mdu`` histograms are binned finely enough — about 0.02 ns —
+that the transform reaches it directly, with no rotating reference frame. This
+is the corpus's high-field frequency-domain example; the ordering transition
+and its order parameter are analysed as a temperature trend
+(:doc:`/workflows/temperature_scan_magnetism`) rather than repeated here.
+
+.. figure:: /_generated/corpus_screenshots/corpus_kappacl_tf_fft.png
+   :alt: Multi-run FFT overlay of two κ-Cl 6 T runs at 813 MHz — a sharp
+      paramagnetic line at 50.66 K and a broadened, depleted ordered line at
+      3.24 K
+   :width: 100%
+
+   Two 6 T runs overlaid on the **Frequency Domain** tab through the
+   `GUI Fourier workflow`_ multi-run overlay, with the plot's ``Label`` combo
+   set to ``Temperature (K)`` so the legend reads the temperatures directly.
+   The paramagnetic run (50.66 K, above the transition) shows a sharp
+   diamagnetic line at 813.5 MHz; the ordered run (3.24 K, below it) is visibly
+   **broadened and depleted** — the antiferromagnetic order moves spectral
+   weight out of the sharp central peak into the wings. The narrow 6 T line
+   (~13 G wide at 813 MHz) is framed around its centre automatically, since on
+   a from-zero axis it would be sub-pixel.
+
+MaxEnt reconstructs the same line straight off the raw ``.mdu`` file. Its
+≈ 389 000 time bins would make an unsteered reconstruction enormous, but with
+``Auto workload steering`` (see `Workload steering and the large-calculation
+warning`_) the engine sizes the settings you leave unset to the run — here
+raising ``Binning`` to 10 and capping the end time near 2 μs — and records what
+it chose in the result's ``auto_steer_applied`` metadata.
+
+.. figure:: /_generated/corpus_screenshots/corpus_kappacl_maxent.png
+   :alt: Auto-steered MaxEnt reconstruction of the base-temperature κ-Cl 6 T
+      run 686, showing the internal-field line at 813.56 MHz just above the
+      applied-field marker
+   :width: 100%
+
+   The base-temperature ordered run (686, 6 T, 3.24 K) reconstructed by MaxEnt
+   from the raw HAL histograms with binning and end-time chosen automatically.
+   The internal-field line lands at 813.56 MHz, just above the
+   :math:`\gamma_\mu \cdot B` applied-field marker at 813.3 MHz, and the
+   calculation converges in eight cycles. The field-referenced ΔB axis the
+   original study works in is one selector away through **X Units** and
+   **Axis:** (`Shift axes`_).
 
 Practical example
 -----------------
@@ -1299,6 +1413,13 @@ References
    *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), §15.5.
 
 .. [7] F. J. Harris, Proc. IEEE **66**, 51 (1978).
+
+.. [8] J. M. Gil *et al.*, Phys. Rev. Lett. **83**, 5294 (1999).
+
+.. [9] J. M. Gil *et al.*, Phys. Rev. B **64**, 075205 (2001).
+
+.. [10] B. M. Huddart, T. Lancaster, S. J. Blundell, Z. Guguchia, H. Taniguchi,
+   S. J. Clark, and F. L. Pratt, Phys. Rev. Research **5**, 013015 (2023).
 
 The ``phaseOptReal`` entropy phase optimiser reproduces the
 ``PFTPhaseCorrection`` routine of musrfit (A. Suter and B. M. Wojek,

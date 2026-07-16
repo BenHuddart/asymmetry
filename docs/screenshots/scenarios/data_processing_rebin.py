@@ -29,7 +29,6 @@ class DataProcessingRebinScenario(Scenario):
     size = (1400, 720)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
-        from asymmetry.gui.panels.plot_panel import PlotPanel
 
         raw_dataset = make_generic_tf_for_processing()
         t_reb, v_reb, e_reb = rebin(
