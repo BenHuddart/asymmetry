@@ -144,6 +144,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/gui/test_trend_axis_transforms.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_fit_panel_density.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_grouping_preview_pane.py" = ["E402"]  # pytest.importorskip before optional Qt imports
+"tests/gui/test_maxent_workload_warning.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/core/test_field_scan_fitting.py" = ["N803"]  # Physics parameter names (B0, Bwid)
 "tests/core/test_sc_vl_lineshape.py" = ["N803", "N806"]  # Physics parameter names (B0, Bc2)
 "tests/core/test_rf_musr_resonance.py" = ["N802", "N803"]  # Physics names (A_p in test ids; A_mu/BG args)

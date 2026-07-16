@@ -22,6 +22,7 @@ from asymmetry.core.maxent.engine import (
     maxent,
     opus,
     reconstruct_group_signals,
+    resolve_maxent_auto_steering,
     run_cycles,
     tropus,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "pulse_response",
     "reconstruct_group_signals",
     "resolve_backend",
+    "resolve_maxent_auto_steering",
     "run_cycles",
     "run_log_text",
     "spectrum_to_text",

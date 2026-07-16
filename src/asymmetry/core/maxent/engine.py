@@ -50,6 +50,32 @@ _EXCLUSION_SIGMA_INFLATION = 1.0e8
 
 _PULSE_N_PULSES = {"ignore": 0, "single": 1, "double": 2}
 
+# Group-amplitude bounds for the per-cycle nuisance fit.  The spectrum is
+# normalised to unit *area*, so the coherent projection ``M @ f`` has amplitude
+# ~1/Δν and the correct group amplitude is ~A_osc·Δν — e.g. ~2×10⁻⁴ for a 5 %
+# oscillation on a 2048-point, 8 MHz window.  The floor therefore has to sit
+# far below any physical value: a floor anywhere near the old 0.01 pins weak
+# lines 10–100× too high, and the only way the solver can then reduce χ² is to
+# decohere the spectrum into spiky noise (the BiSCCO F/B divergence).  It stays
+# strictly positive so a negative least-squares coefficient cannot flip the
+# group's sign out from under the phase fit, and comfortably above
+# ``_MIN_POSITIVE`` so the next cycle's ``base = (p − bg)/amp`` recovery of the
+# bare projection stays exact.
+_AMPLITUDE_FLOOR = 1.0e-6
+_AMPLITUDE_CAP = 100.0
+
+# Workload auto-steering targets (see :func:`resolve_maxent_auto_steering`).
+# The margin keeps the post-binning Nyquist comfortably above the top of the
+# frequency window; the point budgets bound the dense-equivalent projection
+# work so an out-of-the-box run on ~400k-bin high-resolution data (HiFi/HAL
+# ``.mdu``) is minutes, not hours, without user steering.  The budgets are
+# calibrated on that workload: 8192 post-binning points ≈ the 2 µs window the
+# corpus HAL scenario steered to by hand, and 8192 × 1024 × 8 groups keeps a
+# full gradient pass around 10⁸ kernel elements.
+_AUTO_STEER_NYQUIST_MARGIN = 2.5
+_AUTO_STEER_MAX_TIME_POINTS = 8192
+_AUTO_STEER_MAX_SPECTRUM_POINTS = 1024
+
 # Early-stop guard for forced cycle counts.  Past the χ² optimum the projected
 # gradient keeps minimising χ² by collapsing spectral weight onto a grid edge
 # (DC at f=0 for field scans, the band edge otherwise) — the line is lost even
@@ -148,6 +174,16 @@ class MaxEntConfig:
     inner_iterations: int = 12
     chi2_target_over_n: float = 1.0
     fit_phases: bool = True
+    # Seed each group's phase from the data (weighted lock-in at the joint
+    # spectral peak inside the frequency window) instead of the configured
+    # table.  Multi-group runs carry large geometric phase offsets (MUSR's
+    # quadrant groups sit ~90° apart) and the per-cycle phase refinement only
+    # moves ±4°/cycle, so an unseeded 0° start can never reach them — the
+    # mis-phased groups then either poison χ² or mute themselves out of the
+    # joint fit.  ``group_phase_degrees`` still applies where estimation fails
+    # (no coherent signal) or when this is off.  Ignored in ZF/LF mode (phases
+    # are pinned 0/180 there).
+    auto_phase_seed: bool = True
     fit_amplitudes: bool = True
     fit_backgrounds: bool = True
     fit_constant_background: bool = True
@@ -157,6 +193,12 @@ class MaxEntConfig:
     t_min_us: float | None = None
     t_max_us: float | None = None
     time_binning_factor: int = 1
+    # Workload auto-steering: fill *unset* workload knobs (binning left at 1,
+    # no end time, no explicit spectrum length) with values sized to the run
+    # and the frequency window, so high-resolution raw data is tractable out
+    # of the box.  Explicit user values always win — steering never overrides
+    # a field the user set.  See :func:`resolve_maxent_auto_steering`.
+    auto_steer: bool = True
     # ISIS pulse-shape response folded into the forward model (Phase 2).
     # ``pulse_mode`` is one of "ignore" / "single" / "double"; the widths are in
     # microseconds.  Defaults: off (continuous-source data needs no shaping).
@@ -203,6 +245,7 @@ class MaxEntConfig:
             "inner_iterations": int(self.inner_iterations),
             "chi2_target_over_n": float(self.chi2_target_over_n),
             "fit_phases": bool(self.fit_phases),
+            "auto_phase_seed": bool(self.auto_phase_seed),
             "fit_amplitudes": bool(self.fit_amplitudes),
             "fit_backgrounds": bool(self.fit_backgrounds),
             "fit_constant_background": bool(self.fit_constant_background),
@@ -214,6 +257,7 @@ class MaxEntConfig:
             "t_min_us": self.t_min_us,
             "t_max_us": self.t_max_us,
             "time_binning_factor": int(self.time_binning_factor),
+            "auto_steer": bool(self.auto_steer),
             "pulse_mode": str(self.pulse_mode),
             "pulse_half_width_us": float(self.pulse_half_width_us),
             "pulse_separation_us": float(self.pulse_separation_us),
@@ -254,6 +298,7 @@ class MaxEntConfig:
                 _MIN_POSITIVE, _float_or_default(data.get("chi2_target_over_n"), 1.0)
             ),
             fit_phases=bool(data.get("fit_phases", True)),
+            auto_phase_seed=bool(data.get("auto_phase_seed", True)),
             fit_amplitudes=bool(data.get("fit_amplitudes", True)),
             fit_backgrounds=bool(data.get("fit_backgrounds", True)),
             fit_constant_background=bool(data.get("fit_constant_background", True)),
@@ -263,6 +308,7 @@ class MaxEntConfig:
             t_min_us=optional_float(data.get("t_min_us")),
             t_max_us=optional_float(data.get("t_max_us")),
             time_binning_factor=_parse_positive_int(data.get("time_binning_factor", 1)),
+            auto_steer=bool(data.get("auto_steer", True)),
             pulse_mode=_parse_choice(
                 data.get("pulse_mode"), ("ignore", "single", "double"), "ignore"
             ),
@@ -508,32 +554,17 @@ def _run_with_maxent_binning(run: Run, config: MaxEntConfig) -> Run:
     return replace(run, grouping=grouping)
 
 
-def estimate_maxent_workload(
-    run: Run,
-    config: MaxEntConfig | dict | None = None,
-) -> MaxEntWorkloadEstimate:
-    """Estimate dense-matrix work for a MaxEnt run without building matrices."""
-    resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
-    names_by_group = group_names(run)
-    all_ids = sorted(names_by_group)
-    if resolved_config.selected_group_ids is None:
-        selected = all_ids
-    else:
-        wanted = {int(g) for g in resolved_config.selected_group_ids}
-        selected = [gid for gid in all_ids if gid in wanted]
+def _good_bin_time_axis(run: Run) -> tuple[NDArray[np.float64], float, int] | None:
+    """Return the raw-bin good-window time axis, bin width (µs), and base bunching.
 
+    ``None`` when the run has no histograms.  Shared by the workload estimate
+    and the auto-steering resolver so both size the same time grid the input
+    builder will produce.
+    """
     grouping = run.grouping if isinstance(run.grouping, dict) else {}
     histograms = list(run.histograms)
-    if not histograms or not selected:
-        return MaxEntWorkloadEstimate(
-            run_number=int(run.run_number),
-            selected_group_count=len(selected),
-            time_points_per_group=tuple(),
-            n_spectrum_points=int(resolved_config.n_spectrum_points or 0),
-            peak_dense_matrix_bytes=0,
-            total_dense_matrix_bytes=0,
-        )
-
+    if not histograms:
+        return None
     n_bins = min(hist.n_bins for hist in histograms)
     try:
         first_good = max(0, int(grouping.get("first_good_bin", 0)))
@@ -555,13 +586,170 @@ def estimate_maxent_workload(
     bin_width = float(histograms[0].bin_width)
     bins = np.arange(first_good, last_good + 1, dtype=np.float64)
     time_us = (bins - float(reference_t0)) * bin_width
+    base_bunch = _parse_positive_int(grouping.get("bunching_factor", 1))
+    return time_us, bin_width, base_bunch
+
+
+def _steering_frequency_ceiling(run: Run, config: MaxEntConfig) -> float | None:
+    """Return the window's top frequency when it is known *without* the data.
+
+    Binning steering may only trust a field-derived auto window or explicit
+    bounds.  A ZF/near-ZF run resolves its window from the grouped data (the
+    D7/F19 data-aware path), which happens *after* binning is applied — so
+    steering the binning from the near-DC fallback would alias away the very
+    line the data-aware window exists to find.  Returning ``None`` here
+    disables binning steering for that case.
+    """
+    field_value = run.metadata.get("field") if isinstance(run.metadata, dict) else None
+    try:
+        center = _field_to_frequency_mhz(float(field_value))
+    except (TypeError, ValueError):
+        center = 0.0
+    half_width = _field_to_frequency_mhz(float(config.window_half_width_gauss))
+    if config.auto_window:
+        if center > 0.0 and half_width > 0.0:
+            return center + half_width
+        return None
+    explicit_min = config.f_min_mhz
+    explicit_max = config.f_max_mhz
+    if explicit_max is not None and explicit_max > 0.0:
+        if explicit_min is None or explicit_max > explicit_min:
+            return float(explicit_max)
+    return None
+
+
+def resolve_maxent_auto_steering(
+    run: Run,
+    config: MaxEntConfig | dict | None = None,
+) -> MaxEntConfig:
+    """Return *config* with unset workload knobs sized to *run*.
+
+    A no-op unless ``config.auto_steer`` is on, and each rule only fills a
+    knob the user left at its default — an explicit binning, end time, or
+    spectrum length always wins.  Idempotent, so the entry points
+    (:func:`maxent`, :func:`build_maxent_input`,
+    :func:`estimate_maxent_workload`) can each resolve it independently and
+    agree on the same effective configuration.
+
+    Rules, in order:
+
+    1. **Time binning** (``time_binning_factor`` left at 1): bin down until the
+       post-binning Nyquist frequency sits ``_AUTO_STEER_NYQUIST_MARGIN``×
+       above the top of the frequency window.  Raw high-resolution data
+       (HiFi/HAL ``.mdu`` at ~0.02 ns bins → 20 GHz Nyquist) carries far more
+       bandwidth than any windowed reconstruction needs.  Applies only when
+       the window is known without the data (field-derived auto window or
+       explicit bounds) — see :func:`_steering_frequency_ceiling`.
+    2. **End time** (``t_max_us`` unset): cap the post-binning grid at
+       ``_AUTO_STEER_MAX_TIME_POINTS`` points per group, cutting the
+       statistically weakest late-time tail first.
+    3. **Spectrum length** (``n_spectrum_points`` unset, and only when rule 1
+       or 2 fired): cap the Mantid-style power-of-two default at
+       ``_AUTO_STEER_MAX_SPECTRUM_POINTS`` — a 400k-bin input otherwise
+       defaults to a 2¹⁹-point spectrum.  Gating on the other rules keeps
+       ordinary-resolution runs bit-identical to the unsteered path.
+    """
+    resolved = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
+    if not resolved.auto_steer:
+        return resolved
+    axis = _good_bin_time_axis(run)
+    if axis is None:
+        return resolved
+    time_us, bin_width, base_bunch = axis
+    mask = np.ones(time_us.size, dtype=bool)
+    if resolved.t_min_us is not None:
+        mask &= time_us >= float(resolved.t_min_us)
+    if resolved.t_max_us is not None:
+        mask &= time_us <= float(resolved.t_max_us)
+    usable_times = time_us[mask]
+    if usable_times.size == 0 or bin_width <= 0.0:
+        return resolved
+
+    dt_base = bin_width * float(base_bunch)
+    nyquist_base = 1.0 / (2.0 * dt_base) if dt_base > 0.0 else 0.0
+    f_ceiling = _steering_frequency_ceiling(run, resolved)
+
+    steer_binning = resolved.time_binning_factor
+    if (
+        resolved.time_binning_factor == 1
+        and nyquist_base > 0.0
+        and f_ceiling is not None
+        and f_ceiling > 0.0
+    ):
+        factor = int(nyquist_base / (_AUTO_STEER_NYQUIST_MARGIN * float(f_ceiling)))
+        if factor >= 2:
+            steer_binning = factor
+
+    effective_bunch = max(1, base_bunch * steer_binning)
+    points_after = usable_times.size // effective_bunch
+
+    steer_t_max = resolved.t_max_us
+    if resolved.t_max_us is None and points_after > _AUTO_STEER_MAX_TIME_POINTS:
+        dt_eff = dt_base * float(steer_binning)
+        steer_t_max = float(usable_times[0]) + _AUTO_STEER_MAX_TIME_POINTS * dt_eff
+        points_after = _AUTO_STEER_MAX_TIME_POINTS
+
+    workload_steered = (
+        steer_binning != resolved.time_binning_factor or steer_t_max != resolved.t_max_us
+    )
+    steer_points = resolved.n_spectrum_points
+    if (
+        workload_steered
+        and resolved.n_spectrum_points is None
+        and default_n_spectrum_points(points_after) > _AUTO_STEER_MAX_SPECTRUM_POINTS
+    ):
+        steer_points = _AUTO_STEER_MAX_SPECTRUM_POINTS
+
+    if (
+        steer_binning == resolved.time_binning_factor
+        and steer_t_max == resolved.t_max_us
+        and steer_points == resolved.n_spectrum_points
+    ):
+        return resolved
+    return replace(
+        resolved,
+        time_binning_factor=int(steer_binning),
+        t_max_us=steer_t_max,
+        n_spectrum_points=steer_points,
+    )
+
+
+def estimate_maxent_workload(
+    run: Run,
+    config: MaxEntConfig | dict | None = None,
+) -> MaxEntWorkloadEstimate:
+    """Estimate dense-matrix work for a MaxEnt run without building matrices.
+
+    Workload auto-steering is resolved first (when enabled), so the estimate
+    reflects the configuration the reconstruction will actually run.
+    """
+    resolved_config = resolve_maxent_auto_steering(run, config)
+    names_by_group = group_names(run)
+    all_ids = sorted(names_by_group)
+    if resolved_config.selected_group_ids is None:
+        selected = all_ids
+    else:
+        wanted = {int(g) for g in resolved_config.selected_group_ids}
+        selected = [gid for gid in all_ids if gid in wanted]
+
+    axis = _good_bin_time_axis(run)
+    if axis is None or not selected:
+        return MaxEntWorkloadEstimate(
+            run_number=int(run.run_number),
+            selected_group_count=len(selected),
+            time_points_per_group=tuple(),
+            n_spectrum_points=int(resolved_config.n_spectrum_points or 0),
+            peak_dense_matrix_bytes=0,
+            total_dense_matrix_bytes=0,
+        )
+
+    time_us, _bin_width, base_bunch = axis
     mask = np.ones(time_us.size, dtype=bool)
     if resolved_config.t_min_us is not None:
         mask &= time_us >= float(resolved_config.t_min_us)
     if resolved_config.t_max_us is not None:
         mask &= time_us <= float(resolved_config.t_max_us)
     usable = int(np.count_nonzero(mask))
-    base_bunch = _parse_positive_int(grouping.get("bunching_factor", 1))
     maxent_bunch = _parse_positive_int(resolved_config.time_binning_factor)
     effective_bunch = max(1, base_bunch * maxent_bunch)
     points = usable // effective_bunch if effective_bunch > 1 else usable
@@ -664,6 +852,112 @@ def _resolve_frequency_window(
     return 0.0, max(10.0, center + half_width)
 
 
+def _weighted_lockin(
+    groups: Sequence[MaxEntGroupInput],
+    frequencies_mhz: NDArray[np.float64],
+) -> dict[int, NDArray[np.complex128]]:
+    """Return each group's 1/σ²-weighted lock-in ``z_g(ν)`` on *frequencies_mhz*.
+
+    ``z_g(ν) = Σ w·s·e^{−2πiνt} / Σ w`` over the group's good points.  For a
+    signal ``a·cos(2πνt + φ)`` this yields ``(a/2)·e^{+iφ}`` at the line, so
+    ``angle(z)`` is the group's phase in the engine's ``cos(2πνt + φ)``
+    convention.  The 1/σ² weighting suppresses the exp-amplified late-time
+    bins the same way the χ² does.
+    """
+    lockins: dict[int, NDArray[np.complex128]] = {}
+    for group in groups:
+        mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
+        time = np.asarray(group.time_us, dtype=np.float64)[mask]
+        signal = np.asarray(group.signal, dtype=np.float64)[mask]
+        sigma = np.maximum(np.asarray(group.sigma, dtype=np.float64)[mask], _MIN_POSITIVE)
+        weights = 1.0 / np.square(sigma)
+        weight_total = float(np.sum(weights))
+        if time.size == 0 or not np.isfinite(weight_total) or weight_total <= 0.0:
+            lockins[group.group_id] = np.zeros(frequencies_mhz.size, dtype=np.complex128)
+            continue
+        weighted = (weights * signal) / weight_total
+        z = np.empty(frequencies_mhz.size, dtype=np.complex128)
+        # Row-per-frequency keeps the working set at O(n_time) — the raw .mdu
+        # workloads reach ~400k time points, so an n_freq × n_time phase matrix
+        # is off the table.
+        for k, freq in enumerate(frequencies_mhz):
+            z[k] = np.dot(weighted, np.exp(-2j * np.pi * float(freq) * time))
+        lockins[group.group_id] = z
+    return lockins
+
+
+def _estimate_group_phase_seeds(
+    groups: Sequence[MaxEntGroupInput],
+    f_min_mhz: float,
+    f_max_mhz: float,
+    *,
+    n_scan: int = 193,
+    pulse_half_width_us: float = 0.0,
+    pulse_separation_us: float = 0.0,
+    n_pulses: int = 0,
+) -> dict[int, float]:
+    """Estimate per-group phase seeds at the joint spectral peak in the window.
+
+    Scans a coarse frequency grid over ``[f_min, f_max]``, locates the peak of
+    the groups' summed lock-in power, then reads each group's phase off its
+    lock-in at that frequency (parabolically refined).  Groups with no
+    coherent power at the joint peak are omitted so the caller can keep their
+    configured seed.
+
+    With a pulse response active the data carries the kernel's phase shift —
+    the signal at the line is ``a·R·cos(2πνt + φ − δ(ν))`` — so the lock-in
+    angle is ``φ − δ(ν*)``.  The kernel subtracts δ itself, so δ(ν*) is added
+    back here or the model would double-count it.
+    """
+    if not groups or not np.isfinite(f_min_mhz) or not np.isfinite(f_max_mhz):
+        return {}
+    if f_max_mhz <= f_min_mhz:
+        return {}
+    scan = np.linspace(float(f_min_mhz), float(f_max_mhz), max(8, int(n_scan)))
+    lockins = _weighted_lockin(groups, scan)
+    power = np.zeros(scan.size, dtype=np.float64)
+    for z in lockins.values():
+        power += np.abs(z) ** 2
+    if not np.any(np.isfinite(power)) or float(np.nanmax(power)) <= 0.0:
+        return {}
+    k = int(np.nanargmax(power))
+    peak_freq = float(scan[k])
+    if 0 < k < scan.size - 1:
+        # Parabolic refinement of the peak: the lock-in phase rotates by
+        # ~2π·δν·t̄ for a grid offset δν, so landing closer to the true line
+        # tightens the seed well inside the ±4°/cycle refinement's reach.
+        y0, y1, y2 = power[k - 1], power[k], power[k + 1]
+        denom = y0 - 2.0 * y1 + y2
+        if np.isfinite(denom) and abs(denom) > 0.0:
+            shift = float(np.clip(0.5 * (y0 - y2) / denom, -0.5, 0.5))
+            peak_freq += shift * float(scan[1] - scan[0])
+    refined = _weighted_lockin(groups, np.asarray([peak_freq], dtype=np.float64))
+    delta_deg = 0.0
+    if int(n_pulses) > 0 and float(pulse_half_width_us) > 0.0:
+        _pulse_r, pulse_delta = pulse_amplitude_phase(
+            np.asarray([peak_freq], dtype=np.float64),
+            half_width_us=float(pulse_half_width_us),
+            separation_us=float(pulse_separation_us),
+            n_pulses=int(n_pulses),
+        )
+        if pulse_delta is not None:
+            delta_deg = float(np.degrees(pulse_delta[0]))
+    # A group whose lock-in at the joint line is negligible next to the
+    # strongest group has no coherent signal there; its angle is noise, so
+    # leave it to the configured seed.
+    magnitudes = {gid: float(np.abs(z[0])) for gid, z in refined.items()}
+    strongest = max(magnitudes.values(), default=0.0)
+    if strongest <= 0.0:
+        return {}
+    seeds: dict[int, float] = {}
+    for group in groups:
+        z = refined[group.group_id][0]
+        if magnitudes[group.group_id] < 0.01 * strongest:
+            continue
+        seeds[group.group_id] = float(np.degrees(np.angle(z))) + delta_deg
+    return seeds
+
+
 def _require_run(obj: object) -> Run:
     """Return *obj* if it is a :class:`Run`, else raise a pointing TypeError.
 
@@ -691,9 +985,19 @@ def build_maxent_input(
     prepared_histograms: list[Histogram] | None = None,
     reference_t0_bin: int | None = None,
 ) -> MaxEntInput:
-    """Build grouped raw-count MaxEnt input from *run* and *config*."""
+    """Build grouped raw-count MaxEnt input from *run* and *config*.
+
+    Workload auto-steering is resolved first (when enabled), so a direct call
+    builds the same input :func:`maxent` would.
+    """
     run = _require_run(run)
-    resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
+    pre_steer = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
+    resolved_config = resolve_maxent_auto_steering(run, pre_steer)
+    steered_fields = {
+        name: getattr(resolved_config, name)
+        for name in ("time_binning_factor", "t_max_us", "n_spectrum_points")
+        if getattr(resolved_config, name) != getattr(pre_steer, name)
+    }
     run = _run_with_maxent_binning(run, resolved_config)
     names_by_group = group_names(run)
     if not names_by_group:
@@ -776,7 +1080,20 @@ def build_maxent_input(
             mask &= time <= float(resolved_config.t_max_us)
         if not np.any(mask):
             continue
-        baseline = float(np.nanmean(signal[mask]))
+        # 1/σ²-weighted mean: the maximum-likelihood estimate of the constant
+        # count level.  A plain mean is poisoned on long windows — the
+        # lifetime-corrected signal multiplies late-time Poisson bins by
+        # e^{t/τ} (a 0/1-count bin at 30 µs becomes 0 or ~10⁶), inflating the
+        # baseline several-fold so the well-measured early-time data lands far
+        # from zero after normalisation and χ² diverges from cycle 1.  σ grows
+        # with the same e^{t/τ} factor, so weighting by 1/σ² keeps the
+        # baseline pinned to the high-statistics bins.
+        weights = 1.0 / np.square(np.maximum(sigma[mask], _MIN_POSITIVE))
+        weight_total = float(np.sum(weights))
+        if np.isfinite(weight_total) and weight_total > 0.0:
+            baseline = float(np.sum(signal[mask] * weights) / weight_total)
+        else:
+            baseline = float(np.nanmean(signal[mask]))
         if not np.isfinite(baseline) or abs(baseline) <= _MIN_POSITIVE:
             baseline = 1.0
         normalized = (signal / baseline) - 1.0
@@ -826,6 +1143,22 @@ def build_maxent_input(
     f_min, f_max = _resolve_frequency_window(run, resolved_config, groups)
     if f_max <= f_min:
         f_max = f_min + 1.0
+
+    if resolved_config.auto_phase_seed and resolved_config.mode != "zf_lf":
+        seeds = _estimate_group_phase_seeds(
+            groups,
+            float(f_min),
+            float(f_max),
+            pulse_half_width_us=resolved_config.pulse_half_width_us,
+            pulse_separation_us=resolved_config.pulse_separation_us,
+            n_pulses=_PULSE_N_PULSES.get(resolved_config.pulse_mode, 0),
+        )
+        if seeds:
+            groups = [
+                replace(group, phase_degrees=float(seeds.get(group.group_id, group.phase_degrees)))
+                for group in groups
+            ]
+
     n_points = int(n_points)
     frequencies = np.linspace(float(f_min), float(f_max), n_points)
     n_pulses = _PULSE_N_PULSES.get(resolved_config.pulse_mode, 0)
@@ -853,6 +1186,9 @@ def build_maxent_input(
             "pulse_mode": str(resolved_config.pulse_mode),
             "maxent_mode": str(resolved_config.mode),
             "zf_lf_alpha": zf_lf_alpha,
+            # Which workload knobs auto-steering filled (empty when none were):
+            # surfaces the effective binning/end-time/spectrum-length choices.
+            "auto_steer_applied": steered_fields,
         },
     )
 
@@ -1372,6 +1708,12 @@ def _fit_group_nuisance(
             continue
         y = np.asarray(group.signal, dtype=float)[mask]
         p = np.asarray(predictions[group.group_id], dtype=float)[mask]
+        # Whiten the regression by 1/σ so the nuisance fit minimises the same
+        # weighted χ² as the spectrum iteration.  Unweighted, the exp-amplified
+        # late-time junk bins (σ-inflated by the lifetime correction, or by the
+        # interior-exclusion window) dominate the amplitude/background estimate
+        # and drag both toward the noise rather than the measured signal.
+        inv_sigma = 1.0 / np.maximum(np.asarray(group.sigma, dtype=float)[mask], _MIN_POSITIVE)
         if config.fit_amplitudes or config.fit_backgrounds or config.fit_constant_background:
             # ``p`` already includes the current amplitude and background, so
             # recover the bare projection before regressing absolute values;
@@ -1392,15 +1734,17 @@ def _fit_group_nuisance(
             else:
                 target = target - background
             if columns:
-                x = np.vstack(columns).T
+                x = (np.vstack(columns) * inv_sigma).T
                 try:
-                    coeffs, *_ = np.linalg.lstsq(x, target, rcond=None)
+                    coeffs, *_ = np.linalg.lstsq(x, target * inv_sigma, rcond=None)
                 except np.linalg.LinAlgError:
                     coeffs = None
                 if coeffs is not None:
                     idx = 0
                     if config.fit_amplitudes:
-                        state.amplitudes[group.group_id] = float(np.clip(coeffs[idx], 0.01, 100.0))
+                        state.amplitudes[group.group_id] = float(
+                            np.clip(coeffs[idx], _AMPLITUDE_FLOOR, _AMPLITUDE_CAP)
+                        )
                         idx += 1
                     if config.fit_backgrounds or config.fit_constant_background:
                         state.backgrounds[group.group_id] = float(coeffs[idx])
@@ -1430,7 +1774,7 @@ def _fit_group_nuisance(
                     amplitude * (np.cos(radians) * cos_proj - np.sin(radians) * sin_proj)
                     + background
                 )
-                residual = y - pred
+                residual = (y - pred) * inv_sigma
                 score = float(np.dot(residual, residual))
                 if score < best_score:
                     best_score = score
@@ -1464,7 +1808,7 @@ def _apply_zf_lf_tie(
     # MODAMP/MODBAK, i.e. only when those values are being refit).
     tied: list[tuple[dict[int, float], float, float]] = []
     if config.fit_amplitudes:
-        tied.append((state.amplitudes, 0.01, 100.0))
+        tied.append((state.amplitudes, _AMPLITUDE_FLOOR, _AMPLITUDE_CAP))
     if config.fit_backgrounds or config.fit_constant_background:
         tied.append((state.backgrounds, -np.inf, np.inf))
     for table, lo, hi in tied:
@@ -1673,9 +2017,13 @@ def maxent(
     *early_stop* is ``False``.
     """
     run = _require_run(run)
-    resolved_config = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
+    # The cycle loop's state signature reads the config's binning/time-window
+    # fields, so give it the steered configuration; the builder receives the
+    # *original* so its metadata records which knobs steering filled (the
+    # resolver is idempotent, so both see the same effective values).
+    resolved_config = resolve_maxent_auto_steering(run, config)
     _check_cancel(cancel_callback)
-    maxent_input = build_maxent_input(run, resolved_config)
+    maxent_input = build_maxent_input(run, config)
     return run_cycles(
         maxent_input,
         resolved_config,

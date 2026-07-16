@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.maxent import (
     MaxEntCancelledError,
     MaxEntConfig,
@@ -13,6 +14,7 @@ from asymmetry.core.maxent import (
     maxent,
     opus,
     reconstruct_group_signals,
+    resolve_maxent_auto_steering,
     run_cycles,
     tropus,
 )
@@ -229,10 +231,12 @@ def test_maxent_fitted_amplitudes_converge_instead_of_oscillating() -> None:
 
 
 def test_maxent_forced_cycles_stop_at_chi2_plateau_instead_of_diverging() -> None:
-    """Regression: forcing a high cycle count used to iterate past the χ²
-    optimum, collapsing spectral weight onto a grid edge (DC for field scans,
-    the band edge here) and losing the line.  Early-stop (the default) treats
-    the count as a maximum and halts at the plateau, keeping the resolved peak.
+    """Early-stop (the default) treats the cycle count as a maximum and halts
+    at the χ² plateau instead of burning the full budget.  (Historically the
+    unguarded run also drifted off the line to a grid edge; that pathology was
+    driven by the nuisance amplitude floor pinning the model oscillation far
+    too large, which is fixed — a forced 60-cycle run now stays on the line,
+    so the guard's job is purely to stop wasted post-plateau work.)
     """
     run = _synthetic_run(frequency_mhz=1.5)
     config = MaxEntConfig(
@@ -244,21 +248,21 @@ def test_maxent_forced_cycles_stop_at_chi2_plateau_instead_of_diverging() -> Non
         fit_phases=False,
     )
 
-    diverged = maxent(run, config, cycles=60, early_stop=False)
+    unguarded = maxent(run, config, cycles=60, early_stop=False)
     guarded = maxent(run, config, cycles=60, early_stop=True)
 
-    # Without the guard the spectrum drifts off the line to the band edge.
-    diverged_peak = diverged.frequencies_mhz[int(np.argmax(diverged.spectrum))]
-    assert abs(diverged_peak - 1.5) > 1.0
+    # Both resolve the true line — forcing cycles no longer loses the peak.
+    unguarded_peak = unguarded.frequencies_mhz[int(np.argmax(unguarded.spectrum))]
+    assert unguarded_peak == pytest.approx(1.5, abs=0.2)
 
-    # With the guard it stops well short of the requested 60 cycles, the global
-    # argmax is the real line, and χ² stays finite and bounded.
+    # The guard stops well short of the requested 60 cycles with the same
+    # answer: the global argmax is the real line and χ² is comparable.
     assert guarded.early_stopped is True
     assert guarded.state.cycle < 60
     assert np.all(np.isfinite(guarded.spectrum))
     guarded_peak = guarded.frequencies_mhz[int(np.argmax(guarded.spectrum))]
     assert guarded_peak == pytest.approx(1.5, abs=0.2)
-    assert guarded.diagnostics.chi2[-1] < 2.0 * diverged.diagnostics.chi2[-1]
+    assert guarded.diagnostics.chi2[-1] < 2.0 * unguarded.diagnostics.chi2[-1]
 
 
 def test_maxent_stop_reason_flags_behave() -> None:
@@ -288,13 +292,16 @@ def test_maxent_stop_reason_flags_behave() -> None:
     assert converged.converged is not converged.diverged
     assert converged.metadata["maxent_stop_reason"] == "converged"
 
-    # Divergence: resume from deep in the post-optimum regime, where χ² has been
-    # rising monotonically for many cycles, so the next cycle's improvement is
-    # robustly negative (not a knife-edge sign at the plateau knee).  The guard
-    # fires immediately and flags divergence for the GUI to warn on.
+    # Divergence: the healthy engine no longer reaches a genuinely rising-χ²
+    # regime on this synthetic (the amplitude-floor defect that drove it is
+    # fixed), so emulate a post-optimum resume: rewrite the resumed history's
+    # last χ² well below anything the spectrum can actually achieve.  The next
+    # cycle's "improvement" is then robustly negative and the guard must stop
+    # immediately and flag divergence for the GUI to warn on.
     config = MaxEntConfig(inner_iterations=4, **base)
     prepared = build_maxent_input(run, config)
-    past_optimum = run_cycles(prepared, config, cycles=25, early_stop=False)
+    past_optimum = run_cycles(prepared, config, cycles=8, early_stop=False)
+    past_optimum.state.diagnostics.chi2[-1] *= 0.5
     diverged = run_cycles(prepared, config, state=past_optimum.state, cycles=3)
     assert diverged.early_stopped is True
     assert diverged.diverged is True
@@ -406,7 +413,9 @@ def test_maxent_state_rejects_time_range_and_binning_changes() -> None:
 
 def test_maxent_state_rejects_phase_seed_changes() -> None:
     """Edited phase seeds must force a restart: a resumed state keeps its own
-    phases and would otherwise silently ignore the new seeds."""
+    phases and would otherwise silently ignore the new seeds.  (Data-derived
+    seeding is off here — with it on, the table is only a fallback and an
+    edit legitimately changes nothing.)"""
     run = _synthetic_run()
     config = MaxEntConfig(
         n_spectrum_points=64,
@@ -414,6 +423,7 @@ def test_maxent_state_rejects_phase_seed_changes() -> None:
         f_max_mhz=3.0,
         auto_window=False,
         fit_phases=False,
+        auto_phase_seed=False,
     )
     prepared = build_maxent_input(run, config)
     state = initialize_state(prepared, config)
@@ -424,6 +434,7 @@ def test_maxent_state_rejects_phase_seed_changes() -> None:
         f_max_mhz=3.0,
         auto_window=False,
         fit_phases=False,
+        auto_phase_seed=False,
         group_phase_degrees={1: 90.0},
     )
     changed_input = build_maxent_input(run, changed)
@@ -674,3 +685,175 @@ def test_maxent_config_show_reconstruction_round_trips() -> None:
     assert MaxEntConfig.from_dict({}).show_reconstruction is False
     on = MaxEntConfig(show_reconstruction=True)
     assert MaxEntConfig.from_dict(on.to_dict()).show_reconstruction is True
+
+
+# ── Long-window robustness, phase seeding, and workload auto-steering ────────
+
+
+def _long_window_quadrature_run(
+    *,
+    frequency_mhz: float = 5.4,
+    n_bins: int = 2000,
+    bin_width_us: float = 0.016,
+    field: float = 400.0,
+) -> Run:
+    """MUSR-shaped TF run: 4 quadrature groups, integer counts, ~14 lifetimes.
+
+    The long window leaves the late tail with 0/1-count bins whose
+    lifetime-corrected values explode (a 1-count bin at 30 µs becomes ~10⁶),
+    which is exactly the regime that poisoned the plain-mean baseline and the
+    unweighted nuisance regression on real MUSR data.
+    """
+    rng = np.random.default_rng(7)
+    time = np.arange(n_bins, dtype=float) * bin_width_us
+    histograms: list[Histogram] = []
+    for phase in (0.0, 90.0, 180.0, 270.0):
+        signal = 1.0 + 0.2 * np.cos(2.0 * np.pi * frequency_mhz * time + np.deg2rad(phase))
+        expected = 15000.0 * np.exp(-time / 2.1969811) * signal
+        counts = rng.poisson(expected).astype(float)
+        histograms.append(Histogram(counts=counts, bin_width=bin_width_us, t0_bin=0))
+    return Run(
+        run_number=77,
+        histograms=histograms,
+        metadata={"field": field},
+        grouping={
+            "groups": {1: [1], 2: [2], 3: [3], 4: [4]},
+            "group_names": {1: "G1", 2: "G2", 3: "G3", 4: "G4"},
+            "first_good_bin": 0,
+            "last_good_bin": n_bins - 1,
+            "deadtime_correction": False,
+        },
+    )
+
+
+def _phase_distance_deg(a: float, b: float) -> float:
+    return abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+def test_maxent_baseline_survives_lifetime_amplified_tail() -> None:
+    """The normalisation baseline is 1/σ²-weighted, so the exp-amplified
+    late-time Poisson tail cannot inflate it: the well-measured early-time
+    normalised signal stays centred on zero (a plain mean left it at ~−0.7 on
+    real MUSR data, guaranteeing divergence from cycle 1)."""
+    run = _long_window_quadrature_run()
+    prepared = build_maxent_input(run, MaxEntConfig())
+
+    for group in prepared.groups:
+        mask = group.mask if group.mask is not None else np.ones(group.time_us.size, dtype=bool)
+        early = mask & (group.time_us < 4.0)
+        assert abs(float(np.mean(group.signal[early]))) < 0.05
+
+
+def test_maxent_auto_phase_seed_recovers_quadrature_geometry() -> None:
+    """Data-derived phase seeds land near the groups' true 0/90/180/270 layout
+    (up to a common rotation) — the ±4°/cycle refinement could never reach
+    them from an all-zero start."""
+    run = _long_window_quadrature_run()
+    prepared = build_maxent_input(run, MaxEntConfig())
+
+    seeded = {group.group_id: float(group.phase_degrees) for group in prepared.groups}
+    reference = seeded[1]
+    for gid, true_phase in ((1, 0.0), (2, 90.0), (3, 180.0), (4, 270.0)):
+        assert _phase_distance_deg(seeded[gid] - reference, true_phase) < 20.0
+
+    off = build_maxent_input(run, MaxEntConfig(auto_phase_seed=False))
+    assert all(group.phase_degrees == 0.0 for group in off.groups)
+
+
+def test_maxent_long_window_quadrature_converges_to_line() -> None:
+    """End-to-end regression for the real-data divergence: an out-of-the-box
+    config on a long-window quadrature run converges to the true line with
+    χ²/N ≈ 1, and the fitted amplitudes settle well below the legacy 0.01
+    clip floor (which forced a 50×-oversized oscillation the solver could
+    only fight by decohering the spectrum into spikes)."""
+    run = _long_window_quadrature_run()
+    result = maxent(run, MaxEntConfig(), cycles=8)
+
+    n_obs = sum(
+        int(np.count_nonzero(group.mask)) if group.mask is not None else group.time_us.size
+        for group in result.maxent_input.groups
+    )
+    chi2_per_n = result.diagnostics.chi2[-1] / n_obs
+    assert not result.diverged
+    assert chi2_per_n < 2.0
+    peak = result.frequencies_mhz[int(np.argmax(result.spectrum))]
+    assert peak == pytest.approx(5.4, abs=0.15)
+    amplitudes = list(result.state.amplitudes.values())
+    assert all(0.0 < amp < 0.01 for amp in amplitudes)
+    assert max(amplitudes) / min(amplitudes) < 3.0
+
+
+def _high_resolution_run(*, n_bins: int = 100_000, bin_width_us: float = 2.44e-5) -> Run:
+    """HiFi/HAL-shaped run: ~0.02 ns bins, GHz bandwidth, two groups."""
+    time = np.arange(n_bins, dtype=float) * bin_width_us
+    histograms = []
+    for phase in (0.0, 180.0):
+        signal = 1.0 + 0.2 * np.cos(2.0 * np.pi * 813.0 * time + np.deg2rad(phase))
+        counts = 50.0 * np.exp(-time / 2.1969811) * signal
+        histograms.append(Histogram(counts=counts, bin_width=bin_width_us, t0_bin=0))
+    return Run(
+        run_number=88,
+        histograms=histograms,
+        metadata={"field": 60000.0},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "group_names": {1: "F", 2: "B"},
+            "first_good_bin": 0,
+            "last_good_bin": n_bins - 1,
+            "deadtime_correction": False,
+        },
+    )
+
+
+def test_auto_steering_is_noop_for_ordinary_resolution() -> None:
+    run = _long_window_quadrature_run()
+    config = MaxEntConfig()
+    steered = resolve_maxent_auto_steering(run, config)
+
+    assert steered.time_binning_factor == 1
+    assert steered.t_max_us is None
+    assert steered.n_spectrum_points is None
+
+
+def test_auto_steering_sizes_high_resolution_workload() -> None:
+    """Unset workload knobs are sized to the run: high-resolution data is
+    binned toward the window's Nyquist need, the grid is capped, and the
+    spectrum length stops defaulting to a runaway power of two."""
+    run = _high_resolution_run()
+    steered = resolve_maxent_auto_steering(run, MaxEntConfig())
+
+    assert steered.time_binning_factor >= 2
+    assert steered.t_max_us is not None
+    assert steered.n_spectrum_points == 1024
+    # Post-binning Nyquist still clears the top of the auto window.
+    nyquist = 1.0 / (2.0 * 2.44e-5 * steered.time_binning_factor)
+    f_max = gauss_to_mhz(60000.0) + gauss_to_mhz(300.0)
+    assert nyquist > f_max
+
+    estimate = estimate_maxent_workload(run, MaxEntConfig())
+    assert estimate.max_time_points <= 8192
+    assert estimate.n_spectrum_points == 1024
+
+
+def test_auto_steering_respects_explicit_values_and_off_switch() -> None:
+    run = _high_resolution_run()
+    explicit = MaxEntConfig(time_binning_factor=3, t_max_us=1.0, n_spectrum_points=256)
+    steered = resolve_maxent_auto_steering(run, explicit)
+    assert steered.time_binning_factor == 3
+    assert steered.t_max_us == pytest.approx(1.0)
+    assert steered.n_spectrum_points == 256
+
+    off = resolve_maxent_auto_steering(run, MaxEntConfig(auto_steer=False))
+    assert off.time_binning_factor == 1
+    assert off.t_max_us is None
+    assert off.n_spectrum_points is None
+
+
+def test_maxent_config_new_flags_round_trip() -> None:
+    config = MaxEntConfig(auto_steer=False, auto_phase_seed=False)
+    restored = MaxEntConfig.from_dict(config.to_dict())
+    assert restored.auto_steer is False
+    assert restored.auto_phase_seed is False
+    # Old recipes without the keys default to the new behaviour.
+    assert MaxEntConfig.from_dict({}).auto_steer is True
+    assert MaxEntConfig.from_dict({}).auto_phase_seed is True

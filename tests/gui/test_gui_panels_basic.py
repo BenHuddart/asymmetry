@@ -304,6 +304,7 @@ def test_maxent_panel_settings_round_trip_unchanged_after_restructure(qapp: QApp
             "t_min_us": 0.05,
             "t_max_us": 8.0,
             "time_binning_factor": 2,
+            "auto_steer": False,
             "pulse_mode": "single",
             "pulse_half_width_us": 0.09,
             "pulse_separation_us": 0.4,
@@ -315,6 +316,7 @@ def test_maxent_panel_settings_round_trip_unchanged_after_restructure(qapp: QApp
             "inner_iterations": 20,
             "chi2_target_over_n": 1.2,
             "fit_phases": False,
+            "auto_phase_seed": False,
             "fit_amplitudes": False,
             "fit_backgrounds": False,
             "fit_constant_background": False,
@@ -335,6 +337,7 @@ def test_maxent_panel_settings_round_trip_unchanged_after_restructure(qapp: QApp
     assert state["t_min_us"] == pytest.approx(0.05)
     assert state["t_max_us"] == pytest.approx(8.0)
     assert state["time_binning_factor"] == 2
+    assert state["auto_steer"] is False
     assert state["pulse_mode"] == "single"
     assert state["pulse_half_width_us"] == pytest.approx(0.09)
     assert state["pulse_separation_us"] == pytest.approx(0.4)
@@ -346,6 +349,7 @@ def test_maxent_panel_settings_round_trip_unchanged_after_restructure(qapp: QApp
     assert state["inner_iterations"] == 20
     assert state["chi2_target_over_n"] == pytest.approx(1.2)
     assert state["fit_phases"] is False
+    assert state["auto_phase_seed"] is False
     assert state["fit_amplitudes"] is False
     assert state["fit_backgrounds"] is False
     assert state["fit_constant_background"] is False
@@ -1275,3 +1279,23 @@ def test_grouping_dialog_bunch_spin_fits_its_widest_value_under_app_styling(
         _assert_spin_fits_widest_value(dialog._bunch_spin)
     finally:
         window.close()
+
+
+def test_maxent_panel_phase_edit_switches_off_auto_seed(qapp: QApplication) -> None:
+    """Hand-editing a Phase cell must untick "Seed phases from data" — the
+    data-derived seeding would otherwise silently override the edited value."""
+    panel = MaxEntPanel()
+    panel.set_group_definitions({1: "F", 2: "B"})
+    assert panel._auto_phase_seed_check.isChecked() is True
+
+    panel._group_table.item(0, 2).setText("45.0")
+
+    assert panel._auto_phase_seed_check.isChecked() is False
+    assert panel.get_state()["auto_phase_seed"] is False
+
+    # Programmatic (re)population must NOT count as a user edit.
+    panel.set_auto_phase_seed(True)
+    panel.set_group_definitions({1: "F", 2: "B"}, {1: 30.0})
+    assert panel._auto_phase_seed_check.isChecked() is True
+    panel.apply_phase_table({1: 60.0})
+    assert panel._auto_phase_seed_check.isChecked() is True
