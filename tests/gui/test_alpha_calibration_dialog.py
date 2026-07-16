@@ -328,6 +328,77 @@ def test_mid_flight_close_does_not_crash(qapp: QApplication) -> None:
     assert dialog.result_policy() is None
 
 
+def _run_with_pedestal(run_number: int, *, ratio: float, bg: float) -> MuonDataset:
+    """Two-histogram run with a flat pedestal: F = ratio·base + bg, B = base + bg."""
+    base = np.array([100.0, 80.0, 60.0, 40.0])
+    forward = ratio * base + bg
+    backward = base + bg
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(counts=forward, bin_width=0.01),
+            Histogram(counts=backward, bin_width=0.01),
+        ],
+        metadata={"run_number": run_number},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "first_good_bin": 0,
+            "last_good_bin": 3,
+        },
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number},
+        run=run,
+    )
+
+
+def test_estimate_uses_corrected_counts_when_provider_supplies_background(
+    qapp: QApplication,
+) -> None:
+    """With a background-supplying provider, α recovers the true ratio, not the raw one."""
+    ds = _run_with_pedestal(5, ratio=2.0, bg=50.0)
+
+    def provider(_dataset):
+        return {
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [50.0, 50.0],
+        }
+
+    dialog = _make_dialog([ds], correction_provider=provider)
+    dialog._set_method("ratio")
+    dialog._on_estimate()
+    _wait_until(lambda: dialog._tasks.active_count == 0)
+    assert dialog._estimate is not None
+    # Raw ratio would be Σ(2b+50)/Σ(b+50) = 760/480 ≈ 1.583; subtraction gives 2.0.
+    assert dialog._estimate.alpha == pytest.approx(2.0)
+    assert "background" in dialog._correction_note.text().lower()
+
+
+def test_correction_note_warns_when_reference_unresolved(qapp: QApplication) -> None:
+    """A requested reference_run background that cannot resolve must be flagged."""
+    ds = _run_with_pedestal(5, ratio=2.0, bg=50.0)
+
+    def provider(_dataset):
+        return {
+            "background_correction": True,
+            "background_mode": "reference_run",
+            "background_run": {"run_number": 999},
+        }
+
+    # No resolver → the reference cannot be resolved → subtraction cannot happen.
+    dialog = _make_dialog([ds], correction_provider=provider, reference_resolver=None)
+    note = dialog._correction_note.text().lower()
+    assert "not applied" in note
+    assert "background" in note
+
+
 def test_parent_destruction_mid_estimate_does_not_crash(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:

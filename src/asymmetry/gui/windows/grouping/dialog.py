@@ -15,7 +15,7 @@ from __future__ import annotations
 import contextlib
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -52,6 +52,7 @@ from asymmetry.core.instrument import (
     recommend_grouping_preset,
     variant_for_histograms,
 )
+from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     DeadtimePolicy,
@@ -59,6 +60,7 @@ from asymmetry.core.project.profiles import (
     ProfileFingerprint,
     T0Policy,
     profile_fingerprint_for_run,
+    resolve_effective_grouping,
 )
 from asymmetry.core.transform import (
     apply_grouping,
@@ -3387,6 +3389,68 @@ class GroupingDialog(QDialog):
         backward_gid = int(self._backward_combo.currentData())
         self._launch_calibration_dialog("single", forward_gid, backward_gid, self._alpha_spin)
 
+    def _calibration_correction_provider(self):
+        """Build the per-dataset correction-payload provider for the alpha dialog.
+
+        Resolves the current draft (deadtime + background config) against each
+        candidate calibration run, so the alpha estimate runs on the same
+        deadtime-corrected, background-subtracted counts the reduction will. The
+        draft's alpha policy is forced to a fixed value so resolving does not
+        trigger a nested per-run alpha estimate (the dialog measures alpha
+        itself). Returns ``None`` when no fingerprint context is available.
+        """
+        if self._fingerprint is None:
+            return None
+        payload = self._current_grouping_payload()
+        profile = profile_from_form_payload(
+            payload, name=self._draft_name or "draft", fingerprint=self._fingerprint
+        )
+        profile = replace(profile, alpha_policy=AlphaPolicy(mode="fixed", value=1.0))
+
+        def provide(dataset: MuonDataset) -> dict[str, Any]:
+            if dataset.run is None:
+                return {}
+            return resolve_effective_grouping(profile, dataset.run)
+
+        return provide
+
+    def _calibration_reference_resolver(
+        self, grouping: dict[str, Any]
+    ) -> tuple[list, float] | None:
+        """Resolve a ``reference_run`` background for the alpha calibration.
+
+        Reuses an already-loaded reference run from the fingerprint's datasets (or
+        loads the recorded source file, cached per path), returning the reference
+        histograms and the good-frame scale. ``None`` on any failure, so the
+        estimate degrades to no reference subtraction (and the dialog says so).
+        """
+        payload = grouping.get("background_run")
+        if not isinstance(payload, dict):
+            return None
+        cache = getattr(self, "_background_run_cache", None)
+        if cache is None:
+            cache = {}
+            self._background_run_cache = cache
+        try:
+            sample_frames = float(grouping.get("good_frames", 0.0)) or None
+        except (TypeError, ValueError):
+            sample_frames = None
+        try:
+            reference = resolve_background_reference(
+                payload,
+                sample_good_frames=sample_frames,
+                datasets=self._fingerprint_datasets(),
+                cache=cache,
+            )
+        except (ValueError, OSError):
+            return None
+        return reference.histograms, reference.scale
+
+    def _calibration_facility(self) -> str:
+        """Facility label for the alpha dialog's background tail-fit shortening."""
+        metadata = (self._run.metadata if self._run is not None else None) or {}
+        return str(metadata.get("facility", metadata.get("instrument", "")))
+
     def _launch_calibration_dialog(
         self,
         slot: str,
@@ -3431,6 +3495,9 @@ class GroupingDialog(QDialog):
             initial_policy=initial_policy,
             slot_label=slot_label if slot != "single" else None,
             selected_run_number=int(self._reference_dataset.run_number),
+            correction_provider=self._calibration_correction_provider(),
+            reference_resolver=self._calibration_reference_resolver,
+            facility=self._calibration_facility(),
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:

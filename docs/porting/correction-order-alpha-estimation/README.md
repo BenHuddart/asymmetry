@@ -1,7 +1,8 @@
 # Correction Order vs. Alpha Estimation Study
 
-Status: study — approved physics direction pending an implementation pass on this
-branch (`feat/correction-order-alpha-estimation`).
+Status: PR 1 (physics fix) implemented on this branch
+(`feat/correction-order-alpha-estimation`); PR 2 (unified Corrections panel) is
+the remaining follow-up.
 
 This study records how deadtime correction, background subtraction, detector
 grouping, and detector-balance (`alpha`) estimation should be ordered in the
@@ -14,6 +15,42 @@ the calibration dialog's preview does **not** centre the reduced wTF asymmetry.
 The physics direction below was reviewed by a domain consult (µSR data reduction)
 and cross-checked against the reference programs. It is recorded here as the
 source of truth for the implementation pass.
+
+## Decision log
+
+- **2026-07-16 — implementation pass started (PR 1, physics fix).** An empirical
+  probe (known `a_true`, flat pedestals with `bg_F/bg_B ≠ a_true`) confirmed that
+  feeding **background-subtracted** counts to the *existing* estimator recovers
+  `a_true` within ~1σ for all three methods at realistic background fractions
+  (raw counts are badly biased — the reported bug). The diamagnetic weighting
+  residual (the estimator models its own Poisson σ from the counts it is given,
+  so subtracted counts under-state the variance) is within the stated uncertainty
+  at realistic backgrounds. **Decision:** PR 1 is the central-value fix — route
+  both estimate paths through the corrected pipeline. Threading propagated
+  variance through the estimator API (and `_pack_for_estimation`) is a documented
+  follow-up, justified by evidence rather than built on spec.
+- **2026-07-16 — reference-run scope (Ben).** PR 1 wires `reference_run`
+  background into **both** estimate entry points (interactive calibration dialog
+  and the `per_run_estimate` policy), not just the tail-fit/fixed modes. The
+  per-run reference is deadtime-corrected, t0-aligned and grouped before scaling
+  — this reuses the reference-prep the reduction already performs.
+- **2026-07-16 — PR 1 landed.** Core: extracted the reduction's correction
+  stages into `corrected_grouped_counts` (+ `correction_flags_from_grouping`) in
+  `core/transform/reduce.py`; `reduce_grouped_asymmetry` now delegates to it
+  (pin test `tests/gui/test_grouping_preview_pane.py` green, bit-identical).
+  `resolve_effective_grouping` reorders policy application to t0 → deadtime →
+  background → alpha and threads a `reference_resolver`; `_estimate_run_alpha`
+  estimates on corrected counts. GUI: `AlphaCalibrationDialog` takes a
+  `correction_provider` + `reference_resolver` + `facility`, estimates on
+  corrected counts (reference pre-resolved on the GUI thread), and shows a
+  correction-provenance note that warns when a requested correction can't apply.
+  The two estimate entry points are the only `estimate_alpha*` call sites (grep
+  verified). Estimator error-model threading (propagated variance through
+  `estimate_alpha_detailed` + `_pack_for_estimation`) remains a follow-up — the
+  empirical probe showed the residual is within the reported uncertainty at
+  realistic background fractions. Tests:
+  `tests/core/test_correction_order_alpha.py` and two new cases in
+  `tests/gui/test_alpha_calibration_dialog.py`.
 
 ## The bug this study addresses
 

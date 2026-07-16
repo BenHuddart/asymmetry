@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Alpha is now estimated on deadtime- and background-corrected counts.**
+  Previously the detector-balance α was estimated from the *raw* grouped counts,
+  while the reduction it feeds applies deadtime correction and background
+  subtraction first — so a calibrated α balanced the totals and could leave the
+  reduced weak-TF asymmetry off-centre once the background was subtracted. Both
+  the interactive **Estimate α** dialog and the per-run alpha policy now build
+  their forward/backward spectra through the same corrected pipeline the
+  reduction uses (deadtime → grouping → background subtraction), for all three
+  estimators (diamagnetic, general, count ratio) and including the reference-run
+  background mode. The calibration dialog reports which corrections the estimate
+  reflects and warns, in amber, when a requested correction could not be applied
+  to the selected run — so a flattened "after" curve never misrepresents a
+  calibration the reduction will not reproduce. Study:
+  `docs/porting/correction-order-alpha-estimation`.
+
 ## [0.13.0] - 2026-07-14
 
 ### Added
