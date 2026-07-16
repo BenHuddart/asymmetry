@@ -108,9 +108,13 @@ jobs:
           cache: "pip"
 
       - name: Install documentation dependencies
+        # The hdf4 extra (pyhdf) is required by the corpus screenshot
+        # scenarios: most muon-school runs are legacy HDF4 NeXus v1. Without
+        # it every HDF4-based capture fails and stubs silently replace the
+        # real renders on the published site.
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints.txt -e .
+          pip install -c constraints.txt -e ".[hdf4]"
           pip install -c constraints.txt -r docs/requirements.txt
 
       - name: Install offscreen-Qt runtime libraries
