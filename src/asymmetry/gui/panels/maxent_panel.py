@@ -152,8 +152,17 @@ class MaxEntPanel(QWidget):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._group_table.setColumnWidth(2, field_width_for(9, self._group_table))
         self._group_table.setMinimumHeight(100)
+        # A hand-edited phase must actually drive the next reconstruction, so
+        # editing the Phase column switches off the data-derived seeding that
+        # would otherwise silently override the table.
+        self._group_table.itemChanged.connect(self._on_group_table_item_changed)
         section.addWidget(self._group_table)
         return section
+
+    def _on_group_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if self._table_updating or item.column() != 2:
+            return
+        self._auto_phase_seed_check.setChecked(False)
 
     def _build_spectrum_section(self) -> PanelSection:
         section = PanelSection("Spectrum")
@@ -208,6 +217,15 @@ class MaxEntPanel(QWidget):
         # forcing the panel into horizontal scrolling.
         time_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         time_form.setContentsMargins(0, 0, 0, 0)
+        self._auto_steer_check = QCheckBox("Auto workload steering")
+        self._auto_steer_check.setChecked(True)
+        self._auto_steer_check.setToolTip(
+            "Size unset workload settings to the run: bin high-resolution data "
+            "down toward the frequency window's Nyquist need, and cap the time "
+            "range on very large runs. Explicit End/Binning/Spectrum-points "
+            "values always win."
+        )
+        time_form.addRow(self._auto_steer_check)
         self._t_min_edit = self._make_numeric_edit(
             "", minimum=-1_000_000.0, maximum=1_000_000.0, decimals=6
         )
@@ -307,6 +325,15 @@ class MaxEntPanel(QWidget):
 
         self._fit_phases_check = QCheckBox("Fit phases")
         self._fit_phases_check.setChecked(True)
+        self._auto_phase_seed_check = QCheckBox("Seed phases from data")
+        self._auto_phase_seed_check.setChecked(True)
+        self._auto_phase_seed_check.setToolTip(
+            "Estimate each group's starting phase from the data (at the strongest "
+            "line inside the frequency window) instead of the Groups table. "
+            "Multi-group runs carry large geometric phase offsets that the "
+            "per-cycle ±4° refinement cannot reach from 0°. Untick to seed from "
+            'the table ("Use fitted phases" unticks this automatically).'
+        )
         self._fit_amplitudes_check = QCheckBox("Fit amplitudes")
         self._fit_amplitudes_check.setChecked(True)
         self._fit_backgrounds_check = QCheckBox("Fit backgrounds")
@@ -317,6 +344,7 @@ class MaxEntPanel(QWidget):
         self._use_deadtime_check.setChecked(True)
         for check in (
             self._fit_phases_check,
+            self._auto_phase_seed_check,
             self._fit_amplitudes_check,
             self._fit_backgrounds_check,
             self._fit_constant_background_check,
@@ -682,6 +710,7 @@ class MaxEntPanel(QWidget):
             "t_min_us": self._parse_optional_float(self._t_min_edit.text()),
             "t_max_us": self._parse_optional_float(self._t_max_edit.text()),
             "time_binning_factor": int(self._time_binning_spin.value()),
+            "auto_steer": bool(self._auto_steer_check.isChecked()),
             "exclude_t_min_us": self._parse_optional_float(self._exclude_t_min_edit.text()),
             "exclude_t_max_us": self._parse_optional_float(self._exclude_t_max_edit.text()),
             "pulse_mode": str(self._pulse_mode_combo.currentData() or "ignore"),
@@ -697,6 +726,7 @@ class MaxEntPanel(QWidget):
             "inner_iterations": int(self._inner_spin.value()),
             "chi2_target_over_n": self._parse_float(self._chi_target_edit.text(), 1.0),
             "fit_phases": bool(self._fit_phases_check.isChecked()),
+            "auto_phase_seed": bool(self._auto_phase_seed_check.isChecked()),
             "fit_amplitudes": bool(self._fit_amplitudes_check.isChecked()),
             "fit_backgrounds": bool(self._fit_backgrounds_check.isChecked()),
             "fit_constant_background": bool(self._fit_constant_background_check.isChecked()),
@@ -732,6 +762,10 @@ class MaxEntPanel(QWidget):
     def set_phase_provenance(self, text: str) -> None:
         """Show a provenance line for the last phase exchange (which fit, when)."""
         self._phase_provenance_label.setText(str(text))
+
+    def set_auto_phase_seed(self, checked: bool) -> None:
+        """Set the data-derived phase-seeding toggle (e.g. off after a phase exchange)."""
+        self._auto_phase_seed_check.setChecked(bool(checked))
 
     def set_deadtime_text(self, text: str, *, can_apply: bool = False) -> None:
         """Show the fitted-deadtime summary and enable/disable the apply button."""
@@ -817,6 +851,7 @@ class MaxEntPanel(QWidget):
             self._time_binning_spin.setValue(max(1, int(state.get("time_binning_factor", 1))))
         except (TypeError, ValueError):
             self._time_binning_spin.setValue(1)
+        self._auto_steer_check.setChecked(bool(state.get("auto_steer", True)))
         try:
             self._inner_spin.setValue(max(1, int(state.get("inner_iterations", 12))))
         except (TypeError, ValueError):
@@ -825,6 +860,7 @@ class MaxEntPanel(QWidget):
             self._format_float(state.get("chi2_target_over_n", 1.0), "1.0")
         )
         self._fit_phases_check.setChecked(bool(state.get("fit_phases", True)))
+        self._auto_phase_seed_check.setChecked(bool(state.get("auto_phase_seed", True)))
         self._fit_amplitudes_check.setChecked(bool(state.get("fit_amplitudes", True)))
         self._fit_backgrounds_check.setChecked(bool(state.get("fit_backgrounds", True)))
         self._fit_constant_background_check.setChecked(

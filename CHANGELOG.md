@@ -7,8 +7,277 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MaxEnt no longer diverges on real long-window TF data.** Three compounding
+  engine defects made out-of-the-box reconstructions of e.g. MUSR forward/back
+  TF runs collapse into spiky noise with χ² rising from cycle 1 (χ²/N ≈ 8000 on
+  a real 400 G vortex-lattice run): (1) the per-group normalisation baseline
+  was a plain mean of the lifetime-corrected counts, which the exp-amplified
+  late-time Poisson tail inflates several-fold — it is now the 1/σ²-weighted
+  mean, pinned to the high-statistics bins; (2) the per-cycle nuisance
+  amplitude fit clipped at a floor of 0.01 in units where the correct
+  amplitude is ~`A·Δν` (often 10–100× *below* the floor), forcing an oversized
+  model oscillation that the solver could only fight by decohering the
+  spectrum — the floor is now far below any physical value; (3) the nuisance
+  amplitude/background regression and phase scan were unweighted, letting the
+  junk tail dominate — both are now σ-weighted, consistent with the χ² the
+  cycles minimise. The same run now converges to χ²/N ≈ 1.0 with the peak on
+  the vortex line, full range, no manual steering.
+
 ### Added
 
+- **MaxEnt data-derived phase seeding.** New `Seed phases from data` toggle
+  (on by default; `MaxEntConfig.auto_phase_seed`) estimates each group's
+  starting phase from a σ²-weighted lock-in at the strongest line inside the
+  frequency window (pulse-shape aware). The ±4°/cycle phase refinement can
+  never reach the ~90°/45° geometric offsets of real multi-group rings from an
+  all-zero start, so unseeded groups previously either poisoned χ² or muted
+  themselves out of the joint fit. Hand-editing a phase in the Groups table or
+  clicking **Use fitted phases** unticks the toggle so the table drives.
+- **MaxEnt workload auto-steering.** New `Auto workload steering` toggle (on
+  by default; `MaxEntConfig.auto_steer`, resolver exposed as
+  `resolve_maxent_auto_steering(run, config)`) sizes workload settings the
+  user left unset to the run: binning is raised until the post-binning Nyquist
+  clears the frequency window with margin (only when the window is known from
+  the field or explicit bounds — never on data-windowed ZF runs), very large
+  post-binning grids get an end-time cap, and the scripting API's default
+  spectrum length stops growing with the raw bin count. A raw 389k-bin HiFi
+  `.mdu` run that previously implied a ~2¹⁹-point spectrum over 389k time
+  points (days of compute, guaranteed workload warning) now reconstructs its
+  813 MHz line out of the box in ~2–3 minutes. Explicit values always win;
+  the result metadata records what was steered under `auto_steer_applied`.
+
+### Changed
+
+- **The "Large MaxEnt calculation" warning no longer blocks headless
+  sessions.** Offscreen/minimal-platform sessions (CI, screenshot scenarios,
+  scripted driving) have no user to dismiss the modal, so the warning is
+  written to the log panel and the calculation proceeds; setting
+  `ASYMMETRY_SUPPRESS_WORKLOAD_WARNING` does the same on a visible display.
+  The interactive dialog now also points at `Auto workload steering`.
+
+## [0.13.0] - 2026-07-14
+
+### Added
+
+- **Unit-area (field-distribution) FFT display.** A new *Unit area (field
+  distribution)* option in the Fourier panel's FFT settings presents a
+  magnitude-family spectrum as a field distribution `p(ν)` that integrates to
+  one: the noise floor is fitted (a σ-clipped block median) and subtracted, and
+  the residual is normalised to unit area over the full frequency range
+  (range-independent by construction). A significance guard refuses the
+  normalisation for a pure-noise spectrum, keeping the calibrated scale and
+  noting why. Applies to the Magnitude, (Power)^1/2 and Power displays. The
+  displayed density follows the x-axis unit: in a field view the curve, its
+  error band, fit overlays, and the y view window carry the constant dν/dB
+  Jacobian — labelled `p(B) (1/G)` / `(1/T)` and integrating to one per
+  displayed unit — and exports name the y column per unit (`density_per_G`
+  etc.).
+- **Field-shift axes for the frequency view.** A new **Axis:** selector above
+  the spectrum offers three x-axis modes that genuinely transform the plotted
+  data: **Absolute** (today's measured frequency/field), **Shift (x − x₀)** (each
+  spectrum minus its reference field, in MHz / G / T), and **Relative shift
+  (ppm)** ((x − x₀)/x₀ × 10⁶, dimensionless). A companion **Ref.:** selector
+  chooses the reference: **Run field** (the default) shifts each spectrum by
+  *its own* applied field, so transverse-field runs measured at different fields
+  overlay aligned at zero shift and a paramagnetic/Knight shift between them
+  reads at a glance; **Common** shifts every spectrum by a shared, editable Gauss
+  value. A run with no field metadata is drawn untransformed with a logged note
+  rather than dropped. The plotted axis, tick labels, x-limit boxes, framing,
+  the γ_μ·B marker, the moments/fit-range overlays, and the GLE/text export all
+  follow the selected mode; shift/ppm exports name their x-column (`shift_G`,
+  `relative_shift_ppm`, …) and always keep the canonical `frequency_MHz` column
+  alongside.
+
+### Changed
+
+- **FFT amplitudes are now calibrated to fractional asymmetry in percent.** The
+  grouped FFT previously plotted raw, unnormalised count-scale amplitudes whose
+  height depended on the counting statistics, the length of the time window, and
+  the apodisation. The spectrum is now put on a fractional footing (each group's
+  signal divided by its error-weighted baseline) and coherent-gain corrected
+  (`× 2/Σw`), so a pure cosine of fractional asymmetry amplitude *A* peaks at
+  `100·A` — invariant to count level, window length, apodisation choice, and
+  zero padding. Y-axis labels read `(%)` (`(%²)` for Power); a relaxing line
+  reads below `100·A` because damping trades peak height for area. Spectra
+  computed before this change are flagged stale so they recompute onto the new
+  scale.
+- **The frequency toolbar's "X relative to ref. field" checkbox is replaced by
+  the Axis/Ref. selectors above.** The old checkbox only offset the x-limit
+  entry boxes while leaving the plotted curve and ticks in absolute units, so
+  spectra measured at different fields could not be aligned; the new shift axes
+  transform the data itself. Saved projects that had the old flag on migrate to
+  **Shift (x − x₀)** about a **Common** reference (schema v16). Per-mode x-limit
+  view stashes from the retired flag are ephemeral and are discarded on load;
+  the fresh view reframes cleanly.
+- **The Fourier panel's "Compute FFT" is now selection-scoped, replacing
+  "Apply to selection."** The old secondary button copied the active run's
+  already-computed recipe onto the other selected runs, so a setting changed
+  after the last **Compute FFT** was silently left out, it recomputed each
+  target synchronously on the GUI thread, and it never re-rendered the view —
+  nothing visibly happened. There is now ONE compute action: **Compute FFT**
+  computes every run selected in the Data Browser (the active run alone when
+  nothing else is selected), and its label shows the scope before you click —
+  "Compute FFT (3 runs)" for a three-run selection. Every target's
+  configuration is read from the panel as it stands right now: the Groups
+  table's enabled groups apply to every run in the selection (intersected
+  with each run's own available groups, and each target's stored Groups
+  table is updated to match), while phases stay per-run. The whole selection
+  computes asynchronously, and on completion the workspace switches to the
+  frequency view and renders the result (the overlay, when Overlay mode is
+  on). A new banner also flags when
+  an active overlay mixes spectra computed under different settings,
+  independent of the existing out-of-date indicator. The MaxEnt panel's
+  "Apply to selection" is unchanged.
+
+### Fixed
+
+- **Matched-apodisation "Suggest from data" now finds lines buried below the
+  raw noise floor.** `suggest_matched_apodisation` only ever matched a filter
+  to the dominant *raw* peak of the unapodised power spectrum, so a genuinely
+  present line whose late-time noise is amplified by the lifetime correction
+  (an un-windowed, deadtime-corrected record) stayed below that threshold and
+  the suggester reported "No clear line to match — leave apodisation off" —
+  precisely the advice that kept the line invisible. Detection is now
+  two-stage: the existing raw-prominence check runs first and behaves exactly
+  as before when it fires, and only when it fails does a new fallback smooth
+  the power spectrum across a range of candidate linewidths and keep the
+  width with the highest robust (median/MAD, peak-excluded) signal-to-noise.
+  The scanned widths are anchored to the spectrum's real frequency resolution
+  (from the caller, or otherwise estimated from the spectrum's own
+  autocorrelation) rather than the zero-padded display grid, so the scan
+  cannot smooth within a single resolution element and mistake a heavily
+  padded spectrum's padding-correlated noise for a line. The smoothing
+  kernel's own width is deconvolved from the measured linewidth
+  (linearly for Lorentzian, in quadrature for Gaussian) before it is used to
+  derive the matched time constant, and the existing resolution-limited guard
+  now applies to that deconvolved width.
+- **Bundled gleplot bumped to v1.6.1.** The in-app GLE figure editor's live
+  preview failed ("GLE error" on the `data` line) on exported figures whose
+  sidecar data files are named from a leading run number (e.g.
+  `20_main.dat`): gleplot's parser split a digit-led filename after the
+  digits and looked for a truncated file. gleplot v1.6.1 parses unquoted
+  filenames with digits, hyphens, or path separators correctly; the `gle`
+  extra now pins that tag so packaged builds carry the fix.
+- **Plot limits no longer reset themselves on the frequency view.** Computing
+  or recomputing a spectrum could silently reframe the plot: a same-run
+  recompute reset the vertical zoom (only the horizontal window was kept),
+  browsing onto a run with no spectrum forfeited a typed window, the first FFT
+  overwrote its own freshly framed view with the pre-compute defaults, and a
+  pan/zoom gesture — unlike typing — was not treated as a deliberate view
+  choice, so it was reframed away on the next redraw. A recompute now never
+  reframes; only a genuine content change (a different run, domain, or view
+  mode) reframes, and never once you have chosen a window by typing or by
+  pan/zoom. The same latching protects the time-domain view, so a zoomed
+  time-domain window survives run switches too. Toggling **Auto X** or **Auto
+  Y** on remains the explicit "always follow the data" escape hatch and now
+  releases any manual lock. On the frequency view **Auto X** frames the
+  spectrum sensibly (the dominant line / field-derived window) instead of
+  snapping to the full Nyquist span.
+- **Frequency-view (FFT/MaxEnt) GLE and text export now mirror the screen.**
+  Exporting a frequency-domain spectrum reused the time-domain export path
+  verbatim, so the output was wrong in several ways: the axis window was taken
+  raw from the display-unit toolbar fields but applied to canonical-MHz data
+  (a Tesla-mode export produced a meaningless sliver), the axes were labelled
+  `Time (µs)` / `Asymmetry (%)`, and the spectrum was drawn with the
+  time-domain error-bar dots. The export now mirrors the on-screen render: x
+  data and the exported window are in the current display unit (MHz / Field G /
+  Field T, or a reference shift — see the *Field-shift axes* addition above), the
+  axis titles are the real spectrum labels, and the spectrum draws as a
+  piecewise-linear line (no GLE spline, which overshoots on sharp resonance
+  lines) plus a light shaded ±1σ band (omitted when the spectrum has no
+  per-point errors). The
+  `.dat` sidecars are self-describing — columns are named in the header, the
+  canonical `frequency_MHz` axis is kept as a trailing column whenever the
+  display unit differs, and a `START OF FOURIER INFORMATION` block records the
+  display mode, apodisation/zero-pad settings, axis mode, and reference field.
+  The text export's *Limit to current x-range* now filters
+  on the display-unit column, and digit-led sidecar filenames (a bare run
+  number like `20`) are prefixed with `run_` so the gleplot editor's parser
+  accepts them. Time-domain exports are unchanged.
+- **Zooming or panning no longer fights the Auto X / Auto Y toggles.** With
+  **Auto X** or **Auto Y** active, a rubber-band zoom or pan used to snap
+  straight back to the full data extent, because the next redraw re-applied
+  the still-active auto-scaling. An interactive zoom/pan now turns off both
+  toggles — the same way typing a limit value already did — so the framing you
+  dragged to is kept (and, per the entry above, held across run switches until
+  you re-enable Auto X/Y).
+
+## [0.12.1] - 2026-07-13
+
+### Fixed
+
+- **macOS app build restored.** The v0.12.0 macOS DMG build failed because
+  pyhdf 0.11.7 published its macOS wheels with a `macosx_26_0` platform tag
+  (requiring macOS 26), so the build runner fell back to a source build that
+  needs the HDF4 C headers. The build constraints now cap `pyhdf<0.11.7`
+  until upstream ships wheels installable on older macOS; no analysis
+  behaviour changes. (v0.12.0 itself shipped no binaries — this release
+  carries the identical feature set plus this fix.)
+
+## [0.12.0] - 2026-07-13
+
+### Fixed
+
+- **PSI MusrRoot files with the new TDirectory-based header layout.** ROOT
+  files written with musrfit's TDirectory-based `RunHeader` layout (PSI's 2026
+  FLAME DAQ; musrfit ≥ 2025, now the canonical MusrRoot spec) now parse
+  correctly — run title, run number, sample, temperature, field, time
+  resolution, and short detector names with per-detector time-zero/good-bin
+  ranges are read from the header instead of falling back to filename or
+  histogram-title guesses. Legacy TFolder-based MusrRoot and pre-2011 LEM ROOT
+  files are unaffected. Instrument strings are now matched case-insensitively,
+  since the new DAQ writes the lowercase `flame` instrument name.
+- **Startup crash loop from a NaN saved plot range.** If a session ever
+  persisted a non-finite axis limit (e.g. `plot/freq_y_min = nan`) to the
+  application settings at shutdown, every subsequent launch replayed it into
+  Matplotlib's `set_ylim` and crashed before the window appeared, with no way
+  to recover short of hand-editing the settings store. Non-finite values are
+  now rejected at all three layers: the axis-limit fields refuse a NaN
+  (`setValue(nan)` keeps the last good value; NaN previously slipped straight
+  through min/max clamping), shutdown skips persisting a limit set containing
+  a non-finite value, and startup falls back to the per-axis default for any
+  non-finite entry already in the settings — so existing poisoned settings
+  recover on the next launch.
+- **Fit-range spinboxes now commit a programmatically set value.** Setting a
+  fit-range field's value in code (e.g. from a scripted/automated scenario)
+  used to update only the field's display while the fit kept running over the
+  old range — the range is owned by the plot panel, and a bare `setValue`
+  never reached it. The Single and Batch (and grouped multi-group) fit-range
+  fields now push a driven `setValue` through to the plot's fit range exactly
+  as a typed entry does, while the plot→field display mirror stays silent (no
+  feedback loop). Interactive editing (type + Return / focus-out) was already
+  correct and is unchanged.
+
+### Added
+
+- **RunSummary captured as provenance for PSI MusrRoot files.** The free-text
+  `RunSummary` block in the new TDirectory-based header — a block musrfit
+  itself does not read — is now attached verbatim to loaded runs as
+  `metadata["musrroot_run_summary"]`.
+- **Per-axis transforms in the parameter-trending panel.** A collapsible
+  **Axis transforms** section (below the Y-parameter list) applies a transform
+  to either the X or Y axis — `None`, `1/x  (reciprocal)`, `x²  (square)`,
+  `ln x`, `log₁₀ x`, `√x`, or a `Custom…` single-variable expression — so the
+  bread-and-butter µSR linearisations are drawable in-app: **Redfield**
+  (`1/λ` vs `(µ₀H)²`) and **Arrhenius** (`ln λ` vs `1/T`). The transform feeds
+  the trend fit as well as the plot, so a `Linear` Model Fit over transformed
+  axes *is* the Redfield/Arrhenius line, with error bars propagated and slope
+  and intercept read from the model-fit dialog. It is distinct from (and
+  guarded against compounding with) the `log` axis-scale checkboxes.
+  Documented in *Reference ▸ Parameter trending ▸ Axis transforms*.
+- **Multi-series overlay in the parameter-trending panel.** Shift-clicking more
+  than one series pill now overlays those series on the plot (colour = series,
+  with a legend), so `σ(T)` at two applied fields, or the same observable across
+  two samples, can be compared directly instead of one series at a time. A
+  second selected parameter takes a distinct marker shape; the twin-axis layout
+  is reserved for a single series. Documented in *Reference ▸ Parameter trending
+  ▸ Overlaying several series*.
+- **First-class `Quadratic` trend model.** The Model-Fit catalogue gains a plain
+  parabola `c0 + c1*x + c2*x²` on every axis, so a steering-curve minimum (or any
+  gentle curvature a `Linear` cannot match) no longer needs a `Polynomial` with
+  its higher coefficients pinned to zero.
 - **Optional CUDA GPU backend for the MaxEnt engine (scripting API).**
   `MaxEntConfig(backend="cuda")` runs the projection kernels on an NVIDIA GPU
   via CuPy instead of NumPy — measured ~160x faster than the CPU path at

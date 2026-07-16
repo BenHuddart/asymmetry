@@ -81,14 +81,14 @@ class RootLoader(BaseLoader):
 
         with perf_timer("core.load.root", filename=path.name) as perf:
             with uproot.open(path) as root_file:
-                header, header_kind = self._read_header(root_file)
+                header, header_kind, run_summary = self._read_header(root_file)
                 root_histograms = self._read_histograms(root_file)
                 slow_control_logs = self._read_slow_control_logs(root_file, path, header)
 
             if not root_histograms:
                 raise ValueError(f"ROOT file does not contain hDecay histograms: {filepath}")
             dataset = self._build_dataset(
-                path, header, header_kind, root_histograms, slow_control_logs
+                path, header, header_kind, root_histograms, slow_control_logs, run_summary
             )
             perf.detail(detectors=len(root_histograms), bins=dataset.n_points)
             return dataset
@@ -97,12 +97,13 @@ class RootLoader(BaseLoader):
     # ROOT object extraction
     # ------------------------------------------------------------------
 
-    def _read_header(self, root_file) -> tuple[dict[str, str], str]:
+    def _read_header(self, root_file) -> tuple[dict[str, str], str, str | None]:
         if "RunHeader" in root_file:
             run_header = root_file["RunHeader"]
             if self._is_directory(run_header):
-                return self._read_directory_header(root_file), "musr-root-directory"
-            return self._read_folder_header(run_header), "musr-root-folder"
+                header, run_summary = self._read_directory_header(run_header)
+                return header, "musr-root-directory", run_summary
+            return self._read_folder_header(run_header), "musr-root-folder", None
 
         if "RunInfo" in root_file:
             run_info = root_file["RunInfo"]
@@ -110,28 +111,69 @@ class RootLoader(BaseLoader):
                 header = self._read_directory_tree(root_file, "RunInfo")
             else:
                 header = self._read_folder_section(run_info, "RunInfo")
-            return header, "lem-root-folder"
+            return header, "lem-root-folder", None
 
         raise ValueError("ROOT file does not contain a RunHeader or RunInfo header")
 
-    def _read_directory_header(self, root_file) -> dict[str, str]:
+    def _read_directory_header(self, run_header) -> tuple[dict[str, str], str | None]:
+        """Read a TDirectory ``RunHeader`` into header entries plus a run summary.
+
+        New-format (2026 DAQ) files write each leaf as a TObjString whose TKey
+        name and payload are both the encoded ``NNN - Label: Value -@type``
+        string. The ``:`` in those names breaks ``root_file[path]`` lookup
+        (uproot parses ``:`` as an object-path separator), so this walks
+        ``(name, object)`` pairs instead of re-fetching by key path — and the
+        names can also contain ``/`` (``N/A``, ``MeV/c``, URLs), so recursion
+        is per-directory to keep each leaf name intact.
+        """
         header: dict[str, str] = {}
-        for key in root_file.keys(recursive=True):
-            path = self._clean_key(key)
-            if not path.startswith("RunHeader/"):
-                continue
-            try:
-                obj = root_file[key]
-            except Exception:
-                continue
-            if self._is_directory(obj):
-                continue
-            value = self._object_string(obj)
-            if value is None:
-                continue
-            rel_path = path.removeprefix("RunHeader/")
-            header[rel_path] = self._parse_header_value(value)
-        return header
+        summary_lines: list[tuple[int, str]] = []
+
+        def walk(directory, section: str) -> None:
+            for key, obj in directory.items(recursive=False):
+                name = self._clean_key(key)
+                if self._is_directory(obj):
+                    if not section and name == "RunSummary":
+                        # Free-text lines ("NNNN text", no -@type); some
+                        # contain ":" and would false-parse, so they stay out
+                        # of the header dict and become one provenance blob.
+                        for line_key, line_obj in obj.items(recursive=False):
+                            line = self._object_string(line_obj)
+                            if line is not None:
+                                summary_lines.append(
+                                    self._run_summary_line(self._clean_key(line_key), line)
+                                )
+                        continue
+                    walk(obj, f"{section}/{name}" if section else name)
+                    continue
+                value = self._object_string(obj)
+                if value is None:
+                    continue
+                # Encoded leaves carry the encoding in the key name itself, so
+                # the leaf name is the discriminator: clean-form names ("Run
+                # Number") never parse, while parsing only the payload would
+                # false-parse clean values such as "2026-01-01 10:00:00".
+                parsed = self._parse_musrroot_string(name) if section else None
+                if parsed is not None:
+                    payload = self._parse_musrroot_string(value)
+                    header[f"{section}/{parsed[0]}"] = payload[1] if payload else parsed[1]
+                else:
+                    header[f"{section}/{name}" if section else name] = self._parse_header_value(
+                        value
+                    )
+
+        walk(run_header, "")
+        if not summary_lines:
+            return header, None
+        summary_lines.sort(key=lambda item: item[0])
+        return header, "\n".join(text for _, text in summary_lines)
+
+    def _run_summary_line(self, key_name: str, payload: str) -> tuple[int, str]:
+        order = re.match(r"\s*(\d+)", key_name)
+        # Strip the "NNNN " / "NNNN - " numeric prefix only; the remaining
+        # text (including indentation) is kept verbatim.
+        text = re.sub(r"^\d+(?: - | )", "", payload, count=1)
+        return int(order.group(1)) if order else 1 << 30, text
 
     def _read_directory_tree(self, root_file, prefix: str) -> dict[str, str]:
         header: dict[str, str] = {}
@@ -263,11 +305,55 @@ class RootLoader(BaseLoader):
 
         if not time_series:
             return None
+        self._resolve_primary_sample_temperature(time_series, header or {})
         return _RootSlowControlLogs(
             source_file=str(path),
             channels=[key.rsplit("/", 1)[-1] for key in sorted(time_series)],
             time_series=time_series,
         )
+
+    def _resolve_primary_sample_temperature(
+        self,
+        time_series: dict[str, dict[str, Any]],
+        header: dict[str, str],
+    ) -> None:
+        """Pick one primary among competing sample-temperature series.
+
+        New-format FLAME files expose several channels matching the role (e.g.
+        "Cryostat Sample Temperature" plus an all-NaN "Dilution Sample
+        Temperature"), so the primary is the finite series whose typical
+        reading is closest to the header's scalar Sample Temperature. Zeros
+        are masked when computing the typical reading: SC traces are
+        zero-padded outside the recorded range, which would otherwise drag
+        the mean.
+        """
+        candidates = [
+            info for info in time_series.values() if info.get("role") == "sample_temperature"
+        ]
+        if not candidates:
+            return
+        if len(candidates) == 1:
+            # A lone sample-temperature series is the primary by definition;
+            # label-matched channels arrive with primary=False.
+            candidates[0]["primary"] = True
+            return
+        scalar = self._float_from_value(header.get("RunInfo/Sample Temperature"), default=0.0)
+
+        def typical(info: dict[str, Any]) -> float:
+            values = np.asarray(info.get("values", ()), dtype=np.float64)  # finite-filtered
+            nonzero = values[values != 0.0]
+            if nonzero.size:
+                return float(np.mean(nonzero))
+            return float(np.mean(values)) if values.size else float("inf")
+
+        if scalar > 0.0:
+            best = min(candidates, key=lambda info: abs(typical(info) - scalar))
+        else:
+            # Without a usable header scalar, respect an existing Sens=-based
+            # primary designation rather than demoting it by dict order.
+            best = next((info for info in candidates if info.get("primary")), candidates[0])
+        for info in candidates:
+            info["primary"] = info is best
 
     def _slow_control_series_from_histogram(
         self,
@@ -427,6 +513,27 @@ class RootLoader(BaseLoader):
         for sensor, role in sensor_roles.items():
             if sensor and sensor in normalized_label:
                 return dict(role)
+        # New-format files name channels with human-readable labels and carry
+        # no "Sens=..." hints in the header, so match the role on the label
+        # itself. Primary stays False here; when several channels claim the
+        # sample-temperature role, _resolve_primary_sample_temperature picks
+        # the one whose readings agree with the header scalar.
+        if "sampletemperature" in normalized_label:
+            return {
+                "role": "sample_temperature",
+                "sensor": "",
+                "units": "K",
+                "primary": False,
+                "header_key": "",
+            }
+        if "samplemagneticfield" in normalized_label:
+            return {
+                "role": "sample_field",
+                "sensor": "",
+                "units": "G",
+                "primary": False,
+                "header_key": "",
+            }
         return {}
 
     def _normalize_sensor_text(self, text: str) -> str:
@@ -451,6 +558,7 @@ class RootLoader(BaseLoader):
         header_kind: str,
         root_histograms: list[_RootHistogram],
         slow_control_logs: _RootSlowControlLogs | None = None,
+        run_summary: str | None = None,
     ) -> MuonDataset:
         bin_width_us = self._time_resolution_us(header)
         selected = self._select_histograms(header, root_histograms)
@@ -528,7 +636,7 @@ class RootLoader(BaseLoader):
         error = error[first_good : last_good + 1]
 
         metadata = self._metadata(
-            path, header, header_kind, labels, root_numbers, slow_control_logs
+            path, header, header_kind, labels, root_numbers, slow_control_logs, run_summary
         )
         grouping = {
             "groups": groups,
@@ -621,6 +729,11 @@ class RootLoader(BaseLoader):
                 return values
         return {}
 
+    #: Known PSI instrument names; header values matching one of these
+    #: case-insensitively (the 2026 FLAME DAQ writes "flame") are normalized
+    #: to the canonical upper-case form. Anything else is kept verbatim.
+    _PSI_INSTRUMENTS = ("LEM", "FLAME", "GPS", "DOLLY", "GPD", "HAL", "LTF")
+
     def _metadata(
         self,
         path: Path,
@@ -629,6 +742,7 @@ class RootLoader(BaseLoader):
         labels: list[str],
         root_numbers: list[int],
         slow_control_logs: _RootSlowControlLogs | None = None,
+        run_summary: str | None = None,
     ) -> dict[str, Any]:
         run_number = self._int_from_value(header.get("RunInfo/Run Number"), default=0)
         if run_number == 0:
@@ -636,9 +750,11 @@ class RootLoader(BaseLoader):
             run_number = int(match.group(1)) if match else 0
 
         field = self._field_gauss(header.get("RunInfo/Sample Magnetic Field"))
-        instrument = header.get("RunInfo/Instrument", "")
+        instrument = header.get("RunInfo/Instrument", "").strip()
         if not instrument and "flame" in path.stem.lower():
             instrument = "FLAME"
+        if instrument.upper() in self._PSI_INSTRUMENTS:
+            instrument = instrument.upper()
         title = header.get("RunInfo/Run Title", "")
         comment = header.get("RunInfo/Comment", "")
         field_comment_candidate = _extract_field_from_comment(f"{title} {comment}")
@@ -689,6 +805,8 @@ class RootLoader(BaseLoader):
                 "reader_provenance": "MusrRoot slow-control histogram",
                 "channels": list(slow_control_logs.channels),
             }
+        if run_summary:
+            metadata["musrroot_run_summary"] = run_summary
         return metadata
 
     def _default_groups(

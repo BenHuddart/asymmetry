@@ -109,6 +109,18 @@ def _linear(x: NDArray, m: float, b: float) -> NDArray[np.float64]:
     return m * xx + b
 
 
+def _quadratic(
+    x: NDArray,
+    c0: float = 0.0,
+    c1: float = 0.0,
+    c2: float = 0.0,
+) -> NDArray[np.float64]:
+    # A well-conditioned degree-2 restriction of `Polynomial`: the parabola
+    # (steering-curve minimum, and the natural first curved trend a `Linear`
+    # cannot match). Distinct from `Cubic` so a symmetric fit needs no c3=0 fix.
+    return _poly_eval(x, (c0, c1, c2))
+
+
 def _power_law(x: NDArray, a: float, n: float, c: float = 0.0) -> NDArray[np.float64]:
     xx = np.asarray(x, dtype=float)
     safe_x = np.maximum(np.abs(xx), 1e-12)
@@ -477,6 +489,17 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         param_info={"m": get_param_info("m"), "b": get_param_info("b")},
         formula_template="{m}*x + {b}",
         latex_equation=r"y(x) = m x + b",
+        scopes=("common", "field", "temperature"),
+    ),
+    "Quadratic": ParameterModelComponentDefinition(
+        name="Quadratic",
+        description="c0 + c1*x + c2*x^2",
+        function=_quadratic,
+        param_names=["c0", "c1", "c2"],
+        param_defaults={"c0": 0.0, "c1": 1.0, "c2": 0.0},
+        param_info={f"c{k}": get_param_info(f"c{k}") for k in range(3)},
+        formula_template="{c0} + {c1}*x + {c2}*x^2",
+        latex_equation=r"y(x) = c_0 + c_1 x + c_2 x^2",
         scopes=("common", "field", "temperature"),
     ),
     "Polynomial": ParameterModelComponentDefinition(

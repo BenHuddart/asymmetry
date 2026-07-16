@@ -2,6 +2,10 @@
 
 from asymmetry.core.fitting import muon_fluorine, sc
 from asymmetry.core.fitting.asymmetry_global import GlobalFitResult, fit_global
+from asymmetry.core.fitting.axis_transforms import (
+    AxisTransform,
+    validate_axis_expression,
+)
 from asymmetry.core.fitting.component_tags import (
     ComputationalCost,
     FieldGeometry,
@@ -247,6 +251,8 @@ __all__ = [
     "CompositeEvaluation",
     "FunctionSpec",
     "validate_composite_expression",
+    "AxisTransform",
+    "validate_axis_expression",
     "ParameterModelComponentDefinition",
     "ParameterCompositeModel",
     "PARAMETER_MODEL_COMPONENTS",
