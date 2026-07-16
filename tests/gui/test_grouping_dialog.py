@@ -14,13 +14,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel
+from PySide6.QtWidgets import QApplication, QLabel
 
 import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
-from asymmetry.gui.windows.grouping.alpha_calibration_dialog import AlphaCalibrationDialog
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
@@ -48,42 +47,23 @@ def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
     assert predicate(), "timed out waiting for the background worker"
 
 
-def _autocalibrate(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the launched Alpha calibration dialog run headlessly.
+def _estimate_vector_axis(dialog, axis: str) -> None:
+    """Drive the inline per-projection α estimate for *axis* and wait for it.
 
-    The grouping dialog's ``Calibrate…`` (and the per-projection estimate
-    buttons) now open :class:`AlphaCalibrationDialog` modally. Tests that used to
-    call the old synchronous ``_estimate_alpha`` drive the *real* calibration
-    flow instead: this patches ``exec`` to run the dialog's own estimate + accept
-    path (so the estimator, provenance and returned policy are all exercised) and
-    never blocks. ``result_policy()`` then returns the genuine calibrated policy.
-
-    ``_on_estimate`` now runs the estimate on a TaskRunner worker thread (B4),
-    so this pumps the event loop until it lands before reading ``_estimate``.
-
-    This dialog is launched with ``parent=self`` (the GroupingDialog), so it is
-    a *child* widget, not top-level — the ``tests/conftest.py`` teardown fixture
-    only ``close()``s top-level widgets, and it is not reachable via
-    ``QApplication.findChildren(QThread)`` either (its GroupingDialog parent is
-    itself typically parentless in these tests). The only thing that shuts its
-    ``_tasks`` runner down is going through ``done()`` here, exactly as a real
-    modal ``exec()`` would on close — so both branches below must call
-    ``reject()``/``accept()`` rather than just returning a result code.
+    Per-projection calibration is now inline in the grouping dialog (the modal is
+    retired). The estimate runs off-thread on the dialog's vector runner; on
+    success it routes through ``_apply_calibrated_policy`` into the axis's spin.
+    "Estimate All" is serialised, so waiting for the runner to drain covers a
+    single axis or the whole table.
     """
+    dialog._estimate_alpha_for_axis(axis)
+    _wait_until(lambda: dialog._vector_alpha_tasks.active_count == 0)
 
-    def _fake_exec(self: AlphaCalibrationDialog) -> int:
-        self._on_estimate()
-        _wait_until(lambda: self._tasks.active_count == 0)
-        if self._estimate is None:
-            # Estimate failed (e.g. the General method on flat data): behave like
-            # a user who cancels, so the caller leaves alpha untouched. reject()
-            # (not a bare return) so done() -> _tasks.shutdown() still runs.
-            self.reject()
-            return QDialog.DialogCode.Rejected
-        self._on_accept()
-        return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(AlphaCalibrationDialog, "exec", _fake_exec, raising=True)
+def _estimate_all_vector_alpha(dialog) -> None:
+    """Drive the inline "Estimate All α" flow and wait for the serialised runs."""
+    dialog._estimate_all_alpha()
+    _wait_until(lambda: dialog._vector_alpha_tasks.active_count == 0)
 
 
 def _estimate_single_alpha(dialog, method: str | None = None) -> None:
@@ -315,7 +295,6 @@ def _two_period_dataset(run_number: int = 6001) -> MuonDataset:
 def test_estimate_alpha_updates_spinbox(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
     _estimate_single_alpha(dialog)
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
@@ -666,9 +645,8 @@ def test_per_projection_alpha_estimate_updates_and_persists(
 ) -> None:
     """Estimating a non-canonical projection updates its spin and the estimated
     value persists into the projection payload."""
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
-    dialog._estimate_alpha_for_axis("Top-Bottom")
+    _estimate_vector_axis(dialog, "Top-Bottom")
     estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
 
     payload = dialog._current_grouping_payload()
@@ -682,9 +660,8 @@ def test_per_projection_alpha_estimate_persists_provenance(
     """A non-canonical projection's estimate carries its reference-run provenance
     into the projection payload, and a manual edit invalidates it — mirroring the
     canonical per-axis provenance."""
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
-    dialog._estimate_alpha_for_axis("Top-Bottom")
+    _estimate_vector_axis(dialog, "Top-Bottom")
     estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
 
     payload = dialog._current_grouping_payload()
@@ -770,9 +747,8 @@ def test_vector_payload_records_per_axis_alpha_provenance(
 ) -> None:
     """After estimating an axis, the payload carries that axis's error and
     reference run (per-axis provenance, skipped in Phase 1)."""
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
-    dialog._estimate_alpha_for_axis("P_x")
+    _estimate_vector_axis(dialog, "P_x")
     estimated = dialog._vector_alpha_spins["P_x"].value()
 
     payload = dialog._current_grouping_payload()
@@ -790,22 +766,49 @@ def test_vector_payload_records_per_axis_alpha_provenance(
 def test_vector_estimate_alpha_for_axis_updates_axis_spin(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
-    dialog._estimate_alpha_for_axis("P_x")
+    _estimate_vector_axis(dialog, "P_x")
 
     assert dialog._vector_alpha_spins["P_x"].value() == pytest.approx(2.0)
+
+
+def test_estimate_all_alpha_calibrates_every_axis(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "Estimate All α" serialises across axes — every axis is estimated, not
+    just the last one queued.
+
+    The three canonical axes share the same F/B ratio (2.0) but seed to distinct
+    values (α_z = 1.3, α_y = 1.2, α_x = 1.1). After Estimate All every spin holds
+    the estimated 2.0 and every axis carries its own reference-run provenance; if
+    the serialised queue collapsed to the last axis, the earlier axes would keep
+    their seeds and carry no provenance.
+    """
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    assert set(dialog._vector_alpha_spins) == {"P_x", "P_y", "P_z"}
+
+    _estimate_all_vector_alpha(dialog)
+
+    for axis in ("P_x", "P_y", "P_z"):
+        assert dialog._vector_alpha_spins[axis].value() == pytest.approx(2.0)
+
+    payload = dialog._current_grouping_payload()
+    assert payload["alpha_x"] == pytest.approx(2.0)
+    assert payload["alpha_y"] == pytest.approx(2.0)
+    assert payload["alpha_z"] == pytest.approx(2.0)
+    assert "alpha_x_reference_run" in payload
+    assert "alpha_y_reference_run" in payload
+    assert "alpha_z_reference_run" in payload
 
 
 def test_vector_estimate_alpha_uses_selected_reference_run(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     ds_a = _vector_dataset_with_ratio(5201, ratio=2.0)
     ds_b = _vector_dataset_with_ratio(5202, ratio=4.0)
 
     dialog = GroupingDialog([ds_a, ds_b], selected_run_number=5202)
-    dialog._estimate_alpha_for_axis("P_x")
+    _estimate_vector_axis(dialog, "P_x")
 
     # Must use selected reference run (5202 => alpha=4), not an average of runs.
     assert dialog._vector_alpha_spins["P_x"].value() == pytest.approx(4.0)
@@ -814,7 +817,6 @@ def test_vector_estimate_alpha_uses_selected_reference_run(
 def test_estimate_alpha_uses_reference_run_only(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     ds_a = _dataset_with_ratio(5001, ratio=2.0)
     ds_b = _dataset_with_ratio(5002, ratio=4.0)
 
@@ -1465,7 +1467,6 @@ def test_alpha_method_round_trips_through_payload_and_reload(qapp: QApplication)
 def test_estimate_records_provenance_in_payload(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
     _estimate_single_alpha(dialog)
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
@@ -1482,7 +1483,6 @@ def test_estimate_records_provenance_in_payload(
 def test_manual_alpha_edit_invalidates_estimate_provenance(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
     _estimate_single_alpha(dialog)
     dialog._alpha_spin.setValue(dialog._alpha_spin.value() + 0.5)
@@ -1497,7 +1497,6 @@ def test_manual_alpha_edit_invalidates_estimate_provenance(
 def test_estimate_failure_leaves_alpha(qapp: QApplication, monkeypatch) -> None:
     """A failed estimate inside the calibration dialog leaves the alpha untouched
     (the dialog reports the failure; the caller does not write a value back)."""
-    _autocalibrate(monkeypatch)
     dataset = _dataset_with_histograms()
     dialog = GroupingDialog([dataset])
     before = dialog._alpha_spin.value()
@@ -1552,18 +1551,18 @@ def test_background_section_change_updates_mode_and_marks_dirty(qapp: QApplicati
     assert result["background_correction"] is True
 
 
-def test_alpha_child_dialog_survives_grouping_dialog_destruction(
+def test_vector_alpha_estimate_survives_grouping_dialog_destruction(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The exact production race: an alpha *child* dialog with an estimate in
-    flight when its GroupingDialog parent is destroyed without a child close().
+    """The production race, now inline: a per-projection α estimate in flight when
+    the GroupingDialog is destroyed by C++ without a close()/done().
 
-    ``AlphaCalibrationDialog`` is launched with ``parent=self`` (the
-    GroupingDialog), so destroying the parent reaps the child — and the child's
-    estimate ``TaskRunner`` — via C++ destruction. Its ``done``/``closeEvent``
-    never fire, so only the ``TaskRunner`` destroyed-safety-net can keep the
-    running worker thread from being destroyed mid-run. This is the crash a
-    previous B4 attempt shipped.
+    The inline per-projection estimate runs on the dialog's own
+    ``_vector_alpha_tasks`` ``TaskRunner`` (the standalone modal that used to own
+    it is retired). Destroying the dialog reaps that runner via C++ destruction
+    without its ``done``/``closeEvent`` firing, so only the ``TaskRunner``
+    destroyed-safety-net can keep the running worker thread from being destroyed
+    mid-run. This is the crash a previous B4 attempt shipped.
     """
     from PySide6.QtCore import QEvent
 
@@ -1581,38 +1580,28 @@ def test_alpha_child_dialog_survives_grouping_dialog_destruction(
 
     monkeypatch.setattr(alpha_section_module, "estimate_alpha_detailed", gated)
 
-    parent = GroupingDialog([_dataset_with_ratio(5, ratio=2.0)])
-    child = AlphaCalibrationDialog(
-        [_dataset_with_ratio(5, ratio=2.0)],
-        groups={1: [0], 2: [1]},
-        group_names={1: "Forward", 2: "Backward"},
-        forward_group=1,
-        backward_group=2,
-        parent=parent,
-    )
-    child._set_method("ratio")
-    child._on_estimate()
+    dialog = GroupingDialog([_vector_dataset_with_ratio(5201, ratio=2.0)])
+    dialog._estimate_alpha_for_axis("P_x")
     _wait_until(lambda: entered.is_set())  # estimate worker is in-flight
-    assert child._tasks.active_count == 1
+    assert dialog._vector_alpha_tasks.active_count == 1
 
     # Identity-based for the same reason as the background-configure test
     # above: the process-global reaper can park/unpark other tests' orphans
     # during this test's event pump (seen on CI when the shard schedule
     # reshuffles), so an exact global count is racy.
-    worker_thread = child._tasks._live[0][0]
+    worker_thread = dialog._vector_alpha_tasks._live[0][0]
 
     def _parked() -> bool:
         reaper = tasks_mod._orphan_reaper
         return reaper is not None and any(t is worker_thread for t, _ in reaper._threads)
 
-    # Destroy the GroupingDialog PARENT without close()/done() on the child.
-    del child
-    parent.deleteLater()
-    del parent
+    # Destroy the GroupingDialog without close()/done().
+    dialog.deleteLater()
+    del dialog
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     qapp.processEvents()
 
-    _wait_until(_parked)  # child worker parked in the reaper, not aborted
+    _wait_until(_parked)  # worker parked in the reaper, not aborted
 
     release.set()
     _wait_until(lambda: not _parked())
@@ -1716,7 +1705,6 @@ def test_estimate_alpha_respects_detector_exclusion(
 ) -> None:
     """Review fix: the estimate is computed on the same detector set the
     reduction will use."""
-    _autocalibrate(monkeypatch)
     dataset = _dataset_with_histograms()
     dataset.run.histograms = [
         Histogram(counts=np.full(4, 100.0), bin_width=0.01),  # det 1 (forward)

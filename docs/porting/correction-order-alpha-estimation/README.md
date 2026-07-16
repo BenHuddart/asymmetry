@@ -52,6 +52,25 @@ source of truth for the implementation pass.
   `tests/core/test_correction_order_alpha.py` and two new cases in
   `tests/gui/test_alpha_calibration_dialog.py`.
 
+- **2026-07-16 — PR 2 vector-α retirement landed.** `AlphaCalibrationDialog` is
+  fully retired (`alpha_calibration_dialog.py` + `test_alpha_calibration_dialog.py`
+  deleted). Its last remaining caller — the per-projection *vector* calibration —
+  now estimates α inline: the vector table (`dialog.py`) gained a shared
+  **Calibration run** + **Method** row and runs each axis's estimate (and
+  "Estimate All α") through the shared `run_alpha_estimate` / `build_alpha_request`
+  worker on the dialog's own `_vector_alpha_tasks` `TaskRunner`, **serialised** one
+  axis at a time so each result routes to its own spin. Results still flow through
+  `_apply_calibrated_policy` unchanged (P_z→single sync, provenance, staleness).
+  Run-combo population + the request builder were lifted to module-level helpers in
+  `alpha_section.py`, so the single-α and vector paths share one implementation.
+  The `alpha_calibration_dialog` screenshot scenario retargets to the grouping
+  window's inline α section; `detector_grouping.rst` and
+  `calibration_grouping_emu.rst` were updated to the inline flow with verbatim UI
+  strings (and the stale deadtime/background modal prose left by the earlier inline
+  commits was corrected in passing). The WiMDA fidelity note stands: α is estimated
+  on the corrected counts the reduction forms, matching WiMDA's
+  corrected-spectra calibration.
+
 ## The bug this study addresses
 
 Two independent code paths form forward/backward (F/B) spectra and they diverge:

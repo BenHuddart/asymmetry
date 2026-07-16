@@ -87,7 +87,13 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.panel_section import PanelSection
-from asymmetry.gui.windows.grouping.alpha_section import AlphaSectionWidget
+from asymmetry.gui.windows.grouping.alpha_section import (
+    AlphaEstimateResult,
+    AlphaSectionWidget,
+    build_alpha_request,
+    populate_calibration_run_combo,
+    run_alpha_estimate,
+)
 from asymmetry.gui.windows.grouping.background_section import (
     BackgroundReferenceRunCandidate,
     BackgroundSectionWidget,
@@ -238,6 +244,13 @@ class GroupingDialog(QDialog):
         self._vector_backward_labels: dict[str, QLabel] = {}
         self._vector_estimate_buttons: dict[str, QPushButton] = {}
         self._estimate_all_btn: QPushButton | None = None
+        # Inline per-projection α estimate (replaces the retired modal). Estimates
+        # run off-thread on this runner; "Estimate All" serialises them one axis at
+        # a time (the queue below), so each result routes to its own spin.
+        self._vector_alpha_tasks = TaskRunner(self)
+        self._vector_estimate_token = 0
+        self._vector_estimate_queue: list[str] = []
+        self._vector_estimate_source_run: int | None = None
         # Last successful estimate per slot ("single" or axis name):
         # (alpha, alpha_error, reference_run). Used to attach provenance to
         # the payload only while the spin still holds the estimated value.
@@ -647,10 +660,37 @@ class GroupingDialog(QDialog):
         # is the empty container; rows are (re)created from the current
         # projection pairs whenever they change.
         self._vector_alpha_widget = QWidget()
-        self._vector_alpha_layout = QGridLayout(self._vector_alpha_widget)
+        vector_alpha_vbox = QVBoxLayout(self._vector_alpha_widget)
+        vector_alpha_vbox.setContentsMargins(0, 0, 0, 0)
+        vector_alpha_vbox.setSpacing(6)
+
+        # One shared calibration run + method for every projection: alpha is
+        # measured from the same TF calibration run and method for each axis, so
+        # the per-axis Estimate buttons and "Estimate All" all use this pair with
+        # the axis's own forward/backward groups (the estimate is inline — the
+        # standalone modal that used to own these controls is retired).
+        vector_controls = QHBoxLayout()
+        vector_controls.setContentsMargins(0, 0, 0, 0)
+        vector_controls.addWidget(QLabel("Calibration run"))
+        self._vector_run_combo = QComboBox()
+        vector_controls.addWidget(self._vector_run_combo, stretch=1)
+        vector_controls.addWidget(QLabel("Method"))
+        self._vector_method_combo = QComboBox()
+        for label, key, explanation in _ALPHA_METHOD_ITEMS:
+            self._vector_method_combo.addItem(label, key)
+            self._vector_method_combo.setItemData(
+                self._vector_method_combo.count() - 1, explanation, Qt.ItemDataRole.ToolTipRole
+            )
+        self._vector_method_combo.currentIndexChanged.connect(self._on_vector_method_changed)
+        vector_controls.addWidget(self._vector_method_combo)
+        vector_alpha_vbox.addLayout(vector_controls)
+
+        vector_grid_widget = QWidget()
+        self._vector_alpha_layout = QGridLayout(vector_grid_widget)
         self._vector_alpha_layout.setContentsMargins(0, 0, 0, 0)
         self._vector_alpha_layout.setHorizontalSpacing(12)
         self._vector_alpha_layout.setVerticalSpacing(8)
+        vector_alpha_vbox.addWidget(vector_grid_widget)
 
         form.addRow(self._vector_alpha_widget)
 
@@ -2595,11 +2635,13 @@ class GroupingDialog(QDialog):
         super().done(result)
 
     def _teardown_workers(self) -> None:
-        """Cancel and join both worker runners (idempotent).
+        """Cancel and join every worker runner (idempotent).
 
-        The preview pane owns its own runner for the live-preview reduction;
-        ``self._tasks`` is this dialog's own runner for the background-configure
-        preview grouping. Both ``shutdown()``s are safe to call more than once.
+        The preview pane owns its runner for the live-preview reduction; the
+        inline α section owns its single-α estimate runner;
+        ``self._vector_alpha_tasks`` runs the inline per-projection α estimates;
+        and ``self._tasks`` is this dialog's runner for the background-configure
+        preview grouping. Every ``shutdown()`` is safe to call more than once.
         """
         pane = getattr(self, "_preview_pane", None)
         if pane is not None:
@@ -2607,6 +2649,9 @@ class GroupingDialog(QDialog):
         alpha_section = getattr(self, "_alpha_section", None)
         if alpha_section is not None:
             alpha_section.shutdown()
+        vector_tasks = getattr(self, "_vector_alpha_tasks", None)
+        if vector_tasks is not None:
+            vector_tasks.shutdown()
         tasks = getattr(self, "_tasks", None)
         if tasks is not None:
             tasks.shutdown()
@@ -2796,10 +2841,13 @@ class GroupingDialog(QDialog):
         self._single_alpha_widget.setVisible(not vector_mode)
         self._vector_alpha_widget.setVisible(vector_mode)
         # The inline single-α section calibrates the single/P_z balance; the
-        # per-projection vector table (with its own modal Estimate) owns the rest.
+        # per-projection vector table (with its own inline Estimate) owns the rest.
         if hasattr(self, "_alpha_section"):
             self._alpha_section.setVisible(not vector_mode)
             self._alpha_section_label.setVisible(not vector_mode)
+
+        if vector_mode:
+            self._update_vector_alpha_controls()
 
         if not vector_mode:
             self._rebuild_vector_alpha_table([], grouping_values, canonical)
@@ -3304,61 +3352,47 @@ class GroupingDialog(QDialog):
         metadata = (self._run.metadata if self._run is not None else None) or {}
         return str(metadata.get("facility", metadata.get("instrument", "")))
 
-    def _launch_calibration_dialog(
-        self,
-        slot: str,
-        forward_gid: int,
-        backward_gid: int,
-        target_spin: QDoubleSpinBox,
-        *,
-        slot_label: str | None = None,
-    ) -> None:
-        """Open the calibration dialog for one group pair and write the result.
+    # ------------------------------------------------------------------
+    # Inline per-projection (vector) α estimate
+    # ------------------------------------------------------------------
 
-        *slot* is the ``_alpha_estimate_state`` key (``"single"`` or an axis /
-        projection label) the calibration provenance is recorded under; *target_spin*
-        is the alpha spin the calibrated value is written into.
+    def _update_vector_alpha_controls(self) -> None:
+        """(Re)seed the shared vector calibration-run list + method combo.
+
+        The run combo is repopulated preserving the current selection (falling
+        back to the preview reference run); the method mirrors the single-α
+        provenance method. Called whenever the vector table becomes visible.
         """
-        if forward_gid == backward_gid:
-            QMessageBox.warning(
-                self, "Invalid Grouping", "Forward and backward groups must differ."
-            )
+        combo = getattr(self, "_vector_run_combo", None)
+        if combo is None:
             return
-        if self._run is None or not self._run.histograms:
-            QMessageBox.warning(self, "Alpha Calibration", "Reference run has no histograms.")
-            return
+        current = combo.currentData()
+        selected = int(current) if current is not None else int(self._reference_dataset.run_number)
+        combo.blockSignals(True)
+        populate_calibration_run_combo(combo, self._fingerprint_datasets(), selected)
+        combo.blockSignals(False)
+        method_combo = self._vector_method_combo
+        idx = method_combo.findData(self._current_alpha_method())
+        method_combo.blockSignals(True)
+        method_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        method_combo.blockSignals(False)
 
-        from asymmetry.gui.windows.grouping.alpha_calibration_dialog import (
-            AlphaCalibrationDialog,
-        )
+    def _on_vector_method_changed(self) -> None:
+        """Keep the payload's α-method provenance in step with the vector combo."""
+        self._set_alpha_method(self._current_vector_method())
 
-        initial_policy = AlphaPolicy(
-            mode="calibrated",
-            value=float(target_spin.value()),
-            method=self._current_alpha_method(),
-            source_run=self._alpha_estimate_state.get(slot, (None, None, None))[2],
+    def _current_vector_method(self) -> str:
+        return str(self._vector_method_combo.currentData() or "diamagnetic")
+
+    def _vector_calibration_dataset(self) -> MuonDataset | None:
+        """The dataset for the shared vector calibration-run selection."""
+        run_number = self._vector_run_combo.currentData()
+        if run_number is None:
+            return None
+        return next(
+            (ds for ds in self._fingerprint_datasets() if int(ds.run_number) == int(run_number)),
+            None,
         )
-        dialog = AlphaCalibrationDialog(
-            self._fingerprint_datasets(),
-            groups=self._groups,
-            group_names=self._group_names,
-            forward_group=int(forward_gid),
-            backward_group=int(backward_gid),
-            excluded_detectors=self._current_excluded_detectors() or [],
-            initial_policy=initial_policy,
-            slot_label=slot_label if slot != "single" else None,
-            selected_run_number=int(self._reference_dataset.run_number),
-            correction_provider=self._calibration_correction_provider(),
-            reference_resolver=self._calibration_reference_resolver,
-            facility=self._calibration_facility(),
-            parent=self,
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        policy = dialog.result_policy()
-        if policy is None:
-            return
-        self._apply_calibrated_policy(slot, target_spin, policy)
 
     def _apply_calibrated_policy(
         self, slot: str, target_spin: QDoubleSpinBox, policy: AlphaPolicy
@@ -3530,13 +3564,14 @@ class GroupingDialog(QDialog):
             self._alpha_provenance_label.setText("manual")
 
     def _estimate_alpha_for_axis(self, axis: str) -> None:
-        """Launch the calibration dialog for one projection pair.
+        """Inline-estimate α for one projection pair off the GUI thread.
 
         *axis* is the projection slot/label — a canonical EMU axis (P_x/P_y/P_z)
-        or a non-canonical projection label (FB, Top-Bottom, …). The dialog
-        preselects that projection's forward/backward groups and writes the
-        calibrated value + provenance back into the projection's alpha spin (and,
-        for the canonical P_z anchor, the single-alpha spin too).
+        or a non-canonical projection label (FB, Top-Bottom, …). The estimate uses
+        the shared calibration run + method with the projection's own forward/
+        backward groups; on success the calibrated value + provenance are written
+        into the projection's α spin (and, for the canonical P_z anchor, the
+        single-α spin too) via :meth:`_apply_calibrated_policy`.
         """
         pair = self._vector_axis_pairs.get(axis)
         if pair is None:
@@ -3544,17 +3579,117 @@ class GroupingDialog(QDialog):
                 self, "Estimate Failed", f"No grouping pair is available for {axis}."
             )
             return
-        spin = self._vector_alpha_spins.get(axis)
-        if spin is None:
+        if axis not in self._vector_alpha_spins:
             return
-        self._launch_calibration_dialog(axis, int(pair[0]), int(pair[1]), spin, slot_label=axis)
+        self._begin_vector_estimates([axis])
 
     def _estimate_all_alpha(self) -> None:
-        """Estimate alpha for every projection pair in the current table."""
-        for axis in self._ordered_projection_labels(
-            self._vector_axis_pairs, self._is_canonical_vector_pairs(self._vector_axis_pairs)
-        ):
-            self._estimate_alpha_for_axis(axis)
+        """Estimate α for every projection pair, one axis at a time.
+
+        Serialised (not fired in parallel) so each result routes to its own spin —
+        the off-thread estimates share one runner and a single result token.
+        """
+        axes = [
+            axis
+            for axis in self._ordered_projection_labels(
+                self._vector_axis_pairs, self._is_canonical_vector_pairs(self._vector_axis_pairs)
+            )
+            if axis in self._vector_alpha_spins and self._vector_axis_pairs.get(axis) is not None
+        ]
+        self._begin_vector_estimates(axes)
+
+    def _begin_vector_estimates(self, axes: list[str]) -> None:
+        """Queue *axes* for serialised inline estimation and start the first."""
+        if self._run is None or not self._run.histograms:
+            QMessageBox.warning(self, "Alpha Calibration", "Reference run has no histograms.")
+            return
+        if not axes:
+            return
+        self._vector_estimate_queue = list(axes)
+        self._set_vector_estimate_enabled(False)
+        self._start_next_vector_estimate()
+
+    def _start_next_vector_estimate(self) -> None:
+        """Kick off the next queued axis estimate, or re-enable when drained."""
+        while self._vector_estimate_queue:
+            axis = self._vector_estimate_queue[0]
+            pair = self._vector_axis_pairs.get(axis)
+            spin = self._vector_alpha_spins.get(axis)
+            dataset = self._vector_calibration_dataset()
+            if pair is None or spin is None or dataset is None or dataset.run is None:
+                self._vector_estimate_queue.pop(0)
+                continue
+            forward_gid, backward_gid = int(pair[0]), int(pair[1])
+            if forward_gid == backward_gid:
+                QMessageBox.warning(
+                    self, "Invalid Grouping", "Forward and backward groups must differ."
+                )
+                self._vector_estimate_queue.pop(0)
+                continue
+            self._vector_estimate_source_run = int(dataset.run_number)
+            self._vector_estimate_token += 1
+            token = self._vector_estimate_token
+            request = build_alpha_request(
+                token=token,
+                dataset=dataset,
+                groups=self._groups,
+                forward_gid=forward_gid,
+                backward_gid=backward_gid,
+                excluded_detectors=self._current_excluded_detectors() or [],
+                method=self._current_vector_method(),
+                correction_provider=self._calibration_correction_provider(),
+                reference_resolver=self._calibration_reference_resolver,
+                facility=self._calibration_facility(),
+            )
+            self._vector_alpha_tasks.start(
+                lambda worker, request=request: run_alpha_estimate(worker, request),
+                on_finished=lambda result, axis=axis, token=token: (
+                    self._on_vector_estimate_finished(axis, token, result)
+                ),
+                on_error=lambda message, axis=axis: self._on_vector_estimate_error(axis, message),
+            )
+            return
+        self._set_vector_estimate_enabled(True)
+
+    def _on_vector_estimate_finished(self, axis: str, token: int, result: object) -> None:
+        """Apply one axis estimate (unless superseded) and start the next."""
+        if token != self._vector_estimate_token:
+            return  # a newer estimate supersedes this stale result
+        if self._vector_estimate_queue and self._vector_estimate_queue[0] == axis:
+            self._vector_estimate_queue.pop(0)
+        spin = self._vector_alpha_spins.get(axis)
+        if isinstance(result, AlphaEstimateResult) and result.estimate.ok and spin is not None:
+            estimate = result.estimate
+            self._apply_calibrated_policy(
+                axis,
+                spin,
+                AlphaPolicy(
+                    mode="calibrated",
+                    value=float(estimate.alpha),
+                    error=estimate.alpha_error,
+                    method=estimate.method,
+                    source_run=self._vector_estimate_source_run,
+                ),
+            )
+        elif isinstance(result, AlphaEstimateResult) and not result.estimate.ok:
+            QMessageBox.warning(
+                self, "Alpha Calibration", f"Estimate failed: {result.estimate.message}"
+            )
+        self._start_next_vector_estimate()
+
+    def _on_vector_estimate_error(self, axis: str, message: str) -> None:
+        """Surface a worker error for one axis and continue the queue."""
+        if self._vector_estimate_queue and self._vector_estimate_queue[0] == axis:
+            self._vector_estimate_queue.pop(0)
+        QMessageBox.warning(self, "Alpha Calibration", message)
+        self._start_next_vector_estimate()
+
+    def _set_vector_estimate_enabled(self, enabled: bool) -> None:
+        """Enable/disable the per-axis + Estimate-All buttons while in flight."""
+        for button in self._vector_estimate_buttons.values():
+            button.setEnabled(enabled)
+        if self._estimate_all_btn is not None:
+            self._estimate_all_btn.setEnabled(enabled)
 
     def _reference_has_two_period_data(self) -> bool:
         """Return True when the reference run contains two-period histograms."""

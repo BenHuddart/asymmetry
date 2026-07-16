@@ -189,12 +189,13 @@ draft is what gets applied to every run inheriting the profile.
   settings change. The recompute runs on a worker thread (never the GUI
   thread), so editing stays responsive even while a reduction is in flight;
   a superseded recompute is discarded in favour of the latest edit.
-* **Status rows and dialogs** — compact one-line summaries of the current
-  :math:`\alpha` (with provenance, e.g. "α = 1.2345(67) · diamagnetic · run
-  2923"), deadtime mode, and background mode, each with a **Calibrate…** /
-  **Configure…** button that opens the corresponding dedicated dialog (see
-  `Alpha calibration`_, `Deadtime Correction`_, and `Background Correction`_
-  below).
+* **Corrections panel** — a single collapsible **Corrections** section that
+  configures deadtime, background, and :math:`\alpha` together, each previewed
+  against the same corrected reduction shown below. The :math:`\alpha` section
+  carries a one-line provenance summary (e.g. "α = 1.2345(67) · Diamagnetic
+  (TF) · run 2923"); deadtime and background carry their own mode controls and
+  one-line status (see `Alpha calibration`_, `Deadtime Correction`_, and
+  `Background Correction`_ below).
 
 Editing never touches a saved profile or run until you press **Apply**.
 **Apply commits everything you have changed in one pass** — the profile to
@@ -326,47 +327,61 @@ Alpha calibration
 .. figure:: /_generated/screenshots/alpha_calibration_dialog.png
    :width: 80%
    :align: center
-   :alt: Alpha calibration dialog with a highlighted TF candidate run and a
-      before/after asymmetry preview.
+   :alt: The inline alpha calibration controls in the grouping window's
+      Corrections panel — a highlighted transverse-field calibration run, a
+      method combo, an Estimate α button, and the shared before/after preview.
 
-   The alpha calibration dialog. The calibration-run dropdown highlights a
-   likely weak-transverse-field run, and the before (α = 1) / after (fitted
-   α) preview shows the balancing effect.
+   Alpha is calibrated inline, in the **α (detector balance)** section of the
+   Corrections panel: pick the calibration run, choose a method, and press
+   **Estimate α**. The shared live preview below doubles as the before (α = 1)
+   / after (fitted α) comparison once α is calibrated.
 
-Click **Calibrate…** beside the alpha status row to open the alpha
-calibration dialog. It lists every run of the current instrument in a
-dropdown, with likely calibration candidates highlighted and auto-selected:
-a run is flagged when its metadata carries explicit transverse-field
-evidence (a structured ``Transverse`` field-geometry classification, or a
-``TF``/``wTF``/``transverse`` token in the title or comment) and, when a
-field magnitude is recorded, that magnitude sits in the weak-to-moderate
-window a diamagnetic calibration run conventionally occupies (roughly 5–500
-G). A run with an explicit transverse token but no recorded field magnitude
-is still flagged, since the token is the stronger signal; a field magnitude
-alone, with no textual evidence, is not — the value alone is ambiguous
-between a weak-TF calibration run and a run whose only relation to the
+Alpha is calibrated inline, in the **α (detector balance)** section of the
+Corrections panel. Pick a run from the **Calibration run** dropdown — every run
+of the current instrument is listed, with likely calibration candidates
+highlighted and auto-selected: a run is flagged when its metadata carries
+explicit transverse-field evidence (a structured ``Transverse`` field-geometry
+classification, or a ``TF``/``wTF``/``transverse`` token in the title or
+comment) and, when a field magnitude is recorded, that magnitude sits in the
+weak-to-moderate window a diamagnetic calibration run conventionally occupies
+(roughly 5–500 G). A run with an explicit transverse token but no recorded
+field magnitude is still flagged, since the token is the stronger signal; a
+field magnitude alone, with no textual evidence, is not — the value alone is
+ambiguous between a weak-TF calibration run and a run whose only relation to the
 window is coincidence. This heuristic only changes what is highlighted and
 pre-selected: any loaded run remains choosable from the dropdown.
 
-Three calibration methods are offered:
+Choose a **Method** from three options:
 
-* **Diamagnetic** — the standard balance method for a silver or other
+* **Diamagnetic (TF)** — the standard balance method for a silver or other
   non-relaxing transverse-field run: :math:`\alpha` is fitted so the forward
   and backward precession signals oscillate symmetrically about zero.
-* **General** — a fit that also accommodates a genuinely relaxing or
-  multi-component transverse-field signal.
-* **Ratio** — the simple forward/backward integral ratio over the good-bin
-  window (Mantid's ``AlphaCalc``), with no oscillation model.
+* **General (LF/ZF)** — a fit that also accommodates a genuinely relaxing or
+  multi-component signal.
+* **Count ratio ΣF/ΣB** — the simple forward/backward integral ratio over the
+  good-bin window (Mantid's ``AlphaCalc``), with no oscillation model.
 
-The dialog shows a live **before/after** preview: the asymmetry at
-:math:`\alpha = 1` beside the asymmetry at the newly fitted :math:`\hat\alpha`,
-so the balancing effect is visible before it is accepted. Accepting a
-calibration sets the profile's alpha policy to ``calibrated`` and records its
-**provenance** — method, source run, and uncertainty — displayed in the
-status row as, for example, "α = 1.2345(67) · diamagnetic · run 2923". Typing
-a value into the alpha field directly instead switches the policy to
-``fixed`` and the provenance to plain "manual", since a hand-typed number no
-longer carries a measurement behind it.
+Press **Estimate α**. The estimate runs on a worker thread over the *corrected*
+forward/backward counts — deadtime-corrected and background-subtracted exactly
+as the reduction forms them — so a calibrated :math:`\alpha` centres the reduced
+asymmetry rather than the raw totals. A note under the result reports which
+corrections the estimate reflected (for example "α is estimated on corrected
+counts (deadtime, background (range))", or a warning when a requested correction
+could not be applied to the calibration run). The shared live preview doubles as
+the **before/after** comparison: once :math:`\alpha` is calibrated it overlays
+the asymmetry at :math:`\alpha = 1` against the asymmetry at the fitted
+:math:`\hat\alpha`, and reports the residual baseline :math:`\langle A \rangle`
+so the balance is self-evident.
+
+A successful estimate sets the profile's alpha policy to ``calibrated`` and
+records its **provenance** — method, source run, and uncertainty — displayed as,
+for example, "α = 1.2345(67) · Diamagnetic (TF) · run 2923". Typing a value into
+the alpha field directly instead switches the policy to ``fixed`` and the
+provenance to plain "manual", since a hand-typed number no longer carries a
+measurement behind it. If you change the deadtime or background settings after
+calibrating, an amber banner — "α was calibrated under different
+deadtime/background corrections — re-estimate so it centres the corrected
+asymmetry" — flags that the calibration is stale until you re-estimate.
 
 Per-projection alpha (WEP / vector)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -386,9 +401,8 @@ per-projection model.
 Deadtime correction
 --------------------
 
-The Grouping window's deadtime status row summarises the profile's deadtime
-policy; click **Configure…** to open the deadtime dialog and change it. Four
-modes are available:
+The **Deadtime correction** section of the Corrections panel configures the
+profile's deadtime policy inline. Four modes are available:
 
 * ``Off`` disables the correction.
 * ``File`` uses per-detector deadtime values already present in a run file.
@@ -401,10 +415,10 @@ modes are available:
   following WiMDA's uniform deadtime estimate workflow, then applies that one
   estimated value to every detector.
 
-The dialog includes a per-detector table and a **Cal** button that ports
+The section includes a per-detector table and a **Cal** button that ports
 WiMDA's per-detector calibration routine: it fits each detector histogram in
 the selected run separately, produces a resolved per-detector deadtime table,
-and populates the manual table with those calibrated values. The dialog also
+and populates the manual table with those calibrated values. The section also
 shows a **maximum correction at t=0** summary, the largest fractional
 correction any detector receives at the first good bin, so an unreasonable
 deadtime value is visible immediately rather than only showing up as a
@@ -442,27 +456,27 @@ run. The background correction path remains separate and optional.
 Background correction
 ----------------------
 
-The background status row summarises the profile's background policy; click
-**Configure…** to open the background dialog for PSI-style raw histogram
-formats, including PSI BIN/MDU and PSI/LEM ROOT data. This is separate from
-fit-model background parameters such as ``A_bg``: it subtracts a count
-background from grouped raw forward/backward histograms before the asymmetry
-is calculated.
+The **Background subtraction** section of the Corrections panel configures the
+profile's background policy inline for PSI-style raw histogram formats,
+including PSI BIN/MDU and PSI/LEM ROOT data. This is separate from fit-model
+background parameters such as ``A_bg``: it subtracts a count background from
+grouped raw forward/backward histograms before the asymmetry is calculated.
 
 This follows musrfit's ``PRunAsymmetry`` ordering. Histograms are first
 grouped into forward and backward sums, then background is subtracted, and
-then asymmetry is calculated. The dialog's modes are:
+then asymmetry is calculated. The section's modes are:
 
 * ``None`` — no correction.
 * ``Range`` — the background is estimated as the mean count in an inclusive
   pre-:math:`t_0` bin range. If no range is given, it uses musrfit's fallback
-  range from ``0.1 * t0`` to ``0.6 * t0``. The dialog shades this window on a
-  preview plot so the range is visible before it is accepted.
+  range from ``0.1 * t0`` to ``0.6 * t0``.
 * ``Tail fit`` — a Poisson maximum-likelihood fit of the late-time count
   level, for runs where a fixed pre-:math:`t_0` window is not representative.
 * ``Reference run`` — subtracts a dedicated background run's own grouped
-  counts (scaled by relative good-frame count), with the same shaded-window
-  preview showing which run and range are in use.
+  counts (scaled by relative good-frame count).
+
+The shared live preview below the Corrections panel always reflects the
+subtraction, so its effect on the asymmetry is visible as the mode changes.
 * ``Fixed`` — fixed forward/backward count values are subtracted directly.
 
 For corrected histograms, Asymmetry propagates musrfit-style count

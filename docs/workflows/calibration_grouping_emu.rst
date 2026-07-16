@@ -124,24 +124,27 @@ calibration surface for that profile:
 Step 3 — Calibrate α from the TF run
 --------------------------------------
 
-With the TF calibration run (``EMU00044989``) selected in the scope panel,
-click **Calibrate…** beside the alpha status row. Because this run's field
-geometry is transverse and its magnitude sits in the weak-TF window, the
-calibration dialog highlights and pre-selects it in its own run dropdown.
+In the **α (detector balance)** section of the Corrections panel, pick the TF
+calibration run (``EMU00044989``) from the **Calibration run** dropdown.
+Because this run's field geometry is transverse and its magnitude sits in the
+weak-TF window, it is highlighted and pre-selected there. Choose a **Method**
+and press **Estimate α**.
 
 .. figure:: /_generated/screenshots/alpha_calibration_dialog.png
    :width: 80%
    :align: center
-   :alt: The alpha calibration dialog, with a highlighted transverse-field
-      candidate run and a before (α = 1) / after (fitted α) asymmetry preview.
+   :alt: The inline alpha calibration controls, with a highlighted
+      transverse-field calibration run, a method combo, an Estimate α button,
+      and the shared before (α = 1) / after (fitted α) asymmetry preview.
 
-   The alpha calibration dialog, shown here on a representative synthetic
+   The inline alpha calibration, shown here on a representative synthetic
    transverse-field run (your EMU silver run ``44989`` reports
-   :math:`\alpha \approx 1.103`). The dropdown highlights the likely TF
-   calibration run, and the before/after preview shows the precession
-   becoming symmetric about zero once the fitted :math:`\alpha` is applied.
+   :math:`\alpha \approx 1.103`). The **Calibration run** dropdown highlights
+   the likely TF calibration run, and the shared before/after preview shows the
+   precession becoming symmetric about zero once the fitted :math:`\alpha` is
+   applied.
 
-Choose the **Diamagnetic** method. On a silver TF run the precession is a
+Choose the **Diamagnetic (TF)** method. On a silver TF run the precession is a
 clean, non-relaxing oscillation, and the correct :math:`\alpha` is the one
 that makes the forward/backward asymmetry oscillate *symmetrically about
 zero* — an imbalanced :math:`\alpha` leaves the precession riding on a
@@ -154,18 +157,18 @@ power over the good-data window,
    \qquad A_i = \frac{F_i - \alpha B_i}{F_i + \alpha B_i},
 
 with :math:`\sigma_i` the Poisson-propagated per-bin asymmetry error — WiMDA's
-diamagnetic estimate. (The **Ratio** method instead computes the simple
-integral balance :math:`\alpha = \sum_i F_i / \sum_i B_i`, Mantid's
+diamagnetic estimate. (The **Count ratio ΣF/ΣB** method instead computes the
+simple integral balance :math:`\alpha = \sum_i F_i / \sum_i B_i`, Mantid's
 ``AlphaCalc``, with no oscillation model; on a clean Ag run the two agree
-closely. The **General** method accommodates a genuinely relaxing or
+closely. The **General (LF/ZF)** method accommodates a genuinely relaxing or
 multi-component TF signal.) On the Ag TF run all of these give
-:math:`\alpha \approx 1.103`, and the dialog's before/after preview shows
-the balancing effect directly. Accept the calibration: the status row now
-reads something like "α = 1.103(2) · diamagnetic · run 44989".
+:math:`\alpha \approx 1.103`, and the shared before/after preview shows the
+balancing effect directly. The estimate applies immediately: the α section now
+reads something like "α = 1.103(2) · Diamagnetic (TF) · run 44989".
 
 The same calculation is available from the Python API. The diamagnetic fit
 lives in :func:`~asymmetry.core.transform.estimate_alpha_detailed`; the
-simpler integral ratio (equivalent to the dialog's **Ratio** method) is
+simpler integral ratio (equivalent to the **Count ratio ΣF/ΣB** method) is
 :func:`~asymmetry.core.transform.estimate_alpha`:
 
 .. code-block:: python

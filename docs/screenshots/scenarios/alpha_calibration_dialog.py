@@ -1,13 +1,14 @@
-"""Alpha calibration dialog: TF run auto-suggestion and before/after preview.
+"""Inline alpha calibration in the grouping window's Corrections panel.
 
-Opens the alpha calibration dialog directly on a synthesised YBCO
-transverse-field run. The run's title ("YBCO TF 200G...") and its 200 G
-field both satisfy the weak-transverse-field calibration heuristic
-(:func:`asymmetry.core.data.calibration.classify_tf_calibration_run`), so it
-is highlighted and pre-selected in the calibration-run dropdown exactly as it
-would be for a real TF calibration run. Estimating alpha then draws the
-before (alpha = 1) / after (fitted alpha) asymmetry preview. Companion to
-:doc:`/reference/detector_grouping` and :doc:`/reference/grouping_calibration`.
+Opens the Grouping window directly on a synthesised YBCO transverse-field run.
+Alpha (the detector-balance parameter) is now calibrated **inline** in the
+Corrections panel — a calibration-run picker (weak-TF candidates highlighted), an
+estimation method, and an **Estimate α** button — instead of a separate modal
+dialog. Pressing Estimate α measures alpha on the *corrected* forward/backward
+counts and drives the shared grouping preview, which overlays the α = 1 "before"
+ghost against the estimated-α "after" curve and reports the residual baseline
+⟨A⟩. Companion to :doc:`/reference/detector_grouping` and
+:doc:`/reference/grouping_calibration`.
 """
 
 from __future__ import annotations
@@ -24,42 +25,41 @@ from ._base import CaptureContext, Scenario, register
 class AlphaCalibrationDialogScenario(Scenario):
     name = "alpha_calibration_dialog"
     description = (
-        "Alpha calibration dialog with a highlighted TF candidate run and a before/after preview."
+        "Inline alpha calibration in the grouping window's Corrections panel, with the "
+        "shared before/after (α = 1 ↔ α̂) asymmetry preview."
     )
-    size = (760, 640)
+    size = (1180, 760)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
-        from asymmetry.gui.windows.grouping.alpha_calibration_dialog import (
-            AlphaCalibrationDialog,
-        )
+        from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = make_ybco_knight_grouped()
-        grouping = dataset.run.grouping
 
-        dialog = AlphaCalibrationDialog(
-            [dataset],
-            groups=grouping["groups"],
-            group_names=grouping.get("group_names"),
-            forward_group=grouping["forward_group"],
-            backward_group=grouping["backward_group"],
-            selected_run_number=int(dataset.run_number),
-        )
+        dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
         _pump_events(150)
 
-        # Estimate now runs the grouping + alpha reduction on a background
-        # worker thread, so a single click does not populate the result before
-        # the grab. Pump the event loop until the worker's queued finished
-        # callback has landed (deterministic, not a fixed sleep) so the captured
-        # preview and result label always show the estimate, never the transient
-        # "Computing estimate…" busy state.
-        estimate_btn = getattr(dialog, "_estimate_btn", None)
-        if estimate_btn is not None:
-            estimate_btn.click()
-            _pump_until(lambda: dialog._tasks.active_count == 0 and dialog._estimate is not None)
-            _pump_events(50)
+        # The inline α estimate runs on a background worker thread, so a single
+        # click does not populate the result before the grab. Pump the event loop
+        # until the worker's queued finished callback has landed (deterministic,
+        # not a fixed sleep) so the captured α result and preview overlay always
+        # show the estimate, never the transient "Computing estimate…" state.
+        section = getattr(dialog, "_alpha_section", None)
+        if section is not None:
+            section._on_estimate()
+            _pump_until(lambda: section._tasks.active_count == 0)
+            # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.
+            _pump_events(500)
+            # Bring the inline α-calibration controls (run picker, method, Estimate
+            # α, result) into view — they sit at the foot of the Corrections panel,
+            # below deadtime and background, in the scrolling right pane.
+            scroll = getattr(dialog, "_right_scroll", None)
+            if scroll is not None:
+                bar = scroll.verticalScrollBar()
+                bar.setValue(bar.maximum())
+                _pump_events(80)
 
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"

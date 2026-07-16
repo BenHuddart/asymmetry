@@ -179,13 +179,30 @@ excludes cosmetics/alpha — the reuse candidate for the staleness digest.
      success it emits a calibrated `AlphaPolicy` the dialog applies via
      `_apply_calibrated_policy` (α spin + provenance + staleness digest), driving
      the shared preview overlay. The off-thread estimate worker moved to
-     `alpha_section.py` and is shared with the modal. The section pulls its group
-     pair / correction context fresh at Estimate time via a provider callback.
-     **The standalone `AlphaCalibrationDialog` is kept only for the per-projection
-     *vector* calibration** (`_estimate_alpha_for_axis`) — retiring that (inline
-     per-axis estimate) and retargeting the `alpha_calibration_dialog` screenshot
-     scenario are the remaining follow-ups. Corrections panel now hosts deadtime +
-     background + single-α inline.
+     `alpha_section.py`. The section pulls its group pair / correction context
+     fresh at Estimate time via a provider callback. Corrections panel now hosts
+     deadtime + background + single-α inline.
+   - **α (vector / per-projection) — DONE.** The standalone
+     `AlphaCalibrationDialog` is **fully retired** (`alpha_calibration_dialog.py`
+     + `test_alpha_calibration_dialog.py` deleted). The per-projection vector
+     table (`dialog.py`) gained a shared **Calibration run** + **Method** row and
+     drives its per-axis and "Estimate All α" estimates inline through the shared
+     `run_alpha_estimate` / `build_alpha_request` worker on the dialog's own
+     `_vector_alpha_tasks` `TaskRunner`. "Estimate All" is **serialised** one axis
+     at a time (a queue + single result token) so each result routes to its own
+     spin — never fired in parallel. Every result still flows through
+     `_apply_calibrated_policy(slot, spin, policy)` unchanged (P_z→single sync,
+     provenance, staleness digest). Run-combo population and the request builder
+     were lifted to module-level helpers in `alpha_section.py`
+     (`populate_calibration_run_combo`, `build_alpha_request`,
+     `grouping_for_reduction`, `resolve_reference`, `good_window`) so the single-α
+     section and the vector path share one implementation. The
+     `alpha_calibration_dialog` screenshot scenario is retargeted to the grouping
+     window's inline α section; `detector_grouping.rst` and
+     `calibration_grouping_emu.rst` (both figures + captions) were updated to the
+     inline flow with verbatim UI strings, and `ARCHITECTURE.md` drops the retired
+     module. (While there, the stale "opens the deadtime/background dialog" prose
+     left by the earlier deadtime/background inline commits was corrected too.)
 5. **Diagnostic per-stage toggles** (preview-only). **Trap:** they must write to
    the preview request only, never the persisted grouping payload — otherwise
    they silently change real reductions (the exact bug class PR 1 fixed).

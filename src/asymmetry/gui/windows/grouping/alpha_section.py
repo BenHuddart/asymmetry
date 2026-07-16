@@ -11,9 +11,11 @@ dialog applies it to the α spin and the shared preview (which already draws the
 α=1↔α̂ overlay and the residual baseline). There is no preview of its own — the
 unified grouping preview is the single source of truth.
 
-The off-thread estimate worker (:func:`run_alpha_estimate`) and its corrected-F/B
-builder (:func:`build_corrected`) are shared with the still-modal *vector*
-per-projection calibration in ``alpha_calibration_dialog.py``.
+The off-thread estimate worker (:func:`run_alpha_estimate`), its corrected-F/B
+builder (:func:`build_corrected`), the request builder (:func:`build_alpha_request`)
+and the run-combo helpers (:func:`populate_calibration_run_combo`) are shared with
+the grouping dialog's inline *vector* per-projection α estimate (the standalone
+``AlphaCalibrationDialog`` it used to launch has been retired).
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ from asymmetry.core.transform.background import resolve_background_mode
 from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.transform.reduce import (
     CorrectedGroupedCounts,
+    ReferenceResolver,
     corrected_grouped_counts,
     correction_flags_from_grouping,
 )
@@ -60,9 +63,16 @@ __all__ = [
     "AlphaEstimateRequest",
     "AlphaEstimateResult",
     "AlphaSectionWidget",
+    "build_alpha_request",
     "build_corrected",
     "correction_note",
+    "good_window",
+    "grouping_for_reduction",
+    "populate_calibration_run_combo",
+    "resolve_reference",
     "run_alpha_estimate",
+    "run_metadata",
+    "run_summary",
 ]
 
 CorrectionProvider = Callable[[MuonDataset], "dict[str, Any]"]
@@ -218,6 +228,177 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
     )
 
 
+# ----------------------------------------------------------------------------
+# Shared run-combo + request builders (used by the inline single-α section here
+# and by the grouping dialog's inline per-projection vector estimate). One
+# implementation, so the two estimate call sites agree by construction.
+# ----------------------------------------------------------------------------
+
+
+def run_metadata(dataset: MuonDataset) -> dict[str, Any]:
+    """Merged run + dataset metadata (the run's is the loaders' richer copy)."""
+    metadata: dict[str, Any] = dict(dataset.metadata or {})
+    run = dataset.run
+    if run is not None and isinstance(run.metadata, dict):
+        metadata.update(run.metadata)
+    return metadata
+
+
+def run_summary(dataset: MuonDataset) -> str:
+    """One-line ``Run — title · T · B`` summary for a calibration-run dropdown."""
+    metadata = run_metadata(dataset)
+    parts: list[str] = [f"Run {dataset.run_label}"]
+    title = str(metadata.get("title", "")).strip()
+    if title:
+        parts.append(title)
+    for key, unit in (("temperature", "K"), ("field", "G")):
+        value = metadata.get(key)
+        if value is not None:
+            try:
+                parts.append(f"{float(value):g} {unit}")
+            except (TypeError, ValueError):
+                pass
+    return "  ·  ".join(parts)
+
+
+def populate_calibration_run_combo(
+    combo: QComboBox,
+    datasets: list[MuonDataset],
+    selected_run_number: int | None,
+) -> None:
+    """Fill *combo* with the fingerprint runs, highlighting weak-TF candidates.
+
+    Weak-TF calibration candidates are drawn in the accent colour with the
+    classifier's reason as a tooltip. The selection prefers *selected_run_number*,
+    then the auto-picked best calibration run, then the first entry.
+    """
+    combo.clear()
+    candidate_brush = QBrush(QColor(tokens.ACCENT))
+    for ds in datasets:
+        verdict = classify_tf_calibration_run(run_metadata(ds))
+        combo.addItem(run_summary(ds), int(ds.run_number))
+        index = combo.count() - 1
+        if verdict.is_candidate:
+            combo.setItemData(index, candidate_brush, Qt.ItemDataRole.ForegroundRole)
+            combo.setItemData(index, verdict.reason, Qt.ItemDataRole.ToolTipRole)
+    if not datasets:
+        return
+    if selected_run_number is not None:
+        found = combo.findData(int(selected_run_number))
+        if found >= 0:
+            combo.setCurrentIndex(found)
+            return
+    auto = best_calibration_run_index([run_metadata(ds) for ds in datasets])
+    combo.setCurrentIndex(auto if auto is not None else 0)
+
+
+def grouping_for_reduction(
+    dataset: MuonDataset,
+    *,
+    groups: dict[int, list[int]],
+    forward_gid: int,
+    backward_gid: int,
+    excluded_detectors: list[int],
+    correction_provider: CorrectionProvider | None,
+) -> dict[str, Any]:
+    """Resolved correction grouping for *dataset* with a draft group pair.
+
+    Starts from the dataset's resolved correction payload (deadtime + background
+    config plus per-run t0 / good-window facts) so α is estimated on the same
+    corrected counts the reduction applies it to, then overrides the group
+    selection, forward/backward pair and exclusions. Without a
+    ``correction_provider`` this degrades to the minimal raw-count dict. ``groups``
+    are the dialog's 0-based detector indices; they are stored 1-based here.
+    """
+    grouping: dict[str, Any] = {}
+    if correction_provider is not None:
+        try:
+            grouping = dict(correction_provider(dataset) or {})
+        except Exception:  # noqa: BLE001 — a broken provider degrades to raw counts
+            grouping = {}
+    grouping["groups"] = {int(gid): [int(i) + 1 for i in idxs] for gid, idxs in groups.items()}
+    grouping["forward_group"] = int(forward_gid)
+    grouping["backward_group"] = int(backward_gid)
+    grouping["excluded_detectors"] = list(excluded_detectors)
+    return grouping
+
+
+def resolve_reference(
+    grouping: dict[str, Any], reference_resolver: ReferenceResolver | None
+) -> tuple[list[Histogram], float] | None:
+    """Resolve the ``reference_run`` background on the GUI thread, or ``None``.
+
+    Done on the GUI thread (not in the worker) because the resolver reaches into
+    the loaded-dataset registry; the result is plain data snapshotted into the
+    worker request. Degrades to ``None`` for non-reference modes or any failure.
+    """
+    if reference_resolver is None:
+        return None
+    if resolve_background_mode(grouping) != "reference_run":
+        return None
+    try:
+        return reference_resolver(grouping)
+    except Exception:  # noqa: BLE001 — an unresolvable reference degrades to no subtraction
+        return None
+
+
+def good_window(grouping: dict[str, Any], n_bins: int) -> tuple[int, int]:
+    """Good-bin ``(first, last)`` from the resolved grouping, clamped to *n_bins*."""
+    try:
+        first = max(0, int(grouping.get("first_good_bin", 0)))
+    except (TypeError, ValueError):
+        first = 0
+    try:
+        last = int(grouping.get("last_good_bin", n_bins - 1))
+    except (TypeError, ValueError):
+        last = n_bins - 1
+    return first, last
+
+
+def build_alpha_request(
+    *,
+    token: int,
+    dataset: MuonDataset,
+    groups: dict[int, list[int]],
+    forward_gid: int,
+    backward_gid: int,
+    excluded_detectors: list[int],
+    method: str,
+    correction_provider: CorrectionProvider | None,
+    reference_resolver: ReferenceResolver | None,
+    facility: str,
+) -> AlphaEstimateRequest:
+    """Snapshot the current inputs into an :class:`AlphaEstimateRequest`.
+
+    Built on the GUI thread — resolves the correction grouping, the good-bin
+    window and the ``reference_run`` background to plain data so the worker never
+    touches widgets or the loader. *dataset* must carry a run with histograms.
+    """
+    run = dataset.run
+    assert run is not None
+    grouping = grouping_for_reduction(
+        dataset,
+        groups=groups,
+        forward_gid=forward_gid,
+        backward_gid=backward_gid,
+        excluded_detectors=excluded_detectors,
+        correction_provider=correction_provider,
+    )
+    n_bins = int(run.histograms[0].n_bins)
+    first_good, last_good = good_window(grouping, n_bins)
+    return AlphaEstimateRequest(
+        token=token,
+        histograms=list(run.histograms),
+        grouping=grouping,
+        method=method,
+        first_good_bin=first_good,
+        last_good_bin=last_good,
+        run_label=str(dataset.run_label),
+        resolved_reference=resolve_reference(grouping, reference_resolver),
+        facility=str(facility or ""),
+    )
+
+
 class AlphaSectionWidget(QWidget):
     """Inline single-α calibration controls (run picker + method + Estimate).
 
@@ -314,49 +495,7 @@ class AlphaSectionWidget(QWidget):
     # -- run combo -------------------------------------------------------
 
     def _populate_run_combo(self, selected_run_number: int | None) -> None:
-        combo = self._run_combo
-        combo.clear()
-        candidate_brush = QBrush(QColor(tokens.ACCENT))
-        for ds in self._datasets:
-            verdict = classify_tf_calibration_run(self._run_metadata(ds))
-            combo.addItem(self._run_summary(ds), int(ds.run_number))
-            index = combo.count() - 1
-            if verdict.is_candidate:
-                combo.setItemData(index, candidate_brush, Qt.ItemDataRole.ForegroundRole)
-                combo.setItemData(index, verdict.reason, Qt.ItemDataRole.ToolTipRole)
-        if not self._datasets:
-            return
-        if selected_run_number is not None:
-            found = combo.findData(int(selected_run_number))
-            if found >= 0:
-                combo.setCurrentIndex(found)
-                return
-        auto = best_calibration_run_index([self._run_metadata(ds) for ds in self._datasets])
-        combo.setCurrentIndex(auto if auto is not None else 0)
-
-    @staticmethod
-    def _run_metadata(dataset: MuonDataset) -> dict[str, Any]:
-        metadata: dict[str, Any] = dict(dataset.metadata or {})
-        run = dataset.run
-        if run is not None and isinstance(run.metadata, dict):
-            metadata.update(run.metadata)
-        return metadata
-
-    @classmethod
-    def _run_summary(cls, dataset: MuonDataset) -> str:
-        metadata = cls._run_metadata(dataset)
-        parts: list[str] = [f"Run {dataset.run_label}"]
-        title = str(metadata.get("title", "")).strip()
-        if title:
-            parts.append(title)
-        for key, unit in (("temperature", "K"), ("field", "G")):
-            value = metadata.get(key)
-            if value is not None:
-                try:
-                    parts.append(f"{float(value):g} {unit}")
-                except (TypeError, ValueError):
-                    pass
-        return "  ·  ".join(parts)
+        populate_calibration_run_combo(self._run_combo, self._datasets, selected_run_number)
 
     def _current_dataset(self) -> MuonDataset | None:
         run_number = self._run_combo.currentData()
@@ -369,69 +508,24 @@ class AlphaSectionWidget(QWidget):
 
     # -- estimate --------------------------------------------------------
 
-    def _grouping_for_reduction(
-        self, dataset: MuonDataset, context: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Resolved correction grouping for *dataset* with the draft group pair."""
-        grouping: dict[str, Any] = {}
-        provider = context.get("correction_provider")
-        if provider is not None:
-            try:
-                grouping = dict(provider(dataset) or {})
-            except Exception:  # noqa: BLE001 — a broken provider degrades to raw counts
-                grouping = {}
-        groups = context.get("groups") or {}
-        grouping["groups"] = {int(gid): [int(i) + 1 for i in idxs] for gid, idxs in groups.items()}
-        grouping["forward_group"] = int(context.get("forward_group", 1))
-        grouping["backward_group"] = int(context.get("backward_group", 2))
-        grouping["excluded_detectors"] = list(context.get("excluded_detectors") or [])
-        return grouping
-
-    def _resolve_reference(
-        self, grouping: dict[str, Any], context: dict[str, Any]
-    ) -> tuple[list[Histogram], float] | None:
-        resolver = context.get("reference_resolver")
-        if resolver is None:
-            return None
-        if resolve_background_mode(grouping) != "reference_run":
-            return None
-        try:
-            return resolver(grouping)
-        except Exception:  # noqa: BLE001 — an unresolvable reference degrades to no subtraction
-            return None
-
-    @staticmethod
-    def _good_window(grouping: dict[str, Any], n_bins: int) -> tuple[int, int]:
-        try:
-            first = max(0, int(grouping.get("first_good_bin", 0)))
-        except (TypeError, ValueError):
-            first = 0
-        try:
-            last = int(grouping.get("last_good_bin", n_bins - 1))
-        except (TypeError, ValueError):
-            last = n_bins - 1
-        return first, last
-
     def _on_estimate(self) -> None:
         dataset = self._current_dataset()
         if dataset is None or dataset.run is None or not dataset.run.histograms:
             QMessageBox.warning(self, "Alpha Calibration", "Selected run has no histograms.")
             return
         context = self._context_provider() if self._context_provider is not None else {}
-        grouping = self._grouping_for_reduction(dataset, context)
-        n_bins = int(dataset.run.histograms[0].n_bins)
-        first_good, last_good = self._good_window(grouping, n_bins)
         self._estimate_source_run = int(dataset.run_number)
         self._estimate_token += 1
-        request = AlphaEstimateRequest(
+        request = build_alpha_request(
             token=self._estimate_token,
-            histograms=list(dataset.run.histograms),
-            grouping=grouping,
+            dataset=dataset,
+            groups=context.get("groups") or {},
+            forward_gid=int(context.get("forward_group", 1)),
+            backward_gid=int(context.get("backward_group", 2)),
+            excluded_detectors=context.get("excluded_detectors") or [],
             method=self._current_method(),
-            first_good_bin=first_good,
-            last_good_bin=last_good,
-            run_label=str(dataset.run_label),
-            resolved_reference=self._resolve_reference(grouping, context),
+            correction_provider=context.get("correction_provider"),
+            reference_resolver=context.get("reference_resolver"),
             facility=str(context.get("facility", "")),
         )
         self._estimate_btn.setEnabled(False)
