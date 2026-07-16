@@ -108,13 +108,13 @@ jobs:
           cache: "pip"
 
       - name: Install documentation dependencies
-        # The hdf4 extra (pyhdf) is required by the corpus screenshot
-        # scenarios: most muon-school runs are legacy HDF4 NeXus v1. Without
-        # it every HDF4-based capture fails and stubs silently replace the
-        # real renders on the published site.
+        # The hdf4 (pyhdf) and hdf5 (h5py) extras are required by the corpus
+        # screenshot scenarios: most muon-school runs are legacy HDF4 NeXus v1,
+        # and the 2024 EMU/ARGUS teaching runs are NeXus v2 (HDF5). Without them
+        # captures fail at load and stubs silently replace the published renders.
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[hdf4]"
+          pip install -c constraints.txt -e ".[hdf4,hdf5]"
           pip install -c constraints.txt -r docs/requirements.txt
 
       - name: Install offscreen-Qt runtime libraries
@@ -188,8 +188,19 @@ jobs:
           fi
           # Fill any missing render (failed module, or no corpus at all) with a
           # labelled placeholder so the built pages are image-complete. Existing
-          # real renders are never overwritten.
-          python -m docs.screenshots.capture_corpus --stubs-missing
+          # real renders are never overwritten. When the corpus WAS provisioned,
+          # any stub means a scenario silently failed — surface that loudly as a
+          # workflow warning + step summary instead of a quietly green job.
+          STUB_LOG=$(python -m docs.screenshots.capture_corpus --stubs-missing)
+          echo "$STUB_LOG"
+          if [ -d ~/wimda-corpus/Basics ] && echo "$STUB_LOG" | grep -q "] stub "; then
+            COUNT=$(echo "$STUB_LOG" | grep -c "] stub ")
+            echo "::warning::${COUNT} corpus render(s) fell back to stubs despite the corpus being provisioned — see the step summary"
+            {
+              echo "## Corpus renders stubbed despite provisioned corpus (${COUNT})"
+              echo "$STUB_LOG" | grep "] stub " | sed -E 's#.*/([^/]+)\.png#- \1#'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Build HTML docs
         run: sphinx-build -d docs/_build/doctrees -b html docs docs/_build/html
