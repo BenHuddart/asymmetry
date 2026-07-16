@@ -58,11 +58,14 @@ Not just the headline result. Each example should yield roughly 3–6 renders:
   adaptive widths — resize docks in `settle()`, after show.
 - **Warm-start batch fits** in temperature/field order; cold seeds walk to
   wrong minima on real data (EuO ν, YMnAl λ/β, PTFE r all showed this).
-- **MaxEnt on real data is temperamental**: fine on κ-Cl `.mdu` high-TF;
-  diverges on BiSCCO F/B asymmetry (large baseline). Try it, keep compute
-  modest (binning/time-range), and fall back to FFT rather than shipping a
-  broken panel. Full-resolution MaxEnt can trip the workload-warning modal,
-  which blocks offscreen.
+- **MaxEnt works out of the box since PR 249** (phase seeding + workload
+  auto-steering, both default-on; the old BiSCCO divergence is fixed and the
+  workload warning routes to the log when headless). Leave End/Binning unset
+  and let auto-steer size them; `auto_steer_applied` in the result records
+  what it chose. Remaining rough edges: the fixed 300 G auto-window half-width
+  is too wide for low-field runs (LiFeAs — set an explicit window), wide
+  multi-line windows can't be binned by the steer margin (benzene — slow),
+  and χ²/N may plateau above 1 on some real F/B runs.
 - **Trending panel plots one active series** — for two-series comparisons use
   a standalone matplotlib figure via the house `mgb2_lambda_t.py` pattern.
 - **Twin-axis `QWidget.grab` has a last-pixel flake offscreen** — prefer two

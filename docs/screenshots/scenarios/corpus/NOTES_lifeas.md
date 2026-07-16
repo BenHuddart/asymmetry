@@ -137,6 +137,21 @@ runs are 1.5/20 K field-dependence *pairs*, not a T-scan (see problems).
 5. **No reference-program output exists** (§7) — no WiMDA `.fit`, no teaching
    docx. Grading is against the paper's printed λ_ab/n (hard) and the digitised
    Fig. 1 B_rms(T) (shape/magnitude), per §11.
+6. **MaxEnt does not cleanly separate the vortex/normal lineshape here — FFT
+   stays the tool.** Re-tested on the PR-249 branch (2026-07-16): core `maxent()`
+   on the Up/Down transverse pair (groups 3, 4), out-of-the-box auto steering,
+   converges to **χ²/N ≈ 30–50** with **no** vortex-vs-normal contrast — the
+   1.5 K and 18 K runs both reconstruct to an identical 5.40 MHz line. Cause is
+   the field-derived auto window: on a 400 G run the fixed 300 G half-width spans
+   ≈1.4–9.5 MHz, far wider than the ~5.4 MHz line, so the reconstruction is
+   baseline-dominated (RMS width ≈1.2 MHz for both). With a **hand-tuned tight
+   window (4–7 MHz, binning 4, 512 pts, 40 cycles)** the broadening does emerge —
+   vortex RMS width ≈0.375 vs normal ≈0.255 MHz (FWHM 0.112 vs 0.088) — but
+   χ²/N stays 8–13 (the same raw PSI error-scaling that keeps the time-domain
+   fits at χ²ᵣ ≈ 6–10, caveat 3). So MaxEnt reproduces the physics only under
+   manual steering and never at χ²/N ≈ 1; the frequency-domain
+   `corpus_lifeas_vortex_lineshape` FFT overlay remains the cleaner, more
+   compelling picture of the p(B) broadening. No MaxEnt scenario added.
 
 ## PR-248 (multi-series overlay) — verdict from this rework
 

@@ -339,9 +339,9 @@ class KappaClMaxEntScenario(CorpusScenario):
     name = "corpus_kappacl_maxent"
     description = (
         "MaxEnt internal-field distribution around the 6 T applied field "
-        "(field-centred auto window) for the base-T ordered κ-Cl run: the "
-        "internal-field line resolves at ~813.7 MHz, just above the γ_µ·B "
-        "applied-field marker — the paper's headline observable."
+        "(field-centred auto window, auto workload steering) for the base-T "
+        "ordered κ-Cl run: the internal-field line resolves at ~813.6 MHz, just "
+        "above the γ_µ·B applied-field marker — the paper's headline observable."
     )
     example = EXAMPLE
     size = (1500, 920)
@@ -364,15 +364,20 @@ class KappaClMaxEntScenario(CorpusScenario):
         window._on_domain_button_clicked("maxent")
         _process_events_for(milliseconds=120)
 
-        # Steer the reconstruction to a tractable, field-centred window: auto
-        # window (centres on γ_µ·6T ≈ 813 MHz), a short coherent time range with
-        # generous binning to keep the projection matrix small (Nyquist after
-        # 8× binning is ≈ 2.6 GHz, still well above the line).
+        # Out-of-the-box auto workload steering (PR 249, default on) sizes the
+        # binning and end time to this raw 389k-bin .mdu run: with the End and
+        # Binning fields left unset it raises binning to 10 and caps t_max at
+        # ≈2.0 µs — the same values this scenario used to hand-tune — so the
+        # field-centred auto window (centres on γ_µ·6T ≈ 813 MHz) reconstructs
+        # the internal-field line without any manual time-range/binning steering.
+        # Only the spectrum-point count is set explicitly (256, for capture
+        # speed — the GUI always honours the explicit Spectrum-points value).
         panel = window._maxent_panel
         panel._auto_window_check.setChecked(True)
+        panel._auto_steer_check.setChecked(True)
         panel._points_spin.setValue(256)
-        panel._t_max_edit.setText("2.0")
-        panel._time_binning_spin.setValue(8)
+        panel._t_max_edit.setText("")
+        panel._time_binning_spin.setValue(1)
         _process_events_for(milliseconds=60)
 
         run_number = int(ordered.run_number)

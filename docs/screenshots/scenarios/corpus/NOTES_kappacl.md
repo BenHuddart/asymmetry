@@ -80,18 +80,36 @@ time; the comparison figure uses a standalone frequency `PlotPanel` with
 `compute_average_group_spectrum`). This is a mild UI gap: **no in-window
 multi-run FFT overlay** — worth a product note.
 
-**MaxEnt — works, but slow and needs steering.** The field-centred **auto
-window** (centres on γ_µ·B) is exactly right for the ΔB observable and needs no
-manual frequency entry. But the raw run is 388 894 time bins × 8 octant groups;
-a full-resolution reconstruction is a huge projection matrix. To stay under the
-GUI's own workload-warning thresholds (which would otherwise pop a modal
-"Large MaxEnt calculation" dialog) and finish in ≈90 s, the scenario sets
-`t_max = 2 µs`, `binning = 8` (Nyquist after binning ≈ 2.6 GHz, still above the
-line), 256 spectrum points, 8 cycles. The reconstructed internal-field line
-resolves just above ΔB = 0; short-time/8-cycle reconstruction leaves visible
-MaxEnt side-lobe ringing on the high-ΔB side. Fidelity is fine for a demo, but
-**a default HAL-high-field MaxEnt preset (binning/time-range/points) would help
-users** — the out-of-box full-resolution settings trip the workload warning.
+**MaxEnt — works out of the box since PR 249 (auto workload steering).** The
+field-centred **auto window** (centres on γ_µ·B) is exactly right for the ΔB
+observable and needs no manual frequency entry. The raw run is 388 894 time
+bins × 8 octant groups, so a full-resolution reconstruction was a huge
+projection matrix (3.1 M observations, 2¹⁹-point default spectrum) that tripped
+the workload-warning modal and blocked offscreen capture. PR 249's **auto
+workload steering** now sizes the unset knobs automatically: on run 686 it
+raises `binning` to **10** and caps `t_max` at **≈2.005 µs** (spectrum length
+would cap at 1024 in the scripting API; the GUI honours the explicit
+Spectrum-points value), exactly the values this scenario used to hand-tune, and
+records them in the result metadata `auto_steer_applied`.
+
+Re-tested on run 686 (6 T, 3.24 K, base-T ordered), PR-249 branch
+(2026-07-16), core `maxent()`, `early_stop` on:
+
+| Path | binning | t_max (µs) | spec pts | cycles | χ²/N | peak (MHz) | time |
+|---|---|---|---|---|---|---|---|
+| Hand-tuned (explicit) | 8 | 2.0 | 256 | 9 (converged) | **1.03** | **813.57** | 165 s |
+| **Auto-steer (all unset)** | 10 (auto) | 2.005 (auto) | 1024 (auto) | 8 (converged) | **1.04** | **813.56** | 200 s |
+
+Physics is identical (peak 813.56–813.57 MHz, just above the γ_µ·6T ≈ 813.3 MHz
+applied-field marker; χ²/N ≈ 1.03). Auto-steer is ~20 % slower only because its
+scripting-API default spectrum is 1024 vs the hand-tuned 256; forcing 256
+points in the GUI keeps it fast. **The `corpus_kappacl_maxent` scenario now
+uses the auto-steer path** (End/Binning left unset, `Auto workload steering`
+ticked, 256 spectrum points) — a simpler scenario that also demonstrates the
+new feature. `auto_steer_applied` metadata on the auto path:
+`{'time_binning_factor': 10, 't_max_us': 2.0048828125, 'n_spectrum_points': 1024}`.
+Explicit values always win (setting `binning`/`t_max`/points leaves
+`auto_steer_applied` empty).
 
 **T_N recovery — partial; the field shift is under-resolved.** The single most
 important honesty point for product: the peak-height proxy reproduces the §6b
@@ -136,5 +154,10 @@ these 18 runs alone.
   `plot_datasets`, which manages its own artists and is robust.
 * `MuonDataset.run_label` has no setter; the overlay legend label is set through
   `metadata['run_label']` instead.
-* MaxEnt at full `.mdu` resolution trips the GUI workload-warning modal (blocks
-  offscreen); binning/time-range must be reduced in the scenario to proceed.
+* MaxEnt at full `.mdu` resolution used to trip the GUI workload-warning modal
+  (blocked offscreen), so the scenario hand-reduced binning/time-range.
+  **Resolved by PR 249**: auto workload steering sizes those knobs out of the
+  box (the scenario now leaves them unset), and the warning — if a residual
+  config is still large — now routes to the log panel and proceeds under a
+  headless (offscreen/minimal) QPA platform instead of hanging on the modal
+  (`ASYMMETRY_SUPPRESS_WORKLOAD_WARNING` does the same on a display).

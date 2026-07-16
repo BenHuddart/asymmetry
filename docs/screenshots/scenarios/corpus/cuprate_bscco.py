@@ -37,11 +37,21 @@ Scenarios registered (all on the MUSR 400 G scan, the authoritative deliverable)
   400 G plateau (~1.15 µs⁻¹) — the pancake-vortex field dependence of §6b, not
   fit scatter.
 
-The guide also asks to compare FFT with Maximum-Entropy; MaxEnt does *not*
-reconstruct cleanly on this real forward/back asymmetry (its large α = 1
-baseline drives the solver past its χ² optimum by ~cycle 7 and it diverges into
-spiky noise), so only the FFT frequency-domain render is shipped. ``requires_fit
-= True`` on every scenario that runs a real iminuit fit at capture time (iminuit
+* ``corpus_bscco_maxent`` — the guide's FFT-vs-MaxEnt comparison: the 10 K
+  broad vortex p(B) overlaid on the 125 K normal-state narrow line, both as
+  unit-area MaxEnt spectra. The vortex lattice spreads the same area into a
+  broad distribution; the 10 K peak also sits just below the normal-state line
+  (the diamagnetic shift). Out of the box now (PR #249) — see below.
+
+The guide asks to compare FFT with Maximum-Entropy. This *previously* failed:
+MaxEnt diverged into spiky noise on this real forward/back asymmetry (its large
+α = 1 baseline drove the solver past its χ² optimum by ~cycle 7), so wave-2
+shipped only the FFT render. **PR #249 fixed the engine** (weighted baseline,
+lowered amplitude floor, σ-weighted nuisance fits, data-derived phase seeding of
+the MUSR quadrant groups): the 10 K run (1277) now converges out of the box to
+χ²/N ≈ 1.04 with the peak on the 5.40 MHz vortex line, so ``corpus_bscco_maxent``
+ships the previously-dropped comparison. ``requires_fit = True`` on every
+scenario that runs a real iminuit/MaxEnt computation at capture time (iminuit
 trips numpy ≥ 2.3 in dev environments; CI pins numpy < 2.3).
 """
 
@@ -535,8 +545,166 @@ class BsccoFieldCompareScenario(CorpusScenario):
         _process_events_for(milliseconds=120)
 
 
+# --------------------------------------------------------------------------- #
+#  6. MaxEnt vortex p(B) — 10 K broad distribution vs 125 K narrow line.
+# --------------------------------------------------------------------------- #
+def _grab_canvas_agg(canvas, name: str, output_dir):
+    """Save a drawn matplotlib canvas from its Agg buffer (byte-deterministic).
+
+    ``QWidget.grab`` on a fresh offscreen ``FigureCanvas`` settles the last pixel
+    column non-deterministically offscreen; the Agg RGBA buffer is byte-stable
+    (same pattern as ``benzene_multi``).
+    """
+    from PySide6.QtGui import QImage
+
+    arr = np.asarray(canvas.buffer_rgba())
+    height, width = arr.shape[:2]
+    image = QImage(arr.tobytes(), width, height, QImage.Format.Format_RGBA8888)
+    out_path = output_dir / f"{name}.png"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if not image.save(str(out_path), "PNG"):
+        raise RuntimeError(f"Failed to save screenshot to {out_path}")
+    return out_path
+
+
+def _bscco_maxent_spectrum(run_number: int):
+    """One out-of-the-box MaxEnt spectrum for a BiSCCO 400 G run.
+
+    Defaults everywhere except a GUI-default 1024-point spectrum: the field-
+    derived auto window centres on γ_µ·400 G ≈ 5.42 MHz, ``auto_phase_seed``
+    recovers the four MUSR quadrant-group phases (~90° apart), and the
+    reconstruction is unit-area normalised. Returns
+    ``(frequencies, spectrum, χ²/N, peak MHz)``; the χ²/N is recomputed from the
+    time-domain reconstruction so it equals the engine's by identity.
+    """
+    from asymmetry.core.maxent import (
+        MaxEntConfig,
+        maxent,
+        reconstruct_group_signals,
+    )
+
+    dataset = load_corpus_datasets([_rel(run_number)])[0]
+    config = MaxEntConfig(n_spectrum_points=1024)
+    result = maxent(dataset.run, config, cycles=12)
+    recon = reconstruct_group_signals(result.maxent_input, result.state)
+    n_obs = sum(g.n_obs for g in recon.values()) or 1
+    chi2_over_n = sum(g.chi2 for g in recon.values()) / n_obs
+    spectrum = np.asarray(result.spectrum, dtype=float)
+    frequencies = np.asarray(result.frequencies_mhz, dtype=float)
+    peak_mhz = float(frequencies[int(np.argmax(spectrum))])
+    return frequencies, spectrum, float(chi2_over_n), peak_mhz
+
+
+class BsccoMaxEntScenario(CorpusScenario):
+    name = "corpus_bscco_maxent"
+    description = (
+        "BiSCCO 400 G MaxEnt (PR #249): the 10 K broad vortex field distribution "
+        "p(B) overlaid on the 125 K normal-state narrow line, both unit-area "
+        "spectra near the 5.42 MHz Larmor frequency. The vortex lattice spreads "
+        "the same area into a broad p(B), and the 10 K peak sits just below the "
+        "normal-state line (diamagnetic shift) — the guide's FFT-vs-MaxEnt "
+        "comparison, which previously diverged and had to be dropped."
+    )
+    example = EXAMPLE
+    size = (1180, 720)
+    requires_fit = True  # real MaxEnt reconstruction runs at capture time
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._summary: dict[str, float] = {}
+
+    def capture(self, ctx):  # noqa: D401 - standalone-figure render
+        from asymmetry.gui.styles import tokens
+        from asymmetry.gui.widgets.mpl_canvas import create_canvas
+
+        # Warm a throwaway canvas so the first real draw is deterministic.
+        _warm_fig, _warm_canvas = create_canvas(layout="tight")
+        _warm_canvas.draw()
+        _process_events_for(milliseconds=60)
+
+        f10, s10, chi10, pk10 = _bscco_maxent_spectrum(_RUN_SUPER)
+        f125, s125, chi125, pk125 = _bscco_maxent_spectrum(_RUN_NORMAL)
+        self._summary = {
+            "chi2_over_n_10K": chi10,
+            "chi2_over_n_125K": chi125,
+            "peak_mhz_10K": pk10,
+            "peak_mhz_125K": pk125,
+        }
+
+        larmor = 5.421  # γ_µ · 400 G
+        figure, canvas = create_canvas(layout="tight")
+        ax = figure.add_subplot(111)
+        # 10 K vortex distribution — filled so it reads as p(B).
+        ax.fill_between(f10, 0.0, s10, color=tokens.TRACE_BLUE, alpha=0.28, linewidth=0)
+        ax.plot(
+            f10,
+            s10,
+            color=tokens.TRACE_BLUE,
+            lw=1.5,
+            label=f"10 K vortex state — broad p(B)  (χ²/N = {chi10:.2f})",
+        )
+        # 125 K normal-state narrow line.
+        ax.plot(
+            f125,
+            s125,
+            color=tokens.TRACE_VERMILLION,
+            lw=1.5,
+            label=f"125 K normal state — narrow line  (χ²/N = {chi125:.2f})",
+        )
+        ax.axvline(larmor, color="0.55", linestyle="--", linewidth=1.0, zorder=1)
+        ymax = float(max(s10.max(), s125.max()))
+        ax.set_xlim(4.4, 6.4)
+        ax.set_ylim(-0.03 * ymax, 1.10 * ymax)
+        ax.text(
+            larmor + 0.03,
+            1.0 * ymax,
+            r"$\gamma_\mu\!\cdot\!400\,$G $\approx$ 5.42 MHz",
+            color="0.4",
+            fontsize=8.5,
+            va="top",
+            ha="left",
+        )
+        ax.text(
+            0.985,
+            0.60,
+            "Same unit area, spread by the\n"
+            r"vortex lattice below $T_\mathrm{c}$."
+            "\n"
+            f"10 K peak {pk10:.2f} MHz sits below the\n"
+            f"125 K line {pk125:.2f} MHz — diamagnetic shift.\n"
+            "(MaxEnt line shape is an estimate,\nnot a calibrated width.)",
+            transform=ax.transAxes,
+            color="0.35",
+            fontsize=8,
+            va="center",
+            ha="right",
+        )
+        ax.set_xlabel(r"Frequency $\nu$ (MHz)")
+        ax.set_ylabel("MaxEnt spectral density (unit area)")
+        ax.set_title(
+            "BiSCCO 400 G MaxEnt: vortex broadening of the internal-field "
+            "distribution p(B)",
+            fontsize=10.5,
+        )
+        ax.legend(fontsize=8.5, loc="upper left")
+
+        canvas.resize(*self.size)
+        canvas.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        canvas.show()
+        _process_events_for(milliseconds=200)
+        canvas.draw()
+        _process_events_for(milliseconds=80)
+        canvas.draw()
+        out = _grab_canvas_agg(canvas, self.name, ctx.output_dir)
+        canvas.close()
+        canvas.deleteLater()
+        _process_events_for(milliseconds=40)
+        return out
+
+
 register(BsccoTfDampingScenario())
 register(BsccoVortexFftScenario())
 register(BsccoTfFitScenario())
 register(BsccoSigmaTScenario())
+register(BsccoMaxEntScenario())
 register(BsccoFieldCompareScenario())

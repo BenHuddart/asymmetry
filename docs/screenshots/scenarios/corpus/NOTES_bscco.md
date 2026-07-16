@@ -18,6 +18,7 @@ comparison. EMU 150 G is *not* used — its reference fits are unreliable
 | `corpus_bscco_tf_fit` | Converged Oscillatory×Gaussian single fit, run 1277, zoomed 0.1–2.5 µs | Headline fit: σ ≈ **1.164 µs⁻¹** vs WiMDA **1.1467(75)**, χ²ᵣ = 1.09, "Fit converged" |
 | `corpus_bscco_sigma_t` | Fit-Parameters trending panel, σ(T) 10–125 K (14 runs) | **The headline**: σ(T) reproducing the 14-row reference trend, with T_c ≈ 107 K marker and σ(10 K) → λ_L ≈ 255 nm note (§6b caveat inline) |
 | `corpus_bscco_field_compare` | **Real Fit-Parameters trend panel, native multi-series overlay** (PR-248): σ(T) 400 G + 200 G as two coloured series with a legend | The guide's **field-comparison** task: 200 G plateau sits below 400 G — pancake-vortex field dependence (§6b) |
+| `corpus_bscco_maxent` | **MaxEnt overlay** (standalone Agg figure): 10 K broad vortex p(B) (filled) vs 125 K normal narrow line, unit-area spectra near 5.42 MHz | The guide's **FFT-vs-MaxEnt** comparison, previously dropped — now works out of the box after PR #249 (see PR #249 section) |
 
 `requires_fit = True` on `tf_fit`, `sigma_t`, `field_compare` (real iminuit
 fits at capture time).
@@ -103,13 +104,17 @@ for Bi-2212. Captions respect that fence.
 
 ## Problems / honest caveats
 
-1. **MaxEnt does not render well here — dropped.** The guide asks to compare FFT
-   with Maximum-Entropy, and `maxent_ybco` shows it works on synthetic data.
-   On this real F/B asymmetry the numba MaxEnt solver **diverges** ("stopped
-   early at cycle 7 as χ² began rising past the optimum") and produces spiky
-   noise (~470 direction-changes across the vortex window at 4–8 cycles), not a
-   clean line — its large α = 1 baseline defeats the reconstruction. Only the
-   FFT frequency-domain render is shipped; the module docstring records this.
+1. **MaxEnt was dropped in wave 2 — now FIXED and shipped (PR #249).** The guide
+   asks to compare FFT with Maximum-Entropy. On this real F/B asymmetry the
+   V1 MaxEnt solver *used to* diverge ("stopped early at cycle 7 as χ² began
+   rising past the optimum") into spiky noise — its large α = 1 baseline
+   defeated the reconstruction, so wave 2 shipped only the FFT render.
+   **PR #249 fixed the engine** (1/σ²-weighted baseline, lowered amplitude
+   floor, σ-weighted nuisance fits, data-derived phase seeding of the MUSR
+   quadrant groups). Verified 2026-07-16: run 1277 (10 K) now converges out of
+   the box (defaults, field auto window) to **χ²/N = 1.035 with the peak at
+   5.404 MHz** (the 400 G vortex line), in 26 s. `corpus_bscco_maxent` ships the
+   previously-dropped FFT-vs-MaxEnt comparison. See the PR #249 section below.
 2. **Grouping is F/B, not All Grps** (see workflow). Reproduces σ(T) to a few
    percent but is not a byte-for-byte match to the WiMDA All-Grps numbers.
 3. **`tf_damping` contrast is real but subtle.** The oscillation amplitude is
@@ -197,3 +202,43 @@ genuine per-run TF Gaussian fits via the core FitEngine).
 The round-1 caveats "Export is active-series only" and "no public multi-select
 entry point" are now **resolved** (TSV) / **superseded** (select_series). GLE
 multi-series export remains the documented fast-follow.
+
+## PR #249 (MaxEnt divergence fix + phase seeding) — pre-merge verification (2026-07-16)
+
+Verified against the real MUSR runs through the core `maxent()` API (χ²/N
+recomputed from `reconstruct_group_signals`, i.e. equal to the engine's by
+identity). New scenario `corpus_bscco_maxent` added; no `src/` changes.
+
+**Item 1 — headline (out-of-the-box BiSCCO), CONFIRMED.** Run 1277 (10 K,
+400 G) with `MaxEntConfig()` defaults, full 32 µs range, field-derived auto
+window (1.36–9.49 MHz): **χ²/N = 1.035** (PR claim ≈ 1.04 ✓), **peak 5.404 MHz**
+(PR claim 5.40 ✓), converged at cycle 7, 26 s. `auto_steer_applied = {}` (no
+steering — a MUSR 16 ns run's Nyquist is already fine for the 5.4 MHz window).
+The raw χ² is 8200 (matches the PR's quoted number) but is correctly normalised
+to 1.035 over 7924 obs. FFT-vs-MaxEnt sanity: the MaxEnt peak (5.404) sits just
+below the normal-state line (5.418, run 1276) — the vortex diamagnetic shift,
+physically sensible; the broad 10 K line carries the vortex p(B) width.
+
+**Item 2 — phase seeding on MUSR quadrant groups, CONFIRMED.** The data-derived
+seeds on run 1277 are group 1 = 36°, 2 = −49°, 3 = −133°, 4 = +131° — the four
+MUSR quadrant groups **~90° apart**, exactly as claimed. With
+`auto_phase_seed=True` (default) all four groups keep healthy amplitudes
+(~0.0014) and χ²/N = 1.035 (converges cycle 7, 28 s). With seeding **off**,
+groups 1 and 4 **mute out** (amp → 0.0001 and 0.0 — the "fits its amplitude to
+zero and drops out" failure the PR describes), the surviving groups collapse
+toward each other, and χ²/N = **2.76** (never converges in 10 cycles, 88 s).
+Seeding is a clear, decisive win. GUI wiring confirmed in
+`maxent_panel.py`/`mainwindow.py`: the **"Seed phases from data"** checkbox
+exists and defaults on (`maxent_panel.py:328–330`); editing a Phase-column cell
+unticks it (`_on_group_table_item_changed`, line 162–165); **"Use fitted
+phases"** unticks it via `set_auto_phase_seed(False)`
+(`mainwindow.py:8781`). Matches the docs verbatim.
+
+**Scenario config note.** `corpus_bscco_maxent` uses `n_spectrum_points=1024`
+(the GUI default), full time resolution, everything else default. At capture:
+10 K χ²/N = 1.06 (peak 5.40), 125 K χ²/N = 2.25 (peak 5.42, a narrow near-
+unrelaxed line MaxEnt piles into one bin). ~25 s total, 93 KB. Both spectra are
+unit-area, so the render is an honest "equal area, spread by the vortex lattice"
+p(B) comparison. The 125 K line's higher χ²/N is the estimator over-iterating on
+a long-lived narrow line — not a defect; the caption carries the standard
+"MaxEnt shape is an estimate, not a calibrated width" caveat.
