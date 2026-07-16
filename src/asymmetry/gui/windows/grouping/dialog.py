@@ -2706,11 +2706,15 @@ class GroupingDialog(QDialog):
             metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(getattr(run, "metadata", {}) or {})
         facility = str(metadata.get("facility", metadata.get("instrument", "")))
+        # Calibrate view: once α is calibrated, overlay the α=1 curve and report
+        # the residual baseline, so the balance is self-evident in the one preview
+        # (the comparison the standalone alpha dialog used to show).
         pane.request_preview_from_profile(
             profile=profile,
             run=run,
             facility=facility,
             run_number=self._preview_run_number(),
+            overlay=self._alpha_is_calibrated(),
         )
 
     def _preview_run_number(self) -> int | None:

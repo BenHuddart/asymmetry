@@ -176,6 +176,45 @@ def test_alpha_change_visibly_changes_curve(qapp: QApplication) -> None:
     pane.shutdown()
 
 
+def test_overlay_draws_alpha1_ghost_and_reports_residual_baseline(qapp: QApplication) -> None:
+    """The calibrate overlay draws the α=1 curve and reports ⟨A⟩ over the window."""
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+
+    grouping = dict(dataset.run.grouping)
+    grouping["alpha"] = 1.3  # non-unity balance → the α=1 ghost differs from α̂
+    pane.request_preview(
+        histograms=dataset.run.histograms,
+        grouping=grouping,
+        run_number=5001,
+        overlay=True,
+    )
+    pane.flush()
+    _wait_until(
+        lambda: pane._tasks.active_count == 0 and "residual baseline" in pane._status.text()
+    )
+    assert "residual baseline" in pane._status.text()
+    # Both curves are drawn: the α=1 ghost line plus the α̂ errorbar.
+    labels = {str(line.get_label()) for line in pane._axes.get_lines()}
+    assert any("α = 1" in lbl for lbl in labels)
+    pane.shutdown()
+
+
+def test_overlay_off_by_default_draws_single_curve(qapp: QApplication) -> None:
+    """Without overlay the pane draws one curve and shows no baseline readout."""
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+    pane.request_preview(
+        histograms=dataset.run.histograms, grouping=dataset.run.grouping, run_number=5001
+    )
+    pane.flush()
+    _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
+    assert "residual baseline" not in pane._status.text()
+    labels = {str(line.get_label()) for line in pane._axes.get_lines()}
+    assert not any("α = 1" in lbl for lbl in labels)
+    pane.shutdown()
+
+
 def test_rapid_edits_coalesce_to_one_inflight_reduction(qapp: QApplication) -> None:
     """Rapid requests never spawn concurrent workers: latest-pending wins.
 
@@ -239,7 +278,7 @@ def test_error_path_is_muted_not_crashing(
     def _boom(**_kwargs):
         raise RuntimeError("synthetic reduction failure")
 
-    monkeypatch.setattr(pane_module, "reduce_grouped_asymmetry", _boom)
+    monkeypatch.setattr(pane_module, "corrected_grouped_counts", _boom)
     pane.request_preview(
         histograms=dataset.run.histograms,
         grouping=dataset.run.grouping,

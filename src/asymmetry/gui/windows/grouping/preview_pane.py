@@ -39,8 +39,10 @@ from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.project.profiles import GroupingProfile, resolve_effective_grouping
 from asymmetry.core.transform import (
+    binned_fb_asymmetry,
+    corrected_grouped_counts,
+    correction_flags_from_grouping,
     effective_group_indices,
-    reduce_grouped_asymmetry,
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
@@ -80,6 +82,10 @@ class _PreviewRequest:
     grouping: dict[str, Any] | None = None
     profile: GroupingProfile | None = None
     run: Run | None = None
+    #: Calibrate view: also draw the α=1 curve (ghosted) behind the draft-α curve
+    #: and report the residual baseline ⟨A⟩ over the good window, so a calibrated
+    #: α that centres the corrected asymmetry is self-evident in the one preview.
+    overlay: bool = False
 
 
 @dataclass(frozen=True)
@@ -91,6 +97,12 @@ class _PreviewResult:
     asymmetry: np.ndarray
     error: np.ndarray
     run_number: int | None
+    #: Overlay extras (all ``None`` unless the request asked for the overlay).
+    baseline: np.ndarray | None = None
+    centre_mean: float | None = None
+    centre_err: float | None = None
+    alpha: float | None = None
+    overlay: bool = False
 
 
 class GroupingPreviewPane(QWidget):
@@ -156,13 +168,15 @@ class GroupingPreviewPane(QWidget):
         grouping: dict[str, Any],
         facility: str = "",
         run_number: int | None = None,
+        overlay: bool = False,
     ) -> None:
         """Queue a (debounced) recompute of the preview for the current draft.
 
         *grouping* is the draft resolved against the preview run — i.e. exactly
-        the ``run.grouping`` shape :func:`reduce_grouped_asymmetry` consumes. When
-        the dataset has no histograms (co-added curves) the pane hides itself with
-        a note; nothing is scheduled.
+        the ``run.grouping`` shape the reduction consumes. When the dataset has no
+        histograms (co-added curves) the pane hides itself with a note; nothing is
+        scheduled. *overlay* additionally draws the α=1 curve and the residual
+        baseline (the calibrate view).
         """
         if not histograms:
             self._show_unavailable("Preview needs raw detector histograms (none loaded).")
@@ -178,6 +192,7 @@ class GroupingPreviewPane(QWidget):
                 grouping=dict(grouping),
                 facility=str(facility or grouping.get("instrument", "") or ""),
                 run_number=run_number,
+                overlay=bool(overlay),
             )
         )
 
@@ -188,6 +203,7 @@ class GroupingPreviewPane(QWidget):
         run: Run | None,
         facility: str = "",
         run_number: int | None = None,
+        overlay: bool = False,
     ) -> None:
         """Queue a (debounced) resolve + recompute for an unresolved draft.
 
@@ -214,6 +230,7 @@ class GroupingPreviewPane(QWidget):
                 run=run,
                 facility=str(facility or ""),
                 run_number=run_number,
+                overlay=bool(overlay),
             )
         )
 
@@ -294,6 +311,21 @@ class GroupingPreviewPane(QWidget):
                 color=tokens.TEXT_MUTED,
             )
         else:
+            # Calibrate view: ghost the α=1 curve behind the draft-α curve so the
+            # effect of the balance is self-evident.
+            if result.overlay and result.baseline is not None:
+                self._axes.plot(
+                    result.time,
+                    result.baseline,
+                    color=tokens.TEXT_DIM,
+                    linewidth=1.0,
+                    alpha=0.7,
+                    label="α = 1",
+                    zorder=2,
+                )
+            main_label = (
+                f"α = {result.alpha:.4f}" if result.overlay and result.alpha is not None else None
+            )
             self._axes.errorbar(
                 result.time,
                 result.asymmetry,
@@ -305,14 +337,23 @@ class GroupingPreviewPane(QWidget):
                 capsize=0.0,
                 color=tokens.ACCENT,
                 ecolor=tokens.TEXT_MUTED,
+                label=main_label,
+                zorder=3,
             )
             self._axes.axhline(0.0, color=tokens.TEXT_MUTED, linewidth=0.5, alpha=0.5)
+            if result.overlay and result.baseline is not None:
+                self._axes.legend(loc="best", fontsize=7, framealpha=0.85)
         self._axes.set_xlabel("Time (µs)", fontsize=8)
         self._axes.set_ylabel("Asymmetry (%)", fontsize=8)
         self._axes.tick_params(labelsize=7)
         self._canvas.draw_idle()
         run_label = f"run {result.run_number}" if result.run_number is not None else "preview run"
-        self._status.setText(f"Preview: {run_label}")
+        status = f"Preview: {run_label}"
+        if result.overlay and result.centre_mean is not None and result.centre_err is not None:
+            status += (
+                f"  ·  residual baseline ⟨A⟩ = {result.centre_mean:.3f} ± {result.centre_err:.3f} %"
+            )
+        self._status.setText(status)
 
     def _set_error(self, message: str) -> None:
         self._status.setText(message)
@@ -355,32 +396,115 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
 
     if worker.is_cancelled():
         raise TaskCancelledError
-    deadtime_mode = str(grouping.get("deadtime_mode", "off")).strip().lower() or "off"
-    reduction = reduce_grouped_asymmetry(
+    # Correct once, form the asymmetry per α. corrected_grouped_counts runs the
+    # deadtime → grouping → background stages (the expensive part); an overlay
+    # then forms both the α=1 and draft-α curves from the *same* corrected counts
+    # — one reduction, two curves — instead of reducing twice.
+    flags = correction_flags_from_grouping(grouping)
+    corrected = corrected_grouped_counts(
         histograms=request.histograms,
         grouping=grouping,
         forward_idx=forward_idx,
         backward_idx=backward_idx,
-        alpha=_as_float(grouping.get("alpha"), 1.0),
-        use_deadtime=bool(grouping.get("deadtime_correction", False)),
-        deadtime_mode=deadtime_mode,
-        use_background=bool(grouping.get("background_correction", False)),
+        use_deadtime=flags.use_deadtime,
+        deadtime_mode=flags.deadtime_mode,
+        use_background=flags.use_background,
         facility=request.facility or str(grouping.get("instrument", "") or ""),
         reference_resolver=None,
     )
+    n_grouped = min(len(corrected.forward), len(corrected.backward))
+    try:
+        first_good = max(0, int(grouping.get("first_good_bin", 0)))
+    except (TypeError, ValueError):
+        first_good = 0
+    try:
+        last_good = int(grouping.get("last_good_bin", n_grouped - 1))
+    except (TypeError, ValueError):
+        last_good = n_grouped - 1
+    alpha = _as_float(grouping.get("alpha"), 1.0)
+
+    time, asymmetry, error = _form_asymmetry(corrected, grouping, alpha, first_good, last_good)
+
+    baseline = None
+    centre_mean: float | None = None
+    centre_err: float | None = None
+    if request.overlay:
+        # The residual baseline (inverse-variance weighted ⟨A⟩ over the good
+        # window) is computed on the full-resolution curve, before decimation.
+        centre_mean, centre_err = _weighted_centre(asymmetry, error)
+        if abs(alpha - 1.0) > 1e-12:
+            _bt, base_asym, _be = _form_asymmetry(corrected, grouping, 1.0, first_good, last_good)
+            # Decimate with the same length/stride as the main curve so the two
+            # curves share the returned time axis.
+            _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
+
     # Decimate here, off the GUI thread: bounds both the marshalled payload and
     # the GUI-thread errorbar draw (which is O(points) and the real hang on large
     # runs — see _MAX_PREVIEW_POINTS).
-    time, asymmetry, error = _decimate_for_preview(
-        reduction.time, reduction.asymmetry, reduction.error, _MAX_PREVIEW_POINTS
-    )
+    time, asymmetry, error = _decimate_for_preview(time, asymmetry, error, _MAX_PREVIEW_POINTS)
     return _PreviewResult(
         generation=request.generation,
         time=time,
         asymmetry=asymmetry,
         error=error,
         run_number=request.run_number,
+        baseline=baseline,
+        centre_mean=centre_mean,
+        centre_err=centre_err,
+        alpha=alpha,
+        overlay=request.overlay,
     )
+
+
+def _form_asymmetry(
+    corrected: Any,
+    grouping: dict[str, Any],
+    alpha: float,
+    first_good: int,
+    last_good: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bin the corrected counts into a percent asymmetry for one α.
+
+    Mirrors :func:`reduce_grouped_asymmetry`'s final step (counts → binned
+    asymmetry, scaled to percent) so the preview matches the reduction exactly.
+    """
+    time, asym, err = binned_fb_asymmetry(
+        corrected.forward,
+        corrected.backward,
+        grouping=grouping,
+        common_t0=corrected.common_t0,
+        bin_width_us=corrected.bin_width,
+        alpha=alpha,
+        first_good_bin=first_good,
+        last_good_bin=last_good,
+        forward_error=corrected.forward_error,
+        backward_error=corrected.backward_error,
+    )
+    return (
+        np.asarray(time, dtype=np.float64),
+        np.asarray(asym, dtype=np.float64) * 100.0,
+        np.asarray(err, dtype=np.float64) * 100.0,
+    )
+
+
+def _weighted_centre(asymmetry: np.ndarray, error: np.ndarray) -> tuple[float | None, float | None]:
+    """Inverse-variance weighted mean of the asymmetry and its error.
+
+    This is the residual baseline the calibrate view reports: for a weak-TF
+    calibration run a balanced α drives it to zero, so it is the honest numeric
+    replacement for eyeballing whether the oscillation sits on zero.
+    """
+    a = np.asarray(asymmetry, dtype=np.float64)
+    e = np.asarray(error, dtype=np.float64)
+    mask = np.isfinite(a) & np.isfinite(e) & (e > 0.0)
+    if not mask.any():
+        return None, None
+    weights = 1.0 / np.square(e[mask])
+    total = float(np.sum(weights))
+    if total <= 0.0:
+        return None, None
+    mean = float(np.sum(a[mask] * weights) / total)
+    return mean, float(np.sqrt(1.0 / total))
 
 
 def _as_int(value: Any, default: int) -> int:
