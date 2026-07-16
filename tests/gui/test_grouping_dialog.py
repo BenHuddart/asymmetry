@@ -801,6 +801,68 @@ def test_estimate_all_alpha_calibrates_every_axis(
     assert "alpha_z_reference_run" in payload
 
 
+def test_diagnostic_toggles_never_touch_the_persisted_payload(qapp: QApplication) -> None:
+    """The preview-only per-stage toggles never leak into the reduction payload.
+
+    This is the trap PR 1 fixed: a diagnostic view that silently changed the real
+    reduction. Flipping both toggles must leave ``_current_grouping_payload`` (and
+    ``get_grouping_result``) byte-identical — the toggles feed the preview request
+    only.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    before_payload = dialog._current_grouping_payload()
+    before_result = dialog.get_grouping_result()
+
+    dialog._preview_deadtime_check.setChecked(False)
+    dialog._preview_background_check.setChecked(False)
+
+    assert dialog._current_grouping_payload() == before_payload
+    assert dialog.get_grouping_result() == before_result
+
+
+def test_diagnostic_toggle_off_suppresses_calibration_overlay(qapp: QApplication) -> None:
+    """Toggling any stage off suppresses the residual-baseline (acceptance) overlay.
+
+    The overlay's ⟨A⟩ readout is the calibration-acceptance number — "does α centre
+    the *corrected* asymmetry". Computing it against a partially-corrected preview
+    would invert that guarantee, so the overlay is requested only when α is
+    calibrated *and* every diagnostic stage is on.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    _estimate_single_alpha(dialog)
+    assert dialog._alpha_is_calibrated()
+
+    dialog._refresh_preview()
+    assert dialog._preview_pane._pending is not None
+    assert dialog._preview_pane._pending.overlay is True  # all stages on
+
+    dialog._preview_deadtime_check.setChecked(False)  # fires _refresh_preview
+    assert dialog._preview_pane._pending.overlay is False
+
+
+def test_diagnostic_toggles_reach_the_preview_request(qapp: QApplication) -> None:
+    """The checkboxes forward into the preview request's per-stage overrides.
+
+    Pins the one seam the user actually drives: ``_refresh_preview`` must carry
+    each checkbox into ``_PreviewRequest.override_use_*``. If that wiring were
+    dropped, both default to ``True`` and the toggles would silently no-op while
+    the overlay/payload tests still passed.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._refresh_preview()
+    pending = dialog._preview_pane._pending
+    assert pending is not None
+    assert pending.override_use_deadtime is True
+    assert pending.override_use_background is True
+
+    dialog._preview_deadtime_check.setChecked(False)  # fires _refresh_preview
+    assert dialog._preview_pane._pending.override_use_deadtime is False
+    assert dialog._preview_pane._pending.override_use_background is True
+
+    dialog._preview_background_check.setChecked(False)
+    assert dialog._preview_pane._pending.override_use_background is False
+
+
 def test_vector_estimate_alpha_uses_selected_reference_run(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:

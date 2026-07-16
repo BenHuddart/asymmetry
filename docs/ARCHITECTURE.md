@@ -464,7 +464,13 @@ panel (all three standalone modals were retired). The shared α-estimate worker
 and its run-combo / request builders live in `alpha_section.py`; the
 per-projection *vector* α table (`dialog.py`) drives its per-axis and "Estimate
 All α" estimates inline through that same worker on the dialog's own
-`TaskRunner`, serialised one axis at a time.
+`TaskRunner`, serialised one axis at a time. A "Diagnostic view" row adds
+preview-only per-stage toggles (deadtime/background) that drop a stage from the
+live preview via a `_PreviewRequest` override applied in
+`preview_pane._run_reduction` (`use_x = flags.use_x and override_use_x`); the
+override never reaches `_current_grouping_payload`, so the persisted reduction is
+unaffected, and the calibration-acceptance overlay is suppressed while any stage
+is toggled off.
 
 ### 3.7 Global Parameter Fit Studies
 

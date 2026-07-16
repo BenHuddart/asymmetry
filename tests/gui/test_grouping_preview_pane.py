@@ -650,6 +650,57 @@ def test_decimate_for_preview_handles_empty_arrays() -> None:
     assert out_e.size == 0
 
 
+class _StubWorker:
+    """Never-cancelled worker for driving ``_run_reduction`` synchronously."""
+
+    @staticmethod
+    def is_cancelled() -> bool:
+        return False
+
+
+def _reduce_with_override(dataset: MuonDataset, **overrides: bool):
+    """Run ``_run_reduction`` for *dataset* with per-stage preview overrides."""
+    request = preview_pane_module._PreviewRequest(
+        generation=1,
+        histograms=list(dataset.run.histograms),
+        facility="TESTINST",
+        run_number=int(dataset.run_number),
+        grouping=dict(dataset.run.grouping),
+        **overrides,
+    )
+    return preview_pane_module._run_reduction(_StubWorker(), request)
+
+
+def test_diagnostic_deadtime_override_changes_the_preview_curve(qapp: QApplication) -> None:
+    """Unchecking the Deadtime diagnostic toggle drops the stage from the preview.
+
+    Positive (non-vacuous) proof the override bites: on a run with deadtime
+    actually configured, ``override_use_deadtime=False`` yields a *different*
+    asymmetry than the default (all stages on) — and reproduces the curve of the
+    same run with deadtime disabled outright. The per-detector deadtimes differ
+    (F ≠ B) so the correction moves the asymmetry, not just its scale.
+    """
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "dead_time_us": [0.005, 0.001],
+            "good_frames": 1000.0,
+        }
+    )
+    on = _reduce_with_override(dataset)  # default: deadtime applied
+    off = _reduce_with_override(dataset, override_use_deadtime=False)
+    assert not np.allclose(on.asymmetry, off.asymmetry), "the toggle did not change the preview"
+
+    # Toggling the stage off reproduces the same run reduced with deadtime disabled
+    # outright — i.e. the override truly *removes* the configured stage.
+    disabled = dict(dataset.run.grouping)
+    disabled["deadtime_correction"] = False
+    dataset.run.grouping = disabled
+    baseline = _reduce_with_override(dataset)
+    assert np.allclose(off.asymmetry, baseline.asymmetry)
+
+
 def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> None:
     """End-to-end: a preview request over a huge run yields a bounded curve.
 

@@ -86,6 +86,13 @@ class _PreviewRequest:
     #: and report the residual baseline ⟨A⟩ over the good window, so a calibrated
     #: α that centres the corrected asymmetry is self-evident in the one preview.
     overlay: bool = False
+    #: Diagnostic per-stage view (preview only, never the persisted reduction):
+    #: when ``False``, that correction is dropped from *this preview* so its
+    #: incremental effect is visible. They can only *subtract* a configured stage,
+    #: never add one — ``use_x = flags.use_x and override_use_x`` — so an off
+    #: stage stays off. The default ``True`` is a strict no-op.
+    override_use_deadtime: bool = True
+    override_use_background: bool = True
 
 
 @dataclass(frozen=True)
@@ -169,6 +176,8 @@ class GroupingPreviewPane(QWidget):
         facility: str = "",
         run_number: int | None = None,
         overlay: bool = False,
+        override_use_deadtime: bool = True,
+        override_use_background: bool = True,
     ) -> None:
         """Queue a (debounced) recompute of the preview for the current draft.
 
@@ -176,7 +185,9 @@ class GroupingPreviewPane(QWidget):
         the ``run.grouping`` shape the reduction consumes. When the dataset has no
         histograms (co-added curves) the pane hides itself with a note; nothing is
         scheduled. *overlay* additionally draws the α=1 curve and the residual
-        baseline (the calibrate view).
+        baseline (the calibrate view). ``override_use_deadtime`` /
+        ``override_use_background`` drop a configured stage from *this preview only*
+        (the diagnostic view); they never touch the persisted reduction.
         """
         if not histograms:
             self._show_unavailable("Preview needs raw detector histograms (none loaded).")
@@ -193,6 +204,8 @@ class GroupingPreviewPane(QWidget):
                 facility=str(facility or grouping.get("instrument", "") or ""),
                 run_number=run_number,
                 overlay=bool(overlay),
+                override_use_deadtime=bool(override_use_deadtime),
+                override_use_background=bool(override_use_background),
             )
         )
 
@@ -204,6 +217,8 @@ class GroupingPreviewPane(QWidget):
         facility: str = "",
         run_number: int | None = None,
         overlay: bool = False,
+        override_use_deadtime: bool = True,
+        override_use_background: bool = True,
     ) -> None:
         """Queue a (debounced) resolve + recompute for an unresolved draft.
 
@@ -212,7 +227,9 @@ class GroupingPreviewPane(QWidget):
         ``auto_detect`` t0 policy or sum whole groups for a per-run alpha
         estimate — happens on the worker thread. *profile* is deep-copied here
         so subsequent form edits cannot race the in-flight worker; *run* is
-        shared read-only.
+        shared read-only. ``override_use_deadtime`` / ``override_use_background``
+        drop a configured stage from *this preview only* (the diagnostic view);
+        they never touch the persisted reduction.
         """
         histograms = list(run.histograms) if run is not None and run.histograms else []
         if not histograms:
@@ -231,6 +248,8 @@ class GroupingPreviewPane(QWidget):
                 facility=str(facility or ""),
                 run_number=run_number,
                 overlay=bool(overlay),
+                override_use_deadtime=bool(override_use_deadtime),
+                override_use_background=bool(override_use_background),
             )
         )
 
@@ -401,14 +420,19 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     # then forms both the α=1 and draft-α curves from the *same* corrected counts
     # — one reduction, two curves — instead of reducing twice.
     flags = correction_flags_from_grouping(grouping)
+    # Diagnostic per-stage view: a toggle can only *drop* a configured stage from
+    # this preview (``and``), never add one — so the persisted reduction (which
+    # never sees these overrides) is unaffected and an off stage stays off.
+    use_deadtime = flags.use_deadtime and request.override_use_deadtime
+    use_background = flags.use_background and request.override_use_background
     corrected = corrected_grouped_counts(
         histograms=request.histograms,
         grouping=grouping,
         forward_idx=forward_idx,
         backward_idx=backward_idx,
-        use_deadtime=flags.use_deadtime,
+        use_deadtime=use_deadtime,
         deadtime_mode=flags.deadtime_mode,
-        use_background=flags.use_background,
+        use_background=use_background,
         facility=request.facility or str(grouping.get("instrument", "") or ""),
         reference_resolver=None,
     )

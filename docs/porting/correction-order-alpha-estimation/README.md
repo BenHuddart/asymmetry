@@ -71,6 +71,23 @@ source of truth for the implementation pass.
   on the corrected counts the reduction forms, matching WiMDA's
   corrected-spectra calibration.
 
+- **2026-07-16 — PR 2 step 5 (diagnostic per-stage toggles) landed.** A
+  "Diagnostic view" row at the foot of the Corrections panel adds preview-only
+  **Deadtime** / **Background** checkboxes (default on). Unchecking one drops that
+  stage from the *live preview only* to show its incremental effect. The override
+  lives on `_PreviewRequest` and is applied in `preview_pane._run_reduction` as
+  `use_x = flags.use_x and override_use_x` — it can only *subtract* a configured
+  stage and **never touches `_current_grouping_payload`**, so the persisted
+  reduction is unaffected (the exact bug class PR 1 fixed; pinned by a
+  payload-invariance test plus a *positive* test that the override actually changes
+  the curve). Because the residual-baseline ⟨A⟩ readout is the
+  calibration-acceptance number, the before/after overlay is suppressed whenever
+  any stage is toggled off (`_alpha_is_calibrated() and _all_diagnostic_stages_on()`),
+  so a partially-corrected preview cannot masquerade as the acceptance number. With
+  this, PR 2's unified Corrections panel (B2) is functionally complete; remaining
+  items are the deferred lower-priority ones (cross-request preview caching,
+  estimator error-model threading, inline tail-fit rate readout).
+
 ## The bug this study addresses
 
 Two independent code paths form forward/backward (F/B) spectra and they diverge:

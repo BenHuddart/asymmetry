@@ -25,6 +25,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
@@ -765,6 +766,7 @@ class GroupingDialog(QDialog):
         self._alpha_section_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._corrections_section.addWidget(self._alpha_section_label)
         self._corrections_section.addWidget(self._alpha_section)
+        self._corrections_section.addWidget(self._build_diagnostic_view_row())
         scroll_layout.addWidget(self._corrections_section)
         scroll_layout.addStretch()
         self._update_deadtime_status()
@@ -2477,6 +2479,65 @@ class GroupingDialog(QDialog):
         # _on_configure_deadtime/_on_configure_background call _refresh_preview()
         # directly after folding the returned policy into the draft.
 
+    # ------------------------------------------------------------------
+    # Diagnostic per-stage preview toggles (preview-only, never persisted)
+    # ------------------------------------------------------------------
+
+    def _build_diagnostic_view_row(self) -> QWidget:
+        """Build the preview-only per-stage diagnostic toggles.
+
+        Unchecking **Deadtime** or **Background** drops that stage from the *live
+        preview only* so its incremental effect is visible; the persisted
+        reduction always applies every configured stage (the override never
+        reaches ``_current_grouping_payload``). Each box is enabled only while its
+        stage is actually configured, and defaults to on (a strict no-op).
+        """
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        badge = QLabel("Diagnostic view — the reduction always applies every stage")
+        badge.setWordWrap(True)
+        badge.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        layout.addWidget(badge)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(12)
+        self._preview_deadtime_check = QCheckBox("Deadtime")
+        self._preview_deadtime_check.setChecked(True)
+        self._preview_deadtime_check.setToolTip(
+            "Preview only: drop the deadtime correction from the plot below to see its effect."
+        )
+        self._preview_deadtime_check.toggled.connect(self._refresh_preview)
+        self._preview_background_check = QCheckBox("Background")
+        self._preview_background_check.setChecked(True)
+        self._preview_background_check.setToolTip(
+            "Preview only: drop the background subtraction from the plot below to see its effect."
+        )
+        self._preview_background_check.toggled.connect(self._refresh_preview)
+        row.addWidget(self._preview_deadtime_check)
+        row.addWidget(self._preview_background_check)
+        row.addStretch()
+        layout.addLayout(row)
+        return widget
+
+    def _update_diagnostic_toggle_enabled(self) -> None:
+        """Enable each diagnostic toggle only while its stage is configured."""
+        if not hasattr(self, "_preview_deadtime_check"):
+            return
+        self._preview_deadtime_check.setEnabled(self._current_deadtime_mode() != "off")
+        self._preview_background_check.setEnabled(self._current_background_mode() != "none")
+
+    def _all_diagnostic_stages_on(self) -> bool:
+        """True when no diagnostic stage is toggled off (preview == full reduction)."""
+        if not hasattr(self, "_preview_deadtime_check"):
+            return True
+        return (
+            self._preview_deadtime_check.isChecked() and self._preview_background_check.isChecked()
+        )
+
     def _refresh_preview(self, *args: object) -> None:
         """Recompute the live asymmetry preview for the draft + preview run.
 
@@ -2511,15 +2572,24 @@ class GroupingDialog(QDialog):
             metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(getattr(run, "metadata", {}) or {})
         facility = str(metadata.get("facility", metadata.get("instrument", "")))
-        # Calibrate view: once α is calibrated, overlay the α=1 curve and report
-        # the residual baseline, so the balance is self-evident in the one preview
-        # (the comparison the standalone alpha dialog used to show).
+        self._update_diagnostic_toggle_enabled()
+        # Diagnostic per-stage view: drop a stage from *this preview only*. The
+        # residual-baseline ⟨A⟩ readout is the calibration-acceptance number ("does
+        # α centre the *corrected* asymmetry"), so the overlay is suppressed the
+        # moment any stage is toggled off — a partially-corrected curve must never
+        # masquerade as the acceptance number.
+        overlay = self._alpha_is_calibrated() and self._all_diagnostic_stages_on()
+        # Calibrate view: once α is calibrated (and all stages on), overlay the α=1
+        # curve and report the residual baseline, so the balance is self-evident in
+        # the one preview (the comparison the standalone alpha dialog used to show).
         pane.request_preview_from_profile(
             profile=profile,
             run=run,
             facility=facility,
             run_number=self._preview_run_number(),
-            overlay=self._alpha_is_calibrated(),
+            overlay=overlay,
+            override_use_deadtime=self._preview_deadtime_check.isChecked(),
+            override_use_background=self._preview_background_check.isChecked(),
         )
 
     def _preview_run_number(self) -> int | None:

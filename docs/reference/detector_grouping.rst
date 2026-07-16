@@ -474,10 +474,10 @@ then asymmetry is calculated. The section's modes are:
   level, for runs where a fixed pre-:math:`t_0` window is not representative.
 * ``Reference run`` — subtracts a dedicated background run's own grouped
   counts (scaled by relative good-frame count).
+* ``Fixed`` — fixed forward/backward count values are subtracted directly.
 
 The shared live preview below the Corrections panel always reflects the
 subtraction, so its effect on the asymmetry is visible as the mode changes.
-* ``Fixed`` — fixed forward/backward count values are subtracted directly.
 
 For corrected histograms, Asymmetry propagates musrfit-style count
 uncertainties through its standard pair formula, with ``alpha`` multiplying
@@ -493,6 +493,21 @@ The correction is off by default and disabled for ISIS/NeXus data, where
 deadtime correction is the file-metadata correction path. When enabled for
 PSI data, the applied method, estimated values, and ranges are stored on the
 profile's background policy.
+
+Diagnostic view
+---------------
+
+A **Diagnostic view** row at the foot of the Corrections panel carries two
+preview-only checkboxes, **Deadtime** and **Background**, badged
+"Diagnostic view — the reduction always applies every stage". Unchecking one
+drops that stage from the **live preview only**, so you can see its incremental
+effect on the asymmetry; the persisted reduction — and everything Apply writes —
+always applies every configured correction. A checkbox is enabled only while its
+stage is actually configured, and both default to on. Because the residual
+baseline :math:`\langle A \rangle` readout is the calibration-acceptance number
+("does :math:`\alpha` centre the *corrected* asymmetry"), the before/after
+overlay is suppressed while any stage is toggled off, so a partially-corrected
+preview can never masquerade as the acceptance number.
 
 PSI Grouping
 ------------

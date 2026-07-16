@@ -203,9 +203,21 @@ excludes cosmetics/alpha — the reuse candidate for the staleness digest.
      inline flow with verbatim UI strings, and `ARCHITECTURE.md` drops the retired
      module. (While there, the stale "opens the deadtime/background dialog" prose
      left by the earlier deadtime/background inline commits was corrected too.)
-5. **Diagnostic per-stage toggles** (preview-only). **Trap:** they must write to
-   the preview request only, never the persisted grouping payload — otherwise
-   they silently change real reductions (the exact bug class PR 1 fixed).
+5. **Diagnostic per-stage toggles** (preview-only) — **DONE.** A "Diagnostic view"
+   row at the foot of the Corrections panel carries **Deadtime** / **Background**
+   checkboxes (default on, each enabled only while its stage is configured).
+   Unchecking one drops that stage from the *preview only*: the override lives on
+   `_PreviewRequest` (`override_use_deadtime` / `override_use_background`) and is
+   applied in `_run_reduction` as `use_x = flags.use_x and override_use_x` — it can
+   only *subtract* a configured stage, never add one, and **never reaches
+   `_current_grouping_payload`** (the trap PR 1 fixed; pinned by a payload-invariance
+   test). Because the residual-baseline ⟨A⟩ readout is the calibration-acceptance
+   number, `_refresh_preview` gates the overlay on `_alpha_is_calibrated() and
+   _all_diagnostic_stages_on()`, so a partially-corrected preview never masquerades
+   as the acceptance number. Tests: a *positive* `_run_reduction` test (override
+   actually changes the curve and reproduces stage-disabled), the payload-invariance
+   trap test, and the overlay-suppression test. Docs: "Diagnostic view" section in
+   `detector_grouping.rst`.
 
 ## Docs / provenance obligations
 
