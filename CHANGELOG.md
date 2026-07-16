@@ -206,6 +206,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunSummary` block in the new TDirectory-based header — a block musrfit
   itself does not read — is now attached verbatim to loaded runs as
   `metadata["musrroot_run_summary"]`.
+- **Per-axis transforms in the parameter-trending panel.** A collapsible
+  **Axis transforms** section (below the Y-parameter list) applies a transform
+  to either the X or Y axis — `None`, `1/x  (reciprocal)`, `x²  (square)`,
+  `ln x`, `log₁₀ x`, `√x`, or a `Custom…` single-variable expression — so the
+  bread-and-butter µSR linearisations are drawable in-app: **Redfield**
+  (`1/λ` vs `(µ₀H)²`) and **Arrhenius** (`ln λ` vs `1/T`). The transform feeds
+  the trend fit as well as the plot, so a `Linear` Model Fit over transformed
+  axes *is* the Redfield/Arrhenius line, with error bars propagated and slope
+  and intercept read from the model-fit dialog. It is distinct from (and
+  guarded against compounding with) the `log` axis-scale checkboxes.
+  Documented in *Reference ▸ Parameter trending ▸ Axis transforms*.
+- **Multi-series overlay in the parameter-trending panel.** Shift-clicking more
+  than one series pill now overlays those series on the plot (colour = series,
+  with a legend), so `σ(T)` at two applied fields, or the same observable across
+  two samples, can be compared directly instead of one series at a time. A
+  second selected parameter takes a distinct marker shape; the twin-axis layout
+  is reserved for a single series. Documented in *Reference ▸ Parameter trending
+  ▸ Overlaying several series*.
+- **First-class `Quadratic` trend model.** The Model-Fit catalogue gains a plain
+  parabola `c0 + c1*x + c2*x²` on every axis, so a steering-curve minimum (or any
+  gentle curvature a `Linear` cannot match) no longer needs a `Polynomial` with
+  its higher coefficients pinned to zero.
 - **Optional CUDA GPU backend for the MaxEnt engine (scripting API).**
   `MaxEntConfig(backend="cuda")` runs the projection kernels on an NVIDIA GPU
   via CuPy instead of NumPy — measured ~160x faster than the CPU path at
