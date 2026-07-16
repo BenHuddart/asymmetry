@@ -42,6 +42,15 @@ loaded runs to the same behaviour. The Get Info checkbox affects only the
 target run, making it useful for per-dataset overrides. Log-derived temperature
 values are shown with red text in the Data Browser.
 
+The applied field is read from the ``sample/magnetic_field`` header and stored
+in gauss, matching the convention the rest of Asymmetry (and the PSI and
+MusrRoot loaders) uses. Most ISIS files store the value in gauss with no unit,
+which is taken as-is. When the dataset carries a ``units`` attribute the loader
+honours it: ``T`` / ``tesla`` is converted by a factor of 10\ :sup:`4` and
+``mT`` / ``millitesla`` by a factor of 10. An absent, blank, gauss, or
+unrecognised unit is passed through unchanged — the loader never guesses a
+conversion the file did not declare.
+
 For NeXus good-data windows, Asymmetry treats integer bin metadata as
 canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
 ``first_good_time`` / ``last_good_time`` are present, they are used only as a

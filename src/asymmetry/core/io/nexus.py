@@ -101,6 +101,37 @@ def _normalize_temperature_to_kelvin(value: float | None, units: str | None) -> 
     return float(value)
 
 
+#: Unit tokens (lower-cased, with spaces / dots / underscores stripped) that a
+#: NeXus ``sample/magnetic_field`` ``units`` attribute may use to name the tesla
+#: and millitesla scales. The rest of the application treats
+#: ``metadata['field']`` as gauss (the ROOT/PSI/ICP-log loaders all normalise to
+#: gauss at the I/O boundary), so a declared tesla / millitesla unit is converted
+#: here; an absent, blank, gauss, or unrecognised unit is left as-is.
+_TESLA_UNIT_TOKENS = frozenset({"t", "tesla", "teslas"})
+_MILLITESLA_UNIT_TOKENS = frozenset({"mt", "millitesla", "milliteslas"})
+_TESLA_TO_GAUSS = 1.0e4
+_MILLITESLA_TO_GAUSS = 10.0
+
+
+def _normalize_field_to_gauss(value: float | None, units: str | None) -> float | None:
+    """Convert a magnetic field to gauss, honoring the NeXus ``units`` attribute.
+
+    A tesla unit (``T`` / ``tesla``) scales the value by ``1e4`` and a
+    millitesla unit (``mT`` / ``millitesla``) by ``10``; gauss, an empty unit, or
+    any unrecognized unit is passed through unchanged — we never *guess* a
+    conversion the file did not declare, preserving the historical
+    gauss-pass-through behaviour. ``None`` propagates as ``None``.
+    """
+    if value is None:
+        return None
+    token = str(units or "").strip().lower().replace(" ", "").replace(".", "").replace("_", "")
+    if token in _TESLA_UNIT_TOKENS:
+        return float(value) * _TESLA_TO_GAUSS
+    if token in _MILLITESLA_UNIT_TOKENS:
+        return float(value) * _MILLITESLA_TO_GAUSS
+    return float(value)
+
+
 def active_series_mean(entry: Any) -> float | None:
     """Mean of a logged NXlog series over its run-active (t >= 0) samples.
 
@@ -309,7 +340,7 @@ class NexusLoader(BaseLoader):
         temperature = self._read_temperature_kelvin(sample)
         temperature_units = self._sample_temperature_units(sample)
         magnetic_field_node = self._read_optional(sample, "magnetic_field")
-        magnetic_field = self._safe_float(magnetic_field_node, default=0.0)
+        magnetic_field = self._read_field_gauss(sample)
 
         orientation_raw = self._safe_str(
             self._read_optional(self._read_optional(entry, "instrument"), "detector/orientation")
@@ -496,7 +527,7 @@ class NexusLoader(BaseLoader):
         temperature = self._read_temperature_kelvin(sample)
         temperature_units = self._sample_temperature_units(sample)
         magnetic_field_node = self._read_optional(sample, "magnetic_field")
-        magnetic_field = self._safe_float(magnetic_field_node, default=0.0)
+        magnetic_field = self._read_field_gauss(sample)
 
         orientation_raw = self._safe_str(self._read_optional(detector, "orientation"))
         detector_orientation = self._normalise_orientation(orientation_raw)
@@ -1475,6 +1506,31 @@ class NexusLoader(BaseLoader):
         if node is None or not hasattr(node, "attrs"):
             return ""
         return self._safe_str(node.attrs.get("units", ""))
+
+    def _read_field_gauss(self, sample: Any, default: float = 0.0) -> float:
+        """Read ``sample/magnetic_field`` as a field in gauss.
+
+        Reads both the value and its NeXus ``units`` attribute so a field
+        declared in tesla (``T`` / ``tesla``) or millitesla (``mT`` /
+        ``millitesla``) is normalized to gauss via
+        :func:`_normalize_field_to_gauss`. A gauss, missing, or unrecognized
+        unit passes the value through unchanged, matching the historical
+        behaviour and the gauss convention the rest of the app assumes.
+        """
+        if sample is None or not hasattr(sample, "get"):
+            return float(default)
+        # Cannot use _read_optional here: it returns the unwrapped value and
+        # drops the node, but we need node.attrs['units'] to decide the scale.
+        node = sample.get("magnetic_field")
+        if node is None:
+            return float(default)
+        raw = node[()] if hasattr(node, "dtype") else node
+        value = self._safe_float(raw, default=default)
+        units = ""
+        if hasattr(node, "attrs"):
+            units = self._safe_str(node.attrs.get("units", ""))
+        normalized = _normalize_field_to_gauss(value, units)
+        return float(default) if normalized is None else float(normalized)
 
     def _read_field_vector(self, sample: Any) -> list[float] | None:
         """Read ``sample/magnetic_field_vector`` when the file marks it usable.

@@ -35,6 +35,7 @@ def _write_v2_file(
     field_vector: tuple[float, float, float] | None = None,
     field_vector_available: int | None = None,
     magnetic_field: float | None = 150.0,
+    magnetic_field_units: str | None = None,
     temp_setpoint: float = 12.5,
     temp_setpoint_units: str | None = None,
     temp_log_values: tuple[float, ...] = (12.0, 12.5, 13.0),
@@ -119,7 +120,9 @@ def _write_v2_file(
         if temp_setpoint_units is not None:
             temperature_ds.attrs["units"] = np.bytes_(temp_setpoint_units)
         if magnetic_field is not None:
-            sample.create_dataset("magnetic_field", data=magnetic_field)
+            field_ds = sample.create_dataset("magnetic_field", data=magnetic_field)
+            if magnetic_field_units is not None:
+                field_ds.attrs["units"] = np.bytes_(magnetic_field_units)
         if field_state is not None:
             sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
         if field_vector is not None:
@@ -166,6 +169,7 @@ def _write_v1_file(
     orientation: str = "T",
     field_state: str | None = None,
     magnetic_field: float | None = 20.0,
+    magnetic_field_units: str | None = None,
 ) -> None:
     with h5py.File(path, "w") as f:
         run = f.create_group("run")
@@ -184,7 +188,9 @@ def _write_v1_file(
         sample = run.create_group("sample")
         sample.create_dataset("temperature", data=5.0)
         if magnetic_field is not None:
-            sample.create_dataset("magnetic_field", data=magnetic_field)
+            field_ds = sample.create_dataset("magnetic_field", data=magnetic_field)
+            if magnetic_field_units is not None:
+                field_ds.attrs["units"] = np.bytes_(magnetic_field_units)
         if field_state is not None:
             sample.create_dataset("magnetic_field_state", data=np.bytes_(field_state))
 
@@ -900,6 +906,72 @@ def test_v1_field_state_absent_geometry_is_blank(tmp_path, loader: NexusLoader) 
     assert ds.metadata["field_state"] == ""
     assert ds.metadata["field_direction"] == ""
     assert ds.metadata["detector_orientation"] == "Transverse"
+
+
+# --- sample/magnetic_field unit normalisation to gauss ----------------------
+#
+# The rest of the app treats metadata["field"] as gauss. A NeXus file may
+# declare units="T"/"tesla" or "mT"/"millitesla" on sample/magnetic_field; the
+# loader converts those at the I/O boundary (tesla x1e4, millitesla x10) and
+# leaves a gauss / blank / unrecognised unit unchanged.
+
+
+def test_v2_field_no_units_is_gauss_passthrough(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_field_bare.nxs"
+    _write_v2_file(path, magnetic_field=150.0, magnetic_field_units=None)
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field"] == pytest.approx(150.0)
+
+
+def test_v2_field_gauss_units_passthrough(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_field_gauss.nxs"
+    _write_v2_file(path, magnetic_field=150.0, magnetic_field_units="Gauss")
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field"] == pytest.approx(150.0)
+
+
+@pytest.mark.parametrize("units", ["T", "tesla", "Tesla"])
+def test_v2_field_tesla_converts_to_gauss(units, tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_field_tesla.nxs"
+    _write_v2_file(path, magnetic_field=0.15, magnetic_field_units=units)
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field"] == pytest.approx(1500.0)
+
+
+@pytest.mark.parametrize("units", ["mT", "millitesla", "milliTesla"])
+def test_v2_field_millitesla_converts_to_gauss(units, tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_field_mt.nxs"
+    _write_v2_file(path, magnetic_field=150.0, magnetic_field_units=units)
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field"] == pytest.approx(1500.0)
+
+
+def test_v2_field_unrecognised_units_passthrough(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v2_field_weird.nxs"
+    _write_v2_file(path, magnetic_field=150.0, magnetic_field_units="oersted")
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field"] == pytest.approx(150.0)
+
+
+def test_v1_field_tesla_converts_to_gauss(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v1_field_tesla.nxs"
+    _write_v1_file(path, magnetic_field=0.002, magnetic_field_units="T")
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field"] == pytest.approx(20.0)
+
+
+def test_v1_field_no_units_is_gauss_passthrough(tmp_path, loader: NexusLoader) -> None:
+    path = tmp_path / "run_v1_field_bare.nxs"
+    _write_v1_file(path, magnetic_field=20.0, magnetic_field_units=None)
+
+    ds = loader.load(str(path))
+    assert ds.metadata["field"] == pytest.approx(20.0)
 
 
 # --- sample/magnetic_field_vector extraction --------------------------------
