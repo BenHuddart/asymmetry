@@ -74,7 +74,7 @@ def _write_stubs(scenario_names: list[str], out_dir: Path) -> int:
 
 
 def _import_corpus_scenarios() -> dict:
-    """Import and return the registered ``corpus_*`` scenarios (no Qt required)."""
+    """Import and return the registered ``corpus_*`` scenarios (Qt required)."""
     from . import scenarios as _scenarios_pkg  # noqa: F401  (registers _base)
     from .scenarios import corpus as corpus_pkg
     from .scenarios._base import registered_scenarios
@@ -86,6 +86,45 @@ def _import_corpus_scenarios() -> dict:
 def _module_of(scenario) -> str:
     """Return the scenario's defining module basename (e.g. ``euo_ordering``)."""
     return type(scenario).__module__.rsplit(".", 1)[-1]
+
+
+CORPUS_SCENARIOS_DIR = Path(__file__).resolve().parent / "scenarios" / "corpus"
+
+
+def _static_scenarios_by_module() -> dict[str, list[str]]:
+    """Map each corpus scenario module to its declared scenario names.
+
+    Static AST scan (same approach as ``capture.scenario_names_from_source``,
+    but per-file so the module mapping survives): the scenario modules import
+    PySide6 at module level, so the stubs and module-listing paths must never
+    import them — CI's PR smoke has no Qt runtime libraries.
+    """
+    import ast
+
+    by_module: dict[str, list[str]] = {}
+    for path in sorted(CORPUS_SCENARIOS_DIR.glob("*.py")):
+        if path.name.startswith("_"):
+            continue
+        names: list[str] = []
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for stmt in node.body:
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and any(
+                        isinstance(target, ast.Name) and target.id == "name"
+                        for target in stmt.targets
+                    )
+                    and isinstance(stmt.value, ast.Constant)
+                    and isinstance(stmt.value.value, str)
+                    and stmt.value.value.startswith("corpus_")
+                ):
+                    names.append(stmt.value.value)
+        if names:
+            by_module[path.stem] = sorted(names)
+    return by_module
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -118,9 +157,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if list_modules:
         # One module name per line — CI iterates these to keep each capture
-        # process inside the watchdog budget. No Qt boot needed.
-        scenarios = _import_corpus_scenarios()
-        for module in sorted({_module_of(s) for s in scenarios.values()}):
+        # process inside the watchdog budget. Static scan: no imports, no Qt.
+        for module in sorted(_static_scenarios_by_module()):
             print(module)
         return 0
     if args.check_refs:
@@ -130,14 +168,14 @@ def main(argv: list[str] | None = None) -> int:
         args.out = Path("docs/_generated/corpus_screenshots")
 
     if stubs or stubs_missing:
-        # Placeholder path: no corpus, no Qt boot, no fit backend needed. The
-        # scenario modules import cleanly (corpus data is resolved lazily at
-        # capture time), so registration alone gives us every scenario name.
+        # Placeholder path: no corpus, no Qt, no fit backend, no imports — the
+        # scenario names come from a static AST scan (the scenario modules
+        # import PySide6 at module level, which the PR smoke cannot satisfy).
         # ``--stubs-missing`` writes placeholders only where no PNG exists,
         # so a partially-successful capture sweep keeps its real renders.
-        scenarios = _import_corpus_scenarios()
-        names = list(args.only) if args.only else list(scenarios)
-        unknown = [n for n in names if n not in scenarios]
+        all_names = {n for names in _static_scenarios_by_module().values() for n in names}
+        names = list(args.only) if args.only else sorted(all_names)
+        unknown = [n for n in names if n not in all_names]
         if unknown:
             print(f"Unknown corpus scenarios: {', '.join(unknown)}", file=sys.stderr)
             return 2
