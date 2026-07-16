@@ -169,9 +169,15 @@ excludes cosmetics/alpha — the reuse candidate for the staleness digest.
      new `test_background_section.py`. Minor deferred: the inline status drops the
      live tail-fit rate readout (the unified preview shows the subtraction). This
      confirmed the lift is a clean re-hosting — the pattern for the next two.
-   - **Deadtime — next** (`deadtime_dialog.py`, synchronous, per-detector table +
-     Cal). Then **α** (`alpha_calibration_dialog.py`, the largest — the overlay
-     preview already exists to drive; update the screenshot scenario).
+   - **Deadtime — DONE.** `DeadtimeSectionWidget` (`deadtime_section.py`) hosts
+     the mode radios + per-detector table (Fill-all / Cal) + estimate combo +
+     max-correction summary inline; `DeadtimeDialog` retired. Same source-of-truth
+     pattern (`_deadtime_*` state, section folds edits via `changed`). Deleted
+     deadtime_dialog.py + test; new test_deadtime_section.py.
+   - **α — next** (`alpha_calibration_dialog.py`, the largest — retire it, move the
+     run/method/window/Estimate controls inline; the overlay preview already
+     exists to drive the estimate; update the alpha_calibration screenshot
+     scenario). Note the α section is the busiest: it owns the estimate worker.
 5. **Diagnostic per-stage toggles** (preview-only). **Trap:** they must write to
    the preview request only, never the persisted grouping payload — otherwise
    they silently change real reductions (the exact bug class PR 1 fixed).
