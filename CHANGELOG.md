@@ -24,9 +24,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   junk tail dominate — both are now σ-weighted, consistent with the χ² the
   cycles minimise. The same run now converges to χ²/N ≈ 1.0 with the peak on
   the vortex line, full range, no manual steering.
+- **A converged-but-flagged single fit is no longer silently un-plotted.** When
+  the minimiser reaches a usable minimum but flags it (`success=False` — for
+  example a degenerate additive baseline at low field), the single-fit panel
+  now draws the fit curve **greyed** (via the preview overlay) and explains the
+  flag, instead of showing only "Fit failed" and drawing nothing. The fit is
+  still not recorded — *Add to Series* and the pull diagnostic stay disabled —
+  so the user refines the seeds/bounds/model and refits to keep it. A genuine
+  failure (no minimum) still reports "Fit failed" as before.
+- **Both periods of a two-period run survive in the data browser.**
+  `select_period()` now hands each period a distinct encoded run-number key
+  (the same scheme the loader's 3+-period path already uses), so adding both
+  the red and green period of one run no longer collapses them under the
+  shared source run number. The friendly `run/period` label and the true
+  `source_run_number` are preserved in metadata.
+- **Weak-TF α-calibration runs are recognised from the structured field-state
+  code.** `classify_tf_calibration_run` now also treats an explicit
+  `field_state`/`magnetic_field_state` of `TF` as transverse evidence (and
+  `LF`/`ZF` as a veto), so a run whose loader recorded the state code but left
+  `field_direction`/`field` unset is still highlighted in the calibration-run
+  dropdown.
 
 ### Added
 
+- **Pinned frequency-panel annotations that survive a replot.** The frequency
+  `PlotPanel` gains `set_custom_x_axis_label(text)` and
+  `add_persistent_frequency_marker(freq_mhz, label)` /
+  `clear_persistent_frequency_markers()`. A replot clears the axis and
+  recomputes the x-axis label, so a bespoke label or Fourier line marker (ν₁,
+  ν₂, A_µ, γ_μ·B) drawn straight onto the axis was wiped by the show-time
+  render; pinned decorations are now recreated on every render and persist.
 - **MaxEnt data-derived phase seeding.** New `Seed phases from data` toggle
   (on by default; `MaxEntConfig.auto_phase_seed`) estimates each group's
   starting phase from a σ²-weighted lock-in at the strongest line inside the
