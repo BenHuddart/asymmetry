@@ -452,16 +452,17 @@ share one numerics implementation instead of two that could drift apart; a
 pinned test (`tests/gui/test_grouping_preview_pane.py`) keeps the preview
 bit-identical to the original `MainWindow` output.
 
-**GUI.** `gui/windows/grouping/` (`dialog.py` plus `alpha_calibration_dialog.py`,
-`deadtime_section.py`, `background_section.py`, `scope_panel.py`,
-`preview_pane.py`, `profile_bridge.py`) replaced the old single grouping
-dialog with a profile editor: a draft `GroupingProfile` edited in place,
+**GUI.** `gui/windows/grouping/` (`dialog.py` plus `alpha_section.py`,
+`alpha_calibration_dialog.py`, `deadtime_section.py`, `background_section.py`,
+`scope_panel.py`, `preview_pane.py`, `profile_bridge.py`) replaced the old single
+grouping dialog with a profile editor: a draft `GroupingProfile` edited in place,
 a scope panel for release/reattach, and a debounced live-preview pane whose
 reduction runs on a `TaskRunner` worker thread per the threading invariant in
-`AGENTS.md`. The deadtime and background controls are inline
-`DeadtimeSectionWidget` / `BackgroundSectionWidget` in the in-window Corrections
-panel (their standalone modals were retired); α calibration still opens
-`alpha_calibration_dialog.py`.
+`AGENTS.md`. The deadtime, background and single-α controls are inline
+`DeadtimeSectionWidget` / `BackgroundSectionWidget` / `AlphaSectionWidget` in the
+in-window Corrections panel (their standalone modals were retired); the shared
+α-estimate worker lives in `alpha_section.py`. `alpha_calibration_dialog.py`
+remains only for the per-projection *vector* α calibration.
 
 ### 3.7 Global Parameter Fit Studies
 

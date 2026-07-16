@@ -174,10 +174,18 @@ excludes cosmetics/alpha — the reuse candidate for the staleness digest.
      max-correction summary inline; `DeadtimeDialog` retired. Same source-of-truth
      pattern (`_deadtime_*` state, section folds edits via `changed`). Deleted
      deadtime_dialog.py + test; new test_deadtime_section.py.
-   - **α — next** (`alpha_calibration_dialog.py`, the largest — retire it, move the
-     run/method/window/Estimate controls inline; the overlay preview already
-     exists to drive the estimate; update the alpha_calibration screenshot
-     scenario). Note the α section is the busiest: it owns the estimate worker.
+   - **α (single) — DONE.** `AlphaSectionWidget` (`alpha_section.py`) hosts the
+     TF-highlighted calibration-run picker + method combo + Estimate inline; on
+     success it emits a calibrated `AlphaPolicy` the dialog applies via
+     `_apply_calibrated_policy` (α spin + provenance + staleness digest), driving
+     the shared preview overlay. The off-thread estimate worker moved to
+     `alpha_section.py` and is shared with the modal. The section pulls its group
+     pair / correction context fresh at Estimate time via a provider callback.
+     **The standalone `AlphaCalibrationDialog` is kept only for the per-projection
+     *vector* calibration** (`_estimate_alpha_for_axis`) — retiring that (inline
+     per-axis estimate) and retargeting the `alpha_calibration_dialog` screenshot
+     scenario are the remaining follow-ups. Corrections panel now hosts deadtime +
+     background + single-α inline.
 5. **Diagnostic per-stage toggles** (preview-only). **Trap:** they must write to
    the preview request only, never the persisted grouping payload — otherwise
    they silently change real reductions (the exact bug class PR 1 fixed).
