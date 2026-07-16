@@ -64,6 +64,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -100,7 +101,7 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.metrics import field_width_for
+from asymmetry.gui.styles.metrics import char_width, field_width_for
 from asymmetry.gui.styles.plots import (
     draw_empty_state_message,
     draw_fit_range_span,
@@ -228,6 +229,13 @@ class PlotPanel(QWidget):
     #: A moments-handle drag has ended (mouse released after an actual move):
     #: the signal for "recompute with full bootstrap uncertainty now".
     moments_drag_finished = Signal()
+    #: The user clicked the "Open Grouping…" link in the transverse-field
+    #: grouping-hint bar (see :meth:`set_grouping_hint`); the host opens the
+    #: grouping dialog for the current run.
+    grouping_hint_requested = Signal()
+    #: The user dismissed the grouping-hint bar (the ✕ button); the host records
+    #: the dismissal so the nudge stays hidden for that run.
+    grouping_hint_dismissed = Signal()
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
@@ -403,6 +411,8 @@ class PlotPanel(QWidget):
 
             self._plot_header = self._create_plot_header()
             layout.addWidget(self._plot_header)
+            self._grouping_hint_bar = self._create_grouping_hint_bar()
+            layout.addWidget(self._grouping_hint_bar)
             layout.addWidget(self._canvas_scroll_area)
             self._plot_footer = self._create_plot_footer()
             layout.addWidget(self._plot_footer)
@@ -715,6 +725,74 @@ class PlotPanel(QWidget):
 
         self._update_plot_header()
         return widget
+
+    def _create_grouping_hint_bar(self) -> QWidget:
+        """Return the (hidden) transverse-field grouping-nudge bar.
+
+        A dismissable amber banner shown above the canvas when the host detects
+        that the current run is transverse-field but still on a grouping that
+        washes out the precession (see :meth:`set_grouping_hint`). The message
+        carries an "Open Grouping…" link (``grouping_hint_requested``) and a ✕
+        dismiss button (``grouping_hint_dismissed``); the host owns the policy —
+        this widget only renders whatever text it is handed.
+        """
+        # This is a full-width strip flush under the plot header (a bottom border
+        # continuing ``plotHeaderStrip``), not the rounded padded chip
+        # ``styles.widgets.make_warning_banner`` produces — so it styles the
+        # shared ``WARN_BANNER_*`` tokens directly rather than reusing that
+        # helper. It uses the same amber tokens so the two stay in visual step.
+        bar = QFrame()
+        bar.setObjectName("groupingHintBar")
+        bar.setStyleSheet(
+            f"#groupingHintBar {{ background-color: {tokens.WARN_BANNER_BG};"
+            f" border-bottom: 1px solid {tokens.WARN}; }}"
+        )
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(10, 5, 4, 5)
+        row.setSpacing(4)
+
+        self._grouping_hint_label = QLabel("")
+        self._grouping_hint_label.setWordWrap(True)
+        self._grouping_hint_label.setTextFormat(Qt.TextFormat.RichText)
+        self._grouping_hint_label.setStyleSheet(f"color: {tokens.WARN_BANNER_TEXT};")
+        # The link is handled in-process (open the grouping dialog), never as a
+        # browser navigation.
+        self._grouping_hint_label.setOpenExternalLinks(False)
+        self._grouping_hint_label.linkActivated.connect(
+            lambda _href: self.grouping_hint_requested.emit()
+        )
+        row.addWidget(self._grouping_hint_label, 1)
+
+        self._grouping_hint_dismiss_btn = QPushButton("✕")
+        self._grouping_hint_dismiss_btn.setToolTip("Dismiss")
+        self._grouping_hint_dismiss_btn.setFixedWidth(char_width(3))
+        self._grouping_hint_dismiss_btn.setStyleSheet(
+            "QPushButton { border: none; background: transparent; padding: 0 4px;"
+            f" color: {tokens.WARN_BANNER_TEXT}; }}"
+            f"QPushButton:hover {{ background-color: {tokens.SURFACE_HI}; border-radius: 3px; }}"
+        )
+        self._grouping_hint_dismiss_btn.clicked.connect(self.grouping_hint_dismissed.emit)
+        row.addWidget(self._grouping_hint_dismiss_btn)
+
+        bar.hide()
+        return bar
+
+    def set_grouping_hint(self, text: str | None) -> None:
+        """Show or hide the transverse-field grouping-nudge bar.
+
+        ``text`` may contain rich text with an ``<a href=…>Open Grouping…</a>``
+        link; a falsy value hides the bar. Idempotent and safe to call on a
+        matplotlib-less panel (it simply no-ops).
+        """
+        bar = getattr(self, "_grouping_hint_bar", None)
+        if bar is None:
+            return
+        if text:
+            self._grouping_hint_label.setText(str(text))
+            bar.show()
+        else:
+            self._grouping_hint_label.clear()
+            bar.hide()
 
     def _create_plot_footer(self) -> QWidget:
         """Return the control bar shown below the canvas."""
@@ -6477,6 +6555,9 @@ class PlotPanel(QWidget):
         is computed on demand, never automatically); every other caller leaves
         *message* ``None`` and gets an unchanged blank plot.
         """
+        # A cleared panel shows no run, so the transverse-field grouping nudge
+        # (which is per-run) must go with it; the next render re-derives it.
+        self.set_grouping_hint(None)
         if self._has_mpl:
             self._set_canvas_minimum_height_for_axes(1)
             self._set_navigation_mode("none")
