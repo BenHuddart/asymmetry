@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Toggling the frequency Overlay checkbox off and back on no longer
+  discards a manually-set view window.** The overlay's re-render always
+  auto-ranged the axes because switching between the multi-run overlay and
+  the single active run reads as brand-new plotted content to the panel's
+  first-paint framing. `MainWindow` now remembers the view just before
+  leaving an active overlay and restores it when the same combination of
+  runs is re-overlaid; a genuinely different run selection still auto-frames.
 - **MaxEnt no longer diverges on real long-window TF data.** Three compounding
   engine defects made out-of-the-box reconstructions of e.g. MUSR forward/back
   TF runs collapse into spiky noise with χ² rising from cycle 1 (χ²/N ≈ 8000 on

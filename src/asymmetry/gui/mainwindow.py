@@ -751,6 +751,14 @@ class MainWindow(QMainWindow):
         # True while the frequency view shows a multi-run overlay (a comparison
         # display with no single fit/moments target). Gates single-fit blocking.
         self._frequency_overlay_active: bool = False
+        # View captured just before leaving an active overlay (Overlay
+        # unchecked, or the selection dropped below two runs): (sorted run
+        # numbers, x-limits, y-limits). _render_frequency_overlay restores it
+        # when the same run combination is re-overlaid, instead of letting the
+        # panel's first-paint auto-framing discard the prior window.
+        self._frequency_overlay_view_cache: (
+            tuple[tuple[int, ...], tuple[float, float], tuple[float, float]] | None
+        ) = None
         # Set when a project open is cancelled mid-prefetch: the loaded set is
         # known-incomplete, so saving would silently drop the unloaded runs.
         self._project_load_incomplete = False
@@ -7621,6 +7629,11 @@ class MainWindow(QMainWindow):
                 self._render_frequency_overlay(run_numbers)
                 self._update_grouping_hint()
                 return
+        if self._frequency_overlay_active:
+            # Leaving an active overlay: remember its view so re-overlaying
+            # the same run combination restores the window rather than
+            # re-framing.
+            self._cache_frequency_overlay_view()
         run_number = (
             None if self._current_dataset is None else int(self._current_dataset.run_number)
         )
@@ -7665,6 +7678,33 @@ class MainWindow(QMainWindow):
         if representation is not None and representation.primary is not None:
             return [representation.primary]
         return []
+
+    def _cache_frequency_overlay_view(self) -> None:
+        """Remember the current view limits for the active overlay's run set.
+
+        Read by :meth:`_render_frequency_overlay`, which restores this window
+        when the same combination of runs is re-overlaid — otherwise every
+        overlay <-> single-run transition reads as new plotted content to the
+        panel's first-paint auto-framing, discarding the prior window even
+        though nothing about the overlaid runs actually changed.
+        """
+        panel = self._frequency_plot_panel
+        if not hasattr(panel, "get_view_limits"):
+            return
+        run_numbers: list[int] = []
+        for dataset in getattr(panel, "_current_datasets", None) or ():
+            try:
+                run_numbers.append(int(dataset.run_number))
+            except (TypeError, ValueError, AttributeError):
+                return
+        if len(run_numbers) <= 1:
+            return
+        x_min, x_max, y_min, y_max = panel.get_view_limits()
+        self._frequency_overlay_view_cache = (
+            tuple(sorted(run_numbers)),
+            (float(x_min), float(x_max)),
+            (float(y_min), float(y_max)),
+        )
 
     def _render_frequency_overlay(self, run_numbers: list[int]) -> None:
         """Overlay the spectra of every selected run on one axis, computing as needed.
@@ -7745,6 +7785,18 @@ class MainWindow(QMainWindow):
         self._frequency_display_key = None
         self._frequency_overlay_active = True
         self._render_frequency_spectra(rendered_runs[0], rep_type, spectra, None, None)
+        cached_view = self._frequency_overlay_view_cache
+        if (
+            cached_view is not None
+            and cached_view[0] == tuple(sorted(rendered_runs))
+            and hasattr(self._frequency_plot_panel, "set_view_limits")
+        ):
+            # Re-overlaying the same combination: restore the window the
+            # panel's fresh first-paint just auto-framed over.
+            x_limits, y_limits = cached_view[1], cached_view[2]
+            self._frequency_plot_panel.set_view_limits(
+                x_limits[0], x_limits[1], y_limits[0], y_limits[1]
+            )
         if missing:
             name = self._frequency_status_name(rep_type)
             if rep_type == RepresentationType.FREQ_FFT:
