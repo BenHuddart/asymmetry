@@ -682,8 +682,7 @@ class BsccoMaxEntScenario(CorpusScenario):
         ax.set_xlabel(r"Frequency $\nu$ (MHz)")
         ax.set_ylabel("MaxEnt spectral density (unit area)")
         ax.set_title(
-            "BiSCCO 400 G MaxEnt: vortex broadening of the internal-field "
-            "distribution p(B)",
+            "BiSCCO 400 G MaxEnt: vortex broadening of the internal-field distribution p(B)",
             fontsize=10.5,
         )
         ax.legend(fontsize=8.5, loc="upper left")

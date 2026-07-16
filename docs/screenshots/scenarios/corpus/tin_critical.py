@@ -64,8 +64,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._corpus import CorpusScenario, corpus_path, register
 from .._base import CaptureContext
+from ._corpus import CorpusScenario, corpus_path, register
 
 EXAMPLE = "Superconductivity/Critical fields in Sn"
 _DATA = "Superconductivity/Critical fields in Sn/Data/HIFI000%d.nxs"
@@ -421,6 +421,7 @@ class SnTransverseRecoveryScenario(CorpusScenario):
 
     def capture(self, ctx: CaptureContext):  # noqa: D401
         from matplotlib.figure import Figure
+
         from ._corpus import load_corpus_datasets
 
         # Standard-loader forward/backward asymmetry (what Asymmetry shows).
@@ -437,7 +438,7 @@ class SnTransverseRecoveryScenario(CorpusScenario):
         # Fit the recovered precession (A e^{-λt} cos(2πft+φ)) for the annotation.
         from scipy.optimize import curve_fit
 
-        def osc(t, A, f, phi, lam, c):
+        def osc(t, A, f, phi, lam, c):  # noqa: N803 (physics symbol)
             return A * np.exp(-lam * t) * np.cos(2 * np.pi * f * t + phi) + c
 
         popt, _ = curve_fit(
