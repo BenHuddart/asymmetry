@@ -46,7 +46,6 @@ duration. The runner is shut down on every dismissal (``done``/``closeEvent``).
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -72,170 +71,25 @@ from asymmetry.core.data.calibration import (
 )
 from asymmetry.core.data.dataset import Histogram, MuonDataset
 from asymmetry.core.project.profiles import AlphaPolicy
-from asymmetry.core.transform.asymmetry import AlphaEstimate, estimate_alpha_detailed
+from asymmetry.core.transform.asymmetry import AlphaEstimate
 from asymmetry.core.transform.background import resolve_background_mode
-from asymmetry.core.transform.grouping import effective_group_indices
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
 from asymmetry.core.transform.reduce import (
-    CorrectedGroupedCounts,
     ReferenceResolver,
-    corrected_grouped_counts,
-    correction_flags_from_grouping,
 )
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
+from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.windows.grouping.alpha_section import (
+    AlphaEstimateRequest,
+    AlphaEstimateResult,
+    build_corrected,
+    correction_note,
+    run_alpha_estimate,
+)
 from asymmetry.gui.windows.grouping.format import (
     ALPHA_METHOD_ITEMS,
     format_value_with_uncertainty,
 )
-
-#: Background ``method`` labels that mean *no subtraction happened* — a requested
-#: background correction that could not be applied to this run (e.g. a
-#: ``reference_run`` mode whose reference could not be resolved).
-_BACKGROUND_NOT_APPLIED = frozenset({"", "none", "missing_reference", "missing_fixed_values"})
-
-
-@dataclass(frozen=True)
-class _AlphaEstimateRequest:
-    """An immutable snapshot of what to estimate, built on the GUI thread.
-
-    Everything here is a plain object, so the worker function can run entirely
-    off the GUI thread — it must never read widgets. ``resolved_reference`` is the
-    ``reference_run`` background's ``(histograms, scale)`` pre-resolved on the GUI
-    thread (or ``None``), so the worker never reaches back into the loader.
-    """
-
-    token: int
-    histograms: list[Histogram]
-    grouping: dict[str, Any]
-    method: str
-    first_good_bin: int
-    last_good_bin: int
-    run_label: str
-    resolved_reference: tuple[list[Histogram], float] | None
-    facility: str
-
-
-@dataclass(frozen=True)
-class _AlphaEstimateResult:
-    """The estimate marshalled back to the GUI thread, tagged with its token."""
-
-    token: int
-    estimate: AlphaEstimate
-    run_label: str
-
-
-def _build_corrected(
-    histograms: list[Histogram],
-    grouping: dict[str, Any],
-    resolved_reference: tuple[list[Histogram], float] | None,
-    facility: str,
-) -> CorrectedGroupedCounts:
-    """Deadtime-correct, group and background-subtract F/B for the estimate.
-
-    Pure (no widgets), so it runs on the estimate worker thread as well as the
-    GUI-thread preview. Raises :class:`ValueError` when the groups reference no
-    present detectors, matching the grouping dialog's guard.
-    """
-    n = len(histograms)
-    forward_gid = int(grouping.get("forward_group", 1))
-    backward_gid = int(grouping.get("backward_group", 2))
-    forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n)
-    backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n)
-    if not forward_idx or not backward_idx:
-        raise ValueError(
-            "Forward/backward groups do not reference any detectors present in this run "
-            "(after detector exclusion)."
-        )
-    flags = correction_flags_from_grouping(grouping)
-    # The reference was resolved on the GUI thread; wrap it as a trivial resolver.
-    resolver = None if resolved_reference is None else (lambda _g: resolved_reference)
-    return corrected_grouped_counts(
-        histograms=histograms,
-        grouping=grouping,
-        forward_idx=forward_idx,
-        backward_idx=backward_idx,
-        use_deadtime=flags.use_deadtime,
-        deadtime_mode=flags.deadtime_mode,
-        use_background=flags.use_background,
-        facility=facility,
-        reference_resolver=resolver,
-    )
-
-
-def _correction_note(
-    grouping: dict[str, Any], corrected: CorrectedGroupedCounts
-) -> tuple[str, bool]:
-    """Describe which corrections the estimate reflects (text, warn?).
-
-    ``warn`` is ``True`` when a *requested* correction could not be applied to
-    this run — the anti-mislead guardrail: the before/after preview must never
-    read as centred-and-corrected when the reduction would subtract a background
-    the estimate did not.
-    """
-    flags = correction_flags_from_grouping(grouping)
-    applied: list[str] = []
-    missing: list[str] = []
-    if flags.use_deadtime:
-        (applied if corrected.deadtime_applied else missing).append("deadtime")
-    if flags.use_background:
-        method = str((corrected.background_state or {}).get("method", ""))
-        if method and method not in _BACKGROUND_NOT_APPLIED:
-            applied.append(f"background ({method})")
-        else:
-            missing.append("background")
-    if not flags.use_deadtime and not flags.use_background:
-        return (
-            "No deadtime or background correction is configured — α is estimated on raw counts.",
-            False,
-        )
-    if missing:
-        pronoun = "it" if len(missing) == 1 else "them"
-        note = ""
-        if applied:
-            note = "Applied: " + ", ".join(applied) + ".  "
-        note += (
-            "Not applied to this run: "
-            + ", ".join(missing)
-            + f" — α and the preview do not reflect {pronoun}."
-        )
-        return (note, True)
-    return ("α is estimated on corrected counts (" + ", ".join(applied) + ").", False)
-
-
-def _run_alpha_estimate(worker: TaskWorker, request: _AlphaEstimateRequest) -> _AlphaEstimateResult:
-    """Build corrected forward/backward histograms and estimate alpha off-thread.
-
-    :func:`_build_corrected` raises :class:`ValueError` when the groups reference
-    no present detectors; :class:`~asymmetry.gui.tasks.TaskWorker` turns that into
-    the worker's ``error`` signal, which the dialog surfaces with the same warning
-    dialog the synchronous path used.
-    """
-    if worker.is_cancelled():
-        raise TaskCancelledError
-    corrected = _build_corrected(
-        request.histograms, request.grouping, request.resolved_reference, request.facility
-    )
-    forward, backward, common_t0 = corrected.forward, corrected.backward, int(corrected.common_t0)
-    bin_width = float(corrected.bin_width)
-
-    time_us = None
-    if request.method == "general":
-        time_us = (np.arange(forward.size, dtype=np.float64) - float(common_t0)) * bin_width
-
-    if worker.is_cancelled():
-        raise TaskCancelledError
-    estimate = estimate_alpha_detailed(
-        forward,
-        backward,
-        method=request.method,
-        time_us=time_us,
-        first_good_bin=request.first_good_bin,
-        last_good_bin=request.last_good_bin,
-    )
-    # The correction-provenance note is refreshed by the GUI-thread preview redraw
-    # (_grouped_counts → _apply_correction_note) that follows every finish.
-    return _AlphaEstimateResult(token=request.token, estimate=estimate, run_label=request.run_label)
 
 
 class AlphaCalibrationDialog(QDialog):
@@ -641,13 +495,13 @@ class AlphaCalibrationDialog(QDialog):
         grouping = self._grouping_for_reduction(dataset)
         resolved_reference = self._resolve_reference(grouping)
         try:
-            corrected = _build_corrected(
+            corrected = build_corrected(
                 run.histograms, grouping, resolved_reference, self._facility
             )
         except ValueError as exc:
             QMessageBox.warning(self, "Alpha Calibration", str(exc))
             return None
-        self._apply_correction_note(*_correction_note(grouping, corrected))
+        self._apply_correction_note(*correction_note(grouping, corrected))
         return corrected.forward, corrected.backward, int(corrected.common_t0), corrected.bin_width
 
     def _apply_correction_note(self, text: str, warn: bool) -> None:
@@ -665,7 +519,7 @@ class AlphaCalibrationDialog(QDialog):
 
         grouping = self._grouping_for_reduction(dataset)
         self._estimate_token += 1
-        request = _AlphaEstimateRequest(
+        request = AlphaEstimateRequest(
             token=self._estimate_token,
             histograms=list(dataset.run.histograms),
             grouping=grouping,
@@ -682,7 +536,7 @@ class AlphaCalibrationDialog(QDialog):
         self._result_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._result_label.setText("Computing estimate…")
         self._tasks.start(
-            lambda worker: _run_alpha_estimate(worker, request),
+            lambda worker: run_alpha_estimate(worker, request),
             on_finished=self._on_estimate_finished,
             on_error=self._on_estimate_error,
         )
@@ -691,7 +545,7 @@ class AlphaCalibrationDialog(QDialog):
         """GUI thread: apply the estimate unless a newer request supersedes it."""
         self._estimate_btn.setEnabled(True)
         self._result_label.setStyleSheet("")
-        if not isinstance(result, _AlphaEstimateResult) or result.token != self._estimate_token:
+        if not isinstance(result, AlphaEstimateResult) or result.token != self._estimate_token:
             return  # superseded by a later Estimate click / input change
         estimate = result.estimate
 

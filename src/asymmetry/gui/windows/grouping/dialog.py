@@ -87,6 +87,7 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.windows.grouping.alpha_section import AlphaSectionWidget
 from asymmetry.gui.windows.grouping.background_section import (
     BackgroundReferenceRunCandidate,
     BackgroundSectionWidget,
@@ -582,14 +583,11 @@ class GroupingDialog(QDialog):
         period_layout.addStretch()
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
 
-        calibrate_btn = QPushButton("Calibrate…")
-        calibrate_btn.setAutoDefault(False)
-        calibrate_btn.setDefault(False)
-        calibrate_btn.setToolTip(
-            "Open the Alpha calibration dialog: pick a transverse-field "
-            "calibration run and see α balance the asymmetry about zero."
-        )
-        calibrate_btn.clicked.connect(self._estimate_alpha)
+        # Single-α calibration is inline in the Corrections panel (the standalone
+        # modal is kept only for the per-projection vector case). Estimate results
+        # flow back into the α spin + provenance via _apply_calibrated_policy.
+        self._alpha_section = AlphaSectionWidget()
+        self._alpha_section.alpha_estimated.connect(self._on_alpha_section_estimated)
 
         # The estimation *method* is now chosen inside the calibration dialog, so
         # the inline method combo is retired from the visible row. It is kept as a
@@ -627,7 +625,6 @@ class GroupingDialog(QDialog):
         alpha_row = QHBoxLayout(self._single_alpha_widget)
         alpha_row.setContentsMargins(0, 0, 0, 0)
         alpha_row.addWidget(self._alpha_spin)
-        alpha_row.addWidget(calibrate_btn)
         alpha_row.addWidget(self._alpha_provenance_label, stretch=1)
         form.addRow(self._alpha_row_label, self._single_alpha_widget)
         form.addRow("", self._alpha_result_label)
@@ -724,10 +721,15 @@ class GroupingDialog(QDialog):
         background_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         self._corrections_section.addWidget(background_label)
         self._corrections_section.addWidget(self._background_section)
+        self._alpha_section_label = QLabel("α (detector balance)")
+        self._alpha_section_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._corrections_section.addWidget(self._alpha_section_label)
+        self._corrections_section.addWidget(self._alpha_section)
         scroll_layout.addWidget(self._corrections_section)
         scroll_layout.addStretch()
         self._update_deadtime_status()
         self._update_background_status()
+        self._update_alpha_section()
 
         self._right_scroll = QScrollArea()
         self._right_scroll.setWidgetResizable(True)
@@ -1950,6 +1952,7 @@ class GroupingDialog(QDialog):
             else "none"
         )
         self._update_background_status()
+        self._update_alpha_section()
         mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
         self._bin0_spin.setValue(bin0_us)
         self._bin10_spin.setValue(bin10_us)
@@ -2601,6 +2604,9 @@ class GroupingDialog(QDialog):
         pane = getattr(self, "_preview_pane", None)
         if pane is not None:
             pane.shutdown()
+        alpha_section = getattr(self, "_alpha_section", None)
+        if alpha_section is not None:
+            alpha_section.shutdown()
         tasks = getattr(self, "_tasks", None)
         if tasks is not None:
             tasks.shutdown()
@@ -2789,6 +2795,11 @@ class GroupingDialog(QDialog):
         self._alpha_row_label.setVisible(not vector_mode)
         self._single_alpha_widget.setVisible(not vector_mode)
         self._vector_alpha_widget.setVisible(vector_mode)
+        # The inline single-α section calibrates the single/P_z balance; the
+        # per-projection vector table (with its own modal Estimate) owns the rest.
+        if hasattr(self, "_alpha_section"):
+            self._alpha_section.setVisible(not vector_mode)
+            self._alpha_section_label.setVisible(not vector_mode)
 
         if not vector_mode:
             self._rebuild_vector_alpha_table([], grouping_values, canonical)
@@ -3193,20 +3204,43 @@ class GroupingDialog(QDialog):
             "when you press Apply."
         )
 
-    def _estimate_alpha(self) -> None:
-        """Launch the Alpha calibration dialog for the single-alpha grouping.
+    def _update_alpha_section(self) -> None:
+        """(Re)seed the inline single-α section's run list + method."""
+        section = getattr(self, "_alpha_section", None)
+        if section is None:
+            return
+        section.configure(
+            datasets=self._fingerprint_datasets(),
+            method=self._current_alpha_method(),
+            selected_run_number=int(self._reference_dataset.run_number),
+            context_provider=self._alpha_estimate_context,
+        )
 
-        Replaces the old inline "Estimate α" action: the dialog lets the user
-        pick a calibration run, method and window and *see* alpha balance the
-        asymmetry. On OK the calibrated policy is written back into the alpha
-        spin and its provenance (method, error, source run), so the payload's
-        ``alpha_method`` / ``alpha_error`` / ``alpha_reference_run`` — and hence
-        the resolved ``AlphaPolicy`` — carry the calibration exactly as the old
-        inline estimate did.
+    def _alpha_estimate_context(self) -> dict[str, Any]:
+        """The current group pair + correction context for an inline α estimate.
+
+        Read fresh at Estimate time so a group / forward-backward edit is honoured
+        without re-seeding (which would reset the calibration-run selection).
         """
-        forward_gid = int(self._forward_combo.currentData())
-        backward_gid = int(self._backward_combo.currentData())
-        self._launch_calibration_dialog("single", forward_gid, backward_gid, self._alpha_spin)
+        try:
+            forward_gid = int(self._forward_combo.currentData())
+            backward_gid = int(self._backward_combo.currentData())
+        except (TypeError, ValueError):
+            forward_gid, backward_gid = 1, 2
+        return {
+            "groups": self._groups,
+            "forward_group": forward_gid,
+            "backward_group": backward_gid,
+            "excluded_detectors": self._current_excluded_detectors() or [],
+            "correction_provider": self._calibration_correction_provider(),
+            "reference_resolver": self._calibration_reference_resolver,
+            "facility": self._calibration_facility(),
+        }
+
+    def _on_alpha_section_estimated(self, policy: object) -> None:
+        """Apply an inline single-α estimate to the α spin + provenance."""
+        if isinstance(policy, AlphaPolicy):
+            self._apply_calibrated_policy("single", self._alpha_spin, policy)
 
     def _calibration_correction_provider(self):
         """Build the per-dataset correction-payload provider for the alpha dialog.

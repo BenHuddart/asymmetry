@@ -29,9 +29,7 @@ from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.project.profiles import AlphaPolicy
-from asymmetry.gui.windows.grouping import (
-    alpha_calibration_dialog as alpha_calibration_dialog_module,
-)
+from asymmetry.gui.windows.grouping import alpha_section as alpha_section_module
 from asymmetry.gui.windows.grouping.alpha_calibration_dialog import AlphaCalibrationDialog
 
 
@@ -287,14 +285,14 @@ def test_estimate_runs_off_gui_thread_and_toggles_button(
     """The estimate runs on a worker thread; the button is busy for its duration."""
     call_threads: list[int] = []
     release = threading.Event()
-    real_estimate = alpha_calibration_dialog_module.estimate_alpha_detailed
+    real_estimate = alpha_section_module.estimate_alpha_detailed
 
     def spy(*args, **kwargs):
         call_threads.append(threading.get_ident())
         release.wait(timeout=5.0)  # held open until the test has checked the button
         return real_estimate(*args, **kwargs)
 
-    monkeypatch.setattr(alpha_calibration_dialog_module, "estimate_alpha_detailed", spy)
+    monkeypatch.setattr(alpha_section_module, "estimate_alpha_detailed", spy)
 
     dialog = _make_dialog([_run(5, ratio=2.0)])
     dialog._set_method("ratio")
@@ -419,14 +417,14 @@ def test_parent_destruction_mid_estimate_does_not_crash(
 
     release = threading.Event()
     entered = threading.Event()
-    real_estimate = alpha_calibration_dialog_module.estimate_alpha_detailed
+    real_estimate = alpha_section_module.estimate_alpha_detailed
 
     def gated(*args, **kwargs):
         entered.set()
         release.wait(timeout=5.0)  # hold the worker in-flight
         return real_estimate(*args, **kwargs)
 
-    monkeypatch.setattr(alpha_calibration_dialog_module, "estimate_alpha_detailed", gated)
+    monkeypatch.setattr(alpha_section_module, "estimate_alpha_detailed", gated)
 
     parent = QWidget()
     dialog = _make_dialog([_run(5, ratio=2.0)], parent=parent)

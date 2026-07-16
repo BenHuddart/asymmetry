@@ -86,6 +86,22 @@ def _autocalibrate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(AlphaCalibrationDialog, "exec", _fake_exec, raising=True)
 
 
+def _estimate_single_alpha(dialog, method: str | None = None) -> None:
+    """Drive the inline single-α section's estimate and wait for the worker.
+
+    Single-α calibration is now inline in the Corrections panel (the modal is
+    kept only for the per-projection vector case). The estimate runs off-thread;
+    on success the section emits ``alpha_estimated`` and the dialog applies it.
+    """
+    section = dialog._alpha_section
+    if method is not None:
+        idx = section._method_combo.findData(method)
+        assert idx >= 0
+        section._method_combo.setCurrentIndex(idx)
+    section._on_estimate()
+    _wait_until(lambda: section._tasks.active_count == 0)
+
+
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
     app = QApplication.instance()
@@ -301,7 +317,7 @@ def test_estimate_alpha_updates_spinbox(
 ) -> None:
     _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
 
 
@@ -803,7 +819,7 @@ def test_estimate_alpha_uses_reference_run_only(
     ds_b = _dataset_with_ratio(5002, ratio=4.0)
 
     dialog = GroupingDialog([ds_a, ds_b], selected_run_number=5002)
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
 
     # Must use selected reference run (5002 => alpha=4), not an average of runs.
     assert dialog._alpha_spin.value() == pytest.approx(4.0)
@@ -1451,7 +1467,7 @@ def test_estimate_records_provenance_in_payload(
 ) -> None:
     _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
     assert dialog._alpha_result_label.text() != ""
     # The single-alpha provenance status reflects the calibration, not "manual".
@@ -1468,7 +1484,7 @@ def test_manual_alpha_edit_invalidates_estimate_provenance(
 ) -> None:
     _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
     dialog._alpha_spin.setValue(dialog._alpha_spin.value() + 0.5)
     result = dialog.get_grouping_result()
     assert "alpha_error" not in result
@@ -1484,9 +1500,8 @@ def test_estimate_failure_leaves_alpha(qapp: QApplication, monkeypatch) -> None:
     _autocalibrate(monkeypatch)
     dataset = _dataset_with_histograms()
     dialog = GroupingDialog([dataset])
-    dialog._set_alpha_method("general")  # flat 4-bin data: no relaxation contrast
     before = dialog._alpha_spin.value()
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog, "general")  # flat 4-bin data: no relaxation contrast
     assert dialog._alpha_spin.value() == pytest.approx(before)
 
 
@@ -1553,20 +1568,18 @@ def test_alpha_child_dialog_survives_grouping_dialog_destruction(
     from PySide6.QtCore import QEvent
 
     from asymmetry.gui import tasks as tasks_mod
-    from asymmetry.gui.windows.grouping import (
-        alpha_calibration_dialog as alpha_calibration_dialog_module,
-    )
+    from asymmetry.gui.windows.grouping import alpha_section as alpha_section_module
 
     release = threading.Event()
     entered = threading.Event()
-    real_estimate = alpha_calibration_dialog_module.estimate_alpha_detailed
+    real_estimate = alpha_section_module.estimate_alpha_detailed
 
     def gated(*args, **kwargs):
         entered.set()
         release.wait(timeout=5.0)
         return real_estimate(*args, **kwargs)
 
-    monkeypatch.setattr(alpha_calibration_dialog_module, "estimate_alpha_detailed", gated)
+    monkeypatch.setattr(alpha_section_module, "estimate_alpha_detailed", gated)
 
     parent = GroupingDialog([_dataset_with_ratio(5, ratio=2.0)])
     child = AlphaCalibrationDialog(
@@ -1713,12 +1726,11 @@ def test_estimate_alpha_respects_detector_exclusion(
     ]
     dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
     dialog = GroupingDialog([dataset])
-    dialog._set_alpha_method("ratio")
 
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog, "ratio")
     with_hot = dialog._alpha_spin.value()
     dialog._exclude_edit.setText("2")
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
     without_hot = dialog._alpha_spin.value()
 
     assert with_hot == pytest.approx(1000.0 / 100.0)
