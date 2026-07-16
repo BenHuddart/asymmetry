@@ -146,12 +146,19 @@ excludes cosmetics/alpha — the reuse candidate for the staleness digest.
 2. **Layout scaffold.** The right pane has no `QScrollArea` and a fixed 560 px
    height; four sections + preview won't fit. Add a scroll area and an empty
    Corrections `PanelSection` container, no behaviour change, tests green.
-3. **Preview unification + staged caching.** Drive the shared `GroupingPreviewPane`
-   from the α section with an α=1↔α̂ overlay; add staged caching (deadtime-corrected
-   grouped counts keyed on `(histogram-content digest, τ table, grouping, t0)`, the
-   background op cheap on top) so the corrected preview stays snappy on large
-   detector counts — this is where PR 1's deferred perf cost comes due. Add the
-   numeric centring readout.
+3. **Preview unification + centring readout — DONE** (commit e34f1a5). The pane
+   worker now runs on the corrected-counts seam (`corrected_grouped_counts` once,
+   then `binned_fb_asymmetry` per α); the calibrate overlay forms the α=1 and
+   draft-α curves from the *same* corrected counts (one reduction, two curves) and
+   reports the inverse-variance-weighted residual baseline ⟨A⟩ in the status. The
+   grouping dialog requests the overlay when α is calibrated. **Cross-request
+   staged caching was deferred** with rationale: the pane is already off-thread +
+   debounced and the single-pass overlay avoids the double reduction, so a
+   cross-thread corrected-counts cache is a riskier threading change without a
+   demonstrated need — revisit only if a large-detector run shows α-tick lag.
+   Known cosmetic: a good window extending into the fully-decayed tail lets the
+   α=1 ghost blow the Y-scale (real windows trim it; same exposure as the
+   pre-existing single-curve preview) — clamp Y to the α̂ curve if it bites.
 4. **Modal-body lift spike + inline the sections** (one modal per commit;
    Background first — synchronous, 412 lines — to validate a modal body lifts
    into an embeddable `QWidget` before replicating). Retire each modal, migrate
