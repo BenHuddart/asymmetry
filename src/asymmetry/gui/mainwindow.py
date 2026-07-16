@@ -7158,7 +7158,12 @@ class MainWindow(QMainWindow):
             )
             run = getattr(dataset, "run", None)
             if isinstance(recipe, dict) and recipe.get("fourier_config") and run is not None:
-                recipe["grouping_digest"] = fourier_grouping_digest(run)
+                recipe_source = str(
+                    recipe["fourier_config"].get("signal_source", "grouped_average")
+                )
+                recipe["grouping_digest"] = fourier_grouping_digest(
+                    run, signal_source=recipe_source
+                )
         self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
         self._finish_frequency_recompute_ui()
         # Only redraw if this exact (run, rep) is still displayed — a rapid run
@@ -8176,7 +8181,9 @@ class MainWindow(QMainWindow):
                 skipped += 1
                 continue
             config = self._candidate_fourier_config(dataset, enabled_group_ids=enabled_group_ids)
-            if not config.selected_group_ids:
+            # Group selection only gates the grouped-average source; fb mode
+            # transforms the single F−B curve regardless of the (inert) table.
+            if not config.selected_group_ids and config.signal_source != "fb_asymmetry":
                 skipped += 1
                 continue
             representation = self._project_model.ensure_dataset(run_number).ensure(
@@ -8184,9 +8191,10 @@ class MainWindow(QMainWindow):
             )
             # Each target's digest is its OWN grouping right now, not the
             # active run's — the live config is evaluated against the target.
+            # The digest covers the keys the config's signal source consumes.
             representation.recipe = {
                 "fourier_config": config.to_dict(),
-                "grouping_digest": fourier_grouping_digest(run),
+                "grouping_digest": fourier_grouping_digest(run, signal_source=config.signal_source),
             }
             representation.invalidate()
             cache.pop(run_number, None)
@@ -8231,6 +8239,7 @@ class MainWindow(QMainWindow):
         """
         return GroupSpectrumConfig(
             display=str(state.get("display", "Real")),
+            signal_source=str(state.get("signal_source", "grouped_average")),
             window=str(state.get("window", "none")),
             padding=int(state.get("padding", 1)),
             display_normalisation=str(state.get("display_normalisation", "calibrated")),
@@ -8341,7 +8350,18 @@ class MainWindow(QMainWindow):
         group_phase_degrees: dict[int, float] = {}
         if fourier_mode_uses_phase_correction(display):
             manual_phase = float(state.get("phase_degrees", 0.0))
-            if bool(state.get("use_phase_table", False)):
+            if str(state.get("signal_source", "grouped_average")) == "fb_asymmetry":
+                # fb mode transforms one F−B curve, and the per-group table is
+                # disabled in the GUI — the global Phase spin is the only phase
+                # the user sees, so it always wins over a leftover
+                # use_phase_table tick from grouped mode. Recorded uniformly
+                # over the run's groups (not just the selected ones, which may
+                # be empty in fb mode) so the effective phase survives.
+                phase_ids = selected_group_ids or [
+                    int(group_id) for group_id in self._fourier_group_names_for_dataset(dataset)
+                ]
+                group_phase_degrees = {int(group_id): manual_phase for group_id in phase_ids}
+            elif bool(state.get("use_phase_table", False)):
                 if is_active_run:
                     table = self._fourier_panel.group_phase_table()
                 else:
@@ -8426,11 +8446,13 @@ class MainWindow(QMainWindow):
         if representation.recipe.get("fourier_config"):
             return None
         config = self._candidate_fourier_config(dataset)
-        if not config.selected_group_ids:
+        # Group selection only gates the grouped-average source (fb transforms
+        # the single F−B curve; the table is inert there).
+        if not config.selected_group_ids and config.signal_source != "fb_asymmetry":
             return None
         representation.recipe = {
             "fourier_config": config.to_dict(),
-            "grouping_digest": fourier_grouping_digest(run),
+            "grouping_digest": fourier_grouping_digest(run, signal_source=config.signal_source),
         }
         return representation, run
 
@@ -8453,14 +8475,18 @@ class MainWindow(QMainWindow):
         if not isinstance(recipe, dict) or not recipe.get("fourier_config"):
             return False, ""
         reasons: list[str] = []
+        recorded = GroupSpectrumConfig.from_dict(recipe.get("fourier_config"))
         recorded_digest = recipe.get("grouping_digest")
+        # Recompute the current digest under the RECORDED config's signal
+        # source: the digest answers "did the run state THIS spectrum depended
+        # on change" (a source switch itself is flagged by config_differences).
         if (
             isinstance(recorded_digest, str)
             and recorded_digest
-            and fourier_grouping_digest(dataset.run) != recorded_digest
+            and fourier_grouping_digest(dataset.run, signal_source=recorded.signal_source)
+            != recorded_digest
         ):
             reasons.append("grouping changed")
-        recorded = GroupSpectrumConfig.from_dict(recipe.get("fourier_config"))
         differences = config_differences(self._candidate_fourier_config(dataset), recorded)
         if differences:
             shown = ", ".join(differences[:3]) + (", …" if len(differences) > 3 else "")

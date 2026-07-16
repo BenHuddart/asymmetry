@@ -41,7 +41,12 @@ from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.units import gauss_to_mhz
 from asymmetry.core.transform.background import resolve_background_mode
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.transform.grouping import common_t0_for_groups, group_names
+from asymmetry.core.transform.grouping import (
+    common_t0_for_groups,
+    detector_t0_overrides,
+    group_names,
+)
+from asymmetry.core.transform.rebin import resolve_binning_mode
 from asymmetry.core.utils.coerce import optional_float
 
 #: Minimum applied field (Gauss) for a diamagnetic fit to be attempted.
@@ -83,6 +88,13 @@ class GroupSpectrumConfig:
     """Concrete configuration for one averaged grouped-FFT spectrum."""
 
     display: str = "(Power)^1/2"
+    #: Which time-domain signal is transformed. ``"grouped_average"`` (default)
+    #: averages each detector group's lifetime-corrected FFT; ``"fb_asymmetry"``
+    #: transforms the run's single forward−backward asymmetry curve (the signal
+    #: the time-domain plot shows) — cleaner for a single detector pair. In
+    #: fb-asymmetry mode the per-group phase table and ``selected_group_ids`` are
+    #: inert (grouping changes are still tracked by the separate grouping digest).
+    signal_source: str = "grouped_average"
     window: str = "none"
     padding: int = 1
     #: Amplitude normalisation of the spectrum.  ``"asymmetry_percent"`` is the
@@ -139,6 +151,7 @@ class GroupSpectrumConfig:
         """Return a JSON-serialisable ``fourier_config`` recipe block."""
         return {
             "display": self.display,
+            "signal_source": self.signal_source,
             "window": self.window,
             "padding": self.padding,
             "normalisation": self.normalisation,
@@ -185,6 +198,10 @@ class GroupSpectrumConfig:
         )
         return cls(
             display=str(data.get("display", "(Power)^1/2")),
+            # A missing key is an old grouped-average recipe: default it to
+            # "grouped_average" (not a stale sentinel — pre-fb recipes ARE
+            # grouped-average and must not flag against a fresh default config).
+            signal_source=str(data.get("signal_source", "grouped_average")),
             window=str(data.get("window", "none")),
             padding=max(1, int(data.get("padding", 1))),
             # A missing key is a pre-calibration recipe: map it to the "raw"
@@ -304,10 +321,11 @@ def _background_values_are_list_routed(grouping: dict) -> bool:
     return isinstance(values, (list, tuple)) or isinstance(ranges, (list, tuple))
 
 
-def fourier_grouping_digest(run: Run | None) -> str:
-    """Return a short, stable digest of the grouping state the grouped-FFT input consumes.
+def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_average") -> str:
+    """Return a short, stable digest of the grouping state the FFT input consumes.
 
-    Captures exactly the keys read by
+    For the default ``signal_source="grouped_average"`` this captures exactly
+    the keys read by
     :func:`asymmetry.core.fourier.grouped.build_group_signal_dataset` (and the
     deadtime/background helpers it calls) so a recipe recorded at compute time
     can later be compared against the run's *current* grouping to flag a
@@ -322,6 +340,22 @@ def fourier_grouping_digest(run: Run | None) -> str:
     and ``forward_group``/``backward_group`` only matter when a *list*-shaped
     ``background_values``/``background_ranges`` needs them to route entries to
     groups (see :func:`_background_values_are_list_routed`).
+
+    ``signal_source="fb_asymmetry"`` additionally folds in the keys the
+    forward−backward reduction (:func:`asymmetry.core.simulate.
+    reduce_run_to_dataset` → :func:`asymmetry.core.transform.grouping.
+    group_forward_backward` → :func:`asymmetry.core.transform.rebin.
+    binned_fb_asymmetry`) consumes and the grouped path does not:
+    ``forward_group``/``backward_group`` (with the consumer's 1/2 defaults),
+    ``alpha`` (normalised exactly as the consumer does — degenerate values fall
+    back to 1.0), per-detector t0 overrides
+    (``effective_detector_t0_bins``, resolved against the histogram count like
+    :func:`detector_t0_overrides`), the resolved ``binning_mode`` (plus
+    ``bin0_us``/``bin10_us`` when a non-fixed mode makes them live), and the
+    two-period selection (``period_mode`` + ``period_histograms``) when a
+    valid two-period payload exists. An alpha edit or an F/B group swap
+    therefore flags an fb-source spectrum stale while leaving a
+    grouped-average digest unchanged.
 
     Returns ``""`` for ``run is None``, so a not-yet-loaded run trivially
     compares unequal to any real recorded digest.
@@ -383,6 +417,47 @@ def fourier_grouping_digest(run: Run | None) -> str:
         if parsed is not None:
             payload[key] = parsed
 
+    if signal_source == "fb_asymmetry":
+        # The forward−backward reduction consumes run state the grouped path
+        # never reads (see the docstring); fold in exactly those keys, with the
+        # consumers' own defaults/normalisation so a missing key digests the
+        # same as its explicit default.
+        payload["signal_source"] = "fb_asymmetry"
+        forward_group = _digest_int(grouping.get("forward_group"))
+        backward_group = _digest_int(grouping.get("backward_group"))
+        payload["fb_forward_group"] = forward_group if forward_group is not None else 1
+        payload["fb_backward_group"] = backward_group if backward_group is not None else 2
+        # Normalise alpha exactly as group_forward_backward does: unparseable,
+        # non-finite or non-positive values all fall back to 1.0.
+        try:
+            alpha = float(grouping.get("alpha", 1.0))
+        except (TypeError, ValueError):
+            alpha = 1.0
+        if not math.isfinite(alpha) or alpha <= 0.0:
+            alpha = 1.0
+        payload["fb_alpha"] = alpha
+        overrides = detector_t0_overrides(grouping, len(run.histograms))
+        if overrides is not None:
+            payload["fb_detector_t0_bins"] = overrides
+        binning_mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
+        payload["fb_binning_mode"] = binning_mode
+        if binning_mode != "fixed":
+            payload["fb_bin0_us"] = bin0_us
+            payload["fb_bin10_us"] = bin10_us
+        # Two-period selection: only live when a valid two-period payload
+        # exists (mirrors reduce_run_to_dataset's has_periods gate).
+        period_lists = grouping.get("period_histograms")
+        has_periods = (
+            isinstance(period_lists, list)
+            and len(period_lists) >= 2
+            and all(isinstance(period, list) and period for period in period_lists)
+        )
+        if has_periods:
+            payload["fb_period_mode"] = str(grouping.get("period_mode", "red"))
+            payload["fb_period_histograms"] = [
+                [_digest_int(value) for value in period] for period in period_lists
+            ]
+
     encoded = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha1(encoded.encode("utf-8")).hexdigest()[:16]
 
@@ -413,6 +488,25 @@ def _phase_ids(config: GroupSpectrumConfig) -> set[int]:
     return {int(g) for g in config.group_phase_degrees}
 
 
+def _fb_effective_phase_degrees(config: GroupSpectrumConfig) -> float:
+    """Return the global phase (degrees) an fb-asymmetry transform applies.
+
+    fb-asymmetry mode has no per-group id: the phase table is inert, but the
+    GUI writes the manual (global) phase identically onto every group entry,
+    so any recorded entry carries that shared value. Single source of truth
+    shared by the compute branch and :func:`config_differences`, so "what
+    phase would be applied" and "did the effective phase change" can never
+    drift.
+
+    The "first entry" is dict insertion order (Python guarantees it, and
+    ``to_dict``/``from_dict`` preserve it): the GUI always writes one uniform
+    value so any entry is equivalent, but a *scripted* config with divergent
+    ``group_phase_degrees`` entries gets its first-inserted value — the rest
+    are ignored, exactly as the compute branch ignores them.
+    """
+    return float(next(iter(config.group_phase_degrees.values()), 0.0))
+
+
 def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConfig) -> list[str]:
     """Return human-readable labels of effective differences between two configs.
 
@@ -434,6 +528,15 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
         if label not in labels:
             labels.append(label)
 
+    if current.signal_source != recorded.signal_source:
+        emit("signal source")
+
+    # In fb-asymmetry mode group inclusion is inert and the per-group phase
+    # table reduces to one effective global phase (a single F−B curve is
+    # transformed), so when BOTH configs are fb-source only that effective
+    # phase — not the table's per-group detail — can change the spectrum.
+    both_fb = current.signal_source == "fb_asymmetry" and recorded.signal_source == "fb_asymmetry"
+
     # Canonical compare so a legacy display alias (e.g. "power" for
     # "(Power)^1/2") in an old recipe cannot read as a mode change.
     if canonical_fourier_display_mode(current.display) != canonical_fourier_display_mode(
@@ -452,7 +555,7 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
     ):
         emit("time window")
 
-    if _sorted_group_ids(current.selected_group_ids) != _sorted_group_ids(
+    if not both_fb and _sorted_group_ids(current.selected_group_ids) != _sorted_group_ids(
         recorded.selected_group_ids
     ):
         emit("included groups")
@@ -480,16 +583,27 @@ def config_differences(current: GroupSpectrumConfig, recorded: GroupSpectrumConf
     if uses_phase:
         if not _floats_equal(current.t0_offset_us, recorded.t0_offset_us):
             emit("t0 offset")
-        ids = _phase_ids(current) | _phase_ids(recorded)
-        phases_differ = any(
-            not _floats_equal(
-                current.group_phase_degrees.get(gid, 0.0),
-                recorded.group_phase_degrees.get(gid, 0.0),
+        if both_fb:
+            # In fb-asymmetry mode the transform applies one EFFECTIVE global
+            # phase (see _fb_effective_phase_degrees). Compare that instead of
+            # the per-group table: a global-phase change genuinely changes the
+            # spectrum and must flag, while table differences beyond it are
+            # inert and stay suppressed.
+            if not _floats_equal(
+                _fb_effective_phase_degrees(current), _fb_effective_phase_degrees(recorded)
+            ):
+                emit("phase")
+        else:
+            ids = _phase_ids(current) | _phase_ids(recorded)
+            phases_differ = any(
+                not _floats_equal(
+                    current.group_phase_degrees.get(gid, 0.0),
+                    recorded.group_phase_degrees.get(gid, 0.0),
+                )
+                for gid in ids
             )
-            for gid in ids
-        )
-        if phases_differ:
-            emit("group phases")
+            if phases_differ:
+                emit("group phases")
 
     if current.pulse_compensation != recorded.pulse_compensation:
         emit("pulse compensation")
@@ -669,14 +783,21 @@ def compute_average_group_spectrum(
     if not names_by_group:
         return None
 
+    is_fb_asymmetry = config.signal_source == "fb_asymmetry"
+
     all_ids = sorted(names_by_group)
-    if config.selected_group_ids is None:
-        selected = list(all_ids)
+    if is_fb_asymmetry:
+        # Group inclusion is inert in fb-asymmetry mode: a single forward−backward
+        # curve is transformed regardless of which groups the table selects.
+        selected: list[int] = []
     else:
-        wanted = {int(g) for g in config.selected_group_ids}
-        selected = [gid for gid in all_ids if gid in wanted]
-    if not selected:
-        return None
+        if config.selected_group_ids is None:
+            selected = list(all_ids)
+        else:
+            wanted = {int(g) for g in config.selected_group_ids}
+            selected = [gid for gid in all_ids if gid in wanted]
+        if not selected:
+            return None
 
     display = config.display
     apply_phase = fourier_mode_uses_phase_correction(display)
@@ -726,15 +847,45 @@ def compute_average_group_spectrum(
     # prepares once, not once per group.
     background_reference_cache: dict = {}
 
-    for group_id in selected:
-        group_dataset = build_group_signal_dataset(
-            run,
-            group_id,
-            center_signal=False,
-            reference_t0_bin=reference_t0_bin,
-            prepared_histograms=prepared_histograms,
-            background_reference_cache=background_reference_cache,
-        )
+    # Build the list of (group_id, base time-domain dataset) to transform. In the
+    # default grouped-average mode this is one lifetime-corrected signal per
+    # selected group; in fb-asymmetry mode it is the single forward−backward
+    # asymmetry curve the time-domain plot shows (group_id is ``None`` — the
+    # per-group phase table is inert there). Both are fractional signals, so the
+    # same per-signal machinery (projection, apodisation, calibration,
+    # conditioning) applies unchanged.
+    signal_inputs: list[tuple[int | None, MuonDataset]] = []
+    if is_fb_asymmetry:
+        # Imported lazily: simulate imports widely, so a module-level import here
+        # would risk a load cycle (mirrors combine.reduce_combined_run).
+        from asymmetry.core.simulate import reduce_run_to_dataset  # noqa: PLC0415
+
+        try:
+            fb_dataset = reduce_run_to_dataset(run)
+        except ValueError:
+            # No valid forward/backward pair (single-group run, empty groups,
+            # no histograms): a degenerate input returns None like the grouped
+            # paths do, rather than raising — one bad run must not poison a
+            # batch compute.
+            return None
+        signal_inputs.append((None, fb_dataset))
+    else:
+        signal_inputs = [
+            (
+                group_id,
+                build_group_signal_dataset(
+                    run,
+                    group_id,
+                    center_signal=False,
+                    reference_t0_bin=reference_t0_bin,
+                    prepared_histograms=prepared_histograms,
+                    background_reference_cache=background_reference_cache,
+                ),
+            )
+            for group_id in selected
+        ]
+
+    for group_id, group_dataset in signal_inputs:
         if config.remove_diamag:
             seed_field = reference_field_gauss(run, group_dataset)
             diamag_seed_fields.append(seed_field)
@@ -757,7 +908,8 @@ def compute_average_group_spectrum(
 
         if first_group_dataset is None:
             first_group_dataset = group_dataset
-        selected_names.append(names_by_group.get(group_id, f"Group {group_id}"))
+        if group_id is not None:
+            selected_names.append(names_by_group.get(group_id, f"Group {group_id}"))
 
         if is_burg:
             prepared = prepare_fft_time_signal(
@@ -788,7 +940,13 @@ def compute_average_group_spectrum(
         phase_degrees = 0.0
         group_t0_offset_us = 0.0
         if apply_phase:
-            phase_degrees = float(config.group_phase_degrees.get(group_id, 0.0))
+            if group_id is None:
+                # fb-asymmetry mode: the per-group table is inert, but the
+                # shared global phase and the t0 offset still apply (see
+                # _fb_effective_phase_degrees, also used by config_differences).
+                phase_degrees = _fb_effective_phase_degrees(config)
+            else:
+                phase_degrees = float(config.group_phase_degrees.get(group_id, 0.0))
             group_t0_offset_us = config.t0_offset_us
 
         fft_diagnostics: dict = {}
@@ -924,7 +1082,11 @@ def compute_average_group_spectrum(
             else:
                 unit_area_skipped_note = unit_area.reason
 
-    if len(selected) == len(all_ids):
+    if is_fb_asymmetry:
+        # Distinct from the grouped "… Average" label so an overlay legend
+        # tells the two signal sources apart.
+        run_label = f"{run.run_number} F−B"
+    elif len(selected) == len(all_ids):
         run_label = f"{run.run_number} Average"
     else:
         run_label = f"{run.run_number} Average ({', '.join(selected_names)})"
@@ -940,6 +1102,8 @@ def compute_average_group_spectrum(
             "y_label": fourier_display_ylabel(display),
             "fourier_display": str(display),
             "fourier_group_output": "average",
+            # Which time-domain signal was transformed (both modes stamp it).
+            "fourier_signal_source": str(config.signal_source),
             "group_ids": list(selected),
             # Record the apodisation the spectrum was computed with, so
             # downstream readings (spectral moments) can caveat filtered
@@ -956,9 +1120,11 @@ def compute_average_group_spectrum(
     # derived modes keep their raw footing.
     metadata["fourier_normalisation"] = "asymmetry_percent" if calibrate else "raw"
     if calibrate and fractional_guard_hits:
+        n_signals = len(signal_inputs)
+        unit = "signal" if is_fb_asymmetry else "groups"
         metadata["fourier_normalisation_degenerate"] = (
             f"the fractional baseline was non-positive for {fractional_guard_hits} of "
-            f"{len(selected)} groups, which kept the raw (uncalibrated) footing"
+            f"{n_signals} {unit}, which kept the raw (uncalibrated) footing"
         )
     if unit_area_applied:
         metadata["fourier_display_normalisation"] = "unit_area"

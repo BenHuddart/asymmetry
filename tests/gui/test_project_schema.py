@@ -1217,6 +1217,7 @@ class TestFourierPanelState:
             "phase_degrees": 32.5,
             "t0_offset_us": 0.125,
             "display": "Phase",
+            "signal_source": "grouped_average",
             "display_normalisation": "calibrated",
             "subtract_average_signal": True,
             "auto_phase_method": "Average",

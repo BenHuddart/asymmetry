@@ -370,3 +370,116 @@ def test_config_differences_pulse_settings_reported_when_active():
     current = GroupSpectrumConfig(pulse_compensation=True, pulse_half_width_us=0.1)
     recorded = GroupSpectrumConfig(pulse_compensation=True, pulse_half_width_us=0.9)
     assert config_differences(current, recorded) == ["pulse settings"]
+
+
+# --------------------------------------------------------------------------- #
+# signal source (grouped average vs F−B asymmetry)
+# --------------------------------------------------------------------------- #
+
+
+def test_config_differences_flags_signal_source_switch():
+    grouped = GroupSpectrumConfig(signal_source="grouped_average")
+    fb = GroupSpectrumConfig(signal_source="fb_asymmetry")
+    assert "signal source" in config_differences(fb, grouped)
+
+
+def test_config_differences_included_groups_suppressed_when_both_fb():
+    # Group inclusion is inert in fb-asymmetry mode: two fb configs that differ
+    # only in selected_group_ids produce the same spectrum, so no difference.
+    current = GroupSpectrumConfig(signal_source="fb_asymmetry", selected_group_ids=[1])
+    recorded = GroupSpectrumConfig(signal_source="fb_asymmetry", selected_group_ids=[1, 2])
+    assert config_differences(current, recorded) == []
+
+
+def test_config_differences_included_groups_reported_when_both_grouped():
+    current = GroupSpectrumConfig(selected_group_ids=[1])
+    recorded = GroupSpectrumConfig(selected_group_ids=[1, 2])
+    assert config_differences(current, recorded) == ["included groups"]
+
+
+def test_config_differences_fb_effective_phase_change_flags_phase():
+    # fb mode applies one effective global phase (the value the GUI writes onto
+    # every group entry). Changing it recomputes a different spectrum, so it
+    # must flag — compute↔staleness parity.
+    current = GroupSpectrumConfig(
+        signal_source="fb_asymmetry", display="Phase", group_phase_degrees={1: 10.0, 2: 10.0}
+    )
+    recorded = GroupSpectrumConfig(
+        signal_source="fb_asymmetry", display="Phase", group_phase_degrees={1: 40.0, 2: 40.0}
+    )
+    assert config_differences(current, recorded) == ["phase"]
+
+
+def test_config_differences_fb_per_group_detail_suppressed_when_effective_phase_equal():
+    # Per-group entries beyond the effective (first) phase are genuinely inert
+    # in fb mode: only one F−B curve is transformed.
+    current = GroupSpectrumConfig(
+        signal_source="fb_asymmetry", display="Phase", group_phase_degrees={1: 10.0, 2: 99.0}
+    )
+    recorded = GroupSpectrumConfig(
+        signal_source="fb_asymmetry", display="Phase", group_phase_degrees={1: 10.0, 2: -5.0}
+    )
+    assert config_differences(current, recorded) == []
+
+
+def test_config_differences_fb_phase_change_inert_in_non_phase_display():
+    # uses_phase gating is preserved: a non-phase-correcting display never
+    # consumes the phase, fb mode or not.
+    current = GroupSpectrumConfig(
+        signal_source="fb_asymmetry", display="(Power)^1/2", group_phase_degrees={1: 10.0}
+    )
+    recorded = GroupSpectrumConfig(
+        signal_source="fb_asymmetry", display="(Power)^1/2", group_phase_degrees={1: 40.0}
+    )
+    assert config_differences(current, recorded) == []
+
+
+def test_config_differences_t0_offset_still_reported_when_both_fb():
+    # The global t0 offset applies in fb mode (unlike the per-group table).
+    current = GroupSpectrumConfig(signal_source="fb_asymmetry", display="Phase", t0_offset_us=0.0)
+    recorded = GroupSpectrumConfig(signal_source="fb_asymmetry", display="Phase", t0_offset_us=0.1)
+    assert config_differences(current, recorded) == ["t0 offset"]
+
+
+def test_fb_digest_changes_on_alpha_change_grouped_unchanged():
+    base = _base_grouping()
+    changed = dict(_base_grouping())
+    changed["alpha"] = 1.3
+    # The fb reduction consumes alpha, so an alpha edit must flag an fb-source
+    # spectrum stale …
+    assert fourier_grouping_digest(
+        _run(base), signal_source="fb_asymmetry"
+    ) != fourier_grouping_digest(_run(changed), signal_source="fb_asymmetry")
+    # … while the grouped-average contract stays pinned: alpha is not digested.
+    assert fourier_grouping_digest(_run(base)) == fourier_grouping_digest(_run(changed))
+
+
+def test_fb_digest_changes_on_forward_backward_swap_grouped_unchanged():
+    base = dict(_base_grouping(), forward_group=1, backward_group=2)
+    swapped = dict(_base_grouping(), forward_group=2, backward_group=1)
+    assert fourier_grouping_digest(
+        _run(base), signal_source="fb_asymmetry"
+    ) != fourier_grouping_digest(_run(swapped), signal_source="fb_asymmetry")
+    # Grouped-average input is per-group and background is off, so the swap is
+    # digest-invisible there (the pinned axis-switch contract).
+    assert fourier_grouping_digest(_run(base)) == fourier_grouping_digest(_run(swapped))
+
+
+def test_fb_digest_missing_keys_match_consumer_defaults():
+    # A grouping without explicit forward/backward/alpha digests identically to
+    # one carrying the consumer defaults (forward 1, backward 2, alpha 1.0), so
+    # merely materialising a default never flags staleness.
+    implicit = _base_grouping()
+    explicit = dict(_base_grouping(), forward_group=1, backward_group=2, alpha=1.0)
+    assert fourier_grouping_digest(
+        _run(implicit), signal_source="fb_asymmetry"
+    ) == fourier_grouping_digest(_run(explicit), signal_source="fb_asymmetry")
+
+
+def test_fb_and_grouped_digests_differ_for_same_run():
+    # The source is folded into the payload, so a digest recorded under one
+    # source can never accidentally match the other's.
+    grouping = _base_grouping()
+    assert fourier_grouping_digest(
+        _run(grouping), signal_source="fb_asymmetry"
+    ) != fourier_grouping_digest(_run(grouping))
