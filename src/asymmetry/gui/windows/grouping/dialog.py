@@ -60,6 +60,7 @@ from asymmetry.core.instrument import (
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
+    BackgroundPolicy,
     GroupingProfile,
     ProfileFingerprint,
     T0Policy,
@@ -102,10 +103,12 @@ from asymmetry.gui.windows.grouping.alpha_section import (
 from asymmetry.gui.windows.grouping.background_section import (
     BackgroundReferenceRunCandidate,
     BackgroundSectionWidget,
+    background_status_text,
 )
 from asymmetry.gui.windows.grouping.deadtime_section import (
     DeadtimeSectionWidget,
     DeadtimeSourceRun,
+    deadtime_status_text,
 )
 from asymmetry.gui.windows.grouping.format import (
     ALPHA_METHOD_ITEMS as _ALPHA_METHOD_ITEMS,
@@ -779,6 +782,7 @@ class GroupingDialog(QDialog):
         #: Per-stage "Compare in preview" checkboxes ("deadtime"/"background"/
         #: "alpha"/"raw"), mutually exclusive (see :meth:`_set_compare_stage`).
         self._compare_toggles: dict[str, QCheckBox] = {}
+        corrections_layout.addWidget(self._build_pipeline_strip())
         corrections_layout.addWidget(
             self._build_correction_header("Deadtime correction", "deadtime")
         )
@@ -2510,8 +2514,103 @@ class GroupingDialog(QDialog):
         # directly after folding the returned policy into the draft.
 
     # ------------------------------------------------------------------
-    # Compare-in-preview toggles (preview-only, never persisted)
+    # Compare-in-preview toggles + pipeline strip (preview-only, never persisted)
     # ------------------------------------------------------------------
+
+    def _build_pipeline_strip(self) -> QWidget:
+        """The ``Deadtime → group → Background → α`` pipeline overview.
+
+        Each correction is a chip showing its one-line summary; the ``group``
+        divider (non-interactive — grouping lives on the Grouping tab) makes the
+        reduction *order* visible. Clicking a chip focuses that stage's compare (the
+        same ``_compare_stage`` the section toggles drive) and scrolls it into view.
+        The α chip is hidden in vector mode, where the Grouping tab owns α.
+        """
+        widget = QWidget()
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(0, 0, 0, 2)
+        row.setSpacing(6)
+        self._pipeline_chips: dict[str, QPushButton] = {}
+        row.addWidget(self._make_pipeline_chip("deadtime"))
+        row.addWidget(self._pipeline_arrow())
+        group = QLabel("group")
+        group.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        group.setToolTip("Detector grouping is set on the Grouping and timing tab.")
+        row.addWidget(group)
+        row.addWidget(self._pipeline_arrow())
+        row.addWidget(self._make_pipeline_chip("background"))
+        # The α chip and its leading arrow live in a container hidden in vector mode.
+        self._pipeline_alpha_widget = QWidget()
+        alpha_row = QHBoxLayout(self._pipeline_alpha_widget)
+        alpha_row.setContentsMargins(0, 0, 0, 0)
+        alpha_row.setSpacing(6)
+        alpha_row.addWidget(self._pipeline_arrow())
+        alpha_row.addWidget(self._make_pipeline_chip("alpha"))
+        row.addWidget(self._pipeline_alpha_widget)
+        row.addStretch()
+        return widget
+
+    @staticmethod
+    def _pipeline_arrow() -> QLabel:
+        arrow = QLabel("→")
+        arrow.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        return arrow
+
+    def _make_pipeline_chip(self, stage: str) -> QPushButton:
+        chip = QPushButton()
+        chip.setCheckable(True)
+        chip.setAutoDefault(False)
+        chip.setDefault(False)
+        chip.setToolTip("Compare this stage's before/after in the preview below.")
+        chip.clicked.connect(lambda _checked=False, s=stage: self._on_pipeline_chip_clicked(s))
+        self._pipeline_chips[stage] = chip
+        return chip
+
+    def _on_pipeline_chip_clicked(self, stage: str) -> None:
+        """Focus (or unfocus) *stage*'s compare and scroll its section into view."""
+        self._set_compare_stage(None if self._compare_stage == stage else stage)
+        section = {
+            "deadtime": getattr(self, "_deadtime_section", None),
+            "background": getattr(self, "_background_section", None),
+            "alpha": getattr(self, "_alpha_section", None),
+        }.get(stage)
+        scroll = getattr(self, "_corrections_scroll", None)
+        if section is not None and scroll is not None:
+            scroll.ensureWidgetVisible(section)
+
+    def _sync_pipeline_strip(self) -> None:
+        """Refresh chip summaries, focus highlight, enabled + vector visibility."""
+        if not hasattr(self, "_pipeline_chips"):
+            return
+        for stage, chip in self._pipeline_chips.items():
+            chip.setText(self._pipeline_summary(stage))
+            available = self._compare_stage_available(stage)
+            chip.setEnabled(available)
+            chip.setChecked(available and self._compare_stage == stage)
+        if hasattr(self, "_pipeline_alpha_widget"):
+            self._pipeline_alpha_widget.setVisible(not bool(self._vector_axis_pairs))
+
+    def _pipeline_summary(self, stage: str) -> str:
+        """The one-line chip summary for *stage* (reuses the section formatters)."""
+        if stage == "deadtime":
+            return deadtime_status_text(self._deadtime_section.get_policy())
+        if stage == "background":
+            details = (
+                {"background_run": self._background_run_payload}
+                if self._background_run_payload
+                else {}
+            )
+            return background_status_text(
+                BackgroundPolicy(mode=self._current_background_mode(), details=details)
+            )
+        value = float(self._alpha_spin.value())
+        if self._alpha_is_calibrated():
+            label = next(
+                (lbl for lbl, key, _ in _ALPHA_METHOD_ITEMS if key == self._current_alpha_method()),
+                self._current_alpha_method(),
+            )
+            return f"α = {value:.4f} · {label}"
+        return f"α = {value:.4f}"
 
     def _build_correction_header(self, title: str, stage: str) -> QWidget:
         """A section header: the muted title + a "Compare in preview" toggle.
@@ -2599,6 +2698,7 @@ class GroupingDialog(QDialog):
                 toggle.setChecked(available and self._compare_stage == key)
         finally:
             self._syncing_compare = False
+        self._sync_pipeline_strip()
 
     def _compare_stage_available(self, stage: str) -> bool:
         """Whether *stage* has a before/after to show (enable-when-active)."""
@@ -3678,12 +3778,31 @@ class GroupingDialog(QDialog):
         blob = json.dumps(surface, sort_keys=True, default=str)
         return hashlib.sha1(blob.encode()).hexdigest()[:16]
 
+    @staticmethod
+    def _alpha_provenance_holds(
+        recorded_value: float, current_value: float, decimals: int = 6
+    ) -> bool:
+        """True when *current_value* (a spin's displayed α) still shows *recorded*.
+
+        The estimate stores full precision but the α spins round to *decimals*, so a
+        naive ``< 1e-9`` compare reads every real (non-round) calibration as a hand
+        edit — silently dropping the "calibrated" provenance (from the saved profile
+        too), the staleness banner and the ⚠ tab marker. A displayed value is within
+        half a display ULP of the recorded value; a genuine manual edit moves the
+        spin to a different displayed value, well beyond that. (Tested against the
+        raw difference rather than re-rounding both sides, so Python's banker's
+        rounding can't disagree with Qt's at an exact half-ULP tie.)
+        """
+        return abs(float(recorded_value) - float(current_value)) < 0.5 * 10 ** (-decimals)
+
     def _alpha_is_calibrated(self) -> bool:
         """True when the single α spin still holds a calibrated estimate."""
         recorded = self._alpha_estimate_state.get("single") or self._alpha_estimate_state.get("P_z")
         if recorded is None:
             return False
-        return abs(recorded[0] - float(self._alpha_spin.value())) < 1e-9
+        return self._alpha_provenance_holds(
+            recorded[0], self._alpha_spin.value(), self._alpha_spin.decimals()
+        )
 
     def _refresh_alpha_staleness(self) -> None:
         """Show the banner when corrections changed since α was calibrated."""
@@ -3724,7 +3843,9 @@ class GroupingDialog(QDialog):
             return
         recorded = self._alpha_estimate_state.get("single") or self._alpha_estimate_state.get("P_z")
         value = float(self._alpha_spin.value())
-        if recorded is not None and abs(recorded[0] - value) < 1e-9:
+        if recorded is not None and self._alpha_provenance_holds(
+            recorded[0], value, self._alpha_spin.decimals()
+        ):
             method_label = next(
                 (
                     label
@@ -3932,7 +4053,7 @@ class GroupingDialog(QDialog):
         alpha_provenance: dict[str, Any] = {"alpha_method": self._current_alpha_method()}
         slot = "P_z" if canonical else "single"
         recorded = self._alpha_estimate_state.get(slot)
-        if recorded is not None and abs(recorded[0] - alpha_value) < 1e-9:
+        if recorded is not None and self._alpha_provenance_holds(recorded[0], alpha_value):
             if recorded[1] is not None:
                 alpha_provenance["alpha_error"] = float(recorded[1])
             alpha_provenance["alpha_reference_run"] = int(recorded[2])
@@ -4007,7 +4128,7 @@ class GroupingDialog(QDialog):
                 value = float(self._vector_alpha_spins[label].value())
                 new_spec["alpha"] = value
                 recorded = self._alpha_estimate_state.get(label)
-                if recorded is not None and abs(recorded[0] - value) < 1e-9:
+                if recorded is not None and self._alpha_provenance_holds(recorded[0], value):
                     if recorded[1] is not None:
                         new_spec["alpha_error"] = float(recorded[1])
                     new_spec["alpha_reference_run"] = int(recorded[2])
@@ -4034,7 +4155,7 @@ class GroupingDialog(QDialog):
             value = float(self._vector_alpha_spins[axis].value())
             payload[key] = value
             recorded = self._alpha_estimate_state.get(axis)
-            if recorded is not None and abs(recorded[0] - value) < 1e-9:
+            if recorded is not None and self._alpha_provenance_holds(recorded[0], value):
                 if recorded[1] is not None:
                     payload[f"{key}_error"] = float(recorded[1])
                 payload[f"{key}_reference_run"] = int(recorded[2])

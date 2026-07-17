@@ -398,6 +398,48 @@ def test_corrections_tab_marker_suppressed_in_vector_mode(qapp: QApplication) ->
     assert not dialog._alpha_stale_banner.isHidden()  # banner (Grouping tab) still fires
 
 
+def test_calibrated_alpha_survives_spin_rounding(qapp: QApplication) -> None:
+    """A real (non-round) calibrated α is recognised despite the 6-decimal spin.
+
+    Regression: ``_alpha_is_calibrated`` compared the full-precision estimate
+    against the rounded spin with a 1e-9 tolerance, so every real calibration read
+    as a manual edit — silently disabling the staleness banner, the ⚠ marker, and
+    the "calibrated" provenance (in the saved profile too). Round test values (2.0,
+    1.23) masked it; a genuine estimate value does not.
+    """
+    from asymmetry.core.project.profiles import AlphaPolicy
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    policy = AlphaPolicy(
+        mode="calibrated", value=0.9583488636, method="diamagnetic", error=7.2e-5, source_run=7101
+    )
+    dialog._apply_calibrated_policy("single", dialog._alpha_spin, policy)
+
+    assert dialog._alpha_spin.value() != policy.value  # the spin rounded the value
+    assert dialog._alpha_is_calibrated()  # ...but the calibration is still recognised
+    assert "run 7101" in dialog._alpha_provenance_label.text()
+
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+    assert not dialog._alpha_stale_banner.isHidden()  # staleness now actually fires
+    assert dialog._current_grouping_payload().get("alpha_reference_run") == 7101
+
+
+def test_vector_calibrated_alpha_provenance_survives_spin_rounding(qapp: QApplication) -> None:
+    """Vector per-axis provenance survives spin rounding into the saved payload."""
+    from asymmetry.core.project.profiles import AlphaPolicy
+
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    spin = dialog._vector_alpha_spins["P_x"]
+    policy = AlphaPolicy(
+        mode="calibrated", value=1.0371828, method="diamagnetic", error=1e-4, source_run=4010
+    )
+    dialog._apply_calibrated_policy("P_x", spin, policy)
+
+    assert spin.value() != policy.value  # rounded
+    assert dialog._current_grouping_payload().get("alpha_x_reference_run") == 4010
+
+
 def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
     dataset = _dataset_with_histograms()
     assert dataset.run is not None
@@ -926,6 +968,35 @@ def test_alpha_compare_unavailable_in_vector_mode(qapp: QApplication) -> None:
     assert dialog._alpha_is_calibrated()
     assert not dialog._compare_stage_available("alpha")
     assert dialog._compare_stage != "alpha"
+
+
+def test_pipeline_strip_summaries_and_chip_focus(qapp: QApplication) -> None:
+    """The pipeline chips show live summaries, focus a stage on click, and reflect
+    availability; the α chip is hidden in vector mode."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    # Off corrections → deadtime/background chips read their status and are disabled.
+    assert dialog._pipeline_chips["deadtime"].text() == "Deadtime: off"
+    assert dialog._pipeline_chips["background"].text() == "Background: none"
+    assert not dialog._pipeline_chips["deadtime"].isEnabled()
+    assert not dialog._pipeline_chips["background"].isEnabled()
+
+    _estimate_single_alpha(dialog)  # α ≠ 1 → the α chip becomes available + auto-focused
+    assert dialog._pipeline_chips["alpha"].isChecked()
+    assert dialog._pipeline_chips["alpha"].text().startswith("α = ")
+
+    # Clicking the focused chip clears the focus.
+    dialog._on_pipeline_chip_clicked("alpha")
+    assert dialog._compare_stage is None
+    assert not dialog._pipeline_chips["alpha"].isChecked()
+
+
+def test_pipeline_alpha_chip_hidden_in_vector_mode(qapp: QApplication) -> None:
+    """The α pipeline chip is hidden in vector mode (the Grouping tab owns α)."""
+    single = GroupingDialog([_dataset_with_histograms()])
+    assert not single._pipeline_alpha_widget.isHidden()
+
+    vector = GroupingDialog([_vector_dataset_with_histograms()])
+    assert vector._pipeline_alpha_widget.isHidden()
 
 
 def test_vector_estimate_alpha_uses_selected_reference_run(

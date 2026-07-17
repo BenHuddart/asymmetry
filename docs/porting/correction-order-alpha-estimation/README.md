@@ -144,6 +144,23 @@ source of truth for the implementation pass.
   "Comparing a correction's effect" in `detector_grouping.rst`, `ARCHITECTURE.md`.
   Remaining: step 3 pipeline-strip chrome.
 
+- **2026-07-17 — interactive Corrections compare, step 3 (pipeline strip).** Added
+  the ``Deadtime → group → Background → α`` chip strip across the top of the
+  Corrections tab — each chip a live one-line summary (reusing
+  ``deadtime_status_text`` / ``background_status_text`` / the α formatter), the
+  non-interactive ``group`` divider teaching the order. Clicking a chip focuses
+  that stage's compare (the same `_compare_stage`) and scrolls its section into
+  view; the α chip is hidden in vector mode. **Bug found + fixed while building
+  it:** `_alpha_is_calibrated` (and four sibling provenance comparisons) compared
+  the full-precision estimate against the 6-decimal-rounded α spin with a `< 1e-9`
+  tolerance, so every *real* (non-round) calibration read as a manual edit —
+  silently disabling the staleness banner, the ⚠ tab marker, and the "calibrated"
+  provenance in the saved profile (both single and vector). Round test values
+  (2.0, 1.23) had masked it. Fixed with a shared `_alpha_provenance_holds` helper
+  that compares at the spin's display precision; regression tests use genuine
+  non-round values. This completes the interactive Corrections tab (compare
+  mechanism + toggles + strip).
+
 ## The bug this study addresses
 
 Two independent code paths form forward/backward (F/B) spectra and they diverge:

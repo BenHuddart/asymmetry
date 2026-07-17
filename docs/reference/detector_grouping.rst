@@ -503,7 +503,15 @@ profile's background policy.
 Comparing a correction's effect
 -------------------------------
 
-Each correction section header on the Corrections tab carries a
+A **pipeline strip** across the top of the Corrections tab —
+``Deadtime → group → Background → α`` — makes the reduction *order* visible and
+summarises each stage in a chip ("Deadtime: off", "Background: tail fit",
+"α = 1.037 · Diamagnetic (TF)"); the ``group`` divider is a reminder that
+detector grouping, set on the **Grouping and timing** tab, sits between deadtime
+and background. Clicking a chip focuses that stage's compare (below) and scrolls
+its section into view.
+
+Each correction section header on the Corrections tab also carries a
 **Compare in preview** checkbox, and the tab foot adds a compound
 **Compare vs raw (uncorrected)**. Checking one overlays that stage's
 before/after in the pinned preview: the solid curve is always the full

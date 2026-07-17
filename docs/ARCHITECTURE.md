@@ -476,7 +476,10 @@ the solid is never degraded, so the α compare's residual-⟨A⟩ acceptance num
 always read off the fully-corrected reduction. The compare is preview-only
 (`compare_stage` never reaches `_current_grouping_payload`); the α compare
 auto-focuses on calibration and is unavailable in vector mode (its toggle is
-hidden — the per-projection table on the Grouping tab owns α there).
+hidden — the per-projection table on the Grouping tab owns α there). A
+`Deadtime → group → Background → α` pipeline strip across the top of the tab shows
+each stage's live one-line summary and clicking a chip focuses that stage's
+compare (the same `_compare_stage`), making the reduction order visible.
 
 ### 3.7 Global Parameter Fit Studies
 
