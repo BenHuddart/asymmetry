@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -126,6 +127,18 @@ from asymmetry.gui.windows.grouping.profile_bridge import (
     profile_from_form_payload,
 )
 from asymmetry.gui.windows.grouping.scope_panel import ScopePanel
+
+#: Compare-pager cycle order (`_step_compare`/`_sync_compare_pager`). ``None``
+#: ("off") is always available; the rest are gated by `_compare_stage_available`.
+_COMPARE_CYCLE: tuple[str | None, ...] = (None, "deadtime", "background", "alpha", "raw")
+
+#: Pager label text per focused stage (see `_sync_compare_pager`).
+_COMPARE_STAGE_LABELS: dict[str, str] = {
+    "deadtime": "without deadtime",
+    "background": "without background",
+    "alpha": "α = 1",
+    "raw": "vs raw",
+}
 
 
 class GroupingDialog(QDialog):
@@ -823,6 +836,12 @@ class GroupingDialog(QDialog):
         )
 
         right_layout.addWidget(self._tabs, stretch=1)
+
+        # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
+        # the configured corrections, directly above the preview so it works from
+        # either tab (the preview is pinned below both). Pure wrapper over the
+        # same `_set_compare_stage` the section toggles and pipeline chips drive.
+        right_layout.addWidget(self._build_compare_pager())
 
         # Live asymmetry preview of the preview run under the current draft.
         # Pinned below the tabs (shared by both), fixed-height so it never fights
@@ -2740,6 +2759,80 @@ class GroupingDialog(QDialog):
         finally:
             self._syncing_compare = False
         self._sync_pipeline_strip()
+        self._sync_compare_pager()
+
+    def _build_compare_pager(self) -> QWidget:
+        """The ◀/▶ pager row: steps ``_compare_stage`` through the cycle.
+
+        Sits directly above the pinned preview so it works from either tab.
+        A pure wrapper over :meth:`_set_compare_stage` — same shared state the
+        section toggles and pipeline chips drive; :meth:`_sync_compare_pager`
+        (called from the single :meth:`_sync_compare_toggles` sync seam) keeps
+        the label and arrow enabled-state in step.
+        """
+        widget = QWidget()
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(0, 4, 0, 4)
+        row.setSpacing(6)
+        self._compare_prev_btn = QToolButton()
+        self._compare_prev_btn.setArrowType(Qt.ArrowType.LeftArrow)
+        self._compare_prev_btn.setToolTip("Previous comparison")
+        self._compare_prev_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._compare_prev_btn.clicked.connect(lambda: self._step_compare(-1))
+        row.addWidget(self._compare_prev_btn)
+        self._compare_pager_label = QLabel("Comparing: off")
+        self._compare_pager_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        row.addWidget(self._compare_pager_label)
+        self._compare_next_btn = QToolButton()
+        self._compare_next_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self._compare_next_btn.setToolTip("Next comparison")
+        self._compare_next_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._compare_next_btn.clicked.connect(lambda: self._step_compare(1))
+        row.addWidget(self._compare_next_btn)
+        row.addStretch()
+        return widget
+
+    def _step_compare(self, direction: int) -> None:
+        """Advance ``_compare_stage`` by *direction* (±1) to the next available
+        stage in ``_COMPARE_CYCLE``, wrapping and skipping stages
+        :meth:`_compare_stage_available` rejects. ``None`` ("off") is always a
+        valid landing stage, so this always terminates within one lap.
+        """
+        n = len(_COMPARE_CYCLE)
+        try:
+            idx = _COMPARE_CYCLE.index(self._compare_stage)
+        except ValueError:
+            idx = 0
+        for _ in range(n):
+            idx = (idx + direction) % n
+            stage = _COMPARE_CYCLE[idx]
+            if stage is None or self._compare_stage_available(stage):
+                self._set_compare_stage(stage)
+                return
+
+    def _sync_compare_pager(self) -> None:
+        """Refresh the pager label + arrow enabled-state from ``_compare_stage``.
+
+        Called from the end of :meth:`_sync_compare_toggles`, the single sync
+        seam that already runs on every stage change, availability change, and
+        vector-mode flip.
+        """
+        if not hasattr(self, "_compare_pager_label"):
+            return  # sync can run before the pager is built
+        available = [
+            stage
+            for stage in _COMPARE_CYCLE
+            if stage is not None and self._compare_stage_available(stage)
+        ]
+        if self._compare_stage is None:
+            self._compare_pager_label.setText("Comparing: off")
+        else:
+            name = _COMPARE_STAGE_LABELS[self._compare_stage]
+            position = available.index(self._compare_stage) + 1
+            self._compare_pager_label.setText(f"Comparing: {name} ({position}/{len(available)})")
+        enabled = bool(available)
+        self._compare_prev_btn.setEnabled(enabled)
+        self._compare_next_btn.setEnabled(enabled)
 
     def _compare_stage_available(self, stage: str) -> bool:
         """Whether *stage* has a before/after to show (enable-when-active)."""

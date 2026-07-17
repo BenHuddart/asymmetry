@@ -160,6 +160,7 @@ ignore = ["E501"]  # Ruff format handles normal wrapping; long prose/UI strings 
 "tests/core/test_result_summary.py" = ["N806"]  # Physics symbol R (χ² confidence level)
 "tests/core/test_diffusion.py" = ["N803", "N806"]  # Physics notation (D_nD, D_perp) as args/locals
 # E402: pytest.importorskip / pytestmark before optional-dependency imports is intentional in all GUI and IO test files
+"tests/gui/test_compare_pager.py" = ["E402"]  # pytest.importorskip before optional Qt imports
 "tests/gui/test_waterfall_utils.py" = ["E402"]
 "tests/gui/test_plot_panel_waterfall.py" = ["E402"]
 "tests/gui/test_background_section.py" = ["E402"]

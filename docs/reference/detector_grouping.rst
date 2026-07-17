@@ -544,6 +544,17 @@ its compare, so a fresh calibration shows the balancing effect immediately; the
 :math:`\alpha` compare is not offered in vector mode, where the per-projection
 :math:`\alpha` table on the **Grouping and timing** tab owns the balance.
 
+A **compare pager** — ``◀``/``▶`` arrow buttons flanking a muted label — sits
+directly above the pinned preview, below the tabs, so it works from either the
+**Grouping and timing** or **Corrections** tab. It drives the same shared focus
+as the section toggles and pipeline chips: each arrow steps through the
+configured corrections in pipeline order (deadtime, background, :math:`\alpha`,
+raw), skipping any stage without a before/after to show. The label reads
+"Comparing: off" when nothing is focused, and otherwise names the stage and its
+position among the currently available stages, e.g. "Comparing: without
+background (1/3)" or "Comparing: vs raw (3/3)". Both arrows disable together
+when no correction is configured yet.
+
 PSI Grouping
 ------------
 
