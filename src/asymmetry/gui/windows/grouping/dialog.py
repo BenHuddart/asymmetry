@@ -93,6 +93,7 @@ from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollDoubleSpinBox,
     NoScrollSpinBox,
 )
+from asymmetry.gui.widgets.section_overflow_indicator import SectionOverflowIndicator
 from asymmetry.gui.windows.grouping.alpha_section import (
     AlphaEstimateResult,
     AlphaSectionWidget,
@@ -705,13 +706,15 @@ class GroupingDialog(QDialog):
 
         form.addRow(self._vector_alpha_widget)
 
-        t0_row_widget = QWidget()
-        t0_row = QHBoxLayout(t0_row_widget)
+        # Kept as an attribute: the section-overflow pill on the Grouping tab uses
+        # this row as the "t0 and binning" landmark.
+        self._t0_row_widget = QWidget()
+        t0_row = QHBoxLayout(self._t0_row_widget)
         t0_row.setContentsMargins(0, 0, 0, 0)
         t0_row.addWidget(self._t0_mode_combo)
         t0_row.addWidget(self._t0_spin)
         t0_row.addWidget(self._find_t0_btn)
-        form.addRow("t0 Bin", t0_row_widget)
+        form.addRow("t0 Bin", self._t0_row_widget)
         form.addRow("", self._t0_mode_label)
         form.addRow("t_good Offset", self._t_good_offset_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
@@ -736,12 +739,13 @@ class GroupingDialog(QDialog):
         )
         self._map_periods_btn.clicked.connect(self._on_map_periods)
         self.period_mapping_request: dict[str, Any] | None = None
-        period_row_widget = QWidget()
-        period_row_box = QHBoxLayout(period_row_widget)
+        # Kept as an attribute: the "Periods" landmark for the Grouping-tab pill.
+        self._period_row_widget = QWidget()
+        period_row_box = QHBoxLayout(self._period_row_widget)
         period_row_box.setContentsMargins(0, 0, 0, 0)
         period_row_box.addWidget(self._period_mode_widget)
         period_row_box.addWidget(self._map_periods_btn)
-        form.addRow(self._period_mode_label, period_row_widget)
+        form.addRow(self._period_mode_label, self._period_row_widget)
         self._update_map_periods_visibility()
 
         # The right pane is a two-tab notebook — "Grouping and timing" and
@@ -783,13 +787,15 @@ class GroupingDialog(QDialog):
         #: "alpha"/"raw"), mutually exclusive (see :meth:`_set_compare_stage`).
         self._compare_toggles: dict[str, QCheckBox] = {}
         corrections_layout.addWidget(self._build_pipeline_strip())
-        corrections_layout.addWidget(
-            self._build_correction_header("Deadtime correction", "deadtime")
-        )
+        # The header widgets double as the section-overflow pill's landmarks, so
+        # keep references to them (the α header is already stored below).
+        self._deadtime_header = self._build_correction_header("Deadtime correction", "deadtime")
+        corrections_layout.addWidget(self._deadtime_header)
         corrections_layout.addWidget(self._deadtime_section)
-        corrections_layout.addWidget(
-            self._build_correction_header("Background subtraction", "background")
+        self._background_header = self._build_correction_header(
+            "Background subtraction", "background"
         )
+        corrections_layout.addWidget(self._background_header)
         corrections_layout.addWidget(self._background_section)
         self._alpha_header = self._build_correction_header("α (detector balance)", "alpha")
         corrections_layout.addWidget(self._alpha_header)
@@ -804,6 +810,17 @@ class GroupingDialog(QDialog):
         self._update_deadtime_status()
         self._update_background_status()
         self._update_alpha_section()
+
+        # Overlay pills naming the sections hidden below the fold on a short
+        # window. The section lists are callables because vector mode drops the
+        # single-α header and adds the per-projection table; _update_vector_mode_
+        # controls calls refresh() after those visibility flips.
+        self._corrections_overflow = SectionOverflowIndicator(
+            self._corrections_scroll, self._corrections_overflow_sections
+        )
+        self._grouping_overflow = SectionOverflowIndicator(
+            self._grouping_scroll, self._grouping_overflow_sections
+        )
 
         right_layout.addWidget(self._tabs, stretch=1)
 
@@ -2612,6 +2629,30 @@ class GroupingDialog(QDialog):
             return f"α = {value:.4f} · {label}"
         return f"α = {value:.4f}"
 
+    def _corrections_overflow_sections(self) -> list[tuple[str, QWidget]]:
+        """Corrections-tab landmarks for the overflow pill, top-to-bottom.
+
+        Short labels (the pill has no room for the "correction"/"subtraction"
+        suffixes); α keeps its full display name and is omitted in vector mode,
+        where its inline section is hidden in favour of the per-projection table.
+        """
+        sections = [
+            ("Deadtime", self._deadtime_header),
+            ("Background", self._background_header),
+        ]
+        if not bool(self._vector_axis_pairs):
+            sections.append(("α (detector balance)", self._alpha_header))
+        return sections
+
+    def _grouping_overflow_sections(self) -> list[tuple[str, QWidget]]:
+        """Grouping-tab landmarks for the overflow pill — coarse, top-to-bottom."""
+        sections: list[tuple[str, QWidget]] = []
+        if bool(self._vector_axis_pairs):
+            sections.append(("α (per projection)", self._vector_alpha_widget))
+        sections.append(("t0 and binning", self._t0_row_widget))
+        sections.append(("Periods", self._period_row_widget))
+        return sections
+
     def _build_correction_header(self, title: str, stage: str) -> QWidget:
         """A section header: the muted title + a "Compare in preview" toggle.
 
@@ -3110,6 +3151,7 @@ class GroupingDialog(QDialog):
                     self._alpha_spin.setValue(float(grouping_values.get("alpha", 1.0)))
                 except (TypeError, ValueError):
                     pass
+            self._refresh_overflow_indicators()
             return
 
         ordered = self._ordered_projection_labels(pairs, canonical)
@@ -3123,6 +3165,17 @@ class GroupingDialog(QDialog):
             self._set_combo_to_group(self._forward_combo, pz_fwd)
             self._set_combo_to_group(self._backward_combo, pz_bwd)
             self._alpha_spin.setValue(float(self._vector_alpha_spins["P_z"].value()))
+
+        # Section visibility just changed (single-α header vs per-projection
+        # table), so re-derive which sections fall below the fold.
+        self._refresh_overflow_indicators()
+
+    def _refresh_overflow_indicators(self) -> None:
+        """Recompute both overflow pills (no-op before they are constructed)."""
+        for name in ("_corrections_overflow", "_grouping_overflow"):
+            indicator = getattr(self, name, None)
+            if indicator is not None:
+                indicator.refresh()
 
     @staticmethod
     def _ordered_projection_labels(pairs: dict[str, tuple[int, int]], canonical: bool) -> list[str]:

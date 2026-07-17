@@ -201,7 +201,10 @@ draft is what gets applied to every run inheriting the profile.
   one-line provenance summary (e.g. "α = 1.2345(67) · Diamagnetic (TF) · run
   2923"); deadtime and background carry their own mode controls and one-line
   status (see `Alpha calibration`_, `Deadtime Correction`_, and
-  `Background Correction`_ below).
+  `Background Correction`_ below). On a window too short to show every section at
+  once, a small pill at the bottom of the scroll names the sections hidden below
+  the fold (e.g. ``↓ Background · α (detector balance)``); clicking it scrolls the
+  first one into view.
 
 Editing never touches a saved profile or run until you press **Apply**.
 **Apply commits everything you have changed in one pass** — the profile to

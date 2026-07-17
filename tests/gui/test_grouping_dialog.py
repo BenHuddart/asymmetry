@@ -325,6 +325,42 @@ def test_right_pane_is_tabbed_with_preview_pinned(qapp: QApplication) -> None:
     assert not dialog._tabs.isAncestorOf(dialog._preview_pane)
 
 
+def test_corrections_overflow_pill_names_hidden_sections(qapp: QApplication) -> None:
+    """The Corrections overflow pill names below-the-fold sections on a short window.
+
+    At a deliberately short size with deadtime in manual mode (its table pushes
+    the later sections down), the pill lists the hidden sections including
+    "Background"; at the default size with deadtime off, everything fits and the
+    pill is hidden.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.show()
+    dialog.resize(1180, 560)
+    dialog._tabs.setCurrentIndex(dialog._corrections_tab_index)
+    QApplication.processEvents()
+
+    # Manual deadtime shows the per-detector table, pushing Background (and α)
+    # below the fold on the short viewport. No explicit refresh() — the pill
+    # must react on its own via the scrollbar's rangeChanged (content grew).
+    dialog._deadtime_section._set_mode("manual")
+    dialog._deadtime_section._on_mode_or_state_changed()
+    QApplication.processEvents()
+
+    pill = dialog._corrections_overflow
+    assert pill.isVisible()
+    assert pill.text().startswith("↓ ")
+    assert "Background" in pill.text()
+
+    # Default size with deadtime off: M1 makes this state fit, so no pill.
+    dialog.resize(1180, 760)
+    dialog._deadtime_section._set_mode("off")
+    dialog._deadtime_section._on_mode_or_state_changed()
+    QApplication.processEvents()
+    assert not dialog._corrections_overflow.isVisible()
+
+    dialog.close()
+
+
 def test_alpha_staleness_banner_tracks_correction_changes(qapp: QApplication) -> None:
     """The banner fires when deadtime/background change after α was calibrated."""
     from asymmetry.core.project.profiles import AlphaPolicy

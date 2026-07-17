@@ -168,6 +168,10 @@ them:
   progress UI + request-id staleness + cancel/closeEvent skeleton for guided
   fit-wizard windows; a subclass supplies its own tabs, worker task, and
   result-tab population.
+- `gui.widgets.section_overflow_indicator.SectionOverflowIndicator` — a
+  viewport-overlay pill that names the scroll sections currently hidden below
+  the fold and scrolls the first one into view on click; recomputes from cheap
+  geometry reads on scroll/resize plus an explicit `refresh()`.
 - `gui.panels.fit/` — the fit-setup-and-results package (`FitPanel`,
   `FitTabBase`, `SingleFitTab`, `GlobalFitTab`, `FitParameterTable`, seeding
   helpers), split out of the former monolithic `fit_panel.py` (now a thin
