@@ -2092,16 +2092,17 @@ def _gps_dataset(field_direction: str | None) -> MuonDataset:
     )
 
 
-def test_transverse_field_gps_run_shows_grouping_nudge(qapp) -> None:
-    """B8a: a TF GPS run on the longitudinal default nudges toward spin-rotated."""
+def test_grouping_dialog_has_no_tf_banner_but_layout_editor_gets_direction(qapp) -> None:
+    """The full-width TF nudge banner is retired from the grouping dialog.
+
+    It cost a full-width row on small windows; the recommendation survives in
+    the Detector Layout editor (its own ``_tf_hint_label`` + preset preselect —
+    see test_detector_layout_dialog.py), which this dialog feeds the reference
+    run's field direction. Pin that seam so the editor's nudge keeps working.
+    """
     dialog = GroupingDialog([_gps_dataset("Transverse")])
-    assert dialog._tf_hint_label.isVisibleTo(dialog)
-    assert "Spin-rotated (B+U/F+D)" in dialog._tf_hint_label.text()
-
-
-def test_gps_run_without_field_direction_does_not_nudge(qapp) -> None:
-    dialog = GroupingDialog([_gps_dataset(None)])
-    assert not dialog._tf_hint_label.isVisibleTo(dialog)
+    assert not hasattr(dialog, "_tf_hint_label")
+    assert dialog._reference_field_direction() == "Transverse"
 
 
 # ---------------------------------------------------------------------------

@@ -175,7 +175,8 @@ draft is what gets applied to every run inheriting the profile.
   **"Editing override for run N — this run only"** while an overridden run is
   selected. The same tint highlights the selected row in the scope list, and a
   run with uncommitted override edits gains an **"override *"** marker there.
-* **Preset dropdown and chip** — an instrument-aware preset dropdown seeds a
+* **Preset dropdown and chip** — an instrument-aware preset dropdown in the
+  left column, directly above the group table it seeds with a
   sensible starting arrangement (see the per-instrument sections below), and
   a chip beside it reads either **"Preset: <name>"** when the draft's groups
   still match that preset exactly, or **"Custom (edited from <name>)"** the
