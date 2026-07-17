@@ -200,6 +200,16 @@ def _corpus_rf_dir() -> Path | None:
 _RF_DIR = _corpus_rf_dir()
 
 
+# Loads 37 real HDF4 files + a Migrad fit (~5s alone) — a genuine standard-tier
+# outlier among otherwise-fast unit tests. Flaky under -n auto standard-tier
+# runs (observed 2026-07-13, recurred 2026-07-17): xdist schedules it onto a
+# worker alongside dozens of other tests with no wall-clock margin, and under
+# full-suite contention it has intermittently run past the tier's tight
+# per-test budget. `slow` moves it to the full tier (2 workers, 600s timeout —
+# see tools/harness.py _FULL_TIER_WORKERS/_FULL_TIER_TIMEOUT_S), matching the
+# precedent already set for the other corpus-conditional heavy test,
+# test_corpus_hdf4_parity in tests/io/test_hdf4_loader.py.
+@pytest.mark.slow
 @pytest.mark.skipif(_RF_DIR is None, reason="WiMDA benzene RF corpus not present")
 def test_benzene_rf_scan_recovers_paper_couplings() -> None:
     """End-to-end: load benzene RF runs → Green − Red scan → fit → A_µ ≈ 514.78."""
