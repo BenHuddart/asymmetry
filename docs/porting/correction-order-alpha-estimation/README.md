@@ -88,6 +88,26 @@ source of truth for the implementation pass.
   items are the deferred lower-priority ones (cross-request preview caching,
   estimator error-model threading, inline tail-fit rate readout).
 
+- **2026-07-17 — Corrections UX follow-up: tabbed right pane.** Ben flagged that
+  the corrections were poorly discoverable at the bottom of the right-pane single
+  scroll, and that scrolling could accidentally toggle combos/spins. Two fixes,
+  each shipped independently: (1) **wheel guards** — a new `NoScrollComboBox`
+  (widgets/no_scroll_spin.py) + migration of every combo/spin in the grouping
+  package to the StrongFocus/ignore-unfocused-wheel variants; (2) **tabbed right
+  pane** — the right pane is now a two-tab `QTabWidget`, "Grouping and timing" and
+  "Corrections", with the single preview pinned below both (it reduces from widget
+  *state*, so no preview changes were needed). The Corrections tab gets a ⚠ marker
+  when a calibrated α goes stale. Deliberate asymmetry recorded here: single-α
+  calibration lives on the Corrections tab, but the per-projection *vector* α table
+  (values + inline per-axis Estimate) stays whole on the Grouping tab — splitting
+  one grid across tabs was not worth it. **Next (approved, not yet built):** make
+  the Corrections tab interactive per the Fable "ghost-the-removal" model —
+  generalize the preview's `overlay: bool` to `compare_stage:
+  "deadtime"|"background"|"alpha"|None` so selecting a stage overlays its
+  before/after ghost (solid = always the full pipeline), single-focus, α keeps the
+  ⟨A⟩ acceptance readout; then exclusive per-section "Compare in preview" toggles
+  (+ a "vs raw" compound); then a pipeline-strip chrome.
+
 ## The bug this study addresses
 
 Two independent code paths form forward/backward (F/B) spectra and they diverge:

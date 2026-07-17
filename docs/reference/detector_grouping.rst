@@ -189,12 +189,18 @@ draft is what gets applied to every run inheriting the profile.
   settings change. The recompute runs on a worker thread (never the GUI
   thread), so editing stays responsive even while a reduction is in flight;
   a superseded recompute is discarded in favour of the latest edit.
-* **Corrections panel** — a single collapsible **Corrections** section that
-  configures deadtime, background, and :math:`\alpha` together, each previewed
-  against the same corrected reduction shown below. The :math:`\alpha` section
-  carries a one-line provenance summary (e.g. "α = 1.2345(67) · Diamagnetic
-  (TF) · run 2923"); deadtime and background carry their own mode controls and
-  one-line status (see `Alpha calibration`_, `Deadtime Correction`_, and
+* **Tabbed settings** — the right pane is split into two tabs, **Grouping and
+  timing** (groups, the :math:`\alpha` value and its provenance, t0, binning,
+  exclusions, periods) and **Corrections** (deadtime, background, and
+  :math:`\alpha` calibration, each previewed against the same corrected reduction),
+  with the live preview pinned below both. Splitting them keeps the corrections a
+  first-class, named destination rather than the foot of one long scroll. When a
+  calibrated :math:`\alpha` goes stale (the deadtime or background settings changed
+  since it was measured), the **Corrections** tab is marked with a ⚠ so the change
+  is discoverable from the Grouping tab. The :math:`\alpha` section carries a
+  one-line provenance summary (e.g. "α = 1.2345(67) · Diamagnetic (TF) · run
+  2923"); deadtime and background carry their own mode controls and one-line
+  status (see `Alpha calibration`_, `Deadtime Correction`_, and
   `Background Correction`_ below).
 
 Editing never touches a saved profile or run until you press **Apply**.
@@ -328,16 +334,16 @@ Alpha calibration
    :width: 80%
    :align: center
    :alt: The inline alpha calibration controls in the grouping window's
-      Corrections panel — a highlighted transverse-field calibration run, a
+      Corrections tab — a highlighted transverse-field calibration run, a
       method combo, an Estimate α button, and the shared before/after preview.
 
    Alpha is calibrated inline, in the **α (detector balance)** section of the
-   Corrections panel: pick the calibration run, choose a method, and press
+   Corrections tab: pick the calibration run, choose a method, and press
    **Estimate α**. The shared live preview below doubles as the before (α = 1)
    / after (fitted α) comparison once α is calibrated.
 
 Alpha is calibrated inline, in the **α (detector balance)** section of the
-Corrections panel. Pick a run from the **Calibration run** dropdown — every run
+Corrections tab. Pick a run from the **Calibration run** dropdown — every run
 of the current instrument is listed, with likely calibration candidates
 highlighted and auto-selected: a run is flagged when its metadata carries
 explicit transverse-field evidence (a structured ``Transverse`` field-geometry
@@ -401,7 +407,7 @@ per-projection model.
 Deadtime correction
 --------------------
 
-The **Deadtime correction** section of the Corrections panel configures the
+The **Deadtime correction** section of the Corrections tab configures the
 profile's deadtime policy inline. Four modes are available:
 
 * ``Off`` disables the correction.
@@ -456,7 +462,7 @@ run. The background correction path remains separate and optional.
 Background correction
 ----------------------
 
-The **Background subtraction** section of the Corrections panel configures the
+The **Background subtraction** section of the Corrections tab configures the
 profile's background policy inline for PSI-style raw histogram formats,
 including PSI BIN/MDU and PSI/LEM ROOT data. This is separate from fit-model
 background parameters such as ``A_bg``: it subtracts a count background from
@@ -476,7 +482,7 @@ then asymmetry is calculated. The section's modes are:
   counts (scaled by relative good-frame count).
 * ``Fixed`` — fixed forward/backward count values are subtracted directly.
 
-The shared live preview below the Corrections panel always reflects the
+The shared live preview below the Corrections tab always reflects the
 subtraction, so its effect on the asymmetry is visible as the mode changes.
 
 For corrected histograms, Asymmetry propagates musrfit-style count
@@ -497,7 +503,7 @@ profile's background policy.
 Diagnostic view
 ---------------
 
-A **Diagnostic view** row at the foot of the Corrections panel carries two
+A **Diagnostic view** row at the foot of the Corrections tab carries two
 preview-only checkboxes, **Deadtime** and **Background**, badged
 "Diagnostic view — the reduction always applies every stage". Unchecking one
 drops that stage from the **live preview only**, so you can see its incremental

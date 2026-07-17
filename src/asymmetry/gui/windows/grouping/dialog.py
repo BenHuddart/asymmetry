@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -91,7 +92,6 @@ from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollDoubleSpinBox,
     NoScrollSpinBox,
 )
-from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.windows.grouping.alpha_section import (
     AlphaEstimateResult,
     AlphaSectionWidget,
@@ -738,54 +738,69 @@ class GroupingDialog(QDialog):
         form.addRow(self._period_mode_label, period_row_widget)
         self._update_map_periods_visibility()
 
-        # The form and the (initially empty) unified Corrections container scroll
-        # together, so the growing correction sections added in later steps fit
-        # the fixed dialog height; the live preview stays pinned below the scroll
-        # area. See docs/porting/correction-order-alpha-estimation
-        # (implementation-options.md, PR 2 build plan).
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(0, 0, 0, 0)
-        scroll_layout.setSpacing(8)
-        scroll_layout.addLayout(form)
+        # The right pane is a two-tab notebook — "Grouping and timing" and
+        # "Corrections" — with the live preview pinned below BOTH tabs. The two
+        # tasks are genuinely different (define what/when to group vs. correct the
+        # counts), and splitting them makes the corrections a first-class named
+        # destination instead of being buried at the bottom of one long scroll.
+        # The single shared preview keeps working across tabs because it reduces
+        # from the draft's widget *state* (read via `_current_grouping_payload`),
+        # never from which tab is showing. See docs/porting/
+        # correction-order-alpha-estimation (implementation-options.md).
+        self._tabs = QTabWidget()
 
-        # Unified Corrections panel. Sections are moved in-window one at a time
-        # (background first); deadtime and α still live in the form above until
-        # their own steps land.
-        self._corrections_section = PanelSection(
-            "Corrections",
-            collapsible=True,
-            expanded=True,
-            hint="Deadtime, background and α — configured and previewed together.",
-        )
+        # Tab 1 — Grouping & timing: groups, the α value + provenance + staleness
+        # (and, in vector mode, the per-projection α table), t0, binning,
+        # exclusions and periods. Everything currently in the form.
+        grouping_content = QWidget()
+        grouping_layout = QVBoxLayout(grouping_content)
+        grouping_layout.setContentsMargins(0, 0, 0, 0)
+        grouping_layout.setSpacing(8)
+        grouping_layout.addLayout(form)
+        grouping_layout.addStretch()
+        self._grouping_scroll = QScrollArea()
+        self._grouping_scroll.setWidgetResizable(True)
+        self._grouping_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._grouping_scroll.setWidget(grouping_content)
+        self._tabs.addTab(self._grouping_scroll, "Grouping and timing")
+
+        # Tab 2 — Corrections: deadtime, background and single-α calibration
+        # inline, plus the preview-only diagnostic toggles. The tab name is the
+        # heading, so there is no outer section wrapper — just the three labelled
+        # sub-sections stacked.
+        corrections_content = QWidget()
+        corrections_layout = QVBoxLayout(corrections_content)
+        corrections_layout.setContentsMargins(0, 0, 0, 0)
+        corrections_layout.setSpacing(8)
         deadtime_label = QLabel("Deadtime correction")
         deadtime_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        self._corrections_section.addWidget(deadtime_label)
-        self._corrections_section.addWidget(self._deadtime_section)
+        corrections_layout.addWidget(deadtime_label)
+        corrections_layout.addWidget(self._deadtime_section)
         background_label = QLabel("Background subtraction")
         background_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        self._corrections_section.addWidget(background_label)
-        self._corrections_section.addWidget(self._background_section)
+        corrections_layout.addWidget(background_label)
+        corrections_layout.addWidget(self._background_section)
         self._alpha_section_label = QLabel("α (detector balance)")
         self._alpha_section_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        self._corrections_section.addWidget(self._alpha_section_label)
-        self._corrections_section.addWidget(self._alpha_section)
-        self._corrections_section.addWidget(self._build_diagnostic_view_row())
-        scroll_layout.addWidget(self._corrections_section)
-        scroll_layout.addStretch()
+        corrections_layout.addWidget(self._alpha_section_label)
+        corrections_layout.addWidget(self._alpha_section)
+        corrections_layout.addWidget(self._build_diagnostic_view_row())
+        corrections_layout.addStretch()
+        self._corrections_scroll = QScrollArea()
+        self._corrections_scroll.setWidgetResizable(True)
+        self._corrections_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._corrections_scroll.setWidget(corrections_content)
+        self._corrections_tab_index = self._tabs.addTab(self._corrections_scroll, "Corrections")
         self._update_deadtime_status()
         self._update_background_status()
         self._update_alpha_section()
 
-        self._right_scroll = QScrollArea()
-        self._right_scroll.setWidgetResizable(True)
-        self._right_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._right_scroll.setWidget(scroll_content)
-        right_layout.addWidget(self._right_scroll, stretch=1)
+        right_layout.addWidget(self._tabs, stretch=1)
 
         # Live asymmetry preview of the preview run under the current draft.
-        # Fixed-height so it never fights the form for space; it reduces off the
-        # GUI thread (debounced) and redraws as the form is edited.
+        # Pinned below the tabs (shared by both), fixed-height so it never fights
+        # the form for space; it reduces off the GUI thread (debounced) and
+        # redraws as the form is edited.
         self._preview_pane = GroupingPreviewPane()
         right_layout.addWidget(self._preview_pane)
 
@@ -3614,6 +3629,23 @@ class GroupingDialog(QDialog):
                 "re-estimate so it centres the corrected asymmetry."
             )
         self._alpha_stale_banner.setVisible(stale)
+        # The single-α calibration lives on the Corrections tab, so mark that tab
+        # when a stale α is discoverable only from the Grouping tab. In vector mode
+        # the re-estimate is the per-projection table on the *Grouping* tab (the
+        # inline α section is hidden), so the marker would misdirect — the
+        # Grouping-tab banner already covers that case, so suppress it there.
+        vector_mode = bool(self._vector_axis_pairs)
+        mark = stale and not vector_mode
+        if hasattr(self, "_tabs") and hasattr(self, "_corrections_tab_index"):
+            self._tabs.setTabText(
+                self._corrections_tab_index, "Corrections ⚠" if mark else "Corrections"
+            )
+            self._tabs.setTabToolTip(
+                self._corrections_tab_index,
+                "α was calibrated under different corrections — re-estimate on this tab."
+                if mark
+                else "",
+            )
 
     def _refresh_alpha_provenance_label(self) -> None:
         """Reflect the single alpha's provenance ("calibrated …" or "manual")."""

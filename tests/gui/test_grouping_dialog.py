@@ -300,18 +300,29 @@ def test_estimate_alpha_updates_spinbox(
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
 
 
-def test_right_pane_scrolls_with_corrections_container(qapp: QApplication) -> None:
-    """The form + Corrections container scroll; the live preview stays pinned."""
-    from PySide6.QtWidgets import QScrollArea
+def test_right_pane_is_tabbed_with_preview_pinned(qapp: QApplication) -> None:
+    """The right pane is a two-tab notebook; the live preview stays pinned below.
 
-    from asymmetry.gui.widgets.panel_section import PanelSection
+    "Grouping and timing" | "Corrections", each its own scroll area, with the
+    single shared preview pane pinned OUTSIDE the tabs (a descendant of neither
+    tab) so it stays visible on both.
+    """
+    from PySide6.QtWidgets import QScrollArea, QTabWidget
 
     dialog = GroupingDialog([_dataset_with_histograms()])
-    assert isinstance(dialog._right_scroll, QScrollArea)
-    assert dialog._right_scroll.widgetResizable()
-    assert isinstance(dialog._corrections_section, PanelSection)
-    # The preview pane is a sibling of the scroll area (pinned), not inside it.
-    assert dialog._preview_pane.parent() is not dialog._right_scroll.widget()
+    assert isinstance(dialog._tabs, QTabWidget)
+    assert [dialog._tabs.tabText(i) for i in range(dialog._tabs.count())] == [
+        "Grouping and timing",
+        "Corrections",
+    ]
+    assert isinstance(dialog._grouping_scroll, QScrollArea)
+    assert isinstance(dialog._corrections_scroll, QScrollArea)
+    assert dialog._corrections_scroll.widgetResizable()
+    # The deadtime/background/α sections live on the Corrections tab.
+    assert dialog._corrections_scroll.isAncestorOf(dialog._deadtime_section)
+    assert dialog._corrections_scroll.isAncestorOf(dialog._alpha_section)
+    # The preview is pinned outside the tabs (shared by both), so it stays visible.
+    assert not dialog._tabs.isAncestorOf(dialog._preview_pane)
 
 
 def test_alpha_staleness_banner_tracks_correction_changes(qapp: QApplication) -> None:
@@ -349,6 +360,42 @@ def test_alpha_staleness_banner_tracks_correction_changes(qapp: QApplication) ->
     dialog._alpha_spin.setValue(1.99)
     assert banner.isHidden()
     assert dialog._alpha_correction_digest is None
+
+
+def test_corrections_tab_marks_stale_single_alpha(qapp: QApplication) -> None:
+    """A stale single-α marks the Corrections tab (where its inline calibration is)."""
+    from asymmetry.core.project.profiles import AlphaPolicy
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    ci = dialog._corrections_tab_index
+    assert dialog._tabs.tabText(ci) == "Corrections"
+
+    policy = AlphaPolicy(
+        mode="calibrated", value=1.23, method="diamagnetic", error=0.01, source_run=1
+    )
+    dialog._apply_calibrated_policy("single", dialog._alpha_spin, policy)
+    assert dialog._tabs.tabText(ci) == "Corrections"  # digests match: not stale yet
+
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+    assert dialog._tabs.tabText(ci) == "Corrections ⚠"
+
+
+def test_corrections_tab_marker_suppressed_in_vector_mode(qapp: QApplication) -> None:
+    """In vector mode the ⚠ marker stays off — the re-estimate is the per-projection
+    table on the Grouping tab (the inline α section is hidden on the Corrections
+    tab), so marking Corrections would misdirect. The Grouping-tab banner covers it.
+    """
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    ci = dialog._corrections_tab_index
+    _estimate_vector_axis(dialog, "P_z")
+    assert dialog._alpha_is_calibrated()
+
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+
+    assert dialog._tabs.tabText(ci) == "Corrections"  # not marked in vector mode
+    assert not dialog._alpha_stale_banner.isHidden()  # banner (Grouping tab) still fires
 
 
 def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:

@@ -1,14 +1,14 @@
-"""Inline alpha calibration in the grouping window's Corrections panel.
+"""Inline alpha calibration on the grouping window's Corrections tab.
 
-Opens the Grouping window directly on a synthesised YBCO transverse-field run.
-Alpha (the detector-balance parameter) is now calibrated **inline** in the
-Corrections panel — a calibration-run picker (weak-TF candidates highlighted), an
-estimation method, and an **Estimate α** button — instead of a separate modal
-dialog. Pressing Estimate α measures alpha on the *corrected* forward/backward
-counts and drives the shared grouping preview, which overlays the α = 1 "before"
-ghost against the estimated-α "after" curve and reports the residual baseline
-⟨A⟩. Companion to :doc:`/reference/detector_grouping` and
-:doc:`/reference/grouping_calibration`.
+Opens the Grouping window directly on a synthesised YBCO transverse-field run and
+selects the **Corrections** tab. Alpha (the detector-balance parameter) is
+calibrated **inline** there — a calibration-run picker (weak-TF candidates
+highlighted), an estimation method, and an **Estimate α** button — instead of a
+separate modal dialog. Pressing Estimate α measures alpha on the *corrected*
+forward/backward counts and drives the shared grouping preview (pinned below the
+tabs), which overlays the α = 1 "before" ghost against the estimated-α "after"
+curve and reports the residual baseline ⟨A⟩. Companion to
+:doc:`/reference/detector_grouping` and :doc:`/reference/grouping_calibration`.
 """
 
 from __future__ import annotations
@@ -46,18 +46,25 @@ class AlphaCalibrationDialogScenario(Scenario):
         # until the worker's queued finished callback has landed (deterministic,
         # not a fixed sleep) so the captured α result and preview overlay always
         # show the estimate, never the transient "Computing estimate…" state.
+        # Show the Corrections tab, where the inline α-calibration controls (run
+        # picker, method, Estimate α, result) live alongside deadtime and
+        # background — a first-class named tab rather than the foot of a long scroll.
+        tabs = getattr(dialog, "_tabs", None)
+        if tabs is not None:
+            tabs.setCurrentIndex(getattr(dialog, "_corrections_tab_index", 1))
+            _pump_events(80)
+
         section = getattr(dialog, "_alpha_section", None)
         if section is not None:
             section._on_estimate()
             _pump_until(lambda: section._tasks.active_count == 0)
             # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.
             _pump_events(500)
-            # Bring the inline α-calibration controls (run picker, method, Estimate
-            # α, result) into view — they sit at the foot of the Corrections panel,
-            # below deadtime and background, in the scrolling right pane.
-            scroll = getattr(dialog, "_right_scroll", None)
-            if scroll is not None:
-                bar = scroll.verticalScrollBar()
+            # Scroll the Corrections tab to the α section (it sits below deadtime
+            # and background) so the calibration controls + result are in frame.
+            corr_scroll = getattr(dialog, "_corrections_scroll", None)
+            if corr_scroll is not None:
+                bar = corr_scroll.verticalScrollBar()
                 bar.setValue(bar.maximum())
                 _pump_events(80)
 
