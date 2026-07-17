@@ -22,8 +22,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
-    QComboBox,
-    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -43,6 +41,7 @@ from asymmetry.core.transform import (
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox, NoScrollDoubleSpinBox
 
 __all__ = ["DeadtimeSectionWidget", "DeadtimeSourceRun", "deadtime_status_text"]
 
@@ -131,7 +130,7 @@ class DeadtimeSectionWidget(QWidget):
         estimate_row = QHBoxLayout()
         estimate_row.setContentsMargins(0, 0, 0, 0)
         estimate_row.addWidget(QLabel("Source run"))
-        self._source_run_combo = QComboBox()
+        self._source_run_combo = NoScrollComboBox()
         estimate_row.addWidget(self._source_run_combo, stretch=1)
         self._estimate_btn = QPushButton("Estimate")
         self._estimate_btn.setAutoDefault(False)
@@ -146,7 +145,7 @@ class DeadtimeSectionWidget(QWidget):
         table_controls.setContentsMargins(0, 0, 0, 0)
         table_controls.addWidget(QLabel("Per-detector values (ns)"))
         table_controls.addStretch()
-        self._fill_all_spin = QDoubleSpinBox()
+        self._fill_all_spin = NoScrollDoubleSpinBox()
         self._fill_all_spin.setDecimals(3)
         self._fill_all_spin.setRange(0.0, 1.0e6)
         self._fill_all_spin.setSuffix(" ns")

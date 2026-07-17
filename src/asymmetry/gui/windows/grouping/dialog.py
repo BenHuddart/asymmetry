@@ -39,7 +39,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
-    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -87,6 +86,11 @@ from asymmetry.gui.styles.widgets import (
     make_warning_banner,
 )
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.widgets.no_scroll_spin import (
+    NoScrollComboBox,
+    NoScrollDoubleSpinBox,
+    NoScrollSpinBox,
+)
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.windows.grouping.alpha_section import (
     AlphaEstimateResult,
@@ -269,7 +273,7 @@ class GroupingDialog(QDialog):
         # \u2500\u2500 Top bar: profile selector + preview run + preset \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         profile_row = QHBoxLayout()
         profile_row.addWidget(QLabel("Profile"))
-        self._profile_combo = QComboBox()
+        self._profile_combo = NoScrollComboBox()
         self._profile_combo.setMinimumContentsLength(20)
         self._rebuild_profile_combo()
         self._profile_combo.activated.connect(self._on_profile_combo_activated)
@@ -285,7 +289,7 @@ class GroupingDialog(QDialog):
         # datasets. Hidden when the project holds a single instrument (nothing to
         # switch between); shown as "<display> \u2014 N runs" otherwise.
         self._instrument_label = QLabel("Instrument")
-        self._instrument_combo = QComboBox()
+        self._instrument_combo = NoScrollComboBox()
         self._instrument_combo.setMinimumContentsLength(18)
         self._rebuild_instrument_combo()
         self._instrument_combo.activated.connect(self._on_instrument_combo_activated)
@@ -301,7 +305,7 @@ class GroupingDialog(QDialog):
 
         preset_row = QHBoxLayout()
         preset_row.addWidget(QLabel("Preset"))
-        self._preset_combo = QComboBox()
+        self._preset_combo = NoScrollComboBox()
         self._preset_combo.setMinimumContentsLength(18)
         self._preset_combo.activated.connect(self._on_preset_combo_activated)
         preset_row.addWidget(self._preset_combo)
@@ -383,8 +387,8 @@ class GroupingDialog(QDialog):
         form = QFormLayout()
         form.setVerticalSpacing(8)
         form.setHorizontalSpacing(12)
-        self._forward_combo = QComboBox()
-        self._backward_combo = QComboBox()
+        self._forward_combo = NoScrollComboBox()
+        self._backward_combo = NoScrollComboBox()
         # setMinimumContentsLength sizes the combo to N characters of the
         # current font, so it tracks the UI zoom without a frozen pixel width.
         self._forward_combo.setMinimumContentsLength(18)
@@ -407,7 +411,7 @@ class GroupingDialog(QDialog):
         self._set_combo_to_group(self._forward_combo, forward_gid)
         self._set_combo_to_group(self._backward_combo, backward_gid)
 
-        self._alpha_spin = QDoubleSpinBox()
+        self._alpha_spin = NoScrollDoubleSpinBox()
         self._alpha_spin.setDecimals(6)
         self._alpha_spin.setRange(0.01, 1000.0)
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
@@ -421,7 +425,7 @@ class GroupingDialog(QDialog):
         # FileValues checkbox: "From file" uses the header t0 per run and locks
         # the spinbox; "Manual" is the historical editable override; "Auto-detect"
         # runs the prompt-peak / pulse-edge search per run at resolution time.
-        self._t0_mode_combo = QComboBox()
+        self._t0_mode_combo = NoScrollComboBox()
         for label, key, tooltip in (
             (
                 "From file",
@@ -442,7 +446,7 @@ class GroupingDialog(QDialog):
             )
         self._t0_mode_combo.setMaximumWidth(130)
 
-        self._t0_spin = QSpinBox()
+        self._t0_spin = NoScrollSpinBox()
         self._t0_spin.setRange(index_base, max_bin + index_base)
         self._t0_spin.setValue(default_t0_internal + index_base)
 
@@ -451,13 +455,13 @@ class GroupingDialog(QDialog):
         self._t0_mode_label.setWordWrap(True)
         self._t0_mode_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
 
-        self._t_good_offset_spin = QSpinBox()
+        self._t_good_offset_spin = NoScrollSpinBox()
         self._t_good_offset_spin.setRange(0, max_bin)
         self._t_good_offset_spin.setValue(default_t_good)
         self._t0_spin.valueChanged.connect(self._on_t0_changed)
         self._on_t0_changed()
 
-        self._last_good_spin = QSpinBox()
+        self._last_good_spin = NoScrollSpinBox()
         self._last_good_spin.setRange(index_base, max_bin + index_base)
         default_first_good = min(max_bin, default_t0_internal + default_t_good)
         default_last_good = int(grouping.get("last_good_bin", max_bin))
@@ -465,14 +469,14 @@ class GroupingDialog(QDialog):
             default_last_good = default_first_good
         self._last_good_spin.setValue(default_last_good + index_base)
 
-        self._bunch_spin = QSpinBox()
+        self._bunch_spin = NoScrollSpinBox()
         self._bunch_spin.setRange(1, 10000)
         requested_bunching = int(grouping.get("bunching_factor", 1))
         self._bunch_spin.setValue(requested_bunching)
         self._bunch_spin.setMaximumWidth(metrics.spin_width_for(5, self._bunch_spin))
         self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
 
-        self._binning_mode_combo = QComboBox()
+        self._binning_mode_combo = NoScrollComboBox()
         for label, key, tooltip in (
             ("Fixed", "fixed", "Merge a fixed number of raw bins (bunching factor)."),
             (
@@ -492,11 +496,11 @@ class GroupingDialog(QDialog):
             self._binning_mode_combo.setItemData(
                 self._binning_mode_combo.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole
             )
-        self._bin0_spin = QDoubleSpinBox()
+        self._bin0_spin = NoScrollDoubleSpinBox()
         self._bin0_spin.setDecimals(4)
         self._bin0_spin.setRange(0.0001, 100.0)
         self._bin0_spin.setSuffix(" µs")
-        self._bin10_spin = QDoubleSpinBox()
+        self._bin10_spin = NoScrollDoubleSpinBox()
         self._bin10_spin.setDecimals(4)
         self._bin10_spin.setRange(0.0001, 100.0)
         self._bin10_spin.setSuffix(" µs")
@@ -608,7 +612,7 @@ class GroupingDialog(QDialog):
         # hidden control because the current-method key still seeds the payload's
         # ``alpha_method`` provenance (and a calibration writes the chosen method
         # back into it).
-        self._alpha_method_combo = QComboBox()
+        self._alpha_method_combo = NoScrollComboBox()
         for label, key, explanation in _ALPHA_METHOD_ITEMS:
             self._alpha_method_combo.addItem(label, key)
             self._alpha_method_combo.setItemData(
@@ -673,10 +677,10 @@ class GroupingDialog(QDialog):
         vector_controls = QHBoxLayout()
         vector_controls.setContentsMargins(0, 0, 0, 0)
         vector_controls.addWidget(QLabel("Calibration run"))
-        self._vector_run_combo = QComboBox()
+        self._vector_run_combo = NoScrollComboBox()
         vector_controls.addWidget(self._vector_run_combo, stretch=1)
         vector_controls.addWidget(QLabel("Method"))
-        self._vector_method_combo = QComboBox()
+        self._vector_method_combo = NoScrollComboBox()
         for label, key, explanation in _ALPHA_METHOD_ITEMS:
             self._vector_method_combo.addItem(label, key)
             self._vector_method_combo.setItemData(
@@ -3005,7 +3009,7 @@ class GroupingDialog(QDialog):
             self._vector_forward_labels[label] = fwd_label
             self._vector_backward_labels[label] = bwd_label
 
-            spin = QDoubleSpinBox()
+            spin = NoScrollDoubleSpinBox()
             spin.setDecimals(6)
             spin.setRange(0.01, 1000.0)
             if canonical:

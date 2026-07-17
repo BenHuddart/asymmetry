@@ -21,6 +21,7 @@ from PySide6.QtGui import QWheelEvent
 from PySide6.QtWidgets import QApplication, QSpinBox
 
 from asymmetry.gui.widgets.no_scroll_spin import (
+    NoScrollComboBox,
     NoScrollDoubleSpinBox,
     NoScrollSpinBox,
 )
@@ -92,6 +93,30 @@ def test_focused_wheel_still_changes_value(qapp):
     # A focused spin box wheels normally (down one notch → value decreases).
     assert spin.value() != 10
     spin.deleteLater()
+
+
+def test_unfocused_wheel_does_not_change_combo(qapp):
+    # The grouping/reduction editor's correction combos live in a scroll area;
+    # scrolling past an unfocused combo must not change the selection.
+    combo = NoScrollComboBox()
+    combo.addItems(["a", "b", "c"])
+    combo.setCurrentIndex(1)
+    assert not combo.hasFocus()
+
+    event = _wheel_event(combo)
+    qapp.sendEvent(combo, event)
+
+    assert combo.currentIndex() == 1
+    # Platform-independent proof the guard fired: it ignored the event so the
+    # enclosing scroll area receives it (a plain QComboBox accepts + consumes it
+    # on Linux/Windows; macOS's native style already declines it, so asserting
+    # the *ignore* — not a plain-combo sanity diff — is what works everywhere).
+    assert not event.isAccepted()
+    combo.deleteLater()
+
+
+def test_combo_focus_policy_is_strong(qapp):
+    assert NoScrollComboBox().focusPolicy() == Qt.FocusPolicy.StrongFocus
 
 
 def test_focus_policy_is_strong(qapp):

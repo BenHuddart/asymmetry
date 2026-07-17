@@ -54,6 +54,7 @@ from asymmetry.core.transform.reduce import (
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
 from asymmetry.gui.windows.grouping.format import (
     ALPHA_METHOD_ITEMS,
     format_value_with_uncertainty,
@@ -431,14 +432,14 @@ class AlphaSectionWidget(QWidget):
         run_row = QHBoxLayout()
         run_row.setContentsMargins(0, 0, 0, 0)
         run_row.addWidget(QLabel("Calibration run"))
-        self._run_combo = QComboBox()
+        self._run_combo = NoScrollComboBox()
         run_row.addWidget(self._run_combo, stretch=1)
         root.addLayout(run_row)
 
         method_row = QHBoxLayout()
         method_row.setContentsMargins(0, 0, 0, 0)
         method_row.addWidget(QLabel("Method"))
-        self._method_combo = QComboBox()
+        self._method_combo = NoScrollComboBox()
         for label, key, explanation in ALPHA_METHOD_ITEMS:
             self._method_combo.addItem(label, key)
             self._method_combo.setItemData(

@@ -20,7 +20,6 @@ from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -31,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.project.profiles import BackgroundPolicy
+from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
 
 __all__ = ["BackgroundReferenceRunCandidate", "BackgroundSectionWidget", "background_status_text"]
 
@@ -137,7 +137,7 @@ class BackgroundSectionWidget(QWidget):
         mode_row = QHBoxLayout()
         mode_row.setContentsMargins(0, 0, 0, 0)
         mode_row.addWidget(QLabel("Mode"))
-        self._mode_combo = QComboBox()
+        self._mode_combo = NoScrollComboBox()
         self._mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_row.addWidget(self._mode_combo, stretch=1)
         root.addLayout(mode_row)
