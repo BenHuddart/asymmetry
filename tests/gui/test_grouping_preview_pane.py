@@ -701,6 +701,68 @@ def test_diagnostic_deadtime_override_changes_the_preview_curve(qapp: QApplicati
     assert np.allclose(off.asymmetry, baseline.asymmetry)
 
 
+def test_compare_stage_deadtime_ghosts_the_removed_stage(qapp: QApplication) -> None:
+    """compare_stage="deadtime" solid = full reduction, ghost = deadtime removed.
+
+    The solid curve keeps deadtime applied; the ghost is a second corrected pass
+    with deadtime dropped, labelled "without deadtime". The residual-⟨A⟩ readout
+    is *not* computed for a count-stage compare (that number is α's alone).
+    """
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "dead_time_us": [0.005, 0.001],
+            "good_frames": 1000.0,
+        }
+    )
+    res = _reduce_with_override(dataset, compare_stage="deadtime")
+    assert res.compare_stage == "deadtime"
+    assert res.overlay is True
+    assert res.baseline is not None
+    assert res.baseline_label == "without deadtime"
+    assert not np.allclose(res.baseline, res.asymmetry)  # the ghost actually differs
+    assert res.centre_mean is None and res.centre_err is None
+
+
+def test_compare_stage_background_ghosts_the_removed_stage(qapp: QApplication) -> None:
+    """compare_stage="background" ghosts the curve with no pedestal subtracted."""
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [30.0, 20.0],
+        }
+    )
+    res = _reduce_with_override(dataset, compare_stage="background")
+    assert res.compare_stage == "background"
+    assert res.baseline is not None
+    assert res.baseline_label == "without background"
+    assert not np.allclose(res.baseline, res.asymmetry)
+
+
+def test_compare_stage_alpha_matches_legacy_overlay(qapp: QApplication) -> None:
+    """compare_stage="alpha" is the generic form of the legacy overlay=True."""
+    dataset = _histogram_dataset(grouping_extra={"alpha": 1.3})
+    via_stage = _reduce_with_override(dataset, compare_stage="alpha")
+    via_overlay = _reduce_with_override(dataset, overlay=True)
+
+    assert via_overlay.compare_stage == "alpha"  # overlay maps onto the α stage
+    assert via_stage.baseline_label == "α = 1"
+    assert via_stage.centre_mean is not None  # α compare reports the residual ⟨A⟩
+    assert via_stage.baseline is not None and via_overlay.baseline is not None
+    np.testing.assert_allclose(via_stage.baseline, via_overlay.baseline)
+
+
+def test_compare_stage_unconfigured_stage_draws_no_ghost(qapp: QApplication) -> None:
+    """A stage that isn't applied has nothing to remove — no ghost is drawn."""
+    dataset = _histogram_dataset()  # deadtime + background both off
+    res = _reduce_with_override(dataset, compare_stage="deadtime")
+    assert res.compare_stage == "deadtime"
+    assert res.baseline is None
+    assert res.baseline_label is None
+
+
 def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> None:
     """End-to-end: a preview request over a huge run yields a bounded curve.
 

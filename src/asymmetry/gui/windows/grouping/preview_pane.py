@@ -85,7 +85,16 @@ class _PreviewRequest:
     #: Calibrate view: also draw the α=1 curve (ghosted) behind the draft-α curve
     #: and report the residual baseline ⟨A⟩ over the good window, so a calibrated
     #: α that centres the corrected asymmetry is self-evident in the one preview.
+    #: Retained as the legacy switch for the α compare; ``overlay=True`` is
+    #: equivalent to ``compare_stage="alpha"``.
     overlay: bool = False
+    #: Stage-generic before/after compare (one focused stage at a time). The solid
+    #: curve is always the reduction the request describes; the *ghost* removes one
+    #: stage: ``"alpha"`` ghosts α=1 (and reports the residual baseline), while
+    #: ``"deadtime"``/``"background"`` ghost a *second* corrected pass with that one
+    #: stage dropped. ``None`` draws only the solid curve. Preview-only, like the
+    #: overrides — it never touches the persisted reduction.
+    compare_stage: str | None = None
     #: Diagnostic per-stage view (preview only, never the persisted reduction):
     #: when ``False``, that correction is dropped from *this preview* so its
     #: incremental effect is visible. They can only *subtract* a configured stage,
@@ -104,8 +113,13 @@ class _PreviewResult:
     asymmetry: np.ndarray
     error: np.ndarray
     run_number: int | None
-    #: Overlay extras (all ``None`` unless the request asked for the overlay).
+    #: Compare extras (all ``None``/``False`` unless the request asked for a
+    #: compare). ``baseline`` is the ghost curve (aligned to ``time``);
+    #: ``baseline_label`` names it ("α = 1", "without deadtime", …); the
+    #: ``centre_*`` residual baseline is populated only for the α compare.
     baseline: np.ndarray | None = None
+    baseline_label: str | None = None
+    compare_stage: str | None = None
     centre_mean: float | None = None
     centre_err: float | None = None
     alpha: float | None = None
@@ -176,6 +190,7 @@ class GroupingPreviewPane(QWidget):
         facility: str = "",
         run_number: int | None = None,
         overlay: bool = False,
+        compare_stage: str | None = None,
         override_use_deadtime: bool = True,
         override_use_background: bool = True,
     ) -> None:
@@ -185,9 +200,11 @@ class GroupingPreviewPane(QWidget):
         the ``run.grouping`` shape the reduction consumes. When the dataset has no
         histograms (co-added curves) the pane hides itself with a note; nothing is
         scheduled. *overlay* additionally draws the α=1 curve and the residual
-        baseline (the calibrate view). ``override_use_deadtime`` /
-        ``override_use_background`` drop a configured stage from *this preview only*
-        (the diagnostic view); they never touch the persisted reduction.
+        baseline (the calibrate view). *compare_stage* is the stage-generic form of
+        the same idea (``"deadtime"``/``"background"``/``"alpha"``), overriding
+        *overlay*. ``override_use_deadtime`` / ``override_use_background`` drop a
+        configured stage from *this preview only* (the diagnostic view); none of
+        these touch the persisted reduction.
         """
         if not histograms:
             self._show_unavailable("Preview needs raw detector histograms (none loaded).")
@@ -204,6 +221,7 @@ class GroupingPreviewPane(QWidget):
                 facility=str(facility or grouping.get("instrument", "") or ""),
                 run_number=run_number,
                 overlay=bool(overlay),
+                compare_stage=compare_stage,
                 override_use_deadtime=bool(override_use_deadtime),
                 override_use_background=bool(override_use_background),
             )
@@ -217,6 +235,7 @@ class GroupingPreviewPane(QWidget):
         facility: str = "",
         run_number: int | None = None,
         overlay: bool = False,
+        compare_stage: str | None = None,
         override_use_deadtime: bool = True,
         override_use_background: bool = True,
     ) -> None:
@@ -227,9 +246,10 @@ class GroupingPreviewPane(QWidget):
         ``auto_detect`` t0 policy or sum whole groups for a per-run alpha
         estimate — happens on the worker thread. *profile* is deep-copied here
         so subsequent form edits cannot race the in-flight worker; *run* is
-        shared read-only. ``override_use_deadtime`` / ``override_use_background``
+        shared read-only. *compare_stage* draws a stage-generic before/after ghost
+        (overriding *overlay*). ``override_use_deadtime`` / ``override_use_background``
         drop a configured stage from *this preview only* (the diagnostic view);
-        they never touch the persisted reduction.
+        none of these touch the persisted reduction.
         """
         histograms = list(run.histograms) if run is not None and run.histograms else []
         if not histograms:
@@ -248,6 +268,7 @@ class GroupingPreviewPane(QWidget):
                 facility=str(facility or ""),
                 run_number=run_number,
                 overlay=bool(overlay),
+                compare_stage=compare_stage,
                 override_use_deadtime=bool(override_use_deadtime),
                 override_use_background=bool(override_use_background),
             )
@@ -330,8 +351,9 @@ class GroupingPreviewPane(QWidget):
                 color=tokens.TEXT_MUTED,
             )
         else:
-            # Calibrate view: ghost the α=1 curve behind the draft-α curve so the
-            # effect of the balance is self-evident.
+            # Compare view: ghost the "before" (α=1, or the stage removed) behind
+            # the solid "as reduced" curve so the effect of that stage is
+            # self-evident. The ghost's label names it ("α = 1" / "without …").
             if result.overlay and result.baseline is not None:
                 self._axes.plot(
                     result.time,
@@ -339,12 +361,17 @@ class GroupingPreviewPane(QWidget):
                     color=tokens.TEXT_DIM,
                     linewidth=1.0,
                     alpha=0.7,
-                    label="α = 1",
+                    label=result.baseline_label or "before",
                     zorder=2,
                 )
-            main_label = (
-                f"α = {result.alpha:.4f}" if result.overlay and result.alpha is not None else None
-            )
+            # Solid curve label: the α value for the α compare, "as reduced" when a
+            # count-stage removal is ghosted, else unlabelled.
+            if result.compare_stage == "alpha" and result.alpha is not None:
+                main_label: str | None = f"α = {result.alpha:.4f}"
+            elif result.overlay and result.baseline is not None:
+                main_label = "as reduced"
+            else:
+                main_label = None
             self._axes.errorbar(
                 result.time,
                 result.asymmetry,
@@ -416,26 +443,29 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     if worker.is_cancelled():
         raise TaskCancelledError
     # Correct once, form the asymmetry per α. corrected_grouped_counts runs the
-    # deadtime → grouping → background stages (the expensive part); an overlay
-    # then forms both the α=1 and draft-α curves from the *same* corrected counts
-    # — one reduction, two curves — instead of reducing twice.
+    # deadtime → grouping → background stages (the expensive part).
     flags = correction_flags_from_grouping(grouping)
     # Diagnostic per-stage view: a toggle can only *drop* a configured stage from
     # this preview (``and``), never add one — so the persisted reduction (which
     # never sees these overrides) is unaffected and an off stage stays off.
     use_deadtime = flags.use_deadtime and request.override_use_deadtime
     use_background = flags.use_background and request.override_use_background
-    corrected = corrected_grouped_counts(
-        histograms=request.histograms,
-        grouping=grouping,
-        forward_idx=forward_idx,
-        backward_idx=backward_idx,
-        use_deadtime=use_deadtime,
-        deadtime_mode=flags.deadtime_mode,
-        use_background=use_background,
-        facility=request.facility or str(grouping.get("instrument", "") or ""),
-        reference_resolver=None,
-    )
+    facility = request.facility or str(grouping.get("instrument", "") or "")
+
+    def _reduce(dt: bool, bg: bool):
+        return corrected_grouped_counts(
+            histograms=request.histograms,
+            grouping=grouping,
+            forward_idx=forward_idx,
+            backward_idx=backward_idx,
+            use_deadtime=dt,
+            deadtime_mode=flags.deadtime_mode,
+            use_background=bg,
+            facility=facility,
+            reference_resolver=None,
+        )
+
+    corrected = _reduce(use_deadtime, use_background)
     n_grouped = min(len(corrected.forward), len(corrected.backward))
     try:
         first_good = max(0, int(grouping.get("first_good_bin", 0)))
@@ -449,18 +479,45 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
 
     time, asymmetry, error = _form_asymmetry(corrected, grouping, alpha, first_good, last_good)
 
+    # Stage-generic before/after compare: the solid curve is the reduction above;
+    # the *ghost* removes one stage. "alpha" ghosts α=1 from the SAME corrected
+    # counts (one reduction, two curves) and reports the residual baseline;
+    # "deadtime"/"background" ghost a SECOND corrected pass with that one stage
+    # dropped — CorrectedGroupedCounts keeps only post-background arrays, so the
+    # pedestal cannot be added back and the extra pass is unavoidable, but it runs
+    # behind the pane's debounce + single-flight. All preview-only (`_reduce` reads
+    # the same grouping; nothing here touches the persisted reduction). An
+    # un-applied stage has nothing to remove, so it draws no ghost.
+    compare = request.compare_stage or ("alpha" if request.overlay else None)
     baseline = None
+    baseline_label: str | None = None
     centre_mean: float | None = None
     centre_err: float | None = None
-    if request.overlay:
-        # The residual baseline (inverse-variance weighted ⟨A⟩ over the good
-        # window) is computed on the full-resolution curve, before decimation.
+    if compare == "alpha":
+        # Residual baseline (inverse-variance weighted ⟨A⟩) on the full-res curve.
         centre_mean, centre_err = _weighted_centre(asymmetry, error)
         if abs(alpha - 1.0) > 1e-12:
             _bt, base_asym, _be = _form_asymmetry(corrected, grouping, 1.0, first_good, last_good)
-            # Decimate with the same length/stride as the main curve so the two
-            # curves share the returned time axis.
             _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
+            baseline_label = "α = 1"
+    elif compare == "deadtime" and use_deadtime:
+        # The ghost is a second full reduction — honour cancellation before it, as
+        # the first pass does, so a shutdown mid-flight stops promptly on big runs.
+        if worker.is_cancelled():
+            raise TaskCancelledError
+        ghost = _form_asymmetry(
+            _reduce(False, use_background), grouping, alpha, first_good, last_good
+        )
+        _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
+        baseline_label = "without deadtime"
+    elif compare == "background" and use_background:
+        if worker.is_cancelled():
+            raise TaskCancelledError
+        ghost = _form_asymmetry(
+            _reduce(use_deadtime, False), grouping, alpha, first_good, last_good
+        )
+        _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
+        baseline_label = "without background"
 
     # Decimate here, off the GUI thread: bounds both the marshalled payload and
     # the GUI-thread errorbar draw (which is O(points) and the real hang on large
@@ -473,10 +530,12 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         error=error,
         run_number=request.run_number,
         baseline=baseline,
+        baseline_label=baseline_label,
+        compare_stage=compare,
         centre_mean=centre_mean,
         centre_err=centre_err,
         alpha=alpha,
-        overlay=request.overlay,
+        overlay=compare is not None,
     )
 
 

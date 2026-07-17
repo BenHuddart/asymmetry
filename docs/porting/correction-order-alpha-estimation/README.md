@@ -108,6 +108,22 @@ source of truth for the implementation pass.
   ⟨A⟩ acceptance readout; then exclusive per-section "Compare in preview" toggles
   (+ a "vs raw" compound); then a pipeline-strip chrome.
 
+- **2026-07-17 — interactive Corrections compare, step 1 (preview plumbing).**
+  Generalized the preview's α-only overlay into a stage-generic
+  `compare_stage: "deadtime"|"background"|"alpha"|None` on `_PreviewRequest`. The
+  solid curve is the reduction the request describes; the *ghost* removes one
+  stage — `"alpha"` ghosts α=1 from the same corrected counts (and reports the
+  residual ⟨A⟩), while `"deadtime"`/`"background"` ghost a **second**
+  `corrected_grouped_counts` pass with that one stage dropped (unavoidable — the
+  dataclass keeps only post-background arrays — but behind the debounce +
+  single-flight). `_PreviewResult` gained `baseline_label`/`compare_stage`; `_draw`
+  labels the ghost ("without deadtime" …) and the solid ("as reduced"). Legacy
+  `overlay=True` maps to `compare_stage="alpha"`, so all existing call sites/tests
+  stay green; an un-applied stage draws no ghost. **Invisible to users** — the
+  dialog still sends only `overlay`; the compare toggles that drive it are step 2.
+  Tests in `test_grouping_preview_pane.py` (deadtime/background ghost differs from
+  solid, α-compare == legacy overlay, unconfigured stage → no ghost).
+
 ## The bug this study addresses
 
 Two independent code paths form forward/backward (F/B) spectra and they diverge:
