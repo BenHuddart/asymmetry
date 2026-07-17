@@ -120,3 +120,83 @@ def test_estimate_fills_table_and_emits(
 def test_off_mode_policy(qapp: QApplication) -> None:
     section = _configured(mode="off")
     assert section.get_policy().mode == "off"
+
+
+# -- adaptive per-mode layout ------------------------------------------------
+
+
+def test_off_mode_hides_table_controls_estimate_and_summary(qapp: QApplication) -> None:
+    section = _configured(mode="off")
+    assert not section._table.isVisibleTo(section)
+    assert not section._table_controls_widget.isVisibleTo(section)
+    assert not section._estimate_row_widget.isVisibleTo(section)
+    assert not section._summary_row_widget.isVisibleTo(section)
+    assert not section._disclosure_btn.isVisibleTo(section)
+    assert section._file_hint.text() == "Deadtime correction is disabled."
+
+
+def test_file_mode_shows_summary_and_collapsed_disclosure(qapp: QApplication) -> None:
+    section = _configured(mode="file", file_values_us=[0.010, 0.010])
+    # Summary reports the mean value and detector count.
+    assert "10.000 ns" in section._summary_label.text()
+    assert "2 detectors" in section._summary_label.text()
+    # Table controls and the estimate row belong to other modes.
+    assert not section._table_controls_widget.isVisibleTo(section)
+    assert not section._estimate_row_widget.isVisibleTo(section)
+    # Disclosure starts collapsed with the read-only table hidden; toggling reveals it.
+    assert section._disclosure_btn.isVisibleTo(section)
+    assert not section._disclosure_btn.isChecked()
+    assert not section._table.isVisibleTo(section)
+    section._disclosure_btn.setChecked(True)
+    assert section._table.isVisibleTo(section)
+    section._disclosure_btn.setChecked(False)
+    assert not section._table.isVisibleTo(section)
+
+
+def test_estimate_mode_shows_source_row_summary_and_disclosure(qapp: QApplication) -> None:
+    section = _configured(mode="estimate")
+    assert section._estimate_row_widget.isVisibleTo(section)
+    assert section._summary_row_widget.isVisibleTo(section)
+    assert section._disclosure_btn.isVisibleTo(section)
+    assert not section._disclosure_btn.isChecked()
+    assert not section._table.isVisibleTo(section)
+    assert not section._table_controls_widget.isVisibleTo(section)
+    section._disclosure_btn.setChecked(True)
+    assert section._table.isVisibleTo(section)
+
+
+def test_manual_mode_shows_capped_table_and_controls(qapp: QApplication) -> None:
+    section = _configured(mode="manual", manual_values_us=[0.01, 0.01])
+    assert section._table.isVisibleTo(section)
+    assert section._table_controls_widget.isVisibleTo(section)
+    assert not section._estimate_row_widget.isVisibleTo(section)
+    assert not section._disclosure_btn.isVisibleTo(section)
+
+
+def test_disclosure_toggle_does_not_emit_changed(qapp: QApplication) -> None:
+    section = _configured(mode="file", file_values_us=[0.010, 0.010])
+    fired: list[int] = []
+    section.changed.connect(lambda: fired.append(1))
+    section._disclosure_btn.setChecked(True)
+    assert not fired  # view-only reveal never mutates the policy
+
+
+def test_table_height_capped_with_many_detectors(qapp: QApplication) -> None:
+    n = 64
+    section = _configured(
+        mode="manual",
+        n_detectors=n,
+        manual_values_us=[0.01] * n,
+        peak_rates_per_us=[500.0] * n,
+    )
+    section.resize(420, 480)
+    section.show()
+    qapp.processEvents()
+    table = section._table
+    assert table.rowCount() == n
+    # Cap = 6 data rows + header + frame — far short of all 64 rows.
+    row_h = table.verticalHeader().defaultSectionSize()
+    assert 0 < table.maximumHeight() < row_h * n
+    # The rows beyond the cap scroll inside the table, not the tab.
+    assert table.verticalScrollBar().maximum() > 0
+    section.close()

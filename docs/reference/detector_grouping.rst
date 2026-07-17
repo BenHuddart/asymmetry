@@ -421,14 +421,25 @@ profile's deadtime policy inline. Four modes are available:
   following WiMDA's uniform deadtime estimate workflow, then applies that one
   estimated value to every detector.
 
-The section includes a per-detector table and a **Cal** button that ports
-WiMDA's per-detector calibration routine: it fits each detector histogram in
-the selected run separately, produces a resolved per-detector deadtime table,
-and populates the manual table with those calibrated values. The section also
-shows a **maximum correction at t=0** summary, the largest fractional
-correction any detector receives at the first good bin, so an unreasonable
-deadtime value is visible immediately rather than only showing up as a
-distorted asymmetry later.
+The section adapts to the selected mode, showing only the controls that mode
+uses so the Corrections tab stays readable without scrolling. ``Off`` shows the
+mode radios and a **Deadtime correction is disabled.** note. ``Manual`` shows
+the editable ``Per-detector values (ns)`` table with its **Fill all** and
+**Cal** buttons, height-capped at six rows so larger detector counts scroll
+inside the table rather than the tab. ``File`` and ``Estimate`` collapse to a
+one-line summary — the mean deadtime value times the detector count followed by
+the maximum-correction figure (for example, ``10.000 ns × 4 detectors · max
+correction at t=0: 1.2%``) — with a **Show per-detector values** disclosure that
+reveals the read-only table on demand; ``Estimate`` also keeps its source-run
+picker and **Estimate** button.
+
+The **Cal** button ports WiMDA's per-detector calibration routine: it fits each
+detector histogram in the selected run separately, produces a resolved
+per-detector deadtime table, and populates the manual table with those
+calibrated values. The **maximum correction at t=0** figure is the largest
+fractional correction any detector receives at the first good bin, so an
+unreasonable deadtime value is visible immediately rather than only showing up
+as a distorted asymmetry later.
 
 When ``Off`` is selected, deadtime correction is disabled. When ``Estimate``
 is selected, the estimate is calculated from the currently selected preview

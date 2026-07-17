@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QRadioButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -163,7 +164,30 @@ class DeadtimeSectionWidget(QWidget):
         )
         self._calibrate_btn.clicked.connect(self._on_calibrate_clicked)
         table_controls.addWidget(self._calibrate_btn)
-        root.addLayout(table_controls)
+        self._table_controls_widget = QWidget()
+        self._table_controls_widget.setLayout(table_controls)
+        root.addWidget(self._table_controls_widget)
+
+        # file/estimate summary + disclosure share one row so the collapsed
+        # states stay short enough to fit the Corrections tab without scrolling.
+        summary_row = QHBoxLayout()
+        summary_row.setContentsMargins(0, 0, 0, 0)
+        self._summary_label = QLabel("")
+        # One-line summary — word-wrap would inflate the row's height hint and
+        # push the collapsed estimate mode past the Corrections-tab viewport.
+        self._summary_label.setWordWrap(False)
+        summary_row.addWidget(self._summary_label, stretch=1)
+        self._disclosure_btn = QToolButton()
+        self._disclosure_btn.setText("Show per-detector values")
+        self._disclosure_btn.setCheckable(True)
+        self._disclosure_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._disclosure_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self._disclosure_btn.setStyleSheet("QToolButton { border: none; }")
+        self._disclosure_btn.toggled.connect(self._on_disclosure_toggled)
+        summary_row.addWidget(self._disclosure_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        self._summary_row_widget = QWidget()
+        self._summary_row_widget.setLayout(summary_row)
+        root.addWidget(self._summary_row_widget)
 
         self._table = QTableWidget(0, 2)
         self._table.setHorizontalHeaderLabels(["Detector", "Deadtime (ns)"])
@@ -171,10 +195,6 @@ class DeadtimeSectionWidget(QWidget):
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.itemChanged.connect(self._on_table_item_changed)
         root.addWidget(self._table)
-
-        self._summary_label = QLabel("")
-        self._summary_label.setWordWrap(True)
-        root.addWidget(self._summary_label)
 
     # -- configuration ---------------------------------------------------
 
@@ -283,7 +303,7 @@ class DeadtimeSectionWidget(QWidget):
         self._fill_all_spin.setEnabled(editable)
         self._fill_all_btn.setEnabled(editable)
         self._calibrate_btn.setEnabled(editable and bool(self._source_runs))
-        self._estimate_row_widget.setEnabled(mode == "estimate" and bool(self._source_runs))
+        self._estimate_btn.setEnabled(bool(self._source_runs))
         if mode == "file" and not self._file_available():
             self._file_hint.setText("The reference run does not provide file deadtime values.")
             self._file_hint.setVisible(True)
@@ -294,6 +314,48 @@ class DeadtimeSectionWidget(QWidget):
             self._file_hint.setVisible(False)
         self._refresh_table()
         self._refresh_summary()
+        self._apply_row_visibility()
+
+    def _summary_available(self) -> bool:
+        """Whether the summary/disclosure have per-detector values to show."""
+        mode = self._current_mode()
+        if mode == "file":
+            return self._file_available()
+        if mode == "estimate":
+            return self._n_detectors > 0
+        return False
+
+    def _apply_row_visibility(self) -> None:
+        """Show only the rows the current mode uses; collapse the rest.
+
+        Whole-row ``setVisible`` (not ``setEnabled``) so the scroll-area content
+        actually shrinks — off/file/estimate collapsed must fit the tab without
+        outer scrolling; only manual's capped table may reach its scroll cap.
+        """
+        mode = self._current_mode()
+        # Estimate carries the extra source-run row, so it alone needs the tight
+        # spacing to keep its collapsed height inside the tab viewport.
+        self.layout().setSpacing(0 if mode == "estimate" else 4)
+        show_summary = mode in ("file", "estimate", "manual")
+        self._estimate_row_widget.setVisible(mode == "estimate")
+        self._table_controls_widget.setVisible(mode == "manual")
+        disclose = self._summary_available()
+        self._disclosure_btn.setVisible(disclose)
+        self._summary_row_widget.setVisible(show_summary and bool(self._summary_label.text()))
+        if mode == "manual":
+            self._table.setVisible(True)
+        elif disclose:
+            self._table.setVisible(self._disclosure_btn.isChecked())
+        else:
+            self._table.setVisible(False)
+        self.updateGeometry()
+
+    def _on_disclosure_toggled(self, checked: bool) -> None:
+        # View-only reveal of the read-only table; never touches the policy.
+        self._disclosure_btn.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
+        self._apply_row_visibility()
 
     def _refresh_table(self) -> None:
         values = self._display_values()
@@ -309,6 +371,17 @@ class DeadtimeSectionWidget(QWidget):
                 value_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             self._table.setItem(row, 1, value_item)
         self._table.blockSignals(False)
+        self._apply_table_height_cap()
+
+    def _apply_table_height_cap(self) -> None:
+        # Cap the table at ~6 data rows; further rows scroll inside the table so
+        # a large detector count never forces the Corrections tab to scroll.
+        # Fewer rows than the cap shrink to fit rather than reserving blank rows.
+        rows = min(max(self._table.rowCount(), 1), 6)
+        row_h = self._table.verticalHeader().defaultSectionSize()
+        header_h = self._table.horizontalHeader().height()
+        frame = self._table.frameWidth()
+        self._table.setMaximumHeight(row_h * rows + header_h + 2 * frame)
 
     def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
         if item.column() != 1 or self._current_mode() != "manual":
@@ -388,21 +461,16 @@ class DeadtimeSectionWidget(QWidget):
         self._manual_values_us = [tau_us] * max(self._n_detectors, 1)
         self._refresh_table()
         self._refresh_summary()
+        self._apply_row_visibility()
         self._notify()
 
-    def _refresh_summary(self) -> None:
-        mode = self._current_mode()
-        if mode == "off":
-            self._summary_label.setText("")
-            return
-        values = self._display_values()
+    def _max_correction_fraction(self, values: list[float]) -> float | None:
+        """Largest fractional correction any detector receives at the first bin."""
         if not values or not self._peak_rates_per_us or self._bin_width_us <= 0.0:
-            self._summary_label.setText("")
-            return
+            return None
         n = min(len(values), len(self._peak_rates_per_us))
         if n == 0:
-            self._summary_label.setText("")
-            return
+            return None
         max_fraction = 0.0
         for i in range(n):
             tau_us = values[i]
@@ -412,7 +480,31 @@ class DeadtimeSectionWidget(QWidget):
             denom = max(denom, 1.0e-6)
             fraction = 1.0 / denom - 1.0
             max_fraction = max(max_fraction, fraction)
-        self._summary_label.setText(f"Max correction at t=0: {max_fraction * 100.0:.1f}%")
+        return max_fraction
+
+    def _refresh_summary(self) -> None:
+        mode = self._current_mode()
+        if mode == "off" or (mode == "file" and not self._file_available()):
+            self._summary_label.setText("")
+            return
+        values = self._display_values()
+        fraction = self._max_correction_fraction(values)
+        if mode == "manual":
+            # The manual table already lists every value; report the peak only.
+            self._summary_label.setText(
+                f"Max correction at t=0: {fraction * 100.0:.1f}%" if fraction is not None else ""
+            )
+            return
+        # file / estimate collapse to one line: mean value × N + peak correction.
+        if not values:
+            self._summary_label.setText("")
+            return
+        n = len(values)
+        mean_ns = float(np.mean(values)) * 1000.0
+        detail = f"{mean_ns:.3f} ns × {n} detector{'' if n == 1 else 's'}"
+        if fraction is not None:
+            detail += f" · max correction at t=0: {fraction * 100.0:.1f}%"
+        self._summary_label.setText(detail)
 
     def _notify(self) -> None:
         if not self._seeding:

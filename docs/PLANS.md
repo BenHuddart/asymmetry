@@ -6,6 +6,15 @@ subsystems or days.
 
 ## Active
 
+### Corrections-tab UX follow-ups (grouping dialog)
+
+Status: planned, awaiting go — three sequential milestones (adaptive deadtime
+section → section-overflow indicator pill → compare pager above the preview)
+on branch `feat/correction-order-alpha-estimation`. Full plan, per-milestone
+agent assignments, review gates, and deferred-idea record (converging-ghost
+stepper, hold-to-swap) live in
+[porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md](porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md).
+
 ### Bayesian Experimental Design: Suggest Next Point (Trending)
 
 Status: complete — Phases 1–2 (core + dialog GUI) shipped in PR #203,

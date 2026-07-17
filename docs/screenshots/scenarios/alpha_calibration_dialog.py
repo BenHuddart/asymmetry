@@ -60,12 +60,12 @@ class AlphaCalibrationDialogScenario(Scenario):
             _pump_until(lambda: section._tasks.active_count == 0)
             # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.
             _pump_events(500)
-            # Scroll the Corrections tab to the α section (it sits below deadtime
-            # and background) so the calibration controls + result are in frame.
+            # Bring the α section into frame. With the adaptive deadtime layout
+            # it already sits above the fold in the default (deadtime-off) state,
+            # so this is a no-op there and still correct on smaller captures.
             corr_scroll = getattr(dialog, "_corrections_scroll", None)
             if corr_scroll is not None:
-                bar = corr_scroll.verticalScrollBar()
-                bar.setValue(bar.maximum())
+                corr_scroll.ensureWidgetVisible(section)
                 _pump_events(80)
 
         pix = dialog.grab()
