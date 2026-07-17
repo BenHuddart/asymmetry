@@ -8,11 +8,12 @@ subsystems or days.
 
 ### Corrections-tab UX follow-ups (grouping dialog)
 
-Status: planned, awaiting go — three sequential milestones (adaptive deadtime
-section → section-overflow indicator pill → compare pager above the preview)
-on branch `feat/correction-order-alpha-estimation`. Full plan, per-milestone
-agent assignments, review gates, and deferred-idea record (converging-ghost
-stepper, hold-to-swap) live in
+Status: complete — all three milestones (adaptive deadtime section →
+section-overflow indicator pill → compare pager above the preview) plus a
+saturation-readout fix and a post-review fit-restoration fix landed on
+`feat/correction-order-alpha-estimation` (commits `8b52aa0`..`9f73250`,
+2026-07-17). Plan, execution notes, and the deferred-idea record
+(converging-ghost stepper, hold-to-swap) live in
 [porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md](porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md).
 
 ### Bayesian Experimental Design: Suggest Next Point (Trending)

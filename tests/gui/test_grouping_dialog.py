@@ -349,6 +349,33 @@ def test_corrections_tab_fits_without_scroll_at_reference_size(qapp: QApplicatio
     dialog.close()
 
 
+def test_overflow_pill_settles_hidden_after_inline_alpha_estimate(qapp: QApplication) -> None:
+    """The pill must not linger after the α result rows relayout the tab.
+
+    The inline α estimate grows the α section (result + provenance note), and
+    the content can transiently overflow the viewport mid-relayout — the
+    scrollbar's rangeChanged then fires against unsettled geometry and shows the
+    pill naming sections that are actually on screen. The pill's settle pass (a
+    coalesced zero-interval recompute after the event loop drains) must leave it
+    hidden once the content fits again; this was caught live in the screenshot
+    scenario, where the stale pill was captured mid-race.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.resize(1180, 760)
+    dialog.show()
+    dialog._tabs.setCurrentIndex(dialog._corrections_tab_index)
+    QApplication.processEvents()
+
+    _estimate_single_alpha(dialog)
+    QApplication.processEvents()  # queued result callbacks + the pill's settle pass
+    QApplication.processEvents()
+
+    assert dialog._corrections_scroll.verticalScrollBar().maximum() == 0
+    assert not dialog._corrections_overflow.isVisible()
+    # No dialog.close(): the estimate dirtied the draft, and close() would pop
+    # the discard-guard modal; the autouse widget reaper tears the dialog down.
+
+
 def test_corrections_overflow_pill_names_hidden_sections(qapp: QApplication) -> None:
     """The Corrections overflow pill names below-the-fold sections on a short window.
 

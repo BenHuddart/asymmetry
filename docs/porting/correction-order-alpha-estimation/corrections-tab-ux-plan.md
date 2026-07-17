@@ -1,9 +1,32 @@
 # Corrections-tab UX follow-ups — implementation plan
 
-Status: **approved scope, awaiting go** (designed 2026-07-17 with Ben; this file is
-the execution plan). Branch: `feat/correction-order-alpha-estimation`, on top of
-the completed interactive Corrections tab (compare toggles + pipeline strip,
-commits `2dc2f57`..`1773312`).
+Status: **DONE** (designed and executed 2026-07-17 with Ben; landed as five
+commits on `feat/correction-order-alpha-estimation`: M1 `8b52aa0`, M2 `952cac9`,
+saturation-readout fix `3f9d9cb`, M3 `a4df936`, integration fix `9f73250`).
+Built on the completed interactive Corrections tab (compare toggles + pipeline
+strip, commits `2dc2f57`..`1773312`).
+
+Execution notes (what the plan didn't foresee):
+
+- **The pager row consumed the M1 fit budget.** Adding the M3 pager row under
+  the tabs shrank the tab viewport 379→348 px, silently re-breaking M1's
+  "default state fits without outer scrolling" acceptance (content 366 px) —
+  caught at the closeout advisor review, not at either milestone gate, because
+  no test pinned the whole-tab budget. Fix (`9f73250`): the compare footer was
+  redundant once the pager shipped ("vs raw" is a pager stop), so the
+  "Compare vs raw (uncorrected)" checkbox moved into the pager row and the
+  badge sentence became the pager label's tooltip (content now 306 px);
+  `test_corrections_tab_fits_without_scroll_at_reference_size` pins the budget.
+- The deadtime max-correction readout could display a clamped ~1e8% when the
+  correction saturates; fixed (`3f9d9cb`) with a "deadtime saturates the t=0
+  correction" warning past 100%.
+- Headless-render gotcha: driving dialog state directly (bypassing section
+  seams) marks the draft dirty, so `dialog.close()` pops the discard-guard
+  modal and hangs offscreen scripts — use `_teardown_workers()` +
+  `deleteLater()` in verification scripts instead.
+- Benign leftover: the file/estimate "Show per-detector values" disclosure
+  keeps its expanded state across mode switches (collapsed on fresh
+  `configure()`, which is what the spec required).
 
 ## Problem and agreed scope
 

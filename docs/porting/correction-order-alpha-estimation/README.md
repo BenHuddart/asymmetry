@@ -160,6 +160,30 @@ source of truth for the implementation pass.
   that compares at the spin's display precision; regression tests use genuine
   non-round values. This completes the interactive Corrections tab (compare
   mechanism + toggles + strip).
+- **2026-07-17 — Corrections-tab UX follow-ups (plan + execution:
+  `corrections-tab-ux-plan.md`).** Designed with Ben, executed by subagents with
+  orchestrator gates. (1) **Adaptive deadtime section** (`8b52aa0`): each mode
+  shows only what it uses — off is radios + hint, file/estimate collapse to a
+  one-line summary with a "Show per-detector values" disclosure, manual keeps a
+  six-row-capped table with internal scrolling — so the default Corrections
+  state fits the tab without outer scrolling. (2) **Section-overflow pill**
+  (`952cac9`): `gui/widgets/section_overflow_indicator.py` overlays
+  "↓ Background · α (detector balance)" at the viewport's bottom edge on short
+  windows, click scrolls the first hidden section into view; wired to both tabs
+  with vector-aware section lists. (3) **Compare pager** (`a4df936`): ◀/▶ +
+  label above the pinned preview stepping `_compare_stage` through the
+  configured stages in pipeline order — replaces the earlier hold-to-swap idea.
+  Plus a saturation warning for the deadtime max-correction readout
+  (`3f9d9cb`). **Post-review integration fix** (`9f73250`): the pager row had
+  consumed the tab-viewport budget the fit relied on, so the "Compare vs raw
+  (uncorrected)" toggle moved into the pager row (the footer it lived in was
+  redundant once "vs raw" became a pager stop) and a dialog-level test now pins
+  the whole-tab no-scroll budget. **Deferred, decisions recorded in the plan
+  file:** cumulative build-up stepper (if ever built, the converging-ghost
+  shape: solid stays the full reduction, the ghost steps Raw → +Deadtime →
+  +Background → +α onto it — only the "+Deadtime" ghost is new); hold-to-swap
+  peek flip (redraw-only; requires retaining the last `_PreviewResult` and the
+  ghost's real errors).
 
 ## The bug this study addresses
 

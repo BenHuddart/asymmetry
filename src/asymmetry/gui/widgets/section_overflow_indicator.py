@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import shiboken6
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtWidgets import QPushButton, QScrollArea, QWidget
 
 from asymmetry.gui.styles import tokens
@@ -79,9 +79,20 @@ class SectionOverflowIndicator(QPushButton):
         self.clicked.connect(self._on_clicked)
 
         self._viewport = scroll_area.viewport()
+        # Settle pass: scrollbar signals can fire mid-layout (e.g. content that
+        # transiently overflows while a section's result rows are relaid), so a
+        # recompute at signal time may read unsettled geometry and show a stale
+        # pill. Every trigger recomputes immediately for responsiveness AND arms
+        # this zero-interval one-shot, which recomputes once more after the
+        # event loop drains — the final state always reflects settled geometry.
+        # Owned by the pill, so it cannot fire after destruction.
+        self._settle_timer = QTimer(self)
+        self._settle_timer.setSingleShot(True)
+        self._settle_timer.setInterval(0)
+        self._settle_timer.timeout.connect(self._recompute)
         vbar = scroll_area.verticalScrollBar()
-        vbar.valueChanged.connect(self._recompute)
-        vbar.rangeChanged.connect(self._recompute)
+        vbar.valueChanged.connect(self._recompute_and_settle)
+        vbar.rangeChanged.connect(self._recompute_and_settle)
         self._viewport.installEventFilter(self)
 
         self.hide()
@@ -89,7 +100,11 @@ class SectionOverflowIndicator(QPushButton):
 
     def refresh(self) -> None:
         """Recompute the label and visibility — call after a section's visibility flips."""
+        self._recompute_and_settle()
+
+    def _recompute_and_settle(self, *_: object) -> None:
         self._recompute()
+        self._settle_timer.start()
 
     def _hidden_sections(self) -> list[tuple[str, QWidget]]:
         """The *sections* whose top sits at or below the viewport's bottom edge.
@@ -149,5 +164,5 @@ class SectionOverflowIndicator(QPushButton):
         # Identity check against the stored wrapper — never a method call on the
         # (possibly torn-down) scroll area.
         if obj is self._viewport and event.type() == QEvent.Type.Resize:
-            self._recompute()
+            self._recompute_and_settle()
         return super().eventFilter(obj, event)
