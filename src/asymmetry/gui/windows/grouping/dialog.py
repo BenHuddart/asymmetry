@@ -225,7 +225,11 @@ class GroupingDialog(QDialog):
         self._tasks = TaskRunner(self)
 
         self.setWindowTitle("Grouping")
-        self.resize(940, 560)
+        # Wide enough that the Corrections tab's pipeline strip and section
+        # headers fit without horizontal scrolling at the default size, and
+        # tall enough that its default (deadtime-off) state needs no vertical
+        # scrolling either.
+        self.resize(1120, 670)
 
         if not self._datasets:
             layout = QVBoxLayout(self)
@@ -320,6 +324,15 @@ class GroupingDialog(QDialog):
         # preview-run combo. ``_current_run`` tracks the selected run.
         self._current_run = int(self._reference_dataset.run_number)
         profile_row.addStretch()
+
+        # Persistent editing-target strip, right-aligned in the top row so it
+        # costs the right pane no vertical space: accent-tinted while editing
+        # the profile ("Editing profile 'X' — applies to N runs"), warning-
+        # tinted while editing a single run's override ("Editing override for
+        # run N — this run only"). One of three redundant cues (with the
+        # scope-list row tint and the "override *" chip).
+        self._editing_strip = QLabel()
+        profile_row.addWidget(self._editing_strip)
         root.addLayout(profile_row)
 
         # \u2500\u2500 Main split: left pane (datasets + groups) | right pane (form) \u2500
@@ -386,16 +399,6 @@ class GroupingDialog(QDialog):
         right_layout = QVBoxLayout(right_pane)
         right_layout.setContentsMargins(4, 4, 0, 0)
         right_layout.setSpacing(0)
-
-        # Persistent editing-target strip, directly above the form: accent-tinted
-        # while editing the profile ("Editing profile 'X' — applies to N runs"),
-        # warning-tinted while editing a single run's override ("Editing override
-        # for run N — this run only"). One of three redundant cues (with the
-        # scope-list row tint and the "override *" chip).
-        self._editing_strip = QLabel()
-        self._editing_strip.setWordWrap(True)
-        right_layout.addWidget(self._editing_strip)
-        right_layout.addSpacing(6)
 
         form = QFormLayout()
         form.setVerticalSpacing(8)
@@ -844,7 +847,7 @@ class GroupingDialog(QDialog):
 
         splitter.addWidget(right_pane)
 
-        splitter.setSizes([330, 520])
+        splitter.setSizes([330, 760])
         root.addWidget(splitter, stretch=1)
 
         self._update_vector_mode_controls(grouping)

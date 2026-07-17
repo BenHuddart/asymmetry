@@ -169,7 +169,8 @@ draft is what gets applied to every run inheriting the profile.
   change follows the selected run's status (`Editing target follows selection`_
   below). Apply is disabled only when every run has been released *and* no
   override has pending edits, since there would then be nothing left to commit.
-* **Editing-target strip** — directly above the form, a persistent strip states
+* **Editing-target strip** — right-aligned in the dialog's top row, a
+  persistent strip states
   what your edits currently apply to: accent-tinted **"Editing profile '<name>'
   — applies to N runs"** while an inheriting run is selected, or warning-tinted
   **"Editing override for run N — this run only"** while an overridden run is
