@@ -2668,7 +2668,13 @@ class GroupingDialog(QDialog):
         if bool(self._vector_axis_pairs):
             sections.append(("α (per projection)", self._vector_alpha_widget))
         sections.append(("t0 and binning", self._t0_row_widget))
-        sections.append(("Periods", self._period_row_widget))
+        # The periods row container stays visible even when both of its
+        # independently-gated children are hidden (RG radios: two-period data;
+        # Map periods…: 3+ periods), so gate the landmark on the children's own
+        # state — isHidden(), not isVisibleTo(), so the answer is the same from
+        # either tab. Without this, single-period data lists a phantom "Periods".
+        if not self._period_mode_widget.isHidden() or not self._map_periods_btn.isHidden():
+            sections.append(("Periods", self._period_row_widget))
         return sections
 
     def _build_correction_header(self, title: str, stage: str) -> QWidget:
@@ -3591,6 +3597,8 @@ class GroupingDialog(QDialog):
         """Show Map periods… only when the reference run has 3+ periods."""
         visible = len(self._sibling_period_datasets()) > 2
         self._map_periods_btn.setVisible(visible)
+        # The "Periods" overflow landmark is gated on this visibility.
+        self._refresh_overflow_indicators()
 
     def _sibling_period_datasets(self) -> list[MuonDataset]:
         """Per-period sibling datasets of the reference run, in period order."""
@@ -4143,6 +4151,8 @@ class GroupingDialog(QDialog):
         self._period_mode_label.setVisible(has_two_period)
         self._period_mode_widget.setVisible(has_two_period)
         self._period_mode_widget.setEnabled(has_two_period)
+        # The "Periods" overflow landmark is gated on this visibility.
+        self._refresh_overflow_indicators()
 
     def _set_period_mode(self, mode_key: str) -> None:
         """Select a period-mode radio button, defaulting to RED."""

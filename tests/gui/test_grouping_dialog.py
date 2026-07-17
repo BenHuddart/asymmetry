@@ -349,6 +349,30 @@ def test_corrections_tab_fits_without_scroll_at_reference_size(qapp: QApplicatio
     dialog.close()
 
 
+def test_grouping_overflow_omits_periods_for_single_period_data(qapp: QApplication) -> None:
+    """No phantom "Periods" landmark when the periods row has no visible content.
+
+    The periods row container stays visible even when both of its
+    independently-gated children are hidden (RG radios need two-period data,
+    "Map periods…" needs 3+), so the landmark must be gated on the children —
+    otherwise every single-period dataset lists "Periods" in the Grouping-tab
+    pill on short windows.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.show()
+    QApplication.processEvents()
+
+    labels = [label for label, _ in dialog._grouping_overflow_sections()]
+    assert "Periods" not in labels
+
+    # With the RG radios shown (two-period data), the landmark returns.
+    dialog._period_mode_widget.setVisible(True)
+    labels = [label for label, _ in dialog._grouping_overflow_sections()]
+    assert "Periods" in labels
+
+    dialog.close()
+
+
 def test_overflow_pill_settles_hidden_after_inline_alpha_estimate(qapp: QApplication) -> None:
     """The pill must not linger after the α result rows relayout the tab.
 
