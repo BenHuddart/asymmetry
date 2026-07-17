@@ -46,6 +46,10 @@ from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox, NoScrollDoubl
 
 __all__ = ["DeadtimeSectionWidget", "DeadtimeSourceRun", "deadtime_status_text"]
 
+# Above this fraction (100%) the t=0 correction has saturated — the raw
+# percentage is no longer a physically meaningful number to show.
+_MAX_SANE_CORRECTION_FRACTION = 1.0
+
 
 @dataclass(frozen=True)
 class DeadtimeSourceRun:
@@ -489,11 +493,19 @@ class DeadtimeSectionWidget(QWidget):
             return
         values = self._display_values()
         fraction = self._max_correction_fraction(values)
+        saturated = fraction is not None and fraction > _MAX_SANE_CORRECTION_FRACTION
         if mode == "manual":
             # The manual table already lists every value; report the peak only.
-            self._summary_label.setText(
-                f"Max correction at t=0: {fraction * 100.0:.1f}%" if fraction is not None else ""
-            )
+            if saturated:
+                self._summary_label.setText(
+                    "Deadtime saturates the t=0 correction — value too large."
+                )
+            else:
+                self._summary_label.setText(
+                    f"Max correction at t=0: {fraction * 100.0:.1f}%"
+                    if fraction is not None
+                    else ""
+                )
             return
         # file / estimate collapse to one line: mean value × N + peak correction.
         if not values:
@@ -502,7 +514,9 @@ class DeadtimeSectionWidget(QWidget):
         n = len(values)
         mean_ns = float(np.mean(values)) * 1000.0
         detail = f"{mean_ns:.3f} ns × {n} detector{'' if n == 1 else 's'}"
-        if fraction is not None:
+        if saturated:
+            detail += " · deadtime saturates the t=0 correction — value too large"
+        elif fraction is not None:
             detail += f" · max correction at t=0: {fraction * 100.0:.1f}%"
         self._summary_label.setText(detail)
 

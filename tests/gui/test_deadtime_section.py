@@ -181,6 +181,27 @@ def test_disclosure_toggle_does_not_emit_changed(qapp: QApplication) -> None:
     assert not fired  # view-only reveal never mutates the policy
 
 
+def test_manual_mode_saturated_correction_shows_warning(qapp: QApplication) -> None:
+    # tau=2.0 us against peak_rates_per_us=500 and good_frames=1000 drives the
+    # correction denominator to (and past) zero — the raw percentage would
+    # read as a nonsensical ~1e8%.
+    section = _configured(mode="manual", manual_values_us=[2.0, 2.0])
+    text = section._summary_label.text()
+    assert text == "Deadtime saturates the t=0 correction — value too large."
+    assert "%" not in text
+
+
+def test_file_mode_saturated_correction_shows_warning(qapp: QApplication) -> None:
+    section = _configured(mode="file", file_values_us=[2.0, 2.0])
+    text = section._summary_label.text()
+    # Mean/detector-count prefix survives; the max-correction clause is
+    # replaced with the saturation warning instead of a huge percentage.
+    assert text.startswith("2000.000 ns × 2 detectors")
+    assert "deadtime saturates the t=0 correction — value too large" in text
+    assert "max correction" not in text
+    assert "%" not in text
+
+
 def test_table_height_capped_with_many_detectors(qapp: QApplication) -> None:
     n = 64
     section = _configured(
