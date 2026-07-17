@@ -526,17 +526,18 @@ and background. Clicking a chip focuses that stage's compare (below) and scrolls
 its section into view.
 
 Each correction section header on the Corrections tab also carries a
-**Compare in preview** checkbox, and the tab foot adds a compound
-**Compare vs raw (uncorrected)**. Checking one overlays that stage's
-before/after in the pinned preview: the solid curve is always the full
+**Compare in preview** checkbox, and a compound
+**Compare vs raw (uncorrected)** checkbox sits in the pager row just above the
+pinned preview (so it is reachable from either tab). Checking one overlays that
+stage's before/after in the pinned preview: the solid curve is always the full
 reduction, and a ghosted curve shows the asymmetry with that one stage
 removed — labelled "without deadtime", "without background", the
 :math:`\alpha = 1` calibration ghost, or "raw (uncorrected)" for the compound
 view (no deadtime, no background, :math:`\alpha = 1`). The toggles are mutually
 exclusive — comparing one stage at a time keeps the two-curve plot legible — and
-each is enabled only while it has a before/after to show. The badge
-"Comparing overlays one stage's before/after — the reduction always applies
-every stage" states the contract: comparing never changes what Apply writes, and
+each is enabled only while it has a before/after to show. The pager label's
+tooltip states the contract — "Comparing overlays one stage's before/after — the
+reduction always applies every stage": comparing never changes what Apply writes, and
 because the **solid curve is never degraded**, the residual baseline
 :math:`\langle A \rangle` readout (shown for the :math:`\alpha` compare) is always
 read off the fully-corrected reduction. Calibrating :math:`\alpha` auto-focuses
@@ -553,7 +554,8 @@ raw), skipping any stage without a before/after to show. The label reads
 "Comparing: off" when nothing is focused, and otherwise names the stage and its
 position among the currently available stages, e.g. "Comparing: without
 background (1/3)" or "Comparing: vs raw (3/3)". Both arrows disable together
-when no correction is configured yet.
+when no correction is configured yet. The **Compare vs raw (uncorrected)**
+checkbox rides at the right end of the same row.
 
 PSI Grouping
 ------------

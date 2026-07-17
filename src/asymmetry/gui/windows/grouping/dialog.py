@@ -813,7 +813,6 @@ class GroupingDialog(QDialog):
         self._alpha_header = self._build_correction_header("α (detector balance)", "alpha")
         corrections_layout.addWidget(self._alpha_header)
         corrections_layout.addWidget(self._alpha_section)
-        corrections_layout.addWidget(self._build_compare_footer())
         corrections_layout.addStretch()
         self._corrections_scroll = QScrollArea()
         self._corrections_scroll.setWidgetResizable(True)
@@ -2699,32 +2698,6 @@ class GroupingDialog(QDialog):
             self._alpha_section_label = label
         return widget
 
-    def _build_compare_footer(self) -> QWidget:
-        """The compare badge + the compound "vs raw" toggle."""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        badge = QLabel(
-            "Comparing overlays one stage's before/after — the reduction always applies every stage."
-        )
-        badge.setWordWrap(True)
-        badge.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        layout.addWidget(badge)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        raw = QCheckBox("Compare vs raw (uncorrected)")
-        raw.setToolTip(
-            "Preview only: overlay the fully-uncorrected asymmetry — no deadtime, no "
-            "background, α = 1."
-        )
-        raw.toggled.connect(lambda checked: self._on_compare_toggled("raw", checked))
-        self._compare_toggles["raw"] = raw
-        row.addWidget(raw)
-        row.addStretch()
-        layout.addLayout(row)
-        return widget
-
     def _on_compare_toggled(self, stage: str, checked: bool) -> None:
         """A compare toggle was clicked — focus that stage, or clear focus."""
         if getattr(self, "_syncing_compare", False):
@@ -2782,6 +2755,9 @@ class GroupingDialog(QDialog):
         row.addWidget(self._compare_prev_btn)
         self._compare_pager_label = QLabel("Comparing: off")
         self._compare_pager_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._compare_pager_label.setToolTip(
+            "Comparing overlays one stage's before/after — the reduction always applies every stage."
+        )
         row.addWidget(self._compare_pager_label)
         self._compare_next_btn = QToolButton()
         self._compare_next_btn.setArrowType(Qt.ArrowType.RightArrow)
@@ -2790,6 +2766,19 @@ class GroupingDialog(QDialog):
         self._compare_next_btn.clicked.connect(lambda: self._step_compare(1))
         row.addWidget(self._compare_next_btn)
         row.addStretch()
+        # The compound "vs raw" toggle lives here (not in the Corrections tab's
+        # scroll content): it is one of the pager's stops, and pinning it beside
+        # the pager keeps it reachable from both tabs — and keeps the tab content
+        # short enough to fit the viewport without outer scrolling (the M1 fit
+        # budget the pager row itself consumed).
+        raw = QCheckBox("Compare vs raw (uncorrected)")
+        raw.setToolTip(
+            "Preview only: overlay the fully-uncorrected asymmetry — no deadtime, no "
+            "background, α = 1."
+        )
+        raw.toggled.connect(lambda checked: self._on_compare_toggled("raw", checked))
+        self._compare_toggles["raw"] = raw
+        row.addWidget(raw)
         return widget
 
     def _step_compare(self, direction: int) -> None:

@@ -325,6 +325,30 @@ def test_right_pane_is_tabbed_with_preview_pinned(qapp: QApplication) -> None:
     assert not dialog._tabs.isAncestorOf(dialog._preview_pane)
 
 
+def test_corrections_tab_fits_without_scroll_at_reference_size(qapp: QApplication) -> None:
+    """The default Corrections-tab state needs no outer scrolling at 1180×760.
+
+    This is the headline acceptance of the corrections-tab UX work (see
+    docs/porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md):
+    with deadtime off — the default — deadtime, background, α and the compare
+    controls must all be reachable without scrolling. Pins the whole-tab budget,
+    not just the deadtime section's per-mode heights, so a new row elsewhere in
+    the right pane (the compare pager once ate ~31px of it) fails here instead
+    of silently reintroducing the fold.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.resize(1180, 760)
+    dialog.show()
+    dialog._tabs.setCurrentIndex(dialog._corrections_tab_index)
+    QApplication.processEvents()
+
+    assert dialog._deadtime_section._current_mode() == "off"
+    assert dialog._corrections_scroll.verticalScrollBar().maximum() == 0
+    assert not dialog._corrections_overflow.isVisible()
+
+    dialog.close()
+
+
 def test_corrections_overflow_pill_names_hidden_sections(qapp: QApplication) -> None:
     """The Corrections overflow pill names below-the-fold sections on a short window.
 
