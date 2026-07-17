@@ -658,47 +658,17 @@ class _StubWorker:
         return False
 
 
-def _reduce_with_override(dataset: MuonDataset, **overrides: bool):
-    """Run ``_run_reduction`` for *dataset* with per-stage preview overrides."""
+def _reduce_preview(dataset: MuonDataset, **fields):
+    """Run ``_run_reduction`` for *dataset* with extra ``_PreviewRequest`` fields."""
     request = preview_pane_module._PreviewRequest(
         generation=1,
         histograms=list(dataset.run.histograms),
         facility="TESTINST",
         run_number=int(dataset.run_number),
         grouping=dict(dataset.run.grouping),
-        **overrides,
+        **fields,
     )
     return preview_pane_module._run_reduction(_StubWorker(), request)
-
-
-def test_diagnostic_deadtime_override_changes_the_preview_curve(qapp: QApplication) -> None:
-    """Unchecking the Deadtime diagnostic toggle drops the stage from the preview.
-
-    Positive (non-vacuous) proof the override bites: on a run with deadtime
-    actually configured, ``override_use_deadtime=False`` yields a *different*
-    asymmetry than the default (all stages on) — and reproduces the curve of the
-    same run with deadtime disabled outright. The per-detector deadtimes differ
-    (F ≠ B) so the correction moves the asymmetry, not just its scale.
-    """
-    dataset = _histogram_dataset(
-        grouping_extra={
-            "deadtime_correction": True,
-            "deadtime_mode": "manual",
-            "dead_time_us": [0.005, 0.001],
-            "good_frames": 1000.0,
-        }
-    )
-    on = _reduce_with_override(dataset)  # default: deadtime applied
-    off = _reduce_with_override(dataset, override_use_deadtime=False)
-    assert not np.allclose(on.asymmetry, off.asymmetry), "the toggle did not change the preview"
-
-    # Toggling the stage off reproduces the same run reduced with deadtime disabled
-    # outright — i.e. the override truly *removes* the configured stage.
-    disabled = dict(dataset.run.grouping)
-    disabled["deadtime_correction"] = False
-    dataset.run.grouping = disabled
-    baseline = _reduce_with_override(dataset)
-    assert np.allclose(off.asymmetry, baseline.asymmetry)
 
 
 def test_compare_stage_deadtime_ghosts_the_removed_stage(qapp: QApplication) -> None:
@@ -716,7 +686,7 @@ def test_compare_stage_deadtime_ghosts_the_removed_stage(qapp: QApplication) -> 
             "good_frames": 1000.0,
         }
     )
-    res = _reduce_with_override(dataset, compare_stage="deadtime")
+    res = _reduce_preview(dataset, compare_stage="deadtime")
     assert res.compare_stage == "deadtime"
     assert res.overlay is True
     assert res.baseline is not None
@@ -734,7 +704,7 @@ def test_compare_stage_background_ghosts_the_removed_stage(qapp: QApplication) -
             "background_fixed_values": [30.0, 20.0],
         }
     )
-    res = _reduce_with_override(dataset, compare_stage="background")
+    res = _reduce_preview(dataset, compare_stage="background")
     assert res.compare_stage == "background"
     assert res.baseline is not None
     assert res.baseline_label == "without background"
@@ -744,8 +714,8 @@ def test_compare_stage_background_ghosts_the_removed_stage(qapp: QApplication) -
 def test_compare_stage_alpha_matches_legacy_overlay(qapp: QApplication) -> None:
     """compare_stage="alpha" is the generic form of the legacy overlay=True."""
     dataset = _histogram_dataset(grouping_extra={"alpha": 1.3})
-    via_stage = _reduce_with_override(dataset, compare_stage="alpha")
-    via_overlay = _reduce_with_override(dataset, overlay=True)
+    via_stage = _reduce_preview(dataset, compare_stage="alpha")
+    via_overlay = _reduce_preview(dataset, overlay=True)
 
     assert via_overlay.compare_stage == "alpha"  # overlay maps onto the α stage
     assert via_stage.baseline_label == "α = 1"
@@ -754,10 +724,68 @@ def test_compare_stage_alpha_matches_legacy_overlay(qapp: QApplication) -> None:
     np.testing.assert_allclose(via_stage.baseline, via_overlay.baseline)
 
 
+def test_compare_focus_never_changes_the_solid_curve(qapp: QApplication) -> None:
+    """Focusing any compare stage leaves the SOLID curve the full reduction.
+
+    The acceptance-number invariant: a compare only ever adds a ghost, never
+    degrades the solid, so the α compare's residual ⟨A⟩ is always read off the
+    fully-corrected reduction. Passes now (no code path degrades the solid) and
+    fails the instant a solid-degrade path is reintroduced.
+    """
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "dead_time_us": [0.005, 0.001],
+            "good_frames": 1000.0,
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [30.0, 20.0],
+            "alpha": 1.3,
+        }
+    )
+    solid = _reduce_preview(dataset).asymmetry
+    for stage in ("deadtime", "background", "alpha", "raw"):
+        focused = _reduce_preview(dataset, compare_stage=stage).asymmetry
+        np.testing.assert_allclose(
+            focused, solid, err_msg=f"compare_stage={stage!r} changed the solid curve"
+        )
+
+
+def test_compare_stage_raw_ghosts_the_fully_uncorrected_curve(qapp: QApplication) -> None:
+    """compare_stage="raw" ghosts every stage removed at once (deadtime, bg, α=1)."""
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "dead_time_us": [0.005, 0.001],
+            "good_frames": 1000.0,
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [30.0, 20.0],
+            "alpha": 1.3,
+        }
+    )
+    res = _reduce_preview(dataset, compare_stage="raw")
+    assert res.compare_stage == "raw"
+    assert res.baseline is not None
+    assert res.baseline_label == "raw (uncorrected)"
+    assert not np.allclose(res.baseline, res.asymmetry)
+    # No residual ⟨A⟩ readout for the compound compare (that number is α's alone).
+    assert res.centre_mean is None
+
+
+def test_compare_stage_raw_with_nothing_configured_draws_no_ghost(qapp: QApplication) -> None:
+    """With no corrections and α=1, raw == full — nothing to ghost."""
+    dataset = _histogram_dataset()  # deadtime off, background off, α = 1
+    res = _reduce_preview(dataset, compare_stage="raw")
+    assert res.baseline is None
+
+
 def test_compare_stage_unconfigured_stage_draws_no_ghost(qapp: QApplication) -> None:
     """A stage that isn't applied has nothing to remove — no ghost is drawn."""
     dataset = _histogram_dataset()  # deadtime + background both off
-    res = _reduce_with_override(dataset, compare_stage="deadtime")
+    res = _reduce_preview(dataset, compare_stage="deadtime")
     assert res.compare_stage == "deadtime"
     assert res.baseline is None
     assert res.baseline_label is None

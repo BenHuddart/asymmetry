@@ -500,20 +500,27 @@ deadtime correction is the file-metadata correction path. When enabled for
 PSI data, the applied method, estimated values, and ranges are stored on the
 profile's background policy.
 
-Diagnostic view
----------------
+Comparing a correction's effect
+-------------------------------
 
-A **Diagnostic view** row at the foot of the Corrections tab carries two
-preview-only checkboxes, **Deadtime** and **Background**, badged
-"Diagnostic view — the reduction always applies every stage". Unchecking one
-drops that stage from the **live preview only**, so you can see its incremental
-effect on the asymmetry; the persisted reduction — and everything Apply writes —
-always applies every configured correction. A checkbox is enabled only while its
-stage is actually configured, and both default to on. Because the residual
-baseline :math:`\langle A \rangle` readout is the calibration-acceptance number
-("does :math:`\alpha` centre the *corrected* asymmetry"), the before/after
-overlay is suppressed while any stage is toggled off, so a partially-corrected
-preview can never masquerade as the acceptance number.
+Each correction section header on the Corrections tab carries a
+**Compare in preview** checkbox, and the tab foot adds a compound
+**Compare vs raw (uncorrected)**. Checking one overlays that stage's
+before/after in the pinned preview: the solid curve is always the full
+reduction, and a ghosted curve shows the asymmetry with that one stage
+removed — labelled "without deadtime", "without background", the
+:math:`\alpha = 1` calibration ghost, or "raw (uncorrected)" for the compound
+view (no deadtime, no background, :math:`\alpha = 1`). The toggles are mutually
+exclusive — comparing one stage at a time keeps the two-curve plot legible — and
+each is enabled only while it has a before/after to show. The badge
+"Comparing overlays one stage's before/after — the reduction always applies
+every stage" states the contract: comparing never changes what Apply writes, and
+because the **solid curve is never degraded**, the residual baseline
+:math:`\langle A \rangle` readout (shown for the :math:`\alpha` compare) is always
+read off the fully-corrected reduction. Calibrating :math:`\alpha` auto-focuses
+its compare, so a fresh calibration shows the balancing effect immediately; the
+:math:`\alpha` compare is not offered in vector mode, where the per-projection
+:math:`\alpha` table on the **Grouping and timing** tab owns the balance.
 
 PSI Grouping
 ------------

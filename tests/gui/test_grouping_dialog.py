@@ -848,66 +848,84 @@ def test_estimate_all_alpha_calibrates_every_axis(
     assert "alpha_z_reference_run" in payload
 
 
-def test_diagnostic_toggles_never_touch_the_persisted_payload(qapp: QApplication) -> None:
-    """The preview-only per-stage toggles never leak into the reduction payload.
+def test_compare_toggles_never_touch_the_persisted_payload(qapp: QApplication) -> None:
+    """The preview-only compare toggles never leak into the reduction payload.
 
-    This is the trap PR 1 fixed: a diagnostic view that silently changed the real
-    reduction. Flipping both toggles must leave ``_current_grouping_payload`` (and
-    ``get_grouping_result``) byte-identical — the toggles feed the preview request
-    only.
+    This is the trap PR 1 fixed: a preview control that silently changed the real
+    reduction. Focusing any compare stage must leave ``_current_grouping_payload``
+    (and ``get_grouping_result``) byte-identical — the toggles feed the preview
+    request only.
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
+    _estimate_single_alpha(dialog)  # α ≠ 1 → the α and raw compares become available
     before_payload = dialog._current_grouping_payload()
     before_result = dialog.get_grouping_result()
 
-    dialog._preview_deadtime_check.setChecked(False)
-    dialog._preview_background_check.setChecked(False)
+    dialog._set_compare_stage("raw")
+    assert dialog._compare_stage == "raw"
+    assert dialog._current_grouping_payload() == before_payload
+    assert dialog.get_grouping_result() == before_result
 
+    dialog._set_compare_stage("alpha")
     assert dialog._current_grouping_payload() == before_payload
     assert dialog.get_grouping_result() == before_result
 
 
-def test_diagnostic_toggle_off_suppresses_calibration_overlay(qapp: QApplication) -> None:
-    """Toggling any stage off suppresses the residual-baseline (acceptance) overlay.
-
-    The overlay's ⟨A⟩ readout is the calibration-acceptance number — "does α centre
-    the *corrected* asymmetry". Computing it against a partially-corrected preview
-    would invert that guarantee, so the overlay is requested only when α is
-    calibrated *and* every diagnostic stage is on.
-    """
+def test_compare_toggles_are_exclusive_and_alpha_auto_focuses(qapp: QApplication) -> None:
+    """Compare toggles are mutually exclusive; a fresh α calibration auto-focuses α."""
     dialog = GroupingDialog([_dataset_with_histograms()])
     _estimate_single_alpha(dialog)
-    assert dialog._alpha_is_calibrated()
+
+    # Calibrating α auto-focuses the α compare (preserving the old auto-overlay).
+    assert dialog._compare_stage == "alpha"
+    assert dialog._compare_toggles["alpha"].isChecked()
+
+    # Focusing another stage is exclusive — it unchecks α.
+    dialog._set_compare_stage("raw")
+    assert dialog._compare_stage == "raw"
+    assert dialog._compare_toggles["raw"].isChecked()
+    assert not dialog._compare_toggles["alpha"].isChecked()
+
+    # Clearing focus unchecks everything.
+    dialog._set_compare_stage(None)
+    assert dialog._compare_stage is None
+    assert not any(t.isChecked() for t in dialog._compare_toggles.values())
+
+
+def test_compare_toggle_reaches_the_preview_request(qapp: QApplication) -> None:
+    """The focused stage forwards into the preview request's ``compare_stage``.
+
+    Pins the seam the user drives: ``_refresh_preview`` must carry
+    ``_compare_stage`` into ``_PreviewRequest.compare_stage``. If that wiring were
+    dropped it would default to ``None`` and the toggles would silently no-op.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    _estimate_single_alpha(dialog)  # auto-focuses α
 
     dialog._refresh_preview()
     assert dialog._preview_pane._pending is not None
-    assert dialog._preview_pane._pending.overlay is True  # all stages on
+    assert dialog._preview_pane._pending.compare_stage == "alpha"
 
-    dialog._preview_deadtime_check.setChecked(False)  # fires _refresh_preview
-    assert dialog._preview_pane._pending.overlay is False
+    dialog._set_compare_stage("raw")
+    assert dialog._preview_pane._pending.compare_stage == "raw"
+
+    dialog._set_compare_stage(None)
+    assert dialog._preview_pane._pending.compare_stage is None
 
 
-def test_diagnostic_toggles_reach_the_preview_request(qapp: QApplication) -> None:
-    """The checkboxes forward into the preview request's per-stage overrides.
+def test_alpha_compare_unavailable_in_vector_mode(qapp: QApplication) -> None:
+    """The α compare never focuses in vector mode — its toggle is hidden there.
 
-    Pins the one seam the user actually drives: ``_refresh_preview`` must carry
-    each checkbox into ``_PreviewRequest.override_use_*``. If that wiring were
-    dropped, both default to ``True`` and the toggles would silently no-op while
-    the overlay/payload tests still passed.
+    The per-projection α table on the Grouping tab owns α in vector mode, so a P_z
+    estimate must not auto-focus the (hidden) α compare on the Corrections tab —
+    the same misdirection guarded on the ⚠ tab marker.
     """
-    dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog._refresh_preview()
-    pending = dialog._preview_pane._pending
-    assert pending is not None
-    assert pending.override_use_deadtime is True
-    assert pending.override_use_background is True
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    _estimate_vector_axis(dialog, "P_z")
 
-    dialog._preview_deadtime_check.setChecked(False)  # fires _refresh_preview
-    assert dialog._preview_pane._pending.override_use_deadtime is False
-    assert dialog._preview_pane._pending.override_use_background is True
-
-    dialog._preview_background_check.setChecked(False)
-    assert dialog._preview_pane._pending.override_use_background is False
+    assert dialog._alpha_is_calibrated()
+    assert not dialog._compare_stage_available("alpha")
+    assert dialog._compare_stage != "alpha"
 
 
 def test_vector_estimate_alpha_uses_selected_reference_run(

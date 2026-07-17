@@ -467,13 +467,16 @@ retired); a ⚠ marker on that tab flags a stale calibrated α. The shared α-es
 and its run-combo / request builders live in `alpha_section.py`; the
 per-projection *vector* α table (`dialog.py`) drives its per-axis and "Estimate
 All α" estimates inline through that same worker on the dialog's own
-`TaskRunner`, serialised one axis at a time. A "Diagnostic view" row adds
-preview-only per-stage toggles (deadtime/background) that drop a stage from the
-live preview via a `_PreviewRequest` override applied in
-`preview_pane._run_reduction` (`use_x = flags.use_x and override_use_x`); the
-override never reaches `_current_grouping_payload`, so the persisted reduction is
-unaffected, and the calibration-acceptance overlay is suppressed while any stage
-is toggled off.
+`TaskRunner`, serialised one axis at a time. Each correction section header on the
+Corrections tab carries a mutually-exclusive "Compare in preview" toggle (plus a
+compound "vs raw"); focusing one drives `_PreviewRequest.compare_stage`
+(`"deadtime"`/`"background"`/`"alpha"`/`"raw"`), which `preview_pane._run_reduction`
+renders as a **ghost** of that stage removed behind the solid full-pipeline curve —
+the solid is never degraded, so the α compare's residual-⟨A⟩ acceptance number is
+always read off the fully-corrected reduction. The compare is preview-only
+(`compare_stage` never reaches `_current_grouping_payload`); the α compare
+auto-focuses on calibration and is unavailable in vector mode (its toggle is
+hidden — the per-projection table on the Grouping tab owns α there).
 
 ### 3.7 Global Parameter Fit Studies
 

@@ -124,6 +124,26 @@ source of truth for the implementation pass.
   Tests in `test_grouping_preview_pane.py` (deadtime/background ghost differs from
   solid, α-compare == legacy overlay, unconfigured stage → no ghost).
 
+- **2026-07-17 — interactive Corrections compare, step 2 (exclusive toggles).**
+  Replaced the diagnostic checkboxes (which *dropped* a stage from the solid) with
+  per-section **Compare in preview** toggles + a compound **Compare vs raw
+  (uncorrected)** — mutually exclusive, driving `_PreviewRequest.compare_stage`.
+  The solid curve is now always the full pipeline; the focused stage draws a ghost
+  of itself removed. This is the ghost-the-removal model: the α compare's residual
+  ⟨A⟩ is structurally always read off the fully-corrected solid, so the
+  overlay-suppression rule from step 1 of the diagnostic toggles is gone.
+  `override_use_deadtime`/`override_use_background` were **removed** entirely
+  (dead once "vs raw" is `compare_stage="raw"` rather than a solid-degrade), and
+  "vs raw" is a new `_run_reduction` branch (`_reduce(False, False)` at α=1). The α
+  compare **auto-focuses on calibration** (preserving the old auto-overlay, adding
+  dismissability) and is unavailable in vector mode — its toggle is hidden, the
+  per-projection table on the Grouping tab owns α there (same misdirection guarded
+  on the ⚠ tab marker, via `_compare_stage_available("alpha")` returning False in
+  vector mode). Tests: exclusivity + α auto-focus, payload-invariance (the trap),
+  wiring reaches `_pending.compare_stage`, α-compare-unavailable-in-vector. Docs:
+  "Comparing a correction's effect" in `detector_grouping.rst`, `ARCHITECTURE.md`.
+  Remaining: step 3 pipeline-strip chrome.
+
 ## The bug this study addresses
 
 Two independent code paths form forward/backward (F/B) spectra and they diverge:

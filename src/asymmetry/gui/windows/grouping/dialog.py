@@ -256,6 +256,9 @@ class GroupingDialog(QDialog):
         self._vector_estimate_token = 0
         self._vector_estimate_queue: list[str] = []
         self._vector_estimate_source_run: int | None = None
+        #: Focused compare-in-preview stage ("deadtime"/"background"/"alpha"/
+        #: "raw"/None) — preview-only, drives the ghost overlay (never the payload).
+        self._compare_stage: str | None = None
         # Last successful estimate per slot ("single" or axis name):
         # (alpha, alpha_error, reference_run). Used to attach provenance to
         # the payload only while the spin still holds the estimated value.
@@ -765,26 +768,29 @@ class GroupingDialog(QDialog):
         self._tabs.addTab(self._grouping_scroll, "Grouping and timing")
 
         # Tab 2 — Corrections: deadtime, background and single-α calibration
-        # inline, plus the preview-only diagnostic toggles. The tab name is the
-        # heading, so there is no outer section wrapper — just the three labelled
-        # sub-sections stacked.
+        # inline. The tab name is the heading, so there is no outer section
+        # wrapper — just the three labelled sub-sections stacked. Each section
+        # header carries a "Compare in preview" toggle that ghosts that stage's
+        # before/after in the pinned preview (see the compare machinery below).
         corrections_content = QWidget()
         corrections_layout = QVBoxLayout(corrections_content)
         corrections_layout.setContentsMargins(0, 0, 0, 0)
         corrections_layout.setSpacing(8)
-        deadtime_label = QLabel("Deadtime correction")
-        deadtime_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        corrections_layout.addWidget(deadtime_label)
+        #: Per-stage "Compare in preview" checkboxes ("deadtime"/"background"/
+        #: "alpha"/"raw"), mutually exclusive (see :meth:`_set_compare_stage`).
+        self._compare_toggles: dict[str, QCheckBox] = {}
+        corrections_layout.addWidget(
+            self._build_correction_header("Deadtime correction", "deadtime")
+        )
         corrections_layout.addWidget(self._deadtime_section)
-        background_label = QLabel("Background subtraction")
-        background_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        corrections_layout.addWidget(background_label)
+        corrections_layout.addWidget(
+            self._build_correction_header("Background subtraction", "background")
+        )
         corrections_layout.addWidget(self._background_section)
-        self._alpha_section_label = QLabel("α (detector balance)")
-        self._alpha_section_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        corrections_layout.addWidget(self._alpha_section_label)
+        self._alpha_header = self._build_correction_header("α (detector balance)", "alpha")
+        corrections_layout.addWidget(self._alpha_header)
         corrections_layout.addWidget(self._alpha_section)
-        corrections_layout.addWidget(self._build_diagnostic_view_row())
+        corrections_layout.addWidget(self._build_compare_footer())
         corrections_layout.addStretch()
         self._corrections_scroll = QScrollArea()
         self._corrections_scroll.setWidgetResizable(True)
@@ -835,6 +841,11 @@ class GroupingDialog(QDialog):
         self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()
         self._refresh_alpha_staleness()
+        # Open focused on the α compare when α is already calibrated (single mode),
+        # preserving the pre-tab auto-overlay; _sync_compare_toggles reflects it.
+        if self._alpha_is_calibrated() and not bool(self._vector_axis_pairs):
+            self._compare_stage = "alpha"
+        self._sync_compare_toggles()
         self._connect_preview_refresh()
         self._refresh_preview()
 
@@ -2499,63 +2510,116 @@ class GroupingDialog(QDialog):
         # directly after folding the returned policy into the draft.
 
     # ------------------------------------------------------------------
-    # Diagnostic per-stage preview toggles (preview-only, never persisted)
+    # Compare-in-preview toggles (preview-only, never persisted)
     # ------------------------------------------------------------------
 
-    def _build_diagnostic_view_row(self) -> QWidget:
-        """Build the preview-only per-stage diagnostic toggles.
+    def _build_correction_header(self, title: str, stage: str) -> QWidget:
+        """A section header: the muted title + a "Compare in preview" toggle.
 
-        Unchecking **Deadtime** or **Background** drops that stage from the *live
-        preview only* so its incremental effect is visible; the persisted
-        reduction always applies every configured stage (the override never
-        reaches ``_current_grouping_payload``). Each box is enabled only while its
-        stage is actually configured, and defaults to on (a strict no-op).
+        Checking the toggle ghosts that stage's before/after in the pinned preview
+        (the solid curve always stays the full reduction); the toggles are mutually
+        exclusive. Preview-only — nothing here reaches ``_current_grouping_payload``.
         """
+        widget = QWidget()
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        label = QLabel(title)
+        label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        row.addWidget(label)
+        row.addStretch()
+        toggle = QCheckBox("Compare in preview")
+        toggle.setToolTip(
+            "Preview only: overlay this correction's before/after — the reduction always "
+            "applies every stage."
+        )
+        toggle.toggled.connect(lambda checked, s=stage: self._on_compare_toggled(s, checked))
+        row.addWidget(toggle)
+        self._compare_toggles[stage] = toggle
+        if stage == "alpha":
+            self._alpha_section_label = label
+        return widget
+
+    def _build_compare_footer(self) -> QWidget:
+        """The compare badge + the compound "vs raw" toggle."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-
-        badge = QLabel("Diagnostic view — the reduction always applies every stage")
+        badge = QLabel(
+            "Comparing overlays one stage's before/after — the reduction always applies every stage."
+        )
         badge.setWordWrap(True)
         badge.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
         layout.addWidget(badge)
-
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(12)
-        self._preview_deadtime_check = QCheckBox("Deadtime")
-        self._preview_deadtime_check.setChecked(True)
-        self._preview_deadtime_check.setToolTip(
-            "Preview only: drop the deadtime correction from the plot below to see its effect."
+        raw = QCheckBox("Compare vs raw (uncorrected)")
+        raw.setToolTip(
+            "Preview only: overlay the fully-uncorrected asymmetry — no deadtime, no "
+            "background, α = 1."
         )
-        self._preview_deadtime_check.toggled.connect(self._refresh_preview)
-        self._preview_background_check = QCheckBox("Background")
-        self._preview_background_check.setChecked(True)
-        self._preview_background_check.setToolTip(
-            "Preview only: drop the background subtraction from the plot below to see its effect."
-        )
-        self._preview_background_check.toggled.connect(self._refresh_preview)
-        row.addWidget(self._preview_deadtime_check)
-        row.addWidget(self._preview_background_check)
+        raw.toggled.connect(lambda checked: self._on_compare_toggled("raw", checked))
+        self._compare_toggles["raw"] = raw
+        row.addWidget(raw)
         row.addStretch()
         layout.addLayout(row)
         return widget
 
-    def _update_diagnostic_toggle_enabled(self) -> None:
-        """Enable each diagnostic toggle only while its stage is configured."""
-        if not hasattr(self, "_preview_deadtime_check"):
-            return
-        self._preview_deadtime_check.setEnabled(self._current_deadtime_mode() != "off")
-        self._preview_background_check.setEnabled(self._current_background_mode() != "none")
+    def _on_compare_toggled(self, stage: str, checked: bool) -> None:
+        """A compare toggle was clicked — focus that stage, or clear focus."""
+        if getattr(self, "_syncing_compare", False):
+            return  # programmatic sync, not a user click
+        self._set_compare_stage(stage if checked else None)
 
-    def _all_diagnostic_stages_on(self) -> bool:
-        """True when no diagnostic stage is toggled off (preview == full reduction)."""
-        if not hasattr(self, "_preview_deadtime_check"):
-            return True
-        return (
-            self._preview_deadtime_check.isChecked() and self._preview_background_check.isChecked()
-        )
+    def _set_compare_stage(self, stage: str | None) -> None:
+        """Focus (at most) one compare stage and refresh the preview."""
+        self._compare_stage = stage
+        self._sync_compare_toggles()
+        self._refresh_preview()
+
+    def _sync_compare_toggles(self) -> None:
+        """Reflect ``_compare_stage`` in the toggles; enable each per availability.
+
+        Resets the focus if the focused stage is no longer available (e.g. its
+        correction was switched off, or vector mode hid the α toggle) so the
+        preview and the checked toggle never disagree.
+        """
+        if not hasattr(self, "_compare_toggles"):
+            return
+        if self._compare_stage is not None and not self._compare_stage_available(
+            self._compare_stage
+        ):
+            self._compare_stage = None
+        self._syncing_compare = True
+        try:
+            for key, toggle in self._compare_toggles.items():
+                available = self._compare_stage_available(key)
+                toggle.setEnabled(available)
+                toggle.setChecked(available and self._compare_stage == key)
+        finally:
+            self._syncing_compare = False
+
+    def _compare_stage_available(self, stage: str) -> bool:
+        """Whether *stage* has a before/after to show (enable-when-active)."""
+        alpha_off_unity = abs(float(self._alpha_spin.value()) - 1.0) > 1e-9
+        if stage == "deadtime":
+            return self._current_deadtime_mode() != "off"
+        if stage == "background":
+            return self._current_background_mode() != "none"
+        if stage == "alpha":
+            # The α compare/toggle is hidden in vector mode (the per-projection
+            # table on the Grouping tab owns α there), so it is never available.
+            if bool(self._vector_axis_pairs):
+                return False
+            return self._alpha_is_calibrated() or alpha_off_unity
+        if stage == "raw":
+            return (
+                self._current_deadtime_mode() != "off"
+                or self._current_background_mode() != "none"
+                or alpha_off_unity
+            )
+        return False
 
     def _refresh_preview(self, *args: object) -> None:
         """Recompute the live asymmetry preview for the draft + preview run.
@@ -2591,24 +2655,20 @@ class GroupingDialog(QDialog):
             metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(getattr(run, "metadata", {}) or {})
         facility = str(metadata.get("facility", metadata.get("instrument", "")))
-        self._update_diagnostic_toggle_enabled()
-        # Diagnostic per-stage view: drop a stage from *this preview only*. The
-        # residual-baseline ⟨A⟩ readout is the calibration-acceptance number ("does
-        # α centre the *corrected* asymmetry"), so the overlay is suppressed the
-        # moment any stage is toggled off — a partially-corrected curve must never
-        # masquerade as the acceptance number.
-        overlay = self._alpha_is_calibrated() and self._all_diagnostic_stages_on()
-        # Calibrate view: once α is calibrated (and all stages on), overlay the α=1
-        # curve and report the residual baseline, so the balance is self-evident in
-        # the one preview (the comparison the standalone alpha dialog used to show).
+        # Keep the toggles' enabled/checked state in step with the current draft,
+        # and drop the focus if the focused stage is no longer available.
+        self._sync_compare_toggles()
+        # Compare view: the focused stage (if any) draws its before/after ghost over
+        # the solid full-pipeline curve. The solid is never degraded, so the α
+        # compare's residual-⟨A⟩ acceptance number is always read off the
+        # fully-corrected curve. Preview-only — `compare_stage` never reaches the
+        # persisted reduction.
         pane.request_preview_from_profile(
             profile=profile,
             run=run,
             facility=facility,
             run_number=self._preview_run_number(),
-            overlay=overlay,
-            override_use_deadtime=self._preview_deadtime_check.isChecked(),
-            override_use_background=self._preview_background_check.isChecked(),
+            compare_stage=self._compare_stage,
         )
 
     def _preview_run_number(self) -> int | None:
@@ -2931,9 +2991,14 @@ class GroupingDialog(QDialog):
         self._vector_alpha_widget.setVisible(vector_mode)
         # The inline single-α section calibrates the single/P_z balance; the
         # per-projection vector table (with its own inline Estimate) owns the rest.
+        # Hiding the α header hides its "Compare in preview" toggle too, so
+        # _sync_compare_toggles (which treats α as unavailable in vector mode) drops
+        # any α focus rather than leaving a ghost with no visible control.
         if hasattr(self, "_alpha_section"):
             self._alpha_section.setVisible(not vector_mode)
-            self._alpha_section_label.setVisible(not vector_mode)
+            if hasattr(self, "_alpha_header"):
+                self._alpha_header.setVisible(not vector_mode)
+            self._sync_compare_toggles()
 
         if vector_mode:
             self._update_vector_alpha_controls()
@@ -3515,6 +3580,12 @@ class GroupingDialog(QDialog):
         self._alpha_correction_digest = self._correction_digest()
         self._refresh_alpha_staleness()
         self._record_calibration_result_label(slot, policy)
+        # Auto-focus the α compare on a fresh calibration (single mode only — the
+        # α compare/toggle is hidden in vector mode, where the per-projection table
+        # on the Grouping tab owns α), preserving the old auto-overlay while giving
+        # the toggle a way to dismiss it.
+        if not bool(self._vector_axis_pairs):
+            self._set_compare_stage("alpha")
         self._mark_dirty()
 
     def _record_calibration_result_label(self, slot: str, policy: AlphaPolicy) -> None:

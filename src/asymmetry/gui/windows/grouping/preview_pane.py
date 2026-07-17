@@ -89,19 +89,14 @@ class _PreviewRequest:
     #: equivalent to ``compare_stage="alpha"``.
     overlay: bool = False
     #: Stage-generic before/after compare (one focused stage at a time). The solid
-    #: curve is always the reduction the request describes; the *ghost* removes one
-    #: stage: ``"alpha"`` ghosts α=1 (and reports the residual baseline), while
+    #: curve is always the full configured reduction; the *ghost* removes one
+    #: stage: ``"alpha"`` ghosts α=1 (and reports the residual baseline),
     #: ``"deadtime"``/``"background"`` ghost a *second* corrected pass with that one
-    #: stage dropped. ``None`` draws only the solid curve. Preview-only, like the
-    #: overrides — it never touches the persisted reduction.
+    #: stage dropped, and ``"raw"`` ghosts the fully-uncorrected asymmetry (both
+    #: count-stages dropped, α=1). ``None`` draws only the solid curve. Preview-only
+    #: — it never touches the persisted reduction, and it never degrades the solid,
+    #: so the α residual ⟨A⟩ is always read off the fully-corrected curve.
     compare_stage: str | None = None
-    #: Diagnostic per-stage view (preview only, never the persisted reduction):
-    #: when ``False``, that correction is dropped from *this preview* so its
-    #: incremental effect is visible. They can only *subtract* a configured stage,
-    #: never add one — ``use_x = flags.use_x and override_use_x`` — so an off
-    #: stage stays off. The default ``True`` is a strict no-op.
-    override_use_deadtime: bool = True
-    override_use_background: bool = True
 
 
 @dataclass(frozen=True)
@@ -191,8 +186,6 @@ class GroupingPreviewPane(QWidget):
         run_number: int | None = None,
         overlay: bool = False,
         compare_stage: str | None = None,
-        override_use_deadtime: bool = True,
-        override_use_background: bool = True,
     ) -> None:
         """Queue a (debounced) recompute of the preview for the current draft.
 
@@ -201,10 +194,9 @@ class GroupingPreviewPane(QWidget):
         histograms (co-added curves) the pane hides itself with a note; nothing is
         scheduled. *overlay* additionally draws the α=1 curve and the residual
         baseline (the calibrate view). *compare_stage* is the stage-generic form of
-        the same idea (``"deadtime"``/``"background"``/``"alpha"``), overriding
-        *overlay*. ``override_use_deadtime`` / ``override_use_background`` drop a
-        configured stage from *this preview only* (the diagnostic view); none of
-        these touch the persisted reduction.
+        the same idea (``"deadtime"``/``"background"``/``"alpha"``/``"raw"``),
+        overriding *overlay*. Both are preview-only and never touch the persisted
+        reduction.
         """
         if not histograms:
             self._show_unavailable("Preview needs raw detector histograms (none loaded).")
@@ -222,8 +214,6 @@ class GroupingPreviewPane(QWidget):
                 run_number=run_number,
                 overlay=bool(overlay),
                 compare_stage=compare_stage,
-                override_use_deadtime=bool(override_use_deadtime),
-                override_use_background=bool(override_use_background),
             )
         )
 
@@ -236,8 +226,6 @@ class GroupingPreviewPane(QWidget):
         run_number: int | None = None,
         overlay: bool = False,
         compare_stage: str | None = None,
-        override_use_deadtime: bool = True,
-        override_use_background: bool = True,
     ) -> None:
         """Queue a (debounced) resolve + recompute for an unresolved draft.
 
@@ -247,9 +235,8 @@ class GroupingPreviewPane(QWidget):
         estimate — happens on the worker thread. *profile* is deep-copied here
         so subsequent form edits cannot race the in-flight worker; *run* is
         shared read-only. *compare_stage* draws a stage-generic before/after ghost
-        (overriding *overlay*). ``override_use_deadtime`` / ``override_use_background``
-        drop a configured stage from *this preview only* (the diagnostic view);
-        none of these touch the persisted reduction.
+        (overriding *overlay*); both are preview-only and never touch the persisted
+        reduction.
         """
         histograms = list(run.histograms) if run is not None and run.histograms else []
         if not histograms:
@@ -269,8 +256,6 @@ class GroupingPreviewPane(QWidget):
                 run_number=run_number,
                 overlay=bool(overlay),
                 compare_stage=compare_stage,
-                override_use_deadtime=bool(override_use_deadtime),
-                override_use_background=bool(override_use_background),
             )
         )
 
@@ -445,11 +430,11 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     # Correct once, form the asymmetry per α. corrected_grouped_counts runs the
     # deadtime → grouping → background stages (the expensive part).
     flags = correction_flags_from_grouping(grouping)
-    # Diagnostic per-stage view: a toggle can only *drop* a configured stage from
-    # this preview (``and``), never add one — so the persisted reduction (which
-    # never sees these overrides) is unaffected and an off stage stays off.
-    use_deadtime = flags.use_deadtime and request.override_use_deadtime
-    use_background = flags.use_background and request.override_use_background
+    # The solid curve is always the full configured reduction — compares only ever
+    # add a *ghost*, never degrade the solid — so the α residual ⟨A⟩ (below) is
+    # always read off the fully-corrected curve.
+    use_deadtime = flags.use_deadtime
+    use_background = flags.use_background
     facility = request.facility or str(grouping.get("instrument", "") or "")
 
     def _reduce(dt: bool, bg: bool):
@@ -518,6 +503,14 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         )
         _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
         baseline_label = "without background"
+    elif compare == "raw" and (use_deadtime or use_background or abs(alpha - 1.0) > 1e-12):
+        # The compound "vs raw" ghost: every stage removed at once — no deadtime,
+        # no background, α=1. Nothing configured means raw == full, so no ghost.
+        if worker.is_cancelled():
+            raise TaskCancelledError
+        ghost = _form_asymmetry(_reduce(False, False), grouping, 1.0, first_good, last_good)
+        _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
+        baseline_label = "raw (uncorrected)"
 
     # Decimate here, off the GUI thread: bounds both the marshalled payload and
     # the GUI-thread errorbar draw (which is O(points) and the real hang on large
