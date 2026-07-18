@@ -24,6 +24,11 @@ form edits cannot race the worker; the run is shared read-only (the dialog does
 not mutate it while open). Vector-mode drafts are previewed on their primary
 forward/backward pair (the resolved ``forward_group`` / ``backward_group``; for
 canonical EMU that is the P_z axis).
+
+Drawing contract (see :meth:`GroupingPreviewPane._draw`): the solid curve is
+always the full configured reduction and alone sets the y-limits; a compare
+ghost is drawn dimmer underneath, named by a small inline text rather than a
+legend (the pager label and the focused correction card name the comparison).
 """
 
 from __future__ import annotations
@@ -33,14 +38,23 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import QSize, QTimer
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.project.profiles import GroupingProfile, resolve_effective_grouping
 from asymmetry.core.transform import (
+    binned_fb_asymmetry,
+    corrected_grouped_counts,
+    correction_flags_from_grouping,
     effective_group_indices,
-    reduce_grouped_asymmetry,
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
@@ -80,6 +94,21 @@ class _PreviewRequest:
     grouping: dict[str, Any] | None = None
     profile: GroupingProfile | None = None
     run: Run | None = None
+    #: Calibrate view: also draw the α=1 curve (ghosted) behind the draft-α curve
+    #: and report the residual baseline ⟨A⟩ over the good window, so a calibrated
+    #: α that centres the corrected asymmetry is self-evident in the one preview.
+    #: Retained as the legacy switch for the α compare; ``overlay=True`` is
+    #: equivalent to ``compare_stage="alpha"``.
+    overlay: bool = False
+    #: Stage-generic before/after compare (one focused stage at a time). The solid
+    #: curve is always the full configured reduction; the *ghost* removes one
+    #: stage: ``"alpha"`` ghosts α=1 (and reports the residual baseline),
+    #: ``"deadtime"``/``"background"`` ghost a *second* corrected pass with that one
+    #: stage dropped, and ``"raw"`` ghosts the fully-uncorrected asymmetry (both
+    #: count-stages dropped, α=1). ``None`` draws only the solid curve. Preview-only
+    #: — it never touches the persisted reduction, and it never degrades the solid,
+    #: so the α residual ⟨A⟩ is always read off the fully-corrected curve.
+    compare_stage: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +120,17 @@ class _PreviewResult:
     asymmetry: np.ndarray
     error: np.ndarray
     run_number: int | None
+    #: Compare extras (all ``None``/``False`` unless the request asked for a
+    #: compare). ``baseline`` is the ghost curve (aligned to ``time``);
+    #: ``baseline_label`` names it ("α = 1", "without deadtime", …); the
+    #: ``centre_*`` residual baseline is populated only for the α compare.
+    baseline: np.ndarray | None = None
+    baseline_label: str | None = None
+    compare_stage: str | None = None
+    centre_mean: float | None = None
+    centre_err: float | None = None
+    alpha: float | None = None
+    overlay: bool = False
 
 
 class GroupingPreviewPane(QWidget):
@@ -132,20 +172,65 @@ class GroupingPreviewPane(QWidget):
         self._figure = None
         self._canvas = None
         self._axes = None
+        self._nav_toolbar = None
+        #: Last drawn result, retained so Home can redraw with fresh autoscale
+        #: without a recompute.
+        self._last_result: _PreviewResult | None = None
+        #: The user's chosen ``(xlim, ylim)`` once a pan/zoom drag actually moved
+        #: the view, or ``None`` while the solid-only autoscale owns it. Stored
+        #: explicitly — never re-read from the axes at draw time, because error
+        #: and empty-data paths ``clear()`` the axes (resetting the limits to
+        #: matplotlib's defaults), and capturing those would freeze the preview
+        #: on a garbage view. Home resets to ``None``.
+        self._user_view: tuple[tuple[float, float], tuple[float, float]] | None = None
+        #: Limits at nav-drag press, to tell a real drag from a mode-on click.
+        self._nav_press_view: tuple | None = None
+        #: A result whose draw arrived mid-drag; drawn on release instead, so a
+        #: debounced redraw never clears the axes under the rubber band.
+        self._deferred_result: _PreviewResult | None = None
         try:
             from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
-            self._figure, self._canvas = create_canvas(layout="tight")
+            self._figure, self._canvas, self._nav_toolbar = create_canvas(
+                layout="tight", toolbar=True, parent=self
+            )
             self._axes = self._figure.add_subplot(111)
             self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             layout.addWidget(self._canvas, stretch=1)
+            # The full toolbar is far too much chrome for a 200px advisory pane;
+            # keep it hidden and surface just pan/zoom/home as compact buttons on
+            # the status strip (QToolButtons bound to the toolbar's own actions,
+            # so checked-state and mode plumbing stay matplotlib's).
+            self._nav_toolbar.setVisible(False)
+            # A pan/zoom drag that MOVED the view means the user chose it —
+            # capture the chosen limits on release (the toolbar's own release
+            # handlers run first, so the limits are final by then).
+            self._canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
+            self._canvas.mpl_connect("button_release_event", self._on_canvas_button_release)
         except ImportError:
             fallback = QLabel("matplotlib is not installed — preview unavailable.")
             fallback.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
             fallback.setWordWrap(True)
             layout.addWidget(fallback, stretch=1)
 
-        layout.addWidget(self._status)
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(4)
+        status_row.addWidget(self._status, stretch=1)
+        if self._nav_toolbar is not None:
+            for key in ("pan", "zoom", "home"):
+                action = self._nav_toolbar._actions.get(key)
+                if action is None:
+                    continue
+                button = QToolButton(self)
+                button.setDefaultAction(action)
+                button.setAutoRaise(True)
+                button.setIconSize(QSize(14, 14))
+                if key == "home":
+                    # Home = back to the solid-only autoscale contract.
+                    action.triggered.connect(self._on_home_triggered)
+                status_row.addWidget(button)
+        layout.addLayout(status_row)
 
     # -- public API ------------------------------------------------------
 
@@ -156,13 +241,19 @@ class GroupingPreviewPane(QWidget):
         grouping: dict[str, Any],
         facility: str = "",
         run_number: int | None = None,
+        overlay: bool = False,
+        compare_stage: str | None = None,
     ) -> None:
         """Queue a (debounced) recompute of the preview for the current draft.
 
         *grouping* is the draft resolved against the preview run — i.e. exactly
-        the ``run.grouping`` shape :func:`reduce_grouped_asymmetry` consumes. When
-        the dataset has no histograms (co-added curves) the pane hides itself with
-        a note; nothing is scheduled.
+        the ``run.grouping`` shape the reduction consumes. When the dataset has no
+        histograms (co-added curves) the pane hides itself with a note; nothing is
+        scheduled. *overlay* additionally draws the α=1 curve and the residual
+        baseline (the calibrate view). *compare_stage* is the stage-generic form of
+        the same idea (``"deadtime"``/``"background"``/``"alpha"``/``"raw"``),
+        overriding *overlay*. Both are preview-only and never touch the persisted
+        reduction.
         """
         if not histograms:
             self._show_unavailable("Preview needs raw detector histograms (none loaded).")
@@ -178,6 +269,8 @@ class GroupingPreviewPane(QWidget):
                 grouping=dict(grouping),
                 facility=str(facility or grouping.get("instrument", "") or ""),
                 run_number=run_number,
+                overlay=bool(overlay),
+                compare_stage=compare_stage,
             )
         )
 
@@ -188,6 +281,8 @@ class GroupingPreviewPane(QWidget):
         run: Run | None,
         facility: str = "",
         run_number: int | None = None,
+        overlay: bool = False,
+        compare_stage: str | None = None,
     ) -> None:
         """Queue a (debounced) resolve + recompute for an unresolved draft.
 
@@ -196,7 +291,9 @@ class GroupingPreviewPane(QWidget):
         ``auto_detect`` t0 policy or sum whole groups for a per-run alpha
         estimate — happens on the worker thread. *profile* is deep-copied here
         so subsequent form edits cannot race the in-flight worker; *run* is
-        shared read-only.
+        shared read-only. *compare_stage* draws a stage-generic before/after ghost
+        (overriding *overlay*); both are preview-only and never touch the persisted
+        reduction.
         """
         histograms = list(run.histograms) if run is not None and run.histograms else []
         if not histograms:
@@ -214,6 +311,8 @@ class GroupingPreviewPane(QWidget):
                 run=run,
                 facility=str(facility or ""),
                 run_number=run_number,
+                overlay=bool(overlay),
+                compare_stage=compare_stage,
             )
         )
 
@@ -271,7 +370,46 @@ class GroupingPreviewPane(QWidget):
             return
         if result.generation != self._generation:
             return  # superseded by a newer edit
+        self._last_result = result
         self._draw(result)
+
+    # -- pan/zoom --------------------------------------------------------
+
+    def _nav_active(self) -> bool:
+        toolbar = self._nav_toolbar
+        return toolbar is not None and bool(str(getattr(toolbar, "mode", "")))
+
+    def _drag_in_progress(self) -> bool:
+        """A nav-mode mouse drag is live (press seen, release not yet)."""
+        return self._nav_press_view is not None
+
+    def _on_canvas_button_press(self, event: object) -> None:
+        if self._nav_active() and self._axes is not None:
+            self._nav_press_view = (self._axes.get_xlim(), self._axes.get_ylim())
+
+    def _on_canvas_button_release(self, event: object) -> None:
+        """Capture the user's view when a nav drag actually moved it.
+
+        Runs after the toolbar's own release handlers (registered first), so the
+        limits are final. A mode-on click that moved nothing captures nothing —
+        otherwise a stray click would freeze the autoscale at its current range.
+        Any redraw deferred during the drag lands now.
+        """
+        press_view = self._nav_press_view
+        self._nav_press_view = None
+        if press_view is not None and self._axes is not None:
+            view = (self._axes.get_xlim(), self._axes.get_ylim())
+            if view != press_view:
+                self._user_view = view
+        if self._deferred_result is not None:
+            deferred, self._deferred_result = self._deferred_result, None
+            self._draw(deferred)
+
+    def _on_home_triggered(self, *args: object) -> None:
+        """Home: hand the view back to the solid-only autoscale contract."""
+        self._user_view = None
+        if self._last_result is not None:
+            self._draw(self._last_result)
 
     def _on_error(self, message: str) -> None:
         self._dispatch_next_after_completion()
@@ -280,8 +418,32 @@ class GroupingPreviewPane(QWidget):
     # -- drawing ---------------------------------------------------------
 
     def _draw(self, result: _PreviewResult) -> None:
+        """Redraw the preview: solid = the full reduction, ghost = the compare.
+
+        The y-axis always follows the *solid* curve (its finite ``asymmetry ±
+        error`` range, padded ~8%) — the ghost never influences the autoscale,
+        because an uncorrected ghost can reach ~1e7 % (e.g. a FLAME run without
+        deadtime) and would crush the solid flat. There is no legend: the
+        comparison is named by the pager label and the focused correction card,
+        and the ghost itself is labelled inline at its rightmost in-view sample
+        (clamped just inside the top/bottom limit when the ghost runs off-scale,
+        so an off-scale ghost is still named). Once the user pans/zooms, their
+        view is preserved verbatim across redraws until Home resets it.
+        """
         if self._axes is None or self._canvas is None:
             return
+        # Never clear the axes under a live pan/zoom rubber band — park the
+        # result and draw it on release.
+        if self._drag_in_progress():
+            self._deferred_result = result
+            return
+        # A user-chosen pan/zoom view survives the debounced redraws — an edit
+        # mid-inspection must not yank the axes back — until Home resets it.
+        # `_user_view` is the stored drag result, deliberately NOT re-read from
+        # the axes here: the error/empty paths clear() the axes back to default
+        # limits, and re-capturing those would freeze the preview on a garbage
+        # (0..1) view — the "strange state" this guards against.
+        preserved = self._user_view
         self._axes.clear()
         if result.time.size == 0:
             self._axes.text(
@@ -294,6 +456,18 @@ class GroupingPreviewPane(QWidget):
                 color=tokens.TEXT_MUTED,
             )
         else:
+            # Compare view: ghost the "before" (α=1, or the stage removed) behind
+            # the solid "as reduced" curve so the effect of that stage is
+            # self-evident.
+            if result.overlay and result.baseline is not None:
+                self._axes.plot(
+                    result.time,
+                    result.baseline,
+                    color=tokens.TEXT_DIM,
+                    linewidth=0.9,
+                    alpha=0.55,
+                    zorder=2,
+                )
             self._axes.errorbar(
                 result.time,
                 result.asymmetry,
@@ -305,14 +479,43 @@ class GroupingPreviewPane(QWidget):
                 capsize=0.0,
                 color=tokens.ACCENT,
                 ecolor=tokens.TEXT_MUTED,
+                zorder=3,
             )
             self._axes.axhline(0.0, color=tokens.TEXT_MUTED, linewidth=0.5, alpha=0.5)
+            # Solid-only autoscale, set explicitly AFTER plotting so neither the
+            # ghost nor matplotlib's own autoscale can widen the range — unless
+            # the user panned/zoomed, in which case their view wins verbatim.
+            if preserved is not None:
+                self._axes.set_xlim(*preserved[0])
+                limits: tuple[float, float] | None = preserved[1]
+            else:
+                limits = _solid_ylimits(result.asymmetry, result.error)
+            if limits is not None:
+                self._axes.set_ylim(*limits)
+                if result.overlay and result.baseline is not None and result.baseline_label:
+                    spec = _ghost_label_spec(result.time, result.baseline, *limits)
+                    if spec is not None:
+                        x, y, ha, va = spec
+                        self._axes.text(
+                            x,
+                            y,
+                            result.baseline_label,
+                            fontsize=7,
+                            color=tokens.TEXT_DIM,
+                            ha=ha,
+                            va=va,
+                        )
         self._axes.set_xlabel("Time (µs)", fontsize=8)
         self._axes.set_ylabel("Asymmetry (%)", fontsize=8)
         self._axes.tick_params(labelsize=7)
         self._canvas.draw_idle()
         run_label = f"run {result.run_number}" if result.run_number is not None else "preview run"
-        self._status.setText(f"Preview: {run_label}")
+        status = f"Preview: {run_label}"
+        if result.overlay and result.centre_mean is not None and result.centre_err is not None:
+            status += (
+                f"  ·  residual baseline ⟨A⟩ = {result.centre_mean:.3f} ± {result.centre_err:.3f} %"
+            )
+        self._status.setText(status)
 
     def _set_error(self, message: str) -> None:
         self._status.setText(message)
@@ -355,32 +558,214 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
 
     if worker.is_cancelled():
         raise TaskCancelledError
-    deadtime_mode = str(grouping.get("deadtime_mode", "off")).strip().lower() or "off"
-    reduction = reduce_grouped_asymmetry(
-        histograms=request.histograms,
-        grouping=grouping,
-        forward_idx=forward_idx,
-        backward_idx=backward_idx,
-        alpha=_as_float(grouping.get("alpha"), 1.0),
-        use_deadtime=bool(grouping.get("deadtime_correction", False)),
-        deadtime_mode=deadtime_mode,
-        use_background=bool(grouping.get("background_correction", False)),
-        facility=request.facility or str(grouping.get("instrument", "") or ""),
-        reference_resolver=None,
-    )
+    # Correct once, form the asymmetry per α. corrected_grouped_counts runs the
+    # deadtime → grouping → background stages (the expensive part).
+    flags = correction_flags_from_grouping(grouping)
+    # The solid curve is always the full configured reduction — compares only ever
+    # add a *ghost*, never degrade the solid — so the α residual ⟨A⟩ (below) is
+    # always read off the fully-corrected curve.
+    use_deadtime = flags.use_deadtime
+    use_background = flags.use_background
+    facility = request.facility or str(grouping.get("instrument", "") or "")
+
+    def _reduce(dt: bool, bg: bool):
+        return corrected_grouped_counts(
+            histograms=request.histograms,
+            grouping=grouping,
+            forward_idx=forward_idx,
+            backward_idx=backward_idx,
+            use_deadtime=dt,
+            deadtime_mode=flags.deadtime_mode,
+            use_background=bg,
+            facility=facility,
+            reference_resolver=None,
+        )
+
+    corrected = _reduce(use_deadtime, use_background)
+    n_grouped = min(len(corrected.forward), len(corrected.backward))
+    try:
+        first_good = max(0, int(grouping.get("first_good_bin", 0)))
+    except (TypeError, ValueError):
+        first_good = 0
+    try:
+        last_good = int(grouping.get("last_good_bin", n_grouped - 1))
+    except (TypeError, ValueError):
+        last_good = n_grouped - 1
+    alpha = _as_float(grouping.get("alpha"), 1.0)
+
+    time, asymmetry, error = _form_asymmetry(corrected, grouping, alpha, first_good, last_good)
+
+    # Stage-generic before/after compare: the solid curve is the reduction above;
+    # the *ghost* removes one stage. "alpha" ghosts α=1 from the SAME corrected
+    # counts (one reduction, two curves) and reports the residual baseline;
+    # "deadtime"/"background" ghost a SECOND corrected pass with that one stage
+    # dropped — CorrectedGroupedCounts keeps only post-background arrays, so the
+    # pedestal cannot be added back and the extra pass is unavoidable, but it runs
+    # behind the pane's debounce + single-flight. All preview-only (`_reduce` reads
+    # the same grouping; nothing here touches the persisted reduction). An
+    # un-applied stage has nothing to remove, so it draws no ghost.
+    compare = request.compare_stage or ("alpha" if request.overlay else None)
+    baseline = None
+    baseline_label: str | None = None
+    centre_mean: float | None = None
+    centre_err: float | None = None
+    if compare == "alpha":
+        # Residual baseline (inverse-variance weighted ⟨A⟩) on the full-res curve.
+        centre_mean, centre_err = _weighted_centre(asymmetry, error)
+        if abs(alpha - 1.0) > 1e-12:
+            _bt, base_asym, _be = _form_asymmetry(corrected, grouping, 1.0, first_good, last_good)
+            _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
+            baseline_label = "α = 1"
+    elif compare == "deadtime" and use_deadtime:
+        # The ghost is a second full reduction — honour cancellation before it, as
+        # the first pass does, so a shutdown mid-flight stops promptly on big runs.
+        if worker.is_cancelled():
+            raise TaskCancelledError
+        ghost = _form_asymmetry(
+            _reduce(False, use_background), grouping, alpha, first_good, last_good
+        )
+        _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
+        baseline_label = "without deadtime"
+    elif compare == "background" and use_background:
+        if worker.is_cancelled():
+            raise TaskCancelledError
+        ghost = _form_asymmetry(
+            _reduce(use_deadtime, False), grouping, alpha, first_good, last_good
+        )
+        _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
+        baseline_label = "without background"
+    elif compare == "raw" and (use_deadtime or use_background or abs(alpha - 1.0) > 1e-12):
+        # The compound "vs raw" ghost: every stage removed at once — no deadtime,
+        # no background, α=1. Nothing configured means raw == full, so no ghost.
+        if worker.is_cancelled():
+            raise TaskCancelledError
+        ghost = _form_asymmetry(_reduce(False, False), grouping, 1.0, first_good, last_good)
+        _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
+        baseline_label = "raw (uncorrected)"
+
     # Decimate here, off the GUI thread: bounds both the marshalled payload and
     # the GUI-thread errorbar draw (which is O(points) and the real hang on large
     # runs — see _MAX_PREVIEW_POINTS).
-    time, asymmetry, error = _decimate_for_preview(
-        reduction.time, reduction.asymmetry, reduction.error, _MAX_PREVIEW_POINTS
-    )
+    time, asymmetry, error = _decimate_for_preview(time, asymmetry, error, _MAX_PREVIEW_POINTS)
     return _PreviewResult(
         generation=request.generation,
         time=time,
         asymmetry=asymmetry,
         error=error,
         run_number=request.run_number,
+        baseline=baseline,
+        baseline_label=baseline_label,
+        compare_stage=compare,
+        centre_mean=centre_mean,
+        centre_err=centre_err,
+        alpha=alpha,
+        overlay=compare is not None,
     )
+
+
+def _form_asymmetry(
+    corrected: Any,
+    grouping: dict[str, Any],
+    alpha: float,
+    first_good: int,
+    last_good: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bin the corrected counts into a percent asymmetry for one α.
+
+    Mirrors :func:`reduce_grouped_asymmetry`'s final step (counts → binned
+    asymmetry, scaled to percent) so the preview matches the reduction exactly.
+    """
+    time, asym, err = binned_fb_asymmetry(
+        corrected.forward,
+        corrected.backward,
+        grouping=grouping,
+        common_t0=corrected.common_t0,
+        bin_width_us=corrected.bin_width,
+        alpha=alpha,
+        first_good_bin=first_good,
+        last_good_bin=last_good,
+        forward_error=corrected.forward_error,
+        backward_error=corrected.backward_error,
+    )
+    return (
+        np.asarray(time, dtype=np.float64),
+        np.asarray(asym, dtype=np.float64) * 100.0,
+        np.asarray(err, dtype=np.float64) * 100.0,
+    )
+
+
+def _solid_ylimits(
+    asymmetry: np.ndarray, error: np.ndarray, pad_fraction: float = 0.08
+) -> tuple[float, float] | None:
+    """Y-limits covering the solid curve's finite ``asymmetry ± error``, padded.
+
+    The preview's autoscale contract: only the solid (fully-reduced) curve sets
+    the range — a compare ghost, which can sit orders of magnitude away, must
+    never crush it. Returns ``None`` when nothing is finite (caller keeps
+    matplotlib's default limits).
+    """
+    a = np.asarray(asymmetry, dtype=np.float64)
+    e = np.asarray(error, dtype=np.float64)
+    e = np.where(np.isfinite(e), np.abs(e), 0.0)
+    finite = np.isfinite(a)
+    if not finite.any():
+        return None
+    lo = float(np.min(a[finite] - e[finite]))
+    hi = float(np.max(a[finite] + e[finite]))
+    pad = pad_fraction * (hi - lo)
+    if pad <= 0.0:
+        pad = max(1.0, abs(hi) * pad_fraction)  # flat curve: keep a visible band
+    return lo - pad, hi + pad
+
+
+def _ghost_label_spec(
+    time: np.ndarray, baseline: np.ndarray, ylo: float, yhi: float
+) -> tuple[float, float, str, str] | None:
+    """Placement ``(x, y, ha, va)`` for the inline ghost label.
+
+    Anchors at the rightmost ghost sample inside the final y-limits. When no
+    ghost sample is in view (the ghost runs entirely off-scale), the label sits
+    at the right edge, clamped just inside the top or bottom limit — whichever
+    side the ghost exited — so the off-scale ghost is still named. ``None`` when
+    the ghost has no finite samples.
+    """
+    t = np.asarray(time, dtype=np.float64)
+    b = np.asarray(baseline, dtype=np.float64)
+    n = min(t.size, b.size)
+    t, b = t[:n], b[:n]
+    finite = np.isfinite(t) & np.isfinite(b)
+    if not finite.any():
+        return None
+    in_view = finite & (b >= ylo) & (b <= yhi)
+    if in_view.any():
+        idx = int(np.flatnonzero(in_view)[-1])
+        return float(t[idx]), float(b[idx]), "right", "bottom"
+    idx = int(np.flatnonzero(finite)[-1])
+    x = float(np.max(t[finite]))
+    margin = 0.02 * (yhi - ylo)
+    if b[idx] > yhi:
+        return x, yhi - margin, "right", "top"
+    return x, ylo + margin, "right", "bottom"
+
+
+def _weighted_centre(asymmetry: np.ndarray, error: np.ndarray) -> tuple[float | None, float | None]:
+    """Inverse-variance weighted mean of the asymmetry and its error.
+
+    This is the residual baseline the calibrate view reports: for a weak-TF
+    calibration run a balanced α drives it to zero, so it is the honest numeric
+    replacement for eyeballing whether the oscillation sits on zero.
+    """
+    a = np.asarray(asymmetry, dtype=np.float64)
+    e = np.asarray(error, dtype=np.float64)
+    mask = np.isfinite(a) & np.isfinite(e) & (e > 0.0)
+    if not mask.any():
+        return None, None
+    weights = 1.0 / np.square(e[mask])
+    total = float(np.sum(weights))
+    if total <= 0.0:
+        return None, None
+    mean = float(np.sum(a[mask] * weights) / total)
+    return mean, float(np.sqrt(1.0 / total))
 
 
 def _as_int(value: Any, default: int) -> int:

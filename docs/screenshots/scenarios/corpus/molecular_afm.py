@@ -174,25 +174,16 @@ class MolAfmAlphaScenario(CorpusScenario):
         "step — Estimate balances the forward/backward asymmetry (α ≈ 1.25)."
     )
     example = EXAMPLE
-    size = (760, 660)
+    size = (1220, 760)
 
     def capture(self, ctx) -> Path:  # noqa: D401
-        from asymmetry.gui.windows.grouping.alpha_calibration_dialog import (
-            AlphaCalibrationDialog,
-        )
+        # α calibration is inline in the Grouping window's Corrections column
+        # (the standalone modal is retired); the shared preview overlays the
+        # α = 1 ↔ α̂ before/after with the residual baseline ⟨A⟩.
+        from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = load_corpus_datasets([_DATA % _ALPHA_RUN])[0]
-        grouping = dataset.run.grouping
-        # The dialog wants gid -> 0-based detector indices (it re-adds 1 for the
-        # reduction); the corpus payload stores 1-based ids, so shift down.
-        groups = {int(gid): [int(i) - 1 for i in idxs] for gid, idxs in grouping["groups"].items()}
-        dialog = AlphaCalibrationDialog(
-            [dataset],
-            groups=groups,
-            forward_group=int(grouping["forward_group"]),
-            backward_group=int(grouping["backward_group"]),
-            selected_run_number=int(dataset.run_number),
-        )
+        dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
@@ -201,11 +192,12 @@ class MolAfmAlphaScenario(CorpusScenario):
         # Estimate runs on a worker thread; block until it lands so the capture
         # shows the α value and the balanced "after" curve, never the transient
         # "Computing estimate…" state.
-        dialog._estimate_btn.click()
-        _wait_until(
-            lambda: dialog._tasks.active_count == 0 and dialog._estimate is not None,
-            timeout_ms=15000,
-        )
+        section = dialog._alpha_section
+        section._on_estimate()
+        _wait_until(lambda: section._tasks.active_count == 0, timeout_ms=15000)
+        # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.
+        _process(500)
+        dialog._corrections_scroll.ensureWidgetVisible(section)
         _process(80)
 
         out_path = ctx.output_dir / f"{self.name}.png"
@@ -213,7 +205,9 @@ class MolAfmAlphaScenario(CorpusScenario):
         pix = dialog.grab()
         if not pix.save(str(out_path), "PNG"):
             raise RuntimeError(f"Failed to save screenshot to {out_path}")
-        dialog.close()
+        # The applied estimate dirtied the draft: close() would raise the
+        # discard-guard modal, which hangs headless — tear down directly.
+        dialog._teardown_workers()
         dialog.deleteLater()
         _process(40)
         return out_path

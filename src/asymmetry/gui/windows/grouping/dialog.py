@@ -13,20 +13,25 @@ module so the historical module API is unchanged after the package split.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QApplication,
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -34,34 +39,35 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
-    QSpinBox,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset
+from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.instrument import (
     CANONICAL_VECTOR_AXES,
     derive_projection_pairs,
     detect_instrument,
     get_instrument_layout,
     instrument_display_name,
-    recommend_grouping_preset,
     variant_for_histograms,
 )
+from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
-    DeadtimePolicy,
+    BackgroundPolicy,
     GroupingProfile,
     ProfileFingerprint,
     T0Policy,
     profile_fingerprint_for_run,
+    resolve_effective_grouping,
 )
 from asymmetry.core.transform import (
-    apply_grouping,
     available_background_modes,
     calibrate_deadtime_from_histograms,
     common_t0_for_groups,
@@ -69,7 +75,6 @@ from asymmetry.core.transform import (
     excluded_detector_indices,
     filter_excluded_indices,
     find_t0_for_run,
-    fit_tail_background,
     format_detector_list,
     parse_detector_list,
     resolve_background_mode,
@@ -77,14 +82,35 @@ from asymmetry.core.transform import (
 )
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
-from asymmetry.gui.styles.widgets import apply_param_table_style, clear_layout
-from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
-from asymmetry.gui.windows.grouping.background_dialog import (
-    BackgroundDialog,
-    BackgroundReferenceRunCandidate,
+from asymmetry.gui.styles.widgets import (
+    apply_param_table_style,
+    build_stage_chip_qss,
+    clear_layout,
+    make_section_header,
+    make_warning_banner,
 )
-from asymmetry.gui.windows.grouping.deadtime_dialog import (
-    DeadtimeDialog,
+from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.widgets.no_scroll_spin import (
+    NoScrollComboBox,
+    NoScrollDoubleSpinBox,
+    NoScrollSpinBox,
+)
+from asymmetry.gui.widgets.section_overflow_indicator import SectionOverflowIndicator
+from asymmetry.gui.windows.grouping.alpha_section import (
+    AlphaEstimateResult,
+    AlphaSectionWidget,
+    build_alpha_request,
+    populate_calibration_run_combo,
+    run_alpha_estimate,
+)
+from asymmetry.gui.windows.grouping.background_section import (
+    BackgroundReferenceRunCandidate,
+    BackgroundSectionWidget,
+    background_status_text,
+)
+from asymmetry.gui.windows.grouping.correction_card import CorrectionCard
+from asymmetry.gui.windows.grouping.deadtime_section import (
+    DeadtimeSectionWidget,
     DeadtimeSourceRun,
     deadtime_status_text,
 )
@@ -104,70 +130,40 @@ from asymmetry.gui.windows.grouping.profile_bridge import (
 )
 from asymmetry.gui.windows.grouping.scope_panel import ScopePanel
 
+#: Compare-pager cycle order (`_step_compare`/`_sync_compare_pager`). ``None``
+#: ("off") is always available; the rest are gated by `_compare_stage_available`.
+_COMPARE_CYCLE: tuple[str | None, ...] = (None, "deadtime", "background", "alpha", "raw")
 
-@dataclass(frozen=True)
-class _BackgroundDialogContext:
-    """Everything ``_on_configure_background`` gathers cheaply on the GUI thread.
+#: Stage identity colours (chip outline = card stripe; see ``tokens.STAGE_*``).
+_STAGE_COLORS: dict[str, tuple[str, str]] = {
+    "deadtime": (tokens.STAGE_DEADTIME, tokens.STAGE_DEADTIME_SOFT),
+    "background": (tokens.STAGE_BACKGROUND, tokens.STAGE_BACKGROUND_SOFT),
+    "alpha": (tokens.STAGE_ALPHA, tokens.STAGE_ALPHA_SOFT),
+}
 
-    Cheap relative to the group summation below: no full-histogram scan, so it
-    stays synchronous and is simply carried across to the worker's
-    finished/error callback, which opens :class:`BackgroundDialog` with it.
-    """
+#: Pager label text per focused stage (see `_sync_compare_pager`).
+_COMPARE_STAGE_LABELS: dict[str, str] = {
+    "deadtime": "without deadtime",
+    "background": "without background",
+    "alpha": "α = 1",
+    "raw": "vs raw",
+}
 
-    has_fixed: bool
-    candidates: list[BackgroundReferenceRunCandidate]
-    reference_grouping: dict[str, Any]
-    background_run_payload: dict[str, Any] | None
+#: Correction-card compare indicator per focused stage (`_sync_correction_cards`).
+#: "raw" is deliberately absent: the compound compare is not one stage's card.
+_CARD_COMPARING_TEXTS: dict[str, str] = {
+    "deadtime": "comparing: without deadtime",
+    "background": "comparing: without background",
+    "alpha": "comparing: α = 1 ghost",
+}
 
-
-@dataclass(frozen=True)
-class _BackgroundPreviewRequest:
-    """An immutable snapshot of what to group, built on the GUI thread."""
-
-    token: int
-    histograms: list[Histogram]
-    forward_indices: list[int]
-    backward_indices: list[int]
-    bin_width: float
-    t0_bin: int
-    last_good_bin: int
-
-
-@dataclass(frozen=True)
-class _BackgroundPreviewResult:
-    """The grouped forward/backward preview arrays, tagged with their token."""
-
-    token: int
-    forward_counts: np.ndarray
-    backward_counts: np.ndarray
-    bin_width: float
-    t0_bin: int
-    last_good_bin: int
-
-
-def _run_background_preview(
-    worker: TaskWorker, request: _BackgroundPreviewRequest
-) -> _BackgroundPreviewResult:
-    """Sum the full forward/backward groups off the GUI thread.
-
-    ``apply_grouping`` sums every listed histogram's counts array — for a
-    grouping spanning most of a 128-detector run over millions of bins this is
-    the expensive step the Configure… button used to run synchronously.
-    """
-    if worker.is_cancelled():
-        raise TaskCancelledError
-    forward_counts = apply_grouping(request.histograms, request.forward_indices)
-    if worker.is_cancelled():
-        raise TaskCancelledError
-    backward_counts = apply_grouping(request.histograms, request.backward_indices)
-    return _BackgroundPreviewResult(
-        token=request.token,
-        forward_counts=forward_counts,
-        backward_counts=backward_counts,
-        bin_width=request.bin_width,
-        t0_bin=request.t0_bin,
-        last_good_bin=request.last_good_bin,
-    )
+#: Card status = the pipeline-chip summary minus the prefix that would
+#: duplicate the card title ("Deadtime" + "off", not "Deadtime" + "Deadtime: off").
+_CARD_STATUS_PREFIXES: dict[str, str] = {
+    "deadtime": "Deadtime: ",
+    "background": "Background: ",
+    "alpha": "α = ",
+}
 
 
 class GroupingDialog(QDialog):
@@ -253,13 +249,13 @@ class GroupingDialog(QDialog):
         # one is the dialog's). Created before the "no runs" early return below
         # so ``done``/``closeEvent`` can unconditionally shut it down.
         self._tasks = TaskRunner(self)
-        #: Bumped on every Configure… click; a finished/errored result whose
-        #: token no longer matches the current one is stale and is discarded.
-        self._background_configure_token = 0
-        self._pending_background_context: _BackgroundDialogContext | None = None
 
         self.setWindowTitle("Grouping")
-        self.resize(940, 560)
+        # Wide enough that the grouping and corrections columns sit side by side
+        # (the pipeline strip and section headers fit without horizontal
+        # scrolling) and tall enough that both columns' default (deadtime-off)
+        # state needs no vertical scrolling either.
+        self.resize(1220, 680)
 
         if not self._datasets:
             layout = QVBoxLayout(self)
@@ -299,10 +295,26 @@ class GroupingDialog(QDialog):
         self._vector_backward_labels: dict[str, QLabel] = {}
         self._vector_estimate_buttons: dict[str, QPushButton] = {}
         self._estimate_all_btn: QPushButton | None = None
+        # Inline per-projection α estimate (replaces the retired modal). Estimates
+        # run off-thread on this runner; "Estimate All" serialises them one axis at
+        # a time (the queue below), so each result routes to its own spin.
+        self._vector_alpha_tasks = TaskRunner(self)
+        self._vector_estimate_token = 0
+        self._vector_estimate_queue: list[str] = []
+        self._vector_estimate_source_run: int | None = None
+        #: Focused compare-in-preview stage ("deadtime"/"background"/"alpha"/
+        #: "raw"/None) — preview-only, drives the ghost overlay (never the payload).
+        self._compare_stage: str | None = None
         # Last successful estimate per slot ("single" or axis name):
         # (alpha, alpha_error, reference_run). Used to attach provenance to
         # the payload only while the spin still holds the estimated value.
         self._alpha_estimate_state: dict[str, tuple[float, float | None, int]] = {}
+        # Digest of the deadtime + background settings a calibrated alpha was
+        # measured under. When the corrections later change, the calibrated alpha
+        # no longer balances the reduced (corrected) asymmetry — the staleness
+        # banner flags that. ``None`` until an alpha is calibrated in this session
+        # or re-seeded from a saved payload's ``alpha_correction_digest``.
+        self._alpha_correction_digest: str | None = None
 
         root = QVBoxLayout(self)
         root.setSpacing(6)
@@ -310,7 +322,7 @@ class GroupingDialog(QDialog):
         # \u2500\u2500 Top bar: profile selector + preview run + preset \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         profile_row = QHBoxLayout()
         profile_row.addWidget(QLabel("Profile"))
-        self._profile_combo = QComboBox()
+        self._profile_combo = NoScrollComboBox()
         self._profile_combo.setMinimumContentsLength(20)
         self._rebuild_profile_combo()
         self._profile_combo.activated.connect(self._on_profile_combo_activated)
@@ -326,7 +338,7 @@ class GroupingDialog(QDialog):
         # datasets. Hidden when the project holds a single instrument (nothing to
         # switch between); shown as "<display> \u2014 N runs" otherwise.
         self._instrument_label = QLabel("Instrument")
-        self._instrument_combo = QComboBox()
+        self._instrument_combo = NoScrollComboBox()
         self._instrument_combo.setMinimumContentsLength(18)
         self._rebuild_instrument_combo()
         self._instrument_combo.activated.connect(self._on_instrument_combo_activated)
@@ -338,32 +350,16 @@ class GroupingDialog(QDialog):
         # preview-run combo. ``_current_run`` tracks the selected run.
         self._current_run = int(self._reference_dataset.run_number)
         profile_row.addStretch()
+
+        # Persistent editing-target strip, right-aligned in the top row so it
+        # costs the right pane no vertical space: accent-tinted while editing
+        # the profile ("Editing profile 'X' — applies to N runs"), warning-
+        # tinted while editing a single run's override ("Editing override for
+        # run N — this run only"). One of three redundant cues (with the
+        # scope-list row tint and the "override *" chip).
+        self._editing_strip = QLabel()
+        profile_row.addWidget(self._editing_strip)
         root.addLayout(profile_row)
-
-        preset_row = QHBoxLayout()
-        preset_row.addWidget(QLabel("Preset"))
-        self._preset_combo = QComboBox()
-        self._preset_combo.setMinimumContentsLength(18)
-        self._preset_combo.activated.connect(self._on_preset_combo_activated)
-        preset_row.addWidget(self._preset_combo)
-        self._preset_chip = QLabel("")
-        self._preset_chip.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        preset_row.addWidget(self._preset_chip)
-        preset_row.addStretch()
-        root.addLayout(preset_row)
-        # The preset combo is populated at the end of __init__, once the
-        # detector-layout resolution state (_detector_layout_instrument_name)
-        # exists in the form section below.
-
-        # Non-blocking transverse-field nudge: shown when the reference run is
-        # transverse-field but the grouping is still on a longitudinal preset
-        # (which washes out the precession). Points the user at the Detector
-        # Layout editor, where the recommended preset can be applied.
-        self._tf_hint_label = QLabel()
-        self._tf_hint_label.setWordWrap(True)
-        self._tf_hint_label.setStyleSheet(f"color: {tokens.WARN};")
-        self._tf_hint_label.setVisible(False)
-        root.addWidget(self._tf_hint_label)
 
         # \u2500\u2500 Main split: left pane (datasets + groups) | right pane (form) \u2500
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -382,6 +378,25 @@ class GroupingDialog(QDialog):
         self._scope_panel.selected.connect(self._on_scope_run_selected)
         left_layout.addWidget(self._scope_panel)
         self._refresh_scope_panel()
+
+        # Preset row lives in the left column, directly above the group table it
+        # seeds — keeping the top of the dialog to a single full-width row so the
+        # right pane's tabs get the vertical space on small windows.
+        preset_row = QHBoxLayout()
+        preset_row.setContentsMargins(0, 0, 0, 0)
+        preset_row.addWidget(QLabel("Preset"))
+        self._preset_combo = NoScrollComboBox()
+        self._preset_combo.setMinimumContentsLength(18)
+        self._preset_combo.activated.connect(self._on_preset_combo_activated)
+        preset_row.addWidget(self._preset_combo)
+        self._preset_chip = QLabel("")
+        self._preset_chip.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        preset_row.addWidget(self._preset_chip)
+        preset_row.addStretch()
+        left_layout.addLayout(preset_row)
+        # The preset combo is populated at the end of __init__, once the
+        # detector-layout resolution state (_detector_layout_instrument_name)
+        # exists in the form section below.
 
         self._group_table = QTableWidget(0, 4)
         self._group_table.setHorizontalHeaderLabels(
@@ -411,21 +426,11 @@ class GroupingDialog(QDialog):
         right_layout.setContentsMargins(4, 4, 0, 0)
         right_layout.setSpacing(0)
 
-        # Persistent editing-target strip, directly above the form: accent-tinted
-        # while editing the profile ("Editing profile 'X' — applies to N runs"),
-        # warning-tinted while editing a single run's override ("Editing override
-        # for run N — this run only"). One of three redundant cues (with the
-        # scope-list row tint and the "override *" chip).
-        self._editing_strip = QLabel()
-        self._editing_strip.setWordWrap(True)
-        right_layout.addWidget(self._editing_strip)
-        right_layout.addSpacing(6)
-
         form = QFormLayout()
         form.setVerticalSpacing(8)
         form.setHorizontalSpacing(12)
-        self._forward_combo = QComboBox()
-        self._backward_combo = QComboBox()
+        self._forward_combo = NoScrollComboBox()
+        self._backward_combo = NoScrollComboBox()
         # setMinimumContentsLength sizes the combo to N characters of the
         # current font, so it tracks the UI zoom without a frozen pixel width.
         self._forward_combo.setMinimumContentsLength(18)
@@ -448,7 +453,7 @@ class GroupingDialog(QDialog):
         self._set_combo_to_group(self._forward_combo, forward_gid)
         self._set_combo_to_group(self._backward_combo, backward_gid)
 
-        self._alpha_spin = QDoubleSpinBox()
+        self._alpha_spin = NoScrollDoubleSpinBox()
         self._alpha_spin.setDecimals(6)
         self._alpha_spin.setRange(0.01, 1000.0)
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
@@ -462,7 +467,7 @@ class GroupingDialog(QDialog):
         # FileValues checkbox: "From file" uses the header t0 per run and locks
         # the spinbox; "Manual" is the historical editable override; "Auto-detect"
         # runs the prompt-peak / pulse-edge search per run at resolution time.
-        self._t0_mode_combo = QComboBox()
+        self._t0_mode_combo = NoScrollComboBox()
         for label, key, tooltip in (
             (
                 "From file",
@@ -483,7 +488,7 @@ class GroupingDialog(QDialog):
             )
         self._t0_mode_combo.setMaximumWidth(130)
 
-        self._t0_spin = QSpinBox()
+        self._t0_spin = NoScrollSpinBox()
         self._t0_spin.setRange(index_base, max_bin + index_base)
         self._t0_spin.setValue(default_t0_internal + index_base)
 
@@ -492,13 +497,13 @@ class GroupingDialog(QDialog):
         self._t0_mode_label.setWordWrap(True)
         self._t0_mode_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
 
-        self._t_good_offset_spin = QSpinBox()
+        self._t_good_offset_spin = NoScrollSpinBox()
         self._t_good_offset_spin.setRange(0, max_bin)
         self._t_good_offset_spin.setValue(default_t_good)
         self._t0_spin.valueChanged.connect(self._on_t0_changed)
         self._on_t0_changed()
 
-        self._last_good_spin = QSpinBox()
+        self._last_good_spin = NoScrollSpinBox()
         self._last_good_spin.setRange(index_base, max_bin + index_base)
         default_first_good = min(max_bin, default_t0_internal + default_t_good)
         default_last_good = int(grouping.get("last_good_bin", max_bin))
@@ -506,14 +511,14 @@ class GroupingDialog(QDialog):
             default_last_good = default_first_good
         self._last_good_spin.setValue(default_last_good + index_base)
 
-        self._bunch_spin = QSpinBox()
+        self._bunch_spin = NoScrollSpinBox()
         self._bunch_spin.setRange(1, 10000)
         requested_bunching = int(grouping.get("bunching_factor", 1))
         self._bunch_spin.setValue(requested_bunching)
         self._bunch_spin.setMaximumWidth(metrics.spin_width_for(5, self._bunch_spin))
         self._bunch_spin.setToolTip("Set any bunching factor >= 1.")
 
-        self._binning_mode_combo = QComboBox()
+        self._binning_mode_combo = NoScrollComboBox()
         for label, key, tooltip in (
             ("Fixed", "fixed", "Merge a fixed number of raw bins (bunching factor)."),
             (
@@ -533,11 +538,11 @@ class GroupingDialog(QDialog):
             self._binning_mode_combo.setItemData(
                 self._binning_mode_combo.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole
             )
-        self._bin0_spin = QDoubleSpinBox()
+        self._bin0_spin = NoScrollDoubleSpinBox()
         self._bin0_spin.setDecimals(4)
         self._bin0_spin.setRange(0.0001, 100.0)
         self._bin0_spin.setSuffix(" µs")
-        self._bin10_spin = QDoubleSpinBox()
+        self._bin10_spin = NoScrollDoubleSpinBox()
         self._bin10_spin.setDecimals(4)
         self._bin10_spin.setRange(0.0001, 100.0)
         self._bin10_spin.setSuffix(" µs")
@@ -595,18 +600,11 @@ class GroupingDialog(QDialog):
             else None
         )
 
-        self._deadtime_status_row = QWidget()
-        deadtime_status_layout = QHBoxLayout(self._deadtime_status_row)
-        deadtime_status_layout.setContentsMargins(0, 0, 0, 0)
-        self._deadtime_status_label = QLabel("")
-        self._deadtime_status_label.setWordWrap(True)
-        deadtime_status_layout.addWidget(self._deadtime_status_label, stretch=1)
-        self._deadtime_configure_btn = QPushButton("Configure…")
-        self._deadtime_configure_btn.setAutoDefault(False)
-        self._deadtime_configure_btn.setDefault(False)
-        self._deadtime_configure_btn.clicked.connect(self._on_configure_deadtime)
-        deadtime_status_layout.addWidget(self._deadtime_configure_btn)
-        self._update_deadtime_status()
+        # Inline deadtime controls (the retired DeadtimeDialog's body) live in the
+        # Corrections section; the dialog keeps the _deadtime_* state as the source
+        # of truth the payload reads (the section folds edits back via `changed`).
+        self._deadtime_section = DeadtimeSectionWidget()
+        self._deadtime_section.changed.connect(self._on_deadtime_changed)
 
         payload = grouping.get("background_run")
         self._background_run_payload: dict[str, Any] | None = (
@@ -616,17 +614,11 @@ class GroupingDialog(QDialog):
         if bool(grouping.get("background_correction", False)):
             self._background_mode = resolve_background_mode(grouping)
 
-        self._background_status_row = QWidget()
-        background_status_layout = QHBoxLayout(self._background_status_row)
-        background_status_layout.setContentsMargins(0, 0, 0, 0)
-        self._background_status_label = QLabel("")
-        self._background_status_label.setWordWrap(True)
-        background_status_layout.addWidget(self._background_status_label, stretch=1)
-        self._background_configure_btn = QPushButton("Configure…")
-        self._background_configure_btn.setAutoDefault(False)
-        self._background_configure_btn.setDefault(False)
-        self._background_configure_btn.clicked.connect(self._on_configure_background)
-        background_status_layout.addWidget(self._background_configure_btn)
+        # Inline background controls (the retired BackgroundDialog's body) live in
+        # the Corrections section; the dialog keeps _background_mode /
+        # _background_run_payload as the source of truth the payload reads.
+        self._background_section = BackgroundSectionWidget(self._background_reference_candidates)
+        self._background_section.changed.connect(self._on_background_changed)
 
         self._period_mode_label = QLabel("RG Mode")
         self._period_mode_group = QButtonGroup(self)
@@ -651,21 +643,18 @@ class GroupingDialog(QDialog):
         period_layout.addStretch()
         self._set_period_mode(str(grouping.get("period_mode", PeriodMode.RED)))
 
-        calibrate_btn = QPushButton("Calibrate…")
-        calibrate_btn.setAutoDefault(False)
-        calibrate_btn.setDefault(False)
-        calibrate_btn.setToolTip(
-            "Open the Alpha calibration dialog: pick a transverse-field "
-            "calibration run and see α balance the asymmetry about zero."
-        )
-        calibrate_btn.clicked.connect(self._estimate_alpha)
+        # Single-α calibration is inline in the Corrections panel (the standalone
+        # modal is kept only for the per-projection vector case). Estimate results
+        # flow back into the α spin + provenance via _apply_calibrated_policy.
+        self._alpha_section = AlphaSectionWidget()
+        self._alpha_section.alpha_estimated.connect(self._on_alpha_section_estimated)
 
         # The estimation *method* is now chosen inside the calibration dialog, so
         # the inline method combo is retired from the visible row. It is kept as a
         # hidden control because the current-method key still seeds the payload's
         # ``alpha_method`` provenance (and a calibration writes the chosen method
         # back into it).
-        self._alpha_method_combo = QComboBox()
+        self._alpha_method_combo = NoScrollComboBox()
         for label, key, explanation in _ALPHA_METHOD_ITEMS:
             self._alpha_method_combo.addItem(label, key)
             self._alpha_method_combo.setItemData(
@@ -687,23 +676,41 @@ class GroupingDialog(QDialog):
 
         self._forward_row_label = QLabel("Forward Group")
         self._backward_row_label = QLabel("Backward Group")
-        self._alpha_row_label = QLabel("Alpha")
+        self._alpha_row_label = QLabel("α")
+
+        # Width discipline for the (now narrow) grouping column: fields size to
+        # their content and never stretch to fill the column. Widths derive from
+        # the UI-font metrics (harness rule: no literal-pixel geometry).
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        for combo in (self._forward_combo, self._backward_combo):
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+            combo.setMaximumWidth(metrics.field_width_for(32, combo))
+        for spin in (self._t0_spin, self._t_good_offset_spin, self._last_good_spin):
+            spin.setMaximumWidth(metrics.spin_width_for(6, spin))
+        self._exclude_edit.setMinimumWidth(metrics.field_width_for(24, self._exclude_edit))
 
         form.addRow(self._forward_row_label, self._forward_combo)
         form.addRow(self._backward_row_label, self._backward_combo)
 
+        # The α value row, result and staleness banner (single mode) plus the
+        # per-projection table (vector mode) live in the Corrections column's α
+        # area, not the grouping form — assembled below once the vector widget
+        # exists. Only the widgets are built here.
         self._single_alpha_widget = QWidget()
         alpha_row = QHBoxLayout(self._single_alpha_widget)
         alpha_row.setContentsMargins(0, 0, 0, 0)
         alpha_row.addWidget(self._alpha_spin)
-        alpha_row.addWidget(calibrate_btn)
         alpha_row.addWidget(self._alpha_provenance_label, stretch=1)
-        form.addRow(self._alpha_row_label, self._single_alpha_widget)
-        form.addRow("", self._alpha_result_label)
+        # Staleness banner: shown when the deadtime/background corrections change
+        # after α was calibrated (α no longer centres the corrected asymmetry).
+        self._alpha_stale_banner = make_warning_banner("", severity="warn")
+        self._alpha_stale_banner.setVisible(False)
         # A hand-edit of the alpha spin clears calibration provenance → "manual".
         self._alpha_spin.valueChanged.connect(self._on_alpha_spin_edited)
         self._reseed_alpha_provenance_from_grouping(grouping)
         self._refresh_alpha_provenance_label()
+        # Note: the initial staleness check runs at the end of __init__, once the
+        # whole form exists (_correction_digest reads the full payload).
 
         # Vector alpha widget: one row per declared projection. The rows are
         # built dynamically (see :meth:`_rebuild_vector_alpha_table`) because the
@@ -712,20 +719,67 @@ class GroupingDialog(QDialog):
         # is the empty container; rows are (re)created from the current
         # projection pairs whenever they change.
         self._vector_alpha_widget = QWidget()
-        self._vector_alpha_layout = QGridLayout(self._vector_alpha_widget)
+        vector_alpha_vbox = QVBoxLayout(self._vector_alpha_widget)
+        vector_alpha_vbox.setContentsMargins(0, 0, 0, 0)
+        vector_alpha_vbox.setSpacing(6)
+
+        # One shared calibration run + method for every projection: alpha is
+        # measured from the same TF calibration run and method for each axis, so
+        # the per-axis Estimate buttons and "Estimate All" all use this pair with
+        # the axis's own forward/backward groups (the estimate is inline — the
+        # standalone modal that used to own these controls is retired).
+        vector_controls = QHBoxLayout()
+        vector_controls.setContentsMargins(0, 0, 0, 0)
+        vector_controls.addWidget(QLabel("Calibration run"))
+        self._vector_run_combo = NoScrollComboBox()
+        vector_controls.addWidget(self._vector_run_combo, stretch=1)
+        vector_controls.addWidget(QLabel("Method"))
+        self._vector_method_combo = NoScrollComboBox()
+        for label, key, explanation in _ALPHA_METHOD_ITEMS:
+            self._vector_method_combo.addItem(label, key)
+            self._vector_method_combo.setItemData(
+                self._vector_method_combo.count() - 1, explanation, Qt.ItemDataRole.ToolTipRole
+            )
+        self._vector_method_combo.currentIndexChanged.connect(self._on_vector_method_changed)
+        vector_controls.addWidget(self._vector_method_combo)
+        vector_alpha_vbox.addLayout(vector_controls)
+
+        vector_grid_widget = QWidget()
+        self._vector_alpha_layout = QGridLayout(vector_grid_widget)
         self._vector_alpha_layout.setContentsMargins(0, 0, 0, 0)
-        self._vector_alpha_layout.setHorizontalSpacing(12)
+        # 8px, not the form default 12: the α card's border + body margins spend
+        # ~16px of the corrections column's width, and the 5-column grid's four
+        # gaps at 12px pushed vector mode into a horizontal scrollbar at the
+        # default dialog width. Four gaps at 8px hand those 16px back.
+        self._vector_alpha_layout.setHorizontalSpacing(8)
         self._vector_alpha_layout.setVerticalSpacing(8)
+        vector_alpha_vbox.addWidget(vector_grid_widget)
 
-        form.addRow(self._vector_alpha_widget)
+        # The α area for the Corrections column: single mode shows the α value
+        # row + result + staleness banner; vector mode swaps in the per-projection
+        # table in the same slot (_update_vector_mode_controls toggles visibility).
+        self._alpha_area = QWidget()
+        alpha_area_layout = QVBoxLayout(self._alpha_area)
+        alpha_area_layout.setContentsMargins(0, 0, 0, 0)
+        alpha_area_layout.setSpacing(8)
+        alpha_area_form = QFormLayout()
+        alpha_area_form.setVerticalSpacing(4)
+        alpha_area_form.setHorizontalSpacing(12)
+        alpha_area_form.addRow(self._alpha_row_label, self._single_alpha_widget)
+        alpha_area_form.addRow("", self._alpha_result_label)
+        alpha_area_form.addRow("", self._alpha_stale_banner)
+        alpha_area_form.addRow(self._vector_alpha_widget)
+        alpha_area_layout.addLayout(alpha_area_form)
 
-        t0_row_widget = QWidget()
-        t0_row = QHBoxLayout(t0_row_widget)
+        # Kept as an attribute: the Grouping-column overflow pill uses this row as
+        # the "t0 and binning" landmark.
+        self._t0_row_widget = QWidget()
+        t0_row = QHBoxLayout(self._t0_row_widget)
         t0_row.setContentsMargins(0, 0, 0, 0)
         t0_row.addWidget(self._t0_mode_combo)
         t0_row.addWidget(self._t0_spin)
         t0_row.addWidget(self._find_t0_btn)
-        form.addRow("t0 Bin", t0_row_widget)
+        form.addRow("t0 Bin", self._t0_row_widget)
         form.addRow("", self._t0_mode_label)
         form.addRow("t_good Offset", self._t_good_offset_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
@@ -741,9 +795,6 @@ class GroupingDialog(QDialog):
         form.addRow("Binning", binning_row_widget)
         self._on_binning_mode_changed()
         form.addRow("Exclude Detectors", self._exclude_edit)
-        form.addRow("Deadtime", self._deadtime_status_row)
-        form.addRow("Background", self._background_status_row)
-        self._update_background_status()
         self._map_periods_btn = QPushButton("Map periods…")
         self._map_periods_btn.setAutoDefault(False)
         self._map_periods_btn.setDefault(False)
@@ -753,29 +804,157 @@ class GroupingDialog(QDialog):
         )
         self._map_periods_btn.clicked.connect(self._on_map_periods)
         self.period_mapping_request: dict[str, Any] | None = None
-        period_row_widget = QWidget()
-        period_row_box = QHBoxLayout(period_row_widget)
+        # Kept as an attribute: the "Periods" landmark for the Grouping-column pill.
+        self._period_row_widget = QWidget()
+        period_row_box = QHBoxLayout(self._period_row_widget)
         period_row_box.setContentsMargins(0, 0, 0, 0)
         period_row_box.addWidget(self._period_mode_widget)
         period_row_box.addWidget(self._map_periods_btn)
-        form.addRow(self._period_mode_label, period_row_widget)
+        form.addRow(self._period_mode_label, self._period_row_widget)
         self._update_map_periods_visibility()
 
-        right_layout.addLayout(form)
-        right_layout.addStretch()
+        # The right pane is tabless: a full-width pipeline strip over a two-column
+        # row — "Grouping and timing" (define what/when to group) on the left and
+        # "Corrections" (correct the counts) on the right — with the compare pager
+        # and the shared live preview pinned below BOTH columns. The single preview
+        # keeps working across columns because it reduces from the draft's widget
+        # *state* (read via `_current_grouping_payload`), never from which column is
+        # focused. See docs/porting/correction-order-alpha-estimation.
+        #: Compare checkboxes. Only "raw" remains (the pager-row checkbox): the
+        #: per-stage compares are driven by the pipeline chips + pager and
+        #: *displayed* on the focused correction card (see :meth:`_set_compare_stage`).
+        self._compare_toggles: dict[str, QCheckBox] = {}
+
+        # Pipeline strip spans the full right-pane width, above both columns.
+        right_layout.addWidget(self._build_pipeline_strip())
+
+        # ── Grouping and timing column (left) ──────────────────────────────
+        # Groups, t0, binning, exclusions and periods. Its scroll sizes to its
+        # content width (AdjustToContents), so the narrow column never fights the
+        # corrections column for horizontal space and needs no h-scroll at rest.
+        grouping_content = QWidget()
+        grouping_layout = QVBoxLayout(grouping_content)
+        grouping_layout.setContentsMargins(0, 0, 0, 0)
+        grouping_layout.setSpacing(8)
+        grouping_layout.addLayout(form)
+        grouping_layout.addStretch()
+        self._grouping_scroll = QScrollArea()
+        self._grouping_scroll.setWidgetResizable(True)
+        self._grouping_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._grouping_scroll.setSizeAdjustPolicy(
+            QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents
+        )
+        self._grouping_scroll.setWidget(grouping_content)
+        grouping_column = QWidget()
+        # Hold the narrow column near its natural width so it never grows to
+        # swallow the right pane (the AdjustToContents scroll over-reserves ~60px
+        # otherwise); the corrections column (stretch 1) takes the rest. Derived
+        # from the UI-font metrics so it tracks the zoom with the capped fields it
+        # bounds, keeping every row inside the width with no horizontal scroll.
+        grouping_column.setMaximumWidth(metrics.field_width_for(56))
+        grouping_col_layout = QVBoxLayout(grouping_column)
+        grouping_col_layout.setContentsMargins(0, 0, 0, 0)
+        grouping_col_layout.setSpacing(2)
+        grouping_col_layout.addWidget(self._build_column_header("Grouping and timing"))
+        grouping_col_layout.addWidget(self._grouping_scroll)
+
+        # ── Corrections column (right) ─────────────────────────────────────
+        # Deadtime, background and α, each wrapped in a collapsible CorrectionCard
+        # whose header carries the live status summary (and the compare indicator
+        # while that stage's before/after ghost is focused). The α card body holds
+        # the α area (single value + result + banner, or the per-projection vector
+        # table) above the single-α calibration section.
+        corrections_content = QWidget()
+        corrections_layout = QVBoxLayout(corrections_content)
+        corrections_layout.setContentsMargins(0, 0, 0, 0)
+        # Tighter than the grouping form's 8px: the corrections column carries the
+        # taller payload (deadtime/background/α cards), so the inter-card gap is
+        # trimmed to keep its default state comfortably inside the viewport at the
+        # default height (with headroom for the taller default fonts on other
+        # platforms) without an outer scroll.
+        corrections_layout.setSpacing(4)
+        # The cards double as the section-overflow pill's landmarks.
+        self._deadtime_card = CorrectionCard(
+            "Deadtime", color=tokens.STAGE_DEADTIME, soft=tokens.STAGE_DEADTIME_SOFT
+        )
+        self._deadtime_card.set_body(self._deadtime_section)
+        corrections_layout.addWidget(self._deadtime_card)
+        self._background_card = CorrectionCard(
+            "Background", color=tokens.STAGE_BACKGROUND, soft=tokens.STAGE_BACKGROUND_SOFT
+        )
+        self._background_card.set_body(self._background_section)
+        corrections_layout.addWidget(self._background_card)
+        self._alpha_card = CorrectionCard(
+            "α (detector balance)", color=tokens.STAGE_ALPHA, soft=tokens.STAGE_ALPHA_SOFT
+        )
+        self._alpha_card.set_body(self._alpha_area)
+        self._alpha_card.set_body(self._alpha_section)
+        corrections_layout.addWidget(self._alpha_card)
+        self._correction_cards: dict[str, CorrectionCard] = {
+            "deadtime": self._deadtime_card,
+            "background": self._background_card,
+            "alpha": self._alpha_card,
+        }
+        corrections_layout.addStretch()
+        self._corrections_scroll = QScrollArea()
+        self._corrections_scroll.setWidgetResizable(True)
+        self._corrections_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._corrections_scroll.setWidget(corrections_content)
+        corrections_column = QWidget()
+        corrections_col_layout = QVBoxLayout(corrections_column)
+        corrections_col_layout.setContentsMargins(0, 0, 0, 0)
+        corrections_col_layout.setSpacing(2)
+        corrections_col_layout.addWidget(self._build_column_header("Corrections"))
+        corrections_col_layout.addWidget(self._corrections_scroll)
+
+        self._update_deadtime_status()
+        self._update_background_status()
+        self._update_alpha_section()
+
+        columns_row = QHBoxLayout()
+        columns_row.setContentsMargins(0, 0, 0, 0)
+        columns_row.setSpacing(8)
+        columns_row.addWidget(grouping_column, stretch=0)
+        columns_row.addWidget(corrections_column, stretch=1)
+        right_layout.addLayout(columns_row, stretch=1)
+
+        # Overlay pills naming the sections hidden below the fold on a short
+        # window. The section lists are callables because vector mode swaps the α
+        # slot and the deadtime section changes height live; _update_vector_mode_
+        # controls / the visibility updaters call refresh() after those flips.
+        self._corrections_overflow = SectionOverflowIndicator(
+            self._corrections_scroll, self._corrections_overflow_sections
+        )
+        self._grouping_overflow = SectionOverflowIndicator(
+            self._grouping_scroll, self._grouping_overflow_sections
+        )
+
+        # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
+        # the configured corrections, directly above the preview so it works from
+        # either column (the preview is pinned below both). Pure wrapper over the
+        # same `_set_compare_stage` the section toggles and pipeline chips drive.
+        right_layout.addWidget(self._build_compare_pager())
 
         # Live asymmetry preview of the preview run under the current draft.
-        # Fixed-height so it never fights the form for space; it reduces off the
-        # GUI thread (debounced) and redraws as the form is edited.
+        # Pinned below both columns, fixed-height so it never fights the form for
+        # space; it reduces off the GUI thread (debounced) and redraws as edited.
         self._preview_pane = GroupingPreviewPane()
         right_layout.addWidget(self._preview_pane)
 
         splitter.addWidget(right_pane)
 
-        splitter.setSizes([330, 520])
+        splitter.setSizes([330, 860])
         root.addWidget(splitter, stretch=1)
 
         self._update_vector_mode_controls(grouping)
+
+        # Correction cards open expanded iff their stage is active — an idle
+        # correction costs one header row until it is needed. From here the
+        # expansion is plain widget state for the dialog's lifetime (no QSettings);
+        # a reseed that *activates* a stage re-expands its card
+        # (:meth:`_auto_expand_active_cards`), but going inactive never collapses.
+        for stage, card in self._correction_cards.items():
+            card.set_expanded(self._correction_stage_active(stage))
 
         # ── Bottom bar: action buttons ───────────────────────────────────
         cancel_btn = QPushButton("Cancel")
@@ -794,12 +973,17 @@ class GroupingDialog(QDialog):
         root.addLayout(bottom_bar)
 
         self._update_period_mode_visibility()
-        self._update_grouping_recommendation()
         self._rebuild_preset_combo()
         self._seed_t0_mode_from_draft()
         self._connect_dirty_tracking()
         self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()
+        self._refresh_alpha_staleness()
+        # Open focused on the α compare when α is already calibrated (single mode),
+        # preserving the pre-tab auto-overlay; _sync_compare_toggles reflects it.
+        if self._alpha_is_calibrated() and not bool(self._vector_axis_pairs):
+            self._compare_stage = "alpha"
+        self._sync_compare_toggles()
         self._connect_preview_refresh()
         self._refresh_preview()
 
@@ -1323,7 +1507,6 @@ class GroupingDialog(QDialog):
         self._refresh_group_combo_items(forward_gid=forward_gid, backward_gid=backward_gid)
         self._populate_group_table()
         self._update_vector_mode_controls()
-        self._update_grouping_recommendation()
         self._refresh_preset_chip(self._current_grouping_payload())
 
     def _refresh_preset_chip(self, payload: dict[str, Any]) -> None:
@@ -1501,31 +1684,6 @@ class GroupingDialog(QDialog):
             value = str(metadata.get("field_direction", "")).strip()
             return value or None
         return None
-
-    def _update_grouping_recommendation(self) -> None:
-        """Show or hide the transverse-field grouping nudge for the reference run.
-
-        Fires when the run is transverse-field but the grouping is still on a
-        non-recommended (typically longitudinal) preset, per
-        :func:`asymmetry.core.instrument.recommend_grouping_preset`.  The hint is
-        purely advisory — it points at the Detector Layout editor where the user
-        applies the preset; nothing is changed automatically.
-        """
-        direction = self._reference_field_direction()
-        n_histo = len(self._run.histograms) if self._run and self._run.histograms else 0
-        metadata = (
-            dict(self._run.metadata) if self._run and isinstance(self._run.metadata, dict) else {}
-        )
-        layout = self._resolve_detector_layout(n_histo, metadata)
-        recommended = recommend_grouping_preset(layout, direction)
-        if recommended is None or recommended == self._grouping_preset_name:
-            self._tf_hint_label.setVisible(False)
-            return
-        self._tf_hint_label.setText(
-            f"Transverse-field run: the current grouping washes out the precession. "
-            f"Open Detector Layout… and apply ‘{recommended}’."
-        )
-        self._tf_hint_label.setVisible(True)
 
     def _reference_is_psi(self) -> bool:
         """Return True when the current reference run uses PSI detector conventions."""
@@ -1927,9 +2085,11 @@ class GroupingDialog(QDialog):
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
         self._set_alpha_method(str(grouping.get("alpha_method", "diamagnetic")))
         self._alpha_estimate_state.clear()
+        self._alpha_correction_digest = None
         self._reseed_alpha_provenance_from_grouping(grouping)
         self._alpha_result_label.setText("")
         self._refresh_alpha_provenance_label()
+        self._refresh_alpha_staleness()
         max_bin = self._max_bin_index_for_reference_dataset()
         index_base = self._bin_index_base(grouping)
         self._t0_spin.setRange(index_base, max_bin + index_base)
@@ -1976,6 +2136,7 @@ class GroupingDialog(QDialog):
             else "none"
         )
         self._update_background_status()
+        self._update_alpha_section()
         mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
         self._bin0_spin.setValue(bin0_us)
         self._bin10_spin.setValue(bin10_us)
@@ -1986,11 +2147,13 @@ class GroupingDialog(QDialog):
         self._update_vector_mode_controls(grouping)
         self._update_period_mode_visibility()
         self._update_map_periods_visibility()
-        self._update_grouping_recommendation()
         # The preset dropdown follows the preview run's instrument; the chip
         # follows the (possibly drifted) draft.
         if hasattr(self, "_preset_combo"):
             self._rebuild_preset_combo()
+        # A reseed that activates a stage must surface its controls: expand any
+        # collapsed card whose stage became active (never collapses the rest).
+        self._auto_expand_active_cards()
         # Preview-run change / profile switch: recompute against the new state.
         if hasattr(self, "_preview_pane"):
             self._refresh_preview()
@@ -2204,37 +2367,33 @@ class GroupingDialog(QDialog):
         self._update_deadtime_status()
 
     def _update_deadtime_status(self) -> None:
-        """Refresh the compact deadtime status row from the current state."""
-        self._deadtime_status_label.setText(
-            deadtime_status_text(self._deadtime_policy_from_state())
+        """Re-seed the inline deadtime section from the current draft state."""
+        grouping = (
+            self._run.grouping
+            if self._run is not None and isinstance(self._run.grouping, dict)
+            else {}
         )
-
-    def _deadtime_policy_from_state(self) -> DeadtimePolicy:
-        """Build the :class:`DeadtimePolicy` the status row / dialog reflect."""
-        mode = self._deadtime_mode
-        if mode == "off":
-            return DeadtimePolicy(mode="off")
-        if mode == "file":
-            return DeadtimePolicy(mode="from_file")
-        if mode == "manual":
-            return DeadtimePolicy(
-                mode="manual",
-                values=list(self._deadtime_manual_values_us),
-                method=self._deadtime_manual_method,
-                source_run=self._deadtime_source_run,
-            )
-        return DeadtimePolicy(
-            mode="estimate",
+        peak_rates, bin_width_us, good_frames = self._deadtime_peak_rates(grouping)
+        reference_run_number = (
+            int(self._reference_dataset.run_number) if self._reference_dataset is not None else None
+        )
+        self._deadtime_section.configure(
+            n_detectors=len(self._run.histograms) if self._run is not None else 0,
+            mode=self._deadtime_mode,
+            file_values_us=self._reference_file_deadtime_values(grouping),
+            manual_values_us=list(self._deadtime_manual_values_us),
+            manual_method=self._deadtime_manual_method,
             estimated_us=self._deadtime_estimated_us,
-            source_run=self._deadtime_source_run,
+            source_run=self._deadtime_source_run or reference_run_number,
+            source_runs=self._deadtime_source_runs(),
+            reference_run_number=reference_run_number,
+            peak_rates_per_us=peak_rates,
+            bin_width_us=bin_width_us,
+            good_frames=good_frames,
         )
 
-    def _on_configure_deadtime(self) -> None:
-        """Open the deadtime dialog, seeded from the current state."""
-        n_detectors = len(self._run.histograms) if self._run is not None else 0
-        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-        file_values = self._reference_file_deadtime_values(grouping)
-
+    def _deadtime_source_runs(self) -> list[DeadtimeSourceRun]:
+        """Candidate source runs (of the fingerprint) for Cal/Estimate."""
         source_runs: list[DeadtimeSourceRun] = []
         for ds in self._fingerprint_datasets():
             if ds.run is None or not ds.run.histograms:
@@ -2252,7 +2411,10 @@ class GroupingDialog(QDialog):
                     good_frames=good_frames,
                 )
             )
+        return source_runs
 
+    def _deadtime_peak_rates(self, grouping: dict[str, Any]) -> tuple[list[float], float, float]:
+        """Per-detector peak early-time rate, bin width and good frames (summary line)."""
         peak_rates: list[float] = []
         bin_width_us = 0.0
         good_frames = 1.0
@@ -2266,26 +2428,11 @@ class GroupingDialog(QDialog):
                 counts = np.asarray(hist.counts, dtype=np.float64)
                 peak = float(np.max(counts)) if counts.size else 0.0
                 peak_rates.append(peak / bin_width_us if bin_width_us > 0.0 else 0.0)
+        return peak_rates, bin_width_us, good_frames
 
-        dlg = DeadtimeDialog(
-            n_detectors=n_detectors,
-            mode=self._deadtime_mode,
-            file_values_us=file_values,
-            manual_values_us=list(self._deadtime_manual_values_us),
-            manual_method=self._deadtime_manual_method,
-            estimated_us=self._deadtime_estimated_us,
-            source_run=self._deadtime_source_run or int(self._reference_dataset.run_number),
-            source_runs=source_runs,
-            reference_run_number=int(self._reference_dataset.run_number),
-            peak_rates_per_us=peak_rates,
-            bin_width_us=bin_width_us,
-            good_frames=good_frames,
-            parent=self,
-        )
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        policy = dlg.get_policy()
+    def _on_deadtime_changed(self) -> None:
+        """Fold an inline deadtime-section edit back into the draft + preview."""
+        policy = self._deadtime_section.get_policy()
         self._deadtime_mode = policy.mode if policy.mode != "from_file" else "file"
         if policy.mode == "manual":
             self._deadtime_manual_values_us = list(policy.values)
@@ -2294,25 +2441,13 @@ class GroupingDialog(QDialog):
         elif policy.mode == "estimate":
             self._deadtime_estimated_us = policy.estimated_us
             self._deadtime_source_run = policy.source_run
-        self._update_deadtime_status()
         self._mark_dirty()
         self._refresh_preview()
+        self._refresh_alpha_staleness()
 
-    def _on_configure_background(self) -> None:
-        """Gather the cheap context synchronously; group F/B off-thread if needed.
-
-        The context (candidates, payload, has-fixed flag) is cheap — no
-        full-histogram scan — so it stays synchronous. The forward/backward
-        preview arrays are the expensive step (``apply_grouping`` sums every
-        listed histogram), so when a preview is possible they are computed on
-        ``self._tasks`` and the dialog opens from the finished callback instead.
-        """
-        grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
-        has_fixed = any(
-            isinstance(grouping.get(key), (list, tuple))
-            for key in ("background_fixed_values", "background_fix", "bkg_fix")
-        )
-        candidates = [
+    def _background_reference_candidates(self) -> list[BackgroundReferenceRunCandidate]:
+        """Reference-run candidates for the background picker (excludes the preview run)."""
+        return [
             BackgroundReferenceRunCandidate(
                 run_number=int(ds.run_number),
                 label=f"{ds.run_label} (run {ds.run_number})",
@@ -2327,121 +2462,35 @@ class GroupingDialog(QDialog):
             and int(ds.run_number) != int(self._reference_dataset.run_number)
         ]
 
-        # Attach the sample side's good_frames so a payload built from the
-        # picked candidate can compute the frame-ratio scale immediately.
-        reference_grouping = (
+    def _background_has_fixed_values(self) -> bool:
+        """Whether the run's grouping carries stored fixed background values."""
+        grouping = (
             self._run.grouping
             if self._run is not None and isinstance(self._run.grouping, dict)
             else {}
         )
-        background_run_payload = (
-            dict(self._background_run_payload) if self._background_run_payload else None
+        return any(
+            isinstance(grouping.get(key), (list, tuple))
+            for key in ("background_fixed_values", "background_fix", "bkg_fix")
         )
-        if background_run_payload is not None:
-            background_run_payload.setdefault(
-                "good_frames_sample", reference_grouping.get("good_frames")
+
+    def _on_background_changed(self) -> None:
+        """Fold an inline background-section edit back into the draft + preview."""
+        self._background_mode = self._background_section.mode()
+        if self._background_mode == "reference_run":
+            reference_grouping = (
+                self._run.grouping
+                if self._run is not None and isinstance(self._run.grouping, dict)
+                else {}
             )
-        context = _BackgroundDialogContext(
-            has_fixed=has_fixed,
-            candidates=candidates,
-            reference_grouping=reference_grouping,
-            background_run_payload=background_run_payload,
-        )
-
-        forward_indices: list[int] = []
-        backward_indices: list[int] = []
-        if self._run is not None and self._run.histograms:
-            forward_gid = int(self._forward_combo.currentData())
-            backward_gid = int(self._backward_combo.currentData())
-            candidate_forward = self._filtered_group_indices(forward_gid)
-            candidate_backward = self._filtered_group_indices(backward_gid)
-            n_hist = len(self._run.histograms)
-            if (
-                candidate_forward
-                and candidate_backward
-                and max(candidate_forward) < n_hist
-                and max(candidate_backward) < n_hist
-            ):
-                forward_indices = candidate_forward
-                backward_indices = candidate_backward
-
-        if not forward_indices or not backward_indices:
-            self._open_background_dialog(preview=None, context=context)
-            return
-
-        t0_bin, _offset, _first, last_good = self._resolve_good_bin_limits_from_controls()
-        bin_width = float(self._run.histograms[0].bin_width)
-        self._background_configure_token += 1
-        request = _BackgroundPreviewRequest(
-            token=self._background_configure_token,
-            histograms=list(self._run.histograms),
-            forward_indices=list(forward_indices),
-            backward_indices=list(backward_indices),
-            bin_width=bin_width,
-            t0_bin=int(t0_bin),
-            last_good_bin=int(last_good),
-        )
-        self._pending_background_context = context
-        self._background_configure_btn.setEnabled(False)
-        self._tasks.start(
-            lambda worker: _run_background_preview(worker, request),
-            on_finished=self._on_background_preview_finished,
-            on_error=self._on_background_preview_error,
-        )
-
-    def _on_background_preview_finished(self, result: object) -> None:
-        """GUI thread: open the background dialog with the grouped preview."""
-        self._background_configure_btn.setEnabled(True)
-        context = self._pending_background_context
-        self._pending_background_context = None
-        if (
-            not isinstance(result, _BackgroundPreviewResult)
-            or result.token != self._background_configure_token
-            or context is None
-        ):
-            return  # superseded by a later Configure… click, or the dialog moved on
-        preview = (
-            result.forward_counts,
-            result.backward_counts,
-            result.bin_width,
-            result.t0_bin,
-            result.last_good_bin,
-        )
-        self._open_background_dialog(preview=preview, context=context)
-
-    def _on_background_preview_error(self, message: str) -> None:
-        """GUI thread: re-enable Configure… and surface the grouping failure."""
-        self._background_configure_btn.setEnabled(True)
-        self._pending_background_context = None
-        QMessageBox.warning(self, "Background", message)
-
-    def _open_background_dialog(
-        self, *, preview: tuple | None, context: _BackgroundDialogContext
-    ) -> None:
-        """Build, exec, and apply the result of :class:`BackgroundDialog`."""
-        dlg = BackgroundDialog(
-            available_modes=self._available_background_modes(),
-            has_fixed_values=context.has_fixed,
-            initial_mode=self._background_mode,
-            background_run_payload=context.background_run_payload,
-            reference_run_candidates=context.candidates,
-            preview=preview,
-            forward_label="F",
-            backward_label="B",
-            parent=self,
-        )
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        policy = dlg.get_policy()
-        self._background_mode = policy.mode
-        if policy.mode == "reference_run":
-            payload = dict(policy.details.get("background_run") or {})
-            payload["good_frames_sample"] = context.reference_grouping.get("good_frames")
+            payload = dict(self._background_section.background_run_payload() or {})
+            # Attach the sample side's good_frames so the frame-ratio scale can be
+            # shown immediately (the reduction resolves it either way).
+            payload["good_frames_sample"] = reference_grouping.get("good_frames")
             self._background_run_payload = payload
-        self._update_background_status()
         self._mark_dirty()
         self._refresh_preview()
+        self._refresh_alpha_staleness()
 
     def _available_background_modes(self) -> tuple[str, ...]:
         metadata: dict[str, Any] = {}
@@ -2456,56 +2505,13 @@ class GroupingDialog(QDialog):
         return self._background_mode
 
     def _update_background_status(self) -> None:
-        """Show the per-mode summary under the background status row."""
-        mode = self._current_background_mode()
-        if mode == "tail_fit":
-            self._background_status_label.setText(self._tail_fit_preview_text())
-            return
-        if mode == "reference_run":
-            payload = self._background_run_payload or {}
-            run_number = payload.get("run_number")
-            label = f"run {run_number}" if run_number else str(payload.get("source_file", ""))
-            sample = payload.get("good_frames_sample")
-            reference = payload.get("good_frames_reference")
-            try:
-                scale = float(sample) / float(reference)
-                self._background_status_label.setText(
-                    f"Subtract {label}, frame-ratio scale {scale:.4g}."
-                )
-            except (TypeError, ValueError, ZeroDivisionError):
-                self._background_status_label.setText(
-                    f"Subtract {label} (frame ratio resolved at reduction)."
-                )
-            return
-        self._background_status_label.setText(f"Background: {mode}" if mode != "none" else "")
-
-    def _tail_fit_preview_text(self) -> str:
-        """Run the tail fit on the reference run's groups for display."""
-        if self._run is None or not self._run.histograms:
-            return ""
-        forward_gid = int(self._forward_combo.currentData())
-        backward_gid = int(self._backward_combo.currentData())
-        t0_bin, _offset, _first, last_good = self._resolve_good_bin_limits_from_controls()
-        bin_width = float(self._run.histograms[0].bin_width)
-        parts: list[str] = []
-        for name, gid in (("F", forward_gid), ("B", backward_gid)):
-            indices = self._filtered_group_indices(gid)
-            if not indices or max(indices) >= len(self._run.histograms):
-                continue
-            counts = apply_grouping(self._run.histograms, indices)
-            fit = fit_tail_background(
-                counts,
-                bin_width_us=bin_width,
-                t0_bin=int(t0_bin),
-                last_good_bin=int(last_good),
-            )
-            if not fit.ok:
-                parts.append(f"{name}: {fit.message}")
-                continue
-            value = _format_value_with_uncertainty(fit.rate_per_us, fit.rate_error_per_us)
-            note = " (consistent with zero)" if fit.consistent_with_zero else ""
-            parts.append(f"{name}: {value} counts/µs{note}")
-        return "Tail-fit background — " + "; ".join(parts) if parts else ""
+        """Re-seed the inline background section from the current draft state."""
+        self._background_section.configure(
+            available_modes=self._available_background_modes(),
+            has_fixed_values=self._background_has_fixed_values(),
+            mode=self._background_mode,
+            background_run_payload=self._background_run_payload,
+        )
 
     def _on_apply(self) -> None:
         """Validate form values before accepting the dialog."""
@@ -2617,6 +2623,356 @@ class GroupingDialog(QDialog):
         # _on_configure_deadtime/_on_configure_background call _refresh_preview()
         # directly after folding the returned policy into the draft.
 
+    # ------------------------------------------------------------------
+    # Compare-in-preview toggles + pipeline strip (preview-only, never persisted)
+    # ------------------------------------------------------------------
+
+    def _build_pipeline_strip(self) -> QWidget:
+        """The ``Deadtime → group → Background → α`` pipeline overview.
+
+        Each correction is a chip showing its one-line summary; the ``group``
+        divider (non-interactive — grouping lives in the Grouping column) makes the
+        reduction *order* visible. Clicking a chip focuses that stage's compare (the
+        same ``_compare_stage`` the section toggles drive) and scrolls it into view.
+        The α chip is hidden in vector mode, where the per-projection table owns α.
+        """
+        widget = QWidget()
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(0, 0, 0, 2)
+        row.setSpacing(6)
+        self._pipeline_chips: dict[str, QPushButton] = {}
+        row.addWidget(self._make_pipeline_chip("deadtime"))
+        row.addWidget(self._pipeline_arrow())
+        group = QLabel("group")
+        group.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        group.setToolTip("Detector grouping is set in the Grouping and timing column.")
+        row.addWidget(group)
+        row.addWidget(self._pipeline_arrow())
+        row.addWidget(self._make_pipeline_chip("background"))
+        # The α chip and its leading arrow live in a container hidden in vector mode.
+        self._pipeline_alpha_widget = QWidget()
+        alpha_row = QHBoxLayout(self._pipeline_alpha_widget)
+        alpha_row.setContentsMargins(0, 0, 0, 0)
+        alpha_row.setSpacing(6)
+        alpha_row.addWidget(self._pipeline_arrow())
+        alpha_row.addWidget(self._make_pipeline_chip("alpha"))
+        row.addWidget(self._pipeline_alpha_widget)
+        row.addStretch()
+        return widget
+
+    @staticmethod
+    def _pipeline_arrow() -> QLabel:
+        arrow = QLabel("→")
+        arrow.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        return arrow
+
+    def _make_pipeline_chip(self, stage: str) -> QPushButton:
+        chip = QPushButton()
+        chip.setCheckable(True)
+        chip.setAutoDefault(False)
+        chip.setDefault(False)
+        # The chip outline wears the stage's identity colour — the same colour
+        # the stage's correction card wears as its stripe — so chip and card
+        # read as one thing; the checked (compare-focused) chip fills the
+        # stage's soft tint.
+        color, soft = _STAGE_COLORS[stage]
+        chip.setStyleSheet(build_stage_chip_qss(color, soft))
+        chip.setToolTip("Compare this stage's before/after in the preview below.")
+        chip.clicked.connect(lambda _checked=False, s=stage: self._on_pipeline_chip_clicked(s))
+        self._pipeline_chips[stage] = chip
+        return chip
+
+    def _on_pipeline_chip_clicked(self, stage: str) -> None:
+        """Focus (or unfocus) *stage*'s compare; expand and reveal its card."""
+        self._set_compare_stage(None if self._compare_stage == stage else stage)
+        card = getattr(self, "_correction_cards", {}).get(stage)
+        scroll = getattr(self, "_corrections_scroll", None)
+        if card is not None:
+            card.set_expanded(True)
+            if scroll is not None:
+                scroll.ensureWidgetVisible(card)
+
+    def _sync_pipeline_strip(self) -> None:
+        """Refresh chip summaries, focus highlight, enabled + vector visibility."""
+        if not hasattr(self, "_pipeline_chips"):
+            return
+        alpha_stale = self._alpha_is_stale()
+        for stage, chip in self._pipeline_chips.items():
+            chip.setText(self._pipeline_summary(stage))
+            available = self._compare_stage_available(stage)
+            chip.setEnabled(available)
+            chip.setChecked(available and self._compare_stage == stage)
+            if stage == "alpha":
+                chip.setToolTip(
+                    "α was calibrated under different corrections — re-estimate it "
+                    "in the α section so it centres the corrected asymmetry."
+                    if alpha_stale
+                    else "Compare this stage's before/after in the preview below."
+                )
+        if hasattr(self, "_pipeline_alpha_widget"):
+            self._pipeline_alpha_widget.setVisible(not bool(self._vector_axis_pairs))
+        self._sync_correction_cards()
+
+    def _sync_correction_cards(self) -> None:
+        """Refresh each card's status summary, stale tint, and compare indicator.
+
+        Runs from the end of :meth:`_sync_pipeline_strip`, so the card headers
+        track the same seams that refresh the chips (mode edits, α calibration,
+        staleness, compare-focus changes). "raw" shows no card indicator — the
+        compound compare is not one stage's card; the pager label names it.
+        """
+        cards = getattr(self, "_correction_cards", None)
+        if not cards:
+            return
+        for stage, card in cards.items():
+            card.set_status(self._correction_card_status(stage))
+            if stage == "alpha":
+                card.set_stale(self._alpha_is_stale())
+            comparing = self._compare_stage == stage and self._compare_stage_available(stage)
+            card.set_comparing(_CARD_COMPARING_TEXTS[stage] if comparing else None)
+
+    def _correction_card_status(self, stage: str) -> str:
+        """The card's live status: the chip summary minus the title-duplicating prefix."""
+        return self._pipeline_summary(stage).removeprefix(_CARD_STATUS_PREFIXES[stage])
+
+    def _correction_stage_active(self, stage: str) -> bool:
+        """Whether *stage* is configured to do anything to the reduction.
+
+        Drives the card expansion policy (expanded iff active at open;
+        auto-expand on a reseed that activates a collapsed card). α counts as
+        active when calibrated, off-unity, or in vector mode (the per-projection
+        table always carries real balances there).
+        """
+        if stage == "deadtime":
+            return self._current_deadtime_mode() != "off"
+        if stage == "background":
+            return self._current_background_mode() != "none"
+        if stage == "alpha":
+            return (
+                bool(self._vector_axis_pairs)
+                or self._alpha_is_calibrated()
+                or abs(float(self._alpha_spin.value()) - 1.0) > 1e-9
+            )
+        return False
+
+    def _auto_expand_active_cards(self) -> None:
+        """Expand any collapsed card whose stage is now active (never collapses).
+
+        Called after the form is re-seeded (preset/profile/run switch through
+        :meth:`_reload_controls_from_seed`): a stage the reseed just activated
+        must not stay hidden behind a collapsed card. A stage going inactive
+        keeps its card as the user left it.
+        """
+        cards = getattr(self, "_correction_cards", None)
+        if not cards:
+            return
+        for stage, card in cards.items():
+            if self._correction_stage_active(stage) and not card.is_expanded():
+                card.set_expanded(True)
+
+    def _pipeline_summary(self, stage: str) -> str:
+        """The one-line chip summary for *stage* (reuses the section formatters)."""
+        if stage == "deadtime":
+            return deadtime_status_text(self._deadtime_section.get_policy())
+        if stage == "background":
+            details = (
+                {"background_run": self._background_run_payload}
+                if self._background_run_payload
+                else {}
+            )
+            return background_status_text(
+                BackgroundPolicy(mode=self._current_background_mode(), details=details)
+            )
+        value = float(self._alpha_spin.value())
+        stale_suffix = " · stale" if self._alpha_is_stale() else ""
+        if self._alpha_is_calibrated():
+            label = next(
+                (lbl for lbl, key, _ in _ALPHA_METHOD_ITEMS if key == self._current_alpha_method()),
+                self._current_alpha_method(),
+            )
+            return f"α = {value:.4f} · {label}{stale_suffix}"
+        return f"α = {value:.4f}{stale_suffix}"
+
+    def _corrections_overflow_sections(self) -> list[tuple[str, QWidget]]:
+        """Corrections-column landmarks for the overflow pill, top-to-bottom.
+
+        The correction cards are the landmarks. Short labels (the pill has no
+        room for the "correction"/"subtraction" suffixes); α keeps its full
+        display name and is always included — the α card stays in this column in
+        vector mode too, where the per-projection table lives in its body.
+        """
+        return [
+            ("Deadtime", self._deadtime_card),
+            ("Background", self._background_card),
+            ("α (detector balance)", self._alpha_card),
+        ]
+
+    def _grouping_overflow_sections(self) -> list[tuple[str, QWidget]]:
+        """Grouping-column landmarks for the overflow pill — coarse, top-to-bottom."""
+        sections: list[tuple[str, QWidget]] = [("t0 and binning", self._t0_row_widget)]
+        # The periods row container stays visible even when both of its
+        # independently-gated children are hidden (RG radios: two-period data;
+        # Map periods…: 3+ periods), so gate the landmark on the children's own
+        # state — isHidden(), not isVisibleTo(), so the answer does not depend on
+        # focus. Without this, single-period data lists a phantom "Periods".
+        if not self._period_mode_widget.isHidden() or not self._map_periods_btn.isHidden():
+            sections.append(("Periods", self._period_row_widget))
+        return sections
+
+    @staticmethod
+    def _build_column_header(title: str) -> QLabel:
+        """The uppercase BENCH section-header label used atop each column."""
+        return make_section_header(title)
+
+    def _on_compare_toggled(self, stage: str, checked: bool) -> None:
+        """A compare checkbox was clicked ("raw") — focus that stage, or clear."""
+        if getattr(self, "_syncing_compare", False):
+            return  # programmatic sync, not a user click
+        self._set_compare_stage(stage if checked else None)
+
+    def _set_compare_stage(self, stage: str | None) -> None:
+        """Focus (at most) one compare stage and refresh the preview."""
+        self._compare_stage = stage
+        self._sync_compare_toggles()
+        self._refresh_preview()
+
+    def _sync_compare_toggles(self) -> None:
+        """Reflect ``_compare_stage`` across the compare surfaces.
+
+        Syncs the pager-row "raw" checkbox (the only remaining checkbox — the
+        per-stage compares are driven by chips + pager and displayed on the
+        focused card), resets the focus if the focused stage is no longer
+        available (e.g. its correction was switched off, or vector mode made α
+        unavailable), then refreshes the pipeline strip (which refreshes the
+        cards) and the pager, so no surface ever disagrees with the preview.
+        """
+        if not hasattr(self, "_compare_toggles"):
+            return
+        if self._compare_stage is not None and not self._compare_stage_available(
+            self._compare_stage
+        ):
+            self._compare_stage = None
+        self._syncing_compare = True
+        try:
+            for key, toggle in self._compare_toggles.items():
+                available = self._compare_stage_available(key)
+                toggle.setEnabled(available)
+                toggle.setChecked(available and self._compare_stage == key)
+        finally:
+            self._syncing_compare = False
+        self._sync_pipeline_strip()
+        self._sync_compare_pager()
+
+    def _build_compare_pager(self) -> QWidget:
+        """The ◀/▶ pager row: steps ``_compare_stage`` through the cycle.
+
+        Sits directly above the pinned preview so it works from either column.
+        A pure wrapper over :meth:`_set_compare_stage` — same shared state the
+        section toggles and pipeline chips drive; :meth:`_sync_compare_pager`
+        (called from the single :meth:`_sync_compare_toggles` sync seam) keeps
+        the label and arrow enabled-state in step.
+        """
+        widget = QWidget()
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(0, 2, 0, 2)
+        row.setSpacing(6)
+        self._compare_prev_btn = QToolButton()
+        self._compare_prev_btn.setArrowType(Qt.ArrowType.LeftArrow)
+        self._compare_prev_btn.setToolTip("Previous comparison")
+        self._compare_prev_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._compare_prev_btn.clicked.connect(lambda: self._step_compare(-1))
+        row.addWidget(self._compare_prev_btn)
+        self._compare_pager_label = QLabel("Comparing: off")
+        self._compare_pager_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._compare_pager_label.setToolTip(
+            "Comparing overlays one stage's before/after — the reduction always applies every stage."
+        )
+        row.addWidget(self._compare_pager_label)
+        self._compare_next_btn = QToolButton()
+        self._compare_next_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self._compare_next_btn.setToolTip("Next comparison")
+        self._compare_next_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._compare_next_btn.clicked.connect(lambda: self._step_compare(1))
+        row.addWidget(self._compare_next_btn)
+        row.addStretch()
+        # The compound "vs raw" toggle lives here (not in the Corrections column's
+        # scroll content): it is one of the pager's stops, and pinning it beside
+        # the pager keeps it reachable regardless of which column is focused — and
+        # keeps the corrections content short enough to fit the viewport without
+        # outer scrolling.
+        raw = QCheckBox("Compare vs raw (uncorrected)")
+        raw.setToolTip(
+            "Preview only: overlay the fully-uncorrected asymmetry — no deadtime, no "
+            "background, α = 1."
+        )
+        raw.toggled.connect(lambda checked: self._on_compare_toggled("raw", checked))
+        self._compare_toggles["raw"] = raw
+        row.addWidget(raw)
+        return widget
+
+    def _step_compare(self, direction: int) -> None:
+        """Advance ``_compare_stage`` by *direction* (±1) to the next available
+        stage in ``_COMPARE_CYCLE``, wrapping and skipping stages
+        :meth:`_compare_stage_available` rejects. ``None`` ("off") is always a
+        valid landing stage, so this always terminates within one lap.
+        """
+        n = len(_COMPARE_CYCLE)
+        try:
+            idx = _COMPARE_CYCLE.index(self._compare_stage)
+        except ValueError:
+            idx = 0
+        for _ in range(n):
+            idx = (idx + direction) % n
+            stage = _COMPARE_CYCLE[idx]
+            if stage is None or self._compare_stage_available(stage):
+                self._set_compare_stage(stage)
+                return
+
+    def _sync_compare_pager(self) -> None:
+        """Refresh the pager label + arrow enabled-state from ``_compare_stage``.
+
+        Called from the end of :meth:`_sync_compare_toggles`, the single sync
+        seam that already runs on every stage change, availability change, and
+        vector-mode flip.
+        """
+        if not hasattr(self, "_compare_pager_label"):
+            return  # sync can run before the pager is built
+        available = [
+            stage
+            for stage in _COMPARE_CYCLE
+            if stage is not None and self._compare_stage_available(stage)
+        ]
+        if self._compare_stage is None:
+            self._compare_pager_label.setText("Comparing: off")
+        else:
+            name = _COMPARE_STAGE_LABELS[self._compare_stage]
+            position = available.index(self._compare_stage) + 1
+            self._compare_pager_label.setText(f"Comparing: {name} ({position}/{len(available)})")
+        enabled = bool(available)
+        self._compare_prev_btn.setEnabled(enabled)
+        self._compare_next_btn.setEnabled(enabled)
+
+    def _compare_stage_available(self, stage: str) -> bool:
+        """Whether *stage* has a before/after to show (enable-when-active)."""
+        alpha_off_unity = abs(float(self._alpha_spin.value()) - 1.0) > 1e-9
+        if stage == "deadtime":
+            return self._current_deadtime_mode() != "off"
+        if stage == "background":
+            return self._current_background_mode() != "none"
+        if stage == "alpha":
+            # The α compare/toggle is unavailable in vector mode (the per-projection
+            # table in the Corrections column owns α there), so it never focuses.
+            if bool(self._vector_axis_pairs):
+                return False
+            return self._alpha_is_calibrated() or alpha_off_unity
+        if stage == "raw":
+            return (
+                self._current_deadtime_mode() != "off"
+                or self._current_background_mode() != "none"
+                or alpha_off_unity
+            )
+        return False
+
     def _refresh_preview(self, *args: object) -> None:
         """Recompute the live asymmetry preview for the draft + preview run.
 
@@ -2651,11 +3007,20 @@ class GroupingDialog(QDialog):
             metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(getattr(run, "metadata", {}) or {})
         facility = str(metadata.get("facility", metadata.get("instrument", "")))
+        # Keep the toggles' enabled/checked state in step with the current draft,
+        # and drop the focus if the focused stage is no longer available.
+        self._sync_compare_toggles()
+        # Compare view: the focused stage (if any) draws its before/after ghost over
+        # the solid full-pipeline curve. The solid is never degraded, so the α
+        # compare's residual-⟨A⟩ acceptance number is always read off the
+        # fully-corrected curve. Preview-only — `compare_stage` never reaches the
+        # persisted reduction.
         pane.request_preview_from_profile(
             profile=profile,
             run=run,
             facility=facility,
             run_number=self._preview_run_number(),
+            compare_stage=self._compare_stage,
         )
 
     def _preview_run_number(self) -> int | None:
@@ -2771,15 +3136,23 @@ class GroupingDialog(QDialog):
         super().done(result)
 
     def _teardown_workers(self) -> None:
-        """Cancel and join both worker runners (idempotent).
+        """Cancel and join every worker runner (idempotent).
 
-        The preview pane owns its own runner for the live-preview reduction;
-        ``self._tasks`` is this dialog's own runner for the background-configure
-        preview grouping. Both ``shutdown()``s are safe to call more than once.
+        The preview pane owns its runner for the live-preview reduction; the
+        inline α section owns its single-α estimate runner;
+        ``self._vector_alpha_tasks`` runs the inline per-projection α estimates;
+        and ``self._tasks`` is this dialog's runner for the background-configure
+        preview grouping. Every ``shutdown()`` is safe to call more than once.
         """
         pane = getattr(self, "_preview_pane", None)
         if pane is not None:
             pane.shutdown()
+        alpha_section = getattr(self, "_alpha_section", None)
+        if alpha_section is not None:
+            alpha_section.shutdown()
+        vector_tasks = getattr(self, "_vector_alpha_tasks", None)
+        if vector_tasks is not None:
+            vector_tasks.shutdown()
         tasks = getattr(self, "_tasks", None)
         if tasks is not None:
             tasks.shutdown()
@@ -2968,6 +3341,19 @@ class GroupingDialog(QDialog):
         self._alpha_row_label.setVisible(not vector_mode)
         self._single_alpha_widget.setVisible(not vector_mode)
         self._vector_alpha_widget.setVisible(vector_mode)
+        # The inline single-α section calibrates the single/P_z balance; the
+        # per-projection vector table (in the α area, with its own inline Estimate)
+        # owns the rest. The α card stays put in both modes — its body (single-α
+        # widgets or the vector table) always lives in the Corrections column —
+        # but the single-α calibration section is hidden in vector mode.
+        # _sync_compare_toggles clears an α compare focus there (α is never
+        # available in vector mode), so no ghost — and no card accent — is left.
+        if hasattr(self, "_alpha_section"):
+            self._alpha_section.setVisible(not vector_mode)
+            self._sync_compare_toggles()
+
+        if vector_mode:
+            self._update_vector_alpha_controls()
 
         if not vector_mode:
             self._rebuild_vector_alpha_table([], grouping_values, canonical)
@@ -2976,6 +3362,7 @@ class GroupingDialog(QDialog):
                     self._alpha_spin.setValue(float(grouping_values.get("alpha", 1.0)))
                 except (TypeError, ValueError):
                     pass
+            self._refresh_overflow_indicators()
             return
 
         ordered = self._ordered_projection_labels(pairs, canonical)
@@ -2989,6 +3376,17 @@ class GroupingDialog(QDialog):
             self._set_combo_to_group(self._forward_combo, pz_fwd)
             self._set_combo_to_group(self._backward_combo, pz_bwd)
             self._alpha_spin.setValue(float(self._vector_alpha_spins["P_z"].value()))
+
+        # Section visibility just changed (single-α header vs per-projection
+        # table), so re-derive which sections fall below the fold.
+        self._refresh_overflow_indicators()
+
+    def _refresh_overflow_indicators(self) -> None:
+        """Recompute both overflow pills (no-op before they are constructed)."""
+        for name in ("_corrections_overflow", "_grouping_overflow"):
+            indicator = getattr(self, name, None)
+            if indicator is not None:
+                indicator.refresh()
 
     @staticmethod
     def _ordered_projection_labels(pairs: dict[str, tuple[int, int]], canonical: bool) -> list[str]:
@@ -3055,7 +3453,7 @@ class GroupingDialog(QDialog):
             self._vector_forward_labels[label] = fwd_label
             self._vector_backward_labels[label] = bwd_label
 
-            spin = QDoubleSpinBox()
+            spin = NoScrollDoubleSpinBox()
             spin.setDecimals(6)
             spin.setRange(0.01, 1000.0)
             if canonical:
@@ -3220,7 +3618,6 @@ class GroupingDialog(QDialog):
 
         self._populate_group_table()
         self._update_vector_mode_controls()
-        self._update_grouping_recommendation()
         self._mark_dirty()
         self._refresh_preset_chip(self._current_grouping_payload())
         self._refresh_preview()
@@ -3322,6 +3719,8 @@ class GroupingDialog(QDialog):
         """Show Map periods… only when the reference run has 3+ periods."""
         visible = len(self._sibling_period_datasets()) > 2
         self._map_periods_btn.setVisible(visible)
+        # The "Periods" overflow landmark is gated on this visibility.
+        self._refresh_overflow_indicators()
 
     def _sibling_period_datasets(self) -> list[MuonDataset]:
         """Per-period sibling datasets of the reference run, in period order."""
@@ -3372,73 +3771,147 @@ class GroupingDialog(QDialog):
             "when you press Apply."
         )
 
-    def _estimate_alpha(self) -> None:
-        """Launch the Alpha calibration dialog for the single-alpha grouping.
-
-        Replaces the old inline "Estimate α" action: the dialog lets the user
-        pick a calibration run, method and window and *see* alpha balance the
-        asymmetry. On OK the calibrated policy is written back into the alpha
-        spin and its provenance (method, error, source run), so the payload's
-        ``alpha_method`` / ``alpha_error`` / ``alpha_reference_run`` — and hence
-        the resolved ``AlphaPolicy`` — carry the calibration exactly as the old
-        inline estimate did.
-        """
-        forward_gid = int(self._forward_combo.currentData())
-        backward_gid = int(self._backward_combo.currentData())
-        self._launch_calibration_dialog("single", forward_gid, backward_gid, self._alpha_spin)
-
-    def _launch_calibration_dialog(
-        self,
-        slot: str,
-        forward_gid: int,
-        backward_gid: int,
-        target_spin: QDoubleSpinBox,
-        *,
-        slot_label: str | None = None,
-    ) -> None:
-        """Open the calibration dialog for one group pair and write the result.
-
-        *slot* is the ``_alpha_estimate_state`` key (``"single"`` or an axis /
-        projection label) the calibration provenance is recorded under; *target_spin*
-        is the alpha spin the calibrated value is written into.
-        """
-        if forward_gid == backward_gid:
-            QMessageBox.warning(
-                self, "Invalid Grouping", "Forward and backward groups must differ."
-            )
+    def _update_alpha_section(self) -> None:
+        """(Re)seed the inline single-α section's run list + method."""
+        section = getattr(self, "_alpha_section", None)
+        if section is None:
             return
-        if self._run is None or not self._run.histograms:
-            QMessageBox.warning(self, "Alpha Calibration", "Reference run has no histograms.")
-            return
-
-        from asymmetry.gui.windows.grouping.alpha_calibration_dialog import (
-            AlphaCalibrationDialog,
-        )
-
-        initial_policy = AlphaPolicy(
-            mode="calibrated",
-            value=float(target_spin.value()),
+        section.configure(
+            datasets=self._fingerprint_datasets(),
             method=self._current_alpha_method(),
-            source_run=self._alpha_estimate_state.get(slot, (None, None, None))[2],
-        )
-        dialog = AlphaCalibrationDialog(
-            self._fingerprint_datasets(),
-            groups=self._groups,
-            group_names=self._group_names,
-            forward_group=int(forward_gid),
-            backward_group=int(backward_gid),
-            excluded_detectors=self._current_excluded_detectors() or [],
-            initial_policy=initial_policy,
-            slot_label=slot_label if slot != "single" else None,
             selected_run_number=int(self._reference_dataset.run_number),
-            parent=self,
+            context_provider=self._alpha_estimate_context,
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+
+    def _alpha_estimate_context(self) -> dict[str, Any]:
+        """The current group pair + correction context for an inline α estimate.
+
+        Read fresh at Estimate time so a group / forward-backward edit is honoured
+        without re-seeding (which would reset the calibration-run selection).
+        """
+        try:
+            forward_gid = int(self._forward_combo.currentData())
+            backward_gid = int(self._backward_combo.currentData())
+        except (TypeError, ValueError):
+            forward_gid, backward_gid = 1, 2
+        return {
+            "groups": self._groups,
+            "forward_group": forward_gid,
+            "backward_group": backward_gid,
+            "excluded_detectors": self._current_excluded_detectors() or [],
+            "correction_provider": self._calibration_correction_provider(),
+            "reference_resolver": self._calibration_reference_resolver,
+            "facility": self._calibration_facility(),
+        }
+
+    def _on_alpha_section_estimated(self, policy: object) -> None:
+        """Apply an inline single-α estimate to the α spin + provenance."""
+        if isinstance(policy, AlphaPolicy):
+            self._apply_calibrated_policy("single", self._alpha_spin, policy)
+
+    def _calibration_correction_provider(self):
+        """Build the per-dataset correction-payload provider for the alpha dialog.
+
+        Resolves the current draft (deadtime + background config) against each
+        candidate calibration run, so the alpha estimate runs on the same
+        deadtime-corrected, background-subtracted counts the reduction will. The
+        draft's alpha policy is forced to a fixed value so resolving does not
+        trigger a nested per-run alpha estimate (the dialog measures alpha
+        itself). Returns ``None`` when no fingerprint context is available.
+        """
+        if self._fingerprint is None:
+            return None
+        payload = self._current_grouping_payload()
+        profile = profile_from_form_payload(
+            payload, name=self._draft_name or "draft", fingerprint=self._fingerprint
+        )
+        profile = replace(profile, alpha_policy=AlphaPolicy(mode="fixed", value=1.0))
+
+        def provide(dataset: MuonDataset) -> dict[str, Any]:
+            if dataset.run is None:
+                return {}
+            return resolve_effective_grouping(profile, dataset.run)
+
+        return provide
+
+    def _calibration_reference_resolver(
+        self, grouping: dict[str, Any]
+    ) -> tuple[list, float] | None:
+        """Resolve a ``reference_run`` background for the alpha calibration.
+
+        Reuses an already-loaded reference run from the fingerprint's datasets (or
+        loads the recorded source file, cached per path), returning the reference
+        histograms and the good-frame scale. ``None`` on any failure, so the
+        estimate degrades to no reference subtraction (and the dialog says so).
+        """
+        payload = grouping.get("background_run")
+        if not isinstance(payload, dict):
+            return None
+        cache = getattr(self, "_background_run_cache", None)
+        if cache is None:
+            cache = {}
+            self._background_run_cache = cache
+        try:
+            sample_frames = float(grouping.get("good_frames", 0.0)) or None
+        except (TypeError, ValueError):
+            sample_frames = None
+        try:
+            reference = resolve_background_reference(
+                payload,
+                sample_good_frames=sample_frames,
+                datasets=self._fingerprint_datasets(),
+                cache=cache,
+            )
+        except (ValueError, OSError):
+            return None
+        return reference.histograms, reference.scale
+
+    def _calibration_facility(self) -> str:
+        """Facility label for the alpha dialog's background tail-fit shortening."""
+        metadata = (self._run.metadata if self._run is not None else None) or {}
+        return str(metadata.get("facility", metadata.get("instrument", "")))
+
+    # ------------------------------------------------------------------
+    # Inline per-projection (vector) α estimate
+    # ------------------------------------------------------------------
+
+    def _update_vector_alpha_controls(self) -> None:
+        """(Re)seed the shared vector calibration-run list + method combo.
+
+        The run combo is repopulated preserving the current selection (falling
+        back to the preview reference run); the method mirrors the single-α
+        provenance method. Called whenever the vector table becomes visible.
+        """
+        combo = getattr(self, "_vector_run_combo", None)
+        if combo is None:
             return
-        policy = dialog.result_policy()
-        if policy is None:
-            return
-        self._apply_calibrated_policy(slot, target_spin, policy)
+        current = combo.currentData()
+        selected = int(current) if current is not None else int(self._reference_dataset.run_number)
+        combo.blockSignals(True)
+        populate_calibration_run_combo(combo, self._fingerprint_datasets(), selected)
+        combo.blockSignals(False)
+        method_combo = self._vector_method_combo
+        idx = method_combo.findData(self._current_alpha_method())
+        method_combo.blockSignals(True)
+        method_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        method_combo.blockSignals(False)
+
+    def _on_vector_method_changed(self) -> None:
+        """Keep the payload's α-method provenance in step with the vector combo."""
+        self._set_alpha_method(self._current_vector_method())
+
+    def _current_vector_method(self) -> str:
+        return str(self._vector_method_combo.currentData() or "diamagnetic")
+
+    def _vector_calibration_dataset(self) -> MuonDataset | None:
+        """The dataset for the shared vector calibration-run selection."""
+        run_number = self._vector_run_combo.currentData()
+        if run_number is None:
+            return None
+        return next(
+            (ds for ds in self._fingerprint_datasets() if int(ds.run_number) == int(run_number)),
+            None,
+        )
 
     def _apply_calibrated_policy(
         self, slot: str, target_spin: QDoubleSpinBox, policy: AlphaPolicy
@@ -3467,7 +3940,20 @@ class GroupingDialog(QDialog):
             finally:
                 self._suppress_alpha_provenance_reset = False
             self._refresh_alpha_provenance_label()
+        # α is now measured under the current corrections; stamp their digest so
+        # a later deadtime/background change re-raises the staleness banner.
+        self._alpha_correction_digest = self._correction_digest()
+        self._refresh_alpha_staleness()
         self._record_calibration_result_label(slot, policy)
+        # Auto-focus the α compare on a fresh calibration (single mode only — the
+        # α compare is unavailable in vector mode, where the per-projection table
+        # owns α), preserving the old auto-overlay; the chips/pager can dismiss
+        # it. The α card is expanded too so the result + provenance rows the
+        # calibration just wrote are actually on screen.
+        if not bool(self._vector_axis_pairs):
+            self._set_compare_stage("alpha")
+        if hasattr(self, "_alpha_card"):
+            self._alpha_card.set_expanded(True)
         self._mark_dirty()
 
     def _record_calibration_result_label(self, slot: str, policy: AlphaPolicy) -> None:
@@ -3487,7 +3973,9 @@ class GroupingDialog(QDialog):
             return
         self._alpha_estimate_state.pop("single", None)
         self._alpha_estimate_state.pop("P_z", None)
+        self._alpha_correction_digest = None
         self._refresh_alpha_provenance_label()
+        self._refresh_alpha_staleness()
 
     def _reseed_alpha_provenance_from_grouping(self, grouping: dict[str, Any]) -> None:
         """Re-seed ``_alpha_estimate_state['single']`` from a resolved payload.
@@ -3514,6 +4002,105 @@ class GroupingDialog(QDialog):
             error_val,
             run,
         )
+        digest = grouping.get("alpha_correction_digest")
+        self._alpha_correction_digest = str(digest) if digest is not None else None
+
+    #: Grouping keys whose change means a calibrated α no longer centres the
+    #: corrected asymmetry (the deadtime + background correction surface).
+    _CORRECTION_DIGEST_DEADTIME_KEYS = (
+        "deadtime_mode",
+        "deadtime_method",
+        "dead_time_us",
+        "deadtime_estimated_us",
+    )
+    _CORRECTION_DIGEST_BACKGROUND_KEYS = (
+        "background_mode",
+        "background_fixed_values",
+        "background_ranges",
+        "background_range",
+        "background_run",
+    )
+
+    def _correction_digest(self) -> str:
+        """Stable digest of the *effective* deadtime + background settings.
+
+        Only the enabled corrections contribute, so an ``off`` deadtime with
+        stale table values digests the same as a plain ``off`` — the banner fires
+        on a change that would actually move the corrected counts, not on inert
+        edits.
+        """
+        payload = self._current_grouping_payload()
+        surface: dict[str, Any] = {}
+        if payload.get("deadtime_correction"):
+            surface["deadtime"] = {
+                key: payload.get(key)
+                for key in self._CORRECTION_DIGEST_DEADTIME_KEYS
+                if payload.get(key) is not None
+            }
+        if payload.get("background_correction"):
+            surface["background"] = {
+                key: payload.get(key)
+                for key in self._CORRECTION_DIGEST_BACKGROUND_KEYS
+                if payload.get(key) is not None
+            }
+        blob = json.dumps(surface, sort_keys=True, default=str)
+        return hashlib.sha1(blob.encode()).hexdigest()[:16]
+
+    @staticmethod
+    def _alpha_provenance_holds(
+        recorded_value: float, current_value: float, decimals: int = 6
+    ) -> bool:
+        """True when *current_value* (a spin's displayed α) still shows *recorded*.
+
+        The estimate stores full precision but the α spins round to *decimals*, so a
+        naive ``< 1e-9`` compare reads every real (non-round) calibration as a hand
+        edit — silently dropping the "calibrated" provenance (from the saved profile
+        too), the staleness banner and the α chip's stale flag. A displayed value is within
+        half a display ULP of the recorded value; a genuine manual edit moves the
+        spin to a different displayed value, well beyond that. (Tested against the
+        raw difference rather than re-rounding both sides, so Python's banker's
+        rounding can't disagree with Qt's at an exact half-ULP tie.)
+        """
+        return abs(float(recorded_value) - float(current_value)) < 0.5 * 10 ** (-decimals)
+
+    def _alpha_is_calibrated(self) -> bool:
+        """True when the single α spin still holds a calibrated estimate."""
+        recorded = self._alpha_estimate_state.get("single") or self._alpha_estimate_state.get("P_z")
+        if recorded is None:
+            return False
+        return self._alpha_provenance_holds(
+            recorded[0], self._alpha_spin.value(), self._alpha_spin.decimals()
+        )
+
+    def _alpha_is_stale(self) -> bool:
+        """True when a calibrated α no longer matches the current corrections.
+
+        The digest of the deadtime/background settings α was measured under has
+        diverged from the current one, so the calibrated α no longer centres the
+        corrected asymmetry. Drives both the staleness banner and the " · stale"
+        suffix (plus re-estimation tooltip) on the pipeline α chip.
+        """
+        return (
+            self._alpha_is_calibrated()
+            and self._alpha_correction_digest is not None
+            and self._alpha_correction_digest != self._correction_digest()
+        )
+
+    def _refresh_alpha_staleness(self) -> None:
+        """Show the banner (and flag the pipeline α chip) when α went stale."""
+        if not hasattr(self, "_alpha_stale_banner"):
+            return
+        stale = self._alpha_is_stale()
+        if stale:
+            self._alpha_stale_banner.setText(
+                "α was calibrated under different deadtime/background corrections — "
+                "re-estimate so it centres the corrected asymmetry."
+            )
+        self._alpha_stale_banner.setVisible(stale)
+        # There are no tabs to mark: staleness surfaces on the pipeline α chip
+        # (" · stale" summary + a re-estimation tooltip). The chip is hidden in
+        # vector mode, where the banner in the α area covers the same case.
+        self._sync_pipeline_strip()
 
     def _refresh_alpha_provenance_label(self) -> None:
         """Reflect the single alpha's provenance ("calibrated …" or "manual")."""
@@ -3521,7 +4108,9 @@ class GroupingDialog(QDialog):
             return
         recorded = self._alpha_estimate_state.get("single") or self._alpha_estimate_state.get("P_z")
         value = float(self._alpha_spin.value())
-        if recorded is not None and abs(recorded[0] - value) < 1e-9:
+        if recorded is not None and self._alpha_provenance_holds(
+            recorded[0], value, self._alpha_spin.decimals()
+        ):
             method_label = next(
                 (
                     label
@@ -3538,13 +4127,14 @@ class GroupingDialog(QDialog):
             self._alpha_provenance_label.setText("manual")
 
     def _estimate_alpha_for_axis(self, axis: str) -> None:
-        """Launch the calibration dialog for one projection pair.
+        """Inline-estimate α for one projection pair off the GUI thread.
 
         *axis* is the projection slot/label — a canonical EMU axis (P_x/P_y/P_z)
-        or a non-canonical projection label (FB, Top-Bottom, …). The dialog
-        preselects that projection's forward/backward groups and writes the
-        calibrated value + provenance back into the projection's alpha spin (and,
-        for the canonical P_z anchor, the single-alpha spin too).
+        or a non-canonical projection label (FB, Top-Bottom, …). The estimate uses
+        the shared calibration run + method with the projection's own forward/
+        backward groups; on success the calibrated value + provenance are written
+        into the projection's α spin (and, for the canonical P_z anchor, the
+        single-α spin too) via :meth:`_apply_calibrated_policy`.
         """
         pair = self._vector_axis_pairs.get(axis)
         if pair is None:
@@ -3552,17 +4142,117 @@ class GroupingDialog(QDialog):
                 self, "Estimate Failed", f"No grouping pair is available for {axis}."
             )
             return
-        spin = self._vector_alpha_spins.get(axis)
-        if spin is None:
+        if axis not in self._vector_alpha_spins:
             return
-        self._launch_calibration_dialog(axis, int(pair[0]), int(pair[1]), spin, slot_label=axis)
+        self._begin_vector_estimates([axis])
 
     def _estimate_all_alpha(self) -> None:
-        """Estimate alpha for every projection pair in the current table."""
-        for axis in self._ordered_projection_labels(
-            self._vector_axis_pairs, self._is_canonical_vector_pairs(self._vector_axis_pairs)
-        ):
-            self._estimate_alpha_for_axis(axis)
+        """Estimate α for every projection pair, one axis at a time.
+
+        Serialised (not fired in parallel) so each result routes to its own spin —
+        the off-thread estimates share one runner and a single result token.
+        """
+        axes = [
+            axis
+            for axis in self._ordered_projection_labels(
+                self._vector_axis_pairs, self._is_canonical_vector_pairs(self._vector_axis_pairs)
+            )
+            if axis in self._vector_alpha_spins and self._vector_axis_pairs.get(axis) is not None
+        ]
+        self._begin_vector_estimates(axes)
+
+    def _begin_vector_estimates(self, axes: list[str]) -> None:
+        """Queue *axes* for serialised inline estimation and start the first."""
+        if self._run is None or not self._run.histograms:
+            QMessageBox.warning(self, "Alpha Calibration", "Reference run has no histograms.")
+            return
+        if not axes:
+            return
+        self._vector_estimate_queue = list(axes)
+        self._set_vector_estimate_enabled(False)
+        self._start_next_vector_estimate()
+
+    def _start_next_vector_estimate(self) -> None:
+        """Kick off the next queued axis estimate, or re-enable when drained."""
+        while self._vector_estimate_queue:
+            axis = self._vector_estimate_queue[0]
+            pair = self._vector_axis_pairs.get(axis)
+            spin = self._vector_alpha_spins.get(axis)
+            dataset = self._vector_calibration_dataset()
+            if pair is None or spin is None or dataset is None or dataset.run is None:
+                self._vector_estimate_queue.pop(0)
+                continue
+            forward_gid, backward_gid = int(pair[0]), int(pair[1])
+            if forward_gid == backward_gid:
+                QMessageBox.warning(
+                    self, "Invalid Grouping", "Forward and backward groups must differ."
+                )
+                self._vector_estimate_queue.pop(0)
+                continue
+            self._vector_estimate_source_run = int(dataset.run_number)
+            self._vector_estimate_token += 1
+            token = self._vector_estimate_token
+            request = build_alpha_request(
+                token=token,
+                dataset=dataset,
+                groups=self._groups,
+                forward_gid=forward_gid,
+                backward_gid=backward_gid,
+                excluded_detectors=self._current_excluded_detectors() or [],
+                method=self._current_vector_method(),
+                correction_provider=self._calibration_correction_provider(),
+                reference_resolver=self._calibration_reference_resolver,
+                facility=self._calibration_facility(),
+            )
+            self._vector_alpha_tasks.start(
+                lambda worker, request=request: run_alpha_estimate(worker, request),
+                on_finished=lambda result, axis=axis, token=token: (
+                    self._on_vector_estimate_finished(axis, token, result)
+                ),
+                on_error=lambda message, axis=axis: self._on_vector_estimate_error(axis, message),
+            )
+            return
+        self._set_vector_estimate_enabled(True)
+
+    def _on_vector_estimate_finished(self, axis: str, token: int, result: object) -> None:
+        """Apply one axis estimate (unless superseded) and start the next."""
+        if token != self._vector_estimate_token:
+            return  # a newer estimate supersedes this stale result
+        if self._vector_estimate_queue and self._vector_estimate_queue[0] == axis:
+            self._vector_estimate_queue.pop(0)
+        spin = self._vector_alpha_spins.get(axis)
+        if isinstance(result, AlphaEstimateResult) and result.estimate.ok and spin is not None:
+            estimate = result.estimate
+            self._apply_calibrated_policy(
+                axis,
+                spin,
+                AlphaPolicy(
+                    mode="calibrated",
+                    value=float(estimate.alpha),
+                    error=estimate.alpha_error,
+                    method=estimate.method,
+                    source_run=self._vector_estimate_source_run,
+                ),
+            )
+        elif isinstance(result, AlphaEstimateResult) and not result.estimate.ok:
+            QMessageBox.warning(
+                self, "Alpha Calibration", f"Estimate failed: {result.estimate.message}"
+            )
+        self._start_next_vector_estimate()
+
+    def _on_vector_estimate_error(self, axis: str, message: str) -> None:
+        """Surface a worker error for one axis and continue the queue."""
+        if self._vector_estimate_queue and self._vector_estimate_queue[0] == axis:
+            self._vector_estimate_queue.pop(0)
+        QMessageBox.warning(self, "Alpha Calibration", message)
+        self._start_next_vector_estimate()
+
+    def _set_vector_estimate_enabled(self, enabled: bool) -> None:
+        """Enable/disable the per-axis + Estimate-All buttons while in flight."""
+        for button in self._vector_estimate_buttons.values():
+            button.setEnabled(enabled)
+        if self._estimate_all_btn is not None:
+            self._estimate_all_btn.setEnabled(enabled)
 
     def _reference_has_two_period_data(self) -> bool:
         """Return True when the reference run contains two-period histograms."""
@@ -3583,6 +4273,8 @@ class GroupingDialog(QDialog):
         self._period_mode_label.setVisible(has_two_period)
         self._period_mode_widget.setVisible(has_two_period)
         self._period_mode_widget.setEnabled(has_two_period)
+        # The "Periods" overflow landmark is gated on this visibility.
+        self._refresh_overflow_indicators()
 
     def _set_period_mode(self, mode_key: str) -> None:
         """Select a period-mode radio button, defaulting to RED."""
@@ -3628,10 +4320,14 @@ class GroupingDialog(QDialog):
         alpha_provenance: dict[str, Any] = {"alpha_method": self._current_alpha_method()}
         slot = "P_z" if canonical else "single"
         recorded = self._alpha_estimate_state.get(slot)
-        if recorded is not None and abs(recorded[0] - alpha_value) < 1e-9:
+        if recorded is not None and self._alpha_provenance_holds(recorded[0], alpha_value):
             if recorded[1] is not None:
                 alpha_provenance["alpha_error"] = float(recorded[1])
             alpha_provenance["alpha_reference_run"] = int(recorded[2])
+            # Persist the corrections α was measured under so the staleness
+            # banner can fire on reopen, not just within this session.
+            if self._alpha_correction_digest is not None:
+                alpha_provenance["alpha_correction_digest"] = self._alpha_correction_digest
 
         return (
             {
@@ -3699,7 +4395,7 @@ class GroupingDialog(QDialog):
                 value = float(self._vector_alpha_spins[label].value())
                 new_spec["alpha"] = value
                 recorded = self._alpha_estimate_state.get(label)
-                if recorded is not None and abs(recorded[0] - value) < 1e-9:
+                if recorded is not None and self._alpha_provenance_holds(recorded[0], value):
                     if recorded[1] is not None:
                         new_spec["alpha_error"] = float(recorded[1])
                     new_spec["alpha_reference_run"] = int(recorded[2])
@@ -3726,7 +4422,7 @@ class GroupingDialog(QDialog):
             value = float(self._vector_alpha_spins[axis].value())
             payload[key] = value
             recorded = self._alpha_estimate_state.get(axis)
-            if recorded is not None and abs(recorded[0] - value) < 1e-9:
+            if recorded is not None and self._alpha_provenance_holds(recorded[0], value):
                 if recorded[1] is not None:
                     payload[f"{key}_error"] = float(recorded[1])
                 payload[f"{key}_reference_run"] = int(recorded[2])

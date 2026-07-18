@@ -168,6 +168,15 @@ them:
   progress UI + request-id staleness + cancel/closeEvent skeleton for guided
   fit-wizard windows; a subclass supplies its own tabs, worker task, and
   result-tab population.
+- `gui.widgets.section_overflow_indicator.SectionOverflowIndicator` — a
+  viewport-overlay pill that names the scroll sections currently hidden below
+  the fold and scrolls the first one into view on click; recomputes from cheap
+  geometry reads on scroll/resize plus an explicit `refresh()`.
+- `gui.widgets.elided_label.ElidedLabel` — a QLabel that elides right instead
+  of imposing its text width as a layout minimum (zero minimum width; full
+  text as a tooltip while elided). Use it for any long one-line status text
+  inside a width-constrained column so the text can never force a horizontal
+  scrollbar.
 - `gui.panels.fit/` — the fit-setup-and-results package (`FitPanel`,
   `FitTabBase`, `SingleFitTab`, `GlobalFitTab`, `FitParameterTable`, seeding
   helpers), split out of the former monolithic `fit_panel.py` (now a thin
@@ -452,13 +461,47 @@ share one numerics implementation instead of two that could drift apart; a
 pinned test (`tests/gui/test_grouping_preview_pane.py`) keeps the preview
 bit-identical to the original `MainWindow` output.
 
-**GUI.** `gui/windows/grouping/` (`dialog.py` plus `alpha_calibration_dialog.py`,
-`deadtime_dialog.py`, `background_dialog.py`, `scope_panel.py`,
-`preview_pane.py`, `profile_bridge.py`) replaced the old single grouping
-dialog with a profile editor: a draft `GroupingProfile` edited in place,
-a scope panel for release/reattach, and a debounced live-preview pane whose
-reduction runs on a `TaskRunner` worker thread per the threading invariant in
-`AGENTS.md`.
+**GUI.** `gui/windows/grouping/` (`dialog.py` plus `alpha_section.py`,
+`deadtime_section.py`, `background_section.py`, `correction_card.py`,
+`scope_panel.py`, `preview_pane.py`, `profile_bridge.py`) replaced the old
+single grouping dialog
+with a profile editor: a draft `GroupingProfile` edited in place, a scope panel
+for release/reattach, and a debounced live-preview pane whose reduction runs on a
+`TaskRunner` worker thread per the threading invariant in `AGENTS.md`. The right
+pane is tabless: a full-width pipeline strip over two side-by-side scroll columns
+— "Grouping and timing" (`_grouping_scroll`) and "Corrections"
+(`_corrections_scroll`) — with the compare pager and the single preview pane
+pinned below both (the preview reduces from the draft's widget state, not from a
+focused column). The deadtime, background and single-α controls are inline
+`DeadtimeSectionWidget` / `BackgroundSectionWidget` / `AlphaSectionWidget` in the
+Corrections column (all three standalone modals were retired), each wrapped in a
+collapsible `CorrectionCard` (`correction_card.py` — grouping-specific, richer
+than the shared `PanelSection`: its header carries the live status summary and
+the compare indicator). Cards open expanded iff their stage is active, remember
+user toggles only for the dialog's lifetime (no QSettings), and auto-expand when
+a reseed activates their stage; a stale calibrated
+α is flagged by a `" · stale"` suffix (and re-estimation tooltip) on the pipeline
+α chip plus a warn-tint on the α card header. The shared α-estimate worker and
+its run-combo / request builders live in
+`alpha_section.py`; the per-projection *vector* α table (`dialog.py`) lives in the
+same Corrections-column α area and drives its per-axis and "Estimate All α"
+estimates inline through that same worker on the dialog's own `TaskRunner`,
+serialised one axis at a time. Compare focus is driven by the pipeline chips and
+the compare pager (plus a compound "vs raw" checkbox in the pager row — the
+per-section checkboxes are retired); focusing drives `_PreviewRequest.compare_stage`
+(`"deadtime"`/`"background"`/`"alpha"`/`"raw"`), which `preview_pane._run_reduction`
+renders as a **ghost** of that stage removed behind the solid full-pipeline curve —
+the solid is never degraded, so the α compare's residual-⟨A⟩ acceptance number is
+always read off the fully-corrected reduction, and the preview's y-axis follows
+the solid alone (an off-scale ghost is named by an inline label, never a legend).
+The compare is preview-only
+(`compare_stage` never reaches `_current_grouping_payload`); the α compare
+auto-focuses on calibration and is unavailable in vector mode (the
+per-projection table owns α there). A
+`Deadtime → group → Background → α` pipeline strip across the top of the right
+pane shows each stage's live one-line summary and clicking a chip focuses that
+stage's compare (the same `_compare_stage`), expands its card, and scrolls it
+into view, making the reduction order visible.
 
 ### 3.7 Global Parameter Fit Studies
 

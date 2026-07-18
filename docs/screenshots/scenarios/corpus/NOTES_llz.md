@@ -178,7 +178,7 @@ Re-tested commit 4a91420 on the real `corpus_llz_nu_arrhenius` panel
   `field_state="TF"`, so the classifier returns `is_candidate=True` (structured
   transverse evidence + field in the weak-TF window). The earlier "classifier
   miss / minor gap" caveat is retired. No scenario-code change: the calibration
-  scenario builds `AlphaCalibrationDialog` on the single run 51315 directly
+  scenario opens the Grouping window on the single run 51315 directly
   (`selected_run_number=...`), which is not a classifier-driven dropdown, so
   there was no explicit-selection workaround to remove — the fix simply means
   the run would auto-highlight in any multi-run calibration dropdown.
