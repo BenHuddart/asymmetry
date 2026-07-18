@@ -184,6 +184,21 @@ source of truth for the implementation pass.
   +Background → +α onto it — only the "+Deadtime" ghost is new); hold-to-swap
   peek flip (redraw-only; requires retaining the last `_PreviewResult` and the
   ghost's real errors).
+- **2026-07-17 — tabless right pane (Ben-approved, `6299152`; live-GUI polish
+  `5927252`/`342e6e3`/`1ae6117` preceding it).** The two tabs are dissolved:
+  the pipeline strip spans the full right pane above two side-by-side columns
+  ("Grouping and timing" | "Corrections"), pager + preview below both, default
+  1220×680 with zero scrollbars in the default single-mode state (pinned by
+  test in both axes for both columns). Everything α unifies in the corrections
+  column (value/provenance/staleness/calibration; vector table in the same
+  slot; α header persists in vector mode); the ⚠ tab marker is replaced by a
+  " · stale" chip suffix + re-estimate tooltip. Also: preset row moved to the
+  left column and the dialog's TF-nudge banner retired (the Detector Layout
+  editor's own hint + preselect covers it), editing-target strip moved into
+  the top row, phantom "Periods" pill landmark fixed. Rationale: the M1
+  adaptive-deadtime collapse made both former tabs short enough to coexist as
+  columns — the tab structure was solving a height problem that no longer
+  existed.
 
 ## The bug this study addresses
 

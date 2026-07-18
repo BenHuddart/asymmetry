@@ -6,6 +6,22 @@ saturation-readout fix `3f9d9cb`, M3 `a4df936`, integration fix `9f73250`).
 Built on the completed interactive Corrections tab (compare toggles + pipeline
 strip, commits `2dc2f57`..`1773312`).
 
+**M4 addendum (2026-07-17, after the original three milestones): the tabs are
+gone.** Ben-approved follow-on landed as `6299152` (plus live-GUI fixes
+`5927252`, `342e6e3`, `1ae6117` in between): the right pane is now a full-width
+pipeline strip over two side-by-side columns — "Grouping and timing" (natural-
+width fields, stretch 0) and "Corrections" (stretch 1) — with the pager and
+preview below both, at a 1220×680 default that needs no scrolling in either
+axis (pinned by `test_both_columns_fit_without_scroll_at_default_size`).
+Everything α (value, provenance, result, staleness banner, vector table) is
+unified in an α area in the corrections column; the ⚠ tab marker became a
+" · stale" suffix + tooltip on the pipeline α chip (`_alpha_is_stale`). The
+adaptive-deadtime collapse (M1) is what made the columns short enough to
+coexist — the tabs existed to stack content that no longer needed stacking.
+Known accepted looseness: vector mode scrolls ~38px at the default height
+(pill covers it); cross-OS font metrics give ~21px vertical / ~32px horizontal
+slack on the fit test (measured on macOS; Linux CI will confirm).
+
 Execution notes (what the plan didn't foresee):
 
 - **The pager row consumed the M1 fit budget.** Adding the M3 pager row under
