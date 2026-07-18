@@ -22,6 +22,24 @@ Known accepted looseness: vector mode scrolls ~38px at the default height
 (pill covers it); cross-OS font metrics give ~21px vertical / ~32px horizontal
 slack on the fit test (measured on macOS; Linux CI will confirm).
 
+**M5 addendum (2026-07-18): correction cards + consolidated compare + preview
+polish (`e8a65b4`, Ben-approved via mockups).** Each correction is a
+`CorrectionCard` (grouping-local widget — clickable status header, stale
+warn-tint, accent "comparing: …" state; expanded-iff-active default recomputed
+per open, deliberately NOT QSettings-persisted so a saved collapse can never
+hide an active correction on another profile). The three per-section
+"Compare in preview" checkboxes are retired — compare focus is controlled by
+the pipeline chips + pager only and displayed on the focused card; column
+headers use `make_section_header`. Preview: y-axis follows the solid curve
+alone (an uncorrected FLAME ghost reaches ~1e7% and used to crush the view);
+ghost thinner/dimmer with an inline clamped label; legend removed. Also fixed
+the pre-existing α run-combo minimum-width overflow (alpha_section.py). Vector
+mode now fits the default height entirely. **Deferred with recorded design: the
+difference strip** — a ~40px Δ = (with − without) trace under the main axes,
+shown only while a compare is focused; the only display that shows a
+correction's effect when it is smaller than a line width; both curves are
+already retained in `_PreviewResult`, so it costs the same whenever built.
+
 Execution notes (what the plan didn't foresee):
 
 - **The pager row consumed the M1 fit budget.** Adding the M3 pager row under
