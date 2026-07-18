@@ -148,25 +148,27 @@ whole calibration surface for that profile:
 Step 3 — Calibrate α from the TF run
 --------------------------------------
 
-Select the silver TF calibration run (``EMU00018854``, silver in a 100 G
-transverse field) in the scope panel and click **Calibrate…** beside the
-**Alpha** row. Because this run's field geometry is transverse and its
-magnitude sits in the weak-TF window, the calibration dialog highlights and
-pre-selects it in its own **Calibration run** dropdown.
+In the **α (detector balance)** card of the Corrections column, pick the
+silver TF calibration run (``EMU00018854``, silver in a 100 G transverse
+field) from the **Calibration run** dropdown. Because this run's field
+geometry is transverse and its magnitude sits in the weak-TF window, it is
+highlighted and pre-selected there. Choose a **Method** and press
+**Estimate α**.
 
 .. figure:: /_generated/corpus_screenshots/corpus_basics_alpha.png
    :width: 80%
    :align: center
-   :alt: The alpha calibration dialog on EMU00018854, showing the fitted
-      α and a before (α = 1, grey) / after (fitted α, blue) asymmetry
-      preview in which the precession becomes symmetric about zero.
+   :alt: The inline alpha calibration on EMU00018854, showing the α card's
+      run picker, method combo and Estimate α button, with a before (α = 1,
+      grey) / after (fitted α, blue) asymmetry preview in which the
+      precession becomes symmetric about zero.
 
-   The alpha calibration dialog on the silver TF run ``EMU00018854``.
+   The inline alpha calibration on the silver TF run ``EMU00018854``.
    With the **Diamagnetic (TF)** method and the good-bin window 21–1999,
-   clicking **Estimate** returns :math:`\alpha = 0.88487(33)`, reported on
-   the status line as ``α = 0.88487(33) · Diamagnetic (TF) · run 18854``.
-   The preview overlays the uncorrected asymmetry (grey, :math:`\alpha = 1`)
-   on the calibrated one (blue): the fitted :math:`\alpha` pulls the
+   pressing **Estimate α** returns :math:`\alpha = 0.88487(33)`, reported in
+   the α card as ``α = 0.88487(33) · Diamagnetic (TF) · run 18854``. The
+   shared preview overlays the uncorrected asymmetry (grey, :math:`\alpha =
+   1`) on the calibrated one (blue): the fitted :math:`\alpha` pulls the
    precession down onto a symmetric oscillation about zero, removing the
    forward/backward imbalance.
 
@@ -189,14 +191,14 @@ B_i` (Mantid's ``AlphaCalc``), with no oscillation model; on a clean silver
 run the two agree closely. The **General (LF/ZF)** method balances
 lifetime-corrected counts and accommodates a genuinely relaxing signal, but
 needs visible relaxation. On this silver TF run the diamagnetic estimate
-gives :math:`\alpha = 0.88487(33)`, and the dialog's before/after preview
-shows the balancing effect directly. Accept the calibration and the status
-row reads ``α = 0.88487(33) · Diamagnetic (TF) · run 18854``.
+gives :math:`\alpha = 0.88487(33)`, and the shared before/after preview
+shows the balancing effect directly. The estimate applies immediately: the
+α card reads ``α = 0.88487(33) · Diamagnetic (TF) · run 18854``.
 
 The same calculation is available from the Python API. The diamagnetic fit
 lives in :func:`~asymmetry.core.transform.estimate_alpha_detailed`; the
-simpler integral ratio (equivalent to the dialog's **Count ratio** method)
-is :func:`~asymmetry.core.transform.estimate_alpha`:
+simpler integral ratio (equivalent to the **Count ratio ΣF/ΣB** method) is
+:func:`~asymmetry.core.transform.estimate_alpha`:
 
 .. code-block:: python
 

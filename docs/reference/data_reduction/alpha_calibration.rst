@@ -43,6 +43,27 @@ estimate :math:`\alpha` there with the diamagnetic method, and hold it fixed
 for the longitudinal- and zero-field runs that follow. The General method
 exists for the case where no TF calibration was recorded.
 
+Corrections and the estimate
+----------------------------
+
+:math:`\alpha` is estimated on the *corrected* forward/backward counts — the
+deadtime correction and the background subtraction configured in the grouping
+dialog are applied to the histograms **before** the estimate reads them, so the
+balance is measured on exactly the spectra the reduction forms the asymmetry
+from. This matters most for the background: a flat background pedestal does not
+track the detectors' efficiency ratio, so estimating :math:`\alpha` from the raw
+(unsubtracted) counts balances the *totals* and leaves the reduced weak-TF
+asymmetry off-centre once the background is subtracted. Estimating on the
+background-subtracted counts centres it. The correction order — deadtime, then
+grouping, then background subtraction, then the estimate — follows every
+reference program (WiMDA, Mantid, musrfit).
+
+The calibration dialog shows which corrections the estimate reflects beneath the
+result, and warns when a *requested* correction could not be applied to the
+selected calibration run — for example a reference-run background whose reference
+could not be resolved — so a flattened "after" curve never misrepresents a
+calibration the reduction will not reproduce.
+
 Diamagnetic method
 ------------------
 

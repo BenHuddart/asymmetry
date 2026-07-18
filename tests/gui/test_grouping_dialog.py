@@ -14,13 +14,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel
+from PySide6.QtWidgets import QApplication, QLabel
 
 import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
-from asymmetry.gui.windows.grouping.alpha_calibration_dialog import AlphaCalibrationDialog
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
@@ -48,42 +47,39 @@ def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
     assert predicate(), "timed out waiting for the background worker"
 
 
-def _autocalibrate(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the launched Alpha calibration dialog run headlessly.
+def _estimate_vector_axis(dialog, axis: str) -> None:
+    """Drive the inline per-projection α estimate for *axis* and wait for it.
 
-    The grouping dialog's ``Calibrate…`` (and the per-projection estimate
-    buttons) now open :class:`AlphaCalibrationDialog` modally. Tests that used to
-    call the old synchronous ``_estimate_alpha`` drive the *real* calibration
-    flow instead: this patches ``exec`` to run the dialog's own estimate + accept
-    path (so the estimator, provenance and returned policy are all exercised) and
-    never blocks. ``result_policy()`` then returns the genuine calibrated policy.
-
-    ``_on_estimate`` now runs the estimate on a TaskRunner worker thread (B4),
-    so this pumps the event loop until it lands before reading ``_estimate``.
-
-    This dialog is launched with ``parent=self`` (the GroupingDialog), so it is
-    a *child* widget, not top-level — the ``tests/conftest.py`` teardown fixture
-    only ``close()``s top-level widgets, and it is not reachable via
-    ``QApplication.findChildren(QThread)`` either (its GroupingDialog parent is
-    itself typically parentless in these tests). The only thing that shuts its
-    ``_tasks`` runner down is going through ``done()`` here, exactly as a real
-    modal ``exec()`` would on close — so both branches below must call
-    ``reject()``/``accept()`` rather than just returning a result code.
+    Per-projection calibration is now inline in the grouping dialog (the modal is
+    retired). The estimate runs off-thread on the dialog's vector runner; on
+    success it routes through ``_apply_calibrated_policy`` into the axis's spin.
+    "Estimate All" is serialised, so waiting for the runner to drain covers a
+    single axis or the whole table.
     """
+    dialog._estimate_alpha_for_axis(axis)
+    _wait_until(lambda: dialog._vector_alpha_tasks.active_count == 0)
 
-    def _fake_exec(self: AlphaCalibrationDialog) -> int:
-        self._on_estimate()
-        _wait_until(lambda: self._tasks.active_count == 0)
-        if self._estimate is None:
-            # Estimate failed (e.g. the General method on flat data): behave like
-            # a user who cancels, so the caller leaves alpha untouched. reject()
-            # (not a bare return) so done() -> _tasks.shutdown() still runs.
-            self.reject()
-            return QDialog.DialogCode.Rejected
-        self._on_accept()
-        return QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(AlphaCalibrationDialog, "exec", _fake_exec, raising=True)
+def _estimate_all_vector_alpha(dialog) -> None:
+    """Drive the inline "Estimate All α" flow and wait for the serialised runs."""
+    dialog._estimate_all_alpha()
+    _wait_until(lambda: dialog._vector_alpha_tasks.active_count == 0)
+
+
+def _estimate_single_alpha(dialog, method: str | None = None) -> None:
+    """Drive the inline single-α section's estimate and wait for the worker.
+
+    Single-α calibration is now inline in the Corrections panel (the modal is
+    kept only for the per-projection vector case). The estimate runs off-thread;
+    on success the section emits ``alpha_estimated`` and the dialog applies it.
+    """
+    section = dialog._alpha_section
+    if method is not None:
+        idx = section._method_combo.findData(method)
+        assert idx >= 0
+        section._method_combo.setCurrentIndex(idx)
+    section._on_estimate()
+    _wait_until(lambda: section._tasks.active_count == 0)
 
 
 @pytest.fixture(scope="module")
@@ -299,10 +295,306 @@ def _two_period_dataset(run_number: int = 6001) -> MuonDataset:
 def test_estimate_alpha_updates_spinbox(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
+
+
+def test_right_pane_is_tabless_two_columns_with_preview_pinned(qapp: QApplication) -> None:
+    """The right pane is tabless: two side-by-side columns, preview pinned below.
+
+    A "Grouping and timing" column and a "Corrections" column, each its own
+    scroll area, with the full-width pipeline strip above BOTH (inside neither
+    scroll) and the single shared preview pinned below BOTH. There is no tab
+    widget any more.
+    """
+    from PySide6.QtWidgets import QScrollArea
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    # No tab widget survives the tabless redesign.
+    assert not hasattr(dialog, "_tabs")
+    assert not hasattr(dialog, "_corrections_tab_index")
+
+    assert isinstance(dialog._grouping_scroll, QScrollArea)
+    assert isinstance(dialog._corrections_scroll, QScrollArea)
+    assert dialog._grouping_scroll.widgetResizable()
+    assert dialog._corrections_scroll.widgetResizable()
+
+    # The deadtime/background/α sections live in the Corrections column; t0 lives
+    # in the Grouping column. Each is in exactly one scroll.
+    assert dialog._corrections_scroll.isAncestorOf(dialog._deadtime_section)
+    assert dialog._corrections_scroll.isAncestorOf(dialog._alpha_section)
+    assert dialog._corrections_scroll.isAncestorOf(dialog._alpha_area)
+    assert dialog._grouping_scroll.isAncestorOf(dialog._t0_row_widget)
+    assert not dialog._grouping_scroll.isAncestorOf(dialog._alpha_section)
+
+    # The pipeline strip spans above both columns — inside neither scroll.
+    strip = dialog._pipeline_chips["deadtime"]
+    assert not dialog._grouping_scroll.isAncestorOf(strip)
+    assert not dialog._corrections_scroll.isAncestorOf(strip)
+
+    # The preview is pinned below both columns — inside neither scroll.
+    assert not dialog._grouping_scroll.isAncestorOf(dialog._preview_pane)
+    assert not dialog._corrections_scroll.isAncestorOf(dialog._preview_pane)
+
+
+def test_both_columns_fit_without_scroll_at_default_size(qapp: QApplication) -> None:
+    """Both columns need no scrolling at the default 1220×680, deadtime off.
+
+    The headline acceptance of the tabless two-column redesign: with deadtime off
+    — the default — every grouping field and every correction section (deadtime,
+    background, the α area and calibration) must be reachable without scrolling in
+    either column. Pins the whole-column budget in both axes, so a new row
+    elsewhere or an over-wide field re-introducing a scrollbar fails here.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.show()
+    QApplication.processEvents()
+
+    assert dialog.size().width() == 1220
+    assert dialog.size().height() == 680
+    assert dialog._deadtime_section._current_mode() == "off"
+
+    for scroll in (dialog._grouping_scroll, dialog._corrections_scroll):
+        assert scroll.verticalScrollBar().maximum() == 0
+        assert scroll.horizontalScrollBar().maximum() == 0
+    assert not dialog._corrections_overflow.isVisible()
+    assert not dialog._grouping_overflow.isVisible()
+
+    dialog.close()
+
+
+def test_grouping_overflow_omits_periods_for_single_period_data(qapp: QApplication) -> None:
+    """No phantom "Periods" landmark when the periods row has no visible content.
+
+    The periods row container stays visible even when both of its
+    independently-gated children are hidden (RG radios need two-period data,
+    "Map periods…" needs 3+), so the landmark must be gated on the children —
+    otherwise every single-period dataset lists "Periods" in the Grouping-tab
+    pill on short windows.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.show()
+    QApplication.processEvents()
+
+    labels = [label for label, _ in dialog._grouping_overflow_sections()]
+    assert "Periods" not in labels
+
+    # With the RG radios shown (two-period data), the landmark returns.
+    dialog._period_mode_widget.setVisible(True)
+    labels = [label for label, _ in dialog._grouping_overflow_sections()]
+    assert "Periods" in labels
+
+    dialog.close()
+
+
+def test_overflow_pill_settles_hidden_after_inline_alpha_estimate(qapp: QApplication) -> None:
+    """The pill must not linger after the α result rows relayout the corrections column.
+
+    The inline α estimate grows the α section (result + provenance note), and
+    the content can transiently overflow the viewport mid-relayout — the
+    scrollbar's rangeChanged then fires against unsettled geometry and shows the
+    pill naming sections that are actually on screen. The pill's settle pass (a
+    coalesced zero-interval recompute after the event loop drains) must leave it
+    hidden once the content fits again; this was caught live in the screenshot
+    scenario, where the stale pill was captured mid-race.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    # A window tall enough that the α result + provenance rows still fit after the
+    # estimate — the point is the settle pass (the pill must not linger stale
+    # mid-relayout), not the default-size budget.
+    dialog.resize(1220, 760)
+    dialog.show()
+    QApplication.processEvents()
+
+    _estimate_single_alpha(dialog)
+    QApplication.processEvents()  # queued result callbacks + the pill's settle pass
+    QApplication.processEvents()
+
+    assert dialog._corrections_scroll.verticalScrollBar().maximum() == 0
+    assert not dialog._corrections_overflow.isVisible()
+    # No dialog.close(): the estimate dirtied the draft, and close() would pop
+    # the discard-guard modal; the autouse widget reaper tears the dialog down.
+
+
+def test_corrections_overflow_pill_names_hidden_sections(qapp: QApplication) -> None:
+    """The Corrections overflow pill names below-the-fold sections on a short window.
+
+    At a deliberately short size with deadtime in manual mode (its table pushes
+    the later sections down), the pill lists the hidden sections including
+    "Background"; at the default size with deadtime off, everything fits and the
+    pill is hidden.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.show()
+    dialog.resize(1220, 520)
+    QApplication.processEvents()
+
+    # Manual deadtime shows the per-detector table, pushing Background (and α)
+    # below the fold on the short viewport. The deadtime card starts collapsed
+    # (stage off), so expand it first — the table only occupies space inside an
+    # expanded card body. No explicit refresh() — the pill must react on its
+    # own via the scrollbar's rangeChanged (content grew).
+    dialog._deadtime_card.set_expanded(True)
+    dialog._deadtime_section._set_mode("manual")
+    dialog._deadtime_section._on_mode_or_state_changed()
+    QApplication.processEvents()
+
+    pill = dialog._corrections_overflow
+    assert pill.isVisible()
+    assert pill.text().startswith("↓ ")
+    assert "Background" in pill.text()
+
+    # Default size with deadtime off: the two-column layout makes this state fit,
+    # so no pill.
+    dialog.resize(1220, 680)
+    dialog._deadtime_section._set_mode("off")
+    dialog._deadtime_section._on_mode_or_state_changed()
+    QApplication.processEvents()
+    assert not dialog._corrections_overflow.isVisible()
+
+    dialog.close()
+
+
+def test_alpha_staleness_banner_tracks_correction_changes(qapp: QApplication) -> None:
+    """The banner fires when deadtime/background change after α was calibrated."""
+    from asymmetry.core.project.profiles import AlphaPolicy
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    banner = dialog._alpha_stale_banner
+    assert banner.isHidden()  # fresh dialog: no calibrated α
+
+    policy = AlphaPolicy(
+        mode="calibrated", value=1.23, method="diamagnetic", error=0.01, source_run=1
+    )
+    dialog._apply_calibrated_policy("single", dialog._alpha_spin, policy)
+    assert dialog._alpha_is_calibrated()
+    assert dialog._alpha_correction_digest is not None
+    assert banner.isHidden()  # digests match right after calibration
+
+    # Change a correction → α no longer centres the corrected asymmetry.
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+    assert not banner.isHidden()
+
+    # The digest is persisted into provenance so the badge survives a reopen.
+    assert "alpha_correction_digest" in dialog._current_grouping_payload()
+
+    # Re-calibrating under the new corrections clears the banner.
+    dialog._apply_calibrated_policy("single", dialog._alpha_spin, policy)
+    assert banner.isHidden()
+
+    # A manual α edit drops calibration provenance and hides the banner.
+    dialog._background_mode = "reference_run"
+    dialog._refresh_alpha_staleness()
+    assert not banner.isHidden()
+    dialog._alpha_spin.setValue(1.99)
+    assert banner.isHidden()
+    assert dialog._alpha_correction_digest is None
+
+
+def test_pipeline_chips_wear_their_cards_stage_colors(qapp: QApplication) -> None:
+    """Chip outline colour == card stripe colour, per stage (the identity tie)."""
+    from asymmetry.gui.styles import tokens
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    expected = {
+        "deadtime": tokens.STAGE_DEADTIME,
+        "background": tokens.STAGE_BACKGROUND,
+        "alpha": tokens.STAGE_ALPHA,
+    }
+    for stage, color in expected.items():
+        assert color in dialog._pipeline_chips[stage].styleSheet()
+        assert f"border-left: 3px solid {color}" in (
+            dialog._correction_cards[stage]._header.styleSheet()
+        )
+    dialog.close()
+
+
+def test_stale_single_alpha_flags_pipeline_chip(qapp: QApplication) -> None:
+    """A stale single-α surfaces as " · stale" on the pipeline α chip (no tabs)."""
+    from asymmetry.core.project.profiles import AlphaPolicy
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    assert not dialog._pipeline_summary("alpha").endswith("· stale")
+
+    policy = AlphaPolicy(
+        mode="calibrated", value=1.23, method="diamagnetic", error=0.01, source_run=1
+    )
+    dialog._apply_calibrated_policy("single", dialog._alpha_spin, policy)
+    assert not dialog._pipeline_summary("alpha").endswith("· stale")  # digests match
+
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+    assert dialog._pipeline_summary("alpha").endswith("· stale")
+    # The chip's tooltip prompts a re-estimate when stale.
+    assert "re-estimate" in dialog._pipeline_chips["alpha"].toolTip()
+
+    # Reverting the corrections re-matches the digest: the flag must CLEAR too.
+    dialog._background_mode = "none"
+    dialog._refresh_alpha_staleness()
+    assert not dialog._pipeline_summary("alpha").endswith("· stale")
+    assert "re-estimate" not in dialog._pipeline_chips["alpha"].toolTip()
+
+
+def test_stale_alpha_banner_still_fires_in_vector_mode(qapp: QApplication) -> None:
+    """In vector mode the α chip is hidden, but the α-area banner still fires.
+
+    There is no ⚠ tab marker any more; the pipeline α chip is hidden in vector
+    mode (the per-projection table owns α), so staleness is surfaced by the banner
+    that lives in the α area alongside the per-projection table.
+    """
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    _estimate_vector_axis(dialog, "P_z")
+    assert dialog._alpha_is_calibrated()
+
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+
+    assert dialog._pipeline_alpha_widget.isHidden()  # α chip hidden in vector mode
+    assert not dialog._alpha_stale_banner.isHidden()  # banner still fires
+
+
+def test_calibrated_alpha_survives_spin_rounding(qapp: QApplication) -> None:
+    """A real (non-round) calibrated α is recognised despite the 6-decimal spin.
+
+    Regression: ``_alpha_is_calibrated`` compared the full-precision estimate
+    against the rounded spin with a 1e-9 tolerance, so every real calibration read
+    as a manual edit — silently disabling the staleness banner, the ⚠ marker, and
+    the "calibrated" provenance (in the saved profile too). Round test values (2.0,
+    1.23) masked it; a genuine estimate value does not.
+    """
+    from asymmetry.core.project.profiles import AlphaPolicy
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    policy = AlphaPolicy(
+        mode="calibrated", value=0.9583488636, method="diamagnetic", error=7.2e-5, source_run=7101
+    )
+    dialog._apply_calibrated_policy("single", dialog._alpha_spin, policy)
+
+    assert dialog._alpha_spin.value() != policy.value  # the spin rounded the value
+    assert dialog._alpha_is_calibrated()  # ...but the calibration is still recognised
+    assert "run 7101" in dialog._alpha_provenance_label.text()
+
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+    assert not dialog._alpha_stale_banner.isHidden()  # staleness now actually fires
+    assert dialog._current_grouping_payload().get("alpha_reference_run") == 7101
+
+
+def test_vector_calibrated_alpha_provenance_survives_spin_rounding(qapp: QApplication) -> None:
+    """Vector per-axis provenance survives spin rounding into the saved payload."""
+    from asymmetry.core.project.profiles import AlphaPolicy
+
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    spin = dialog._vector_alpha_spins["P_x"]
+    policy = AlphaPolicy(
+        mode="calibrated", value=1.0371828, method="diamagnetic", error=1e-4, source_run=4010
+    )
+    dialog._apply_calibrated_policy("P_x", spin, policy)
+
+    assert spin.value() != policy.value  # rounded
+    assert dialog._current_grouping_payload().get("alpha_x_reference_run") == 4010
 
 
 def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:
@@ -392,7 +684,9 @@ def test_file_deadtime_status_reflects_reference_run(qapp: QApplication) -> None
     dialog._update_deadtime_status()
 
     assert dialog._reference_file_deadtime_values() == pytest.approx([0.011, 0.022])
-    assert dialog._deadtime_status_label.text() == "Deadtime: from file"
+    # The inline section reflects "from file" mode with the run's file values.
+    assert dialog._deadtime_section._current_mode() == "file"
+    assert dialog._deadtime_section._display_values() == pytest.approx([0.011, 0.022])
 
 
 def test_estimate_deadtime_uses_reference_run_only(qapp: QApplication) -> None:
@@ -597,9 +891,8 @@ def test_per_projection_alpha_estimate_updates_and_persists(
 ) -> None:
     """Estimating a non-canonical projection updates its spin and the estimated
     value persists into the projection payload."""
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
-    dialog._estimate_alpha_for_axis("Top-Bottom")
+    _estimate_vector_axis(dialog, "Top-Bottom")
     estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
 
     payload = dialog._current_grouping_payload()
@@ -613,9 +906,8 @@ def test_per_projection_alpha_estimate_persists_provenance(
     """A non-canonical projection's estimate carries its reference-run provenance
     into the projection payload, and a manual edit invalidates it — mirroring the
     canonical per-axis provenance."""
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_tf_dataset_with_histograms()])
-    dialog._estimate_alpha_for_axis("Top-Bottom")
+    _estimate_vector_axis(dialog, "Top-Bottom")
     estimated = dialog._vector_alpha_spins["Top-Bottom"].value()
 
     payload = dialog._current_grouping_payload()
@@ -701,9 +993,8 @@ def test_vector_payload_records_per_axis_alpha_provenance(
 ) -> None:
     """After estimating an axis, the payload carries that axis's error and
     reference run (per-axis provenance, skipped in Phase 1)."""
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
-    dialog._estimate_alpha_for_axis("P_x")
+    _estimate_vector_axis(dialog, "P_x")
     estimated = dialog._vector_alpha_spins["P_x"].value()
 
     payload = dialog._current_grouping_payload()
@@ -721,22 +1012,282 @@ def test_vector_payload_records_per_axis_alpha_provenance(
 def test_vector_estimate_alpha_for_axis_updates_axis_spin(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
-    dialog._estimate_alpha_for_axis("P_x")
+    _estimate_vector_axis(dialog, "P_x")
 
     assert dialog._vector_alpha_spins["P_x"].value() == pytest.approx(2.0)
+
+
+def test_estimate_all_alpha_calibrates_every_axis(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "Estimate All α" serialises across axes — every axis is estimated, not
+    just the last one queued.
+
+    The three canonical axes share the same F/B ratio (2.0) but seed to distinct
+    values (α_z = 1.3, α_y = 1.2, α_x = 1.1). After Estimate All every spin holds
+    the estimated 2.0 and every axis carries its own reference-run provenance; if
+    the serialised queue collapsed to the last axis, the earlier axes would keep
+    their seeds and carry no provenance.
+    """
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    assert set(dialog._vector_alpha_spins) == {"P_x", "P_y", "P_z"}
+
+    _estimate_all_vector_alpha(dialog)
+
+    for axis in ("P_x", "P_y", "P_z"):
+        assert dialog._vector_alpha_spins[axis].value() == pytest.approx(2.0)
+
+    payload = dialog._current_grouping_payload()
+    assert payload["alpha_x"] == pytest.approx(2.0)
+    assert payload["alpha_y"] == pytest.approx(2.0)
+    assert payload["alpha_z"] == pytest.approx(2.0)
+    assert "alpha_x_reference_run" in payload
+    assert "alpha_y_reference_run" in payload
+    assert "alpha_z_reference_run" in payload
+
+
+def test_compare_toggles_never_touch_the_persisted_payload(qapp: QApplication) -> None:
+    """The preview-only compare toggles never leak into the reduction payload.
+
+    This is the trap PR 1 fixed: a preview control that silently changed the real
+    reduction. Focusing any compare stage must leave ``_current_grouping_payload``
+    (and ``get_grouping_result``) byte-identical — the toggles feed the preview
+    request only.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    _estimate_single_alpha(dialog)  # α ≠ 1 → the α and raw compares become available
+    before_payload = dialog._current_grouping_payload()
+    before_result = dialog.get_grouping_result()
+
+    dialog._set_compare_stage("raw")
+    assert dialog._compare_stage == "raw"
+    assert dialog._current_grouping_payload() == before_payload
+    assert dialog.get_grouping_result() == before_result
+
+    dialog._set_compare_stage("alpha")
+    assert dialog._current_grouping_payload() == before_payload
+    assert dialog.get_grouping_result() == before_result
+
+
+def test_compare_focus_is_exclusive_and_alpha_auto_focuses(qapp: QApplication) -> None:
+    """Compare focus is exclusive; a fresh α calibration auto-focuses α.
+
+    The per-section checkboxes are gone: focus is *controlled* by the pipeline
+    chips + pager (plus the pager-row "raw" checkbox, the only survivor in
+    ``_compare_toggles``) and *displayed* on the focused card's indicator.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    _estimate_single_alpha(dialog)
+
+    # Only the "raw" checkbox remains; the per-stage checkboxes are retired.
+    assert set(dialog._compare_toggles) == {"raw"}
+
+    # Calibrating α auto-focuses the α compare (preserving the old auto-overlay);
+    # the chip checks and the α card shows the comparing indicator.
+    assert dialog._compare_stage == "alpha"
+    assert dialog._pipeline_chips["alpha"].isChecked()
+    assert dialog._alpha_card.comparing_text() == "comparing: α = 1 ghost"
+
+    # Focusing another stage is exclusive — α loses its chip check + indicator.
+    dialog._set_compare_stage("raw")
+    assert dialog._compare_stage == "raw"
+    assert dialog._compare_toggles["raw"].isChecked()
+    assert not dialog._pipeline_chips["alpha"].isChecked()
+    assert dialog._alpha_card.comparing_text() is None
+    # "raw" is not one stage's card, so no card carries an indicator for it.
+    assert all(card.comparing_text() is None for card in dialog._correction_cards.values())
+
+    # Clearing focus unchecks everything.
+    dialog._set_compare_stage(None)
+    assert dialog._compare_stage is None
+    assert not dialog._compare_toggles["raw"].isChecked()
+    assert not any(chip.isChecked() for chip in dialog._pipeline_chips.values())
+
+
+def test_compare_toggle_reaches_the_preview_request(qapp: QApplication) -> None:
+    """The focused stage forwards into the preview request's ``compare_stage``.
+
+    Pins the seam the user drives: ``_refresh_preview`` must carry
+    ``_compare_stage`` into ``_PreviewRequest.compare_stage``. If that wiring were
+    dropped it would default to ``None`` and the toggles would silently no-op.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    _estimate_single_alpha(dialog)  # auto-focuses α
+
+    dialog._refresh_preview()
+    assert dialog._preview_pane._pending is not None
+    assert dialog._preview_pane._pending.compare_stage == "alpha"
+
+    dialog._set_compare_stage("raw")
+    assert dialog._preview_pane._pending.compare_stage == "raw"
+
+    dialog._set_compare_stage(None)
+    assert dialog._preview_pane._pending.compare_stage is None
+
+
+def test_alpha_compare_unavailable_in_vector_mode(qapp: QApplication) -> None:
+    """The α compare never focuses in vector mode — its toggle is hidden there.
+
+    The per-projection α table owns α in vector mode, so a P_z estimate must not
+    auto-focus the (unavailable) α compare in the corrections column —
+    the same misdirection guarded on the ⚠ tab marker.
+    """
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    _estimate_vector_axis(dialog, "P_z")
+
+    assert dialog._alpha_is_calibrated()
+    assert not dialog._compare_stage_available("alpha")
+    assert dialog._compare_stage != "alpha"
+
+
+def test_pipeline_strip_summaries_and_chip_focus(qapp: QApplication) -> None:
+    """The pipeline chips show live summaries, focus a stage on click, and reflect
+    availability; the α chip is hidden in vector mode."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    # Off corrections → deadtime/background chips read their status and are disabled.
+    assert dialog._pipeline_chips["deadtime"].text() == "Deadtime: off"
+    assert dialog._pipeline_chips["background"].text() == "Background: none"
+    assert not dialog._pipeline_chips["deadtime"].isEnabled()
+    assert not dialog._pipeline_chips["background"].isEnabled()
+
+    _estimate_single_alpha(dialog)  # α ≠ 1 → the α chip becomes available + auto-focused
+    assert dialog._pipeline_chips["alpha"].isChecked()
+    assert dialog._pipeline_chips["alpha"].text().startswith("α = ")
+
+    # Clicking the focused chip clears the focus.
+    dialog._on_pipeline_chip_clicked("alpha")
+    assert dialog._compare_stage is None
+    assert not dialog._pipeline_chips["alpha"].isChecked()
+
+
+def test_pipeline_alpha_chip_hidden_in_vector_mode(qapp: QApplication) -> None:
+    """The α pipeline chip is hidden in vector mode (the per-projection table owns α)."""
+    single = GroupingDialog([_dataset_with_histograms()])
+    assert not single._pipeline_alpha_widget.isHidden()
+
+    vector = GroupingDialog([_vector_dataset_with_histograms()])
+    assert vector._pipeline_alpha_widget.isHidden()
+
+
+def test_correction_cards_default_expansion_follows_activity(qapp: QApplication) -> None:
+    """At open, a card is expanded iff its stage is active.
+
+    The default dataset (deadtime off, background none, α = 1 uncalibrated)
+    opens every card collapsed; a dataset whose stored grouping configures a
+    stage opens that stage's card expanded. Vector mode counts α as active (the
+    per-projection table always carries real balances).
+    """
+    plain = GroupingDialog([_dataset_with_histograms()])
+    assert not plain._deadtime_card.is_expanded()
+    assert not plain._background_card.is_expanded()
+    assert not plain._alpha_card.is_expanded()
+
+    ds = _dataset_with_histograms()
+    ds.run.grouping.update(
+        {
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [30.0, 20.0],
+            "alpha": 1.3,
+        }
+    )
+    configured = GroupingDialog([ds])
+    assert not configured._deadtime_card.is_expanded()  # deadtime still off
+    assert configured._background_card.is_expanded()
+    assert configured._alpha_card.is_expanded()  # α ≠ 1 counts as active
+
+    vector = GroupingDialog([_vector_dataset_with_histograms()])
+    assert vector._alpha_card.is_expanded()
+
+
+def test_alpha_calibration_expands_and_accents_the_alpha_card(qapp: QApplication) -> None:
+    """A fresh inline calibration surfaces its result: α card expands + accents."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    assert not dialog._alpha_card.is_expanded()
+
+    _estimate_single_alpha(dialog)
+    assert dialog._alpha_card.is_expanded()
+    assert dialog._alpha_card.comparing_text() == "comparing: α = 1 ghost"
+
+
+def test_pipeline_chip_click_expands_its_card(qapp: QApplication) -> None:
+    """Clicking a stage's chip focuses its compare AND expands its card."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._background_mode = "range"
+    dialog._sync_compare_toggles()
+    assert not dialog._background_card.is_expanded()
+
+    dialog._on_pipeline_chip_clicked("background")
+    assert dialog._compare_stage == "background"
+    assert dialog._background_card.is_expanded()
+    assert dialog._background_card.comparing_text() == "comparing: without background"
+
+    # Clicking again unfocuses the compare but leaves the card expanded (the
+    # user is plausibly about to edit the section it just revealed).
+    dialog._on_pipeline_chip_clicked("background")
+    assert dialog._compare_stage is None
+    assert dialog._background_card.is_expanded()
+    assert dialog._background_card.comparing_text() is None
+
+
+def test_correction_card_status_tracks_section_state(qapp: QApplication) -> None:
+    """Card statuses mirror the chip summaries minus the title-duplicating prefix."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    assert dialog._deadtime_card.status_text() == "off"
+    assert dialog._background_card.status_text() == "none"
+    assert dialog._alpha_card.status_text() == "1.0000"
+
+    # A deadtime mode edit refreshes the status through the section's changed
+    # signal → _on_deadtime_changed → staleness refresh → pipeline/card sync.
+    # (_on_mode_clicked is the user-click path: relayout + notify.)
+    dialog._deadtime_card.set_expanded(True)
+    dialog._deadtime_section._set_mode("manual")
+    dialog._deadtime_section._on_mode_clicked()
+    assert dialog._deadtime_card.status_text().startswith("manual")
+
+    # A calibrated α reads value · method (and the stale flag warn-tints).
+    _estimate_single_alpha(dialog)
+    assert dialog._alpha_card.status_text().startswith("2.0000 · ")
+    assert not dialog._alpha_card._stale
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+    assert dialog._alpha_card.status_text().endswith("· stale")
+    assert dialog._alpha_card._stale
+
+
+def test_reseed_auto_expands_newly_active_cards_only(qapp: QApplication) -> None:
+    """A reseed that activates a stage expands its collapsed card; nothing collapses.
+
+    The seam is ``_reload_controls_from_seed`` (preset/profile/run switches all
+    funnel through it): a stage the incoming draft configures must not stay
+    hidden behind a collapsed card, while a stage going inactive keeps whatever
+    expansion the user chose.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    # User expands the (inactive) deadtime card; background stays collapsed.
+    dialog._deadtime_card.set_expanded(True)
+    assert not dialog._background_card.is_expanded()
+
+    # Make the draft's background active, then re-seed the form from it.
+    dialog._background_mode = "range"
+    dialog._sync_draft_from_form()
+    dialog._background_card.set_expanded(False)
+    dialog._reload_controls_from_seed()
+
+    assert dialog._background_card.is_expanded()  # newly active → auto-expanded
+    assert dialog._deadtime_card.is_expanded()  # inactive but user-expanded → kept
+    assert not dialog._alpha_card.is_expanded()  # still inactive → untouched
 
 
 def test_vector_estimate_alpha_uses_selected_reference_run(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     ds_a = _vector_dataset_with_ratio(5201, ratio=2.0)
     ds_b = _vector_dataset_with_ratio(5202, ratio=4.0)
 
     dialog = GroupingDialog([ds_a, ds_b], selected_run_number=5202)
-    dialog._estimate_alpha_for_axis("P_x")
+    _estimate_vector_axis(dialog, "P_x")
 
     # Must use selected reference run (5202 => alpha=4), not an average of runs.
     assert dialog._vector_alpha_spins["P_x"].value() == pytest.approx(4.0)
@@ -745,12 +1296,11 @@ def test_vector_estimate_alpha_uses_selected_reference_run(
 def test_estimate_alpha_uses_reference_run_only(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     ds_a = _dataset_with_ratio(5001, ratio=2.0)
     ds_b = _dataset_with_ratio(5002, ratio=4.0)
 
     dialog = GroupingDialog([ds_a, ds_b], selected_run_number=5002)
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
 
     # Must use selected reference run (5002 => alpha=4), not an average of runs.
     assert dialog._alpha_spin.value() == pytest.approx(4.0)
@@ -1396,9 +1946,8 @@ def test_alpha_method_round_trips_through_payload_and_reload(qapp: QApplication)
 def test_estimate_records_provenance_in_payload(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
     assert dialog._alpha_result_label.text() != ""
     # The single-alpha provenance status reflects the calibration, not "manual".
@@ -1413,9 +1962,8 @@ def test_estimate_records_provenance_in_payload(
 def test_manual_alpha_edit_invalidates_estimate_provenance(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _autocalibrate(monkeypatch)
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
     dialog._alpha_spin.setValue(dialog._alpha_spin.value() + 0.5)
     result = dialog.get_grouping_result()
     assert "alpha_error" not in result
@@ -1428,12 +1976,10 @@ def test_manual_alpha_edit_invalidates_estimate_provenance(
 def test_estimate_failure_leaves_alpha(qapp: QApplication, monkeypatch) -> None:
     """A failed estimate inside the calibration dialog leaves the alpha untouched
     (the dialog reports the failure; the caller does not write a value back)."""
-    _autocalibrate(monkeypatch)
     dataset = _dataset_with_histograms()
     dialog = GroupingDialog([dataset])
-    dialog._set_alpha_method("general")  # flat 4-bin data: no relaxation contrast
     before = dialog._alpha_spin.value()
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog, "general")  # flat 4-bin data: no relaxation contrast
     assert dialog._alpha_spin.value() == pytest.approx(before)
 
 
@@ -1445,20 +1991,12 @@ def test_format_value_with_uncertainty() -> None:
     assert fmt(1.3, 0.0995) == "1.30(10)"
 
 
-def test_tail_fit_mode_shows_preview_status(qapp: QApplication) -> None:
+def test_tail_fit_mode_shows_status_in_section(qapp: QApplication) -> None:
     dataset = _dataset_with_histograms()
-    # Long histograms so the tail fit has a usable window.
-    rng = np.random.default_rng(0)
-    counts = rng.poisson(np.full(400, 50.0)).astype(float)
-    dataset.run.histograms = [
-        Histogram(counts=counts, bin_width=0.016),
-        Histogram(counts=counts * 0.8, bin_width=0.016),
-    ]
-    dataset.run.grouping["last_good_bin"] = 399
     dialog = GroupingDialog([dataset])
     dialog._background_mode = "tail_fit"
     dialog._update_background_status()
-    assert "Tail-fit background" in dialog._background_status_label.text()
+    assert "tail fit" in dialog._background_section._status_label.text().lower()
     result = dialog.get_grouping_result()
     assert result["background_mode"] == "tail_fit"
     assert result["background_correction"] is True
@@ -1471,215 +2009,78 @@ def test_background_run_payload_round_trips(qapp: QApplication) -> None:
     dataset.run.grouping["background_run"] = {"run_number": 9001, "source_file": "/tmp/x.nxs"}
     dialog = GroupingDialog([dataset])
     assert dialog._current_background_mode() == "reference_run"
-    dialog._update_background_status()
     result = dialog.get_grouping_result()
     assert result["background_run"]["run_number"] == 9001
-    assert "9001" in dialog._background_status_label.text()
+    # The inline section reflects the reference-run selection.
+    assert "9001" in dialog._background_section._status_label.text()
 
 
-# ---------------------------------------------------------------------------
-# Background Configure… grouping runs off-thread (B4)
-# ---------------------------------------------------------------------------
-
-
-def test_configure_background_groups_off_thread_and_opens_with_arrays(
-    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The forward/backward preview arrays are grouped off the GUI thread, and
-    BackgroundDialog opens seeded with exactly those arrays."""
-    call_threads: list[int] = []
-    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
-
-    def spy(histograms, indices):
-        call_threads.append(threading.get_ident())
-        return real_apply_grouping(histograms, indices)
-
-    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", spy)
-
-    captured: dict[str, object] = {}
-
-    class _FakeBackgroundDialog:
-        def __init__(self, **kwargs) -> None:
-            captured.update(kwargs)
-
-        def exec(self) -> int:
-            return QDialog.DialogCode.Rejected  # cancel; only the inputs matter here
-
-    monkeypatch.setattr(grouping_dialog_dialog_module, "BackgroundDialog", _FakeBackgroundDialog)
-
+def test_background_section_change_updates_mode_and_marks_dirty(qapp: QApplication) -> None:
+    """Editing the inline background mode updates the draft + re-previews."""
     dataset = _dataset_with_histograms()
     dialog = GroupingDialog([dataset])
-    gui_thread = threading.get_ident()
-
-    assert dialog._background_configure_btn.isEnabled()
-    dialog._on_configure_background()
-    _wait_until(lambda: "preview" in captured)
-    assert not any(t == gui_thread for t in call_threads), "apply_grouping ran on the GUI thread"
-    assert call_threads  # apply_grouping was actually called (twice: forward + backward)
-
-    _wait_until(lambda: dialog._tasks.active_count == 0)
-    assert dialog._background_configure_btn.isEnabled()
-
-    preview = captured["preview"]
-    assert preview is not None
-    forward_counts, backward_counts, bin_width, _t0_bin, _last_good = preview
-    assert forward_counts.tolist() == [100.0, 100.0, 100.0, 100.0]
-    assert backward_counts.tolist() == [50.0, 50.0, 50.0, 50.0]
-    assert bin_width == pytest.approx(0.01)
+    assert dialog._current_background_mode() == "none"
+    section = dialog._background_section
+    idx = section._mode_combo.findData("range")
+    assert idx >= 0
+    section._mode_combo.setCurrentIndex(idx)  # fires changed → _on_background_changed
+    assert dialog._current_background_mode() == "range"
+    result = dialog.get_grouping_result()
+    assert result["background_mode"] == "range"
+    assert result["background_correction"] is True
 
 
-def test_configure_background_mid_flight_close_does_not_crash(
+def test_vector_alpha_estimate_survives_grouping_dialog_destruction(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Closing the grouping dialog while the background grouping is still
-    running cancels and joins the worker instead of aborting the process."""
-    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
-    release = threading.Event()
+    """The production race, now inline: a per-projection α estimate in flight when
+    the GroupingDialog is destroyed by C++ without a close()/done().
 
-    def blocked_apply_grouping(histograms, indices):
-        release.wait(timeout=5.0)
-        return real_apply_grouping(histograms, indices)
-
-    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", blocked_apply_grouping)
-
-    dataset = _dataset_with_histograms()
-    dialog = GroupingDialog([dataset])
-    dialog._on_configure_background()
-    assert dialog._tasks.active_count == 1
-    assert not dialog._background_configure_btn.isEnabled()
-
-    # Let the blocked worker proceed shortly after, so the shutdown's bounded
-    # wait does not have to wait out its full timeout.
-    threading.Timer(0.2, release.set).start()
-
-    # Close mid-flight: done() -> _teardown_workers() -> self._tasks.shutdown()
-    # must cancel + join the worker cleanly.
-    dialog.reject()
-
-    for _ in range(50):
-        qapp.processEvents()
-    assert dialog._tasks.active_count == 0
-
-
-def test_configure_background_parent_destruction_does_not_crash(
-    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Destroying the grouping dialog (no close()) mid background-grouping is safe.
-
-    The background-configure preview grouping runs on the dialog's own
-    ``TaskRunner``. The ``tests/conftest.py`` teardown fixture and any
-    ``deleteLater``-based reap destroy the dialog through C++ destruction rather
-    than ``close()``/``done()``, so ``_teardown_workers``/``shutdown()`` never
-    runs. With the worker gated mid-flight, the ``TaskRunner`` destroyed-safety-net
-    must park the still-running thread in the reaper instead of aborting.
+    The inline per-projection estimate runs on the dialog's own
+    ``_vector_alpha_tasks`` ``TaskRunner`` (the standalone modal that used to own
+    it is retired). Destroying the dialog reaps that runner via C++ destruction
+    without its ``done``/``closeEvent`` firing, so only the ``TaskRunner``
+    destroyed-safety-net can keep the running worker thread from being destroyed
+    mid-run. This is the crash a previous B4 attempt shipped.
     """
     from PySide6.QtCore import QEvent
 
     from asymmetry.gui import tasks as tasks_mod
+    from asymmetry.gui.windows.grouping import alpha_section as alpha_section_module
 
     release = threading.Event()
     entered = threading.Event()
-    real_apply_grouping = grouping_dialog_dialog_module.apply_grouping
-
-    def gated(histograms, indices):
-        entered.set()
-        release.wait(timeout=5.0)
-        return real_apply_grouping(histograms, indices)
-
-    monkeypatch.setattr(grouping_dialog_dialog_module, "apply_grouping", gated)
-
-    dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog._on_configure_background()
-    _wait_until(lambda: entered.is_set())  # worker inside apply_grouping -> running
-    assert dialog._tasks.active_count == 1
-
-    # The reaper is process-global and shared across the whole xdist worker:
-    # a *previous* test's deferred deletes can drain during this test's event
-    # pump and park (or unpark) their own orphans concurrently, so an exact
-    # global count is racy under test reordering. Track this dialog's worker
-    # thread by identity instead (same discipline as the spawn-pool reaper
-    # fix in tests/core/test_process_pool.py).
-    worker_thread = dialog._tasks._live[0][0]
-
-    def _parked() -> bool:
-        reaper = tasks_mod._orphan_reaper
-        return reaper is not None and any(t is worker_thread for t, _ in reaper._threads)
-
-    # Destroy WITHOUT close()/done(): deleteLater + a DeferredDelete drain.
-    dialog.deleteLater()
-    del dialog
-    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
-    qapp.processEvents()
-
-    _wait_until(_parked)  # worker parked in the reaper, not aborted
-
-    release.set()
-    _wait_until(lambda: not _parked())
-
-
-def test_alpha_child_dialog_survives_grouping_dialog_destruction(
-    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The exact production race: an alpha *child* dialog with an estimate in
-    flight when its GroupingDialog parent is destroyed without a child close().
-
-    ``AlphaCalibrationDialog`` is launched with ``parent=self`` (the
-    GroupingDialog), so destroying the parent reaps the child — and the child's
-    estimate ``TaskRunner`` — via C++ destruction. Its ``done``/``closeEvent``
-    never fire, so only the ``TaskRunner`` destroyed-safety-net can keep the
-    running worker thread from being destroyed mid-run. This is the crash a
-    previous B4 attempt shipped.
-    """
-    from PySide6.QtCore import QEvent
-
-    from asymmetry.gui import tasks as tasks_mod
-    from asymmetry.gui.windows.grouping import (
-        alpha_calibration_dialog as alpha_calibration_dialog_module,
-    )
-
-    release = threading.Event()
-    entered = threading.Event()
-    real_estimate = alpha_calibration_dialog_module.estimate_alpha_detailed
+    real_estimate = alpha_section_module.estimate_alpha_detailed
 
     def gated(*args, **kwargs):
         entered.set()
         release.wait(timeout=5.0)
         return real_estimate(*args, **kwargs)
 
-    monkeypatch.setattr(alpha_calibration_dialog_module, "estimate_alpha_detailed", gated)
+    monkeypatch.setattr(alpha_section_module, "estimate_alpha_detailed", gated)
 
-    parent = GroupingDialog([_dataset_with_ratio(5, ratio=2.0)])
-    child = AlphaCalibrationDialog(
-        [_dataset_with_ratio(5, ratio=2.0)],
-        groups={1: [0], 2: [1]},
-        group_names={1: "Forward", 2: "Backward"},
-        forward_group=1,
-        backward_group=2,
-        parent=parent,
-    )
-    child._set_method("ratio")
-    child._on_estimate()
+    dialog = GroupingDialog([_vector_dataset_with_ratio(5201, ratio=2.0)])
+    dialog._estimate_alpha_for_axis("P_x")
     _wait_until(lambda: entered.is_set())  # estimate worker is in-flight
-    assert child._tasks.active_count == 1
+    assert dialog._vector_alpha_tasks.active_count == 1
 
     # Identity-based for the same reason as the background-configure test
     # above: the process-global reaper can park/unpark other tests' orphans
     # during this test's event pump (seen on CI when the shard schedule
     # reshuffles), so an exact global count is racy.
-    worker_thread = child._tasks._live[0][0]
+    worker_thread = dialog._vector_alpha_tasks._live[0][0]
 
     def _parked() -> bool:
         reaper = tasks_mod._orphan_reaper
         return reaper is not None and any(t is worker_thread for t, _ in reaper._threads)
 
-    # Destroy the GroupingDialog PARENT without close()/done() on the child.
-    del child
-    parent.deleteLater()
-    del parent
+    # Destroy the GroupingDialog without close()/done().
+    dialog.deleteLater()
+    del dialog
     qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     qapp.processEvents()
 
-    _wait_until(_parked)  # child worker parked in the reaper, not aborted
+    _wait_until(_parked)  # worker parked in the reaper, not aborted
 
     release.set()
     _wait_until(lambda: not _parked())
@@ -1783,7 +2184,6 @@ def test_estimate_alpha_respects_detector_exclusion(
 ) -> None:
     """Review fix: the estimate is computed on the same detector set the
     reduction will use."""
-    _autocalibrate(monkeypatch)
     dataset = _dataset_with_histograms()
     dataset.run.histograms = [
         Histogram(counts=np.full(4, 100.0), bin_width=0.01),  # det 1 (forward)
@@ -1793,12 +2193,11 @@ def test_estimate_alpha_respects_detector_exclusion(
     ]
     dataset.run.grouping["groups"] = {1: [1, 2], 2: [3, 4]}
     dialog = GroupingDialog([dataset])
-    dialog._set_alpha_method("ratio")
 
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog, "ratio")
     with_hot = dialog._alpha_spin.value()
     dialog._exclude_edit.setText("2")
-    dialog._estimate_alpha()
+    _estimate_single_alpha(dialog)
     without_hot = dialog._alpha_spin.value()
 
     assert with_hot == pytest.approx(1000.0 / 100.0)
@@ -1863,16 +2262,17 @@ def _gps_dataset(field_direction: str | None) -> MuonDataset:
     )
 
 
-def test_transverse_field_gps_run_shows_grouping_nudge(qapp) -> None:
-    """B8a: a TF GPS run on the longitudinal default nudges toward spin-rotated."""
+def test_grouping_dialog_has_no_tf_banner_but_layout_editor_gets_direction(qapp) -> None:
+    """The full-width TF nudge banner is retired from the grouping dialog.
+
+    It cost a full-width row on small windows; the recommendation survives in
+    the Detector Layout editor (its own ``_tf_hint_label`` + preset preselect —
+    see test_detector_layout_dialog.py), which this dialog feeds the reference
+    run's field direction. Pin that seam so the editor's nudge keeps working.
+    """
     dialog = GroupingDialog([_gps_dataset("Transverse")])
-    assert dialog._tf_hint_label.isVisibleTo(dialog)
-    assert "Spin-rotated (B+U/F+D)" in dialog._tf_hint_label.text()
-
-
-def test_gps_run_without_field_direction_does_not_nudge(qapp) -> None:
-    dialog = GroupingDialog([_gps_dataset(None)])
-    assert not dialog._tf_hint_label.isVisibleTo(dialog)
+    assert not hasattr(dialog, "_tf_hint_label")
+    assert dialog._reference_field_direction() == "Transverse"
 
 
 # ---------------------------------------------------------------------------

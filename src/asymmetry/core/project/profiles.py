@@ -108,9 +108,13 @@ from asymmetry.core.instrument import detect_instrument, instrument_display_name
 from asymmetry.core.transform.asymmetry import estimate_alpha
 from asymmetry.core.transform.grouping import (
     EFFECTIVE_DETECTOR_T0_KEY,
-    apply_grouping_aligned,
     common_t0_for_groups,
     effective_group_indices,
+)
+from asymmetry.core.transform.reduce import (
+    ReferenceResolver,
+    corrected_grouped_counts,
+    correction_flags_from_grouping,
 )
 from asymmetry.core.transform.t0 import find_t0_for_run
 from asymmetry.core.utils.perf import perf_timer
@@ -975,7 +979,12 @@ def _background_policy_from_payload(payload: dict[str, Any]) -> BackgroundPolicy
 # --------------------------------------------------------------------------- #
 
 
-def resolve_effective_grouping(profile: GroupingProfile, run: Run) -> dict[str, Any]:
+def resolve_effective_grouping(
+    profile: GroupingProfile,
+    run: Run,
+    *,
+    reference_resolver: ReferenceResolver | None = None,
+) -> dict[str, Any]:
     """Merge *profile* with *run*'s file-derived facts into a grouping payload.
 
     The returned dict has exactly the shape of today's ``run.grouping`` so it can
@@ -984,6 +993,13 @@ def resolve_effective_grouping(profile: GroupingProfile, run: Run) -> dict[str, 
     (t0, good-bin window, per-detector tables, good frames, period data), and any
     policy that needs a computed value (per-run alpha estimate, file deadtime) is
     evaluated against the run here.
+
+    ``reference_resolver`` resolves the ``reference_run`` background mode's
+    reference histograms + good-frame scale (the caller supplies one backed by a
+    loaded-dataset registry). It is only consulted by a ``per_run_estimate`` alpha
+    policy paired with ``reference_run`` background, so the estimate balances the
+    same background-subtracted counts the reduction will; ``None`` skips that
+    subtraction for the estimate.
 
     Detector ids in the profile that fall outside ``1..n_detectors`` are handled
     gracefully by the reduction chokepoints (:func:`effective_group_indices`
@@ -1040,10 +1056,17 @@ def resolve_effective_grouping(profile: GroupingProfile, run: Run) -> dict[str, 
             grouping["period_mode"] = run_grouping["period_mode"]
 
         # -- policies -----------------------------------------------------------
+        # Order matters: a per_run_estimate alpha must be measured on the same
+        # deadtime-corrected, background-subtracted counts the reduction applies
+        # it to, so deadtime and background resolve into the grouping *before* the
+        # alpha estimate reads them (see
+        # docs/porting/correction-order-alpha-estimation).
         _apply_t0_policy(grouping, profile.t0_policy, run, n_hist)
-        _apply_alpha_policy(grouping, profile.alpha_policy, run, n_hist)
         _apply_deadtime_policy(grouping, profile.deadtime_policy, run_grouping, n_hist)
         _apply_background_policy(grouping, profile.background_policy)
+        _apply_alpha_policy(
+            grouping, profile.alpha_policy, run, n_hist, reference_resolver=reference_resolver
+        )
 
         perf.detail(n_detectors=n_hist, n_groups=len(grouping.get("groups", {})))
         return grouping
@@ -1148,11 +1171,16 @@ def _apply_t0_policy(grouping: dict[str, Any], policy: T0Policy, run: Run, n_his
 
 
 def _apply_alpha_policy(
-    grouping: dict[str, Any], policy: AlphaPolicy, run: Run, n_hist: int
+    grouping: dict[str, Any],
+    policy: AlphaPolicy,
+    run: Run,
+    n_hist: int,
+    *,
+    reference_resolver: ReferenceResolver | None = None,
 ) -> None:
     """Write ``alpha`` (and provenance) into the grouping per the policy."""
     if policy.mode == "per_run_estimate":
-        alpha = _estimate_run_alpha(grouping, run, n_hist)
+        alpha = _estimate_run_alpha(grouping, run, n_hist, reference_resolver=reference_resolver)
         grouping["alpha"] = float(alpha)
         grouping["alpha_method"] = "per_run_estimate"
         return
@@ -1166,12 +1194,24 @@ def _apply_alpha_policy(
             grouping["alpha_reference_run"] = int(policy.source_run)
 
 
-def _estimate_run_alpha(grouping: dict[str, Any], run: Run, n_hist: int) -> float:
+def _estimate_run_alpha(
+    grouping: dict[str, Any],
+    run: Run,
+    n_hist: int,
+    *,
+    reference_resolver: ReferenceResolver | None = None,
+) -> float:
     """Forward/backward integral-ratio alpha for this run (Mantid ``AlphaCalc``).
 
-    Uses the same grouping + good-bin window the reduction will, so the estimate
-    is self-consistent. Falls back to 1.0 when the groups reference no present
-    detectors (:func:`estimate_alpha` also floors a non-positive backward sum).
+    Estimates on the *corrected* forward/backward counts — deadtime-corrected,
+    grouped and background-subtracted by :func:`corrected_grouped_counts`, exactly
+    the spectra the reduction forms the asymmetry from — so the balance centres
+    the reduced (background-subtracted) asymmetry rather than the raw totals (see
+    ``docs/porting/correction-order-alpha-estimation``). The deadtime and
+    background policies must already be resolved into ``grouping`` (they are, by
+    the policy order in :func:`resolve_effective_grouping`). Falls back to 1.0
+    when the groups reference no present detectors (:func:`estimate_alpha` also
+    floors a non-positive backward sum).
     """
     forward_gid = int(grouping.get("forward_group", 1))
     backward_gid = int(grouping.get("backward_group", 2))
@@ -1179,12 +1219,27 @@ def _estimate_run_alpha(grouping: dict[str, Any], run: Run, n_hist: int) -> floa
     backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
     if not forward_idx or not backward_idx:
         return 1.0
-    common_t0 = common_t0_for_groups(run.histograms, forward_idx, backward_idx)
-    forward = apply_grouping_aligned(run.histograms, forward_idx, common_t0_bin=common_t0)
-    backward = apply_grouping_aligned(run.histograms, backward_idx, common_t0_bin=common_t0)
+    flags = correction_flags_from_grouping(grouping)
+    facility = str((run.metadata or {}).get("facility", grouping.get("instrument", "")))
+    corrected = corrected_grouped_counts(
+        histograms=run.histograms,
+        grouping=grouping,
+        forward_idx=forward_idx,
+        backward_idx=backward_idx,
+        use_deadtime=flags.use_deadtime,
+        deadtime_mode=flags.deadtime_mode,
+        use_background=flags.use_background,
+        facility=facility,
+        reference_resolver=reference_resolver,
+    )
     first_good = _as_int(grouping.get("first_good_bin"))
     last_good = _as_int(grouping.get("last_good_bin"))
-    return estimate_alpha(forward, backward, first_good_bin=first_good, last_good_bin=last_good)
+    return estimate_alpha(
+        corrected.forward,
+        corrected.backward,
+        first_good_bin=first_good,
+        last_good_bin=last_good,
+    )
 
 
 def _apply_deadtime_policy(

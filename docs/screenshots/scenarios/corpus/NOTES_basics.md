@@ -26,7 +26,8 @@ steering deliverable which exercises the fit-table + manual-column trend.
   Forward/Backward combos and the live asymmetry preview. Bunched the preview
   (factor 20) so the fine-binned late-time tail is legible instead of a wall of
   exploding error bars.
-- **α (A4, GT §A4/§C).** Drove the real `AlphaCalibrationDialog` on
+- **α (A4, GT §A4/§C).** Drove the real inline α calibration (the Grouping
+  window's α card — the standalone modal is retired) on
   EMU00018854 (Ag TF 100 G — a clean silver TF calibration run, the classic α
   reference). Corpus `groups` are 1-based; the dialog wants 0-based indices
   (it re-adds 1 internally), so I shift them down. Clicked **Estimate** and

@@ -19,7 +19,7 @@ grouping is 2 × 32 detectors (forward 1 / backward 2), t0 bin 34, first-good bi
 
 | name | render | intended docs use |
 |---|---|---|
-| `corpus_molafm_alpha` | AlphaCalibrationDialog on the 20 G **TF** run 17104 (10 K, paramagnetic): Estimate balances F/B, **α = 1.2516(7)**, before/after curves symmetric about zero. | Data-prep step — the guide's "which data set do you use for α?" (GT §4/§5 Q1). The answer is the TF-above-T_N run. |
+| `corpus_molafm_alpha` | Inline α calibration (Grouping window) on the 20 G **TF** run 17104 (10 K, paramagnetic): Estimate balances F/B, **α = 1.2516(7)**, before/after curves symmetric about zero. | Data-prep step — the guide's "which data set do you use for α?" (GT §4/§5 Q1). The answer is the TF-above-T_N run. |
 | `corpus_molafm_zf_fit` | Converged `Oscillatory×Exponential+Constant` fit on the 1.2 K ZF run 17094, **ν = 1.556 MHz**, zoomed 0–5 µs (~8 cycles), Y-framed. | Money shot: a **low-frequency** molecular-magnet precession (period ~0.65 µs) — visibly different character from EuO's 30 MHz dense band. |
 | `corpus_molafm_nu_t` | ν(T) from real per-run ZF fits (1.2 → 6 K) + fitted OrderParameter power law → **T_N ≈ 6.3 K**. | Headline order-parameter deliverable: monotonic ν(T), T_N in the measured 6–7 K bracket. `requires_fit`. |
 | `corpus_molafm_zf_overlay` | 6 K (17099, ordered) vs 7 K (17100, paramagnetic) ZF spectra overlaid, block-averaged ×40. | Fixes T_N ≈ 6–7 K directly: the 6 K wiggle vs the smooth 7 K decay — "oscillation gone by 7 K". |

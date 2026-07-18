@@ -4221,7 +4221,11 @@ class MainWindow(QMainWindow):
         fingerprint = profile_fingerprint_for_run(run)
         for profile in self._grouping_profiles:
             if profile.name == name and profile.fingerprint.matches(fingerprint):
-                return resolve_effective_grouping(profile, run)
+                return resolve_effective_grouping(
+                    profile,
+                    run,
+                    reference_resolver=lambda g: self._resolve_background_reference(g, run),
+                )
         return None
 
     def _store_grouping_profile(self, profile: GroupingProfile) -> None:
@@ -14997,7 +15001,14 @@ class MainWindow(QMainWindow):
                         # Neither: inherit the active profile of the fingerprint.
                         inherited = active_profile_for_run(self._grouping_profiles, dataset.run)
                         if inherited is not None:
-                            resolved = resolve_effective_grouping(inherited, dataset.run)
+                            run = dataset.run
+                            resolved = resolve_effective_grouping(
+                                inherited,
+                                run,
+                                reference_resolver=lambda g, r=run: (
+                                    self._resolve_background_reference(g, r)
+                                ),
+                            )
                             self._apply_grouping_settings_to_dataset(dataset, resolved)
 
                     self._data_browser.add_dataset(dataset)

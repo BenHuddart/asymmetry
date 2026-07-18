@@ -97,41 +97,37 @@ class LlzCalibrationScenario(CorpusScenario):
         "that fixes the detector balance α before the LF triplet fits."
     )
     example = EXAMPLE
-    size = (760, 640)
+    size = (1220, 760)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
-        from asymmetry.gui.windows.grouping.alpha_calibration_dialog import (
-            AlphaCalibrationDialog,
-        )
+        # α calibration is inline in the Grouping window's Corrections column
+        # (the standalone modal is retired); the shared preview overlays the
+        # α = 1 ↔ α̂ before/after with the residual baseline ⟨A⟩.
+        from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = load_corpus_datasets([f"{_DATA}/emu00051315.nxs"])[0]
-        grouping = dataset.run.grouping
-
-        dialog = AlphaCalibrationDialog(
-            [dataset],
-            groups=grouping["groups"],
-            group_names=grouping.get("group_names"),
-            forward_group=grouping["forward_group"],
-            backward_group=grouping["backward_group"],
-            selected_run_number=int(dataset.run_number),
-        )
+        dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
         dialog.resize(*self.size)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
         _pump(150)
 
-        estimate_btn = getattr(dialog, "_estimate_btn", None)
-        if estimate_btn is not None:
-            estimate_btn.click()
-            _pump_until(lambda: dialog._tasks.active_count == 0 and dialog._estimate is not None)
-            _pump(60)
+        section = dialog._alpha_section
+        section._on_estimate()
+        _pump_until(lambda: section._tasks.active_count == 0)
+        # Let the shared preview redraw the α = 1 ↔ α̂ overlay before grabbing.
+        _pump(500)
+        dialog._corrections_scroll.ensureWidgetVisible(section)
+        _pump(60)
 
         pix = dialog.grab()
         out_path = ctx.output_dir / f"{self.name}.png"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         if not pix.save(str(out_path), "PNG"):
             raise RuntimeError(f"Failed to save screenshot to {out_path}")
-        dialog.close()
+        # The applied estimate dirtied the draft: close() would raise the
+        # discard-guard modal, which hangs headless — tear down directly.
+        dialog._teardown_workers()
         dialog.deleteLater()
         _pump(40)
         return out_path

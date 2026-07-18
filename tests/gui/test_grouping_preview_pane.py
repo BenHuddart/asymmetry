@@ -176,6 +176,54 @@ def test_alpha_change_visibly_changes_curve(qapp: QApplication) -> None:
     pane.shutdown()
 
 
+def _axes_texts(pane: GroupingPreviewPane) -> set[str]:
+    """The text strings currently drawn on the pane's axes (inline labels)."""
+    return {str(text.get_text()) for text in pane._axes.texts}
+
+
+def test_overlay_draws_alpha1_ghost_and_reports_residual_baseline(qapp: QApplication) -> None:
+    """The calibrate overlay draws the α=1 curve and reports ⟨A⟩ over the window.
+
+    The ghost is named by a small inline text (there is no legend any more —
+    the pager label and the focused correction card name the comparison).
+    """
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+
+    grouping = dict(dataset.run.grouping)
+    grouping["alpha"] = 1.3  # non-unity balance → the α=1 ghost differs from α̂
+    pane.request_preview(
+        histograms=dataset.run.histograms,
+        grouping=grouping,
+        run_number=5001,
+        overlay=True,
+    )
+    pane.flush()
+    _wait_until(
+        lambda: pane._tasks.active_count == 0 and "residual baseline" in pane._status.text()
+    )
+    assert "residual baseline" in pane._status.text()
+    # Both curves are drawn: the α=1 ghost line plus the α̂ errorbar, and the
+    # ghost is named inline.
+    assert len(pane._axes.get_lines()) >= 2
+    assert "α = 1" in _axes_texts(pane)
+    pane.shutdown()
+
+
+def test_overlay_off_by_default_draws_single_curve(qapp: QApplication) -> None:
+    """Without overlay the pane draws one curve and shows no baseline readout."""
+    dataset = _histogram_dataset()
+    pane = GroupingPreviewPane()
+    pane.request_preview(
+        histograms=dataset.run.histograms, grouping=dataset.run.grouping, run_number=5001
+    )
+    pane.flush()
+    _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
+    assert "residual baseline" not in pane._status.text()
+    assert "α = 1" not in _axes_texts(pane)
+    pane.shutdown()
+
+
 def test_rapid_edits_coalesce_to_one_inflight_reduction(qapp: QApplication) -> None:
     """Rapid requests never spawn concurrent workers: latest-pending wins.
 
@@ -239,7 +287,7 @@ def test_error_path_is_muted_not_crashing(
     def _boom(**_kwargs):
         raise RuntimeError("synthetic reduction failure")
 
-    monkeypatch.setattr(pane_module, "reduce_grouped_asymmetry", _boom)
+    monkeypatch.setattr(pane_module, "corrected_grouped_counts", _boom)
     pane.request_preview(
         histograms=dataset.run.histograms,
         grouping=dataset.run.grouping,
@@ -611,6 +659,263 @@ def test_decimate_for_preview_handles_empty_arrays() -> None:
     assert out_e.size == 0
 
 
+class _StubWorker:
+    """Never-cancelled worker for driving ``_run_reduction`` synchronously."""
+
+    @staticmethod
+    def is_cancelled() -> bool:
+        return False
+
+
+def _reduce_preview(dataset: MuonDataset, **fields):
+    """Run ``_run_reduction`` for *dataset* with extra ``_PreviewRequest`` fields."""
+    request = preview_pane_module._PreviewRequest(
+        generation=1,
+        histograms=list(dataset.run.histograms),
+        facility="TESTINST",
+        run_number=int(dataset.run_number),
+        grouping=dict(dataset.run.grouping),
+        **fields,
+    )
+    return preview_pane_module._run_reduction(_StubWorker(), request)
+
+
+def test_compare_stage_deadtime_ghosts_the_removed_stage(qapp: QApplication) -> None:
+    """compare_stage="deadtime" solid = full reduction, ghost = deadtime removed.
+
+    The solid curve keeps deadtime applied; the ghost is a second corrected pass
+    with deadtime dropped, labelled "without deadtime". The residual-⟨A⟩ readout
+    is *not* computed for a count-stage compare (that number is α's alone).
+    """
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "dead_time_us": [0.005, 0.001],
+            "good_frames": 1000.0,
+        }
+    )
+    res = _reduce_preview(dataset, compare_stage="deadtime")
+    assert res.compare_stage == "deadtime"
+    assert res.overlay is True
+    assert res.baseline is not None
+    assert res.baseline_label == "without deadtime"
+    assert not np.allclose(res.baseline, res.asymmetry)  # the ghost actually differs
+    assert res.centre_mean is None and res.centre_err is None
+
+
+def test_compare_stage_background_ghosts_the_removed_stage(qapp: QApplication) -> None:
+    """compare_stage="background" ghosts the curve with no pedestal subtracted."""
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [30.0, 20.0],
+        }
+    )
+    res = _reduce_preview(dataset, compare_stage="background")
+    assert res.compare_stage == "background"
+    assert res.baseline is not None
+    assert res.baseline_label == "without background"
+    assert not np.allclose(res.baseline, res.asymmetry)
+
+
+def test_compare_stage_alpha_matches_legacy_overlay(qapp: QApplication) -> None:
+    """compare_stage="alpha" is the generic form of the legacy overlay=True."""
+    dataset = _histogram_dataset(grouping_extra={"alpha": 1.3})
+    via_stage = _reduce_preview(dataset, compare_stage="alpha")
+    via_overlay = _reduce_preview(dataset, overlay=True)
+
+    assert via_overlay.compare_stage == "alpha"  # overlay maps onto the α stage
+    assert via_stage.baseline_label == "α = 1"
+    assert via_stage.centre_mean is not None  # α compare reports the residual ⟨A⟩
+    assert via_stage.baseline is not None and via_overlay.baseline is not None
+    np.testing.assert_allclose(via_stage.baseline, via_overlay.baseline)
+
+
+def test_compare_focus_never_changes_the_solid_curve(qapp: QApplication) -> None:
+    """Focusing any compare stage leaves the SOLID curve the full reduction.
+
+    The acceptance-number invariant: a compare only ever adds a ghost, never
+    degrades the solid, so the α compare's residual ⟨A⟩ is always read off the
+    fully-corrected reduction. Passes now (no code path degrades the solid) and
+    fails the instant a solid-degrade path is reintroduced.
+    """
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "dead_time_us": [0.005, 0.001],
+            "good_frames": 1000.0,
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [30.0, 20.0],
+            "alpha": 1.3,
+        }
+    )
+    solid = _reduce_preview(dataset).asymmetry
+    for stage in ("deadtime", "background", "alpha", "raw"):
+        focused = _reduce_preview(dataset, compare_stage=stage).asymmetry
+        np.testing.assert_allclose(
+            focused, solid, err_msg=f"compare_stage={stage!r} changed the solid curve"
+        )
+
+
+def test_compare_stage_raw_ghosts_the_fully_uncorrected_curve(qapp: QApplication) -> None:
+    """compare_stage="raw" ghosts every stage removed at once (deadtime, bg, α=1)."""
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "dead_time_us": [0.005, 0.001],
+            "good_frames": 1000.0,
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [30.0, 20.0],
+            "alpha": 1.3,
+        }
+    )
+    res = _reduce_preview(dataset, compare_stage="raw")
+    assert res.compare_stage == "raw"
+    assert res.baseline is not None
+    assert res.baseline_label == "raw (uncorrected)"
+    assert not np.allclose(res.baseline, res.asymmetry)
+    # No residual ⟨A⟩ readout for the compound compare (that number is α's alone).
+    assert res.centre_mean is None
+
+
+def test_compare_stage_raw_with_nothing_configured_draws_no_ghost(qapp: QApplication) -> None:
+    """With no corrections and α=1, raw == full — nothing to ghost."""
+    dataset = _histogram_dataset()  # deadtime off, background off, α = 1
+    res = _reduce_preview(dataset, compare_stage="raw")
+    assert res.baseline is None
+
+
+def test_compare_stage_unconfigured_stage_draws_no_ghost(qapp: QApplication) -> None:
+    """A stage that isn't applied has nothing to remove — no ghost is drawn."""
+    dataset = _histogram_dataset()  # deadtime + background both off
+    res = _reduce_preview(dataset, compare_stage="deadtime")
+    assert res.compare_stage == "deadtime"
+    assert res.baseline is None
+    assert res.baseline_label is None
+
+
+# --------------------------------------------------------------------------- #
+# Draw contract: solid-only autoscale, no legend, inline ghost label
+# --------------------------------------------------------------------------- #
+
+
+def _draw_result(pane: GroupingPreviewPane, **fields) -> preview_pane_module._PreviewResult:
+    """Build a ``_PreviewResult`` over a small solid curve and draw it."""
+    t = np.linspace(0.0, 1.0, 50)
+    defaults = dict(
+        generation=1,
+        time=t,
+        asymmetry=np.sin(2 * np.pi * t),
+        error=np.full_like(t, 0.1),
+        run_number=5001,
+    )
+    defaults.update(fields)
+    result = preview_pane_module._PreviewResult(**defaults)
+    pane._draw(result)
+    return result
+
+
+def test_ghost_never_influences_y_autoscale(qapp: QApplication) -> None:
+    """A wildly off-scale ghost must not expand the y-limits.
+
+    The regression this pins: an uncorrected FLAME ghost reaches ~1e7 % and
+    autoscale over both curves crushed the solid flat. The limits must cover
+    exactly the solid's finite asymmetry ± error range (± ~8% pad).
+    """
+    pane = GroupingPreviewPane()
+    result = _draw_result(
+        pane,
+        baseline=np.full(50, 1.0e7),
+        baseline_label="raw (uncorrected)",
+        compare_stage="raw",
+        overlay=True,
+    )
+    ylo, yhi = pane._axes.get_ylim()
+    solid_lo = float(np.min(result.asymmetry - result.error))
+    solid_hi = float(np.max(result.asymmetry + result.error))
+    pad = 0.08 * (solid_hi - solid_lo)
+    assert ylo == pytest.approx(solid_lo - pad)
+    assert yhi == pytest.approx(solid_hi + pad)
+    assert yhi < 100.0  # nowhere near the 1e7 ghost
+    pane.shutdown()
+
+
+def test_compare_draw_has_no_legend(qapp: QApplication) -> None:
+    """No legend is drawn for a compare — the pager + focused card name it."""
+    pane = GroupingPreviewPane()
+    _draw_result(
+        pane,
+        baseline=np.full(50, 0.5),
+        baseline_label="without background",
+        compare_stage="background",
+        overlay=True,
+    )
+    assert pane._axes.get_legend() is None
+    pane.shutdown()
+
+
+def test_ghost_is_labelled_inline_at_its_last_in_view_sample(qapp: QApplication) -> None:
+    """An in-view ghost gets its name drawn at its rightmost visible sample."""
+    pane = GroupingPreviewPane()
+    _draw_result(
+        pane,
+        baseline=np.full(50, 0.5),
+        baseline_label="without deadtime",
+        compare_stage="deadtime",
+        overlay=True,
+    )
+    texts = {str(t.get_text()): t for t in pane._axes.texts}
+    assert "without deadtime" in texts
+    label = texts["without deadtime"]
+    x, y = label.get_position()
+    assert x == pytest.approx(1.0)  # the last sample's time
+    assert y == pytest.approx(0.5)  # sits on the ghost
+    pane.shutdown()
+
+
+def test_off_scale_ghost_label_is_clamped_inside_the_axes(qapp: QApplication) -> None:
+    """A ghost with no in-view sample is still named, just inside the exit side."""
+    pane = GroupingPreviewPane()
+    _draw_result(
+        pane,
+        baseline=np.full(50, 1.0e7),  # exits through the top
+        baseline_label="raw (uncorrected)",
+        compare_stage="raw",
+        overlay=True,
+    )
+    ylo, yhi = pane._axes.get_ylim()
+    texts = {str(t.get_text()): t for t in pane._axes.texts}
+    assert "raw (uncorrected)" in texts
+    x, y = texts["raw (uncorrected)"].get_position()
+    assert ylo < y < yhi  # clamped inside the limits
+    assert y > 0.5 * (ylo + yhi)  # on the top side, where the ghost exited
+    assert x == pytest.approx(1.0)
+    pane.shutdown()
+
+
+def test_ghost_label_spec_prefers_last_in_view_sample() -> None:
+    """The pure placement helper: last in-view sample wins; off-scale clamps."""
+    t = np.array([0.0, 1.0, 2.0, 3.0])
+    ghost = np.array([0.5, 5.0, 0.7, 9.0])  # last sample above yhi=1
+    x, y, ha, va = preview_pane_module._ghost_label_spec(t, ghost, 0.0, 1.0)
+    assert (x, y) == (2.0, 0.7)  # rightmost IN-VIEW sample, not the last sample
+    assert ha == "right"
+
+    below = np.full(4, -50.0)
+    x, y, _ha, va = preview_pane_module._ghost_label_spec(t, below, 0.0, 1.0)
+    assert x == 3.0
+    assert 0.0 < y < 0.1  # clamped just inside the bottom
+    assert va == "bottom"
+
+    assert preview_pane_module._ghost_label_spec(t, np.full(4, np.nan), 0.0, 1.0) is None
+
+
 def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> None:
     """End-to-end: a preview request over a huge run yields a bounded curve.
 
@@ -634,5 +939,134 @@ def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> 
         _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
         curve = _last_curve(pane)
         assert curve.size <= _MAX_PREVIEW_POINTS
+    finally:
+        pane.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# Pan/zoom: compact nav buttons + view preservation across redraws
+# --------------------------------------------------------------------------- #
+
+
+def test_nav_toolbar_hidden_with_compact_buttons(qapp: QApplication) -> None:
+    """The full matplotlib toolbar stays hidden; pan/zoom/home ride the status row."""
+    pane = GroupingPreviewPane()
+    try:
+        assert pane._nav_toolbar is not None
+        assert pane._nav_toolbar.isHidden()
+        from PySide6.QtWidgets import QToolButton
+
+        actions = {b.defaultAction() for b in pane.findChildren(QToolButton)}
+        expected = {pane._nav_toolbar._actions[k] for k in ("pan", "zoom", "home")}
+        assert expected <= actions
+    finally:
+        pane.shutdown()
+
+
+def test_user_view_survives_redraw_until_home(qapp: QApplication) -> None:
+    """A pan/zoomed view is preserved verbatim across redraws; Home resets it.
+
+    The preview redraws on every debounced edit — yanking the axes back to
+    autoscale mid-inspection would make pan/zoom useless. The chosen view is
+    STORED (never re-read from the axes), `_draw` reapplies it; Home returns to
+    the solid-only autoscale contract (redrawn from the retained last result).
+    """
+    pane = GroupingPreviewPane()
+    try:
+        result = _draw_result(pane)
+        auto_ylim = pane._axes.get_ylim()
+
+        # A completed pan/zoom drag stored the user's view.
+        pane._user_view = ((0.2, 0.4), (-0.5, 0.5))
+
+        _draw_result(pane)  # a debounced redraw lands
+        assert pane._axes.get_xlim() == pytest.approx((0.2, 0.4))
+        assert pane._axes.get_ylim() == pytest.approx((-0.5, 0.5))
+
+        pane._last_result = result
+        pane._on_home_triggered()
+        assert pane._user_view is None
+        assert pane._axes.get_ylim() == pytest.approx(auto_ylim)
+    finally:
+        pane.shutdown()
+
+
+def test_error_and_empty_draws_cannot_clobber_the_user_view(qapp: QApplication) -> None:
+    """The "strange state" regression: an error/empty clear() must not corrupt.
+
+    The error path and the empty-data branch clear() the axes, resetting the
+    limits to matplotlib's (0, 1) defaults. When the user view was re-read from
+    the axes at draw time, a transient invalid edit while zoomed captured that
+    garbage view and froze the preview on it. The view is stored explicitly
+    now: after an error the next real draw restores the user's actual view.
+    """
+    import numpy as np
+
+    pane = GroupingPreviewPane()
+    try:
+        _draw_result(pane)
+        pane._user_view = ((0.2, 0.4), (-0.5, 0.5))
+
+        pane._set_error("transient reduction failure")  # clears the axes
+        _draw_result(pane, time=np.array([]), asymmetry=np.array([]), error=np.array([]))
+
+        _draw_result(pane)  # recovery: a real result lands
+        assert pane._axes.get_xlim() == pytest.approx((0.2, 0.4))
+        assert pane._axes.get_ylim() == pytest.approx((-0.5, 0.5))
+    finally:
+        pane.shutdown()
+
+
+def test_redraw_mid_drag_is_deferred_to_release(qapp: QApplication) -> None:
+    """A debounced redraw landing mid-drag must not clear the rubber band.
+
+    While a nav drag is live (press seen, release pending) `_draw` parks the
+    result; the release handler draws it.
+    """
+    pane = GroupingPreviewPane()
+    try:
+        _draw_result(pane)
+        before = len(pane._axes.get_lines())
+        pane._nav_press_view = (pane._axes.get_xlim(), pane._axes.get_ylim())  # live drag
+
+        result = _draw_result(pane)  # lands mid-drag: parked, axes untouched
+        assert pane._deferred_result is result
+        assert len(pane._axes.get_lines()) == before
+
+        pane._on_canvas_button_release(object())  # release draws the parked result
+        assert pane._deferred_result is None
+        assert pane._nav_press_view is None
+    finally:
+        pane.shutdown()
+
+
+def test_release_captures_view_only_when_the_drag_moved_it(qapp: QApplication) -> None:
+    """A mode-on click that moves nothing must not freeze the autoscale.
+
+    Press records the limits; release compares — only an actual change (a real
+    pan/zoom) stores a user view. Without nav mode, press records nothing.
+    """
+    pane = GroupingPreviewPane()
+    try:
+        _draw_result(pane)
+        assert pane._user_view is None
+
+        pane._on_canvas_button_press(object())  # no nav mode: nothing recorded
+        assert pane._nav_press_view is None
+        pane._on_canvas_button_release(object())
+        assert pane._user_view is None
+
+        pane._nav_toolbar.pan()  # engage pan mode
+        pane._on_canvas_button_press(object())
+        assert pane._nav_press_view is not None
+        pane._on_canvas_button_release(object())  # no movement: still autoscale
+        assert pane._user_view is None
+
+        pane._on_canvas_button_press(object())
+        pane._axes.set_xlim(0.1, 0.3)  # the drag moved the view
+        pane._on_canvas_button_release(object())
+        assert pane._user_view is not None
+        assert pane._user_view[0] == pytest.approx((0.1, 0.3))
+        pane._nav_toolbar.pan()  # disengage
     finally:
         pane.shutdown()

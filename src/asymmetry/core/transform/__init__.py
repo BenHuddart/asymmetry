@@ -68,8 +68,12 @@ from asymmetry.core.transform.rebin import (
     resolve_binning_mode,
 )
 from asymmetry.core.transform.reduce import (
+    CorrectedGroupedCounts,
+    CorrectionFlags,
     GroupedAsymmetryReduction,
     ReferenceResolver,
+    corrected_grouped_counts,
+    correction_flags_from_grouping,
     reduce_grouped_asymmetry,
 )
 from asymmetry.core.transform.rrf import (
@@ -139,8 +143,12 @@ __all__ = [
     "binned_fb_asymmetry",
     "binning_slice_edges",
     "resolve_binning_mode",
+    "CorrectedGroupedCounts",
+    "CorrectionFlags",
     "GroupedAsymmetryReduction",
     "ReferenceResolver",
+    "corrected_grouped_counts",
+    "correction_flags_from_grouping",
     "reduce_grouped_asymmetry",
     "RunT0Search",
     "T0Estimate",

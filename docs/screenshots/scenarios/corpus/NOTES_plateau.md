@@ -102,7 +102,7 @@ symbol), so the reader cannot tell B² is in T² or 1/λ in µs — see PR-248 V
   figure. This is the single best corpus demonstration of the axis-transform
   feature: a genuine three-regime µSR field scan linearised in the GUI.
 - **Not captured but available:** (a) the **TF20 α-calibration** on run 9023
-  (the AlphaCalibrationDialog pattern from `ionic_motion_llz.py`) — GT §4 Q1
+  (the inline α-calibration pattern from `ionic_motion_llz.py`) — GT §4 Q1
   data-prep step. (b) A **P_z(t) waterfall** across the full scan. (c) The
   **sub-plateau regime** (Δ ≃ 30 mT, τ ≃ 5 ns, GT §6) if the <0.5 T fits could
   be stabilised (they can't with a single exponential — see below).

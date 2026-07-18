@@ -7,53 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- **Toggling the frequency Overlay checkbox off and back on no longer
-  discards a manually-set view window.** The overlay's re-render always
-  auto-ranged the axes because switching between the multi-run overlay and
-  the single active run reads as brand-new plotted content to the panel's
-  first-paint framing. `MainWindow` now remembers the view just before
-  leaving an active overlay and restores it when the same combination of
-  runs is re-overlaid; a genuinely different run selection still auto-frames.
-- **MaxEnt no longer diverges on real long-window TF data.** Three compounding
-  engine defects made out-of-the-box reconstructions of e.g. MUSR forward/back
-  TF runs collapse into spiky noise with χ² rising from cycle 1 (χ²/N ≈ 8000 on
-  a real 400 G vortex-lattice run): (1) the per-group normalisation baseline
-  was a plain mean of the lifetime-corrected counts, which the exp-amplified
-  late-time Poisson tail inflates several-fold — it is now the 1/σ²-weighted
-  mean, pinned to the high-statistics bins; (2) the per-cycle nuisance
-  amplitude fit clipped at a floor of 0.01 in units where the correct
-  amplitude is ~`A·Δν` (often 10–100× *below* the floor), forcing an oversized
-  model oscillation that the solver could only fight by decohering the
-  spectrum — the floor is now far below any physical value; (3) the nuisance
-  amplitude/background regression and phase scan were unweighted, letting the
-  junk tail dominate — both are now σ-weighted, consistent with the χ² the
-  cycles minimise. The same run now converges to χ²/N ≈ 1.0 with the peak on
-  the vortex line, full range, no manual steering.
-- **A converged-but-flagged single fit is no longer silently un-plotted.** When
-  the minimiser reaches a usable minimum but flags it (`success=False` — for
-  example a degenerate additive baseline at low field), the single-fit panel
-  now draws the fit curve **greyed** (via the preview overlay) and explains the
-  flag, instead of showing only "Fit failed" and drawing nothing. The fit is
-  still not recorded — *Add to Series* and the pull diagnostic stay disabled —
-  so the user refines the seeds/bounds/model and refits to keep it. A genuine
-  failure (no minimum) still reports "Fit failed" as before.
-- **Both periods of a two-period run survive in the data browser.**
-  `select_period()` now hands each period a distinct encoded run-number key
-  (the same scheme the loader's 3+-period path already uses), so adding both
-  the red and green period of one run no longer collapses them under the
-  shared source run number. The friendly `run/period` label and the true
-  `source_run_number` are preserved in metadata.
-- **Weak-TF α-calibration runs are recognised from the structured field-state
-  code.** `classify_tf_calibration_run` now also treats an explicit
-  `field_state`/`magnetic_field_state` of `TF` as transverse evidence (and
-  `LF`/`ZF` as a veto), so a run whose loader recorded the state code but left
-  `field_direction`/`field` unset is still highlighted in the calibration-run
-  dropdown.
-
 ### Added
 
+- **A unified Corrections column in the Grouping window.** The deadtime,
+  background and α-calibration modal dialogs are retired: every correction is
+  now edited inline, and everything α — the value, its provenance, the
+  staleness warning, and the calibration controls (per-projection table in
+  vector mode) — lives together in one place. Each correction is a
+  collapsible **card** with a live status header ("Deadtime · off",
+  "α · 1.2692 · Diamagnetic (TF)"), opening expanded when its stage is active;
+  the deadtime card adapts to its mode (the per-detector table appears only
+  when it is editable, capped at six rows). Each stage wears an identity
+  colour — teal for deadtime, violet for background, red for α — shared
+  between its card's stripe and its chip in the **pipeline strip**
+  (``Deadtime → group → Background → α``) that heads the editor and makes the
+  reduction order visible.
+- **Interactive correction compares in the grouping preview.** Focusing a
+  stage (via its pipeline chip, or the ◀/▶ **compare pager** above the
+  preview) overlays a ghost of the reduction *without* that stage — α = 1 for
+  the α compare, which also reports the residual baseline ⟨A⟩ — behind the
+  as-reduced curve, plus a compound **Compare vs raw (uncorrected)** view.
+  The solid curve is always the full configured reduction and alone sets the
+  y-axis, so an off-scale "before" (an uncorrected run can reach ~10⁷ %) can
+  never crush the real curve; comparing never changes what Apply writes. When
+  a calibrated α goes stale (deadtime/background changed since it was
+  measured), the α chip flags **" · stale"** and the α card carries the
+  warning banner.
+- **Pan, zoom and home controls on the grouping preview**, with a user-chosen
+  view preserved across the live redraws until Home restores the automatic
+  scale.
 - **F−B asymmetry as a Fourier signal source.** The Fourier panel's `FFT Phase
   Mode` section gains a `Signal source` choice: the default `Grouped average`
   (averages each detector group's own lifetime-corrected FFT) or the new
@@ -97,12 +79,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Grouping window's right pane is tabless.** The former "Grouping and
+  timing" / "Corrections" tabs are now two side-by-side columns under the
+  pipeline strip, with the shared live preview pinned below both — everything
+  is visible at once at the new 1220×680 default size, with no scrolling in
+  either axis. The preset selector moved to the left column above the group
+  table it seeds, the editing-target strip moved into the top row, and on
+  windows too small to show everything a compact pill names the sections
+  hidden below the fold and scrolls to them on click. The transverse-field
+  grouping nudge banner is retired from this window (the Detector Layout
+  editor keeps its own copy, including preselecting the recommended preset).
 - **The "Large MaxEnt calculation" warning no longer blocks headless
   sessions.** Offscreen/minimal-platform sessions (CI, screenshot scenarios,
   scripted driving) have no user to dismiss the modal, so the warning is
   written to the log panel and the calculation proceeds; setting
   `ASYMMETRY_SUPPRESS_WORKLOAD_WARNING` does the same on a visible display.
   The interactive dialog now also points at `Auto workload steering`.
+
+### Fixed
+
+- **Calibrated α provenance no longer silently degrades to "manual".** The
+  recorded full-precision estimate was compared against the six-decimal
+  rounded α spin with a near-exact tolerance, so every genuine (non-round)
+  calibration immediately read as a hand edit — silently dropping the
+  "calibrated" provenance from the profile (including what is saved into
+  ``.asymp`` projects) and disabling the staleness warning. Provenance is now
+  compared at the spin's display precision, so saved projects keep the
+  calibration method, source run and uncertainty, and the staleness warning
+  fires when it should.
+- The deadtime summary now reports "Deadtime saturates the t=0 correction —
+  value too large." instead of a meaningless huge percentage when the
+  configured deadtime saturates the correction.
+- Zooming the grouping preview could strand it on a garbage view when a
+  transient reduction error landed mid-inspection; the chosen view is now
+  stored explicitly and survives error/empty redraws.
+- **Alpha is now estimated on deadtime- and background-corrected counts.**
+  Previously the detector-balance α was estimated from the *raw* grouped counts,
+  while the reduction it feeds applies deadtime correction and background
+  subtraction first — so a calibrated α balanced the totals and could leave the
+  reduced weak-TF asymmetry off-centre once the background was subtracted. Both
+  the interactive **Estimate α** dialog and the per-run alpha policy now build
+  their forward/backward spectra through the same corrected pipeline the
+  reduction uses (deadtime → grouping → background subtraction), for all three
+  estimators (diamagnetic, general, count ratio) and including the reference-run
+  background mode. The calibration dialog reports which corrections the estimate
+  reflects and warns, in amber, when a requested correction could not be applied
+  to the selected run — so a flattened "after" curve never misrepresents a
+  calibration the reduction will not reproduce. Study:
+  `docs/porting/correction-order-alpha-estimation`.
+- **Toggling the frequency Overlay checkbox off and back on no longer
+  discards a manually-set view window.** The overlay's re-render always
+  auto-ranged the axes because switching between the multi-run overlay and
+  the single active run reads as brand-new plotted content to the panel's
+  first-paint framing. `MainWindow` now remembers the view just before
+  leaving an active overlay and restores it when the same combination of
+  runs is re-overlaid; a genuinely different run selection still auto-frames.
+- **MaxEnt no longer diverges on real long-window TF data.** Three compounding
+  engine defects made out-of-the-box reconstructions of e.g. MUSR forward/back
+  TF runs collapse into spiky noise with χ² rising from cycle 1 (χ²/N ≈ 8000 on
+  a real 400 G vortex-lattice run): (1) the per-group normalisation baseline
+  was a plain mean of the lifetime-corrected counts, which the exp-amplified
+  late-time Poisson tail inflates several-fold — it is now the 1/σ²-weighted
+  mean, pinned to the high-statistics bins; (2) the per-cycle nuisance
+  amplitude fit clipped at a floor of 0.01 in units where the correct
+  amplitude is ~`A·Δν` (often 10–100× *below* the floor), forcing an oversized
+  model oscillation that the solver could only fight by decohering the
+  spectrum — the floor is now far below any physical value; (3) the nuisance
+  amplitude/background regression and phase scan were unweighted, letting the
+  junk tail dominate — both are now σ-weighted, consistent with the χ² the
+  cycles minimise. The same run now converges to χ²/N ≈ 1.0 with the peak on
+  the vortex line, full range, no manual steering.
+- **A converged-but-flagged single fit is no longer silently un-plotted.** When
+  the minimiser reaches a usable minimum but flags it (`success=False` — for
+  example a degenerate additive baseline at low field), the single-fit panel
+  now draws the fit curve **greyed** (via the preview overlay) and explains the
+  flag, instead of showing only "Fit failed" and drawing nothing. The fit is
+  still not recorded — *Add to Series* and the pull diagnostic stay disabled —
+  so the user refines the seeds/bounds/model and refits to keep it. A genuine
+  failure (no minimum) still reports "Fit failed" as before.
+- **Both periods of a two-period run survive in the data browser.**
+  `select_period()` now hands each period a distinct encoded run-number key
+  (the same scheme the loader's 3+-period path already uses), so adding both
+  the red and green period of one run no longer collapses them under the
+  shared source run number. The friendly `run/period` label and the true
+  `source_run_number` are preserved in metadata.
+- **Weak-TF α-calibration runs are recognised from the structured field-state
+  code.** `classify_tf_calibration_run` now also treats an explicit
+  `field_state`/`magnetic_field_state` of `TF` as transverse evidence (and
+  `LF`/`ZF` as a veto), so a run whose loader recorded the state code but left
+  `field_direction`/`field` unset is still highlighted in the calibration-run
+  dropdown.
 
 ## [0.13.0] - 2026-07-14
 
