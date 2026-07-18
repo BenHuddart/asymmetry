@@ -967,19 +967,17 @@ def test_user_view_survives_redraw_until_home(qapp: QApplication) -> None:
     """A pan/zoomed view is preserved verbatim across redraws; Home resets it.
 
     The preview redraws on every debounced edit — yanking the axes back to
-    autoscale mid-inspection would make pan/zoom useless. Once the user has
-    navigated, `_draw` reapplies their limits; Home returns to the solid-only
-    autoscale contract (redrawn from the retained last result).
+    autoscale mid-inspection would make pan/zoom useless. The chosen view is
+    STORED (never re-read from the axes), `_draw` reapplies it; Home returns to
+    the solid-only autoscale contract (redrawn from the retained last result).
     """
     pane = GroupingPreviewPane()
     try:
         result = _draw_result(pane)
         auto_ylim = pane._axes.get_ylim()
 
-        # Simulate a completed pan/zoom drag: user takes ownership of the view.
-        pane._user_navigated = True
-        pane._axes.set_xlim(0.2, 0.4)
-        pane._axes.set_ylim(-0.5, 0.5)
+        # A completed pan/zoom drag stored the user's view.
+        pane._user_view = ((0.2, 0.4), (-0.5, 0.5))
 
         _draw_result(pane)  # a debounced redraw lands
         assert pane._axes.get_xlim() == pytest.approx((0.2, 0.4))
@@ -987,23 +985,88 @@ def test_user_view_survives_redraw_until_home(qapp: QApplication) -> None:
 
         pane._last_result = result
         pane._on_home_triggered()
-        assert not pane._user_navigated
+        assert pane._user_view is None
         assert pane._axes.get_ylim() == pytest.approx(auto_ylim)
     finally:
         pane.shutdown()
 
 
-def test_drag_release_only_locks_view_while_nav_mode_active(qapp: QApplication) -> None:
-    """A plain click on the canvas (no pan/zoom mode) must not lock the view."""
+def test_error_and_empty_draws_cannot_clobber_the_user_view(qapp: QApplication) -> None:
+    """The "strange state" regression: an error/empty clear() must not corrupt.
+
+    The error path and the empty-data branch clear() the axes, resetting the
+    limits to matplotlib's (0, 1) defaults. When the user view was re-read from
+    the axes at draw time, a transient invalid edit while zoomed captured that
+    garbage view and froze the preview on it. The view is stored explicitly
+    now: after an error the next real draw restores the user's actual view.
+    """
+    import numpy as np
+
     pane = GroupingPreviewPane()
     try:
-        assert not pane._user_navigated
-        pane._on_canvas_button_release(object())  # toolbar mode == "" (inactive)
-        assert not pane._user_navigated
+        _draw_result(pane)
+        pane._user_view = ((0.2, 0.4), (-0.5, 0.5))
+
+        pane._set_error("transient reduction failure")  # clears the axes
+        _draw_result(pane, time=np.array([]), asymmetry=np.array([]), error=np.array([]))
+
+        _draw_result(pane)  # recovery: a real result lands
+        assert pane._axes.get_xlim() == pytest.approx((0.2, 0.4))
+        assert pane._axes.get_ylim() == pytest.approx((-0.5, 0.5))
+    finally:
+        pane.shutdown()
+
+
+def test_redraw_mid_drag_is_deferred_to_release(qapp: QApplication) -> None:
+    """A debounced redraw landing mid-drag must not clear the rubber band.
+
+    While a nav drag is live (press seen, release pending) `_draw` parks the
+    result; the release handler draws it.
+    """
+    pane = GroupingPreviewPane()
+    try:
+        _draw_result(pane)
+        before = len(pane._axes.get_lines())
+        pane._nav_press_view = (pane._axes.get_xlim(), pane._axes.get_ylim())  # live drag
+
+        result = _draw_result(pane)  # lands mid-drag: parked, axes untouched
+        assert pane._deferred_result is result
+        assert len(pane._axes.get_lines()) == before
+
+        pane._on_canvas_button_release(object())  # release draws the parked result
+        assert pane._deferred_result is None
+        assert pane._nav_press_view is None
+    finally:
+        pane.shutdown()
+
+
+def test_release_captures_view_only_when_the_drag_moved_it(qapp: QApplication) -> None:
+    """A mode-on click that moves nothing must not freeze the autoscale.
+
+    Press records the limits; release compares — only an actual change (a real
+    pan/zoom) stores a user view. Without nav mode, press records nothing.
+    """
+    pane = GroupingPreviewPane()
+    try:
+        _draw_result(pane)
+        assert pane._user_view is None
+
+        pane._on_canvas_button_press(object())  # no nav mode: nothing recorded
+        assert pane._nav_press_view is None
+        pane._on_canvas_button_release(object())
+        assert pane._user_view is None
 
         pane._nav_toolbar.pan()  # engage pan mode
+        pane._on_canvas_button_press(object())
+        assert pane._nav_press_view is not None
+        pane._on_canvas_button_release(object())  # no movement: still autoscale
+        assert pane._user_view is None
+
+        pane._on_canvas_button_press(object())
+        pane._axes.set_xlim(0.1, 0.3)  # the drag moved the view
         pane._on_canvas_button_release(object())
-        assert pane._user_navigated
+        assert pane._user_view is not None
+        assert pane._user_view[0] == pytest.approx((0.1, 0.3))
         pane._nav_toolbar.pan()  # disengage
     finally:
         pane.shutdown()

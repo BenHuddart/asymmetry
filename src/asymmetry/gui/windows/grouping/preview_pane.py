@@ -176,10 +176,18 @@ class GroupingPreviewPane(QWidget):
         #: Last drawn result, retained so Home can redraw with fresh autoscale
         #: without a recompute.
         self._last_result: _PreviewResult | None = None
-        #: True once the user has panned/zoomed; `_draw` then preserves the
-        #: current view across the debounced redraws instead of autoscaling,
-        #: until Home resets it.
-        self._user_navigated = False
+        #: The user's chosen ``(xlim, ylim)`` once a pan/zoom drag actually moved
+        #: the view, or ``None`` while the solid-only autoscale owns it. Stored
+        #: explicitly — never re-read from the axes at draw time, because error
+        #: and empty-data paths ``clear()`` the axes (resetting the limits to
+        #: matplotlib's defaults), and capturing those would freeze the preview
+        #: on a garbage view. Home resets to ``None``.
+        self._user_view: tuple[tuple[float, float], tuple[float, float]] | None = None
+        #: Limits at nav-drag press, to tell a real drag from a mode-on click.
+        self._nav_press_view: tuple | None = None
+        #: A result whose draw arrived mid-drag; drawn on release instead, so a
+        #: debounced redraw never clears the axes under the rubber band.
+        self._deferred_result: _PreviewResult | None = None
         try:
             from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
@@ -194,8 +202,10 @@ class GroupingPreviewPane(QWidget):
             # the status strip (QToolButtons bound to the toolbar's own actions,
             # so checked-state and mode plumbing stay matplotlib's).
             self._nav_toolbar.setVisible(False)
-            # A completed pan/zoom drag means the user chose a view — preserve it
-            # across redraws (mere mode toggling without a drag does not).
+            # A pan/zoom drag that MOVED the view means the user chose it —
+            # capture the chosen limits on release (the toolbar's own release
+            # handlers run first, so the limits are final by then).
+            self._canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
             self._canvas.mpl_connect("button_release_event", self._on_canvas_button_release)
         except ImportError:
             fallback = QLabel("matplotlib is not installed — preview unavailable.")
@@ -365,15 +375,39 @@ class GroupingPreviewPane(QWidget):
 
     # -- pan/zoom --------------------------------------------------------
 
-    def _on_canvas_button_release(self, event: object) -> None:
-        """A drag finished while pan/zoom was engaged: the user owns the view now."""
+    def _nav_active(self) -> bool:
         toolbar = self._nav_toolbar
-        if toolbar is not None and str(getattr(toolbar, "mode", "")):
-            self._user_navigated = True
+        return toolbar is not None and bool(str(getattr(toolbar, "mode", "")))
+
+    def _drag_in_progress(self) -> bool:
+        """A nav-mode mouse drag is live (press seen, release not yet)."""
+        return self._nav_press_view is not None
+
+    def _on_canvas_button_press(self, event: object) -> None:
+        if self._nav_active() and self._axes is not None:
+            self._nav_press_view = (self._axes.get_xlim(), self._axes.get_ylim())
+
+    def _on_canvas_button_release(self, event: object) -> None:
+        """Capture the user's view when a nav drag actually moved it.
+
+        Runs after the toolbar's own release handlers (registered first), so the
+        limits are final. A mode-on click that moved nothing captures nothing —
+        otherwise a stray click would freeze the autoscale at its current range.
+        Any redraw deferred during the drag lands now.
+        """
+        press_view = self._nav_press_view
+        self._nav_press_view = None
+        if press_view is not None and self._axes is not None:
+            view = (self._axes.get_xlim(), self._axes.get_ylim())
+            if view != press_view:
+                self._user_view = view
+        if self._deferred_result is not None:
+            deferred, self._deferred_result = self._deferred_result, None
+            self._draw(deferred)
 
     def _on_home_triggered(self, *args: object) -> None:
         """Home: hand the view back to the solid-only autoscale contract."""
-        self._user_navigated = False
+        self._user_view = None
         if self._last_result is not None:
             self._draw(self._last_result)
 
@@ -398,9 +432,18 @@ class GroupingPreviewPane(QWidget):
         """
         if self._axes is None or self._canvas is None:
             return
+        # Never clear the axes under a live pan/zoom rubber band — park the
+        # result and draw it on release.
+        if self._drag_in_progress():
+            self._deferred_result = result
+            return
         # A user-chosen pan/zoom view survives the debounced redraws — an edit
         # mid-inspection must not yank the axes back — until Home resets it.
-        preserved = (self._axes.get_xlim(), self._axes.get_ylim()) if self._user_navigated else None
+        # `_user_view` is the stored drag result, deliberately NOT re-read from
+        # the axes here: the error/empty paths clear() the axes back to default
+        # limits, and re-capturing those would freeze the preview on a garbage
+        # (0..1) view — the "strange state" this guards against.
+        preserved = self._user_view
         self._axes.clear()
         if result.time.size == 0:
             self._axes.text(
