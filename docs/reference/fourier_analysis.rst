@@ -72,11 +72,13 @@ Asymmetry currently exposes two Fourier workflows:
 * the desktop GUI uses a WiMDA-style grouped-detector workflow that rebuilds a
   grouped count signal for each included detector group before taking the FFT
 
-In the GUI, the frequency-domain plot always shows the average of the
-currently included groups rather than separate per-group spectra. Each loaded
-dataset keeps its own Fourier phase-table state, so changing runs restores the
-phase values, included groups, and auto-estimated markers associated with that
-run.
+In the GUI, the frequency-domain plot transforms one of two signal sources
+(see `Signal source`_): by default, the average of the currently included
+groups rather than separate per-group spectra; or, for a single
+forward/backward detector pair, the run's forward−backward asymmetry directly.
+Each loaded dataset keeps its own Fourier phase-table state, so changing runs
+restores the phase values, included groups, and auto-estimated markers
+associated with that run.
 
 Notation
 --------
@@ -115,6 +117,47 @@ spectrum.
    plt.xlabel(r"$\\nu$ (MHz)")
    plt.ylabel(r"$|\\mathcal{F}|$")
    plt.show()
+
+Signal source
+~~~~~~~~~~~~~
+
+The Fourier panel's ``FFT Phase Mode`` section starts with a **Signal
+source** choice — which time-domain signal is transformed, before any of the
+apodisation or phase-mode controls below are applied:
+
+* ``Grouped average`` (the default) — *"Average of each detector group's
+  lifetime-corrected FFT."* This is the WiMDA-style workflow the rest of this
+  page describes: rebuild each included group's signal, FFT it, and average
+  the results.
+* ``F−B asymmetry`` — *"FFT of the forward−backward asymmetry signal (as
+  plotted in the time domain) — cleaner for a single detector pair."* Rather
+  than averaging every group's own FFT, this transforms the single
+  forward−backward asymmetry curve directly — exactly the signal the
+  time-domain plot shows, built with the same grouping and α. Deadtime
+  correction is **not** applied on this path, matching the time-domain plot
+  (the grouped-average path does apply it to each group's count signal before
+  the transform).
+
+For a run with just one forward/backward detector pair, ``F−B asymmetry``
+gives markedly better peak-to-floor contrast than ``Grouped average``: on a
+real GPS zero-field run, switching to F−B asymmetry raised the contrast by
+roughly a factor of five, where averaging every detector group's own FFT
+buried the line under the other groups' baselines. With several detector
+groups, though, ``Grouped average`` remains the workflow to use — averaging
+genuinely independent group spectra is what suppresses their uncorrelated
+noise.
+
+Switching source flags the displayed spectrum out of date, and the ``Groups``
+include/phase table becomes inert (and is disabled, not hidden, so the values
+survive a switch back) in F−B mode, since a single already-combined curve is
+being transformed — the per-group table cannot affect it. Grouping and α
+changes still flag the spectrum out of date in F−B mode, because they change
+the underlying forward−backward curve; the global ``Phase`` field and
+``t0 Offset (μs)`` still apply in the phase-correcting display modes either
+way. The two sources are also distinguished in overlays: a spectrum computed
+from F−B asymmetry is labelled ``<run> F−B`` rather than ``<run> Average``, so
+a multi-run overlay's legend (`GUI Fourier workflow`_) shows at a glance which
+runs used which source.
 
 Filter / apodisation
 ~~~~~~~~~~~~~~~~~~~~
@@ -195,8 +238,9 @@ How the GUI FFT is built
 The docked Fourier workflow in the desktop application is intentionally more
 specific than the low-level API:
 
-* the FFT input is the grouped detector-count signal, not the forward/backward
-  asymmetry trace
+* by default (``Grouped average``) the FFT input is the grouped detector-count
+  signal, not the forward/backward asymmetry trace; the ``F−B asymmetry``
+  `Signal source`_ transforms that asymmetry trace instead
 * the grouped signal is rebuilt from the current grouping and current bunching
   factor every time the transform is computed
 * grouped-count inputs are corrected for the muon lifetime envelope before the
@@ -385,6 +429,8 @@ the forward/adjoint contract of the full three-direction Skilling–Bryan search
 [2]_ but does not yet implement that search itself; it is available from both
 the core Python API and the desktop GUI.
 
+.. _maxent-caution:
+
 .. caution::
 
    **A MaxEnt spectrum is an estimate, not a measurement — do not over-read
@@ -537,11 +583,14 @@ The panel groups its controls as follows:
 * **Window** — ``Auto window from field`` (derive the frequency window from the
   applied field), ``Half width (G)``, or an explicit ``Min`` and ``Max``
   frequency.
-* **Time** — ``Start`` / ``End`` (μs) of the fitted window and a ``Binning``
-  factor.
+* **Time** — ``Auto workload steering`` (size unset workload settings to the
+  run — see below), ``Start`` / ``End`` (μs) of the fitted window, and a
+  ``Binning`` factor.
 * **Cycle Refinement** — ``Inner iterations``; ``χ² target / N``; toggles to
   ``Fit phases`` / ``amplitudes`` / ``backgrounds`` / ``constant background``;
-  and ``Use existing deadtime correction``.
+  ``Seed phases from data`` (estimate each group's starting phase from the
+  data rather than the Groups table — see below); and ``Use existing deadtime
+  correction``.
 
 The run controls sit in a footer pinned to the bottom of the panel, so they
 stay reachable however far the settings above are scrolled:
@@ -562,6 +611,57 @@ stay reachable however far the settings above are scrolled:
    is incompatible with the current configuration."* Restart discards the
    resumable state so the next cycle button rebuilds it from the new settings.
 
+Phase seeding
+~~~~~~~~~~~~~
+
+A joint multi-group reconstruction needs each group's phase to be roughly
+right before the cycles begin: the per-cycle phase refinement only moves ±4°
+per cycle, so it can never reach the large geometric offsets real detector
+rings carry (MUSR's quadrant groups sit ~90° apart, HiFi's octants ~45°). A
+group started far off phase either poisons χ² or fits its amplitude to zero
+and drops out of the reconstruction.
+
+With ``Seed phases from data`` ticked (the default), the engine estimates
+every group's starting phase from the data itself — a weighted lock-in at the
+strongest line inside the frequency window — and the Groups table is only a
+fallback for groups with no coherent signal there. Untick it to seed from the
+table instead; hand-editing a phase in the Groups table, or clicking **Use
+fitted phases**, unticks it for you so the values you set actually drive the
+next reconstruction.
+
+Workload steering and the large-calculation warning
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Raw high-resolution data can make an unsteered reconstruction enormous: a
+HiFi/HAL ``.mdu`` run arrives with ~0.02 ns bins (≈390 000 time points and a
+20 GHz bandwidth), far beyond what any windowed reconstruction needs. With
+``Auto workload steering`` ticked (the default), settings you leave unset are
+sized to the run:
+
+* a ``Binning`` left at 1 is raised until the post-binning Nyquist frequency
+  still clears the top of the frequency window with a comfortable margin
+  (this only applies when the window is known up front — from the applied
+  field or explicit bounds — never on a zero-field run whose window is found
+  from the data);
+* an empty ``End`` time is capped on very large runs so the grid stays within
+  a fixed per-group point budget, trimming the statistically weakest
+  late-time tail first;
+* the scripting API's default spectrum length stops growing with the raw bin
+  count (the GUI always uses the explicit ``Spectrum points`` value).
+
+Explicit values always win — steering never overrides a field you set. The
+result records what was steered in its metadata (``auto_steer_applied``), and
+the scripting API exposes the resolver directly as
+``resolve_maxent_auto_steering(run, config)``.
+
+Configurations that remain very large trigger the **Large MaxEnt calculation**
+warning before launch, with a **Proceed anyway** / **Cancel** choice. In a
+headless session (offscreen/minimal platform — CI, screenshot scenarios,
+scripted driving) there is no user to dismiss a modal dialog, so the warning
+is written to the log panel and the calculation proceeds; setting the
+``ASYMMETRY_SUPPRESS_WORKLOAD_WARNING`` environment variable does the same for
+scripted runs that drive a visible window.
+
 Seeding a clean reconstruction
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -580,10 +680,72 @@ MaxEnt rewards a tightly scoped problem. To resolve a clean precession line:
   refinement — the fit is over-iterating; **Restart** and run fewer cycles
   (or with fewer spectrum points) rather than pushing it further.
 
-As a worked example, the CdS shallow-donor TF 100 G run (run 20711) resolves
-the 1.38 MHz Mu\ :sup:`+` line — :math:`\gamma_\mu \cdot 100\,\text{G}` — with a
-frequency window capped a little above 1.38 MHz, a good time window, and a
-modest number of cycles and spectrum points.
+As a worked example, the CdS shallow-donor TF 100 G run at base temperature
+(run 20721, logged 5.175 K, 45.9 Mevents — the highest-statistics run, deepest
+in the neutral-muonium phase) resolves the diamagnetic Mu\ :sup:`+` Larmor line
+near 1.39 MHz (the muon Larmor frequency at 100 G, :math:`\gamma_\mu \cdot 100\,
+\text{G} \approx 1.36` MHz) with a frequency window capped a little above the
+line, a good time window, and a modest number of cycles and spectrum points.
+Tightening that window further and binning the raw histogram brings out the two
+faint Mu\ :sup:`0` satellites this cold run also carries — the super-resolution
+example below.
+
+Super-resolution: satellites the FFT cannot separate
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The clearest demonstration of what MaxEnt buys you is a splitting the FFT
+physically cannot separate. In a shallow-donor semiconductor the implanted muon
+captures an electron to form neutral muonium (Mu\ :sup:`0`), a light-hydrogen
+analogue whose weak hyperfine coupling splits the diamagnetic precession line
+into a **triplet**: a central Mu\ :sup:`+` line flanked by two Mu\ :sup:`0`
+satellites offset by half the hyperfine constant. In CdS at 100 G that splitting
+is only about 0.214 MHz [8]_ [9]_ — a few times the raw FFT bin of the EMU
+record (≈ 32 kHz over its 32 μs window), so close that the transform's own sinc
+side-lobes masquerade as structure and the three lines blur into a single lumpy
+shoulder.
+
+.. figure:: /_generated/corpus_screenshots/corpus_cds_maxent_triplet.png
+   :alt: Side-by-side program FFT and MaxEnt reconstruction of the CdS
+      shallow-donor TF 100 G base-temperature run 20721, showing the muonium
+      satellite triplet blurred by the FFT and resolved by MaxEnt
+   :width: 100%
+
+   The base-temperature CdS run (20721, logged 5.175 K, 45.9 Mevents, TF 100
+   G). *Left:* the program FFT — at its native ≈ 32 kHz bin, no zero padding —
+   renders the Mu\ :sup:`0` satellite triplet as an unreadable comb of
+   side-lobes about the central Mu\ :sup:`+` line. *Right:* a MaxEnt
+   reconstruction over a tight explicit window resolves three clean lobes at
+   1.27, 1.39, and 1.51 MHz — the central line and its two satellites. The
+   measured satellite splitting, ≈ 0.214 MHz, is the shallow-muonium hyperfine
+   constant. The reconstruction plateaus at χ²/N = 4.54 on this real
+   forward/backward run, yet the lobe centres land on the expected positions.
+
+The recipe is the tightly scoped one above, pushed to its limit:
+
+* **Set an explicit frequency window** — 0.9–1.9 MHz here. Uncheck ``Auto
+  window from field``: at 100 G the field-derived window spans several MHz, so
+  the reconstruction spends its amplitude budget on empty bins and blurs the
+  very lines you are trying to separate.
+* **Bin the raw histogram** (``Binning`` ×4). Combining time bins shortens the
+  design matrix and raises the counts per bin without touching the frequency
+  resolution, which the window sets.
+* **Keep the spectrum grid compact** — a 128-point grid across the narrow
+  window is enough to separate lines 0.1 MHz apart. This is a genuine
+  trade-off: too fine a grid lets the reconstruction ring, scattering spurious
+  ripple between the lobes, while too coarse a grid merges them, so the compact
+  grid is chosen deliberately rather than for speed.
+* **Run a modest number of cycles** (about 20) and watch the Diagnostics line
+  settle.
+
+Note the honest caveat printed on the figure. On this real, high-statistics
+forward/backward run the χ² per degree of freedom plateaus near 4.5 rather than
+falling to 1 — the error model and background handling of a genuine run set a
+floor the entropy estimator cannot beat, and a plateau above 1 is expected on
+several real runs even where the reconstruction is visibly correct. The
+:ref:`caution above <maxent-caution>` therefore applies with full force: read
+the **number and positions** of the three lines, which are robust, and measure
+the splitting with a frequency-domain fit (:doc:`frequency_domain_fitting`)
+rather than off the lobe heights.
 
 Reading the reconstruction overlay
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -832,6 +994,56 @@ carries the per-group phases, the per-bin errors, and — at a pulsed source —
 pulse response through its forward model. Choose between them with the guidance
 above.
 
+High-field FFT and MaxEnt on HAL data
+-------------------------------------
+
+The same comparison plays out on real high-field data. The organic
+antiferromagnet κ-(BEDT-TTF)\ :sub:`2`\ Cu[N(CN)\ :sub:`2`]Cl was measured in
+transverse fields of 6 and 8 T on the HAL9500 spectrometer at PSI [10]_. At 6 T
+the diamagnetic Larmor line sits at 813 MHz (:math:`\gamma_\mu \cdot 6\,\text{T}`),
+and the raw HAL ``.mdu`` histograms are binned finely enough — about 0.02 ns —
+that the transform reaches it directly, with no rotating reference frame. This
+is the corpus's high-field frequency-domain example; the ordering transition
+and its order parameter are analysed as a temperature trend
+(:doc:`/workflows/temperature_scan_magnetism`) rather than repeated here.
+
+.. figure:: /_generated/corpus_screenshots/corpus_kappacl_tf_fft.png
+   :alt: Multi-run FFT overlay of two κ-Cl 6 T runs at 813 MHz — a sharp
+      paramagnetic line at 50.66 K and a broadened, depleted ordered line at
+      3.24 K
+   :width: 100%
+
+   Two 6 T runs overlaid on the **Frequency Domain** tab through the
+   `GUI Fourier workflow`_ multi-run overlay, with the plot's ``Label`` combo
+   set to ``Temperature (K)`` so the legend reads the temperatures directly.
+   The paramagnetic run (50.66 K, above the transition) shows a sharp
+   diamagnetic line at 813.5 MHz; the ordered run (3.24 K, below it) is visibly
+   **broadened and depleted** — the antiferromagnetic order moves spectral
+   weight out of the sharp central peak into the wings. The narrow 6 T line
+   (~13 G wide at 813 MHz) is framed around its centre automatically, since on
+   a from-zero axis it would be sub-pixel.
+
+MaxEnt reconstructs the same line straight off the raw ``.mdu`` file. Its
+≈ 389 000 time bins would make an unsteered reconstruction enormous, but with
+``Auto workload steering`` (see `Workload steering and the large-calculation
+warning`_) the engine sizes the settings you leave unset to the run — here
+raising ``Binning`` to 10 and capping the end time near 2 μs — and records what
+it chose in the result's ``auto_steer_applied`` metadata.
+
+.. figure:: /_generated/corpus_screenshots/corpus_kappacl_maxent.png
+   :alt: Auto-steered MaxEnt reconstruction of the base-temperature κ-Cl 6 T
+      run 686, showing the internal-field line at 813.56 MHz just above the
+      applied-field marker
+   :width: 100%
+
+   The base-temperature ordered run (686, 6 T, 3.24 K) reconstructed by MaxEnt
+   from the raw HAL histograms with binning and end-time chosen automatically.
+   The internal-field line lands at 813.56 MHz, just above the
+   :math:`\gamma_\mu \cdot B` applied-field marker at 813.3 MHz, and the
+   calculation converges in eight cycles. The field-referenced ΔB axis the
+   original study works in is one selector away through **X Units** and
+   **Axis:** (`Shift axes`_).
+
 Practical example
 -----------------
 
@@ -901,6 +1113,14 @@ run(s)…"*), re-rendering after each wave until every selected run is included.
 Runs that cannot compute — no detector groups, or a transform that fails — are
 skipped and reported in the status line: *"Overlaying <n> runs; <m> selected
 run(s) could not be computed — check their detector grouping and the log."*
+
+The overlay's legend takes its labels from the plot panel's own ``Label:``
+combo — the same metadata-field picker the time-domain view uses — so a run
+number, field, temperature, or comment identifies each trace. Choosing
+``Temperature (K)``, for example, renders each entry as its value alone (for
+example ``3.24 K``), which is the natural way to compare, say, an ordered run
+against a paramagnetic one and read the line broadening between them directly
+off the legend.
 
 Once several spectra are overlaid, **Waterfall** stacks each one onto its own
 vertical offset so nearby lines stay resolved instead of overlapping —
@@ -1077,6 +1297,11 @@ fits send ``nu0`` and ``fwhm`` values, plus derived ``B0`` and ``Bwid`` field
 equivalents, to the **Parameters** dock for trend analysis.  See
 :doc:`frequency_domain_fitting` for the full workflow.
 
+A single-run fit needs a single spectrum, so fitting is blocked while an
+`overlay <GUI Fourier workflow>`_ is active: the Fit dock disables and reports
+*"Multiple spectra overlaid — select a single run to fit in the frequency
+domain."* Untick **Overlay** (or select just one run) to fit again.
+
 Phase estimation workflow
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -1097,14 +1322,16 @@ The phase colour cues in the table are also meaningful:
 * green: the phase value was auto-estimated for the current dataset via
   ``Fill Phase Estimates``
 
-Asymmetry now makes two explicit design decisions for this workflow:
+Asymmetry makes two explicit design decisions for this workflow, in the
+default ``Grouped average`` `Signal source`_:
 
-* Fourier transforms always use grouped detector-count signals rather than the
-  FB asymmetry trace as the input source.
-* The frequency-domain plot always shows the average of the currently included
+* Fourier transforms use grouped detector-count signals rather than the FB
+  asymmetry trace as the input source. (The ``F−B asymmetry`` signal source is
+  the deliberate exception — see `Signal source`_.)
+* The frequency-domain plot shows the average of the currently included
   groups rather than separate per-group spectra.
 
-The FFT therefore always uses the current grouped/bunched data definition. The
+The FFT therefore uses the current grouped/bunched data definition. The
 grouped detector-count signal is rebuilt with the current bunching factor
 before the transform, and that grouped count signal is lifetime-corrected
 before the later subtract-average and filter stages. The FFT bandwidth and
@@ -1186,6 +1413,13 @@ References
    *Muon Spectroscopy: An Introduction* (Oxford University Press, Oxford, 2022), §15.5.
 
 .. [7] F. J. Harris, Proc. IEEE **66**, 51 (1978).
+
+.. [8] J. M. Gil *et al.*, Phys. Rev. Lett. **83**, 5294 (1999).
+
+.. [9] J. M. Gil *et al.*, Phys. Rev. B **64**, 075205 (2001).
+
+.. [10] B. M. Huddart, T. Lancaster, S. J. Blundell, Z. Guguchia, H. Taniguchi,
+   S. J. Clark, and F. L. Pratt, Phys. Rev. Research **5**, 013015 (2023).
 
 The ``phaseOptReal`` entropy phase optimiser reproduces the
 ``PFTPhaseCorrection`` routine of musrfit (A. Suter and B. M. Wojek,

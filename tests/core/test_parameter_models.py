@@ -22,6 +22,7 @@ from asymmetry.core.fitting.parameter_models import (
     _lorentzian,
     _order_parameter,
     _power_law,
+    _quadratic,
     _redfield,
     carve_window_gap,
     component_names_for_x,
@@ -61,6 +62,12 @@ def test_component_names_filtered_by_x_key() -> None:
     assert "Linear" in run_names
     assert "Arrhenius" not in run_names
     assert "Redfield" not in run_names
+
+    # Quadratic is a common trend model, available on every axis.
+    assert "Quadratic" in field_names
+    assert "Quadratic" in temp_names
+    assert "Quadratic" in run_names
+    assert "Quadratic" in component_names_for_x("common")
 
 
 def test_component_names_returns_sorted_list() -> None:
@@ -103,6 +110,39 @@ def test_linear_negative_slope() -> None:
     x = np.array([0.0, 5.0])
     result = _linear(x, m=-1.0, b=10.0)
     np.testing.assert_allclose(result, [10.0, 5.0])
+
+
+def test_quadratic_known_values() -> None:
+    # 2 + 3x + 4x^2 at x = 0, 1, 2  ->  2, 9, 24
+    result = _quadratic(np.array([0.0, 1.0, 2.0]), c0=2.0, c1=3.0, c2=4.0)
+    np.testing.assert_allclose(result, [2.0, 9.0, 24.0])
+
+
+def test_quadratic_component_registered() -> None:
+    comp = PARAMETER_MODEL_COMPONENTS["Quadratic"]
+    assert comp.param_names == ["c0", "c1", "c2"]
+    assert comp.description == "c0 + c1*x + c2*x^2"
+
+
+def test_quadratic_recovers_parabola_minimum() -> None:
+    # A steering-curve-like parabola with a minimum at x = -0.06.
+    x = np.linspace(-1.0, 1.0, 21)
+    x_min = -0.06
+    y = 5.1 + 2.4 * (x - x_min) ** 2
+    yerr = np.full_like(x, 0.01)
+    model = ParameterCompositeModel(["Quadratic"])
+    params = ParameterSet(
+        [
+            Parameter("c0", value=0.0, min=-100.0, max=100.0),
+            Parameter("c1", value=0.0, min=-100.0, max=100.0),
+            Parameter("c2", value=1.0, min=-100.0, max=100.0),
+        ]
+    )
+    result = fit_parameter_model(x, y, yerr, model, params)
+    assert result.success
+    coeffs = {p.name: p.value for p in result.parameters}
+    recovered_min = -coeffs["c1"] / (2.0 * coeffs["c2"])
+    np.testing.assert_allclose(recovered_min, x_min, atol=1e-6)
 
 
 def test_power_law_square() -> None:

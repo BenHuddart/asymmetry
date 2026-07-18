@@ -2,12 +2,13 @@ Analysis workflows
 ==================
 
 These chapters walk through end-to-end μSR data analyses and
-demonstrate the Asymmetry GUI and Python API in lock-step. The first
-four are reproducible walkthroughs on real instrument runs from the
-WiMDA muon-school corpus, each with the model, seeds, and expected
-numbers; the remainder use synthetic versions of canonical experiments
-grounded in textbook archetypes (Blundell *et al.* 2022; Amato &
-Morenzoni 2024).
+demonstrate the Asymmetry GUI and Python API in lock-step. Almost all
+are reproducible walkthroughs on **real instrument runs from the WiMDA
+muon-school corpus** — several on the very datasets behind published
+papers — each with the model, seeds, and expected numbers; the
+Knight-shift chapter (and a few illustrative subsections) use synthetic
+versions of canonical experiments grounded in textbook archetypes
+(Blundell *et al.* 2022; Amato & Morenzoni 2024).
 
 The narratives are the recommended onboarding path for users who
 have collected real data and want to see how to analyse it. They
@@ -24,6 +25,8 @@ New users should start with :doc:`calibration_grouping_emu`.
    photomusr_silicon_periods
    alc_scan_tcnq
    temperature_scan_magnetism
+   global_fit_ionic_motion
+   fmuf_entangled_states
    knight_shift_angle
    superconductor_penetration_depth
    lf_decoupling_dynamics
@@ -54,20 +57,31 @@ Quick chooser
      - ALC mode, Build Scan, baseline + peak fit, integral asymmetry
    * - :doc:`temperature_scan_magnetism`
      - Locate Tc and measure the order parameter of a ferromagnet
-       or antiferromagnet
+       or antiferromagnet (real EuO / Ni / molecular-magnet data)
      - Logbook sort, Fit Wizard, parameter trending, power-law fit
+   * - :doc:`global_fit_ionic_motion`
+     - Extract an ion-hopping activation energy from LF triplets in a
+       solid electrolyte (real Li₇La₃Zr₂O₁₂ data)
+     - Global (batch) fit with shared parameters, Keren model, axis
+       transforms, Arrhenius trend
+   * - :doc:`fmuf_entangled_states`
+     - Identify an F–µ–F entangled state and measure the muon–fluorine
+       bond length (real PTFE data)
+     - FmuF models, ZF beating signature, sub-MHz FFT
    * - :doc:`knight_shift_angle`
      - Find the muon site from the angle dependence of the Knight
        shift in a rotated single crystal
      - Knight shift analysis window, Angle axis + Fold, Joint K(θ) fit, KnightAnisotropy, Suggest next angle
    * - :doc:`superconductor_penetration_depth`
      - Extract λ(T) from TF μSR in the vortex state of a
-       superconductor
-     - Multi-run TF fits, parameter trending panel, SC gap models
+       superconductor (real BiSCCO / LiFeAs / Re₆Zr data)
+     - Multi-run TF fits, parameter trending, multi-series overlay,
+       MaxEnt vortex lineshape, SC gap models
    * - :doc:`lf_decoupling_dynamics`
-     - Measure the local-field width Δ in a nonmagnetic host and
-       distinguish static from dynamic field distributions
-     - LF-KT model, global fit with shared Δ, decoupling diagnostic
+     - Distinguish static from dynamic local fields with an LF scan
+       (real Ca₃Co₂O₆ data)
+     - LF exponential fits, axis transforms (1/λ vs B² Redfield),
+       static-KT decoupling diagnostic
 
 Further workflows
 -----------------

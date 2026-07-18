@@ -164,6 +164,7 @@ from asymmetry.core.instrument import (
     PROJECTION_TINTS,
     TRANSVERSE_PROJECTION_TINTS,
     derive_projection_pairs,
+    recommend_grouping_preset_for_run,
 )
 from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.io.periods import (
@@ -722,6 +723,12 @@ class MainWindow(QMainWindow):
         self._settings = QSettings()
         self._last_open_dir = self._settings.value("io/last_open_dir", "", str)
         self._current_dataset = None  # Track currently selected dataset
+        #: Transverse-field grouping-hint dismissal state. ``_dismissed_grouping_hints``
+        #: holds ``(run_number, recommended_preset)`` keys the user has closed so
+        #: the nudge stays hidden for that run; ``_active_grouping_hint_key`` is
+        #: the key currently shown (what a dismiss click records).
+        self._dismissed_grouping_hints: set[tuple[int, str]] = set()
+        self._active_grouping_hint_key: tuple[int, str] | None = None
         self._current_project_path: str | None = None  # Path of currently open project
         # Unsaved-changes guard: _dirty tracks whether the session holds work
         # not yet written to a project file. Mutating user actions set it via
@@ -744,6 +751,14 @@ class MainWindow(QMainWindow):
         # True while the frequency view shows a multi-run overlay (a comparison
         # display with no single fit/moments target). Gates single-fit blocking.
         self._frequency_overlay_active: bool = False
+        # View captured just before leaving an active overlay (Overlay
+        # unchecked, or the selection dropped below two runs): (sorted run
+        # numbers, x-limits, y-limits). _render_frequency_overlay restores it
+        # when the same run combination is re-overlaid, instead of letting the
+        # panel's first-paint auto-framing discard the prior window.
+        self._frequency_overlay_view_cache: (
+            tuple[tuple[int, ...], tuple[float, float], tuple[float, float]] | None
+        ) = None
         # Set when a project open is cancelled mid-prefetch: the loaded set is
         # known-incomplete, so saving would silently drop the unloaded runs.
         self._project_load_incomplete = False
@@ -1893,6 +1908,12 @@ class MainWindow(QMainWindow):
                 )
         if hasattr(self._plot_panel, "cursor_coords_changed"):
             self._plot_panel.cursor_coords_changed.connect(self._on_cursor_coords_changed)
+        # Transverse-field grouping nudge (both domains): the link opens the
+        # grouping dialog for the current run; the ✕ records a per-run dismissal.
+        for _panel in (self._plot_panel, self._frequency_plot_panel):
+            if hasattr(_panel, "grouping_hint_requested"):
+                _panel.grouping_hint_requested.connect(self._on_grouping_hint_requested)
+                _panel.grouping_hint_dismissed.connect(self._on_grouping_hint_dismissed)
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
             self._fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         if hasattr(self._fit_panel, "tab_changed"):
@@ -2694,6 +2715,74 @@ class MainWindow(QMainWindow):
 
         return updated
 
+    def _update_grouping_hint(self) -> None:
+        """Surface the transverse-field grouping nudge on the plot/Fourier panels.
+
+        Mirrors the grouping dialog's hint but on the surfaces the user actually
+        watches: when the current run is transverse-field yet still on a grouping
+        that cancels the precession, both plot panels show a dismissable bar
+        pointing at the grouping dialog. The decision lives in core
+        (:func:`recommend_grouping_preset_for_run`); this only formats the
+        message and honours per-run dismissal
+        (``_dismissed_grouping_hints``, keyed by run + recommended preset).
+
+        Called from the render chokepoints (time render + frequency sync) so the
+        nudge tracks the displayed run and clears itself the moment the run is
+        regrouped onto the recommended preset.
+        """
+        dataset = self._current_dataset
+        recommended: str | None = None
+        run_key: tuple[int, str] | None = None
+        # The nudge is per-run and its wording ("the current grouping") is
+        # singular, so only surface it when exactly one run is displayed. An
+        # overlay leaves ``_current_dataset`` pointing at one (possibly stale)
+        # member, so keying off it alone would attribute the hint to a run that
+        # is not on screen.
+        distinct_runs = {
+            int(ds.run_number)
+            for ds in self._selected_or_current_datasets()
+            if ds is not None and ds.run is not None
+        }
+        if dataset is not None and dataset.run is not None and len(distinct_runs) <= 1:
+            grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
+            try:
+                recommended = recommend_grouping_preset_for_run(
+                    n_histograms=len(dataset.run.histograms),
+                    metadata=dataset.metadata,
+                    source_file=dataset.run.source_file,
+                    current_preset=grouping.get("grouping_preset"),
+                )
+            except Exception:
+                recommended = None
+            if recommended is not None:
+                run_key = (int(dataset.run_number), recommended)
+
+        if run_key is None or run_key in self._dismissed_grouping_hints:
+            text: str | None = None
+        else:
+            text = (
+                "Transverse-field run: the current grouping washes out the "
+                'precession. <a href="#grouping">Open Grouping…</a> and apply '
+                f"‘{recommended}’."
+            )
+        self._active_grouping_hint_key = run_key if text else None
+        for panel in (self._plot_panel, self._frequency_plot_panel):
+            if hasattr(panel, "set_grouping_hint"):
+                panel.set_grouping_hint(text)
+
+    def _on_grouping_hint_requested(self) -> None:
+        """Open the grouping dialog for the current run from the panel hint."""
+        self._on_grouping_current()
+
+    def _on_grouping_hint_dismissed(self) -> None:
+        """Record the current run's grouping-hint dismissal and hide the bar."""
+        if self._active_grouping_hint_key is not None:
+            self._dismissed_grouping_hints.add(self._active_grouping_hint_key)
+        self._active_grouping_hint_key = None
+        for panel in (self._plot_panel, self._frequency_plot_panel):
+            if hasattr(panel, "set_grouping_hint"):
+                panel.set_grouping_hint(None)
+
     def _render_current_selection_plot(self) -> None:
         """Render current single/multi selection using active polarization settings."""
         started_at = time.perf_counter()
@@ -2783,6 +2872,7 @@ class MainWindow(QMainWindow):
             render_mode = "single"
             self._plot_panel.plot_dataset(targets[0])
         finally:
+            self._update_grouping_hint()
             self._log_perf_event(
                 "selection_plot",
                 started_at,
@@ -7080,7 +7170,12 @@ class MainWindow(QMainWindow):
             )
             run = getattr(dataset, "run", None)
             if isinstance(recipe, dict) and recipe.get("fourier_config") and run is not None:
-                recipe["grouping_digest"] = fourier_grouping_digest(run)
+                recipe_source = str(
+                    recipe["fourier_config"].get("signal_source", "grouped_average")
+                )
+                recipe["grouping_digest"] = fourier_grouping_digest(
+                    run, signal_source=recipe_source
+                )
         self._log_perf_event("lazy_spectrum_recompute", started_at, run=run_number)
         self._finish_frequency_recompute_ui()
         # Only redraw if this exact (run, rep) is still displayed — a rapid run
@@ -7536,11 +7631,18 @@ class MainWindow(QMainWindow):
             run_numbers = self._selected_frequency_run_numbers()
             if len(run_numbers) > 1:
                 self._render_frequency_overlay(run_numbers)
+                self._update_grouping_hint()
                 return
+        if self._frequency_overlay_active:
+            # Leaving an active overlay: remember its view so re-overlaying
+            # the same run combination restores the window rather than
+            # re-framing.
+            self._cache_frequency_overlay_view()
         run_number = (
             None if self._current_dataset is None else int(self._current_dataset.run_number)
         )
         self._sync_frequency_plot_for_run(run_number)
+        self._update_grouping_hint()
 
     def _on_frequency_overlay_toggled(self, _enabled: bool) -> None:
         """Re-render the frequency view when the overlay toggle changes."""
@@ -7580,6 +7682,33 @@ class MainWindow(QMainWindow):
         if representation is not None and representation.primary is not None:
             return [representation.primary]
         return []
+
+    def _cache_frequency_overlay_view(self) -> None:
+        """Remember the current view limits for the active overlay's run set.
+
+        Read by :meth:`_render_frequency_overlay`, which restores this window
+        when the same combination of runs is re-overlaid — otherwise every
+        overlay <-> single-run transition reads as new plotted content to the
+        panel's first-paint auto-framing, discarding the prior window even
+        though nothing about the overlaid runs actually changed.
+        """
+        panel = self._frequency_plot_panel
+        if not hasattr(panel, "get_view_limits"):
+            return
+        run_numbers: list[int] = []
+        for dataset in getattr(panel, "_current_datasets", None) or ():
+            try:
+                run_numbers.append(int(dataset.run_number))
+            except (TypeError, ValueError, AttributeError):
+                return
+        if len(run_numbers) <= 1:
+            return
+        x_min, x_max, y_min, y_max = panel.get_view_limits()
+        self._frequency_overlay_view_cache = (
+            tuple(sorted(run_numbers)),
+            (float(x_min), float(x_max)),
+            (float(y_min), float(y_max)),
+        )
 
     def _render_frequency_overlay(self, run_numbers: list[int]) -> None:
         """Overlay the spectra of every selected run on one axis, computing as needed.
@@ -7660,6 +7789,18 @@ class MainWindow(QMainWindow):
         self._frequency_display_key = None
         self._frequency_overlay_active = True
         self._render_frequency_spectra(rendered_runs[0], rep_type, spectra, None, None)
+        cached_view = self._frequency_overlay_view_cache
+        if (
+            cached_view is not None
+            and cached_view[0] == tuple(sorted(rendered_runs))
+            and hasattr(self._frequency_plot_panel, "set_view_limits")
+        ):
+            # Re-overlaying the same combination: restore the window the
+            # panel's fresh first-paint just auto-framed over.
+            x_limits, y_limits = cached_view[1], cached_view[2]
+            self._frequency_plot_panel.set_view_limits(
+                x_limits[0], x_limits[1], y_limits[0], y_limits[1]
+            )
         if missing:
             name = self._frequency_status_name(rep_type)
             if rep_type == RepresentationType.FREQ_FFT:
@@ -8096,7 +8237,9 @@ class MainWindow(QMainWindow):
                 skipped += 1
                 continue
             config = self._candidate_fourier_config(dataset, enabled_group_ids=enabled_group_ids)
-            if not config.selected_group_ids:
+            # Group selection only gates the grouped-average source; fb mode
+            # transforms the single F−B curve regardless of the (inert) table.
+            if not config.selected_group_ids and config.signal_source != "fb_asymmetry":
                 skipped += 1
                 continue
             representation = self._project_model.ensure_dataset(run_number).ensure(
@@ -8104,9 +8247,10 @@ class MainWindow(QMainWindow):
             )
             # Each target's digest is its OWN grouping right now, not the
             # active run's — the live config is evaluated against the target.
+            # The digest covers the keys the config's signal source consumes.
             representation.recipe = {
                 "fourier_config": config.to_dict(),
-                "grouping_digest": fourier_grouping_digest(run),
+                "grouping_digest": fourier_grouping_digest(run, signal_source=config.signal_source),
             }
             representation.invalidate()
             cache.pop(run_number, None)
@@ -8151,6 +8295,7 @@ class MainWindow(QMainWindow):
         """
         return GroupSpectrumConfig(
             display=str(state.get("display", "Real")),
+            signal_source=str(state.get("signal_source", "grouped_average")),
             window=str(state.get("window", "none")),
             padding=int(state.get("padding", 1)),
             display_normalisation=str(state.get("display_normalisation", "calibrated")),
@@ -8261,7 +8406,18 @@ class MainWindow(QMainWindow):
         group_phase_degrees: dict[int, float] = {}
         if fourier_mode_uses_phase_correction(display):
             manual_phase = float(state.get("phase_degrees", 0.0))
-            if bool(state.get("use_phase_table", False)):
+            if str(state.get("signal_source", "grouped_average")) == "fb_asymmetry":
+                # fb mode transforms one F−B curve, and the per-group table is
+                # disabled in the GUI — the global Phase spin is the only phase
+                # the user sees, so it always wins over a leftover
+                # use_phase_table tick from grouped mode. Recorded uniformly
+                # over the run's groups (not just the selected ones, which may
+                # be empty in fb mode) so the effective phase survives.
+                phase_ids = selected_group_ids or [
+                    int(group_id) for group_id in self._fourier_group_names_for_dataset(dataset)
+                ]
+                group_phase_degrees = {int(group_id): manual_phase for group_id in phase_ids}
+            elif bool(state.get("use_phase_table", False)):
                 if is_active_run:
                     table = self._fourier_panel.group_phase_table()
                 else:
@@ -8346,11 +8502,13 @@ class MainWindow(QMainWindow):
         if representation.recipe.get("fourier_config"):
             return None
         config = self._candidate_fourier_config(dataset)
-        if not config.selected_group_ids:
+        # Group selection only gates the grouped-average source (fb transforms
+        # the single F−B curve; the table is inert there).
+        if not config.selected_group_ids and config.signal_source != "fb_asymmetry":
             return None
         representation.recipe = {
             "fourier_config": config.to_dict(),
-            "grouping_digest": fourier_grouping_digest(run),
+            "grouping_digest": fourier_grouping_digest(run, signal_source=config.signal_source),
         }
         return representation, run
 
@@ -8373,14 +8531,18 @@ class MainWindow(QMainWindow):
         if not isinstance(recipe, dict) or not recipe.get("fourier_config"):
             return False, ""
         reasons: list[str] = []
+        recorded = GroupSpectrumConfig.from_dict(recipe.get("fourier_config"))
         recorded_digest = recipe.get("grouping_digest")
+        # Recompute the current digest under the RECORDED config's signal
+        # source: the digest answers "did the run state THIS spectrum depended
+        # on change" (a source switch itself is flagged by config_differences).
         if (
             isinstance(recorded_digest, str)
             and recorded_digest
-            and fourier_grouping_digest(dataset.run) != recorded_digest
+            and fourier_grouping_digest(dataset.run, signal_source=recorded.signal_source)
+            != recorded_digest
         ):
             reasons.append("grouping changed")
-        recorded = GroupSpectrumConfig.from_dict(recipe.get("fourier_config"))
         differences = config_differences(self._candidate_fourier_config(dataset), recorded)
         if differences:
             shown = ", ".join(differences[:3]) + (", …" if len(differences) > 3 else "")
@@ -8780,6 +8942,9 @@ class MainWindow(QMainWindow):
             if "group_id" in spec
         }
         updated = self._maxent_panel.apply_phase_table(phases_deg)
+        # The exchanged table must actually drive the next reconstruction, so
+        # switch off the data-derived seeding that would otherwise override it.
+        self._maxent_panel.set_auto_phase_seed(False)
         stamp = time.strftime("%Y-%m-%d %H:%M")
         self._maxent_panel.set_phase_provenance(
             f"Phases seeded from grouped fit ({updated} groups) · {stamp}"
@@ -8966,8 +9131,24 @@ class MainWindow(QMainWindow):
         )
 
     def _confirm_maxent_workload(self, estimate, config: MaxEntConfig) -> bool:
-        """Ask the user whether to continue with a risky MaxEnt workload."""
+        """Ask the user whether to continue with a risky MaxEnt workload.
+
+        Headless sessions (offscreen/minimal QPA — CI, screenshot scenarios,
+        scripted driving) have no user to dismiss the dialog, so the warning
+        routes to the log and the calculation proceeds.  Setting
+        ``ASYMMETRY_SUPPRESS_WORKLOAD_WARNING`` does the same on a display,
+        for scripted runs that drive a visible window.
+        """
         if not self._maxent_workload_is_unsafe(estimate):
+            return True
+
+        if self._is_headless() or os.environ.get("ASYMMETRY_SUPPRESS_WORKLOAD_WARNING"):
+            self._log_panel.log(
+                "Large MaxEnt calculation: proceeding without confirmation "
+                f"(run {estimate.run_number}: {estimate.total_observations:,} observations, "
+                f"{estimate.n_spectrum_points:,} spectrum points, "
+                f"{_format_bytes(estimate.total_dense_matrix_bytes)} dense-equivalent per pass)."
+            )
             return True
 
         msg = QMessageBox(self)
@@ -8988,7 +9169,9 @@ class MainWindow(QMainWindow):
                     "Asymmetry evaluates the projection in chunks where possible, but this "
                     "setting still represents a large numerical workload.",
                     "Reducing the time range, increasing MaxEnt binning, or using fewer spectrum "
-                    "points will usually make the calculation safer.",
+                    "points will usually make the calculation safer — or tick "
+                    "“Auto workload steering” in the Time section and clear the "
+                    "End/Binning fields to size them automatically.",
                 ]
             )
         )
@@ -15168,6 +15351,11 @@ class MainWindow(QMainWindow):
         self._maxent_state_by_run = {}
         self._maxent_panel_state_by_run = {}
         self._fourier_group_phase_state_by_run = {}
+        # Grouping-hint dismissals are keyed by run number, which is a per-
+        # experiment counter; carrying them into a new project would silently
+        # pre-suppress the nudge on an unrelated run that happens to reuse the id.
+        self._dismissed_grouping_hints.clear()
+        self._active_grouping_hint_key = None
         self._fourier_included_seeded.clear()
         if hasattr(self._fourier_panel, "set_stale"):
             self._fourier_panel.set_stale(None)

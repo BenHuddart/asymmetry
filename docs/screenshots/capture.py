@@ -262,7 +262,6 @@ def _import_scenarios() -> None:
         data_browser_groups,
         data_processing_rebin,
         emu_longitudinal_layout,
-        euo_fit_oscillatory,
         fit_asymmetric_errors,
         fit_wizard_gkt,
         fit_wizard_result,
@@ -280,17 +279,17 @@ def _import_scenarios() -> None:
         logbook_view,
         main_window,
         maxent_ybco,
-        mgb2_lambda_t,
         muon_fluorine_pbf2,
         new_user_function_dialog,
         parameter_trending_mgb2,
+        parameter_trending_overlay,
+        parameter_trending_redfield,
         period_mapping_dialog,
         quickstart_first_fit,
         run_info_provenance,
         simulate_dialog,
         spectral_moments_readout,
         suggest_next_point,
-        temperature_trend_fit,
         trend_model_fit_dialog,
         vector_polarization_emu,
         waterfall_overlay,
@@ -416,7 +415,10 @@ def main(argv: list[str] | None = None) -> int:
     oversized = _oversized_paths(captured_paths, SCREENSHOT_SIZE_BUDGET_BYTES)
     if oversized:
         budget_kb = SCREENSHOT_SIZE_BUDGET_BYTES // 1024
-        print(f"[screenshots] {len(oversized)} PNG(s) exceed the {budget_kb} KB budget:", file=sys.stderr)
+        print(
+            f"[screenshots] {len(oversized)} PNG(s) exceed the {budget_kb} KB budget:",
+            file=sys.stderr,
+        )
         for entry in oversized:
             print(f"  - {entry}", file=sys.stderr)
         return 1

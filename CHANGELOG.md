@@ -36,6 +36,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pan, zoom and home controls on the grouping preview**, with a user-chosen
   view preserved across the live redraws until Home restores the automatic
   scale.
+- **F−B asymmetry as a Fourier signal source.** The Fourier panel's `FFT Phase
+  Mode` section gains a `Signal source` choice: the default `Grouped average`
+  (averages each detector group's own lifetime-corrected FFT) or the new
+  `F−B asymmetry`, which transforms the run's forward−backward asymmetry
+  curve directly — the same signal the time-domain plot shows, with the same
+  grouping and α (`GroupSpectrumConfig.signal_source="fb_asymmetry"`; deadtime
+  correction is not applied on this path, matching the time-domain plot). For
+  a single forward/backward detector pair this gives markedly better
+  peak-to-floor contrast than averaging every detector group — roughly 5× on
+  a real GPS zero-field run where the grouped average buried the line under
+  the other groups' baselines. The `Groups` include/phase table is inert (and
+  disabled) in F−B mode, and the resulting spectrum is labelled `<run> F−B` so
+  overlays distinguish the source.
+- **Pinned frequency-panel annotations that survive a replot.** The frequency
+  `PlotPanel` gains `set_custom_x_axis_label(text)` and
+  `add_persistent_frequency_marker(freq_mhz, label)` /
+  `clear_persistent_frequency_markers()`. A replot clears the axis and
+  recomputes the x-axis label, so a bespoke label or Fourier line marker (ν₁,
+  ν₂, A_µ, γ_μ·B) drawn straight onto the axis was wiped by the show-time
+  render; pinned decorations are now recreated on every render and persist.
+- **MaxEnt data-derived phase seeding.** New `Seed phases from data` toggle
+  (on by default; `MaxEntConfig.auto_phase_seed`) estimates each group's
+  starting phase from a σ²-weighted lock-in at the strongest line inside the
+  frequency window (pulse-shape aware). The ±4°/cycle phase refinement can
+  never reach the ~90°/45° geometric offsets of real multi-group rings from an
+  all-zero start, so unseeded groups previously either poisoned χ² or muted
+  themselves out of the joint fit. Hand-editing a phase in the Groups table or
+  clicking **Use fitted phases** unticks the toggle so the table drives.
+- **MaxEnt workload auto-steering.** New `Auto workload steering` toggle (on
+  by default; `MaxEntConfig.auto_steer`, resolver exposed as
+  `resolve_maxent_auto_steering(run, config)`) sizes workload settings the
+  user left unset to the run: binning is raised until the post-binning Nyquist
+  clears the frequency window with margin (only when the window is known from
+  the field or explicit bounds — never on data-windowed ZF runs), very large
+  post-binning grids get an end-time cap, and the scripting API's default
+  spectrum length stops growing with the raw bin count. A raw 389k-bin HiFi
+  `.mdu` run that previously implied a ~2¹⁹-point spectrum over 389k time
+  points (days of compute, guaranteed workload warning) now reconstructs its
+  813 MHz line out of the box in ~2–3 minutes. Explicit values always win;
+  the result metadata records what was steered under `auto_steer_applied`.
 
 ### Changed
 
@@ -49,6 +89,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hidden below the fold and scrolls to them on click. The transverse-field
   grouping nudge banner is retired from this window (the Detector Layout
   editor keeps its own copy, including preselecting the recommended preset).
+- **The "Large MaxEnt calculation" warning no longer blocks headless
+  sessions.** Offscreen/minimal-platform sessions (CI, screenshot scenarios,
+  scripted driving) have no user to dismiss the modal, so the warning is
+  written to the log panel and the calculation proceeds; setting
+  `ASYMMETRY_SUPPRESS_WORKLOAD_WARNING` does the same on a visible display.
+  The interactive dialog now also points at `Auto workload steering`.
 
 ### Fixed
 
@@ -81,6 +127,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the selected run — so a flattened "after" curve never misrepresents a
   calibration the reduction will not reproduce. Study:
   `docs/porting/correction-order-alpha-estimation`.
+- **Toggling the frequency Overlay checkbox off and back on no longer
+  discards a manually-set view window.** The overlay's re-render always
+  auto-ranged the axes because switching between the multi-run overlay and
+  the single active run reads as brand-new plotted content to the panel's
+  first-paint framing. `MainWindow` now remembers the view just before
+  leaving an active overlay and restores it when the same combination of
+  runs is re-overlaid; a genuinely different run selection still auto-frames.
+- **MaxEnt no longer diverges on real long-window TF data.** Three compounding
+  engine defects made out-of-the-box reconstructions of e.g. MUSR forward/back
+  TF runs collapse into spiky noise with χ² rising from cycle 1 (χ²/N ≈ 8000 on
+  a real 400 G vortex-lattice run): (1) the per-group normalisation baseline
+  was a plain mean of the lifetime-corrected counts, which the exp-amplified
+  late-time Poisson tail inflates several-fold — it is now the 1/σ²-weighted
+  mean, pinned to the high-statistics bins; (2) the per-cycle nuisance
+  amplitude fit clipped at a floor of 0.01 in units where the correct
+  amplitude is ~`A·Δν` (often 10–100× *below* the floor), forcing an oversized
+  model oscillation that the solver could only fight by decohering the
+  spectrum — the floor is now far below any physical value; (3) the nuisance
+  amplitude/background regression and phase scan were unweighted, letting the
+  junk tail dominate — both are now σ-weighted, consistent with the χ² the
+  cycles minimise. The same run now converges to χ²/N ≈ 1.0 with the peak on
+  the vortex line, full range, no manual steering.
+- **A converged-but-flagged single fit is no longer silently un-plotted.** When
+  the minimiser reaches a usable minimum but flags it (`success=False` — for
+  example a degenerate additive baseline at low field), the single-fit panel
+  now draws the fit curve **greyed** (via the preview overlay) and explains the
+  flag, instead of showing only "Fit failed" and drawing nothing. The fit is
+  still not recorded — *Add to Series* and the pull diagnostic stay disabled —
+  so the user refines the seeds/bounds/model and refits to keep it. A genuine
+  failure (no minimum) still reports "Fit failed" as before.
+- **Both periods of a two-period run survive in the data browser.**
+  `select_period()` now hands each period a distinct encoded run-number key
+  (the same scheme the loader's 3+-period path already uses), so adding both
+  the red and green period of one run no longer collapses them under the
+  shared source run number. The friendly `run/period` label and the true
+  `source_run_number` are preserved in metadata.
+- **Weak-TF α-calibration runs are recognised from the structured field-state
+  code.** `classify_tf_calibration_run` now also treats an explicit
+  `field_state`/`magnetic_field_state` of `TF` as transverse evidence (and
+  `LF`/`ZF` as a veto), so a run whose loader recorded the state code but left
+  `field_direction`/`field` unset is still highlighted in the calibration-run
+  dropdown.
 
 ## [0.13.0] - 2026-07-14
 
@@ -281,6 +369,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RunSummary` block in the new TDirectory-based header — a block musrfit
   itself does not read — is now attached verbatim to loaded runs as
   `metadata["musrroot_run_summary"]`.
+- **Per-axis transforms in the parameter-trending panel.** A collapsible
+  **Axis transforms** section (below the Y-parameter list) applies a transform
+  to either the X or Y axis — `None`, `1/x  (reciprocal)`, `x²  (square)`,
+  `ln x`, `log₁₀ x`, `√x`, or a `Custom…` single-variable expression — so the
+  bread-and-butter µSR linearisations are drawable in-app: **Redfield**
+  (`1/λ` vs `(µ₀H)²`) and **Arrhenius** (`ln λ` vs `1/T`). The transform feeds
+  the trend fit as well as the plot, so a `Linear` Model Fit over transformed
+  axes *is* the Redfield/Arrhenius line, with error bars propagated and slope
+  and intercept read from the model-fit dialog. It is distinct from (and
+  guarded against compounding with) the `log` axis-scale checkboxes.
+  Documented in *Reference ▸ Parameter trending ▸ Axis transforms*.
+- **Multi-series overlay in the parameter-trending panel.** Shift-clicking more
+  than one series pill now overlays those series on the plot (colour = series,
+  with a legend), so `σ(T)` at two applied fields, or the same observable across
+  two samples, can be compared directly instead of one series at a time. A
+  second selected parameter takes a distinct marker shape; the twin-axis layout
+  is reserved for a single series. Documented in *Reference ▸ Parameter trending
+  ▸ Overlaying several series*.
+- **First-class `Quadratic` trend model.** The Model-Fit catalogue gains a plain
+  parabola `c0 + c1*x + c2*x²` on every axis, so a steering-curve minimum (or any
+  gentle curvature a `Linear` cannot match) no longer needs a `Polynomial` with
+  its higher coefficients pinned to zero.
 - **Optional CUDA GPU backend for the MaxEnt engine (scripting API).**
   `MaxEntConfig(backend="cuda")` runs the projection kernels on an NVIDIA GPU
   via CuPy instead of NumPy — measured ~160x faster than the CPU path at

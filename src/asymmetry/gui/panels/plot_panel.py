@@ -65,6 +65,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -106,7 +107,7 @@ from asymmetry.gui.export_paths import (
 from asymmetry.gui.panels.draggable_handles import nearest_handle
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.metrics import field_width_for
+from asymmetry.gui.styles.metrics import char_width, field_width_for
 from asymmetry.gui.styles.plots import (
     draw_empty_state_message,
     draw_fit_range_span,
@@ -290,6 +291,13 @@ class PlotPanel(QWidget):
     #: A moments-handle drag has ended (mouse released after an actual move):
     #: the signal for "recompute with full bootstrap uncertainty now".
     moments_drag_finished = Signal()
+    #: The user clicked the "Open Grouping…" link in the transverse-field
+    #: grouping-hint bar (see :meth:`set_grouping_hint`); the host opens the
+    #: grouping dialog for the current run.
+    grouping_hint_requested = Signal()
+    #: The user dismissed the grouping-hint bar (the ✕ button); the host records
+    #: the dismissal so the nudge stays hidden for that run.
+    grouping_hint_dismissed = Signal()
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
@@ -489,6 +497,8 @@ class PlotPanel(QWidget):
 
             self._plot_header = self._create_plot_header()
             layout.addWidget(self._plot_header)
+            self._grouping_hint_bar = self._create_grouping_hint_bar()
+            layout.addWidget(self._grouping_hint_bar)
             layout.addWidget(self._canvas_scroll_area)
             self._plot_footer = self._create_plot_footer()
             layout.addWidget(self._plot_footer)
@@ -561,6 +571,13 @@ class PlotPanel(QWidget):
             self._annotations: list[dict] = self._default_annotations
             self._active_annotation_idx: int | None = None
             self._annotation_drag_started = False
+
+            # Persistent frequency-domain decorations that must survive a replot
+            # (the show-time render clears the axis and recomputes the x-label, so
+            # markers/labels drawn straight onto the axis are otherwise wiped —
+            # see set_custom_x_axis_label / add_persistent_frequency_marker).
+            self._custom_x_axis_label: str | None = None
+            self._persistent_frequency_markers: list[dict] = []
 
             # Cached arrays from the most recently plotted analysis dataset.
             self._last_plot_time = None
@@ -843,6 +860,74 @@ class PlotPanel(QWidget):
 
         self._update_plot_header()
         return widget
+
+    def _create_grouping_hint_bar(self) -> QWidget:
+        """Return the (hidden) transverse-field grouping-nudge bar.
+
+        A dismissable amber banner shown above the canvas when the host detects
+        that the current run is transverse-field but still on a grouping that
+        washes out the precession (see :meth:`set_grouping_hint`). The message
+        carries an "Open Grouping…" link (``grouping_hint_requested``) and a ✕
+        dismiss button (``grouping_hint_dismissed``); the host owns the policy —
+        this widget only renders whatever text it is handed.
+        """
+        # This is a full-width strip flush under the plot header (a bottom border
+        # continuing ``plotHeaderStrip``), not the rounded padded chip
+        # ``styles.widgets.make_warning_banner`` produces — so it styles the
+        # shared ``WARN_BANNER_*`` tokens directly rather than reusing that
+        # helper. It uses the same amber tokens so the two stay in visual step.
+        bar = QFrame()
+        bar.setObjectName("groupingHintBar")
+        bar.setStyleSheet(
+            f"#groupingHintBar {{ background-color: {tokens.WARN_BANNER_BG};"
+            f" border-bottom: 1px solid {tokens.WARN}; }}"
+        )
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(10, 5, 4, 5)
+        row.setSpacing(4)
+
+        self._grouping_hint_label = QLabel("")
+        self._grouping_hint_label.setWordWrap(True)
+        self._grouping_hint_label.setTextFormat(Qt.TextFormat.RichText)
+        self._grouping_hint_label.setStyleSheet(f"color: {tokens.WARN_BANNER_TEXT};")
+        # The link is handled in-process (open the grouping dialog), never as a
+        # browser navigation.
+        self._grouping_hint_label.setOpenExternalLinks(False)
+        self._grouping_hint_label.linkActivated.connect(
+            lambda _href: self.grouping_hint_requested.emit()
+        )
+        row.addWidget(self._grouping_hint_label, 1)
+
+        self._grouping_hint_dismiss_btn = QPushButton("✕")
+        self._grouping_hint_dismiss_btn.setToolTip("Dismiss")
+        self._grouping_hint_dismiss_btn.setFixedWidth(char_width(3))
+        self._grouping_hint_dismiss_btn.setStyleSheet(
+            "QPushButton { border: none; background: transparent; padding: 0 4px;"
+            f" color: {tokens.WARN_BANNER_TEXT}; }}"
+            f"QPushButton:hover {{ background-color: {tokens.SURFACE_HI}; border-radius: 3px; }}"
+        )
+        self._grouping_hint_dismiss_btn.clicked.connect(self.grouping_hint_dismissed.emit)
+        row.addWidget(self._grouping_hint_dismiss_btn)
+
+        bar.hide()
+        return bar
+
+    def set_grouping_hint(self, text: str | None) -> None:
+        """Show or hide the transverse-field grouping-nudge bar.
+
+        ``text`` may contain rich text with an ``<a href=…>Open Grouping…</a>``
+        link; a falsy value hides the bar. Idempotent and safe to call on a
+        matplotlib-less panel (it simply no-ops).
+        """
+        bar = getattr(self, "_grouping_hint_bar", None)
+        if bar is None:
+            return
+        if text:
+            self._grouping_hint_label.setText(str(text))
+            bar.show()
+        else:
+            self._grouping_hint_label.clear()
+            bar.hide()
 
     def _create_plot_footer(self) -> QWidget:
         """Return the control bar shown below the canvas."""
@@ -1616,6 +1701,10 @@ class PlotPanel(QWidget):
 
     def _apply_axis_labels(self, x_label: str, y_label: str) -> None:
         """Apply axis labels and keep the limit-unit helpers in sync."""
+        # A pinned custom x-label wins over the recomputed one so it is not wiped
+        # by the show-time replot (see set_custom_x_axis_label).
+        if self._custom_x_axis_label is not None:
+            x_label = self._custom_x_axis_label
         self._ax.set_xlabel(x_label)
         self._ax.set_ylabel(y_label)
         self._apply_x_axis_decimation_indicator(self._ax)
@@ -3202,6 +3291,55 @@ class PlotPanel(QWidget):
             self.plot_dataset(self._current_dataset)
         elif self._current_datasets:
             self.plot_dataset(self._current_datasets[-1])
+
+    def set_custom_x_axis_label(self, label: str | None) -> None:
+        """Pin (or clear) a custom x-axis label that survives replots.
+
+        A replot recomputes and overwrites the x-axis label, so a caller that
+        wants a bespoke label — for example a Fourier annotation workflow
+        labelling a hyperfine-coupling axis — pins it here. It is re-applied
+        after every render (including the show-time replot) instead of being
+        wiped. Pass ``None`` to restore the computed label.
+        """
+        self._custom_x_axis_label = str(label) if label is not None else None
+        if not self._has_mpl:
+            return
+        if self.has_plot_content():
+            self._redraw_current_view()
+        else:
+            # No data yet: reflect the pinned/cleared label immediately so a
+            # caller that annotates before plotting still sees it.
+            self._apply_axis_labels(*self._default_axis_labels())
+            self._canvas.draw_idle()
+
+    def add_persistent_frequency_marker(self, freq_mhz: float, label: str = "") -> None:
+        """Pin a vertical frequency-line marker that survives replots.
+
+        ``freq_mhz`` is a canonical (absolute) frequency in MHz; it is
+        display-unit converted at draw time so the marker tracks the active axis
+        unit. The marker is recreated on every render, so — unlike a one-off
+        ``axvline`` drawn straight onto the axis — it is not wiped by the
+        show-time replot. Use for Fourier line labels (ν₁, ν₂, A_µ, γ_μ·B).
+        """
+        freq = float(freq_mhz)
+        if not np.isfinite(freq):
+            return
+        self._persistent_frequency_markers.append({"freq_mhz": freq, "label": str(label or "")})
+        if not self._has_mpl:
+            return
+        if self.has_plot_content():
+            self._redraw_current_view()
+        else:
+            self._draw_persistent_frequency_markers()
+            self._canvas.draw_idle()
+
+    def clear_persistent_frequency_markers(self) -> None:
+        """Remove every pinned frequency-line marker and redraw."""
+        if not self._persistent_frequency_markers:
+            return
+        self._persistent_frequency_markers = []
+        if self._has_mpl and self.has_plot_content():
+            self._redraw_current_view()
 
     def _emit_view_limits_changed(self) -> None:
         """Broadcast the current view limits to external UI owners."""
@@ -5218,9 +5356,55 @@ class PlotPanel(QWidget):
             self._limits_user_locked = False
             self._auto_y_limits()
 
+    def _draw_persistent_frequency_markers(self) -> None:
+        """Redraw the pinned frequency-line markers on the active axis.
+
+        Vertical marker + optional label for each pinned frequency (stored in
+        canonical MHz). Built with ``add_artist`` + a ``get_xaxis_transform``
+        idiom — identical to :meth:`_draw_expected_larmor_marker` — so the
+        marker spans the axes height, never perturbs ``dataLim``/autoscale, and
+        (unlike a one-off ``axvline``) is recreated on every render, surviving
+        the show-time replot. The x position is display-unit converted so it
+        tracks the active frequency/field axis unit.
+        """
+        if not self._has_mpl or not self._persistent_frequency_markers:
+            return
+        from matplotlib import lines as mlines
+
+        transform = self._ax.get_xaxis_transform(which="grid")
+        for marker in self._persistent_frequency_markers:
+            x = float(self._convert_frequency_axis_for_display(np.array([marker["freq_mhz"]]))[0])
+            if not np.isfinite(x):
+                continue
+            line = mlines.Line2D(
+                [x, x],
+                [0.0, 1.0],
+                transform=transform,
+                color=tokens.ACCENT,
+                alpha=0.7,
+                linestyle="--",
+                linewidth=1.0,
+                zorder=1,
+            )
+            line.set_label("_nolegend_")
+            self._ax.add_artist(line)
+            label = str(marker.get("label") or "")
+            if label:
+                self._ax.annotate(
+                    label,
+                    xy=(x, 0.96),
+                    xycoords=transform,
+                    ha="left",
+                    va="top",
+                    fontsize=8,
+                    color=tokens.ACCENT,
+                    zorder=5,
+                )
+
     def _draw_annotations(self) -> None:
         """Recreate annotation artists on the active axis."""
         rrf_draw_badge(self, self._ax)
+        self._draw_persistent_frequency_markers()
         for ann in self._annotations:
             artist = self._ax.text(
                 ann["x"],
@@ -7105,6 +7289,9 @@ class PlotPanel(QWidget):
         reframes from scratch. It does not touch the spin *fields*, which clear()
         never reset; callers re-apply the preserved limits explicitly.
         """
+        # A cleared panel shows no run, so the transverse-field grouping nudge
+        # (which is per-run) must go with it; the next render re-derives it.
+        self.set_grouping_hint(None)
         if self._has_mpl:
             self._set_canvas_minimum_height_for_axes(1)
             self._set_navigation_mode("none")
@@ -7141,6 +7328,8 @@ class PlotPanel(QWidget):
             self._annotations = self._default_annotations
             self._active_annotation_idx = None
             self._annotation_drag_started = False
+            self._custom_x_axis_label = None
+            self._persistent_frequency_markers = []
             self._fit_x_min = None
             self._fit_x_max = None
             self._fit_span_artists = []
