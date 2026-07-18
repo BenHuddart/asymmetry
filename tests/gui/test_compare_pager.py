@@ -4,10 +4,11 @@ The pager (`◀`/`▶` + a muted label, built by
 :meth:`GroupingDialog._build_compare_pager`) steps ``_compare_stage`` through the
 cycle ``[None, "deadtime", "background", "alpha", "raw"]``, skipping stages
 :meth:`GroupingDialog._compare_stage_available` rejects. It rides the same
-``_compare_stage`` the section "Compare in preview" toggles and pipeline chips
-drive, and is refreshed from the single :meth:`GroupingDialog._sync_compare_toggles`
+``_compare_stage`` the pipeline chips and the pager-row "raw" checkbox drive,
+and is refreshed from the single :meth:`GroupingDialog._sync_compare_toggles`
 sync seam — see ``docs/porting/correction-order-alpha-estimation/
-corrections-tab-ux-plan.md`` (M3).
+corrections-tab-ux-plan.md`` (M3; per-section checkboxes retired by the
+correction-cards milestone).
 """
 
 from __future__ import annotations
@@ -211,15 +212,16 @@ def test_pager_skips_alpha_in_vector_mode(qapp: QApplication) -> None:
     assert "raw" in seen
 
 
-def test_pager_label_syncs_from_a_section_toggle(qapp: QApplication) -> None:
-    """Checking a section's "Compare in preview" toggle drives the same shared
-    ``_compare_stage``, and the pager label reflects it via the shared sync seam.
+def test_pager_label_syncs_from_a_pipeline_chip(qapp: QApplication) -> None:
+    """Clicking a stage's pipeline chip drives the same shared ``_compare_stage``,
+    and the pager label reflects it via the shared sync seam. (The per-section
+    checkboxes are retired; chips + pager are the compare controls.)
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
     dialog._background_mode = "range"
     dialog._set_compare_stage(None)
 
-    dialog._compare_toggles["background"].setChecked(True)
+    dialog._on_pipeline_chip_clicked("background")
 
     assert dialog._compare_stage == "background"
     assert dialog._compare_pager_label.text().startswith("Comparing: without background")

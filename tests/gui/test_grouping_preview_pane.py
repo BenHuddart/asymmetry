@@ -176,8 +176,17 @@ def test_alpha_change_visibly_changes_curve(qapp: QApplication) -> None:
     pane.shutdown()
 
 
+def _axes_texts(pane: GroupingPreviewPane) -> set[str]:
+    """The text strings currently drawn on the pane's axes (inline labels)."""
+    return {str(text.get_text()) for text in pane._axes.texts}
+
+
 def test_overlay_draws_alpha1_ghost_and_reports_residual_baseline(qapp: QApplication) -> None:
-    """The calibrate overlay draws the α=1 curve and reports ⟨A⟩ over the window."""
+    """The calibrate overlay draws the α=1 curve and reports ⟨A⟩ over the window.
+
+    The ghost is named by a small inline text (there is no legend any more —
+    the pager label and the focused correction card name the comparison).
+    """
     dataset = _histogram_dataset()
     pane = GroupingPreviewPane()
 
@@ -194,9 +203,10 @@ def test_overlay_draws_alpha1_ghost_and_reports_residual_baseline(qapp: QApplica
         lambda: pane._tasks.active_count == 0 and "residual baseline" in pane._status.text()
     )
     assert "residual baseline" in pane._status.text()
-    # Both curves are drawn: the α=1 ghost line plus the α̂ errorbar.
-    labels = {str(line.get_label()) for line in pane._axes.get_lines()}
-    assert any("α = 1" in lbl for lbl in labels)
+    # Both curves are drawn: the α=1 ghost line plus the α̂ errorbar, and the
+    # ghost is named inline.
+    assert len(pane._axes.get_lines()) >= 2
+    assert "α = 1" in _axes_texts(pane)
     pane.shutdown()
 
 
@@ -210,8 +220,7 @@ def test_overlay_off_by_default_draws_single_curve(qapp: QApplication) -> None:
     pane.flush()
     _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
     assert "residual baseline" not in pane._status.text()
-    labels = {str(line.get_label()) for line in pane._axes.get_lines()}
-    assert not any("α = 1" in lbl for lbl in labels)
+    assert "α = 1" not in _axes_texts(pane)
     pane.shutdown()
 
 
@@ -789,6 +798,122 @@ def test_compare_stage_unconfigured_stage_draws_no_ghost(qapp: QApplication) -> 
     assert res.compare_stage == "deadtime"
     assert res.baseline is None
     assert res.baseline_label is None
+
+
+# --------------------------------------------------------------------------- #
+# Draw contract: solid-only autoscale, no legend, inline ghost label
+# --------------------------------------------------------------------------- #
+
+
+def _draw_result(pane: GroupingPreviewPane, **fields) -> preview_pane_module._PreviewResult:
+    """Build a ``_PreviewResult`` over a small solid curve and draw it."""
+    t = np.linspace(0.0, 1.0, 50)
+    defaults = dict(
+        generation=1,
+        time=t,
+        asymmetry=np.sin(2 * np.pi * t),
+        error=np.full_like(t, 0.1),
+        run_number=5001,
+    )
+    defaults.update(fields)
+    result = preview_pane_module._PreviewResult(**defaults)
+    pane._draw(result)
+    return result
+
+
+def test_ghost_never_influences_y_autoscale(qapp: QApplication) -> None:
+    """A wildly off-scale ghost must not expand the y-limits.
+
+    The regression this pins: an uncorrected FLAME ghost reaches ~1e7 % and
+    autoscale over both curves crushed the solid flat. The limits must cover
+    exactly the solid's finite asymmetry ± error range (± ~8% pad).
+    """
+    pane = GroupingPreviewPane()
+    result = _draw_result(
+        pane,
+        baseline=np.full(50, 1.0e7),
+        baseline_label="raw (uncorrected)",
+        compare_stage="raw",
+        overlay=True,
+    )
+    ylo, yhi = pane._axes.get_ylim()
+    solid_lo = float(np.min(result.asymmetry - result.error))
+    solid_hi = float(np.max(result.asymmetry + result.error))
+    pad = 0.08 * (solid_hi - solid_lo)
+    assert ylo == pytest.approx(solid_lo - pad)
+    assert yhi == pytest.approx(solid_hi + pad)
+    assert yhi < 100.0  # nowhere near the 1e7 ghost
+    pane.shutdown()
+
+
+def test_compare_draw_has_no_legend(qapp: QApplication) -> None:
+    """No legend is drawn for a compare — the pager + focused card name it."""
+    pane = GroupingPreviewPane()
+    _draw_result(
+        pane,
+        baseline=np.full(50, 0.5),
+        baseline_label="without background",
+        compare_stage="background",
+        overlay=True,
+    )
+    assert pane._axes.get_legend() is None
+    pane.shutdown()
+
+
+def test_ghost_is_labelled_inline_at_its_last_in_view_sample(qapp: QApplication) -> None:
+    """An in-view ghost gets its name drawn at its rightmost visible sample."""
+    pane = GroupingPreviewPane()
+    _draw_result(
+        pane,
+        baseline=np.full(50, 0.5),
+        baseline_label="without deadtime",
+        compare_stage="deadtime",
+        overlay=True,
+    )
+    texts = {str(t.get_text()): t for t in pane._axes.texts}
+    assert "without deadtime" in texts
+    label = texts["without deadtime"]
+    x, y = label.get_position()
+    assert x == pytest.approx(1.0)  # the last sample's time
+    assert y == pytest.approx(0.5)  # sits on the ghost
+    pane.shutdown()
+
+
+def test_off_scale_ghost_label_is_clamped_inside_the_axes(qapp: QApplication) -> None:
+    """A ghost with no in-view sample is still named, just inside the exit side."""
+    pane = GroupingPreviewPane()
+    _draw_result(
+        pane,
+        baseline=np.full(50, 1.0e7),  # exits through the top
+        baseline_label="raw (uncorrected)",
+        compare_stage="raw",
+        overlay=True,
+    )
+    ylo, yhi = pane._axes.get_ylim()
+    texts = {str(t.get_text()): t for t in pane._axes.texts}
+    assert "raw (uncorrected)" in texts
+    x, y = texts["raw (uncorrected)"].get_position()
+    assert ylo < y < yhi  # clamped inside the limits
+    assert y > 0.5 * (ylo + yhi)  # on the top side, where the ghost exited
+    assert x == pytest.approx(1.0)
+    pane.shutdown()
+
+
+def test_ghost_label_spec_prefers_last_in_view_sample() -> None:
+    """The pure placement helper: last in-view sample wins; off-scale clamps."""
+    t = np.array([0.0, 1.0, 2.0, 3.0])
+    ghost = np.array([0.5, 5.0, 0.7, 9.0])  # last sample above yhi=1
+    x, y, ha, va = preview_pane_module._ghost_label_spec(t, ghost, 0.0, 1.0)
+    assert (x, y) == (2.0, 0.7)  # rightmost IN-VIEW sample, not the last sample
+    assert ha == "right"
+
+    below = np.full(4, -50.0)
+    x, y, _ha, va = preview_pane_module._ghost_label_spec(t, below, 0.0, 1.0)
+    assert x == 3.0
+    assert 0.0 < y < 0.1  # clamped just inside the bottom
+    assert va == "bottom"
+
+    assert preview_pane_module._ghost_label_spec(t, np.full(4, np.nan), 0.0, 1.0) is None
 
 
 def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> None:

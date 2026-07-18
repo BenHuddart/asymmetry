@@ -85,6 +85,7 @@ from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     clear_layout,
+    make_section_header,
     make_warning_banner,
 )
 from asymmetry.gui.tasks import TaskRunner
@@ -106,6 +107,7 @@ from asymmetry.gui.windows.grouping.background_section import (
     BackgroundSectionWidget,
     background_status_text,
 )
+from asymmetry.gui.windows.grouping.correction_card import CorrectionCard
 from asymmetry.gui.windows.grouping.deadtime_section import (
     DeadtimeSectionWidget,
     DeadtimeSourceRun,
@@ -137,6 +139,22 @@ _COMPARE_STAGE_LABELS: dict[str, str] = {
     "background": "without background",
     "alpha": "α = 1",
     "raw": "vs raw",
+}
+
+#: Correction-card compare indicator per focused stage (`_sync_correction_cards`).
+#: "raw" is deliberately absent: the compound compare is not one stage's card.
+_CARD_COMPARING_TEXTS: dict[str, str] = {
+    "deadtime": "comparing: without deadtime",
+    "background": "comparing: without background",
+    "alpha": "comparing: α = 1 ghost",
+}
+
+#: Card status = the pipeline-chip summary minus the prefix that would
+#: duplicate the card title ("Deadtime" + "off", not "Deadtime" + "Deadtime: off").
+_CARD_STATUS_PREFIXES: dict[str, str] = {
+    "deadtime": "Deadtime: ",
+    "background": "Background: ",
+    "alpha": "α = ",
 }
 
 
@@ -721,7 +739,11 @@ class GroupingDialog(QDialog):
         vector_grid_widget = QWidget()
         self._vector_alpha_layout = QGridLayout(vector_grid_widget)
         self._vector_alpha_layout.setContentsMargins(0, 0, 0, 0)
-        self._vector_alpha_layout.setHorizontalSpacing(12)
+        # 8px, not the form default 12: the α card's border + body margins spend
+        # ~16px of the corrections column's width, and the 5-column grid's four
+        # gaps at 12px pushed vector mode into a horizontal scrollbar at the
+        # default dialog width. Four gaps at 8px hand those 16px back.
+        self._vector_alpha_layout.setHorizontalSpacing(8)
         self._vector_alpha_layout.setVerticalSpacing(8)
         vector_alpha_vbox.addWidget(vector_grid_widget)
 
@@ -790,8 +812,9 @@ class GroupingDialog(QDialog):
         # keeps working across columns because it reduces from the draft's widget
         # *state* (read via `_current_grouping_payload`), never from which column is
         # focused. See docs/porting/correction-order-alpha-estimation.
-        #: Per-stage "Compare in preview" checkboxes ("deadtime"/"background"/
-        #: "alpha"/"raw"), mutually exclusive (see :meth:`_set_compare_stage`).
+        #: Compare checkboxes. Only "raw" remains (the pager-row checkbox): the
+        #: per-stage compares are driven by the pipeline chips + pager and
+        #: *displayed* on the focused correction card (see :meth:`_set_compare_stage`).
         self._compare_toggles: dict[str, QCheckBox] = {}
 
         # Pipeline strip spans the full right-pane width, above both columns.
@@ -828,32 +851,36 @@ class GroupingDialog(QDialog):
         grouping_col_layout.addWidget(self._grouping_scroll)
 
         # ── Corrections column (right) ─────────────────────────────────────
-        # Deadtime, background and α — the α area (single value + result + banner,
-        # or the per-projection vector table) sits between the α header and the
-        # single-α calibration section. Each section header carries a "Compare in
-        # preview" toggle that ghosts that stage's before/after in the preview.
+        # Deadtime, background and α, each wrapped in a collapsible CorrectionCard
+        # whose header carries the live status summary (and the compare indicator
+        # while that stage's before/after ghost is focused). The α card body holds
+        # the α area (single value + result + banner, or the per-projection vector
+        # table) above the single-α calibration section.
         corrections_content = QWidget()
         corrections_layout = QVBoxLayout(corrections_content)
         corrections_layout.setContentsMargins(0, 0, 0, 0)
         # Tighter than the grouping form's 8px: the corrections column carries the
-        # taller payload (deadtime/background/α sections + the α area), so the
-        # inter-section gap is trimmed to keep its default state comfortably inside
-        # the viewport at the default height (with headroom for the taller default
-        # fonts on other platforms) without an outer scroll.
+        # taller payload (deadtime/background/α cards), so the inter-card gap is
+        # trimmed to keep its default state comfortably inside the viewport at the
+        # default height (with headroom for the taller default fonts on other
+        # platforms) without an outer scroll.
         corrections_layout.setSpacing(4)
-        # The header widgets double as the section-overflow pill's landmarks.
-        self._deadtime_header = self._build_correction_header("Deadtime correction", "deadtime")
-        corrections_layout.addWidget(self._deadtime_header)
-        corrections_layout.addWidget(self._deadtime_section)
-        self._background_header = self._build_correction_header(
-            "Background subtraction", "background"
-        )
-        corrections_layout.addWidget(self._background_header)
-        corrections_layout.addWidget(self._background_section)
-        self._alpha_header = self._build_correction_header("α (detector balance)", "alpha")
-        corrections_layout.addWidget(self._alpha_header)
-        corrections_layout.addWidget(self._alpha_area)
-        corrections_layout.addWidget(self._alpha_section)
+        # The cards double as the section-overflow pill's landmarks.
+        self._deadtime_card = CorrectionCard("Deadtime")
+        self._deadtime_card.set_body(self._deadtime_section)
+        corrections_layout.addWidget(self._deadtime_card)
+        self._background_card = CorrectionCard("Background")
+        self._background_card.set_body(self._background_section)
+        corrections_layout.addWidget(self._background_card)
+        self._alpha_card = CorrectionCard("α (detector balance)")
+        self._alpha_card.set_body(self._alpha_area)
+        self._alpha_card.set_body(self._alpha_section)
+        corrections_layout.addWidget(self._alpha_card)
+        self._correction_cards: dict[str, CorrectionCard] = {
+            "deadtime": self._deadtime_card,
+            "background": self._background_card,
+            "alpha": self._alpha_card,
+        }
         corrections_layout.addStretch()
         self._corrections_scroll = QScrollArea()
         self._corrections_scroll.setWidgetResizable(True)
@@ -906,6 +933,14 @@ class GroupingDialog(QDialog):
         root.addWidget(splitter, stretch=1)
 
         self._update_vector_mode_controls(grouping)
+
+        # Correction cards open expanded iff their stage is active — an idle
+        # correction costs one header row until it is needed. From here the
+        # expansion is plain widget state for the dialog's lifetime (no QSettings);
+        # a reseed that *activates* a stage re-expands its card
+        # (:meth:`_auto_expand_active_cards`), but going inactive never collapses.
+        for stage, card in self._correction_cards.items():
+            card.set_expanded(self._correction_stage_active(stage))
 
         # ── Bottom bar: action buttons ───────────────────────────────────
         cancel_btn = QPushButton("Cancel")
@@ -2102,6 +2137,9 @@ class GroupingDialog(QDialog):
         # follows the (possibly drifted) draft.
         if hasattr(self, "_preset_combo"):
             self._rebuild_preset_combo()
+        # A reseed that activates a stage must surface its controls: expand any
+        # collapsed card whose stage became active (never collapses the rest).
+        self._auto_expand_active_cards()
         # Preview-run change / profile switch: recompute against the new state.
         if hasattr(self, "_preview_pane"):
             self._refresh_preview()
@@ -2625,16 +2663,14 @@ class GroupingDialog(QDialog):
         return chip
 
     def _on_pipeline_chip_clicked(self, stage: str) -> None:
-        """Focus (or unfocus) *stage*'s compare and scroll its section into view."""
+        """Focus (or unfocus) *stage*'s compare; expand and reveal its card."""
         self._set_compare_stage(None if self._compare_stage == stage else stage)
-        section = {
-            "deadtime": getattr(self, "_deadtime_section", None),
-            "background": getattr(self, "_background_section", None),
-            "alpha": getattr(self, "_alpha_section", None),
-        }.get(stage)
+        card = getattr(self, "_correction_cards", {}).get(stage)
         scroll = getattr(self, "_corrections_scroll", None)
-        if section is not None and scroll is not None:
-            scroll.ensureWidgetVisible(section)
+        if card is not None:
+            card.set_expanded(True)
+            if scroll is not None:
+                scroll.ensureWidgetVisible(card)
 
     def _sync_pipeline_strip(self) -> None:
         """Refresh chip summaries, focus highlight, enabled + vector visibility."""
@@ -2655,6 +2691,64 @@ class GroupingDialog(QDialog):
                 )
         if hasattr(self, "_pipeline_alpha_widget"):
             self._pipeline_alpha_widget.setVisible(not bool(self._vector_axis_pairs))
+        self._sync_correction_cards()
+
+    def _sync_correction_cards(self) -> None:
+        """Refresh each card's status summary, stale tint, and compare indicator.
+
+        Runs from the end of :meth:`_sync_pipeline_strip`, so the card headers
+        track the same seams that refresh the chips (mode edits, α calibration,
+        staleness, compare-focus changes). "raw" shows no card indicator — the
+        compound compare is not one stage's card; the pager label names it.
+        """
+        cards = getattr(self, "_correction_cards", None)
+        if not cards:
+            return
+        for stage, card in cards.items():
+            card.set_status(self._correction_card_status(stage))
+            if stage == "alpha":
+                card.set_stale(self._alpha_is_stale())
+            comparing = self._compare_stage == stage and self._compare_stage_available(stage)
+            card.set_comparing(_CARD_COMPARING_TEXTS[stage] if comparing else None)
+
+    def _correction_card_status(self, stage: str) -> str:
+        """The card's live status: the chip summary minus the title-duplicating prefix."""
+        return self._pipeline_summary(stage).removeprefix(_CARD_STATUS_PREFIXES[stage])
+
+    def _correction_stage_active(self, stage: str) -> bool:
+        """Whether *stage* is configured to do anything to the reduction.
+
+        Drives the card expansion policy (expanded iff active at open;
+        auto-expand on a reseed that activates a collapsed card). α counts as
+        active when calibrated, off-unity, or in vector mode (the per-projection
+        table always carries real balances there).
+        """
+        if stage == "deadtime":
+            return self._current_deadtime_mode() != "off"
+        if stage == "background":
+            return self._current_background_mode() != "none"
+        if stage == "alpha":
+            return (
+                bool(self._vector_axis_pairs)
+                or self._alpha_is_calibrated()
+                or abs(float(self._alpha_spin.value()) - 1.0) > 1e-9
+            )
+        return False
+
+    def _auto_expand_active_cards(self) -> None:
+        """Expand any collapsed card whose stage is now active (never collapses).
+
+        Called after the form is re-seeded (preset/profile/run switch through
+        :meth:`_reload_controls_from_seed`): a stage the reseed just activated
+        must not stay hidden behind a collapsed card. A stage going inactive
+        keeps its card as the user left it.
+        """
+        cards = getattr(self, "_correction_cards", None)
+        if not cards:
+            return
+        for stage, card in cards.items():
+            if self._correction_stage_active(stage) and not card.is_expanded():
+                card.set_expanded(True)
 
     def _pipeline_summary(self, stage: str) -> str:
         """The one-line chip summary for *stage* (reuses the section formatters)."""
@@ -2682,15 +2776,15 @@ class GroupingDialog(QDialog):
     def _corrections_overflow_sections(self) -> list[tuple[str, QWidget]]:
         """Corrections-column landmarks for the overflow pill, top-to-bottom.
 
-        Short labels (the pill has no room for the "correction"/"subtraction"
-        suffixes); α keeps its full display name and is always included — the α
-        header stays in this column in vector mode too, where the per-projection
-        table lives in the α area beneath it.
+        The correction cards are the landmarks. Short labels (the pill has no
+        room for the "correction"/"subtraction" suffixes); α keeps its full
+        display name and is always included — the α card stays in this column in
+        vector mode too, where the per-projection table lives in its body.
         """
         return [
-            ("Deadtime", self._deadtime_header),
-            ("Background", self._background_header),
-            ("α (detector balance)", self._alpha_header),
+            ("Deadtime", self._deadtime_card),
+            ("Background", self._background_card),
+            ("α (detector balance)", self._alpha_card),
         ]
 
     def _grouping_overflow_sections(self) -> list[tuple[str, QWidget]]:
@@ -2707,40 +2801,11 @@ class GroupingDialog(QDialog):
 
     @staticmethod
     def _build_column_header(title: str) -> QLabel:
-        """A muted column-title label (the correction-header title style, no toggle)."""
-        label = QLabel(title)
-        label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        return label
-
-    def _build_correction_header(self, title: str, stage: str) -> QWidget:
-        """A section header: the muted title + a "Compare in preview" toggle.
-
-        Checking the toggle ghosts that stage's before/after in the pinned preview
-        (the solid curve always stays the full reduction); the toggles are mutually
-        exclusive. Preview-only — nothing here reaches ``_current_grouping_payload``.
-        """
-        widget = QWidget()
-        row = QHBoxLayout(widget)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        label = QLabel(title)
-        label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        row.addWidget(label)
-        row.addStretch()
-        toggle = QCheckBox("Compare in preview")
-        toggle.setToolTip(
-            "Preview only: overlay this correction's before/after — the reduction always "
-            "applies every stage."
-        )
-        toggle.toggled.connect(lambda checked, s=stage: self._on_compare_toggled(s, checked))
-        row.addWidget(toggle)
-        self._compare_toggles[stage] = toggle
-        if stage == "alpha":
-            self._alpha_section_label = label
-        return widget
+        """The uppercase BENCH section-header label used atop each column."""
+        return make_section_header(title)
 
     def _on_compare_toggled(self, stage: str, checked: bool) -> None:
-        """A compare toggle was clicked — focus that stage, or clear focus."""
+        """A compare checkbox was clicked ("raw") — focus that stage, or clear."""
         if getattr(self, "_syncing_compare", False):
             return  # programmatic sync, not a user click
         self._set_compare_stage(stage if checked else None)
@@ -2752,11 +2817,14 @@ class GroupingDialog(QDialog):
         self._refresh_preview()
 
     def _sync_compare_toggles(self) -> None:
-        """Reflect ``_compare_stage`` in the toggles; enable each per availability.
+        """Reflect ``_compare_stage`` across the compare surfaces.
 
-        Resets the focus if the focused stage is no longer available (e.g. its
-        correction was switched off, or vector mode hid the α toggle) so the
-        preview and the checked toggle never disagree.
+        Syncs the pager-row "raw" checkbox (the only remaining checkbox — the
+        per-stage compares are driven by chips + pager and displayed on the
+        focused card), resets the focus if the focused stage is no longer
+        available (e.g. its correction was switched off, or vector mode made α
+        unavailable), then refreshes the pipeline strip (which refreshes the
+        cards) and the pager, so no surface ever disagrees with the preview.
         """
         if not hasattr(self, "_compare_toggles"):
             return
@@ -3255,11 +3323,11 @@ class GroupingDialog(QDialog):
         self._vector_alpha_widget.setVisible(vector_mode)
         # The inline single-α section calibrates the single/P_z balance; the
         # per-projection vector table (in the α area, with its own inline Estimate)
-        # owns the rest. The α header stays put in both modes — the α area (single
-        # widgets or the vector table) always lives beneath it in the Corrections
-        # column — but the single-α calibration section is hidden in vector mode.
-        # _sync_compare_toggles disables the header's "Compare in preview" toggle
-        # there (α is never available in vector mode), so no ghost is left behind.
+        # owns the rest. The α card stays put in both modes — its body (single-α
+        # widgets or the vector table) always lives in the Corrections column —
+        # but the single-α calibration section is hidden in vector mode.
+        # _sync_compare_toggles clears an α compare focus there (α is never
+        # available in vector mode), so no ghost — and no card accent — is left.
         if hasattr(self, "_alpha_section"):
             self._alpha_section.setVisible(not vector_mode)
             self._sync_compare_toggles()
@@ -3858,11 +3926,14 @@ class GroupingDialog(QDialog):
         self._refresh_alpha_staleness()
         self._record_calibration_result_label(slot, policy)
         # Auto-focus the α compare on a fresh calibration (single mode only — the
-        # α compare/toggle is unavailable in vector mode, where the per-projection
-        # table owns α), preserving the old auto-overlay while giving the toggle a
-        # way to dismiss it.
+        # α compare is unavailable in vector mode, where the per-projection table
+        # owns α), preserving the old auto-overlay; the chips/pager can dismiss
+        # it. The α card is expanded too so the result + provenance rows the
+        # calibration just wrote are actually on screen.
         if not bool(self._vector_axis_pairs):
             self._set_compare_stage("alpha")
+        if hasattr(self, "_alpha_card"):
+            self._alpha_card.set_expanded(True)
         self._mark_dirty()
 
     def _record_calibration_result_label(self, slot: str, policy: AlphaPolicy) -> None:

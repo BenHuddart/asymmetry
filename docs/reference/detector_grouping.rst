@@ -195,21 +195,30 @@ draft is what gets applied to every run inheriting the profile.
   over two side-by-side columns, with the compare controls and the live preview
   pinned below both. The **Grouping and timing** column (left) holds the groups,
   t0, binning, exclusions and periods; the **Corrections** column (right) holds
-  deadtime, background and :math:`\alpha` — its value and provenance (or, in
-  vector mode, the per-projection table) and the calibration controls — each
-  previewed against the same corrected reduction. Keeping corrections in their own
-  named column makes them a first-class destination rather than the foot of one
-  long scroll. When a calibrated :math:`\alpha` goes stale (the deadtime or
-  background settings changed since it was measured), the :math:`\alpha` chip in
-  the pipeline strip gains a **" · stale"** suffix and a tooltip prompting a
-  re-estimate. The :math:`\alpha` section carries a one-line provenance summary
-  (e.g. "α = 1.2345(67) · Diamagnetic (TF) · run 2923"); deadtime and background
-  carry their own mode controls and one-line status (see `Alpha calibration`_,
-  `Deadtime Correction`_, and `Background Correction`_ below). On a window too
-  short to show every section at once, a small pill at the bottom of each column
-  names the sections hidden below the fold (e.g.
-  ``↓ Background · α (detector balance)``); clicking it scrolls the first one into
-  view.
+  three collapsible **correction cards** — **Deadtime**, **Background**, and
+  **α (detector balance)** (its value and provenance or, in vector mode, the
+  per-projection table, plus the calibration controls) — each previewed against
+  the same corrected reduction. A card's header row shows a disclosure arrow,
+  the title, and a live status summary (e.g. "off", "pre-t0 range",
+  "1.2692 · Diamagnetic (TF)"), so a collapsed card still reports what its stage
+  is doing; clicking anywhere on the header expands or collapses the body. At
+  open, a card is expanded exactly when its stage is active (deadtime on,
+  background configured, :math:`\alpha` calibrated or away from 1); an idle
+  correction costs one header row until it is needed. Switching to a preset or
+  profile that activates a stage re-expands its card automatically. Keeping
+  corrections in their own named column makes them a first-class destination
+  rather than the foot of one long scroll. When a calibrated :math:`\alpha`
+  goes stale (the deadtime or background settings changed since it was
+  measured), the :math:`\alpha` chip in the pipeline strip gains a
+  **" · stale"** suffix and a tooltip prompting a re-estimate, and the
+  :math:`\alpha` card's header is warn-tinted. The :math:`\alpha` card carries a
+  one-line provenance summary (e.g. "α = 1.2345(67) · Diamagnetic (TF) · run
+  2923"); deadtime and background carry their own mode controls and one-line
+  status (see `Alpha calibration`_, `Deadtime Correction`_, and `Background
+  Correction`_ below). On a window too short to show every card at once, a
+  small pill at the bottom of each column names the cards hidden below the fold
+  (e.g. ``↓ Background · α (detector balance)``); clicking it scrolls the first
+  one into view.
 
 Editing never touches a saved profile or run until you press **Apply**.
 **Apply commits everything you have changed in one pass** — the profile to
@@ -415,8 +424,10 @@ per-projection model.
 Deadtime correction
 --------------------
 
-The **Deadtime correction** section of the Corrections column configures the
-profile's deadtime policy inline. Four modes are available:
+The **Deadtime** card of the Corrections column configures the profile's
+deadtime policy inline; its header shows the live mode summary (e.g. "off",
+"manual (10.000 ns avg)") even while the card is collapsed. Four modes are
+available:
 
 * ``Off`` disables the correction.
 * ``File`` uses per-detector deadtime values already present in a run file.
@@ -481,7 +492,7 @@ run. The background correction path remains separate and optional.
 Background correction
 ----------------------
 
-The **Background subtraction** section of the Corrections column configures the
+The **Background** card of the Corrections column configures the
 profile's background policy inline for PSI-style raw histogram formats,
 including PSI BIN/MDU and PSI/LEM ROOT data. This is separate from fit-model
 background parameters such as ``A_bg``: it subtracts a count background from
@@ -531,17 +542,32 @@ and background. Clicking a chip focuses that stage's compare (below) and scrolls
 its section into view. When a calibrated :math:`\alpha` goes stale the chip
 appends **" · stale"** and its tooltip prompts a re-estimate.
 
-Each correction section header on the Corrections column also carries a
-**Compare in preview** checkbox, and a compound
+Comparing is driven from the **pipeline chips** and the **compare pager** —
+there are no per-section checkboxes. Clicking a stage's chip focuses that
+stage's compare, expands its correction card, and scrolls the card into view;
+clicking the focused chip again clears the focus. A compound
 **Compare vs raw (uncorrected)** checkbox sits in the pager row just above the
-pinned preview (so it is reachable from either column). Checking one overlays that
-stage's before/after in the pinned preview: the solid curve is always the full
-reduction, and a ghosted curve shows the asymmetry with that one stage
-removed — labelled "without deadtime", "without background", the
-:math:`\alpha = 1` calibration ghost, or "raw (uncorrected)" for the compound
-view (no deadtime, no background, :math:`\alpha = 1`). The toggles are mutually
-exclusive — comparing one stage at a time keeps the two-curve plot legible — and
-each is enabled only while it has a before/after to show. The pager label's
+pinned preview (so it is reachable from either column). One stage is focused at
+a time — that keeps the two-curve plot legible — and each stage can be focused
+only while it has a before/after to show.
+
+While a stage's compare is focused, its correction card is accent-highlighted —
+soft accent header with an accent left edge — and the header's right side shows
+what the ghost is: "comparing: without deadtime", "comparing: without
+background", or "comparing: α = 1 ghost". (The compound raw compare belongs to
+no single card, so it lights no card; the pager label names it.)
+
+In the preview itself the solid curve is always the full reduction, and a
+dimmer ghosted curve shows the asymmetry with the focused stage removed. The
+ghost is named by a small inline label at its rightmost visible sample —
+"without deadtime", "without background", "α = 1", or "raw (uncorrected)" for
+the compound view (no deadtime, no background, :math:`\alpha = 1`) — there is
+no legend, since the pager label and the highlighted card already name the
+comparison. The y-axis always follows the **as-reduced (solid) curve** alone:
+a ghost that sits far off-scale (an uncorrected FLAME run's ghost can reach
+:math:`\sim 10^7` %) never stretches the axis and never crushes the solid
+curve flat; the off-scale ghost's inline label is clamped just inside the axis
+edge on the side it exited, so the ghost is still named. The pager label's
 tooltip states the contract — "Comparing overlays one stage's before/after — the
 reduction always applies every stage": comparing never changes what Apply writes, and
 because the **solid curve is never degraded**, the residual baseline
@@ -551,10 +577,10 @@ its compare, so a fresh calibration shows the balancing effect immediately; the
 :math:`\alpha` compare is not offered in vector mode, where the per-projection
 :math:`\alpha` table in the **Corrections** column owns the balance.
 
-A **compare pager** — ``◀``/``▶`` arrow buttons flanking a muted label — sits
+The **compare pager** — ``◀``/``▶`` arrow buttons flanking a muted label — sits
 directly above the pinned preview, below both columns, so it works regardless of
 which column is focused. It drives the same shared focus
-as the section toggles and pipeline chips: each arrow steps through the
+as the pipeline chips: each arrow steps through the
 configured corrections in pipeline order (deadtime, background, :math:`\alpha`,
 raw), skipping any stage without a before/after to show. The label reads
 "Comparing: off" when nothing is focused, and otherwise names the stage and its

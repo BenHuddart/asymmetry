@@ -433,6 +433,15 @@ class AlphaSectionWidget(QWidget):
         run_row.setContentsMargins(0, 0, 0, 0)
         run_row.addWidget(QLabel("Calibration run"))
         self._run_combo = NoScrollComboBox()
+        # Long run labels ("Run 7101 · YBCO TF 200G 100K (Knight shift) · …")
+        # must not set the combo's *minimum* width — that forces the whole
+        # corrections column into a horizontal scrollbar on narrow panes. Size
+        # to a modest minimum instead; the stretch grants whatever width the
+        # column actually has, and the popup still shows full labels.
+        self._run_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._run_combo.setMinimumContentsLength(18)
         run_row.addWidget(self._run_combo, stretch=1)
         root.addLayout(run_row)
 

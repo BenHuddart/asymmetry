@@ -24,6 +24,11 @@ form edits cannot race the worker; the run is shared read-only (the dialog does
 not mutate it while open). Vector-mode drafts are previewed on their primary
 forward/backward pair (the resolved ``forward_group`` / ``backward_group``; for
 canonical EMU that is the P_z axis).
+
+Drawing contract (see :meth:`GroupingPreviewPane._draw`): the solid curve is
+always the full configured reduction and alone sets the y-limits; a compare
+ghost is drawn dimmer underneath, named by a small inline text rather than a
+legend (the pager label and the focused correction card name the comparison).
 """
 
 from __future__ import annotations
@@ -322,6 +327,17 @@ class GroupingPreviewPane(QWidget):
     # -- drawing ---------------------------------------------------------
 
     def _draw(self, result: _PreviewResult) -> None:
+        """Redraw the preview: solid = the full reduction, ghost = the compare.
+
+        The y-axis always follows the *solid* curve (its finite ``asymmetry ±
+        error`` range, padded ~8%) — the ghost never influences the autoscale,
+        because an uncorrected ghost can reach ~1e7 % (e.g. a FLAME run without
+        deadtime) and would crush the solid flat. There is no legend: the
+        comparison is named by the pager label and the focused correction card,
+        and the ghost itself is labelled inline at its rightmost in-view sample
+        (clamped just inside the top/bottom limit when the ghost runs off-scale,
+        so an off-scale ghost is still named).
+        """
         if self._axes is None or self._canvas is None:
             return
         self._axes.clear()
@@ -338,25 +354,16 @@ class GroupingPreviewPane(QWidget):
         else:
             # Compare view: ghost the "before" (α=1, or the stage removed) behind
             # the solid "as reduced" curve so the effect of that stage is
-            # self-evident. The ghost's label names it ("α = 1" / "without …").
+            # self-evident.
             if result.overlay and result.baseline is not None:
                 self._axes.plot(
                     result.time,
                     result.baseline,
                     color=tokens.TEXT_DIM,
-                    linewidth=1.0,
-                    alpha=0.7,
-                    label=result.baseline_label or "before",
+                    linewidth=0.9,
+                    alpha=0.55,
                     zorder=2,
                 )
-            # Solid curve label: the α value for the α compare, "as reduced" when a
-            # count-stage removal is ghosted, else unlabelled.
-            if result.compare_stage == "alpha" and result.alpha is not None:
-                main_label: str | None = f"α = {result.alpha:.4f}"
-            elif result.overlay and result.baseline is not None:
-                main_label = "as reduced"
-            else:
-                main_label = None
             self._axes.errorbar(
                 result.time,
                 result.asymmetry,
@@ -368,12 +375,27 @@ class GroupingPreviewPane(QWidget):
                 capsize=0.0,
                 color=tokens.ACCENT,
                 ecolor=tokens.TEXT_MUTED,
-                label=main_label,
                 zorder=3,
             )
             self._axes.axhline(0.0, color=tokens.TEXT_MUTED, linewidth=0.5, alpha=0.5)
-            if result.overlay and result.baseline is not None:
-                self._axes.legend(loc="best", fontsize=7, framealpha=0.85)
+            # Solid-only autoscale, set explicitly AFTER plotting so neither the
+            # ghost nor matplotlib's own autoscale can widen the range.
+            limits = _solid_ylimits(result.asymmetry, result.error)
+            if limits is not None:
+                self._axes.set_ylim(*limits)
+                if result.overlay and result.baseline is not None and result.baseline_label:
+                    spec = _ghost_label_spec(result.time, result.baseline, *limits)
+                    if spec is not None:
+                        x, y, ha, va = spec
+                        self._axes.text(
+                            x,
+                            y,
+                            result.baseline_label,
+                            fontsize=7,
+                            color=tokens.TEXT_DIM,
+                            ha=ha,
+                            va=va,
+                        )
         self._axes.set_xlabel("Time (µs)", fontsize=8)
         self._axes.set_ylabel("Asymmetry (%)", fontsize=8)
         self._axes.tick_params(labelsize=7)
@@ -561,6 +583,60 @@ def _form_asymmetry(
         np.asarray(asym, dtype=np.float64) * 100.0,
         np.asarray(err, dtype=np.float64) * 100.0,
     )
+
+
+def _solid_ylimits(
+    asymmetry: np.ndarray, error: np.ndarray, pad_fraction: float = 0.08
+) -> tuple[float, float] | None:
+    """Y-limits covering the solid curve's finite ``asymmetry ± error``, padded.
+
+    The preview's autoscale contract: only the solid (fully-reduced) curve sets
+    the range — a compare ghost, which can sit orders of magnitude away, must
+    never crush it. Returns ``None`` when nothing is finite (caller keeps
+    matplotlib's default limits).
+    """
+    a = np.asarray(asymmetry, dtype=np.float64)
+    e = np.asarray(error, dtype=np.float64)
+    e = np.where(np.isfinite(e), np.abs(e), 0.0)
+    finite = np.isfinite(a)
+    if not finite.any():
+        return None
+    lo = float(np.min(a[finite] - e[finite]))
+    hi = float(np.max(a[finite] + e[finite]))
+    pad = pad_fraction * (hi - lo)
+    if pad <= 0.0:
+        pad = max(1.0, abs(hi) * pad_fraction)  # flat curve: keep a visible band
+    return lo - pad, hi + pad
+
+
+def _ghost_label_spec(
+    time: np.ndarray, baseline: np.ndarray, ylo: float, yhi: float
+) -> tuple[float, float, str, str] | None:
+    """Placement ``(x, y, ha, va)`` for the inline ghost label.
+
+    Anchors at the rightmost ghost sample inside the final y-limits. When no
+    ghost sample is in view (the ghost runs entirely off-scale), the label sits
+    at the right edge, clamped just inside the top or bottom limit — whichever
+    side the ghost exited — so the off-scale ghost is still named. ``None`` when
+    the ghost has no finite samples.
+    """
+    t = np.asarray(time, dtype=np.float64)
+    b = np.asarray(baseline, dtype=np.float64)
+    n = min(t.size, b.size)
+    t, b = t[:n], b[:n]
+    finite = np.isfinite(t) & np.isfinite(b)
+    if not finite.any():
+        return None
+    in_view = finite & (b >= ylo) & (b <= yhi)
+    if in_view.any():
+        idx = int(np.flatnonzero(in_view)[-1])
+        return float(t[idx]), float(b[idx]), "right", "bottom"
+    idx = int(np.flatnonzero(finite)[-1])
+    x = float(np.max(t[finite]))
+    margin = 0.02 * (yhi - ylo)
+    if b[idx] > yhi:
+        return x, yhi - margin, "right", "top"
+    return x, ylo + margin, "right", "bottom"
 
 
 def _weighted_centre(asymmetry: np.ndarray, error: np.ndarray) -> tuple[float | None, float | None]:

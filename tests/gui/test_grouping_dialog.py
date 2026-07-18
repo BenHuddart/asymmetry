@@ -431,8 +431,11 @@ def test_corrections_overflow_pill_names_hidden_sections(qapp: QApplication) -> 
     QApplication.processEvents()
 
     # Manual deadtime shows the per-detector table, pushing Background (and α)
-    # below the fold on the short viewport. No explicit refresh() — the pill
-    # must react on its own via the scrollbar's rangeChanged (content grew).
+    # below the fold on the short viewport. The deadtime card starts collapsed
+    # (stage off), so expand it first — the table only occupies space inside an
+    # expanded card body. No explicit refresh() — the pill must react on its
+    # own via the scrollbar's rangeChanged (content grew).
+    dialog._deadtime_card.set_expanded(True)
     dialog._deadtime_section._set_mode("manual")
     dialog._deadtime_section._on_mode_or_state_changed()
     QApplication.processEvents()
@@ -1049,25 +1052,39 @@ def test_compare_toggles_never_touch_the_persisted_payload(qapp: QApplication) -
     assert dialog.get_grouping_result() == before_result
 
 
-def test_compare_toggles_are_exclusive_and_alpha_auto_focuses(qapp: QApplication) -> None:
-    """Compare toggles are mutually exclusive; a fresh α calibration auto-focuses α."""
+def test_compare_focus_is_exclusive_and_alpha_auto_focuses(qapp: QApplication) -> None:
+    """Compare focus is exclusive; a fresh α calibration auto-focuses α.
+
+    The per-section checkboxes are gone: focus is *controlled* by the pipeline
+    chips + pager (plus the pager-row "raw" checkbox, the only survivor in
+    ``_compare_toggles``) and *displayed* on the focused card's indicator.
+    """
     dialog = GroupingDialog([_dataset_with_histograms()])
     _estimate_single_alpha(dialog)
 
-    # Calibrating α auto-focuses the α compare (preserving the old auto-overlay).
-    assert dialog._compare_stage == "alpha"
-    assert dialog._compare_toggles["alpha"].isChecked()
+    # Only the "raw" checkbox remains; the per-stage checkboxes are retired.
+    assert set(dialog._compare_toggles) == {"raw"}
 
-    # Focusing another stage is exclusive — it unchecks α.
+    # Calibrating α auto-focuses the α compare (preserving the old auto-overlay);
+    # the chip checks and the α card shows the comparing indicator.
+    assert dialog._compare_stage == "alpha"
+    assert dialog._pipeline_chips["alpha"].isChecked()
+    assert dialog._alpha_card.comparing_text() == "comparing: α = 1 ghost"
+
+    # Focusing another stage is exclusive — α loses its chip check + indicator.
     dialog._set_compare_stage("raw")
     assert dialog._compare_stage == "raw"
     assert dialog._compare_toggles["raw"].isChecked()
-    assert not dialog._compare_toggles["alpha"].isChecked()
+    assert not dialog._pipeline_chips["alpha"].isChecked()
+    assert dialog._alpha_card.comparing_text() is None
+    # "raw" is not one stage's card, so no card carries an indicator for it.
+    assert all(card.comparing_text() is None for card in dialog._correction_cards.values())
 
     # Clearing focus unchecks everything.
     dialog._set_compare_stage(None)
     assert dialog._compare_stage is None
-    assert not any(t.isChecked() for t in dialog._compare_toggles.values())
+    assert not dialog._compare_toggles["raw"].isChecked()
+    assert not any(chip.isChecked() for chip in dialog._pipeline_chips.values())
 
 
 def test_compare_toggle_reaches_the_preview_request(qapp: QApplication) -> None:
@@ -1133,6 +1150,116 @@ def test_pipeline_alpha_chip_hidden_in_vector_mode(qapp: QApplication) -> None:
 
     vector = GroupingDialog([_vector_dataset_with_histograms()])
     assert vector._pipeline_alpha_widget.isHidden()
+
+
+def test_correction_cards_default_expansion_follows_activity(qapp: QApplication) -> None:
+    """At open, a card is expanded iff its stage is active.
+
+    The default dataset (deadtime off, background none, α = 1 uncalibrated)
+    opens every card collapsed; a dataset whose stored grouping configures a
+    stage opens that stage's card expanded. Vector mode counts α as active (the
+    per-projection table always carries real balances).
+    """
+    plain = GroupingDialog([_dataset_with_histograms()])
+    assert not plain._deadtime_card.is_expanded()
+    assert not plain._background_card.is_expanded()
+    assert not plain._alpha_card.is_expanded()
+
+    ds = _dataset_with_histograms()
+    ds.run.grouping.update(
+        {
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [30.0, 20.0],
+            "alpha": 1.3,
+        }
+    )
+    configured = GroupingDialog([ds])
+    assert not configured._deadtime_card.is_expanded()  # deadtime still off
+    assert configured._background_card.is_expanded()
+    assert configured._alpha_card.is_expanded()  # α ≠ 1 counts as active
+
+    vector = GroupingDialog([_vector_dataset_with_histograms()])
+    assert vector._alpha_card.is_expanded()
+
+
+def test_alpha_calibration_expands_and_accents_the_alpha_card(qapp: QApplication) -> None:
+    """A fresh inline calibration surfaces its result: α card expands + accents."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    assert not dialog._alpha_card.is_expanded()
+
+    _estimate_single_alpha(dialog)
+    assert dialog._alpha_card.is_expanded()
+    assert dialog._alpha_card.comparing_text() == "comparing: α = 1 ghost"
+
+
+def test_pipeline_chip_click_expands_its_card(qapp: QApplication) -> None:
+    """Clicking a stage's chip focuses its compare AND expands its card."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog._background_mode = "range"
+    dialog._sync_compare_toggles()
+    assert not dialog._background_card.is_expanded()
+
+    dialog._on_pipeline_chip_clicked("background")
+    assert dialog._compare_stage == "background"
+    assert dialog._background_card.is_expanded()
+    assert dialog._background_card.comparing_text() == "comparing: without background"
+
+    # Clicking again unfocuses the compare but leaves the card expanded (the
+    # user is plausibly about to edit the section it just revealed).
+    dialog._on_pipeline_chip_clicked("background")
+    assert dialog._compare_stage is None
+    assert dialog._background_card.is_expanded()
+    assert dialog._background_card.comparing_text() is None
+
+
+def test_correction_card_status_tracks_section_state(qapp: QApplication) -> None:
+    """Card statuses mirror the chip summaries minus the title-duplicating prefix."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    assert dialog._deadtime_card.status_text() == "off"
+    assert dialog._background_card.status_text() == "none"
+    assert dialog._alpha_card.status_text() == "1.0000"
+
+    # A deadtime mode edit refreshes the status through the section's changed
+    # signal → _on_deadtime_changed → staleness refresh → pipeline/card sync.
+    # (_on_mode_clicked is the user-click path: relayout + notify.)
+    dialog._deadtime_card.set_expanded(True)
+    dialog._deadtime_section._set_mode("manual")
+    dialog._deadtime_section._on_mode_clicked()
+    assert dialog._deadtime_card.status_text().startswith("manual")
+
+    # A calibrated α reads value · method (and the stale flag warn-tints).
+    _estimate_single_alpha(dialog)
+    assert dialog._alpha_card.status_text().startswith("2.0000 · ")
+    assert not dialog._alpha_card._stale
+    dialog._background_mode = "range"
+    dialog._refresh_alpha_staleness()
+    assert dialog._alpha_card.status_text().endswith("· stale")
+    assert dialog._alpha_card._stale
+
+
+def test_reseed_auto_expands_newly_active_cards_only(qapp: QApplication) -> None:
+    """A reseed that activates a stage expands its collapsed card; nothing collapses.
+
+    The seam is ``_reload_controls_from_seed`` (preset/profile/run switches all
+    funnel through it): a stage the incoming draft configures must not stay
+    hidden behind a collapsed card, while a stage going inactive keeps whatever
+    expansion the user chose.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    # User expands the (inactive) deadtime card; background stays collapsed.
+    dialog._deadtime_card.set_expanded(True)
+    assert not dialog._background_card.is_expanded()
+
+    # Make the draft's background active, then re-seed the form from it.
+    dialog._background_mode = "range"
+    dialog._sync_draft_from_form()
+    dialog._background_card.set_expanded(False)
+    dialog._reload_controls_from_seed()
+
+    assert dialog._background_card.is_expanded()  # newly active → auto-expanded
+    assert dialog._deadtime_card.is_expanded()  # inactive but user-expanded → kept
+    assert not dialog._alpha_card.is_expanded()  # still inactive → untouched
 
 
 def test_vector_estimate_alpha_uses_selected_reference_run(

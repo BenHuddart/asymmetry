@@ -61,6 +61,12 @@ class AlphaCalibrationDialogScenario(Scenario):
             corr_scroll = getattr(dialog, "_corrections_scroll", None)
             if corr_scroll is not None:
                 corr_scroll.ensureWidgetVisible(section)
+                # Under the app stylesheet the calibration-run combo's minimum
+                # (the longest run label) can exceed the column width, and
+                # ensureWidgetVisible then also scrolls *right*, cutting off the
+                # correction cards' left edge. Pin the column flush-left — the
+                # cards and the α controls are the subject of this capture.
+                corr_scroll.horizontalScrollBar().setValue(0)
                 _pump_events(80)
 
         pix = dialog.grab()
