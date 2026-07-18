@@ -462,28 +462,31 @@ bit-identical to the original `MainWindow` output.
 with a profile editor: a draft `GroupingProfile` edited in place, a scope panel
 for release/reattach, and a debounced live-preview pane whose reduction runs on a
 `TaskRunner` worker thread per the threading invariant in `AGENTS.md`. The right
-pane is a two-tab `QTabWidget` — "Grouping and timing" and "Corrections" — with
-the single preview pane pinned below both (it reduces from the draft's widget
-state, not from the visible tab). The deadtime, background and single-α controls
-are inline `DeadtimeSectionWidget` / `BackgroundSectionWidget` /
-`AlphaSectionWidget` on the Corrections tab (all three standalone modals were
-retired); a ⚠ marker on that tab flags a stale calibrated α. The shared α-estimate worker
-and its run-combo / request builders live in `alpha_section.py`; the
-per-projection *vector* α table (`dialog.py`) drives its per-axis and "Estimate
-All α" estimates inline through that same worker on the dialog's own
-`TaskRunner`, serialised one axis at a time. Each correction section header on the
-Corrections tab carries a mutually-exclusive "Compare in preview" toggle (plus a
-compound "vs raw"); focusing one drives `_PreviewRequest.compare_stage`
+pane is tabless: a full-width pipeline strip over two side-by-side scroll columns
+— "Grouping and timing" (`_grouping_scroll`) and "Corrections"
+(`_corrections_scroll`) — with the compare pager and the single preview pane
+pinned below both (the preview reduces from the draft's widget state, not from a
+focused column). The deadtime, background and single-α controls are inline
+`DeadtimeSectionWidget` / `BackgroundSectionWidget` / `AlphaSectionWidget` in the
+Corrections column (all three standalone modals were retired); a stale calibrated
+α is flagged by a `" · stale"` suffix (and re-estimation tooltip) on the pipeline
+α chip. The shared α-estimate worker and its run-combo / request builders live in
+`alpha_section.py`; the per-projection *vector* α table (`dialog.py`) lives in the
+same Corrections-column α area and drives its per-axis and "Estimate All α"
+estimates inline through that same worker on the dialog's own `TaskRunner`,
+serialised one axis at a time. Each correction section header in the Corrections
+column carries a mutually-exclusive "Compare in preview" toggle (plus a compound
+"vs raw"); focusing one drives `_PreviewRequest.compare_stage`
 (`"deadtime"`/`"background"`/`"alpha"`/`"raw"`), which `preview_pane._run_reduction`
 renders as a **ghost** of that stage removed behind the solid full-pipeline curve —
 the solid is never degraded, so the α compare's residual-⟨A⟩ acceptance number is
 always read off the fully-corrected reduction. The compare is preview-only
 (`compare_stage` never reaches `_current_grouping_payload`); the α compare
 auto-focuses on calibration and is unavailable in vector mode (its toggle is
-hidden — the per-projection table on the Grouping tab owns α there). A
-`Deadtime → group → Background → α` pipeline strip across the top of the tab shows
-each stage's live one-line summary and clicking a chip focuses that stage's
-compare (the same `_compare_stage`), making the reduction order visible.
+disabled — the per-projection table owns α there). A
+`Deadtime → group → Background → α` pipeline strip across the top of the right
+pane shows each stage's live one-line summary and clicking a chip focuses that
+stage's compare (the same `_compare_stage`), making the reduction order visible.
 
 ### 3.7 Global Parameter Fit Studies
 

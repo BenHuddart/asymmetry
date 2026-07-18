@@ -191,22 +191,25 @@ draft is what gets applied to every run inheriting the profile.
   settings change. The recompute runs on a worker thread (never the GUI
   thread), so editing stays responsive even while a reduction is in flight;
   a superseded recompute is discarded in favour of the latest edit.
-* **Tabbed settings** — the right pane is split into two tabs, **Grouping and
-  timing** (groups, the :math:`\alpha` value and its provenance, t0, binning,
-  exclusions, periods) and **Corrections** (deadtime, background, and
-  :math:`\alpha` calibration, each previewed against the same corrected reduction),
-  with the live preview pinned below both. Splitting them keeps the corrections a
-  first-class, named destination rather than the foot of one long scroll. When a
-  calibrated :math:`\alpha` goes stale (the deadtime or background settings changed
-  since it was measured), the **Corrections** tab is marked with a ⚠ so the change
-  is discoverable from the Grouping tab. The :math:`\alpha` section carries a
-  one-line provenance summary (e.g. "α = 1.2345(67) · Diamagnetic (TF) · run
-  2923"); deadtime and background carry their own mode controls and one-line
-  status (see `Alpha calibration`_, `Deadtime Correction`_, and
-  `Background Correction`_ below). On a window too short to show every section at
-  once, a small pill at the bottom of the scroll names the sections hidden below
-  the fold (e.g. ``↓ Background · α (detector balance)``); clicking it scrolls the
-  first one into view.
+* **Two-column settings** — the right pane is a full-width **pipeline strip**
+  over two side-by-side columns, with the compare controls and the live preview
+  pinned below both. The **Grouping and timing** column (left) holds the groups,
+  t0, binning, exclusions and periods; the **Corrections** column (right) holds
+  deadtime, background and :math:`\alpha` — its value and provenance (or, in
+  vector mode, the per-projection table) and the calibration controls — each
+  previewed against the same corrected reduction. Keeping corrections in their own
+  named column makes them a first-class destination rather than the foot of one
+  long scroll. When a calibrated :math:`\alpha` goes stale (the deadtime or
+  background settings changed since it was measured), the :math:`\alpha` chip in
+  the pipeline strip gains a **" · stale"** suffix and a tooltip prompting a
+  re-estimate. The :math:`\alpha` section carries a one-line provenance summary
+  (e.g. "α = 1.2345(67) · Diamagnetic (TF) · run 2923"); deadtime and background
+  carry their own mode controls and one-line status (see `Alpha calibration`_,
+  `Deadtime Correction`_, and `Background Correction`_ below). On a window too
+  short to show every section at once, a small pill at the bottom of each column
+  names the sections hidden below the fold (e.g.
+  ``↓ Background · α (detector balance)``); clicking it scrolls the first one into
+  view.
 
 Editing never touches a saved profile or run until you press **Apply**.
 **Apply commits everything you have changed in one pass** — the profile to
@@ -339,16 +342,16 @@ Alpha calibration
    :width: 80%
    :align: center
    :alt: The inline alpha calibration controls in the grouping window's
-      Corrections tab — a highlighted transverse-field calibration run, a
+      Corrections column — a highlighted transverse-field calibration run, a
       method combo, an Estimate α button, and the shared before/after preview.
 
    Alpha is calibrated inline, in the **α (detector balance)** section of the
-   Corrections tab: pick the calibration run, choose a method, and press
+   Corrections column: pick the calibration run, choose a method, and press
    **Estimate α**. The shared live preview below doubles as the before (α = 1)
    / after (fitted α) comparison once α is calibrated.
 
 Alpha is calibrated inline, in the **α (detector balance)** section of the
-Corrections tab. Pick a run from the **Calibration run** dropdown — every run
+Corrections column. Pick a run from the **Calibration run** dropdown — every run
 of the current instrument is listed, with likely calibration candidates
 highlighted and auto-selected: a run is flagged when its metadata carries
 explicit transverse-field evidence (a structured ``Transverse`` field-geometry
@@ -412,7 +415,7 @@ per-projection model.
 Deadtime correction
 --------------------
 
-The **Deadtime correction** section of the Corrections tab configures the
+The **Deadtime correction** section of the Corrections column configures the
 profile's deadtime policy inline. Four modes are available:
 
 * ``Off`` disables the correction.
@@ -427,11 +430,11 @@ profile's deadtime policy inline. Four modes are available:
   estimated value to every detector.
 
 The section adapts to the selected mode, showing only the controls that mode
-uses so the Corrections tab stays readable without scrolling. ``Off`` shows the
+uses so the Corrections column stays readable without scrolling. ``Off`` shows the
 mode radios and a **Deadtime correction is disabled.** note. ``Manual`` shows
 the editable ``Per-detector values (ns)`` table with its **Fill all** and
 **Cal** buttons, height-capped at six rows so larger detector counts scroll
-inside the table rather than the tab. ``File`` and ``Estimate`` collapse to a
+inside the table rather than the column. ``File`` and ``Estimate`` collapse to a
 one-line summary — the mean deadtime value times the detector count followed by
 the maximum-correction figure (for example, ``10.000 ns × 4 detectors · max
 correction at t=0: 1.2%``) — with a **Show per-detector values** disclosure that
@@ -478,7 +481,7 @@ run. The background correction path remains separate and optional.
 Background correction
 ----------------------
 
-The **Background subtraction** section of the Corrections tab configures the
+The **Background subtraction** section of the Corrections column configures the
 profile's background policy inline for PSI-style raw histogram formats,
 including PSI BIN/MDU and PSI/LEM ROOT data. This is separate from fit-model
 background parameters such as ``A_bg``: it subtracts a count background from
@@ -498,8 +501,8 @@ then asymmetry is calculated. The section's modes are:
   counts (scaled by relative good-frame count).
 * ``Fixed`` — fixed forward/backward count values are subtracted directly.
 
-The shared live preview below the Corrections tab always reflects the
-subtraction, so its effect on the asymmetry is visible as the mode changes.
+The shared live preview below both columns always reflects the subtraction, so
+its effect on the asymmetry is visible as the mode changes.
 
 For corrected histograms, Asymmetry propagates musrfit-style count
 uncertainties through its standard pair formula, with ``alpha`` multiplying
@@ -519,18 +522,19 @@ profile's background policy.
 Comparing a correction's effect
 -------------------------------
 
-A **pipeline strip** across the top of the Corrections tab —
+A **pipeline strip** across the top of the right pane, above both columns —
 ``Deadtime → group → Background → α`` — makes the reduction *order* visible and
 summarises each stage in a chip ("Deadtime: off", "Background: tail fit",
 "α = 1.037 · Diamagnetic (TF)"); the ``group`` divider is a reminder that
-detector grouping, set on the **Grouping and timing** tab, sits between deadtime
+detector grouping, set in the **Grouping and timing** column, sits between deadtime
 and background. Clicking a chip focuses that stage's compare (below) and scrolls
-its section into view.
+its section into view. When a calibrated :math:`\alpha` goes stale the chip
+appends **" · stale"** and its tooltip prompts a re-estimate.
 
-Each correction section header on the Corrections tab also carries a
+Each correction section header on the Corrections column also carries a
 **Compare in preview** checkbox, and a compound
 **Compare vs raw (uncorrected)** checkbox sits in the pager row just above the
-pinned preview (so it is reachable from either tab). Checking one overlays that
+pinned preview (so it is reachable from either column). Checking one overlays that
 stage's before/after in the pinned preview: the solid curve is always the full
 reduction, and a ghosted curve shows the asymmetry with that one stage
 removed — labelled "without deadtime", "without background", the
@@ -545,11 +549,11 @@ because the **solid curve is never degraded**, the residual baseline
 read off the fully-corrected reduction. Calibrating :math:`\alpha` auto-focuses
 its compare, so a fresh calibration shows the balancing effect immediately; the
 :math:`\alpha` compare is not offered in vector mode, where the per-projection
-:math:`\alpha` table on the **Grouping and timing** tab owns the balance.
+:math:`\alpha` table in the **Corrections** column owns the balance.
 
 A **compare pager** — ``◀``/``▶`` arrow buttons flanking a muted label — sits
-directly above the pinned preview, below the tabs, so it works from either the
-**Grouping and timing** or **Corrections** tab. It drives the same shared focus
+directly above the pinned preview, below both columns, so it works regardless of
+which column is focused. It drives the same shared focus
 as the section toggles and pipeline chips: each arrow steps through the
 configured corrections in pipeline order (deadtime, background, :math:`\alpha`,
 raw), skipping any stage without a before/after to show. The label reads

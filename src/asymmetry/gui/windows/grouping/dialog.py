@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QApplication,
     QButtonGroup,
     QCheckBox,
@@ -42,7 +43,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
-    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -225,11 +225,11 @@ class GroupingDialog(QDialog):
         self._tasks = TaskRunner(self)
 
         self.setWindowTitle("Grouping")
-        # Wide enough that the Corrections tab's pipeline strip and section
-        # headers fit without horizontal scrolling at the default size, and
-        # tall enough that its default (deadtime-off) state needs no vertical
-        # scrolling either.
-        self.resize(1120, 670)
+        # Wide enough that the grouping and corrections columns sit side by side
+        # (the pipeline strip and section headers fit without horizontal
+        # scrolling) and tall enough that both columns' default (deadtime-off)
+        # state needs no vertical scrolling either.
+        self.resize(1220, 680)
 
         if not self._datasets:
             layout = QVBoxLayout(self)
@@ -650,23 +650,35 @@ class GroupingDialog(QDialog):
 
         self._forward_row_label = QLabel("Forward Group")
         self._backward_row_label = QLabel("Backward Group")
-        self._alpha_row_label = QLabel("Alpha")
+        self._alpha_row_label = QLabel("α")
+
+        # Width discipline for the (now narrow) grouping column: fields size to
+        # their content and never stretch to fill the column. Widths derive from
+        # the UI-font metrics (harness rule: no literal-pixel geometry).
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        for combo in (self._forward_combo, self._backward_combo):
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+            combo.setMaximumWidth(metrics.field_width_for(32, combo))
+        for spin in (self._t0_spin, self._t_good_offset_spin, self._last_good_spin):
+            spin.setMaximumWidth(metrics.spin_width_for(6, spin))
+        self._exclude_edit.setMinimumWidth(metrics.field_width_for(24, self._exclude_edit))
 
         form.addRow(self._forward_row_label, self._forward_combo)
         form.addRow(self._backward_row_label, self._backward_combo)
 
+        # The α value row, result and staleness banner (single mode) plus the
+        # per-projection table (vector mode) live in the Corrections column's α
+        # area, not the grouping form — assembled below once the vector widget
+        # exists. Only the widgets are built here.
         self._single_alpha_widget = QWidget()
         alpha_row = QHBoxLayout(self._single_alpha_widget)
         alpha_row.setContentsMargins(0, 0, 0, 0)
         alpha_row.addWidget(self._alpha_spin)
         alpha_row.addWidget(self._alpha_provenance_label, stretch=1)
-        form.addRow(self._alpha_row_label, self._single_alpha_widget)
-        form.addRow("", self._alpha_result_label)
         # Staleness banner: shown when the deadtime/background corrections change
         # after α was calibrated (α no longer centres the corrected asymmetry).
         self._alpha_stale_banner = make_warning_banner("", severity="warn")
         self._alpha_stale_banner.setVisible(False)
-        form.addRow("", self._alpha_stale_banner)
         # A hand-edit of the alpha spin clears calibration provenance → "manual".
         self._alpha_spin.valueChanged.connect(self._on_alpha_spin_edited)
         self._reseed_alpha_provenance_from_grouping(grouping)
@@ -713,10 +725,24 @@ class GroupingDialog(QDialog):
         self._vector_alpha_layout.setVerticalSpacing(8)
         vector_alpha_vbox.addWidget(vector_grid_widget)
 
-        form.addRow(self._vector_alpha_widget)
+        # The α area for the Corrections column: single mode shows the α value
+        # row + result + staleness banner; vector mode swaps in the per-projection
+        # table in the same slot (_update_vector_mode_controls toggles visibility).
+        self._alpha_area = QWidget()
+        alpha_area_layout = QVBoxLayout(self._alpha_area)
+        alpha_area_layout.setContentsMargins(0, 0, 0, 0)
+        alpha_area_layout.setSpacing(8)
+        alpha_area_form = QFormLayout()
+        alpha_area_form.setVerticalSpacing(4)
+        alpha_area_form.setHorizontalSpacing(12)
+        alpha_area_form.addRow(self._alpha_row_label, self._single_alpha_widget)
+        alpha_area_form.addRow("", self._alpha_result_label)
+        alpha_area_form.addRow("", self._alpha_stale_banner)
+        alpha_area_form.addRow(self._vector_alpha_widget)
+        alpha_area_layout.addLayout(alpha_area_form)
 
-        # Kept as an attribute: the section-overflow pill on the Grouping tab uses
-        # this row as the "t0 and binning" landmark.
+        # Kept as an attribute: the Grouping-column overflow pill uses this row as
+        # the "t0 and binning" landmark.
         self._t0_row_widget = QWidget()
         t0_row = QHBoxLayout(self._t0_row_widget)
         t0_row.setContentsMargins(0, 0, 0, 0)
@@ -748,7 +774,7 @@ class GroupingDialog(QDialog):
         )
         self._map_periods_btn.clicked.connect(self._on_map_periods)
         self.period_mapping_request: dict[str, Any] | None = None
-        # Kept as an attribute: the "Periods" landmark for the Grouping-tab pill.
+        # Kept as an attribute: the "Periods" landmark for the Grouping-column pill.
         self._period_row_widget = QWidget()
         period_row_box = QHBoxLayout(self._period_row_widget)
         period_row_box.setContentsMargins(0, 0, 0, 0)
@@ -757,20 +783,24 @@ class GroupingDialog(QDialog):
         form.addRow(self._period_mode_label, self._period_row_widget)
         self._update_map_periods_visibility()
 
-        # The right pane is a two-tab notebook — "Grouping and timing" and
-        # "Corrections" — with the live preview pinned below BOTH tabs. The two
-        # tasks are genuinely different (define what/when to group vs. correct the
-        # counts), and splitting them makes the corrections a first-class named
-        # destination instead of being buried at the bottom of one long scroll.
-        # The single shared preview keeps working across tabs because it reduces
-        # from the draft's widget *state* (read via `_current_grouping_payload`),
-        # never from which tab is showing. See docs/porting/
-        # correction-order-alpha-estimation (implementation-options.md).
-        self._tabs = QTabWidget()
+        # The right pane is tabless: a full-width pipeline strip over a two-column
+        # row — "Grouping and timing" (define what/when to group) on the left and
+        # "Corrections" (correct the counts) on the right — with the compare pager
+        # and the shared live preview pinned below BOTH columns. The single preview
+        # keeps working across columns because it reduces from the draft's widget
+        # *state* (read via `_current_grouping_payload`), never from which column is
+        # focused. See docs/porting/correction-order-alpha-estimation.
+        #: Per-stage "Compare in preview" checkboxes ("deadtime"/"background"/
+        #: "alpha"/"raw"), mutually exclusive (see :meth:`_set_compare_stage`).
+        self._compare_toggles: dict[str, QCheckBox] = {}
 
-        # Tab 1 — Grouping & timing: groups, the α value + provenance + staleness
-        # (and, in vector mode, the per-projection α table), t0, binning,
-        # exclusions and periods. Everything currently in the form.
+        # Pipeline strip spans the full right-pane width, above both columns.
+        right_layout.addWidget(self._build_pipeline_strip())
+
+        # ── Grouping and timing column (left) ──────────────────────────────
+        # Groups, t0, binning, exclusions and periods. Its scroll sizes to its
+        # content width (AdjustToContents), so the narrow column never fights the
+        # corrections column for horizontal space and needs no h-scroll at rest.
         grouping_content = QWidget()
         grouping_layout = QVBoxLayout(grouping_content)
         grouping_layout.setContentsMargins(0, 0, 0, 0)
@@ -780,24 +810,38 @@ class GroupingDialog(QDialog):
         self._grouping_scroll = QScrollArea()
         self._grouping_scroll.setWidgetResizable(True)
         self._grouping_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._grouping_scroll.setSizeAdjustPolicy(
+            QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents
+        )
         self._grouping_scroll.setWidget(grouping_content)
-        self._tabs.addTab(self._grouping_scroll, "Grouping and timing")
+        grouping_column = QWidget()
+        # Hold the narrow column near its natural width so it never grows to
+        # swallow the right pane (the AdjustToContents scroll over-reserves ~60px
+        # otherwise); the corrections column (stretch 1) takes the rest. Derived
+        # from the UI-font metrics so it tracks the zoom with the capped fields it
+        # bounds, keeping every row inside the width with no horizontal scroll.
+        grouping_column.setMaximumWidth(metrics.field_width_for(56))
+        grouping_col_layout = QVBoxLayout(grouping_column)
+        grouping_col_layout.setContentsMargins(0, 0, 0, 0)
+        grouping_col_layout.setSpacing(2)
+        grouping_col_layout.addWidget(self._build_column_header("Grouping and timing"))
+        grouping_col_layout.addWidget(self._grouping_scroll)
 
-        # Tab 2 — Corrections: deadtime, background and single-α calibration
-        # inline. The tab name is the heading, so there is no outer section
-        # wrapper — just the three labelled sub-sections stacked. Each section
-        # header carries a "Compare in preview" toggle that ghosts that stage's
-        # before/after in the pinned preview (see the compare machinery below).
+        # ── Corrections column (right) ─────────────────────────────────────
+        # Deadtime, background and α — the α area (single value + result + banner,
+        # or the per-projection vector table) sits between the α header and the
+        # single-α calibration section. Each section header carries a "Compare in
+        # preview" toggle that ghosts that stage's before/after in the preview.
         corrections_content = QWidget()
         corrections_layout = QVBoxLayout(corrections_content)
         corrections_layout.setContentsMargins(0, 0, 0, 0)
-        corrections_layout.setSpacing(8)
-        #: Per-stage "Compare in preview" checkboxes ("deadtime"/"background"/
-        #: "alpha"/"raw"), mutually exclusive (see :meth:`_set_compare_stage`).
-        self._compare_toggles: dict[str, QCheckBox] = {}
-        corrections_layout.addWidget(self._build_pipeline_strip())
-        # The header widgets double as the section-overflow pill's landmarks, so
-        # keep references to them (the α header is already stored below).
+        # Tighter than the grouping form's 8px: the corrections column carries the
+        # taller payload (deadtime/background/α sections + the α area), so the
+        # inter-section gap is trimmed to keep its default state comfortably inside
+        # the viewport at the default height (with headroom for the taller default
+        # fonts on other platforms) without an outer scroll.
+        corrections_layout.setSpacing(4)
+        # The header widgets double as the section-overflow pill's landmarks.
         self._deadtime_header = self._build_correction_header("Deadtime correction", "deadtime")
         corrections_layout.addWidget(self._deadtime_header)
         corrections_layout.addWidget(self._deadtime_section)
@@ -808,21 +852,35 @@ class GroupingDialog(QDialog):
         corrections_layout.addWidget(self._background_section)
         self._alpha_header = self._build_correction_header("α (detector balance)", "alpha")
         corrections_layout.addWidget(self._alpha_header)
+        corrections_layout.addWidget(self._alpha_area)
         corrections_layout.addWidget(self._alpha_section)
         corrections_layout.addStretch()
         self._corrections_scroll = QScrollArea()
         self._corrections_scroll.setWidgetResizable(True)
         self._corrections_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._corrections_scroll.setWidget(corrections_content)
-        self._corrections_tab_index = self._tabs.addTab(self._corrections_scroll, "Corrections")
+        corrections_column = QWidget()
+        corrections_col_layout = QVBoxLayout(corrections_column)
+        corrections_col_layout.setContentsMargins(0, 0, 0, 0)
+        corrections_col_layout.setSpacing(2)
+        corrections_col_layout.addWidget(self._build_column_header("Corrections"))
+        corrections_col_layout.addWidget(self._corrections_scroll)
+
         self._update_deadtime_status()
         self._update_background_status()
         self._update_alpha_section()
 
+        columns_row = QHBoxLayout()
+        columns_row.setContentsMargins(0, 0, 0, 0)
+        columns_row.setSpacing(8)
+        columns_row.addWidget(grouping_column, stretch=0)
+        columns_row.addWidget(corrections_column, stretch=1)
+        right_layout.addLayout(columns_row, stretch=1)
+
         # Overlay pills naming the sections hidden below the fold on a short
-        # window. The section lists are callables because vector mode drops the
-        # single-α header and adds the per-projection table; _update_vector_mode_
-        # controls calls refresh() after those visibility flips.
+        # window. The section lists are callables because vector mode swaps the α
+        # slot and the deadtime section changes height live; _update_vector_mode_
+        # controls / the visibility updaters call refresh() after those flips.
         self._corrections_overflow = SectionOverflowIndicator(
             self._corrections_scroll, self._corrections_overflow_sections
         )
@@ -830,24 +888,21 @@ class GroupingDialog(QDialog):
             self._grouping_scroll, self._grouping_overflow_sections
         )
 
-        right_layout.addWidget(self._tabs, stretch=1)
-
         # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
         # the configured corrections, directly above the preview so it works from
-        # either tab (the preview is pinned below both). Pure wrapper over the
+        # either column (the preview is pinned below both). Pure wrapper over the
         # same `_set_compare_stage` the section toggles and pipeline chips drive.
         right_layout.addWidget(self._build_compare_pager())
 
         # Live asymmetry preview of the preview run under the current draft.
-        # Pinned below the tabs (shared by both), fixed-height so it never fights
-        # the form for space; it reduces off the GUI thread (debounced) and
-        # redraws as the form is edited.
+        # Pinned below both columns, fixed-height so it never fights the form for
+        # space; it reduces off the GUI thread (debounced) and redraws as edited.
         self._preview_pane = GroupingPreviewPane()
         right_layout.addWidget(self._preview_pane)
 
         splitter.addWidget(right_pane)
 
-        splitter.setSizes([330, 760])
+        splitter.setSizes([330, 860])
         root.addWidget(splitter, stretch=1)
 
         self._update_vector_mode_controls(grouping)
@@ -2524,10 +2579,10 @@ class GroupingDialog(QDialog):
         """The ``Deadtime → group → Background → α`` pipeline overview.
 
         Each correction is a chip showing its one-line summary; the ``group``
-        divider (non-interactive — grouping lives on the Grouping tab) makes the
+        divider (non-interactive — grouping lives in the Grouping column) makes the
         reduction *order* visible. Clicking a chip focuses that stage's compare (the
         same ``_compare_stage`` the section toggles drive) and scrolls it into view.
-        The α chip is hidden in vector mode, where the Grouping tab owns α.
+        The α chip is hidden in vector mode, where the per-projection table owns α.
         """
         widget = QWidget()
         row = QHBoxLayout(widget)
@@ -2538,7 +2593,7 @@ class GroupingDialog(QDialog):
         row.addWidget(self._pipeline_arrow())
         group = QLabel("group")
         group.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        group.setToolTip("Detector grouping is set on the Grouping and timing tab.")
+        group.setToolTip("Detector grouping is set in the Grouping and timing column.")
         row.addWidget(group)
         row.addWidget(self._pipeline_arrow())
         row.addWidget(self._make_pipeline_chip("background"))
@@ -2585,11 +2640,19 @@ class GroupingDialog(QDialog):
         """Refresh chip summaries, focus highlight, enabled + vector visibility."""
         if not hasattr(self, "_pipeline_chips"):
             return
+        alpha_stale = self._alpha_is_stale()
         for stage, chip in self._pipeline_chips.items():
             chip.setText(self._pipeline_summary(stage))
             available = self._compare_stage_available(stage)
             chip.setEnabled(available)
             chip.setChecked(available and self._compare_stage == stage)
+            if stage == "alpha":
+                chip.setToolTip(
+                    "α was calibrated under different corrections — re-estimate it "
+                    "in the α section so it centres the corrected asymmetry."
+                    if alpha_stale
+                    else "Compare this stage's before/after in the preview below."
+                )
         if hasattr(self, "_pipeline_alpha_widget"):
             self._pipeline_alpha_widget.setVisible(not bool(self._vector_axis_pairs))
 
@@ -2607,43 +2670,47 @@ class GroupingDialog(QDialog):
                 BackgroundPolicy(mode=self._current_background_mode(), details=details)
             )
         value = float(self._alpha_spin.value())
+        stale_suffix = " · stale" if self._alpha_is_stale() else ""
         if self._alpha_is_calibrated():
             label = next(
                 (lbl for lbl, key, _ in _ALPHA_METHOD_ITEMS if key == self._current_alpha_method()),
                 self._current_alpha_method(),
             )
-            return f"α = {value:.4f} · {label}"
-        return f"α = {value:.4f}"
+            return f"α = {value:.4f} · {label}{stale_suffix}"
+        return f"α = {value:.4f}{stale_suffix}"
 
     def _corrections_overflow_sections(self) -> list[tuple[str, QWidget]]:
-        """Corrections-tab landmarks for the overflow pill, top-to-bottom.
+        """Corrections-column landmarks for the overflow pill, top-to-bottom.
 
         Short labels (the pill has no room for the "correction"/"subtraction"
-        suffixes); α keeps its full display name and is omitted in vector mode,
-        where its inline section is hidden in favour of the per-projection table.
+        suffixes); α keeps its full display name and is always included — the α
+        header stays in this column in vector mode too, where the per-projection
+        table lives in the α area beneath it.
         """
-        sections = [
+        return [
             ("Deadtime", self._deadtime_header),
             ("Background", self._background_header),
+            ("α (detector balance)", self._alpha_header),
         ]
-        if not bool(self._vector_axis_pairs):
-            sections.append(("α (detector balance)", self._alpha_header))
-        return sections
 
     def _grouping_overflow_sections(self) -> list[tuple[str, QWidget]]:
-        """Grouping-tab landmarks for the overflow pill — coarse, top-to-bottom."""
-        sections: list[tuple[str, QWidget]] = []
-        if bool(self._vector_axis_pairs):
-            sections.append(("α (per projection)", self._vector_alpha_widget))
-        sections.append(("t0 and binning", self._t0_row_widget))
+        """Grouping-column landmarks for the overflow pill — coarse, top-to-bottom."""
+        sections: list[tuple[str, QWidget]] = [("t0 and binning", self._t0_row_widget)]
         # The periods row container stays visible even when both of its
         # independently-gated children are hidden (RG radios: two-period data;
         # Map periods…: 3+ periods), so gate the landmark on the children's own
-        # state — isHidden(), not isVisibleTo(), so the answer is the same from
-        # either tab. Without this, single-period data lists a phantom "Periods".
+        # state — isHidden(), not isVisibleTo(), so the answer does not depend on
+        # focus. Without this, single-period data lists a phantom "Periods".
         if not self._period_mode_widget.isHidden() or not self._map_periods_btn.isHidden():
             sections.append(("Periods", self._period_row_widget))
         return sections
+
+    @staticmethod
+    def _build_column_header(title: str) -> QLabel:
+        """A muted column-title label (the correction-header title style, no toggle)."""
+        label = QLabel(title)
+        label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        return label
 
     def _build_correction_header(self, title: str, stage: str) -> QWidget:
         """A section header: the muted title + a "Compare in preview" toggle.
@@ -2711,7 +2778,7 @@ class GroupingDialog(QDialog):
     def _build_compare_pager(self) -> QWidget:
         """The ◀/▶ pager row: steps ``_compare_stage`` through the cycle.
 
-        Sits directly above the pinned preview so it works from either tab.
+        Sits directly above the pinned preview so it works from either column.
         A pure wrapper over :meth:`_set_compare_stage` — same shared state the
         section toggles and pipeline chips drive; :meth:`_sync_compare_pager`
         (called from the single :meth:`_sync_compare_toggles` sync seam) keeps
@@ -2719,7 +2786,7 @@ class GroupingDialog(QDialog):
         """
         widget = QWidget()
         row = QHBoxLayout(widget)
-        row.setContentsMargins(0, 4, 0, 4)
+        row.setContentsMargins(0, 2, 0, 2)
         row.setSpacing(6)
         self._compare_prev_btn = QToolButton()
         self._compare_prev_btn.setArrowType(Qt.ArrowType.LeftArrow)
@@ -2740,11 +2807,11 @@ class GroupingDialog(QDialog):
         self._compare_next_btn.clicked.connect(lambda: self._step_compare(1))
         row.addWidget(self._compare_next_btn)
         row.addStretch()
-        # The compound "vs raw" toggle lives here (not in the Corrections tab's
+        # The compound "vs raw" toggle lives here (not in the Corrections column's
         # scroll content): it is one of the pager's stops, and pinning it beside
-        # the pager keeps it reachable from both tabs — and keeps the tab content
-        # short enough to fit the viewport without outer scrolling (the M1 fit
-        # budget the pager row itself consumed).
+        # the pager keeps it reachable regardless of which column is focused — and
+        # keeps the corrections content short enough to fit the viewport without
+        # outer scrolling.
         raw = QCheckBox("Compare vs raw (uncorrected)")
         raw.setToolTip(
             "Preview only: overlay the fully-uncorrected asymmetry — no deadtime, no "
@@ -2805,8 +2872,8 @@ class GroupingDialog(QDialog):
         if stage == "background":
             return self._current_background_mode() != "none"
         if stage == "alpha":
-            # The α compare/toggle is hidden in vector mode (the per-projection
-            # table on the Grouping tab owns α there), so it is never available.
+            # The α compare/toggle is unavailable in vector mode (the per-projection
+            # table in the Corrections column owns α there), so it never focuses.
             if bool(self._vector_axis_pairs):
                 return False
             return self._alpha_is_calibrated() or alpha_off_unity
@@ -3187,14 +3254,14 @@ class GroupingDialog(QDialog):
         self._single_alpha_widget.setVisible(not vector_mode)
         self._vector_alpha_widget.setVisible(vector_mode)
         # The inline single-α section calibrates the single/P_z balance; the
-        # per-projection vector table (with its own inline Estimate) owns the rest.
-        # Hiding the α header hides its "Compare in preview" toggle too, so
-        # _sync_compare_toggles (which treats α as unavailable in vector mode) drops
-        # any α focus rather than leaving a ghost with no visible control.
+        # per-projection vector table (in the α area, with its own inline Estimate)
+        # owns the rest. The α header stays put in both modes — the α area (single
+        # widgets or the vector table) always lives beneath it in the Corrections
+        # column — but the single-α calibration section is hidden in vector mode.
+        # _sync_compare_toggles disables the header's "Compare in preview" toggle
+        # there (α is never available in vector mode), so no ghost is left behind.
         if hasattr(self, "_alpha_section"):
             self._alpha_section.setVisible(not vector_mode)
-            if hasattr(self, "_alpha_header"):
-                self._alpha_header.setVisible(not vector_mode)
             self._sync_compare_toggles()
 
         if vector_mode:
@@ -3791,9 +3858,9 @@ class GroupingDialog(QDialog):
         self._refresh_alpha_staleness()
         self._record_calibration_result_label(slot, policy)
         # Auto-focus the α compare on a fresh calibration (single mode only — the
-        # α compare/toggle is hidden in vector mode, where the per-projection table
-        # on the Grouping tab owns α), preserving the old auto-overlay while giving
-        # the toggle a way to dismiss it.
+        # α compare/toggle is unavailable in vector mode, where the per-projection
+        # table owns α), preserving the old auto-overlay while giving the toggle a
+        # way to dismiss it.
         if not bool(self._vector_axis_pairs):
             self._set_compare_stage("alpha")
         self._mark_dirty()
@@ -3897,7 +3964,7 @@ class GroupingDialog(QDialog):
         The estimate stores full precision but the α spins round to *decimals*, so a
         naive ``< 1e-9`` compare reads every real (non-round) calibration as a hand
         edit — silently dropping the "calibrated" provenance (from the saved profile
-        too), the staleness banner and the ⚠ tab marker. A displayed value is within
+        too), the staleness banner and the α chip's stale flag. A displayed value is within
         half a display ULP of the recorded value; a genuine manual edit moves the
         spin to a different displayed value, well beyond that. (Tested against the
         raw difference rather than re-rounding both sides, so Python's banker's
@@ -3914,38 +3981,35 @@ class GroupingDialog(QDialog):
             recorded[0], self._alpha_spin.value(), self._alpha_spin.decimals()
         )
 
-    def _refresh_alpha_staleness(self) -> None:
-        """Show the banner when corrections changed since α was calibrated."""
-        if not hasattr(self, "_alpha_stale_banner"):
-            return
-        stale = (
+    def _alpha_is_stale(self) -> bool:
+        """True when a calibrated α no longer matches the current corrections.
+
+        The digest of the deadtime/background settings α was measured under has
+        diverged from the current one, so the calibrated α no longer centres the
+        corrected asymmetry. Drives both the staleness banner and the " · stale"
+        suffix (plus re-estimation tooltip) on the pipeline α chip.
+        """
+        return (
             self._alpha_is_calibrated()
             and self._alpha_correction_digest is not None
             and self._alpha_correction_digest != self._correction_digest()
         )
+
+    def _refresh_alpha_staleness(self) -> None:
+        """Show the banner (and flag the pipeline α chip) when α went stale."""
+        if not hasattr(self, "_alpha_stale_banner"):
+            return
+        stale = self._alpha_is_stale()
         if stale:
             self._alpha_stale_banner.setText(
                 "α was calibrated under different deadtime/background corrections — "
                 "re-estimate so it centres the corrected asymmetry."
             )
         self._alpha_stale_banner.setVisible(stale)
-        # The single-α calibration lives on the Corrections tab, so mark that tab
-        # when a stale α is discoverable only from the Grouping tab. In vector mode
-        # the re-estimate is the per-projection table on the *Grouping* tab (the
-        # inline α section is hidden), so the marker would misdirect — the
-        # Grouping-tab banner already covers that case, so suppress it there.
-        vector_mode = bool(self._vector_axis_pairs)
-        mark = stale and not vector_mode
-        if hasattr(self, "_tabs") and hasattr(self, "_corrections_tab_index"):
-            self._tabs.setTabText(
-                self._corrections_tab_index, "Corrections ⚠" if mark else "Corrections"
-            )
-            self._tabs.setTabToolTip(
-                self._corrections_tab_index,
-                "α was calibrated under different corrections — re-estimate on this tab."
-                if mark
-                else "",
-            )
+        # There are no tabs to mark: staleness surfaces on the pipeline α chip
+        # (" · stale" summary + a re-estimation tooltip). The chip is hidden in
+        # vector mode, where the banner in the α area covers the same case.
+        self._sync_pipeline_strip()
 
     def _refresh_alpha_provenance_label(self) -> None:
         """Reflect the single alpha's provenance ("calibrated …" or "manual")."""

@@ -300,51 +300,66 @@ def test_estimate_alpha_updates_spinbox(
     assert dialog._alpha_spin.value() == pytest.approx(2.0)
 
 
-def test_right_pane_is_tabbed_with_preview_pinned(qapp: QApplication) -> None:
-    """The right pane is a two-tab notebook; the live preview stays pinned below.
+def test_right_pane_is_tabless_two_columns_with_preview_pinned(qapp: QApplication) -> None:
+    """The right pane is tabless: two side-by-side columns, preview pinned below.
 
-    "Grouping and timing" | "Corrections", each its own scroll area, with the
-    single shared preview pane pinned OUTSIDE the tabs (a descendant of neither
-    tab) so it stays visible on both.
+    A "Grouping and timing" column and a "Corrections" column, each its own
+    scroll area, with the full-width pipeline strip above BOTH (inside neither
+    scroll) and the single shared preview pinned below BOTH. There is no tab
+    widget any more.
     """
-    from PySide6.QtWidgets import QScrollArea, QTabWidget
+    from PySide6.QtWidgets import QScrollArea
 
     dialog = GroupingDialog([_dataset_with_histograms()])
-    assert isinstance(dialog._tabs, QTabWidget)
-    assert [dialog._tabs.tabText(i) for i in range(dialog._tabs.count())] == [
-        "Grouping and timing",
-        "Corrections",
-    ]
+    # No tab widget survives the tabless redesign.
+    assert not hasattr(dialog, "_tabs")
+    assert not hasattr(dialog, "_corrections_tab_index")
+
     assert isinstance(dialog._grouping_scroll, QScrollArea)
     assert isinstance(dialog._corrections_scroll, QScrollArea)
+    assert dialog._grouping_scroll.widgetResizable()
     assert dialog._corrections_scroll.widgetResizable()
-    # The deadtime/background/α sections live on the Corrections tab.
+
+    # The deadtime/background/α sections live in the Corrections column; t0 lives
+    # in the Grouping column. Each is in exactly one scroll.
     assert dialog._corrections_scroll.isAncestorOf(dialog._deadtime_section)
     assert dialog._corrections_scroll.isAncestorOf(dialog._alpha_section)
-    # The preview is pinned outside the tabs (shared by both), so it stays visible.
-    assert not dialog._tabs.isAncestorOf(dialog._preview_pane)
+    assert dialog._corrections_scroll.isAncestorOf(dialog._alpha_area)
+    assert dialog._grouping_scroll.isAncestorOf(dialog._t0_row_widget)
+    assert not dialog._grouping_scroll.isAncestorOf(dialog._alpha_section)
+
+    # The pipeline strip spans above both columns — inside neither scroll.
+    strip = dialog._pipeline_chips["deadtime"]
+    assert not dialog._grouping_scroll.isAncestorOf(strip)
+    assert not dialog._corrections_scroll.isAncestorOf(strip)
+
+    # The preview is pinned below both columns — inside neither scroll.
+    assert not dialog._grouping_scroll.isAncestorOf(dialog._preview_pane)
+    assert not dialog._corrections_scroll.isAncestorOf(dialog._preview_pane)
 
 
-def test_corrections_tab_fits_without_scroll_at_reference_size(qapp: QApplication) -> None:
-    """The default Corrections-tab state needs no outer scrolling at 1180×760.
+def test_both_columns_fit_without_scroll_at_default_size(qapp: QApplication) -> None:
+    """Both columns need no scrolling at the default 1220×680, deadtime off.
 
-    This is the headline acceptance of the corrections-tab UX work (see
-    docs/porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md):
-    with deadtime off — the default — deadtime, background, α and the compare
-    controls must all be reachable without scrolling. Pins the whole-tab budget,
-    not just the deadtime section's per-mode heights, so a new row elsewhere in
-    the right pane (the compare pager once ate ~31px of it) fails here instead
-    of silently reintroducing the fold.
+    The headline acceptance of the tabless two-column redesign: with deadtime off
+    — the default — every grouping field and every correction section (deadtime,
+    background, the α area and calibration) must be reachable without scrolling in
+    either column. Pins the whole-column budget in both axes, so a new row
+    elsewhere or an over-wide field re-introducing a scrollbar fails here.
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog.resize(1180, 760)
     dialog.show()
-    dialog._tabs.setCurrentIndex(dialog._corrections_tab_index)
     QApplication.processEvents()
 
+    assert dialog.size().width() == 1220
+    assert dialog.size().height() == 680
     assert dialog._deadtime_section._current_mode() == "off"
-    assert dialog._corrections_scroll.verticalScrollBar().maximum() == 0
+
+    for scroll in (dialog._grouping_scroll, dialog._corrections_scroll):
+        assert scroll.verticalScrollBar().maximum() == 0
+        assert scroll.horizontalScrollBar().maximum() == 0
     assert not dialog._corrections_overflow.isVisible()
+    assert not dialog._grouping_overflow.isVisible()
 
     dialog.close()
 
@@ -374,7 +389,7 @@ def test_grouping_overflow_omits_periods_for_single_period_data(qapp: QApplicati
 
 
 def test_overflow_pill_settles_hidden_after_inline_alpha_estimate(qapp: QApplication) -> None:
-    """The pill must not linger after the α result rows relayout the tab.
+    """The pill must not linger after the α result rows relayout the corrections column.
 
     The inline α estimate grows the α section (result + provenance note), and
     the content can transiently overflow the viewport mid-relayout — the
@@ -385,9 +400,11 @@ def test_overflow_pill_settles_hidden_after_inline_alpha_estimate(qapp: QApplica
     scenario, where the stale pill was captured mid-race.
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog.resize(1180, 760)
+    # A window tall enough that the α result + provenance rows still fit after the
+    # estimate — the point is the settle pass (the pill must not linger stale
+    # mid-relayout), not the default-size budget.
+    dialog.resize(1220, 760)
     dialog.show()
-    dialog._tabs.setCurrentIndex(dialog._corrections_tab_index)
     QApplication.processEvents()
 
     _estimate_single_alpha(dialog)
@@ -410,8 +427,7 @@ def test_corrections_overflow_pill_names_hidden_sections(qapp: QApplication) -> 
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
     dialog.show()
-    dialog.resize(1180, 560)
-    dialog._tabs.setCurrentIndex(dialog._corrections_tab_index)
+    dialog.resize(1220, 520)
     QApplication.processEvents()
 
     # Manual deadtime shows the per-detector table, pushing Background (and α)
@@ -426,8 +442,9 @@ def test_corrections_overflow_pill_names_hidden_sections(qapp: QApplication) -> 
     assert pill.text().startswith("↓ ")
     assert "Background" in pill.text()
 
-    # Default size with deadtime off: M1 makes this state fit, so no pill.
-    dialog.resize(1180, 760)
+    # Default size with deadtime off: the two-column layout makes this state fit,
+    # so no pill.
+    dialog.resize(1220, 680)
     dialog._deadtime_section._set_mode("off")
     dialog._deadtime_section._on_mode_or_state_changed()
     QApplication.processEvents()
@@ -473,40 +490,48 @@ def test_alpha_staleness_banner_tracks_correction_changes(qapp: QApplication) ->
     assert dialog._alpha_correction_digest is None
 
 
-def test_corrections_tab_marks_stale_single_alpha(qapp: QApplication) -> None:
-    """A stale single-α marks the Corrections tab (where its inline calibration is)."""
+def test_stale_single_alpha_flags_pipeline_chip(qapp: QApplication) -> None:
+    """A stale single-α surfaces as " · stale" on the pipeline α chip (no tabs)."""
     from asymmetry.core.project.profiles import AlphaPolicy
 
     dialog = GroupingDialog([_dataset_with_histograms()])
-    ci = dialog._corrections_tab_index
-    assert dialog._tabs.tabText(ci) == "Corrections"
+    assert not dialog._pipeline_summary("alpha").endswith("· stale")
 
     policy = AlphaPolicy(
         mode="calibrated", value=1.23, method="diamagnetic", error=0.01, source_run=1
     )
     dialog._apply_calibrated_policy("single", dialog._alpha_spin, policy)
-    assert dialog._tabs.tabText(ci) == "Corrections"  # digests match: not stale yet
+    assert not dialog._pipeline_summary("alpha").endswith("· stale")  # digests match
 
     dialog._background_mode = "range"
     dialog._refresh_alpha_staleness()
-    assert dialog._tabs.tabText(ci) == "Corrections ⚠"
+    assert dialog._pipeline_summary("alpha").endswith("· stale")
+    # The chip's tooltip prompts a re-estimate when stale.
+    assert "re-estimate" in dialog._pipeline_chips["alpha"].toolTip()
+
+    # Reverting the corrections re-matches the digest: the flag must CLEAR too.
+    dialog._background_mode = "none"
+    dialog._refresh_alpha_staleness()
+    assert not dialog._pipeline_summary("alpha").endswith("· stale")
+    assert "re-estimate" not in dialog._pipeline_chips["alpha"].toolTip()
 
 
-def test_corrections_tab_marker_suppressed_in_vector_mode(qapp: QApplication) -> None:
-    """In vector mode the ⚠ marker stays off — the re-estimate is the per-projection
-    table on the Grouping tab (the inline α section is hidden on the Corrections
-    tab), so marking Corrections would misdirect. The Grouping-tab banner covers it.
+def test_stale_alpha_banner_still_fires_in_vector_mode(qapp: QApplication) -> None:
+    """In vector mode the α chip is hidden, but the α-area banner still fires.
+
+    There is no ⚠ tab marker any more; the pipeline α chip is hidden in vector
+    mode (the per-projection table owns α), so staleness is surfaced by the banner
+    that lives in the α area alongside the per-projection table.
     """
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
-    ci = dialog._corrections_tab_index
     _estimate_vector_axis(dialog, "P_z")
     assert dialog._alpha_is_calibrated()
 
     dialog._background_mode = "range"
     dialog._refresh_alpha_staleness()
 
-    assert dialog._tabs.tabText(ci) == "Corrections"  # not marked in vector mode
-    assert not dialog._alpha_stale_banner.isHidden()  # banner (Grouping tab) still fires
+    assert dialog._pipeline_alpha_widget.isHidden()  # α chip hidden in vector mode
+    assert not dialog._alpha_stale_banner.isHidden()  # banner still fires
 
 
 def test_calibrated_alpha_survives_spin_rounding(qapp: QApplication) -> None:
@@ -1069,8 +1094,8 @@ def test_compare_toggle_reaches_the_preview_request(qapp: QApplication) -> None:
 def test_alpha_compare_unavailable_in_vector_mode(qapp: QApplication) -> None:
     """The α compare never focuses in vector mode — its toggle is hidden there.
 
-    The per-projection α table on the Grouping tab owns α in vector mode, so a P_z
-    estimate must not auto-focus the (hidden) α compare on the Corrections tab —
+    The per-projection α table owns α in vector mode, so a P_z estimate must not
+    auto-focus the (unavailable) α compare in the corrections column —
     the same misdirection guarded on the ⚠ tab marker.
     """
     dialog = GroupingDialog([_vector_dataset_with_histograms()])
@@ -1102,7 +1127,7 @@ def test_pipeline_strip_summaries_and_chip_focus(qapp: QApplication) -> None:
 
 
 def test_pipeline_alpha_chip_hidden_in_vector_mode(qapp: QApplication) -> None:
-    """The α pipeline chip is hidden in vector mode (the Grouping tab owns α)."""
+    """The α pipeline chip is hidden in vector mode (the per-projection table owns α)."""
     single = GroupingDialog([_dataset_with_histograms()])
     assert not single._pipeline_alpha_widget.isHidden()
 

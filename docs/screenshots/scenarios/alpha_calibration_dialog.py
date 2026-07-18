@@ -1,12 +1,12 @@
-"""Inline alpha calibration on the grouping window's Corrections tab.
+"""Inline alpha calibration in the grouping window's Corrections column.
 
-Opens the Grouping window directly on a synthesised YBCO transverse-field run and
-selects the **Corrections** tab. Alpha (the detector-balance parameter) is
-calibrated **inline** there — a calibration-run picker (weak-TF candidates
+Opens the Grouping window directly on a synthesised YBCO transverse-field run.
+Alpha (the detector-balance parameter) is calibrated **inline** in the
+**Corrections** column — a calibration-run picker (weak-TF candidates
 highlighted), an estimation method, and an **Estimate α** button — instead of a
 separate modal dialog. Pressing Estimate α measures alpha on the *corrected*
-forward/backward counts and drives the shared grouping preview (pinned below the
-tabs), which overlays the α = 1 "before" ghost against the estimated-α "after"
+forward/backward counts and drives the shared grouping preview (pinned below both
+columns), which overlays the α = 1 "before" ghost against the estimated-α "after"
 curve and reports the residual baseline ⟨A⟩. Companion to
 :doc:`/reference/detector_grouping` and :doc:`/reference/grouping_calibration`.
 """
@@ -25,10 +25,10 @@ from ._base import CaptureContext, Scenario, register
 class AlphaCalibrationDialogScenario(Scenario):
     name = "alpha_calibration_dialog"
     description = (
-        "Inline alpha calibration in the grouping window's Corrections panel, with the "
+        "Inline alpha calibration in the grouping window's Corrections column, with the "
         "shared before/after (α = 1 ↔ α̂) asymmetry preview."
     )
-    size = (1180, 760)
+    size = (1220, 760)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog
@@ -45,15 +45,10 @@ class AlphaCalibrationDialogScenario(Scenario):
         # click does not populate the result before the grab. Pump the event loop
         # until the worker's queued finished callback has landed (deterministic,
         # not a fixed sleep) so the captured α result and preview overlay always
-        # show the estimate, never the transient "Computing estimate…" state.
-        # Show the Corrections tab, where the inline α-calibration controls (run
-        # picker, method, Estimate α, result) live alongside deadtime and
-        # background — a first-class named tab rather than the foot of a long scroll.
-        tabs = getattr(dialog, "_tabs", None)
-        if tabs is not None:
-            tabs.setCurrentIndex(getattr(dialog, "_corrections_tab_index", 1))
-            _pump_events(80)
-
+        # show the estimate, never the transient "Computing estimate…" state. The
+        # inline α-calibration controls (run picker, method, Estimate α, result)
+        # live in the Corrections column alongside deadtime and background — no tab
+        # to select, both columns are visible at once.
         section = getattr(dialog, "_alpha_section", None)
         if section is not None:
             section._on_estimate()
