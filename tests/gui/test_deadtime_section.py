@@ -191,6 +191,22 @@ def test_manual_mode_saturated_correction_shows_warning(qapp: QApplication) -> N
     assert "%" not in text
 
 
+def test_wide_rows_do_not_impose_minimum_widths(qapp: QApplication) -> None:
+    """Long summary text and the table-controls label must elide, not widen.
+
+    A non-wrapping QLabel's minimum size hint is its full text width, so the
+    one-line summary (worst case the saturation warning) and the "Per-detector
+    values (ns)" label used to force the whole corrections column into a
+    horizontal scrollbar. Both are ElidedLabels now; the rows' minimum widths
+    must stay bounded by their fixed controls (disclosure button; spin+buttons),
+    not by the text. Bounds are loose for cross-platform font metrics.
+    """
+    section = _configured(mode="file", file_values_us=[2.0, 2.0])  # saturated summary
+    assert section._summary_row_widget.minimumSizeHint().width() < 300
+    section = _configured(mode="manual", manual_values_us=[0.01, 0.01])
+    assert section._table_controls_widget.minimumSizeHint().width() < 420
+
+
 def test_file_mode_saturated_correction_shows_warning(qapp: QApplication) -> None:
     section = _configured(mode="file", file_values_us=[2.0, 2.0])
     text = section._summary_label.text()

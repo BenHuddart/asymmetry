@@ -12,11 +12,12 @@ active) from the draft on every open.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPaintEvent
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from asymmetry.gui.styles import tokens
+from asymmetry.gui.widgets.elided_label import ElidedLabel
 
 #: objectName on the outer card frame so its border rule never cascades onto
 #: child widgets (the ID selector matches this frame only).
@@ -35,44 +36,6 @@ class _ClickableHeader(QFrame):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
-
-
-class _ElidedLabel(QLabel):
-    """A label that elides right instead of forcing its row wider.
-
-    The header packs title + status + compare indicator into one row; a long
-    status ("2.0071 · Diamagnetic (TF)") plus an active indicator must squeeze
-    (…) rather than give the corrections column a horizontal scrollbar. The
-    pen colour is held directly because the custom paint bypasses QSS.
-    """
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._pen_color = QColor(tokens.TEXT_MUTED)
-
-    def set_pen_color(self, color: str) -> None:
-        self._pen_color = QColor(color)
-        self.update()
-
-    def pen_color(self) -> QColor:
-        """Current text colour (test seam)."""
-        return QColor(self._pen_color)
-
-    def minimumSizeHint(self) -> QSize:  # noqa: N802 — Qt override
-        # Width 0: the layout may shrink the label freely; paint elides.
-        return QSize(0, super().minimumSizeHint().height())
-
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 — Qt override
-        painter = QPainter(self)
-        painter.setPen(self._pen_color)
-        elided = self.fontMetrics().elidedText(
-            self.text(), Qt.TextElideMode.ElideRight, max(0, self.width())
-        )
-        painter.drawText(
-            self.rect(),
-            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
-            elided,
-        )
 
 
 class CorrectionCard(QFrame):
@@ -128,10 +91,10 @@ class CorrectionCard(QFrame):
         # Status stretches to fill the middle and elides when tight, so a long
         # summary (or the compare indicator) never widens the corrections column
         # into a horizontal scrollbar.
-        self._status_label = _ElidedLabel(self._header)
+        self._status_label = ElidedLabel(parent=self._header)
         header_layout.addWidget(self._status_label, 1)
 
-        self._comparing_label = _ElidedLabel(self._header)
+        self._comparing_label = ElidedLabel(parent=self._header)
         self._comparing_label.hide()
         header_layout.addWidget(self._comparing_label)
 

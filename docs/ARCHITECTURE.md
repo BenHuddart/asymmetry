@@ -172,6 +172,11 @@ them:
   viewport-overlay pill that names the scroll sections currently hidden below
   the fold and scrolls the first one into view on click; recomputes from cheap
   geometry reads on scroll/resize plus an explicit `refresh()`.
+- `gui.widgets.elided_label.ElidedLabel` — a QLabel that elides right instead
+  of imposing its text width as a layout minimum (zero minimum width; full
+  text as a tooltip while elided). Use it for any long one-line status text
+  inside a width-constrained column so the text can never force a horizontal
+  scrollbar.
 - `gui.panels.fit/` — the fit-setup-and-results package (`FitPanel`,
   `FitTabBase`, `SingleFitTab`, `GlobalFitTab`, `FitParameterTable`, seeding
   helpers), split out of the former monolithic `fit_panel.py` (now a thin

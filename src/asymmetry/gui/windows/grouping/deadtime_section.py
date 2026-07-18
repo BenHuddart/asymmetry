@@ -42,6 +42,7 @@ from asymmetry.core.transform import (
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import apply_param_table_style
+from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox, NoScrollDoubleSpinBox
 
 __all__ = ["DeadtimeSectionWidget", "DeadtimeSourceRun", "deadtime_status_text"]
@@ -148,8 +149,9 @@ class DeadtimeSectionWidget(QWidget):
 
         table_controls = QHBoxLayout()
         table_controls.setContentsMargins(0, 0, 0, 0)
-        table_controls.addWidget(QLabel("Per-detector values (ns)"))
-        table_controls.addStretch()
+        # Elides under a narrow corrections column — the fill spin + buttons
+        # alone must never force a horizontal scrollbar.
+        table_controls.addWidget(ElidedLabel("Per-detector values (ns)"), 1)
         self._fill_all_spin = NoScrollDoubleSpinBox()
         self._fill_all_spin.setDecimals(3)
         self._fill_all_spin.setRange(0.0, 1.0e6)
@@ -176,10 +178,12 @@ class DeadtimeSectionWidget(QWidget):
         # states stay short enough to fit the Corrections tab without scrolling.
         summary_row = QHBoxLayout()
         summary_row.setContentsMargins(0, 0, 0, 0)
-        self._summary_label = QLabel("")
-        # One-line summary — word-wrap would inflate the row's height hint and
-        # push the collapsed estimate mode past the Corrections-tab viewport.
-        self._summary_label.setWordWrap(False)
+        # One-line summary. Eliding (not wrapping) keeps the row a single line —
+        # wrap would inflate the height hint — while a long summary ("10.000 ns ×
+        # 4 detectors · max correction …") can never set a minimum width that
+        # forces the corrections column into a horizontal scrollbar; the full
+        # text appears as a tooltip while elided.
+        self._summary_label = ElidedLabel("")
         summary_row.addWidget(self._summary_label, stretch=1)
         self._disclosure_btn = QToolButton()
         self._disclosure_btn.setText("Show per-detector values")
