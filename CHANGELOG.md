@@ -7,8 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A unified Corrections column in the Grouping window.** The deadtime,
+  background and α-calibration modal dialogs are retired: every correction is
+  now edited inline, and everything α — the value, its provenance, the
+  staleness warning, and the calibration controls (per-projection table in
+  vector mode) — lives together in one place. Each correction is a
+  collapsible **card** with a live status header ("Deadtime · off",
+  "α · 1.2692 · Diamagnetic (TF)"), opening expanded when its stage is active;
+  the deadtime card adapts to its mode (the per-detector table appears only
+  when it is editable, capped at six rows). Each stage wears an identity
+  colour — teal for deadtime, violet for background, red for α — shared
+  between its card's stripe and its chip in the **pipeline strip**
+  (``Deadtime → group → Background → α``) that heads the editor and makes the
+  reduction order visible.
+- **Interactive correction compares in the grouping preview.** Focusing a
+  stage (via its pipeline chip, or the ◀/▶ **compare pager** above the
+  preview) overlays a ghost of the reduction *without* that stage — α = 1 for
+  the α compare, which also reports the residual baseline ⟨A⟩ — behind the
+  as-reduced curve, plus a compound **Compare vs raw (uncorrected)** view.
+  The solid curve is always the full configured reduction and alone sets the
+  y-axis, so an off-scale "before" (an uncorrected run can reach ~10⁷ %) can
+  never crush the real curve; comparing never changes what Apply writes. When
+  a calibrated α goes stale (deadtime/background changed since it was
+  measured), the α chip flags **" · stale"** and the α card carries the
+  warning banner.
+- **Pan, zoom and home controls on the grouping preview**, with a user-chosen
+  view preserved across the live redraws until Home restores the automatic
+  scale.
+
+### Changed
+
+- **The Grouping window's right pane is tabless.** The former "Grouping and
+  timing" / "Corrections" tabs are now two side-by-side columns under the
+  pipeline strip, with the shared live preview pinned below both — everything
+  is visible at once at the new 1220×680 default size, with no scrolling in
+  either axis. The preset selector moved to the left column above the group
+  table it seeds, the editing-target strip moved into the top row, and on
+  windows too small to show everything a compact pill names the sections
+  hidden below the fold and scrolls to them on click. The transverse-field
+  grouping nudge banner is retired from this window (the Detector Layout
+  editor keeps its own copy, including preselecting the recommended preset).
+
 ### Fixed
 
+- **Calibrated α provenance no longer silently degrades to "manual".** The
+  recorded full-precision estimate was compared against the six-decimal
+  rounded α spin with a near-exact tolerance, so every genuine (non-round)
+  calibration immediately read as a hand edit — silently dropping the
+  "calibrated" provenance from the profile (including what is saved into
+  ``.asymp`` projects) and disabling the staleness warning. Provenance is now
+  compared at the spin's display precision, so saved projects keep the
+  calibration method, source run and uncertainty, and the staleness warning
+  fires when it should.
+- The deadtime summary now reports "Deadtime saturates the t=0 correction —
+  value too large." instead of a meaningless huge percentage when the
+  configured deadtime saturates the correction.
+- Zooming the grouping preview could strand it on a garbage view when a
+  transient reduction error landed mid-inspection; the chosen view is now
+  stored explicitly and survives error/empty redraws.
 - **Alpha is now estimated on deadtime- and background-corrected counts.**
   Previously the detector-balance α was estimated from the *raw* grouped counts,
   while the reduction it feeds applies deadtime correction and background
