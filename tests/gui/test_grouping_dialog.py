@@ -493,6 +493,24 @@ def test_alpha_staleness_banner_tracks_correction_changes(qapp: QApplication) ->
     assert dialog._alpha_correction_digest is None
 
 
+def test_pipeline_chips_wear_their_cards_stage_colors(qapp: QApplication) -> None:
+    """Chip outline colour == card stripe colour, per stage (the identity tie)."""
+    from asymmetry.gui.styles import tokens
+
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    expected = {
+        "deadtime": tokens.STAGE_DEADTIME,
+        "background": tokens.STAGE_BACKGROUND,
+        "alpha": tokens.STAGE_ALPHA,
+    }
+    for stage, color in expected.items():
+        assert color in dialog._pipeline_chips[stage].styleSheet()
+        assert f"border-left: 3px solid {color}" in (
+            dialog._correction_cards[stage]._header.styleSheet()
+        )
+    dialog.close()
+
+
 def test_stale_single_alpha_flags_pipeline_chip(qapp: QApplication) -> None:
     """A stale single-α surfaces as " · stale" on the pipeline α chip (no tabs)."""
     from asymmetry.core.project.profiles import AlphaPolicy

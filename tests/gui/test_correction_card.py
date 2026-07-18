@@ -123,6 +123,26 @@ def test_set_stale_tints_title_and_status(qapp: QApplication) -> None:
     assert card._status_label.pen_color() == QColor(tokens.TEXT_MUTED)
 
 
+def test_stage_identity_color_stripe_always_on(qapp: QApplication) -> None:
+    """The stage-colour stripe is the card's identity, shown in every state.
+
+    The comparing state only deepens the header fill to the stage's soft tint —
+    the stripe (which matches the pipeline chip's outline colour) never leaves.
+    """
+    card = CorrectionCard("Deadtime", color=tokens.STAGE_DEADTIME, soft=tokens.STAGE_DEADTIME_SOFT)
+    stripe = f"border-left: 3px solid {tokens.STAGE_DEADTIME}"
+    assert stripe in card._header.styleSheet()
+    assert tokens.STAGE_DEADTIME_SOFT not in card._header.styleSheet()
+
+    card.set_comparing("comparing: without deadtime")
+    assert stripe in card._header.styleSheet()
+    assert tokens.STAGE_DEADTIME_SOFT in card._header.styleSheet()
+
+    card.set_comparing(None)
+    assert stripe in card._header.styleSheet()
+    assert tokens.STAGE_DEADTIME_SOFT not in card._header.styleSheet()
+
+
 def test_status_text_round_trips(qapp: QApplication) -> None:
     card, _body = _card_with_body("Background")
     assert card.status_text() == ""

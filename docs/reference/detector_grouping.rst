@@ -542,6 +542,12 @@ and background. Clicking a chip focuses that stage's compare (below) and scrolls
 its section into view. When a calibrated :math:`\alpha` goes stale the chip
 appends **" · stale"** and its tooltip prompts a re-estimate.
 
+Each stage wears its own identity colour — teal for deadtime, violet for
+background, the accent blue for :math:`\alpha` — as the chip's outline *and*
+the matching card's header stripe, so a chip and its card read as one thing at
+a glance; focusing a stage's compare fills both the chip and the card header
+with that stage's soft tint.
+
 Comparing is driven from the **pipeline chips** and the **compare pager** —
 there are no per-section checkboxes. Clicking a stage's chip focuses that
 stage's compare, expands its correction card, and scrolls the card into view;

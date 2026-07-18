@@ -84,6 +84,7 @@ from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
+    build_stage_chip_qss,
     clear_layout,
     make_section_header,
     make_warning_banner,
@@ -132,6 +133,13 @@ from asymmetry.gui.windows.grouping.scope_panel import ScopePanel
 #: Compare-pager cycle order (`_step_compare`/`_sync_compare_pager`). ``None``
 #: ("off") is always available; the rest are gated by `_compare_stage_available`.
 _COMPARE_CYCLE: tuple[str | None, ...] = (None, "deadtime", "background", "alpha", "raw")
+
+#: Stage identity colours (chip outline = card stripe; see ``tokens.STAGE_*``).
+_STAGE_COLORS: dict[str, tuple[str, str]] = {
+    "deadtime": (tokens.STAGE_DEADTIME, tokens.STAGE_DEADTIME_SOFT),
+    "background": (tokens.STAGE_BACKGROUND, tokens.STAGE_BACKGROUND_SOFT),
+    "alpha": (tokens.STAGE_ALPHA, tokens.STAGE_ALPHA_SOFT),
+}
 
 #: Pager label text per focused stage (see `_sync_compare_pager`).
 _COMPARE_STAGE_LABELS: dict[str, str] = {
@@ -866,13 +874,19 @@ class GroupingDialog(QDialog):
         # platforms) without an outer scroll.
         corrections_layout.setSpacing(4)
         # The cards double as the section-overflow pill's landmarks.
-        self._deadtime_card = CorrectionCard("Deadtime")
+        self._deadtime_card = CorrectionCard(
+            "Deadtime", color=tokens.STAGE_DEADTIME, soft=tokens.STAGE_DEADTIME_SOFT
+        )
         self._deadtime_card.set_body(self._deadtime_section)
         corrections_layout.addWidget(self._deadtime_card)
-        self._background_card = CorrectionCard("Background")
+        self._background_card = CorrectionCard(
+            "Background", color=tokens.STAGE_BACKGROUND, soft=tokens.STAGE_BACKGROUND_SOFT
+        )
         self._background_card.set_body(self._background_section)
         corrections_layout.addWidget(self._background_card)
-        self._alpha_card = CorrectionCard("α (detector balance)")
+        self._alpha_card = CorrectionCard(
+            "α (detector balance)", color=tokens.STAGE_ALPHA, soft=tokens.STAGE_ALPHA_SOFT
+        )
         self._alpha_card.set_body(self._alpha_area)
         self._alpha_card.set_body(self._alpha_section)
         corrections_layout.addWidget(self._alpha_card)
@@ -2657,6 +2671,12 @@ class GroupingDialog(QDialog):
         chip.setCheckable(True)
         chip.setAutoDefault(False)
         chip.setDefault(False)
+        # The chip outline wears the stage's identity colour — the same colour
+        # the stage's correction card wears as its stripe — so chip and card
+        # read as one thing; the checked (compare-focused) chip fills the
+        # stage's soft tint.
+        color, soft = _STAGE_COLORS[stage]
+        chip.setStyleSheet(build_stage_chip_qss(color, soft))
         chip.setToolTip("Compare this stage's before/after in the preview below.")
         chip.clicked.connect(lambda _checked=False, s=stage: self._on_pipeline_chip_clicked(s))
         self._pipeline_chips[stage] = chip

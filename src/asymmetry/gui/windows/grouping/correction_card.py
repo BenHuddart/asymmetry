@@ -51,9 +51,24 @@ class CorrectionCard(QFrame):
     #: Emitted with the new expanded state whenever the card toggles.
     toggled = Signal(bool)
 
-    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        title: str,
+        *,
+        color: str = tokens.ACCENT,
+        soft: str = tokens.ACCENT_SOFT,
+        parent: QWidget | None = None,
+    ) -> None:
+        """*color*/*soft* are the stage's identity pair (see ``tokens.STAGE_*``).
+
+        The header wears a *color* stripe at all times — the same colour the
+        stage's pipeline chip wears as its outline — and fills with *soft*
+        while the stage's compare is focused.
+        """
         super().__init__(parent)
         self._title = str(title)
+        self._color = str(color)
+        self._soft = str(soft)
         self._expanded = True
         self._comparing_text: str | None = None
         self._stale = False
@@ -188,24 +203,18 @@ class CorrectionCard(QFrame):
         self._arrow.setText("▾" if self._expanded else "▸")
 
         comparing = self._comparing_text is not None
-        if comparing:
-            header_style = (
-                f"QFrame#{_HEADER_OBJECT_NAME} {{"
-                f" background-color: {tokens.ACCENT_SOFT};"
-                f" border: none;"
-                f" border-left: 3px solid {tokens.ACCENT};"
-                f" border-radius: 3px;"
-                f" }}"
-            )
-        else:
-            header_style = (
-                f"QFrame#{_HEADER_OBJECT_NAME} {{"
-                f" background-color: {tokens.SURFACE_ALT};"
-                f" border: none;"
-                f" border-radius: 3px;"
-                f" }}"
-            )
-        self._header.setStyleSheet(header_style)
+        # The stage-colour stripe is the card's identity and stays on in every
+        # state (matching its pipeline chip's outline); comparing only deepens
+        # the header fill to the stage's soft tint.
+        header_bg = self._soft if comparing else tokens.SURFACE_ALT
+        self._header.setStyleSheet(
+            f"QFrame#{_HEADER_OBJECT_NAME} {{"
+            f" background-color: {header_bg};"
+            f" border: none;"
+            f" border-left: 3px solid {self._color};"
+            f" border-radius: 3px;"
+            f" }}"
+        )
 
         title_color = tokens.WARN if self._stale else tokens.TEXT
         status_color = tokens.WARN if self._stale else tokens.TEXT_MUTED

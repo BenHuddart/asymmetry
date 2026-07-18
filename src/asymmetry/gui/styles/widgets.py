@@ -449,6 +449,26 @@ def build_segmented_cell_qss(*, first: bool, last: bool, padding_h: int = 10) ->
     )
 
 
+def build_stage_chip_qss(color: str, soft: str) -> str:
+    """QSS for a pipeline-stage chip carrying its stage's identity colour.
+
+    The chip's outline wears the stage colour (the same one its correction
+    card's stripe wears, tying chip ↔ card together); the checked (compare-
+    focused) chip fills the stage's soft tint with the stage colour as text.
+    Disabled chips fall back to neutral chrome so an unavailable stage does
+    not shout its colour.
+    """
+    base = "padding: 2px 8px; border-radius: 3px;"
+    return (
+        f"QPushButton {{ {base} border: 1px solid {color};"
+        f" background-color: transparent; color: {tokens.TEXT_MUTED}; }}"
+        f" QPushButton:checked {{ {base} border: 1px solid {color};"
+        f" background-color: {soft}; color: {color}; }}"
+        f" QPushButton:disabled {{ {base} border: 1px solid {tokens.BORDER};"
+        f" background-color: transparent; color: {tokens.TEXT_DISABLED}; }}"
+    )
+
+
 def build_primary_button_qss() -> str:
     """Accent-tinted treatment for a panel's primary action (Run Fit, …).
 

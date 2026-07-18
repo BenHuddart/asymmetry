@@ -51,6 +51,19 @@ AUTO_GROUP_HEADER_SEL_BG = "#d0b3ab"
 AUTO_GROUP_HEADER_FOCUS_BG = "#c29a8f"
 AUTO_GROUP_MEMBER_BG = "#f7efeb"
 
+# ── Correction-stage identity (grouping dialog) ──────────────────────────────
+# One muted hue per correction stage, shared by the pipeline chip's outline and
+# its card's stripe/comparing tint so chip ↔ card read as the same thing at a
+# glance. α wears the primary accent blue (its chip/card were already blue);
+# deadtime and background take a teal and a violet in the same tonal register.
+# Orange stays reserved for staleness (WARN), red for FitSeries identity.
+STAGE_DEADTIME = "#176e66"
+STAGE_DEADTIME_SOFT = "#e2f0ee"
+STAGE_BACKGROUND = "#5f4a87"
+STAGE_BACKGROUND_SOFT = "#ece8f4"
+STAGE_ALPHA = ACCENT
+STAGE_ALPHA_SOFT = ACCENT_SOFT
+
 # ── Semantic states ───────────────────────────────────────────────────────────
 WARN = "#b66815"
 # Amber banner fill + text for a non-blocking "out of date" warning strip (used
