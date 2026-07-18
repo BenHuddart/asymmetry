@@ -38,8 +38,15 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import QSize, QTimer
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.project.profiles import GroupingProfile, resolve_effective_grouping
@@ -165,20 +172,55 @@ class GroupingPreviewPane(QWidget):
         self._figure = None
         self._canvas = None
         self._axes = None
+        self._nav_toolbar = None
+        #: Last drawn result, retained so Home can redraw with fresh autoscale
+        #: without a recompute.
+        self._last_result: _PreviewResult | None = None
+        #: True once the user has panned/zoomed; `_draw` then preserves the
+        #: current view across the debounced redraws instead of autoscaling,
+        #: until Home resets it.
+        self._user_navigated = False
         try:
             from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
-            self._figure, self._canvas = create_canvas(layout="tight")
+            self._figure, self._canvas, self._nav_toolbar = create_canvas(
+                layout="tight", toolbar=True, parent=self
+            )
             self._axes = self._figure.add_subplot(111)
             self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             layout.addWidget(self._canvas, stretch=1)
+            # The full toolbar is far too much chrome for a 200px advisory pane;
+            # keep it hidden and surface just pan/zoom/home as compact buttons on
+            # the status strip (QToolButtons bound to the toolbar's own actions,
+            # so checked-state and mode plumbing stay matplotlib's).
+            self._nav_toolbar.setVisible(False)
+            # A completed pan/zoom drag means the user chose a view — preserve it
+            # across redraws (mere mode toggling without a drag does not).
+            self._canvas.mpl_connect("button_release_event", self._on_canvas_button_release)
         except ImportError:
             fallback = QLabel("matplotlib is not installed — preview unavailable.")
             fallback.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
             fallback.setWordWrap(True)
             layout.addWidget(fallback, stretch=1)
 
-        layout.addWidget(self._status)
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(4)
+        status_row.addWidget(self._status, stretch=1)
+        if self._nav_toolbar is not None:
+            for key in ("pan", "zoom", "home"):
+                action = self._nav_toolbar._actions.get(key)
+                if action is None:
+                    continue
+                button = QToolButton(self)
+                button.setDefaultAction(action)
+                button.setAutoRaise(True)
+                button.setIconSize(QSize(14, 14))
+                if key == "home":
+                    # Home = back to the solid-only autoscale contract.
+                    action.triggered.connect(self._on_home_triggered)
+                status_row.addWidget(button)
+        layout.addLayout(status_row)
 
     # -- public API ------------------------------------------------------
 
@@ -318,7 +360,22 @@ class GroupingPreviewPane(QWidget):
             return
         if result.generation != self._generation:
             return  # superseded by a newer edit
+        self._last_result = result
         self._draw(result)
+
+    # -- pan/zoom --------------------------------------------------------
+
+    def _on_canvas_button_release(self, event: object) -> None:
+        """A drag finished while pan/zoom was engaged: the user owns the view now."""
+        toolbar = self._nav_toolbar
+        if toolbar is not None and str(getattr(toolbar, "mode", "")):
+            self._user_navigated = True
+
+    def _on_home_triggered(self, *args: object) -> None:
+        """Home: hand the view back to the solid-only autoscale contract."""
+        self._user_navigated = False
+        if self._last_result is not None:
+            self._draw(self._last_result)
 
     def _on_error(self, message: str) -> None:
         self._dispatch_next_after_completion()
@@ -336,10 +393,14 @@ class GroupingPreviewPane(QWidget):
         comparison is named by the pager label and the focused correction card,
         and the ghost itself is labelled inline at its rightmost in-view sample
         (clamped just inside the top/bottom limit when the ghost runs off-scale,
-        so an off-scale ghost is still named).
+        so an off-scale ghost is still named). Once the user pans/zooms, their
+        view is preserved verbatim across redraws until Home resets it.
         """
         if self._axes is None or self._canvas is None:
             return
+        # A user-chosen pan/zoom view survives the debounced redraws — an edit
+        # mid-inspection must not yank the axes back — until Home resets it.
+        preserved = (self._axes.get_xlim(), self._axes.get_ylim()) if self._user_navigated else None
         self._axes.clear()
         if result.time.size == 0:
             self._axes.text(
@@ -379,8 +440,13 @@ class GroupingPreviewPane(QWidget):
             )
             self._axes.axhline(0.0, color=tokens.TEXT_MUTED, linewidth=0.5, alpha=0.5)
             # Solid-only autoscale, set explicitly AFTER plotting so neither the
-            # ghost nor matplotlib's own autoscale can widen the range.
-            limits = _solid_ylimits(result.asymmetry, result.error)
+            # ghost nor matplotlib's own autoscale can widen the range — unless
+            # the user panned/zoomed, in which case their view wins verbatim.
+            if preserved is not None:
+                self._axes.set_xlim(*preserved[0])
+                limits: tuple[float, float] | None = preserved[1]
+            else:
+                limits = _solid_ylimits(result.asymmetry, result.error)
             if limits is not None:
                 self._axes.set_ylim(*limits)
                 if result.overlay and result.baseline is not None and result.baseline_label:

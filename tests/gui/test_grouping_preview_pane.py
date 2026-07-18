@@ -941,3 +941,69 @@ def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> 
         assert curve.size <= _MAX_PREVIEW_POINTS
     finally:
         pane.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# Pan/zoom: compact nav buttons + view preservation across redraws
+# --------------------------------------------------------------------------- #
+
+
+def test_nav_toolbar_hidden_with_compact_buttons(qapp: QApplication) -> None:
+    """The full matplotlib toolbar stays hidden; pan/zoom/home ride the status row."""
+    pane = GroupingPreviewPane()
+    try:
+        assert pane._nav_toolbar is not None
+        assert pane._nav_toolbar.isHidden()
+        from PySide6.QtWidgets import QToolButton
+
+        actions = {b.defaultAction() for b in pane.findChildren(QToolButton)}
+        expected = {pane._nav_toolbar._actions[k] for k in ("pan", "zoom", "home")}
+        assert expected <= actions
+    finally:
+        pane.shutdown()
+
+
+def test_user_view_survives_redraw_until_home(qapp: QApplication) -> None:
+    """A pan/zoomed view is preserved verbatim across redraws; Home resets it.
+
+    The preview redraws on every debounced edit — yanking the axes back to
+    autoscale mid-inspection would make pan/zoom useless. Once the user has
+    navigated, `_draw` reapplies their limits; Home returns to the solid-only
+    autoscale contract (redrawn from the retained last result).
+    """
+    pane = GroupingPreviewPane()
+    try:
+        result = _draw_result(pane)
+        auto_ylim = pane._axes.get_ylim()
+
+        # Simulate a completed pan/zoom drag: user takes ownership of the view.
+        pane._user_navigated = True
+        pane._axes.set_xlim(0.2, 0.4)
+        pane._axes.set_ylim(-0.5, 0.5)
+
+        _draw_result(pane)  # a debounced redraw lands
+        assert pane._axes.get_xlim() == pytest.approx((0.2, 0.4))
+        assert pane._axes.get_ylim() == pytest.approx((-0.5, 0.5))
+
+        pane._last_result = result
+        pane._on_home_triggered()
+        assert not pane._user_navigated
+        assert pane._axes.get_ylim() == pytest.approx(auto_ylim)
+    finally:
+        pane.shutdown()
+
+
+def test_drag_release_only_locks_view_while_nav_mode_active(qapp: QApplication) -> None:
+    """A plain click on the canvas (no pan/zoom mode) must not lock the view."""
+    pane = GroupingPreviewPane()
+    try:
+        assert not pane._user_navigated
+        pane._on_canvas_button_release(object())  # toolbar mode == "" (inactive)
+        assert not pane._user_navigated
+
+        pane._nav_toolbar.pan()  # engage pan mode
+        pane._on_canvas_button_release(object())
+        assert pane._user_navigated
+        pane._nav_toolbar.pan()  # disengage
+    finally:
+        pane.shutdown()
