@@ -355,6 +355,28 @@ def test_both_columns_fit_without_scroll_at_default_size(qapp: QApplication) -> 
     assert dialog.size().height() == 680
     assert dialog._deadtime_section._current_mode() == "off"
 
+    # The budget is asserted on *settled* geometry: scrollbar ranges fire
+    # mid-layout (the pill's own settle pass exists for exactly this), and on a
+    # loaded xdist worker a single processEvents can leave queued relayout
+    # passes pending — a transiently non-zero range there is not a scrolling
+    # column. Pump until settled, then hard-assert so a real overflow still
+    # fails with the actual scrollbar values.
+    def _settled() -> bool:
+        return (
+            all(
+                s.verticalScrollBar().maximum() == 0 and s.horizontalScrollBar().maximum() == 0
+                for s in (dialog._grouping_scroll, dialog._corrections_scroll)
+            )
+            and not dialog._corrections_overflow.isVisible()
+            and not dialog._grouping_overflow.isVisible()
+        )
+
+    if not _settled():
+        try:
+            _wait_until(_settled, timeout_ms=5_000)
+        except AssertionError:
+            pass  # genuinely over budget — the asserts below name the culprit
+
     for scroll in (dialog._grouping_scroll, dialog._corrections_scroll):
         assert scroll.verticalScrollBar().maximum() == 0
         assert scroll.horizontalScrollBar().maximum() == 0

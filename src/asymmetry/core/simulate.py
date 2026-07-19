@@ -1529,6 +1529,7 @@ def _reduce_histograms(
         alpha=fb.alpha,
         first_good_bin=first_good,
         last_good_bin=last_good,
+        beta=fb.beta,
     )
     return time, asymmetry * 100.0, error * 100.0
 

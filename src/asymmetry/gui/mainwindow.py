@@ -478,6 +478,9 @@ REDUCTION_SETTING_KEYS = (
     "binning_mode",
     "bin0_us",
     "bin10_us",
+    # The intrinsic-asymmetry balance rides the copy-or-remove sync: a payload
+    # without the key (beta = 1) removes any stale value from the run.
+    "beta",
 )
 DEADTIME_SETTING_KEYS = (
     "deadtime_manual_us",
@@ -5339,6 +5342,10 @@ class MainWindow(QMainWindow):
         resolves the facility string off the run/dataset metadata and binds the
         ``reference_run`` background resolver to the loaded-dataset registry, so
         the numerics stay shared with the grouping window's preview pane.
+
+        ``alpha`` is explicit because the vector-projection paths substitute a
+        per-axis value; ``beta`` is scalar-only and is read leniently from the
+        grouping payload here (matching ``group_forward_backward``).
         """
         facility = str(
             run.metadata.get(
@@ -5346,6 +5353,12 @@ class MainWindow(QMainWindow):
                 dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
             )
         )
+        try:
+            beta = float(grouping.get("beta", 1.0))
+        except (TypeError, ValueError):
+            beta = 1.0
+        if not np.isfinite(beta) or beta <= 0.0:
+            beta = 1.0
         result = reduce_grouped_asymmetry(
             histograms=histograms,
             grouping=grouping,
@@ -5357,6 +5370,7 @@ class MainWindow(QMainWindow):
             use_background=use_background,
             facility=facility,
             reference_resolver=lambda g: self._resolve_background_reference(g, run),
+            beta=beta,
         )
         return (
             result.time,
@@ -5449,19 +5463,25 @@ class MainWindow(QMainWindow):
             alpha = float(grouping.get("alpha", 1.0))
         except (TypeError, ValueError):
             alpha = 1.0
+        try:
+            beta = float(grouping.get("beta", 1.0))
+        except (TypeError, ValueError):
+            beta = 1.0
         deadtime_mode = str(grouping.get("deadtime_mode", "off")).strip().lower() or "off"
         period_index = 1 if period_mode == str(PeriodMode.GREEN) else 0
 
         # Recipe key. The grouping digest covers groups, exclusions, deadtime,
         # background, good-bin window and the base bunching factor; the reduction
-        # additionally reads alpha, the forward/backward group ids, the deadtime
-        # mode, per-detector t0 overrides, good_frames and the period selection —
-        # none captured by the digest — plus the display multiplier ``extra``.
+        # additionally reads alpha/beta, the forward/backward group ids, the
+        # deadtime mode, per-detector t0 overrides, good_frames and the period
+        # selection — none captured by the digest — plus the display multiplier
+        # ``extra``.
         key = (
             fourier_grouping_digest(run),
             int(forward_gid),
             int(backward_gid),
             round(float(alpha), 12),
+            round(float(beta), 12),
             deadtime_mode,
             int(base_factor),
             int(extra),

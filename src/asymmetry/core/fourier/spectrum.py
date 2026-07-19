@@ -347,8 +347,9 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     group_forward_backward` → :func:`asymmetry.core.transform.rebin.
     binned_fb_asymmetry`) consumes and the grouped path does not:
     ``forward_group``/``backward_group`` (with the consumer's 1/2 defaults),
-    ``alpha`` (normalised exactly as the consumer does — degenerate values fall
-    back to 1.0), per-detector t0 overrides
+    ``alpha`` and ``beta`` (normalised exactly as the consumer does —
+    degenerate values fall back to 1.0; ``beta`` digested only when ≠ 1 so
+    pre-beta recorded digests stay valid), per-detector t0 overrides
     (``effective_detector_t0_bins``, resolved against the histogram count like
     :func:`detector_t0_overrides`), the resolved ``binning_mode`` (plus
     ``bin0_us``/``bin10_us`` when a non-fixed mode makes them live), and the
@@ -427,8 +428,8 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         backward_group = _digest_int(grouping.get("backward_group"))
         payload["fb_forward_group"] = forward_group if forward_group is not None else 1
         payload["fb_backward_group"] = backward_group if backward_group is not None else 2
-        # Normalise alpha exactly as group_forward_backward does: unparseable,
-        # non-finite or non-positive values all fall back to 1.0.
+        # Normalise alpha/beta exactly as group_forward_backward does:
+        # unparseable, non-finite or non-positive values all fall back to 1.0.
         try:
             alpha = float(grouping.get("alpha", 1.0))
         except (TypeError, ValueError):
@@ -436,6 +437,15 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         if not math.isfinite(alpha) or alpha <= 0.0:
             alpha = 1.0
         payload["fb_alpha"] = alpha
+        try:
+            beta = float(grouping.get("beta", 1.0))
+        except (TypeError, ValueError):
+            beta = 1.0
+        if not math.isfinite(beta) or beta <= 0.0:
+            beta = 1.0
+        if beta != 1.0:
+            # Emitted only when active so pre-beta recorded digests stay valid.
+            payload["fb_beta"] = beta
         overrides = detector_t0_overrides(grouping, len(run.histograms))
         if overrides is not None:
             payload["fb_detector_t0_bins"] = overrides

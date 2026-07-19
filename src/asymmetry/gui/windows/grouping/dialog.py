@@ -108,6 +108,10 @@ from asymmetry.gui.windows.grouping.background_section import (
     BackgroundSectionWidget,
     background_status_text,
 )
+from asymmetry.gui.windows.grouping.beta_section import (
+    BetaSectionWidget,
+    beta_status_text,
+)
 from asymmetry.gui.windows.grouping.correction_card import CorrectionCard
 from asymmetry.gui.windows.grouping.deadtime_section import (
     DeadtimeSectionWidget,
@@ -132,13 +136,14 @@ from asymmetry.gui.windows.grouping.scope_panel import ScopePanel
 
 #: Compare-pager cycle order (`_step_compare`/`_sync_compare_pager`). ``None``
 #: ("off") is always available; the rest are gated by `_compare_stage_available`.
-_COMPARE_CYCLE: tuple[str | None, ...] = (None, "deadtime", "background", "alpha", "raw")
+_COMPARE_CYCLE: tuple[str | None, ...] = (None, "deadtime", "background", "alpha", "beta", "raw")
 
 #: Stage identity colours (chip outline = card stripe; see ``tokens.STAGE_*``).
 _STAGE_COLORS: dict[str, tuple[str, str]] = {
     "deadtime": (tokens.STAGE_DEADTIME, tokens.STAGE_DEADTIME_SOFT),
     "background": (tokens.STAGE_BACKGROUND, tokens.STAGE_BACKGROUND_SOFT),
     "alpha": (tokens.STAGE_ALPHA, tokens.STAGE_ALPHA_SOFT),
+    "beta": (tokens.STAGE_BETA, tokens.STAGE_BETA_SOFT),
 }
 
 #: Pager label text per focused stage (see `_sync_compare_pager`).
@@ -146,6 +151,7 @@ _COMPARE_STAGE_LABELS: dict[str, str] = {
     "deadtime": "without deadtime",
     "background": "without background",
     "alpha": "α = 1",
+    "beta": "β = 1",
     "raw": "vs raw",
 }
 
@@ -155,6 +161,7 @@ _CARD_COMPARING_TEXTS: dict[str, str] = {
     "deadtime": "comparing: without deadtime",
     "background": "comparing: without background",
     "alpha": "comparing: α = 1 ghost",
+    "beta": "comparing: β = 1 ghost",
 }
 
 #: Card status = the pipeline-chip summary minus the prefix that would
@@ -163,6 +170,7 @@ _CARD_STATUS_PREFIXES: dict[str, str] = {
     "deadtime": "Deadtime: ",
     "background": "Background: ",
     "alpha": "α = ",
+    "beta": "β = ",
 }
 
 
@@ -771,6 +779,15 @@ class GroupingDialog(QDialog):
         alpha_area_form.addRow(self._vector_alpha_widget)
         alpha_area_layout.addLayout(alpha_area_form)
 
+        # β (intrinsic-asymmetry balance): a fixed user-entered scalar applied
+        # with α in the same asymmetry formula (A = (F − αB)/(βF + αB)).
+        # Scalar-only — in vector mode the whole card is hidden and the payload
+        # omits the key, so per-projection reductions stay at β = 1
+        # (docs/porting/beta-correction/).
+        self._beta_section = BetaSectionWidget()
+        self._beta_section.set_value(grouping.get("beta", 1.0))
+        self._beta_section.changed.connect(self._on_beta_changed)
+
         # Kept as an attribute: the Grouping-column overflow pill uses this row as
         # the "t0 and binning" landmark.
         self._t0_row_widget = QWidget()
@@ -890,10 +907,16 @@ class GroupingDialog(QDialog):
         self._alpha_card.set_body(self._alpha_area)
         self._alpha_card.set_body(self._alpha_section)
         corrections_layout.addWidget(self._alpha_card)
+        self._beta_card = CorrectionCard(
+            "β (asymmetry balance)", color=tokens.STAGE_BETA, soft=tokens.STAGE_BETA_SOFT
+        )
+        self._beta_card.set_body(self._beta_section)
+        corrections_layout.addWidget(self._beta_card)
         self._correction_cards: dict[str, CorrectionCard] = {
             "deadtime": self._deadtime_card,
             "background": self._background_card,
             "alpha": self._alpha_card,
+            "beta": self._beta_card,
         }
         corrections_layout.addStretch()
         self._corrections_scroll = QScrollArea()
@@ -2083,6 +2106,7 @@ class GroupingDialog(QDialog):
         )
         self._refresh_group_combo_items(forward_gid=forward_gid, backward_gid=backward_gid)
         self._alpha_spin.setValue(float(grouping.get("alpha", 1.0)))
+        self._beta_section.set_value(grouping.get("beta", 1.0))
         self._set_alpha_method(str(grouping.get("alpha_method", "diamagnetic")))
         self._alpha_estimate_state.clear()
         self._alpha_correction_digest = None
@@ -2445,6 +2469,17 @@ class GroupingDialog(QDialog):
         self._refresh_preview()
         self._refresh_alpha_staleness()
 
+    def _on_beta_changed(self) -> None:
+        """Fold an inline β edit back into the draft + preview.
+
+        β sits after α in the compare cycle and never affects the α estimate
+        (it is invisible to count ratios), so no staleness refresh is needed —
+        only the chip/card summaries and the preview (``_refresh_preview``
+        syncs the compare surfaces on its way in).
+        """
+        self._mark_dirty()
+        self._refresh_preview()
+
     def _background_reference_candidates(self) -> list[BackgroundReferenceRunCandidate]:
         """Reference-run candidates for the background picker (excludes the preview run)."""
         return [
@@ -2657,6 +2692,14 @@ class GroupingDialog(QDialog):
         alpha_row.addWidget(self._pipeline_arrow())
         alpha_row.addWidget(self._make_pipeline_chip("alpha"))
         row.addWidget(self._pipeline_alpha_widget)
+        # β is scalar-only, so its chip hides with α's in vector mode.
+        self._pipeline_beta_widget = QWidget()
+        beta_row = QHBoxLayout(self._pipeline_beta_widget)
+        beta_row.setContentsMargins(0, 0, 0, 0)
+        beta_row.setSpacing(6)
+        beta_row.addWidget(self._pipeline_arrow())
+        beta_row.addWidget(self._make_pipeline_chip("beta"))
+        row.addWidget(self._pipeline_beta_widget)
         row.addStretch()
         return widget
 
@@ -2711,6 +2754,8 @@ class GroupingDialog(QDialog):
                 )
         if hasattr(self, "_pipeline_alpha_widget"):
             self._pipeline_alpha_widget.setVisible(not bool(self._vector_axis_pairs))
+        if hasattr(self, "_pipeline_beta_widget"):
+            self._pipeline_beta_widget.setVisible(not bool(self._vector_axis_pairs))
         self._sync_correction_cards()
 
     def _sync_correction_cards(self) -> None:
@@ -2753,6 +2798,10 @@ class GroupingDialog(QDialog):
                 or self._alpha_is_calibrated()
                 or abs(float(self._alpha_spin.value()) - 1.0) > 1e-9
             )
+        if stage == "beta":
+            # Scalar-only: never active in vector mode (the card is hidden and
+            # the payload omits the key there).
+            return not bool(self._vector_axis_pairs) and self._beta_section.is_active()
         return False
 
     def _auto_expand_active_cards(self) -> None:
@@ -2774,6 +2823,8 @@ class GroupingDialog(QDialog):
         """The one-line chip summary for *stage* (reuses the section formatters)."""
         if stage == "deadtime":
             return deadtime_status_text(self._deadtime_section.get_policy())
+        if stage == "beta":
+            return beta_status_text(self._beta_section.value())
         if stage == "background":
             details = (
                 {"background_run": self._background_run_payload}
@@ -2801,11 +2852,17 @@ class GroupingDialog(QDialog):
         display name and is always included — the α card stays in this column in
         vector mode too, where the per-projection table lives in its body.
         """
-        return [
+        sections: list[tuple[str, QWidget]] = [
             ("Deadtime", self._deadtime_card),
             ("Background", self._background_card),
             ("α (detector balance)", self._alpha_card),
         ]
+        # The β card hides in vector mode (scalar-only), so it is a landmark
+        # only while visible — isHidden(), not isVisibleTo(), for the same
+        # focus-independence reason as the Periods landmark.
+        if not self._beta_card.isHidden():
+            sections.append(("β (asymmetry balance)", self._beta_card))
+        return sections
 
     def _grouping_overflow_sections(self) -> list[tuple[str, QWidget]]:
         """Grouping-column landmarks for the overflow pill — coarse, top-to-bottom."""
@@ -2955,6 +3012,7 @@ class GroupingDialog(QDialog):
     def _compare_stage_available(self, stage: str) -> bool:
         """Whether *stage* has a before/after to show (enable-when-active)."""
         alpha_off_unity = abs(float(self._alpha_spin.value()) - 1.0) > 1e-9
+        beta_off_unity = not bool(self._vector_axis_pairs) and self._beta_section.is_active()
         if stage == "deadtime":
             return self._current_deadtime_mode() != "off"
         if stage == "background":
@@ -2965,11 +3023,15 @@ class GroupingDialog(QDialog):
             if bool(self._vector_axis_pairs):
                 return False
             return self._alpha_is_calibrated() or alpha_off_unity
+        if stage == "beta":
+            # Scalar-only, like the α compare: never available in vector mode.
+            return beta_off_unity
         if stage == "raw":
             return (
                 self._current_deadtime_mode() != "off"
                 or self._current_background_mode() != "none"
                 or alpha_off_unity
+                or beta_off_unity
             )
         return False
 
@@ -3351,6 +3413,11 @@ class GroupingDialog(QDialog):
         if hasattr(self, "_alpha_section"):
             self._alpha_section.setVisible(not vector_mode)
             self._sync_compare_toggles()
+        # β is scalar-only: the whole card hides in vector mode and the payload
+        # omits the key there (per-projection reductions stay at β = 1). The
+        # widget keeps its value so leaving vector mode restores it.
+        if hasattr(self, "_beta_card"):
+            self._beta_card.setVisible(not vector_mode)
 
         if vector_mode:
             self._update_vector_alpha_controls()
@@ -4362,6 +4429,13 @@ class GroupingDialog(QDialog):
                 else {}
             )
             | alpha_provenance
+            # β: scalar-only, emitted only when active outside vector mode so a
+            # default payload stays byte-identical to a pre-β one.
+            | (
+                {"beta": float(self._beta_section.value())}
+                if not self._vector_axis_pairs and self._beta_section.is_active()
+                else {}
+            )
             | (self._vector_alpha_payload() if canonical else {})
             # Always emit projections (empty when none) so the apply path can
             # distinguish "no projections" from "key omitted / don't touch".

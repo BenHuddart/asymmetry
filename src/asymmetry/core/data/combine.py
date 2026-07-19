@@ -237,6 +237,7 @@ def reduce_combined_run(run: Run) -> MuonDataset:
         np.sqrt(np.maximum(var_fb.forward[:n], 0.0)),
         np.sqrt(np.maximum(var_fb.backward[:n], 0.0)),
         fb.alpha,
+        fb.beta,
     )
     asymmetry = asymmetry * 100.0
     error = error * 100.0
