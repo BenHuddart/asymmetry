@@ -6,6 +6,64 @@ subsystems or days.
 
 ## Active
 
+### Multiple Grouping Profiles per Project (Explicit Run Assignment)
+
+Status: design settled with maintainer (2026-07-19); delivered as a single PR
+on a feature branch, with maintainer review at each milestone below before
+the next begins
+
+Generalise the grouping model from "one active profile per fingerprint +
+per-run release" to multiple concurrently-used profiles with an explicit
+run→profile assignment. Typical use: several samples in one project, each
+with its own background/α/deadtime policies, compared side by side. The
+existing `GroupingProfile` data model, `resolve_effective_grouping`, and the
+digest/caching layer are reused unchanged — the work is concentrated in the
+assignment/selection layer (`active_profile_for_run`, the `active` flag,
+the dataset persistence branch, `ScopePanel`).
+
+Settled decisions:
+
+- New runs auto-assign to a per-fingerprint **default profile** (today's
+  `active` flag, repurposed as default-for-new-runs); users reassign
+  manually. Metadata-based auto-assign rules are deferred.
+- Per-run overrides stay **full snapshots** but additionally record their
+  base profile, so Reattach has an explicit target and the browser marker
+  can name it. Delta-on-profile overrides were considered and rejected.
+- Assignment UX lives in both the grouping window (ScopePanel "Assign
+  to ▸" beside Release/Reattach) and the Data Browser (context menu,
+  multi-select).
+
+Milestones (each reviewed before the next begins):
+
+1. **Core assignment model + schema v17** — every dataset persists an
+   explicit `profile` name (released runs keep `profile` + full
+   `grouping_overrides`); `active` reinterpreted as default-for-new-runs;
+   assignment-aware resolution replaces implicit active-profile lookup at
+   load/save call sites; profile rename rewrites dataset refs; deleting a
+   profile with assigned runs is guarded; v16→v17 migration stamps
+   inherited runs with their active profile's name (lossless).
+2. **Grouping window** — profile-aware ScopePanel (assigned-profile column,
+   "Assign to ▸"), editing-target strip and Reattach target the assigned
+   profile, default-profile star in the selector, delete-with-runs
+   reassignment prompt; Apply loop targets runs assigned to the edited
+   profile.
+3. **Data Browser + docs** — context-menu assignment with multi-select, a
+   per-profile marker beside the existing ⊗ override marker, docs pass
+   (`detector_grouping.rst`, `project_files.rst`, screenshot scenario),
+   changelog.
+
+Acceptance criteria:
+
+- Schema v17: every dataset carries an explicit `profile`; v16 projects
+  migrate losslessly and single-profile projects behave identically.
+- Multiple profiles per fingerprint are usable concurrently; each run
+  resolves through its assigned profile; grouping digest / reduction-cache
+  behaviour is unchanged (assignment still resolves to `run.grouping`).
+- Released runs reattach to their recorded base profile; renaming a
+  profile rewrites all dataset refs in the same operation; deleting a
+  profile with assigned runs prompts for reassignment.
+- Docs and screenshot scenarios updated; `harness validate` green.
+
 ### Corrections-tab UX follow-ups (grouping dialog)
 
 Status: complete — all three milestones (adaptive deadtime section →

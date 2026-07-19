@@ -70,6 +70,7 @@ import json
 import math
 import sys
 import uuid
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -115,12 +116,14 @@ from PySide6.QtWidgets import (
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import period_count, period_labels
+from asymmetry.core.project.profiles import profile_fingerprint_for_run
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.profile_colors import display_profile_color
 from asymmetry.gui.utils.series_scoring import score_series_path
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
@@ -603,6 +606,9 @@ class DataBrowserPanel(QWidget):
     group_selected = Signal(str)
     get_info_requested = Signal(int)
     grouping_requested = Signal(int)
+    #: (run_numbers, profile_name) — assign the runs to the named grouping
+    #: profile (schema v17); MainWindow re-resolves and records the change.
+    assign_profile_requested = Signal(object, str)
     # Emitted when the set or labels of extra columns change (add/remove/rename),
     # so the host can refresh the custom-column options offered as the plot label
     # and the parameter-trend x-axis.
@@ -716,6 +722,11 @@ class DataBrowserPanel(QWidget):
         #: restore, kept until the registry is (re)synced so a pre-registry
         #: project still shows its groups (see :meth:`sync_groups_from_project_model`).
         self._legacy_group_seed: list[dict] = []
+        #: Provider returning the project's live grouping-profile list
+        #: (injected by MainWindow via :meth:`set_grouping_profile_provider`).
+        #: Drives the per-run profile marker and the Assign-Grouping-Profile
+        #: context menu; ``None`` (or a single profile) keeps the pre-v17 UX.
+        self._grouping_profile_provider: Callable[[], list] | None = None
 
         self._column_filters: dict[int, set[str]] = {}
         self._extra_columns: list[ExtraColumn] = []
@@ -1709,11 +1720,38 @@ class DataBrowserPanel(QWidget):
         # Custom-grouping marker: a run released from its fingerprint's grouping
         # profile carries its own per-run override, flagged in metadata. Show a
         # small ⊗ suffix + tooltip so it reads as diverging from the profile.
-        if meta.get("grouping_overrides"):
+        released = bool(meta.get("grouping_overrides"))
+        if released:
             run_item.setText(f"{run_item.text()} ⊗")
-            override_tip = "Custom grouping — this run is released from its grouping profile."
+            base_profile = meta.get("grouping_profile")
+            override_tip = "Custom grouping — this run is released from its grouping profile" + (
+                f" (based on '{base_profile}')." if base_profile else "."
+            )
             existing_tip = run_item.toolTip()
             run_item.setToolTip(f"{existing_tip}\n{override_tip}" if existing_tip else override_tip)
+            # The diverged state outranks sample identity: amber, everywhere.
+            run_item.setForeground(QColor(tokens.WARN))
+
+        # Profile identity (schema v17): when the run's fingerprint has
+        # several grouping profiles in the project (e.g. one per sample), the
+        # run number wears its assigned profile's identity colour — the same
+        # colour the grouping window's scope rows, editing strip, and selector
+        # swatches use — with the tooltip naming the profile. Single-profile
+        # projects look unchanged. The profile colour outranks the derived-run
+        # accent (the provenance stays in the tooltip); released runs stay
+        # amber (above).
+        run_profiles, assigned_profile = self._grouping_profiles_for_run(dataset)
+        if run_profiles and assigned_profile:
+            profile_tip = f"Grouping profile: {assigned_profile}"
+            existing_tip = run_item.toolTip()
+            run_item.setToolTip(f"{existing_tip}\n{profile_tip}" if existing_tip else profile_tip)
+            if not released:
+                assigned_obj = next((p for p in run_profiles if p.name == assigned_profile), None)
+                if assigned_obj is not None:
+                    # None for the ★ default — its runs stay plain black.
+                    color = display_profile_color(assigned_obj, run_profiles)
+                    if color:
+                        run_item.setForeground(QColor(color))
 
         # Copy-row marker (D2): a run under a non-primary group gets a circled
         # digit and an "Also in: …" tooltip naming its other memberships.
@@ -2932,6 +2970,39 @@ class DataBrowserPanel(QWidget):
     def get_dataset(self, run_number: int) -> MuonDataset | None:
         return self._datasets.get(run_number)
 
+    def set_grouping_profile_provider(self, provider: Callable[[], list] | None) -> None:
+        """Inject a callable returning the project's live grouping profiles.
+
+        The panel derives the per-run profile marker and the
+        Assign-Grouping-Profile context menu from it; a provider (rather than
+        a copied list) keeps the panel current when MainWindow rebuilds the
+        profile list on Apply.
+        """
+        self._grouping_profile_provider = provider
+
+    def _grouping_profiles_for_run(self, dataset) -> tuple[list, str | None]:
+        """The run's fingerprint profiles plus its resolved assigned name.
+
+        Returns ``([], None)`` when no provider is set, the run is missing, or
+        the fingerprint has fewer than two profiles — the single-profile UX
+        shows no marker and offers no assign menu.
+        """
+        provider = self._grouping_profile_provider
+        run = getattr(dataset, "run", None)
+        if provider is None or run is None:
+            return [], None
+        fingerprint = profile_fingerprint_for_run(run)
+        matching = [p for p in (provider() or []) if p.fingerprint.matches(fingerprint)]
+        if len(matching) < 2:
+            return [], None
+        names = [p.name for p in matching]
+        meta = getattr(dataset, "metadata", None)
+        assigned = meta.get("grouping_profile") if isinstance(meta, dict) else None
+        if assigned not in names:
+            # No (or stale) recorded assignment: the run follows the default.
+            assigned = next((p.name for p in matching if p.active), names[0])
+        return matching, str(assigned)
+
     def set_highlighted_runs(self, run_numbers: set[int] | None) -> None:
         """Tint *run_numbers* with the FitSeries membership indicator (red tint).
 
@@ -3597,6 +3668,9 @@ class DataBrowserPanel(QWidget):
             send_menu = menu.addMenu("Send to Group")
             self._populate_send_to_group_menu(send_menu, expanded_selected_runs)
 
+        if regular_runs:
+            self._append_assign_profile_menu(menu, regular_runs)
+
         if selected_memberships:
             label = "Remove from Group" if len(selected_memberships) == 1 else "Remove from Groups"
             menu.addAction(label, self._remove_selected_from_group)
@@ -3625,6 +3699,39 @@ class DataBrowserPanel(QWidget):
         label = "Remove Entry" if len(keys) == 1 else "Remove Selected Entries"
         menu.addAction(label, self._remove_selected_entries)
         return menu
+
+    def _append_assign_profile_menu(self, menu: QMenu, selected_runs: list[int]) -> None:
+        """Add the Assign-Grouping-Profile submenu when it is meaningful.
+
+        Shown when every selected run offers the same profile list (one shared
+        fingerprint with at least two profiles). The runs' current assignment
+        is checked when uniform; choosing an entry emits
+        :attr:`assign_profile_requested` for MainWindow to reconcile.
+        """
+        datasets = [self._datasets.get(int(rn)) for rn in selected_runs]
+        datasets = [ds for ds in datasets if ds is not None and ds.run is not None]
+        if not datasets:
+            return
+        per_run = [self._grouping_profiles_for_run(ds) for ds in datasets]
+        first_profiles, _first_assigned = per_run[0]
+        if not first_profiles:
+            return
+        first_names = [p.name for p in first_profiles]
+        if any([p.name for p in profiles] != first_names for profiles, _a in per_run[1:]):
+            return  # mixed fingerprints — no shared profile list to offer
+        assigned_names = {assigned for _profiles, assigned in per_run}
+        uniform = next(iter(assigned_names)) if len(assigned_names) == 1 else None
+        submenu = menu.addMenu("Assign Grouping Profile")
+        runs = [int(ds.run_number) for ds in datasets]
+        for name in first_names:
+            action = submenu.addAction(name)
+            action.setCheckable(True)
+            action.setChecked(name == uniform)
+            action.triggered.connect(
+                lambda _checked=False, n=name, rns=list(runs): self.assign_profile_requested.emit(
+                    rns, n
+                )
+            )
 
     def _populate_send_to_group_menu(self, send_menu: QMenu, selected_runs: list[int]) -> None:
         """Populate Send-to-Group submenu with current groups."""

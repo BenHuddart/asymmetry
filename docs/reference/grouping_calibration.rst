@@ -32,7 +32,8 @@ The Grouping window
 
    The Grouping window: the scope panel (the selector) on the left, the
    :math:`\alpha`/deadtime/background status rows in the centre, and the live
-   forward/backward asymmetry preview along the bottom.
+   forward/backward asymmetry preview along the bottom. Two sample profiles
+   are in concurrent use, with one run following each.
 
 Open it with the **Grouping** button on the main toolbar (or
 **Analysis → Grouping…**). It edits one **profile** at a time — the named,
@@ -44,16 +45,16 @@ settings out to whichever runs happen to be checked:
   For a project with more than one instrument loaded, an **Instrument**
   switcher beside it chooses which instrument's profile the window edits.
 * **Scope panel — the selector.** Headed **Runs of this instrument**, it lists
-  every run of the selected instrument, each tagged **inherits <profile>** or
+  every run of the selected instrument, each tagged **follows <profile>** or
   **override**. The run you *select* here is the one the form previews and
   edits: selecting a run shows its effective settings, drives the live preview,
   and seeds the status rows with its own per-run facts (:math:`t_0`, good-bin
   window, file deadtime). **Release** / **Reattach** move a run between
-  inheriting the profile and carrying its own override (see
-  `Scope: inheriting and releasing`_ below).
+  following the profile and carrying its own override (see
+  `Scope: following, releasing, and assigning`_ below).
 * **Editing-target strip** — a strip above the form that always names what your
   edits currently apply to: "Editing profile '<name>' — applies to N runs"
-  while an inheriting run is selected, or "Editing override for run N — this
+  while a following run is selected, or "Editing override for run N — this
   run only" while an overridden run is selected. The same tint highlights the
   selected scope row, so the two editing modes are never confused.
 * **Forward Group** / **Backward Group** — the two groups that enter the
@@ -80,17 +81,17 @@ settings out to whichever runs happen to be checked:
   :math:`\alpha`, binning, deadtime, or background, so the balancing effect of
   a change is visible immediately rather than only after Apply.
 
-The editing target simply **follows the selected run**: pick an inheriting run
+The editing target simply **follows the selected run**: pick a following run
 and your edits go to the profile draft; pick a released run and they go to that
 run's own override draft, which profile edits never touch. Override drafts
 **accumulate** across the session — switching selection between the profile and
 several overrides never prompts, and each keeps its own in-progress edits.
 
 Press **Apply** to commit everything you have changed in one pass — the profile
-to every inheriting run, plus each edited override to its own run. When an
+to every run following the profile, plus each edited override to its own run. When an
 override has pending edits the button names the blast radius, e.g.
 **"Apply (profile + 2 overrides)"**, and the **LOG** reports how many
-inheriting runs the profile reached and which overrides were updated, for
+following runs the profile reached and which overrides were updated, for
 example::
 
    Applied profile 'Silver TF' to 5 dataset(s); 1 override(s) untouched.
@@ -100,27 +101,31 @@ and lists exactly what would be lost. For the full editing model — the
 per-target draft accumulation and the close guard — see
 :doc:`detector_grouping`.
 
-Scope: inheriting and releasing
---------------------------------
+Scope: following, releasing, and assigning
+-------------------------------------------
 
-Every run of a matching instrument either **inherits** the active profile
-(the default) or carries its own **override** — a per-run grouping frozen at
+Every run of a matching instrument either **follows** its assigned profile
+(the default — a newly loaded run is assigned to the instrument's ★ default
+profile) or carries its own **override** — a per-run grouping frozen at
 the point it was released, which further profile edits do not touch. The
-Data Browser marks an overridden run with a trailing **⊗** and the tooltip
-"Custom grouping — this run is released from its grouping profile."
+Data Browser marks an overridden run with a trailing **⊗** and a tooltip
+naming the base profile it was released from.
 
 Use the scope panel's **Release** button when one run in a series genuinely
 needs a different grouping — a masked detector, say, or a one-off background
 run — without pulling the rest of the series off the shared profile. Use
 **Reattach** to drop that override once the run should go back to following
-the profile.
+its profile. When the project holds several profiles for the instrument —
+one per sample, typically — use **Assign to ▸** (or the Data Browser's
+**Assign Grouping Profile** context menu) to move runs between them; see
+:doc:`detector_grouping` for the full assignment model.
 
 Once released, a run's override is **edited in place**: select it in the scope
 panel and the editing-target strip switches to "Editing override for run N —
 this run only", the form seeds from that run's own grouping, and your edits go
 to a separate override draft. You can move freely between the profile and
 several overrides in one session, editing each in turn, and a single **Apply**
-commits them all — the profile to its inheriting runs and every edited override
+commits them all — the profile to its following runs and every edited override
 to its own run.
 
 The Detector Layout editor
@@ -173,14 +178,14 @@ to fix :math:`\alpha` for the whole experiment.
    zero — the sign that the calibration is good.
 
 To see calibration *propagate* across a series, load a partner run such as
-**34998**: it inherits the same profile — grouping, forward/backward choice,
+**34998**: it follows the same profile — grouping, forward/backward choice,
 and :math:`\alpha` — automatically (see the next section).
 
 Inheritance across a series
 ------------------------------
 
-Once a project has an active profile for an instrument, runs you load
-afterwards inherit it automatically — no per-run Apply step is needed — and
+Once a project has a default profile for an instrument, runs you load
+afterwards are assigned to it automatically — no per-run Apply step is needed — and
 the LOG reports::
 
    Auto-applied existing project grouping to 1 dataset(s); skipped 0.
@@ -188,14 +193,16 @@ the LOG reports::
 This is exactly what you want for a temperature or field series measured on
 one sample: calibrate once, then load the rest of the series and have every
 run share the same profile. If a later edit changes the profile — a
-recalibrated :math:`\alpha`, a different deadtime mode — every inheriting run
+recalibrated :math:`\alpha`, a different deadtime mode — every following run
 picks up the change the next time it is displayed or reduced, with no
 broadcast step required.
 
 .. warning::
 
    A profile's :math:`\alpha` is carried onto **every** run of the same
-   instrument that inherits it, including runs on a *different sample*.
+   instrument assigned to it. Runs on a *different sample* are better kept
+   on their own profile — assign each sample's runs to its own profile so
+   the calibration never leaks across samples (see :doc:`detector_grouping`).
    :math:`\alpha` is a property of the sample-plus-geometry, not a universal
    constant, so when you switch to a new sample you should start (or switch
    to) a **different profile** and **re-Calibrate α** on a reference run for
@@ -257,7 +264,7 @@ Where each function lives
   (``asymmetry.core.project.profiles``) — merge a
   :class:`~asymmetry.core.project.profiles.GroupingProfile` with a run to
   produce the same grouping payload shape the functions above consume; the
-  scriptable equivalent of a run inheriting a profile in the GUI.
+  scriptable equivalent of a run following a profile in the GUI.
 
 Minimal workflow
 ~~~~~~~~~~~~~~~~~

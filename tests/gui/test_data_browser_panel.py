@@ -2406,3 +2406,121 @@ def test_rename_auto_group_flips_colours_to_user(
     assert panel._project_model.data_group(gid).kind == "user"
     header = panel._table.item(_header_row_for(panel, gid), 0)
     assert header.background().color() == _GROUP_HEADER_BACKGROUND
+
+
+# --------------------------------------------------------------------------- #
+# Grouping-profile marker + Assign Grouping Profile menu (schema v17, M3)
+# --------------------------------------------------------------------------- #
+
+from asymmetry.core.project.profiles import (  # noqa: E402
+    GroupingProfile,
+    profile_fingerprint_for_run,
+)
+
+
+def _two_profiles_for(ds: MuonDataset) -> list[GroupingProfile]:
+    fingerprint = profile_fingerprint_for_run(ds.run)
+    return [
+        GroupingProfile(name="Sample A", fingerprint=fingerprint, active=True),
+        GroupingProfile(name="Sample B", fingerprint=fingerprint, active=False),
+    ]
+
+
+def _run_row(panel: DataBrowserPanel, run_number: int) -> int:
+    for row in range(panel._table.rowCount()):
+        item = panel._table.item(row, 0)
+        if item is not None and item.text().split()[0] == str(run_number):
+            return row
+    raise AssertionError(f"run {run_number} not found in table")
+
+
+def test_run_numbers_wear_their_profiles_identity_colors(
+    qapp: QApplication,
+) -> None:
+    """Non-default runs are coloured by profile; the ★ default stays plain."""
+    from asymmetry.gui.styles import tokens
+
+    panel = DataBrowserPanel()
+    ds1 = _dataset_with_run(1)
+    ds2 = _dataset_with_run(2)
+    ds2.metadata["grouping_profile"] = "Sample B"
+    profiles = _two_profiles_for(ds1)
+    panel.set_grouping_profile_provider(lambda: profiles)
+    panel.add_dataset(ds1)
+    panel.add_dataset(ds2)
+
+    item1 = panel._table.item(_run_row(panel, 1), 0)
+    item2 = panel._table.item(_run_row(panel, 2), 0)
+    # Run 1 follows the ★ default (Sample A): plain black, tooltip only.
+    assert all(item1.foreground().color() != QColor(c) for c in tokens.PROFILE_COLORS)
+    assert "Grouping profile: Sample A" in item1.toolTip()
+    # Run 2 follows Sample B — the first non-default profile takes the first
+    # palette colour (the colourless default occupies no slot).
+    assert item2.foreground().color() == QColor(tokens.PROFILE_COLORS[0])
+    assert "Grouping profile: Sample B" in item2.toolTip()
+
+
+def test_released_run_number_is_amber_not_profile_coloured(qapp: QApplication) -> None:
+    """The diverged (⊗) state outranks sample identity in the browser."""
+    from asymmetry.gui.styles import tokens
+
+    panel = DataBrowserPanel()
+    ds1 = _dataset_with_run(1)
+    ds1.metadata["grouping_overrides"] = True
+    ds1.metadata["grouping_profile"] = "Sample B"
+    profiles = _two_profiles_for(ds1)
+    panel.set_grouping_profile_provider(lambda: profiles)
+    panel.add_dataset(ds1)
+
+    item1 = panel._table.item(_run_row(panel, 1), 0)
+    assert "⊗" in item1.text()
+    assert item1.foreground().color() == QColor(tokens.WARN)
+    assert "Grouping profile: Sample B" in item1.toolTip()
+
+
+def test_profile_marker_absent_for_single_profile_projects(qapp: QApplication) -> None:
+    from asymmetry.gui.styles import tokens
+
+    panel = DataBrowserPanel()
+    ds1 = _dataset_with_run(1)
+    profiles = _two_profiles_for(ds1)[:1]
+    panel.set_grouping_profile_provider(lambda: profiles)
+    panel.add_dataset(ds1)
+
+    item1 = panel._table.item(_run_row(panel, 1), 0)
+    assert item1.foreground().color() != QColor(tokens.PROFILE_COLORS[0])
+    assert "Grouping profile" not in item1.toolTip()
+
+
+def test_assign_profile_menu_emits_for_selected_runs(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds1 = _dataset_with_run(1)
+    ds2 = _dataset_with_run(2)
+    profiles = _two_profiles_for(ds1)
+    panel.set_grouping_profile_provider(lambda: profiles)
+    panel.add_dataset(ds1)
+    panel.add_dataset(ds2)
+    panel._table.selectAll()
+
+    captured: list[tuple[list[int], str]] = []
+    panel.assign_profile_requested.connect(lambda runs, name: captured.append((list(runs), name)))
+    menu = panel._create_table_context_menu()
+    assert menu is not None
+    submenu_action = next(a for a in menu.actions() if a.text() == "Assign Grouping Profile")
+    entries = submenu_action.menu().actions()
+    assert [a.text() for a in entries] == ["Sample A", "Sample B"]
+    # Both runs follow the default → Sample A is checked.
+    assert entries[0].isChecked() and not entries[1].isChecked()
+
+    entries[1].trigger()
+    assert captured == [([1, 2], "Sample B")]
+
+
+def test_assign_profile_menu_absent_without_multiple_profiles(qapp: QApplication) -> None:
+    panel = DataBrowserPanel()
+    ds1 = _dataset_with_run(1)
+    panel.add_dataset(ds1)  # no provider at all
+    panel._table.selectAll()
+    menu = panel._create_table_context_menu()
+    assert menu is not None
+    assert all(a.text() != "Assign Grouping Profile" for a in menu.actions())

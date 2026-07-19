@@ -20,6 +20,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and reductions stay at β = 1. A data-driven β estimate — equivalently a
   fittable β in the count-domain F/B fit — is deferred
   (`docs/porting/beta-correction/`).
+- **Multiple grouping profiles per project, with explicit run assignment.**
+  Several grouping profiles per instrument can now be in concurrent use —
+  typically one per sample, each with its own background, α, and deadtime
+  settings — with every run assigned to one profile and reduced under it.
+  One profile per instrument is the ★ **default for new runs**; a "Default
+  for new runs" checkbox moves it, and saving a profile no longer steals it.
+  The Grouping window's scope panel tags each run **follows <profile>** and
+  gains an **Assign to ▸** control; applying a profile reaches only the runs
+  following it. Profiles can be **renamed in place** (every run's assignment
+  follows) and **deleted** (assigned runs move to a profile you choose; the
+  last profile of an instrument cannot be deleted). Every non-default
+  profile carries a stored **identity colour**, worn consistently by its
+  runs' numbers in the Data Browser (tooltip names the profile), the scope
+  rows, the editing strip, and the selector swatches — the ★ default stays
+  plain black, so colour reads as "off the default" — and the browser's
+  **Assign Grouping Profile** context menu makes reassignment a two-click
+  action. A released run now records the **base profile** Reattach returns
+  it to, named in its ⊗ tooltip. Project schema v17: every dataset records
+  its assigned profile; older projects migrate automatically, and
+  single-profile projects behave exactly as before.
 
 ## [0.14.0] - 2026-07-18
 

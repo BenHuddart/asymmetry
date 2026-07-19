@@ -116,8 +116,10 @@ def test_divergent_runs_use_majority_profile_and_keep_outliers():
     assert by_run[1]["profile"] == "Default (EMU)"
     assert "grouping_overrides" not in by_run[1]
     assert by_run[2]["profile"] == "Default (EMU)"
-    # Outlier keeps its full payload and is NOT bound to the profile.
-    assert "profile" not in by_run[3]
+    # The outlier keeps its full payload (authoritative for resolution); the
+    # v17 step additionally stamps the fingerprint's active profile as its
+    # *base* (reattach target).
+    assert by_run[3]["profile"] == "Default (EMU)"
     assert by_run[3]["grouping_overrides"]["alpha"] == 2.5
 
 
@@ -133,7 +135,8 @@ def test_majority_tie_breaks_to_first_run():
     assert migrated["grouping_profiles"][0]["alpha_policy"]["value"] == 1.0
     by_run = {ds["run_number"]: ds for ds in migrated["datasets"]}
     assert by_run[1].get("profile") == "Default (EMU)"
-    assert "profile" not in by_run[2]
+    # The loser keeps its payload; v17 stamps the winner as its base profile.
+    assert by_run[2].get("profile") == "Default (EMU)"
     assert by_run[2]["grouping_overrides"]["alpha"] == 2.0
 
 
@@ -458,3 +461,114 @@ def test_v12_project_with_no_studies_key_migrates_additively():
     migrated = migrate_to_current(copy.deepcopy(state))
     assert migrated["global_fit_studies"] == []
     assert migrated["browser_state"] == state["browser_state"]
+
+
+# --------------------------------------------------------------------------- #
+# v16 -> v17: explicit run→profile assignment (base link for released runs)
+# --------------------------------------------------------------------------- #
+
+
+def _serialized_profile(
+    name: str, *, instrument: str = "EMU", n_hist: int = 4, active: bool = True
+):
+    return GroupingProfile(
+        name=name,
+        fingerprint=ProfileFingerprint(instrument, n_hist),
+        active=active,
+        groups={1: [1, 2], 2: [3, 4]},
+        group_names={1: "Forward", 2: "Backward"},
+    ).to_dict()
+
+
+def _v16_state(*, profiles: list[dict], datasets: list[dict]) -> dict:
+    return {
+        "schema_version": 16,
+        "created_with_app_version": "0.14.0",
+        "grouping_profiles": profiles,
+        "datasets": datasets,
+        "combined_datasets": [],
+    }
+
+
+def test_v17_released_dataset_gains_base_profile_link():
+    """A released run keeps its payload and gains the active profile as base."""
+    overrides = _overrides(alpha=2.5)
+    state = _v16_state(
+        profiles=[_serialized_profile("Sample A")],
+        datasets=[
+            {"run_number": 1, "source_file": "a.nxs", "profile": "Sample A"},
+            {"run_number": 2, "source_file": "b.nxs", "grouping_overrides": overrides},
+        ],
+    )
+    migrated = migrate_to_current(copy.deepcopy(state))
+    validate(migrated)
+
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    by_run = {ds["run_number"]: ds for ds in migrated["datasets"]}
+    # The following dataset's existing reference is simply kept.
+    assert by_run[1]["profile"] == "Sample A"
+    assert "grouping_overrides" not in by_run[1]
+    # The released dataset keeps its payload verbatim and gains the base link.
+    assert by_run[2]["profile"] == "Sample A"
+    assert by_run[2]["grouping_overrides"] == overrides
+
+
+def test_v17_base_link_requires_matching_active_profile():
+    """No stamp from a non-default profile or a different fingerprint."""
+    state = _v16_state(
+        profiles=[
+            # Same fingerprint but not the active/default profile.
+            _serialized_profile("Saved copy", active=False),
+            # Active, but a different fingerprint (instrument and count).
+            _serialized_profile("Other (MuSR)", instrument="MuSR", n_hist=8),
+        ],
+        datasets=[
+            {"run_number": 1, "source_file": "a.nxs", "grouping_overrides": _overrides()},
+        ],
+    )
+    migrated = migrate_to_current(copy.deepcopy(state))
+    entry = migrated["datasets"][0]
+    assert "profile" not in entry
+    assert isinstance(entry["grouping_overrides"], dict)
+
+
+def test_v17_dataset_with_existing_profile_and_overrides_is_unchanged():
+    """A dataset already carrying both keys (hand-rolled v17 shape) is kept."""
+    overrides = _overrides(alpha=3.0)
+    state = _v16_state(
+        profiles=[_serialized_profile("Sample A"), _serialized_profile("Sample B", active=False)],
+        datasets=[
+            {
+                "run_number": 1,
+                "source_file": "a.nxs",
+                "profile": "Sample B",
+                "grouping_overrides": overrides,
+            },
+        ],
+    )
+    migrated = migrate_to_current(copy.deepcopy(state))
+    entry = migrated["datasets"][0]
+    # The recorded base is honoured — never overwritten with the default.
+    assert entry["profile"] == "Sample B"
+    assert entry["grouping_overrides"] == overrides
+
+
+def test_v17_profiles_block_and_junk_entries_survive():
+    """The grouping_profiles block is never rewritten; junk is tolerated."""
+    profiles = [_serialized_profile("Sample A"), {"name": None}, "junk"]
+    state = _v16_state(
+        profiles=list(profiles),
+        datasets=[
+            "not-a-dict",
+            {"run_number": 1, "source_file": "a.nxs"},
+            {"run_number": 2, "source_file": "b.nxs", "grouping_overrides": {"alpha": 1.0}},
+        ],
+    )
+    migrated = migrate_to_current(copy.deepcopy(state))
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    assert migrated["grouping_profiles"] == profiles
+    assert migrated["datasets"][0] == "not-a-dict"
+    # No payload → no fingerprint → no stamp; entry otherwise untouched.
+    assert "profile" not in migrated["datasets"][1]
+    # Payload too bare to fingerprint (no instrument) → left alone.
+    assert "profile" not in migrated["datasets"][2]

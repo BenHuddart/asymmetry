@@ -5930,7 +5930,7 @@ class TestMainWindowBasic:
                 }
 
         monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
-        monkeypatch.setattr(mainwindow, "_store_grouping_profile", lambda _profile: None)
+        monkeypatch.setattr(mainwindow, "_store_grouping_profile", lambda _profile, **_kw: None)
         monkeypatch.setattr(
             mainwindow, "_reconcile_grouping_overrides", lambda _datasets, _result: None
         )
@@ -7367,9 +7367,10 @@ def _grouping_profile_from(dataset: MuonDataset, name: str, **overrides):
     return profile_from_payload(payload, name, fingerprint, active=True)
 
 
-def test_store_grouping_profile_keeps_one_active_per_fingerprint(
+def test_store_grouping_profile_keeps_one_default_per_fingerprint(
     mainwindow: MainWindow,
 ) -> None:
+    """Storing preserves the existing default; an explicit choice moves it."""
     ds = _make_dataset(7101, with_grouping=True)
     profile_a = _grouping_profile_from(ds, "A", alpha=1.1)
     profile_b = _grouping_profile_from(ds, "B", alpha=1.2)
@@ -7381,7 +7382,122 @@ def test_store_grouping_profile_keeps_one_active_per_fingerprint(
     same = [p for p in mainwindow._grouping_profiles if p.fingerprint.matches(fingerprint)]
     active = [p for p in same if p.active]
     assert {p.name for p in same} == {"A", "B"}
+    # Saving B does not steal the default from A (the first profile stored).
+    assert len(active) == 1 and active[0].name == "A"
+
+    mainwindow._store_grouping_profile(
+        _grouping_profile_from(ds, "B", alpha=1.3), default_profile="B"
+    )
+    active = [
+        p for p in mainwindow._grouping_profiles if p.fingerprint.matches(fingerprint) and p.active
+    ]
     assert len(active) == 1 and active[0].name == "B"
+
+
+def test_store_grouping_profile_backfills_identity_color(
+    mainwindow: MainWindow,
+) -> None:
+    """Non-default profiles get palette colours; the ★ default stays plain."""
+    from asymmetry.gui.styles import tokens
+
+    ds = _make_dataset(7108, with_grouping=True)
+    profile_a = _grouping_profile_from(ds, "A", alpha=1.1)
+    mainwindow._store_grouping_profile(profile_a)
+    # The first profile becomes the fingerprint default: no identity colour.
+    assert profile_a.color is None
+
+    profile_b = _grouping_profile_from(ds, "B", alpha=1.2)
+    mainwindow._store_grouping_profile(profile_b)
+    assert profile_b.color == tokens.PROFILE_COLORS[0]
+
+
+def test_store_grouping_profile_rename_rewrites_assignments(
+    mainwindow: MainWindow,
+) -> None:
+    """A first-class rename replaces the stored profile and moves run refs."""
+    ds = _make_dataset(7102, with_grouping=True)
+    mainwindow._data_browser.add_dataset(ds)
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds, "Old name", alpha=1.1))
+    mainwindow._assign_dataset_profile(ds, "Old name")
+
+    renamed = _grouping_profile_from(ds, "New name", alpha=1.1)
+    mainwindow._store_grouping_profile(renamed, renamed_from="Old name")
+
+    fingerprint = profile_fingerprint_for_run(ds.run)
+    same = [p for p in mainwindow._grouping_profiles if p.fingerprint.matches(fingerprint)]
+    assert {p.name for p in same} == {"New name"}
+    assert ds.metadata.get("grouping_profile") == "New name"
+    # The renamed profile inherits the default (it replaced the default).
+    assert [p.name for p in same if p.active] == ["New name"]
+
+
+def test_delete_grouping_profiles_removes_and_promotes_default(
+    mainwindow: MainWindow,
+) -> None:
+    ds = _make_dataset(7103, with_grouping=True)
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds, "A", alpha=1.1))
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds, "B", alpha=1.2))
+    fingerprint = profile_fingerprint_for_run(ds.run)
+
+    # Deleting the default (A) leaves B promoted to default.
+    mainwindow._delete_grouping_profiles(["A"], fingerprint=fingerprint)
+    same = [p for p in mainwindow._grouping_profiles if p.fingerprint.matches(fingerprint)]
+    assert {p.name for p in same} == {"B"}
+    assert [p.name for p in same if p.active] == ["B"]
+
+
+def test_apply_profile_assignments_reresolves_moved_runs(
+    mainwindow: MainWindow,
+) -> None:
+    """A run reassigned to a non-edited profile gets that profile's payload."""
+    ds_a = _make_dataset(7104, with_grouping=True)
+    ds_b = _make_dataset(7105, with_grouping=True)
+    mainwindow._data_browser.add_dataset(ds_a)
+    mainwindow._data_browser.add_dataset(ds_b)
+    profile_a = _grouping_profile_from(ds_a, "Sample A", alpha=1.1)
+    profile_b = _grouping_profile_from(ds_a, "Sample B", alpha=3.3)
+    mainwindow._store_grouping_profile(profile_a)
+    mainwindow._store_grouping_profile(profile_b)
+
+    profile_result = {
+        "profile": profile_a,
+        "released": set(),
+        "newly_reattached": set(),
+        "assignments": {7104: "Sample A", 7105: "Sample B"},
+        "newly_assigned": {7105: "Sample B"},
+    }
+    updated = mainwindow._apply_profile_assignments([ds_a, ds_b], profile_result)
+
+    assert updated == [7105]
+    assert ds_a.metadata.get("grouping_profile") == "Sample A"
+    assert ds_b.metadata.get("grouping_profile") == "Sample B"
+    # The moved run's grouping now carries Sample B's alpha.
+    assert ds_b.run.grouping["alpha"] == pytest.approx(3.3)
+    # The edited profile's run is left for the main apply loop.
+    assert ds_a.run.grouping["alpha"] == pytest.approx(1.0)
+
+
+def test_assign_profile_from_browser_reresolves_following_runs(
+    mainwindow: MainWindow,
+) -> None:
+    """The Data Browser assign action stamps + re-resolves non-released runs."""
+    ds_a = _make_dataset(7106, with_grouping=True)
+    ds_b = _make_dataset(7107, with_grouping=True)
+    ds_b.metadata["grouping_overrides"] = True  # released: payload must survive
+    mainwindow._data_browser.add_dataset(ds_a)
+    mainwindow._data_browser.add_dataset(ds_b)
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds_a, "Sample A", alpha=1.1))
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds_a, "Sample B", alpha=2.7))
+
+    mainwindow._on_assign_profile_requested([7106, 7107], "Sample B")
+
+    # The following run re-resolved onto Sample B.
+    assert ds_a.metadata.get("grouping_profile") == "Sample B"
+    assert ds_a.run.grouping["alpha"] == pytest.approx(2.7)
+    # The released run only retargets its base; its own payload is untouched.
+    assert ds_b.metadata.get("grouping_profile") == "Sample B"
+    assert ds_b.run.grouping["alpha"] == pytest.approx(1.0)
+    assert ds_b.metadata.get("grouping_overrides") is True
 
 
 def test_new_run_inherits_active_profile_grouping(mainwindow: MainWindow) -> None:
@@ -7422,7 +7538,7 @@ def test_grouping_profiles_round_trip_through_project(
 
 
 def test_released_run_persists_grouping_overrides(mainwindow: MainWindow, tmp_path: Path) -> None:
-    """A released run persists grouping_overrides, not a profile reference."""
+    """A released run persists its override payload plus its base profile (v17)."""
     ds = _make_dataset(7401, with_grouping=True)
     ds.metadata["grouping_overrides"] = True
     mainwindow._data_browser.add_dataset(ds)
@@ -7431,20 +7547,72 @@ def test_released_run_persists_grouping_overrides(mainwindow: MainWindow, tmp_pa
 
     state = mainwindow.collect_project_state()
     entry = next(e for e in state["datasets"] if int(e["run_number"]) == 7401)
-    assert "profile" not in entry
+    # The override payload stays authoritative for resolution; the profile
+    # names the base the run can be reattached to.
+    assert entry.get("profile") == "P"
     assert isinstance(entry.get("grouping_overrides"), dict)
+
+
+def test_assignment_to_non_default_profile_persists(mainwindow: MainWindow) -> None:
+    """A run assigned to a non-default profile writes that profile's name."""
+    ds = _make_dataset(7411, with_grouping=True)
+    mainwindow._data_browser.add_dataset(ds)
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds, "Sample B", alpha=1.2))
+    # "Sample A" is made the fingerprint default; "Sample B" stays available
+    # as a concurrently usable (non-default) profile.
+    mainwindow._store_grouping_profile(
+        _grouping_profile_from(ds, "Sample A", alpha=1.1), default_profile="Sample A"
+    )
+    mainwindow._assign_dataset_profile(ds, "Sample B")
+
+    state = mainwindow.collect_project_state()
+    entry = next(e for e in state["datasets"] if int(e["run_number"]) == 7411)
+    assert entry.get("profile") == "Sample B"
+    assert "grouping_overrides" not in entry
+
+
+def test_stale_assignment_falls_back_to_default_profile(mainwindow: MainWindow) -> None:
+    """An assignment naming a deleted profile persists via the default instead."""
+    ds = _make_dataset(7412, with_grouping=True)
+    mainwindow._data_browser.add_dataset(ds)
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds, "Sample A", alpha=1.1))
+    mainwindow._assign_dataset_profile(ds, "Deleted sample")
+
+    state = mainwindow.collect_project_state()
+    entry = next(e for e in state["datasets"] if int(e["run_number"]) == 7412)
+    assert entry.get("profile") == "Sample A"
 
 
 def test_reconcile_grouping_overrides_flags_metadata(mainwindow: MainWindow) -> None:
     ds_a = _make_dataset(7501, with_grouping=True)
     ds_b = _make_dataset(7502, with_grouping=True)
+    profile = _grouping_profile_from(ds_a, "P")
     profile_result = {
+        "profile": profile,
         "newly_released": {7502},
         "newly_reattached": set(),
     }
     mainwindow._reconcile_grouping_overrides([ds_a, ds_b], profile_result)
     assert ds_a.metadata.get("grouping_overrides") in (None, False)
     assert ds_b.metadata.get("grouping_overrides") is True
+    # The released run records the profile it was released from (its base).
+    assert ds_b.metadata.get("grouping_profile") == "P"
+
+
+def test_reconcile_reattach_assigns_run_back_to_profile(mainwindow: MainWindow) -> None:
+    """Reattach clears the override flag and records the profile assignment."""
+    ds = _make_dataset(7503, with_grouping=True)
+    ds.metadata["grouping_overrides"] = True
+    ds.metadata["grouping_profile"] = "Old"
+    profile = _grouping_profile_from(ds, "P")
+    profile_result = {
+        "profile": profile,
+        "newly_released": set(),
+        "newly_reattached": {7503},
+    }
+    mainwindow._reconcile_grouping_overrides([ds], profile_result)
+    assert ds.metadata.get("grouping_overrides") in (None, False)
+    assert ds.metadata.get("grouping_profile") == "P"
 
 
 def test_apply_grouping_override_edits_writes_only_that_run(mainwindow: MainWindow) -> None:
@@ -7614,6 +7782,109 @@ def test_project_restore_heals_stale_instrument_override(
     # The display identity reflects FLAME with 8 detectors.
     assert instrument_display_name(fingerprint.instrument) == "FLAME"
     assert fingerprint.histogram_count == 8
+
+
+def _fake_flame_loader(mainwindow: MainWindow, monkeypatch, source_file, run_number: int):
+    """Monkeypatch _load_file to return a fresh FLAME dataset for *source_file*."""
+
+    def _fake_load_file(_path: str) -> MuonDataset:
+        loaded = _flame_dataset(run_number, grouping_instrument="FLAME")
+        loaded.run.source_file = str(source_file)
+        loaded.metadata["source_file"] = str(source_file)
+        return loaded
+
+    monkeypatch.setattr(mainwindow, "_load_file", _fake_load_file)
+
+
+def _flame_profile_dict(name: str, *, alpha: float) -> dict:
+    return {
+        "name": name,
+        "fingerprint": {"instrument": "FLAME", "histogram_count": 8},
+        "active": True,
+        "groups": {"1": [1], "2": [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha_policy": {"mode": "fixed", "value": alpha},
+    }
+
+
+def test_project_restore_released_run_applies_override_not_base_profile(
+    mainwindow: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A released dataset carrying both keys (v17) resolves from its override.
+
+    The ``profile`` names the base the run can be reattached to and is recorded
+    as its assignment — it must NOT be applied over the frozen per-run payload.
+    """
+    source_file = tmp_path / "run_flame_9103.bin"
+    source_file.write_text("placeholder", encoding="utf-8")
+    _fake_flame_loader(mainwindow, monkeypatch, source_file, 9103)
+
+    overrides = {
+        "instrument": "FLAME",
+        "groups": {1: [1], 2: [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 2.2,
+        "first_good_bin": 0,
+        "last_good_bin": 3,
+        "bunching_factor": 1,
+        "deadtime_correction": False,
+    }
+    state = {
+        "schema_version": 17,
+        "grouping_profiles": [_flame_profile_dict("Sample A", alpha=1.1)],
+        "datasets": [
+            {
+                "run_number": 9103,
+                "source_file": str(source_file),
+                "profile": "Sample A",
+                "grouping_overrides": overrides,
+            }
+        ],
+    }
+
+    mainwindow.restore_project_state(state, str(tmp_path / "released.asymp"))
+
+    dataset = mainwindow._data_browser.get_dataset(9103)
+    assert dataset is not None
+    # The override's alpha survives; the base profile's 1.1 must not win.
+    assert dataset.run.grouping["alpha"] == pytest.approx(2.2)
+    assert dataset.metadata.get("grouping_overrides") is True
+    assert dataset.metadata.get("grouping_profile") == "Sample A"
+
+
+def test_project_restore_stale_profile_name_falls_back_to_default(
+    mainwindow: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A dataset naming a missing profile follows the fingerprint's default."""
+    source_file = tmp_path / "run_flame_9104.bin"
+    source_file.write_text("placeholder", encoding="utf-8")
+    _fake_flame_loader(mainwindow, monkeypatch, source_file, 9104)
+
+    state = {
+        "schema_version": 17,
+        "grouping_profiles": [_flame_profile_dict("Sample A", alpha=1.4)],
+        "datasets": [
+            {
+                "run_number": 9104,
+                "source_file": str(source_file),
+                "profile": "Ghost",
+            }
+        ],
+    }
+
+    mainwindow.restore_project_state(state, str(tmp_path / "stale-name.asymp"))
+
+    dataset = mainwindow._data_browser.get_dataset(9104)
+    assert dataset is not None
+    assert dataset.run.grouping["alpha"] == pytest.approx(1.4)
+    assert dataset.metadata.get("grouping_overrides") in (None, False)
+    assert dataset.metadata.get("grouping_profile") == "Sample A"
 
 
 def _forward_ring_hal_dataset(run_number: int = 3687) -> MuonDataset:

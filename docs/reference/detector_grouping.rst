@@ -51,13 +51,18 @@ plainly — "GPS" — and appends the detector count only when two variants of t
 same instrument are both loaded, so they can be told apart: "GPS (6 detectors)"
 and "GPS (11 detectors)".
 
-A project may hold several saved profiles per instrument (a "silver
-calibration" profile and a "custom two-group" profile for the same
-instrument, say), but only one is **active** at a time. A newly loaded run
-inherits its instrument's active profile automatically — no per-run Apply
-step is needed. Switching which profile is active re-resolves every run of
-that instrument against the new profile the next time it is displayed or
-reduced.
+A project may hold several profiles per instrument **in concurrent use** —
+the typical case is one profile per sample, each with its own background,
+:math:`\alpha`, and deadtime settings, kept in one project so the samples can
+be compared side by side. Every run records which profile it is **assigned**
+to and follows that profile; editing a profile reaches exactly the runs
+assigned to it and leaves the other profiles' runs alone. One profile per
+instrument is flagged the **default for new runs** (marked ★ in the Grouping
+window's profile selector): a newly loaded run is assigned to it
+automatically — no per-run Apply step is needed — and can then be reassigned
+to another profile, from the Grouping window's scope panel or the Data
+Browser's **Assign Grouping Profile** context menu (`Assigning runs to
+profiles`_ below).
 
 Because a run's instrument is a fact about its data rather than a user
 preference, a **stale persisted instrument identity self-heals on reload**: if a
@@ -71,10 +76,43 @@ heal.
 A run can be explicitly **released** from its profile, freezing its current
 grouping as a per-run override that further profile edits do not touch. The
 Data Browser marks a released run with a trailing **⊗** and the tooltip
-"Custom grouping — this run is released from its grouping profile." A
-released run can later be **reattached**, dropping the override so it
-inherits the active profile again. Release and reattach are both driven from
-the Grouping window's scope panel (`The Grouping window`_ below).
+"Custom grouping — this run is released from its grouping profile (based on
+'<profile>')." — the named profile is the run's **base**, the one it stays
+assigned to while released. A released run can later be **reattached**,
+dropping the override so it follows its base profile again. Release and
+reattach are both driven from the Grouping window's scope panel (`The
+Grouping window`_ below).
+
+.. _Assigning runs to profiles:
+
+Assigning runs to profiles
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Which profile a run follows is an explicit, per-run **assignment**. It can be
+changed in two places, and both apply the target profile's settings to the
+moved runs immediately:
+
+* **Grouping window** — select runs in the scope panel and press
+  **Assign to ▸**, which lists every profile of the instrument. Assigning a
+  *released* run does not drop its override; it only retargets the base
+  profile that Reattach returns it to.
+* **Data Browser** — select any number of runs and choose **Assign Grouping
+  Profile** from the context menu; the runs' current profile is checked. The
+  submenu appears once the selected runs' instrument has at least two
+  profiles.
+
+Every **non-default** profile of a multi-profile instrument carries its own
+**identity colour**, assigned from a fixed palette when the profile is first
+saved and stored with it in the project; the ★ default profile stays
+uncoloured, so its runs keep plain black run numbers and a coloured run
+number always means "assigned off the default". The colour is worn
+consistently everywhere the profile appears: the Data Browser colours each
+run's number with its assigned profile's colour (with the tooltip "Grouping
+profile: <name>" naming it), the Grouping window's scope rows, editing
+strip, and selector swatches use the same colour, and a released run shows
+amber instead — the diverged state outranks sample identity. A multi-sample
+project therefore reads as a colour-coded sample map; single-profile
+projects stay entirely uncoloured.
 
 Alpha, deadtime, and background policies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -136,7 +174,16 @@ within each instrument
 The migration is additive: nothing that could not be faithfully represented
 as a profile is discarded, and a run whose instrument cannot be
 identified (missing instrument metadata) is left with its original payload and
-joins no profile. Saving the project afterwards writes schema v12.
+joins no profile.
+
+Projects from before assignments were explicit (schema v16 and earlier, where
+each instrument had a single *active* profile that runs inherited implicitly)
+migrate to schema v17 by recording each run's assignment: a run that named a
+profile keeps it as its explicit assignment, and a released run additionally
+records the instrument's active profile as its base — the reattach target —
+while keeping its override payload untouched. The behaviour of a
+single-profile project is unchanged. Saving the project afterwards writes the
+current schema (see :doc:`project_files`).
 
 The Grouping window
 --------------------
@@ -146,19 +193,33 @@ The Grouping window
    :alt: Grouping window profile editor with its live asymmetry preview pane.
 
    The Grouping window's profile editor, with the scope panel on the left and
-   the live forward/backward asymmetry preview along the bottom.
+   the live forward/backward asymmetry preview along the bottom. Two sample
+   profiles are in concurrent use: "Sample A" (the ★ default, being edited)
+   and "Sample B", with one run following each.
 
 Open it with the **Grouping** button on the main toolbar (or
 **Analysis → Grouping…**). Where the old dialog operated on a reference run
 and broadcast settings to whichever datasets were checked, the window is now
 a **profile editor**: it edits one profile's settings in a draft, and that
-draft is what gets applied to every run inheriting the profile.
+draft is what gets applied to every run following the profile.
 
 * **Profile selector** — switches which saved profile is being edited, and
   offers **New…** and **Duplicate…** to start a fresh profile or branch one
-  from the current settings. Only profiles for the selected instrument are
-  listed. Renaming is available from the same control.
-  Switching away from a profile with unsaved edits prompts to discard them.
+  from the current settings (a new profile starts with no runs assigned —
+  assign them from the scope panel). Only profiles for the selected
+  instrument are listed — non-default profiles with their identity-colour
+  swatch, and the instrument's default-for-new-runs profile marked ★. Switching away from a
+  profile with unsaved edits prompts to discard them.
+
+  **Rename…** renames the edited profile in place — the stored profile is
+  replaced under its new name on Apply and every run's assignment follows;
+  a name already used by another profile of the instrument is refused.
+  **Delete…** removes the edited profile: if runs are assigned to it you
+  choose which remaining profile they move to, and the last profile of an
+  instrument cannot be deleted. A **Default for new runs** checkbox makes
+  the edited profile the instrument's default on Apply; it cannot be
+  unchecked directly — defaultness moves by checking it on another profile —
+  and saving a profile never steals the default on its own.
 * **Instrument switcher** ("Instrument") — chooses which instrument's profile
   the window edits, listing every instrument present in the loaded datasets as
   "GPS — 3 runs". It is hidden when the project holds a single instrument, since
@@ -167,19 +228,29 @@ draft is what gets applied to every run inheriting the profile.
   follow — after the same discard prompt the profile selector uses for unsaved
   edits.
 * **Scope panel — the selector.** Headed "Runs of this instrument", it lists the
-  runs of the selected instrument, each tagged either **inherits <profile>** or
-  **override**, with **Release** and **Reattach** buttons to move a run between
-  the two. The run **selected** here is the one the form previews and edits:
-  selecting a run shows that run's effective settings in the form, drives the
-  live preview, and seeds the status rows with its per-run facts
-  (:math:`t_0`, good-bin window, file deadtime, period tables). What your edits
-  change follows the selected run's status (`Editing target follows selection`_
-  below). Apply is disabled only when every run has been released *and* no
-  override has pending edits, since there would then be nothing left to commit.
+  runs of the selected instrument, each tagged **follows <profile>** (its
+  assigned profile, in that profile's identity colour; the ★ default's rows
+  stay plain — the edited profile's runs additionally bold on a soft tint of
+  the same colour, or of the standard accent while editing the default) or
+  **override**
+  (amber, with the base profile appended as **override · <profile>** when it
+  is not the edited one).
+  **Release from profile**, **Reattach to profile**, and **Assign to ▸**
+  buttons move the selected runs between those states. The run **selected**
+  here is the one the form previews and edits: selecting a run shows that
+  run's effective settings in the form, drives the live preview, and seeds
+  the status rows with its per-run facts (:math:`t_0`, good-bin window, file
+  deadtime, period tables). What your edits change follows the selected run's
+  status (`Editing target follows selection`_ below). Apply is disabled only
+  when nothing would be committed: no run follows the edited profile, no
+  override has pending edits, and no reassignment, rename, deletion, new
+  profile, or default change waits.
 * **Editing-target strip** — right-aligned in the dialog's top row, a
   persistent strip states
-  what your edits currently apply to: accent-tinted **"Editing profile '<name>'
-  — applies to N runs"** while an inheriting run is selected, or warning-tinted
+  what your edits currently apply to: **"Editing profile '<name>' — applies
+  to N runs"**, in the edited profile's identity colour (the standard accent
+  while editing the uncoloured ★ default), while a following run is
+  selected, or warning-tinted
   **"Editing override for run N — this run only"** while an overridden run is
   selected. The same tint highlights the selected row in the scope list, and a
   run with uncommitted override edits gains an **"override *"** marker there.
@@ -233,7 +304,9 @@ draft is what gets applied to every run inheriting the profile.
 
 Editing never touches a saved profile or run until you press **Apply**.
 **Apply commits everything you have changed in one pass** — the profile to
-every inheriting run, plus each edited override to its own run. When any
+every run following it, any reassignments (each moved run re-resolved
+against its new profile), renames, deletions, and the default choice, plus
+each edited override to its own run. When any
 override has pending edits the button names the blast radius, e.g. **"Apply
 (profile + 2 overrides)"**. Switching selection between runs never prompts:
 each target keeps its own draft, so you can move freely between the profile and
@@ -270,8 +343,8 @@ The grouping payload stores:
 * optional background metadata: ``background_correction``,
   ``background_ranges``, ``background_values``, and ``background_method``
 
-These settings are persisted in project files, as grouping profiles (schema
-v12), and in instrument presets.
+These settings are persisted in project files, as grouping profiles with
+per-run assignments (schema v17), and in instrument presets.
 
 .. _Transverse-field grouping hint:
 
@@ -313,9 +386,14 @@ Editing target follows selection
 There is no separate "mode" for editing a per-run override: the editing target
 simply follows whichever run you select in the scope panel.
 
-* **Select an inheriting run** and you are editing the **profile** — the strip
-  above the form reads "Editing profile '<name>' — applies to N runs" in the
-  accent colour, and your edits go to the profile draft.
+* **Select a following (non-released) run** and you are editing the
+  **profile** — the strip above the form reads "Editing profile '<name>' —
+  applies to N runs" in the accent colour, and your edits go to the profile
+  draft. N counts the runs assigned to the edited profile. Selecting a run
+  that follows a *different* profile does not switch what you are editing:
+  the form shows the edited draft resolved onto that run as a what-if, and
+  the strip appends "(preview run follows <profile>)" so the mismatch is
+  explicit.
 * **Select an overridden run** and you are editing **that run's own override** —
   the strip reads "Editing override for run *N* — this run only" in the warning
   colour, the form seeds from the run's own grouping, and your edits go to a
@@ -324,7 +402,7 @@ simply follows whichever run you select in the scope panel.
 Nothing is disabled: the profile and Instrument switchers stay active while an
 overridden run is selected. Changing the profile (or instrument) is a
 profile-scope action, so if an overridden run is selected the window first
-switches the selection to an inheriting run of the current instrument (keeping
+switches the selection to a non-released run of the current instrument (keeping
 your override draft intact); if every run has been released there is no profile
 to edit and the change is refused.
 
@@ -332,7 +410,7 @@ Override drafts **accumulate** across a session: switching selection between the
 profile and one or more overridden runs never prompts, and each keeps its own
 in-progress edits. A run with uncommitted override edits shows an "override *"
 marker in the scope list. **Apply** commits everything at once — the profile to
-its inheriting runs and every edited override to its own run — and the status
+its following runs and every edited override to its own run — and the status
 bar names both parts. Each edited run stays marked overridden (the edit *is* its
 new override).
 
@@ -505,10 +583,10 @@ as a distorted asymmetry later.
 
 When ``Off`` is selected, deadtime correction is disabled. When ``Estimate``
 is selected, the estimate is calculated from the currently selected preview
-run only, then applied to every run inheriting the profile. ``Cal`` also uses
+run only, then applied to every run following the profile. ``Cal`` also uses
 the selected run only, but calibrates one deadtime value per detector
 instead of a single shared value. The resolved deadtime values are stored on
-the profile's deadtime policy, so every run inheriting the profile shares the
+the profile's deadtime policy, so every run following the profile shares the
 same manual, calibrated, or estimated deadtime values, just as they already
 share alpha and grouping.
 
