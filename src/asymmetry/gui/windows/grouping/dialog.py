@@ -1795,6 +1795,10 @@ class GroupingDialog(QDialog):
         self._rebuild_profile_combo()
         self._rebuild_preset_combo()
         self._refresh_scope_panel()
+        # The strip names the edited profile — every path that swaps the draft
+        # (combo switch, create, delete, instrument switch) funnels through
+        # this reseed, so refresh it here or it goes stale on a switch.
+        self._refresh_editing_strip()
 
     # -- preset dropdown + chip ------------------------------------------
 

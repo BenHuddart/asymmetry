@@ -595,3 +595,37 @@ def test_creating_profile_preserves_the_synthesized_default(
     assert result["default_profile"] == original
     # Every run keeps following the original default, not the new profile.
     assert result["assignments"] == {1: original, 2: original}
+
+
+def test_editing_strip_follows_profile_switch(qapp: QApplication) -> None:
+    """Switching the edited profile updates the strip (it went stale before)."""
+    dialog = _two_profile_dialog()
+    assert "Editing profile 'Sample A'" in dialog._editing_strip.text()
+
+    dialog._load_stored_profile_into_draft("Sample B")
+
+    assert "Editing profile 'Sample B'" in dialog._editing_strip.text()
+    assert "'Sample A'" not in dialog._editing_strip.text()
+
+
+def test_scope_rows_wear_the_editing_strip_treatment(qapp: QApplication) -> None:
+    """The edited profile's rows are bold accent on the strip's soft accent."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor
+
+    from asymmetry.gui.styles import tokens
+
+    dialog = _two_profile_dialog({2: "Sample B"})
+    panel = dialog._scope_panel
+    items = {
+        int(panel._list.item(i).data(Qt.ItemDataRole.UserRole)): panel._list.item(i)
+        for i in range(panel._list.count())
+    }
+    # Run 1 follows the edited profile: bold accent on the soft accent bg.
+    assert items[1].font().bold()
+    assert items[1].foreground().color() == QColor(tokens.ACCENT)
+    assert items[1].background().color() == QColor(tokens.ACCENT_SOFT)
+    # Run 2 follows another profile: plain muted text, no tinted background.
+    assert not items[2].font().bold()
+    assert items[2].foreground().color() == QColor(tokens.TEXT_MUTED)
+    assert items[2].background().color() != QColor(tokens.ACCENT_SOFT)

@@ -22,7 +22,7 @@ The dialog reconciles those maps into the project on Apply.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -185,14 +185,28 @@ class ScopePanel(QWidget):
         self._update_button_states()
 
     def _tint_item(self, item: QListWidgetItem, run_number: int) -> None:
-        """Tint a row: warning for overrides, accent for the edited profile's
-        runs, muted for runs following another profile."""
+        """Style a row by its state, tying the edited profile's runs to the strip.
+
+        The runs following the *edited* profile wear the editing-target
+        strip's exact treatment — bold accent text on the soft accent
+        background — so the strip and the rows it "applies to" read as one
+        thing. Runs following another profile are muted plain text; released
+        runs are warning-tinted.
+        """
+        font = item.font()
         if self._released.get(run_number, False):
             item.setForeground(QColor(tokens.WARN))
+            font.setBold(False)
+            item.setBackground(QBrush())
         elif self._assigned.get(run_number, self._profile_name) == self._profile_name:
             item.setForeground(QColor(tokens.ACCENT))
+            font.setBold(True)
+            item.setBackground(QColor(tokens.ACCENT_SOFT))
         else:
             item.setForeground(QColor(tokens.TEXT_MUTED))
+            font.setBold(False)
+            item.setBackground(QBrush())
+        item.setFont(font)
 
     def _set_current_silent(self, run_number: int) -> None:
         """Select *run_number* as the current row without emitting :attr:`selected`."""
