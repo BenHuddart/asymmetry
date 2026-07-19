@@ -129,12 +129,15 @@ of the number survives:
   sensitivities that drift run-to-run stays self-consistent without a shared
   number.
 * **Beta** — the intrinsic-asymmetry balance :math:`\beta = A_{0,b}/A_{0,f}`
-  (musrfit's asymmetry-fit companion to :math:`\alpha`), stored as a plain
-  fixed scalar and applied with :math:`\alpha` in the asymmetry formula
+  (musrfit's asymmetry-fit companion to :math:`\alpha`), applied with
+  :math:`\alpha` in the asymmetry formula
   :math:`A = (F - \alpha B)/(\beta F + \alpha B)`. The default 1 is the
   standard formula and is omitted from saved profiles, so existing projects
-  are unaffected. There is no estimator — :math:`\beta` scales the asymmetry
-  amplitude, not the count rate, so no count ratio can measure it.
+  are unaffected. Unlike :math:`\alpha`, :math:`\beta` is invisible to
+  integrated counts, so no count ratio can measure it; it is either entered
+  as a fixed scalar or measured from a weak-TF calibration run's precession
+  fit (``calibrated`` mode, with recorded method and source run, mirroring
+  the :math:`\alpha` policy) — see :doc:`data_reduction/beta_calibration`.
 * **Deadtime policy** — ``off`` disables the correction; ``from_file`` reads
   each run's own file deadtime values; ``manual`` applies a stored
   per-detector table (hand-typed or fitted with **Cal**); ``estimate``
@@ -276,9 +279,11 @@ draft is what gets applied to every run following the profile.
   four collapsible **correction cards** — **Deadtime**, **Background**,
   **α (detector balance)** (its value and provenance or, in vector mode, the
   per-projection table, plus the calibration controls), and
-  **β (asymmetry balance)** (a fixed **β value** entry for musrfit's
-  intrinsic-asymmetry balance; hidden in vector mode, where per-projection
-  reductions stay at β = 1) — each previewed against the same corrected
+  **β (asymmetry balance)** (a **β value** entry for musrfit's
+  intrinsic-asymmetry balance, plus a "Measure from run" calibration
+  section mirroring α's — see :doc:`data_reduction/beta_calibration`;
+  hidden in vector mode, where per-projection reductions stay at β = 1)
+  — each previewed against the same corrected
   reduction. A card's header row shows a disclosure arrow,
   the title, and a live status summary (e.g. "off", "pre-t0 range",
   "1.2692 · Diamagnetic (TF)"), so a collapsed card still reports what its stage
@@ -542,6 +547,40 @@ projection has none declared. See :doc:`vector_polarization` for the EMU
 per-axis alpha table and estimation buttons, which follow the same
 per-projection model.
 
+Beta calibration
+------------------
+
+.. figure:: /_generated/screenshots/beta_calibration_dialog.png
+   :width: 80%
+   :align: center
+   :alt: The inline beta calibration controls in the grouping window's
+      Corrections column — a calibration run picker, a Count fit / Single-
+      histogram protocol combo, an Estimate β button, and the fitted-α
+      consistency readout beside a completed β result.
+
+   β is calibrated inline, in the **β (asymmetry balance)** card's
+   "Measure from run" section: pick the calibration run, choose a protocol,
+   and press **Estimate β**. The result row shows the fitted α alongside β as
+   a consistency readout; **Apply β** writes it and drives the shared
+   preview's β = 1 ↔ β̂ comparison.
+
+The **β (asymmetry balance)** card grows the same "Measure from run" section
+as α once a calibration run is selected: a **Calibration run** picker (the
+same weak-TF highlighting convention α's picker uses), a **Protocol** combo —
+**Count fit (recommended)**, the simultaneous forward+backward count fit, or
+**Single-histogram ratio**, a statistically weaker independent cross-check —
+and an **Estimate β** button. Press it to fit the selected run's precession
+signal; the result row reports β together with the fitted α as a consistency
+readout (warn-tinted when it disagrees with the card's applied α by more than
+roughly :math:`3\sigma`), and flags a fitted β outside the typical
+:math:`[0.5, 1.5]` range as suspicious. **Apply β** writes only β; a
+secondary **Also update α** checkbox additionally applies the fitted α. As
+with α, a successful estimate records **provenance** (method, source run,
+uncertainty) and goes stale — flagged with an amber banner and a
+**" · stale"** chip suffix — if the deadtime or background settings change
+afterwards. The physics, the two protocols, and the instrument-typical values
+(FLAME, GPS) are covered in :doc:`data_reduction/beta_calibration`.
+
 Deadtime correction
 --------------------
 
@@ -661,8 +700,10 @@ and summarises each stage in a chip ("Deadtime: off", "Background: tail fit",
 reminder that
 detector grouping, set in the **Grouping and timing** column, sits between deadtime
 and background. Clicking a chip focuses that stage's compare (below) and scrolls
-its section into view. When a calibrated :math:`\alpha` goes stale the chip
-appends **" · stale"** and its tooltip prompts a re-estimate. (Strictly,
+its section into view. When a calibrated :math:`\alpha` or :math:`\beta`
+goes stale (its corrections have changed since it was measured — see
+:doc:`data_reduction/beta_calibration`) the chip appends **" · stale"** and
+its tooltip prompts a re-estimate. (Strictly,
 :math:`\alpha` and :math:`\beta` are applied together in the one
 asymmetry-formation step; the strip orders them for focus, not because one
 precedes the other.)

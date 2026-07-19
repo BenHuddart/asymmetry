@@ -17,6 +17,7 @@ it does not.
    :maxdepth: 2
 
    alpha_calibration
+   beta_calibration
    backgrounds
    background_ladder
    binning
