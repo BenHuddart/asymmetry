@@ -5930,7 +5930,7 @@ class TestMainWindowBasic:
                 }
 
         monkeypatch.setattr(mw_module, "GroupingDialog", _StubGroupingDialog)
-        monkeypatch.setattr(mainwindow, "_store_grouping_profile", lambda _profile: None)
+        monkeypatch.setattr(mainwindow, "_store_grouping_profile", lambda _profile, **_kw: None)
         monkeypatch.setattr(
             mainwindow, "_reconcile_grouping_overrides", lambda _datasets, _result: None
         )
@@ -7367,9 +7367,10 @@ def _grouping_profile_from(dataset: MuonDataset, name: str, **overrides):
     return profile_from_payload(payload, name, fingerprint, active=True)
 
 
-def test_store_grouping_profile_keeps_one_active_per_fingerprint(
+def test_store_grouping_profile_keeps_one_default_per_fingerprint(
     mainwindow: MainWindow,
 ) -> None:
+    """Storing preserves the existing default; an explicit choice moves it."""
     ds = _make_dataset(7101, with_grouping=True)
     profile_a = _grouping_profile_from(ds, "A", alpha=1.1)
     profile_b = _grouping_profile_from(ds, "B", alpha=1.2)
@@ -7381,7 +7382,82 @@ def test_store_grouping_profile_keeps_one_active_per_fingerprint(
     same = [p for p in mainwindow._grouping_profiles if p.fingerprint.matches(fingerprint)]
     active = [p for p in same if p.active]
     assert {p.name for p in same} == {"A", "B"}
+    # Saving B does not steal the default from A (the first profile stored).
+    assert len(active) == 1 and active[0].name == "A"
+
+    mainwindow._store_grouping_profile(
+        _grouping_profile_from(ds, "B", alpha=1.3), default_profile="B"
+    )
+    active = [
+        p for p in mainwindow._grouping_profiles if p.fingerprint.matches(fingerprint) and p.active
+    ]
     assert len(active) == 1 and active[0].name == "B"
+
+
+def test_store_grouping_profile_rename_rewrites_assignments(
+    mainwindow: MainWindow,
+) -> None:
+    """A first-class rename replaces the stored profile and moves run refs."""
+    ds = _make_dataset(7102, with_grouping=True)
+    mainwindow._data_browser.add_dataset(ds)
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds, "Old name", alpha=1.1))
+    mainwindow._assign_dataset_profile(ds, "Old name")
+
+    renamed = _grouping_profile_from(ds, "New name", alpha=1.1)
+    mainwindow._store_grouping_profile(renamed, renamed_from="Old name")
+
+    fingerprint = profile_fingerprint_for_run(ds.run)
+    same = [p for p in mainwindow._grouping_profiles if p.fingerprint.matches(fingerprint)]
+    assert {p.name for p in same} == {"New name"}
+    assert ds.metadata.get("grouping_profile") == "New name"
+    # The renamed profile inherits the default (it replaced the default).
+    assert [p.name for p in same if p.active] == ["New name"]
+
+
+def test_delete_grouping_profiles_removes_and_promotes_default(
+    mainwindow: MainWindow,
+) -> None:
+    ds = _make_dataset(7103, with_grouping=True)
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds, "A", alpha=1.1))
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds, "B", alpha=1.2))
+    fingerprint = profile_fingerprint_for_run(ds.run)
+
+    # Deleting the default (A) leaves B promoted to default.
+    mainwindow._delete_grouping_profiles(["A"], fingerprint=fingerprint)
+    same = [p for p in mainwindow._grouping_profiles if p.fingerprint.matches(fingerprint)]
+    assert {p.name for p in same} == {"B"}
+    assert [p.name for p in same if p.active] == ["B"]
+
+
+def test_apply_profile_assignments_reresolves_moved_runs(
+    mainwindow: MainWindow,
+) -> None:
+    """A run reassigned to a non-edited profile gets that profile's payload."""
+    ds_a = _make_dataset(7104, with_grouping=True)
+    ds_b = _make_dataset(7105, with_grouping=True)
+    mainwindow._data_browser.add_dataset(ds_a)
+    mainwindow._data_browser.add_dataset(ds_b)
+    profile_a = _grouping_profile_from(ds_a, "Sample A", alpha=1.1)
+    profile_b = _grouping_profile_from(ds_a, "Sample B", alpha=3.3)
+    mainwindow._store_grouping_profile(profile_a)
+    mainwindow._store_grouping_profile(profile_b)
+
+    profile_result = {
+        "profile": profile_a,
+        "released": set(),
+        "newly_reattached": set(),
+        "assignments": {7104: "Sample A", 7105: "Sample B"},
+        "newly_assigned": {7105: "Sample B"},
+    }
+    updated = mainwindow._apply_profile_assignments([ds_a, ds_b], profile_result)
+
+    assert updated == [7105]
+    assert ds_a.metadata.get("grouping_profile") == "Sample A"
+    assert ds_b.metadata.get("grouping_profile") == "Sample B"
+    # The moved run's grouping now carries Sample B's alpha.
+    assert ds_b.run.grouping["alpha"] == pytest.approx(3.3)
+    # The edited profile's run is left for the main apply loop.
+    assert ds_a.run.grouping["alpha"] == pytest.approx(1.0)
 
 
 def test_new_run_inherits_active_profile_grouping(mainwindow: MainWindow) -> None:
@@ -7442,9 +7518,11 @@ def test_assignment_to_non_default_profile_persists(mainwindow: MainWindow) -> N
     ds = _make_dataset(7411, with_grouping=True)
     mainwindow._data_browser.add_dataset(ds)
     mainwindow._store_grouping_profile(_grouping_profile_from(ds, "Sample B", alpha=1.2))
-    # Storing "Sample A" afterwards makes it the fingerprint default;
-    # "Sample B" stays available as a concurrently usable profile.
-    mainwindow._store_grouping_profile(_grouping_profile_from(ds, "Sample A", alpha=1.1))
+    # "Sample A" is made the fingerprint default; "Sample B" stays available
+    # as a concurrently usable (non-default) profile.
+    mainwindow._store_grouping_profile(
+        _grouping_profile_from(ds, "Sample A", alpha=1.1), default_profile="Sample A"
+    )
     mainwindow._assign_dataset_profile(ds, "Sample B")
 
     state = mainwindow.collect_project_state()

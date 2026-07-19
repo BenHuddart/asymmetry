@@ -178,11 +178,15 @@ class GroupingDialog(QDialog):
     """Profile editor for detector grouping.
 
     The dialog edits an in-memory *draft* grouping profile (a
-    :class:`~asymmetry.core.project.profiles.GroupingProfile`). Runs of a
-    fingerprint ``(instrument, histogram_count)`` inherit the fingerprint's
-    active profile; per-run divergence is an explicit "release from profile"
-    exception managed in the scope panel. Nothing touches the project or runs
-    until Apply.
+    :class:`~asymmetry.core.project.profiles.GroupingProfile`). Each run of a
+    fingerprint ``(instrument, histogram_count)`` follows its *assigned*
+    profile — several profiles can be in concurrent use (schema v17, e.g. one
+    per sample), with one flagged the fingerprint's default for newly loaded
+    runs. The scope panel moves runs between profiles ("Assign to ▸");
+    per-run divergence is an explicit "release from profile" exception, with
+    the assignment kept as the base profile Reattach returns the run to.
+    Applying the edited profile reaches only the runs following it. Nothing
+    touches the project or runs until Apply.
 
     The scope panel is the **selector**: the run selected there is the one the
     form previews and edits, and the *editing target* follows that run's status.
@@ -203,6 +207,11 @@ class GroupingDialog(QDialog):
         The project's existing grouping profiles. When omitted (or empty for the
         current fingerprint), the draft is synthesized from the current/reference
         run's payload as ``"Default (<instrument>)"``.
+    assigned_profiles
+        Optional ``{run_number: profile_name}`` map of each run's recorded
+        profile assignment (schema v17). Runs without an entry — or whose
+        entry no longer names a profile of their fingerprint — are treated as
+        following the fingerprint's default profile.
     selected_run_number
         Optional run number used as the initially selected run.
     selected_run_numbers
@@ -218,6 +227,7 @@ class GroupingDialog(QDialog):
         *,
         profiles: list[GroupingProfile] | None = None,
         overridden_run_numbers: list[int] | None = None,
+        assigned_profiles: dict[int, str] | None = None,
         selected_run_number: int | None = None,
         selected_run_numbers: list[int] | None = None,
         parent=None,
@@ -227,6 +237,24 @@ class GroupingDialog(QDialog):
         self._datasets = [ds for ds in datasets if ds.run is not None]
         self._project_profiles = list(profiles or [])
         self._overridden_run_numbers = {int(v) for v in (overridden_run_numbers or [])}
+        self._assigned_profiles = {
+            int(rn): str(name) for rn, name in (assigned_profiles or {}).items()
+        }
+        # Run→profile assignment maps (schema v17). ``_initial_assignments`` is
+        # each run's assignment resolved when it is first listed; ``_session_
+        # assignments`` is the authoritative working map. It deliberately
+        # survives profile switches and scope-panel repopulates — assigning
+        # runs to a profile and then switching the combo to edit that profile
+        # must not lose the assignment.
+        self._initial_assignments: dict[int, str] = {}
+        self._session_assignments: dict[int, str] = {}
+        #: Stored profile names deleted this session (committed on Apply).
+        self._deleted_profiles: list[str] = []
+        #: The stored name of the draft before an in-session rename, if any.
+        self._renamed_from: str | None = None
+        #: Pending per-fingerprint default-profile choice, keyed by fingerprint
+        #: (survives instrument switches within the session).
+        self._default_names: dict[tuple[str, int], str] = {}
         self._selected_run_number = selected_run_number
         self._selected_run_numbers = (
             {int(v) for v in selected_run_numbers} if selected_run_numbers is not None else None
@@ -341,6 +369,30 @@ class GroupingDialog(QDialog):
         rename_btn.setDefault(False)
         rename_btn.clicked.connect(self._on_rename_profile)
         profile_row.addWidget(rename_btn)
+
+        delete_btn = QPushButton("Delete\u2026")
+        delete_btn.setAutoDefault(False)
+        delete_btn.setDefault(False)
+        delete_btn.setToolTip(
+            "Delete this profile. Runs assigned to it are reassigned to another "
+            "profile of the instrument; the last profile cannot be deleted."
+        )
+        delete_btn.clicked.connect(self._on_delete_profile)
+        profile_row.addWidget(delete_btn)
+
+        # Default-for-new-runs marker (schema v17): freshly loaded runs of this
+        # fingerprint are assigned to the default profile. Checking makes the
+        # edited profile the default on Apply; it cannot be unchecked directly \u2014
+        # defaultness moves by checking it on another profile.
+        self._default_check = QCheckBox("Default for new runs")
+        self._default_check.setToolTip(
+            "Newly loaded runs of this instrument are assigned to the default "
+            "profile (\u2605 in the selector). Check to make this profile the "
+            "default on Apply; to move it, check it on another profile instead."
+        )
+        self._default_check.toggled.connect(self._on_default_toggled)
+        profile_row.addWidget(self._default_check)
+        self._refresh_default_checkbox()
 
         # Instrument switcher: lists every fingerprint present in the loaded
         # datasets. Hidden when the project holds a single instrument (nothing to
@@ -1042,10 +1094,75 @@ class GroupingDialog(QDialog):
         return out
 
     def _profiles_for_fingerprint(self) -> list[GroupingProfile]:
-        """Project profiles matching the editor's current fingerprint."""
+        """Project profiles matching the editor's current fingerprint.
+
+        Profiles deleted this session are filtered out — the deletion is
+        committed on Apply, but the editor must stop offering them at once.
+        """
         if self._fingerprint is None:
             return []
-        return [p for p in self._project_profiles if p.fingerprint.matches(self._fingerprint)]
+        return [
+            p
+            for p in self._project_profiles
+            if p.fingerprint.matches(self._fingerprint) and p.name not in self._deleted_profiles
+        ]
+
+    # -- run→profile assignment + default profile (schema v17) -----------
+
+    def _stored_names_for_fingerprint(self) -> list[str]:
+        """Names of the fingerprint's stored (non-deleted) profiles."""
+        return [p.name for p in self._profiles_for_fingerprint()]
+
+    def _fingerprint_profile_names(self) -> list[str]:
+        """Every assignable profile name: the stored ones plus the draft's."""
+        names = self._stored_names_for_fingerprint()
+        if self._draft_name and self._draft_name not in names:
+            names.append(self._draft_name)
+        return names
+
+    def _fingerprint_key(self) -> tuple[str, int]:
+        """Hashable key for the current fingerprint (case-folded instrument)."""
+        assert self._fingerprint is not None
+        return (
+            str(self._fingerprint.instrument).lower(),
+            int(self._fingerprint.histogram_count),
+        )
+
+    def _current_default_name(self) -> str:
+        """The fingerprint's default-profile name, honouring pending changes."""
+        key = self._fingerprint_key()
+        pending = self._default_names.get(key)
+        if pending and pending in self._fingerprint_profile_names():
+            return pending
+        return self._stored_default_name()
+
+    def _stored_default_name(self) -> str:
+        """The fingerprint's default per the stored ``active`` flags."""
+        for profile in self._profiles_for_fingerprint():
+            if profile.active:
+                return profile.name
+        return self._draft_name
+
+    def _resolved_assignment(self, run_number: int) -> str:
+        """A run's assigned profile name, falling back to the default.
+
+        Resolves the recorded assignment passed at construction; a missing or
+        stale name (the profile was deleted or renamed outside this run's
+        record) falls back to the fingerprint's default profile — mirroring
+        :func:`~asymmetry.core.project.profiles.assigned_profile_for_run`.
+        """
+        raw = self._assigned_profiles.get(int(run_number))
+        if raw and str(raw) in self._fingerprint_profile_names():
+            return str(raw)
+        return self._current_default_name()
+
+    def _newly_assigned(self) -> dict[int, str]:
+        """Runs whose assignment changed this session (run → new profile)."""
+        return {
+            rn: name
+            for rn, name in self._session_assignments.items()
+            if name != self._initial_assignments.get(rn)
+        }
 
     # -- instrument switcher (M2) ----------------------------------------
 
@@ -1140,10 +1257,13 @@ class GroupingDialog(QDialog):
         self._reference_dataset = datasets[0]
         self._run = datasets[0].run
         self._current_run = int(datasets[0].run_number)
-        # Draft: the new instrument's active profile, or a fresh default.
+        # Draft: the new instrument's default profile, or a fresh default.
         self._draft = self._initial_draft()
         self._draft_name = self._draft.name
         self._draft_dirty = False
+        # A pending rename belongs to the outgoing fingerprint's draft; the
+        # switch already confirmed discarding uncommitted edits.
+        self._renamed_from = None
         # Re-seed every form control, scope panel, preset list, and preview; the
         # scope panel is repopulated for the new instrument's runs by
         # _reseed_form_from_draft → _refresh_scope_panel below.
@@ -1326,20 +1446,52 @@ class GroupingDialog(QDialog):
     # -- profile selector -------------------------------------------------
 
     def _rebuild_profile_combo(self) -> None:
-        """(Re)populate the profile selector for the current fingerprint."""
+        """(Re)populate the profile selector for the current fingerprint.
+
+        The fingerprint's default profile (the one newly loaded runs are
+        assigned to) is marked with a ★ prefix; item data stays the bare name.
+        """
         combo = self._profile_combo
         combo.blockSignals(True)
         combo.clear()
-        names = [p.name for p in self._profiles_for_fingerprint()]
-        if self._draft_name and self._draft_name not in names:
-            names.append(self._draft_name)
+        names = self._fingerprint_profile_names()
+        default_name = self._current_default_name()
         for name in names:
-            combo.addItem(name, name)
+            display = f"★ {name}" if name == default_name else name
+            combo.addItem(display, name)
         combo.addItem("New…", "__new__")
         combo.addItem("Duplicate…", "__duplicate__")
         idx = combo.findData(self._draft_name)
         combo.setCurrentIndex(idx if idx >= 0 else 0)
         combo.blockSignals(False)
+        self._refresh_default_checkbox()
+
+    def _refresh_default_checkbox(self) -> None:
+        """Sync the default-for-new-runs checkbox to the edited profile.
+
+        Checked (and locked) when the edited profile is the fingerprint's
+        default — unchecking without choosing a new default is meaningless, so
+        defaultness only moves by checking the box on another profile.
+        """
+        if not hasattr(self, "_default_check"):
+            return
+        is_default = self._draft_name == self._current_default_name()
+        blocked = self._default_check.blockSignals(True)
+        try:
+            self._default_check.setChecked(is_default)
+        finally:
+            self._default_check.blockSignals(blocked)
+        self._default_check.setEnabled(not is_default)
+
+    def _on_default_toggled(self, checked: bool) -> None:
+        """Make the edited profile the fingerprint's default on Apply."""
+        if not checked:
+            # Unchecking is disabled while default; a spurious signal is a no-op.
+            self._refresh_default_checkbox()
+            return
+        self._default_names[self._fingerprint_key()] = self._draft_name
+        self._mark_dirty()
+        self._rebuild_profile_combo()
 
     def _on_profile_combo_activated(self, index: int) -> None:
         """Switch the active draft, or create a new / duplicated profile.
@@ -1365,13 +1517,24 @@ class GroupingDialog(QDialog):
         if not self._confirm_discard_before_switch():
             self._select_profile_in_combo(self._draft_name)
             return
+        if self._load_stored_profile_into_draft(name):
+            self._draft_dirty = False
+
+    def _load_stored_profile_into_draft(self, name: str) -> bool:
+        """Switch the editor to the stored profile *name* (draft reloaded).
+
+        Discards any in-session rename of the outgoing draft (the caller has
+        already confirmed the discard where one is needed). Returns whether the
+        profile was found. Callers own the ``_draft_dirty`` flag.
+        """
         for profile in self._profiles_for_fingerprint():
             if profile.name == name:
                 self._draft = GroupingProfile.from_dict(profile.to_dict())
-                self._draft_name = name
-                self._draft_dirty = False
+                self._draft_name = str(name)
+                self._renamed_from = None
                 self._reseed_form_from_draft()
-                return
+                return True
+        return False
 
     def _create_new_profile(self, *, duplicate: bool) -> None:
         """Prompt for a name and start a fresh (or duplicated) draft."""
@@ -1403,10 +1566,17 @@ class GroupingDialog(QDialog):
         self._draft.name = name
         self._draft_name = name
         self._draft_dirty = True
+        self._renamed_from = None
         self._reseed_form_from_draft()
 
     def _on_rename_profile(self) -> None:
-        """Rename the current draft profile."""
+        """Rename the current draft profile (first-class, committed on Apply).
+
+        When the draft corresponds to a stored profile, the original stored
+        name is remembered in ``_renamed_from`` so Apply replaces the stored
+        profile in place and the main window rewrites every run's assignment —
+        rather than saving a second profile under the new name.
+        """
         from PySide6.QtWidgets import QInputDialog
 
         name, accepted = QInputDialog.getText(
@@ -1415,10 +1585,116 @@ class GroupingDialog(QDialog):
         name = str(name).strip()
         if not accepted or not name or name == self._draft_name:
             return
+        taken = [n for n in self._stored_names_for_fingerprint() if n != self._draft_name]
+        if self._renamed_from in taken:
+            taken.remove(self._renamed_from)
+        if name in taken:
+            QMessageBox.warning(
+                self,
+                "Rename Profile",
+                f"A profile named '{name}' already exists for this instrument.",
+            )
+            return
+        old_name = self._draft_name
+        # Chained renames keep the original stored name; a draft never stored
+        # (New/Duplicate) has nothing to replace, so no rename record.
+        if self._renamed_from is None and old_name in self._stored_names_for_fingerprint():
+            self._renamed_from = old_name
         self._draft_name = name
         self._draft.name = name
+        key = self._fingerprint_key()
+        if self._default_names.get(key) == old_name or self._current_default_name() == old_name:
+            self._default_names[key] = name
+        # Carry every reference to the old name across the working maps.
+        for mapping in (self._initial_assignments, self._session_assignments):
+            for rn, assigned in list(mapping.items()):
+                if assigned == old_name:
+                    mapping[rn] = name
+        self._scope_panel.rename_profile(old_name, name)
         self._draft_dirty = True
         self._rebuild_profile_combo()
+        self._refresh_editing_strip()
+
+    def _on_delete_profile(self) -> None:
+        """Delete the edited profile, reassigning its runs to another profile.
+
+        Guarded: the last profile of a fingerprint cannot be deleted. Runs
+        assigned to the profile (including released runs based on it) move to
+        a reassignment target chosen by the user; the forced moves surface as
+        assignment changes and are committed on Apply.
+        """
+        from PySide6.QtWidgets import QInputDialog
+
+        # The stored profile this draft corresponds to (renames pending).
+        stored_name = self._renamed_from or self._draft_name
+        display_name = self._draft_name
+        if stored_name not in self._stored_names_for_fingerprint():
+            # Unsaved draft (New/Duplicate): nothing stored to delete — offer to
+            # discard it and return to an existing profile.
+            others = self._stored_names_for_fingerprint()
+            if not others:
+                QMessageBox.warning(
+                    self,
+                    "Delete Profile",
+                    "This is the only profile for this instrument; every "
+                    "instrument keeps at least one profile.",
+                )
+                return
+            if not self._confirm_discard_before_switch():
+                return
+            self._load_stored_profile_into_draft(others[0])
+            self._draft_dirty = False
+            return
+        others = [n for n in self._stored_names_for_fingerprint() if n != stored_name]
+        if not others:
+            QMessageBox.warning(
+                self,
+                "Delete Profile",
+                "This is the only profile for this instrument; every "
+                "instrument keeps at least one profile.",
+            )
+            return
+        affected = sorted(
+            rn for rn, assigned in self._session_assignments.items() if assigned == display_name
+        )
+        if affected:
+            noun = "run" if len(affected) == 1 else "runs"
+            target, ok = QInputDialog.getItem(
+                self,
+                "Delete Profile",
+                f"Profile '{display_name}' has {len(affected)} assigned {noun}. Reassign them to:",
+                others,
+                0,
+                False,
+            )
+            if not ok or not target:
+                return
+            target = str(target)
+        else:
+            answer = QMessageBox.question(
+                self,
+                "Delete Profile",
+                f"Delete profile '{display_name}'?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            target = others[0]
+        self._deleted_profiles.append(stored_name)
+        self._renamed_from = None
+        for rn, assigned in list(self._session_assignments.items()):
+            if assigned == display_name:
+                self._session_assignments[rn] = target
+        key = self._fingerprint_key()
+        if self._current_default_name() == display_name:
+            self._default_names[key] = target
+        self._scope_panel.remove_profile(display_name, target)
+        self._load_stored_profile_into_draft(target)
+        # The deletion (and its forced reassignments) commit on Apply; keep the
+        # dirty flag armed so the close guard covers them.
+        self._draft_dirty = True
+        self._update_apply_enabled()
 
     def _unique_profile_name(self, base: str) -> str:
         """Return *base* suffixed to avoid clashing with existing profile names."""
@@ -1556,12 +1832,23 @@ class GroupingDialog(QDialog):
     # -- scope panel ------------------------------------------------------
 
     def _refresh_scope_panel(self) -> None:
-        """Repopulate the scope panel for the current fingerprint + draft."""
-        runs: list[tuple[int, str, bool]] = []
+        """Repopulate the scope panel for the current fingerprint + draft.
+
+        Assignments are seeded from the session map (first resolving each
+        newly listed run's recorded assignment), so in-session reassignments
+        survive profile switches and repopulates.
+        """
+        runs: list[tuple[int, str, bool, str]] = []
         for ds in self._fingerprint_datasets():
             rn = int(ds.run_number)
-            runs.append((rn, ds.run_label, rn in self._overridden_run_numbers))
-        self._scope_panel.set_runs(runs, profile_name=self._draft_name)
+            initial = self._initial_assignments.setdefault(rn, self._resolved_assignment(rn))
+            assigned = self._session_assignments.setdefault(rn, initial)
+            runs.append((rn, ds.run_label, rn in self._overridden_run_numbers, assigned))
+        self._scope_panel.set_runs(
+            runs,
+            profile_name=self._draft_name,
+            profile_names=self._fingerprint_profile_names(),
+        )
         if hasattr(self, "_apply_btn"):
             self._update_apply_enabled()
 
@@ -1577,11 +1864,17 @@ class GroupingDialog(QDialog):
             return
         target = self._editing_target()
         if target == "profile":
-            n = len(self._scope_panel.inheriting_run_numbers())
+            n = len(self._scope_panel.runs_following(self._draft_name))
             noun = "run" if n == 1 else "runs"
-            self._editing_strip.setText(
-                f"Editing profile '{self._draft_name}' — applies to {n} {noun}"
-            )
+            text = f"Editing profile '{self._draft_name}' — applies to {n} {noun}"
+            # Cue when the previewed run follows another profile: edits still go
+            # to this draft; the preview is a what-if on that run.
+            current = self._current_run
+            if current is not None and not self._run_is_overridden(int(current)):
+                assigned = self._scope_panel.assigned_profile(int(current))
+                if assigned and assigned != self._draft_name:
+                    text += f" (preview run follows {assigned})"
+            self._editing_strip.setText(text)
             self._editing_strip.setStyleSheet(
                 f"color: {tokens.ACCENT}; font-weight: bold; "
                 f"background: {tokens.ACCENT_SOFT}; border: 1px solid {tokens.ACCENT}; "
@@ -1615,6 +1908,9 @@ class GroupingDialog(QDialog):
             for rn in reattached_dirty:
                 self._scope_panel.set_released(int(rn), True)
             return
+        # Sync the authoritative assignment map from the panel (an Assign-to
+        # action lands here through the same ``changed`` signal).
+        self._session_assignments.update(self._scope_panel.assignments())
         self._draft_dirty = True
         # Drop override drafts for any run that is now inheriting.
         for rn in list(self._override_drafts):
@@ -3113,18 +3409,38 @@ class GroupingDialog(QDialog):
         """Overridden runs with a dirty override draft, in ascending order."""
         return sorted(rn for rn in self._override_dirty_runs if self._run_is_overridden(int(rn)))
 
+    def _has_structural_changes(self) -> bool:
+        """Whether Apply must commit profile-level changes beyond run payloads.
+
+        Covers reassignments, deletions, a pending rename, a brand-new (never
+        stored) profile, and a moved default — each meaningful even when no run
+        currently follows the edited profile.
+        """
+        if self._newly_assigned() or self._deleted_profiles:
+            return True
+        if self._renamed_from is not None:
+            return True
+        stored = self._stored_names_for_fingerprint()
+        # A user-created (New/Duplicate) profile not yet stored is structural;
+        # the auto-synthesized initial draft of a profile-less fingerprint is
+        # not — it only becomes worth saving once a run follows it.
+        if stored and self._draft_name not in stored:
+            return True
+        return self._current_default_name() != self._stored_default_name()
+
     def _update_apply_enabled(self) -> None:
         """Enable/label Apply, showing the blast radius of everything dirty.
 
-        Apply commits the profile to every inheriting run plus each dirty
+        Apply commits the profile to every run following it plus each dirty
         override to its own run. The label shows the pending override count when
-        any override is dirty ("Apply (profile + 2 overrides)"). Apply is disabled
-        only when there is nothing to commit: no inheriting run *and* no pending
-        override.
+        any override is dirty ("Apply (profile + 2 overrides)"). Apply is
+        disabled only when there is nothing to commit: no run follows the
+        profile, no override has pending edits, and no structural change
+        (reassignment, rename, deletion, new profile, moved default) waits.
         """
-        inheriting = self._scope_panel.inheriting_run_numbers()
+        followers = self._scope_panel.runs_following(self._draft_name)
         pending = self._pending_override_runs()
-        enabled = bool(inheriting) or bool(pending)
+        enabled = bool(followers) or bool(pending) or self._has_structural_changes()
         self._apply_btn.setEnabled(enabled)
         if pending:
             noun = "override" if len(pending) == 1 else "overrides"
@@ -3133,15 +3449,16 @@ class GroupingDialog(QDialog):
             self._apply_btn.setText("Apply")
         if not enabled:
             self._apply_btn.setToolTip(
-                "No run of this instrument inherits the profile (all released) "
-                "and no override has pending edits. Reattach a run to apply."
+                "No run of this instrument follows this profile (all released "
+                "or assigned elsewhere) and no override has pending edits. "
+                "Reattach or assign a run to apply."
             )
             return
         parts: list[str] = []
-        if inheriting:
-            parts.append(
-                f"save profile '{self._draft_name}' to {len(inheriting)} inheriting run(s)"
-            )
+        if followers:
+            parts.append(f"save profile '{self._draft_name}' to {len(followers)} run(s)")
+        elif self._has_structural_changes():
+            parts.append(f"save profile '{self._draft_name}'")
         if pending:
             parts.append(f"apply override edits to run(s) {', '.join(str(r) for r in pending)}")
         self._apply_btn.setToolTip("Apply will " + " and ".join(parts) + ".")
@@ -3150,6 +3467,9 @@ class GroupingDialog(QDialog):
         """Disarm the unsaved-draft guard (used by the test teardown fixture)."""
         self._draft_dirty = False
         self._override_dirty_runs.clear()
+        self._deleted_profiles.clear()
+        self._renamed_from = None
+        self._session_assignments = dict(self._initial_assignments)
 
     def _guard_discard(self) -> bool:
         """Return whether it is safe to close (prompting on any uncommitted edit).
@@ -3160,7 +3480,12 @@ class GroupingDialog(QDialog):
         runs 12, 15" — so nothing can be lost silently.
         """
         pending = self._pending_override_runs()
-        if not self._draft_dirty and not pending:
+        structural = (
+            bool(self._deleted_profiles)
+            or self._renamed_from is not None
+            or bool(self._newly_assigned())
+        )
+        if not self._draft_dirty and not pending and not structural:
             return True
         lost: list[str] = []
         if self._draft_dirty:
@@ -3169,6 +3494,8 @@ class GroupingDialog(QDialog):
             noun = "override" if len(pending) == 1 else "overrides"
             run_word = "run" if len(pending) == 1 else "runs"
             lost.append(f"{noun} for {run_word} {', '.join(str(r) for r in pending)}")
+        if structural and not self._draft_dirty:
+            lost.append("pending profile changes (reassignment/rename/deletion)")
         answer = QMessageBox.question(
             self,
             "Discard changes",
@@ -4534,10 +4861,12 @@ class GroupingDialog(QDialog):
         """
         if self._editing_target() == "profile":
             return self._current_grouping_payload()
-        inheriting = sorted(self._scope_panel.inheriting_run_numbers())
+        followers = sorted(self._scope_panel.runs_following(self._draft_name)) or sorted(
+            self._scope_panel.inheriting_run_numbers()
+        )
         reference_run = self._run
         for ds in self._fingerprint_datasets():
-            if int(ds.run_number) in inheriting and ds.run is not None:
+            if int(ds.run_number) in followers and ds.run is not None:
                 reference_run = ds.run
                 break
         return dict(payload_from_profile_for_preview(self._draft, reference_run))
@@ -4561,7 +4890,10 @@ class GroupingDialog(QDialog):
         if self._run is None or not self._run.histograms:
             return None
         payload = self._profile_broadcast_payload()
-        payload["run_numbers"] = sorted(self._scope_panel.inheriting_run_numbers())
+        # Only the runs *following the edited profile* receive the profile
+        # apply — runs assigned to another profile of the fingerprint are that
+        # profile's business (schema v17).
+        payload["run_numbers"] = sorted(self._scope_panel.runs_following(self._draft_name))
         return payload
 
     def get_profile_result(self) -> dict[str, Any] | None:
@@ -4601,6 +4933,14 @@ class GroupingDialog(QDialog):
             "newly_reattached": self._scope_panel.newly_reattached(),
             "preview_run_number": int(self._reference_dataset.run_number),
             "override_edits": override_edits,
+            # Schema v17 assignment reconciliation: the authoritative run→profile
+            # map, the changes made this session, the fingerprint's default
+            # profile after this apply, and any pending rename/deletions.
+            "assignments": {int(rn): str(name) for rn, name in self._session_assignments.items()},
+            "newly_assigned": {int(rn): str(name) for rn, name in self._newly_assigned().items()},
+            "default_profile": self._current_default_name(),
+            "renamed_from": self._renamed_from,
+            "deleted_profiles": list(self._deleted_profiles),
         }
 
     @property
