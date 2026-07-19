@@ -64,6 +64,10 @@ STAGE_BACKGROUND = "#5f4a87"
 STAGE_BACKGROUND_SOFT = "#ece8f4"
 STAGE_ALPHA = ACCENT_RED
 STAGE_ALPHA_SOFT = ACCENT_RED_SOFT
+# Steel blue for β (Ben's pick for the intrinsic-asymmetry balance card) —
+# clearly apart from the deadtime teal at this muted saturation.
+STAGE_BETA = "#2e5e8f"
+STAGE_BETA_SOFT = "#e6edf5"
 
 # ── Semantic states ───────────────────────────────────────────────────────────
 WARN = "#b66815"

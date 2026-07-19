@@ -48,12 +48,18 @@ is
 
 .. math::
 
-   A(t) = \frac{F(t) - \alpha B(t)}{F(t) + \alpha B(t)},
+   A(t) = \frac{F(t) - \alpha B(t)}{\beta F(t) + \alpha B(t)},
 
-with the calibration constant :math:`\alpha` applied to the **backward** group.
+with the calibration constant :math:`\alpha` applied to the **backward** group
+and the optional intrinsic-asymmetry balance
+:math:`\beta = A_{0,b}/A_{0,f}` (default 1, giving the familiar
+:math:`(F - \alpha B)/(F + \alpha B)`) applied to the forward group in the
+denominator — the musrfit asymmetry-fit (fit type 2) correction pair, set in
+the Grouping window's Corrections column.
 This convention is used consistently across the interface, the loaders, the
 grouping tools, and the fitting inputs. Some other programs place :math:`\alpha`
-on the forward group instead, so take care when comparing α values between tools.
+on the forward group instead, so take care when comparing α values between
+tools (:math:`\beta` is numerically identical in both conventions).
 The corrections that produce the asymmetry are applied in a fixed order —
 deadtime, then background, then grouping, then asymmetry — as described in
 :doc:`/getting_started/key_concepts` and

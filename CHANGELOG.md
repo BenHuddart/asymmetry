@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **β (asymmetry balance) correction.** The Corrections column gains a fourth,
+  steel-blue **β (asymmetry balance)** card porting musrfit's asymmetry-fit
+  (fit type 2) beta — the intrinsic-asymmetry ratio β = A₀,b/A₀,f — applied
+  with α as A = (F − αB)/(βF + αB) with exact Poisson errors. β is a fixed
+  user-entered scalar (default 1 = the standard formula; the key is only
+  persisted when it departs from 1, so existing projects and profiles are
+  untouched), gets its own pipeline chip and a **β = 1** compare ghost in the
+  preview, and is scalar-only: in vector (per-projection) mode the card hides
+  and reductions stay at β = 1. A data-driven β estimate — equivalently a
+  fittable β in the count-domain F/B fit — is deferred
+  (`docs/porting/beta-correction/`).
+
 ## [0.14.0] - 2026-07-18
 
 ### Added

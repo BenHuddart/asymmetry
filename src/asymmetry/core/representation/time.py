@@ -81,6 +81,7 @@ class TimeFBAsymmetry(Representation):
             alpha=alpha,
             first_good_bin=first_good,
             last_good_bin=last_good,
+            beta=fb.beta,
         )
 
         metadata = dict(run.metadata)
@@ -96,6 +97,10 @@ class TimeFBAsymmetry(Representation):
                 "alpha": alpha,
             }
         )
+        # Emitted only when the correction is active so existing metadata
+        # snapshots stay byte-identical at the beta = 1 default.
+        if fb.beta != 1.0:
+            metadata["beta"] = fb.beta
         return [
             MuonDataset(
                 time=np.asarray(time, dtype=float),

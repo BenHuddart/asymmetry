@@ -592,8 +592,13 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     except (TypeError, ValueError):
         last_good = n_grouped - 1
     alpha = _as_float(grouping.get("alpha"), 1.0)
+    beta = _as_float(grouping.get("beta"), 1.0)
+    if not np.isfinite(beta) or beta <= 0.0:
+        beta = 1.0
 
-    time, asymmetry, error = _form_asymmetry(corrected, grouping, alpha, first_good, last_good)
+    time, asymmetry, error = _form_asymmetry(
+        corrected, grouping, alpha, first_good, last_good, beta=beta
+    )
 
     # Stage-generic before/after compare: the solid curve is the reduction above;
     # the *ghost* removes one stage. "alpha" ghosts α=1 from the SAME corrected
@@ -613,16 +618,27 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         # Residual baseline (inverse-variance weighted ⟨A⟩) on the full-res curve.
         centre_mean, centre_err = _weighted_centre(asymmetry, error)
         if abs(alpha - 1.0) > 1e-12:
-            _bt, base_asym, _be = _form_asymmetry(corrected, grouping, 1.0, first_good, last_good)
+            # The ghost removes only α; a configured β stays applied.
+            _bt, base_asym, _be = _form_asymmetry(
+                corrected, grouping, 1.0, first_good, last_good, beta=beta
+            )
             _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
             baseline_label = "α = 1"
+    elif compare == "beta" and abs(beta - 1.0) > 1e-12:
+        # β ghost: same corrected counts, α as configured, β removed — the exact
+        # mirror of the α compare (one reduction, two curves).
+        _bt, base_asym, _be = _form_asymmetry(
+            corrected, grouping, alpha, first_good, last_good, beta=1.0
+        )
+        _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
+        baseline_label = "β = 1"
     elif compare == "deadtime" and use_deadtime:
         # The ghost is a second full reduction — honour cancellation before it, as
         # the first pass does, so a shutdown mid-flight stops promptly on big runs.
         if worker.is_cancelled():
             raise TaskCancelledError
         ghost = _form_asymmetry(
-            _reduce(False, use_background), grouping, alpha, first_good, last_good
+            _reduce(False, use_background), grouping, alpha, first_good, last_good, beta=beta
         )
         _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
         baseline_label = "without deadtime"
@@ -630,13 +646,15 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         if worker.is_cancelled():
             raise TaskCancelledError
         ghost = _form_asymmetry(
-            _reduce(use_deadtime, False), grouping, alpha, first_good, last_good
+            _reduce(use_deadtime, False), grouping, alpha, first_good, last_good, beta=beta
         )
         _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
         baseline_label = "without background"
-    elif compare == "raw" and (use_deadtime or use_background or abs(alpha - 1.0) > 1e-12):
+    elif compare == "raw" and (
+        use_deadtime or use_background or abs(alpha - 1.0) > 1e-12 or abs(beta - 1.0) > 1e-12
+    ):
         # The compound "vs raw" ghost: every stage removed at once — no deadtime,
-        # no background, α=1. Nothing configured means raw == full, so no ghost.
+        # no background, α=1, β=1. Nothing configured means raw == full, so no ghost.
         if worker.is_cancelled():
             raise TaskCancelledError
         ghost = _form_asymmetry(_reduce(False, False), grouping, 1.0, first_good, last_good)
@@ -669,8 +687,10 @@ def _form_asymmetry(
     alpha: float,
     first_good: int,
     last_good: int,
+    *,
+    beta: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Bin the corrected counts into a percent asymmetry for one α.
+    """Bin the corrected counts into a percent asymmetry for one (α, β).
 
     Mirrors :func:`reduce_grouped_asymmetry`'s final step (counts → binned
     asymmetry, scaled to percent) so the preview matches the reduction exactly.
@@ -686,6 +706,7 @@ def _form_asymmetry(
         last_good_bin=last_good,
         forward_error=corrected.forward_error,
         backward_error=corrected.backward_error,
+        beta=beta,
     )
     return (
         np.asarray(time, dtype=np.float64),

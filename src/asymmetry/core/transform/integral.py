@@ -93,6 +93,7 @@ def integrate_asymmetry(
     backward: NDArray[np.float64],
     *,
     alpha: float = 1.0,
+    beta: float = 1.0,
     time: NDArray[np.float64] | None = None,
     t_min: float | None = None,
     t_max: float | None = None,
@@ -107,6 +108,9 @@ def integrate_asymmetry(
         :func:`asymmetry.core.transform.compute_asymmetry`).
     alpha
         Detector balance parameter (must be > 0).
+    beta
+        Intrinsic-asymmetry balance parameter (must be > 0; default 1.0 is the
+        standard formula, matching :func:`compute_asymmetry`).
     time
         Optional time axis (µs) aligned with the count arrays.  Required when
         ``t_min``/``t_max`` are supplied; otherwise the whole array is used.
@@ -127,6 +131,7 @@ def integrate_asymmetry(
     """
     _validate_method(method)
     _validate_alpha(alpha)
+    _validate_beta(beta)
 
     f = np.asarray(forward, dtype=np.float64)
     b = np.asarray(backward, dtype=np.float64)
@@ -143,15 +148,15 @@ def integrate_asymmetry(
     if method == "integral":
         f_int = np.array([float(np.sum(f[mask]))], dtype=np.float64)
         b_int = np.array([float(np.sum(b[mask]))], dtype=np.float64)
-        asym, err = compute_asymmetry(f_int, b_int, alpha)
+        asym, err = compute_asymmetry(f_int, b_int, alpha, beta)
         return float(asym[0]), float(err[0])
 
     # "differential": per-bin asymmetry, then mean over the window. Exclude
     # zero-denominator bins, where compute_asymmetry returns a sentinel
     # (asym=0, err=1.0); including them would bias the mean toward zero and
     # inflate the error.
-    asym, err = compute_asymmetry(f, b, alpha)
-    valid = mask & ((f + alpha * b) != 0.0)
+    asym, err = compute_asymmetry(f, b, alpha, beta)
+    valid = mask & ((beta * f + alpha * b) != 0.0)
     if not np.any(valid):
         raise ValueError("Integration window selects no bins with non-zero counts.")
     return _mean_over_window(asym, err, valid)
@@ -225,7 +230,9 @@ def integrate_run(
     """
     _validate_method(method)
     run = _resolve_run(data)
-    time, forward, backward, alpha_used, good = _reduce_run_to_fb(run, alpha, grouping_ref)
+    time, forward, backward, alpha_used, beta_used, good = _reduce_run_to_fb(
+        run, alpha, grouping_ref
+    )
 
     if t_min is None:
         t_min = float(time[good[0]])
@@ -237,6 +244,7 @@ def integrate_run(
         forward,
         backward,
         alpha=alpha_used,
+        beta=beta_used,
         time=time,
         t_min=t_min,
         t_max=t_max,
@@ -467,6 +475,11 @@ def _validate_alpha(alpha: float) -> None:
         raise ValueError(f"alpha must be a positive, finite number, got {alpha!r}")
 
 
+def _validate_beta(beta: float) -> None:
+    if not np.isfinite(beta) or beta <= 0.0:
+        raise ValueError(f"beta must be a positive, finite number, got {beta!r}")
+
+
 def _validate_window(t_min: float, t_max: float) -> None:
     # Equal bounds are allowed: they select a single bin (for example a run
     # whose good-bin range is one bin). Only an inverted window is rejected.
@@ -530,16 +543,23 @@ def _reduce_run_to_fb(
     run: Run,
     alpha: float | None,
     grouping_ref: dict | None,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], float, tuple[int, int]]:
+) -> tuple[
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    float,
+    float,
+    tuple[int, int],
+]:
     """Form forward/backward groups + time axis + good-bin range from a run.
 
     Uses the same shared grouping path as
     :class:`asymmetry.core.representation.time.TimeFBAsymmetry`
     (:func:`effective_grouping` + :func:`group_forward_backward`), so the
-    integral observable agrees with the time-domain asymmetry on grouping and
-    ``alpha`` by construction. Returns
-    ``(time, forward, backward, alpha_used, (good_start, good_end))`` where the
-    good indices are 0-based into the returned full-length arrays.
+    integral observable agrees with the time-domain asymmetry on grouping,
+    ``alpha`` and ``beta`` by construction. Returns
+    ``(time, forward, backward, alpha_used, beta_used, (good_start, good_end))``
+    where the good indices are 0-based into the returned full-length arrays.
     """
     histograms = list(run.histograms)
     if not histograms:
@@ -576,7 +596,7 @@ def _reduce_run_to_fb(
 
     bin_width = float(histograms[0].bin_width)
     time = (np.arange(n, dtype=np.float64) - float(fb.common_t0)) * bin_width
-    return time, forward, backward, alpha_used, (first_good, last_good)
+    return time, forward, backward, alpha_used, fb.beta, (first_good, last_good)
 
 
 def _order_value(run: Run, order_key: str) -> float | None:

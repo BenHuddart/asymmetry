@@ -1,11 +1,16 @@
 """Compute the μSR asymmetry from grouped histograms.
 
-The standard asymmetry is defined as
+The corrected asymmetry is defined as
 
-    A(t) = [N_F(t) − α N_B(t)] / [N_F(t) + α N_B(t)]
+    A(t) = [N_F(t) − α N_B(t)] / [β N_F(t) + α N_B(t)]
 
-where N_F and N_B are the forward and backward group counts and α is
-the balance parameter.
+where N_F and N_B are the forward and backward group counts, α is the
+count-rate balance (detector efficiencies × solid angles) and β is the
+intrinsic-asymmetry balance β = A_{0,B}/A_{0,F} (musrfit asymmetry fit
+type 2; β multiplies the *forward* counts in our α-on-backward convention,
+which is algebraically identical to musrfit's α-on-forward form with
+α_musrfit = 1/α — see docs/porting/beta-correction/). β = 1 recovers the
+standard formula A = (F − αB)/(F + αB).
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ def compute_asymmetry(
     forward: NDArray[np.float64],
     backward: NDArray[np.float64],
     alpha: float = 1.0,
+    beta: float = 1.0,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Calculate asymmetry and its statistical error.
 
@@ -43,7 +49,10 @@ def compute_asymmetry(
     forward, backward
         Counts in the forward and backward detector groups (same length).
     alpha
-        Balance parameter (α).
+        Count-rate balance parameter (α).
+    beta
+        Intrinsic-asymmetry balance parameter (β = A_{0,B}/A_{0,F}); the
+        default 1.0 is the standard formula.
 
     Returns
     -------
@@ -54,7 +63,7 @@ def compute_asymmetry(
     b = np.asarray(backward, dtype=np.float64)
 
     numerator = f - alpha * b
-    denominator = f + alpha * b
+    denominator = beta * f + alpha * b
     # Only divide on non-zero denominator.
     safe = denominator != 0.0
     asym = np.zeros_like(f)
@@ -64,14 +73,17 @@ def compute_asymmetry(
 
     asym[safe] = numerator[safe] / denominator[safe]
 
-    # Exact Poisson propagation of A = (F - alpha B)/(F + alpha B) with
-    # var(F) = F, var(B) = B, keeping the cov(num, den) = F - alpha^2 B term:
-    #   var(A) = 4 alpha^2 F B (F + B) / (F + alpha B)^4
-    #          = (1 - A^2)/(F + B)        at alpha = 1.
-    # This is the textbook / WiMDA / musrfit result. (The older Mantid
-    # AsymmetryCalc model propagated num and den as *independent*, dropping
-    # that covariance and over-estimating sigma_A by (1 + A^2)/(1 - A^2);
-    # see docs/porting/asymmetry-error-propagation/.)
+    # Exact Poisson propagation of A = (F - alpha B)/(beta F + alpha B) with
+    # var(F) = F, var(B) = B, keeping the num/den covariance:
+    #   dA/dF = alpha B (1 + beta)/D^2,  dA/dB = -alpha F (1 + beta)/D^2
+    #   var(A) = alpha^2 (1 + beta)^2 F B (F + B) / (beta F + alpha B)^4
+    #          = (1 - A^2)/(F + B)        at alpha = beta = 1.
+    # At beta = 1 this is the textbook / WiMDA / musrfit result. (The older
+    # Mantid AsymmetryCalc model propagated num and den as *independent*,
+    # dropping that covariance and over-estimating sigma_A by
+    # (1 + A^2)/(1 - A^2); see docs/porting/asymmetry-error-propagation/.
+    # musrfit itself weights fits with the *raw* asymmetry error, independent
+    # of alpha/beta — a recorded divergence, see docs/porting/beta-correction/.)
     #
     # One-sided bins (F * B == 0) have a degenerate zero first-order variance
     # (A is pinned to +/-1), which is useless as a fit weight, so they keep
@@ -85,7 +97,8 @@ def compute_asymmetry(
         # (e.g. background-subtracted) counts, matching the clamp in
         # compute_asymmetry_with_count_errors.
         radicand = np.maximum(fi * bi * (fi + bi), 0.0)
-        err[informative] = 2.0 * abs(float(alpha)) * np.sqrt(radicand) / (den * den)
+        scale = abs(float(alpha)) * (1.0 + float(beta))
+        err[informative] = scale * np.sqrt(radicand) / (den * den)
 
     return asym, err
 
@@ -96,13 +109,15 @@ def compute_asymmetry_with_count_errors(
     forward_error: NDArray[np.float64],
     backward_error: NDArray[np.float64],
     alpha: float = 1.0,
+    beta: float = 1.0,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Calculate asymmetry from counts with supplied count uncertainties.
 
     This is used for musrfit-style background-corrected histograms, where the
     count uncertainties are formed before or during background subtraction.
     The asymmetry convention remains Asymmetry's convention, with ``alpha``
-    multiplying the backward group.
+    multiplying the backward group (and ``beta`` the forward group in the
+    denominator).
     """
     f = np.asarray(forward, dtype=np.float64)
     b = np.asarray(backward, dtype=np.float64)
@@ -116,7 +131,7 @@ def compute_asymmetry_with_count_errors(
     eb = eb[:n]
 
     numerator = f - alpha * b
-    denominator = f + alpha * b
+    denominator = beta * f + alpha * b
     safe = denominator != 0.0
     asym = np.zeros_like(f)
     err = np.ones_like(f)
@@ -125,12 +140,8 @@ def compute_asymmetry_with_count_errors(
     if np.any(safe):
         den_safe = denominator[safe]
         variance_term = (b[safe] * ef[safe]) ** 2 + (f[safe] * eb[safe]) ** 2
-        err[safe] = (
-            2.0
-            * abs(float(alpha))
-            * np.sqrt(np.maximum(variance_term, 0.0))
-            / (den_safe * den_safe)
-        )
+        scale = abs(float(alpha)) * (1.0 + float(beta))
+        err[safe] = scale * np.sqrt(np.maximum(variance_term, 0.0)) / (den_safe * den_safe)
 
     return asym, err
 

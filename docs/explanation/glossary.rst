@@ -25,6 +25,17 @@ For a narrative introduction rather than isolated definitions, read the
       oscillates symmetrically about zero. See
       :doc:`/reference/data_reduction/alpha_calibration`.
 
+   beta
+   β
+      The intrinsic-asymmetry balance :math:`\beta = A_{0,b}/A_{0,f}` from
+      musrfit's asymmetry fit (fit type 2): it corrects for the two detector
+      groups observing different asymmetry *amplitudes* (solid-angle and
+      absorption effects), entering the corrected asymmetry as
+      :math:`A = (F - \alpha B)/(\beta F + \alpha B)`. Unlike :math:`\alpha`
+      it is invisible to count totals, so it cannot be estimated from count
+      ratios; it is entered as a fixed value in the Grouping window's
+      **β (asymmetry balance)** card and defaults to 1.
+
    ALC
    avoided level crossing
       A resonance seen in a longitudinal-field scan when a muon and a

@@ -90,6 +90,13 @@ of the number survives:
   ``AlphaCalc``; the PSI ``.bin`` default), so a series with detector
   sensitivities that drift run-to-run stays self-consistent without a shared
   number.
+* **Beta** — the intrinsic-asymmetry balance :math:`\beta = A_{0,b}/A_{0,f}`
+  (musrfit's asymmetry-fit companion to :math:`\alpha`), stored as a plain
+  fixed scalar and applied with :math:`\alpha` in the asymmetry formula
+  :math:`A = (F - \alpha B)/(\beta F + \alpha B)`. The default 1 is the
+  standard formula and is omitted from saved profiles, so existing projects
+  are unaffected. There is no estimator — :math:`\beta` scales the asymmetry
+  amplitude, not the count rate, so no count ratio can measure it.
 * **Deadtime policy** — ``off`` disables the correction; ``from_file`` reads
   each run's own file deadtime values; ``manual`` applies a stored
   per-detector table (hand-typed or fitted with **Cal**); ``estimate``
@@ -195,15 +202,19 @@ draft is what gets applied to every run inheriting the profile.
   over two side-by-side columns, with the compare controls and the live preview
   pinned below both. The **Grouping and timing** column (left) holds the groups,
   t0, binning, exclusions and periods; the **Corrections** column (right) holds
-  three collapsible **correction cards** — **Deadtime**, **Background**, and
+  four collapsible **correction cards** — **Deadtime**, **Background**,
   **α (detector balance)** (its value and provenance or, in vector mode, the
-  per-projection table, plus the calibration controls) — each previewed against
-  the same corrected reduction. A card's header row shows a disclosure arrow,
+  per-projection table, plus the calibration controls), and
+  **β (asymmetry balance)** (a fixed **β value** entry for musrfit's
+  intrinsic-asymmetry balance; hidden in vector mode, where per-projection
+  reductions stay at β = 1) — each previewed against the same corrected
+  reduction. A card's header row shows a disclosure arrow,
   the title, and a live status summary (e.g. "off", "pre-t0 range",
   "1.2692 · Diamagnetic (TF)"), so a collapsed card still reports what its stage
   is doing; clicking anywhere on the header expands or collapses the body. At
   open, a card is expanded exactly when its stage is active (deadtime on,
-  background configured, :math:`\alpha` calibrated or away from 1); an idle
+  background configured, :math:`\alpha` calibrated or away from 1,
+  :math:`\beta` away from 1); an idle
   correction costs one header row until it is needed. Switching to a preset or
   profile that activates a stage re-expands its card automatically. Keeping
   corrections in their own named column makes them a first-class destination
@@ -566,16 +577,21 @@ Comparing a correction's effect
 -------------------------------
 
 A **pipeline strip** across the top of the right pane, above both columns —
-``Deadtime → group → Background → α`` — makes the reduction *order* visible and
-summarises each stage in a chip ("Deadtime: off", "Background: tail fit",
-"α = 1.037 · Diamagnetic (TF)"); the ``group`` divider is a reminder that
+``Deadtime → group → Background → α → β`` — makes the reduction *order* visible
+and summarises each stage in a chip ("Deadtime: off", "Background: tail fit",
+"α = 1.037 · Diamagnetic (TF)", "β = 1.0000"); the ``group`` divider is a
+reminder that
 detector grouping, set in the **Grouping and timing** column, sits between deadtime
 and background. Clicking a chip focuses that stage's compare (below) and scrolls
 its section into view. When a calibrated :math:`\alpha` goes stale the chip
-appends **" · stale"** and its tooltip prompts a re-estimate.
+appends **" · stale"** and its tooltip prompts a re-estimate. (Strictly,
+:math:`\alpha` and :math:`\beta` are applied together in the one
+asymmetry-formation step; the strip orders them for focus, not because one
+precedes the other.)
 
 Each stage wears its own identity colour — teal for deadtime, violet for
-background, a muted red for :math:`\alpha` — as the chip's outline *and*
+background, a muted red for :math:`\alpha`, a steel blue for :math:`\beta` — as
+the chip's outline *and*
 the matching card's header stripe, so a chip and its card read as one thing at
 a glance; focusing a stage's compare fills both the chip and the card header
 with that stage's soft tint.
@@ -592,14 +608,17 @@ only while it has a before/after to show.
 While a stage's compare is focused, its correction card is accent-highlighted —
 soft accent header with an accent left edge — and the header's right side shows
 what the ghost is: "comparing: without deadtime", "comparing: without
-background", or "comparing: α = 1 ghost". (The compound raw compare belongs to
+background", "comparing: α = 1 ghost", or "comparing: β = 1 ghost". (The
+compound raw compare belongs to
 no single card, so it lights no card; the pager label names it.)
 
 In the preview itself the solid curve is always the full reduction, and a
 dimmer ghosted curve shows the asymmetry with the focused stage removed. The
 ghost is named by a small inline label at its rightmost visible sample —
-"without deadtime", "without background", "α = 1", or "raw (uncorrected)" for
-the compound view (no deadtime, no background, :math:`\alpha = 1`) — there is
+"without deadtime", "without background", "α = 1", "β = 1", or
+"raw (uncorrected)" for
+the compound view (no deadtime, no background, :math:`\alpha = 1`,
+:math:`\beta = 1`) — there is
 no legend, since the pager label and the highlighted card already name the
 comparison. The y-axis always follows the **as-reduced (solid) curve** alone:
 a ghost that sits far off-scale (an uncorrected FLAME run's ghost can reach
@@ -612,15 +631,17 @@ because the **solid curve is never degraded**, the residual baseline
 :math:`\langle A \rangle` readout (shown for the :math:`\alpha` compare) is always
 read off the fully-corrected reduction. Calibrating :math:`\alpha` auto-focuses
 its compare, so a fresh calibration shows the balancing effect immediately; the
-:math:`\alpha` compare is not offered in vector mode, where the per-projection
-:math:`\alpha` table in the **Corrections** column owns the balance.
+:math:`\alpha` and :math:`\beta` compares are not offered in vector mode, where
+the per-projection
+:math:`\alpha` table in the **Corrections** column owns the balance (and the
+scalar :math:`\beta` card is hidden entirely).
 
 The **compare pager** — ``◀``/``▶`` arrow buttons flanking a muted label — sits
 directly above the pinned preview, below both columns, so it works regardless of
 which column is focused. It drives the same shared focus
 as the pipeline chips: each arrow steps through the
 configured corrections in pipeline order (deadtime, background, :math:`\alpha`,
-raw), skipping any stage without a before/after to show. The label reads
+:math:`\beta`, raw), skipping any stage without a before/after to show. The label reads
 "Comparing: off" when nothing is focused, and otherwise names the stage and its
 position among the currently available stages, e.g. "Comparing: without
 background (1/3)" or "Comparing: vs raw (3/3)". Both arrows disable together

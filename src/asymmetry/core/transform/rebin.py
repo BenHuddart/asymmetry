@@ -178,6 +178,7 @@ def binned_fb_asymmetry(
     last_good_bin: int,
     forward_error: NDArray[np.float64] | None = None,
     backward_error: NDArray[np.float64] | None = None,
+    beta: float = 1.0,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Reduce grouped counts to a binned asymmetry curve (all binning modes).
 
@@ -240,10 +241,10 @@ def binned_fb_asymmetry(
         ef_out = np.sqrt(np.add.reduceat(ef * ef, starts))
         eb_out = np.sqrt(np.add.reduceat(eb * eb, starts))
         asymmetry, error = compute_asymmetry_with_count_errors(
-            f_out, b_out, ef_out, eb_out, alpha=alpha
+            f_out, b_out, ef_out, eb_out, alpha=alpha, beta=beta
         )
     else:
-        asymmetry, error = compute_asymmetry(f_out, b_out, alpha=alpha)
+        asymmetry, error = compute_asymmetry(f_out, b_out, alpha=alpha, beta=beta)
     # Mean of the merged raw bins' time stamps (k − t0)·w: for the slice
     # [e0, e1) that is ((e0 + e1 − 1)/2)·w — matching the fixed-mode path,
     # where rebin() averages the same left-edge stamps.
