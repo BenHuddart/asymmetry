@@ -567,3 +567,31 @@ def test_create_rejects_an_existing_profile_name(
     assert warnings and "already exists" in warnings[0]
     assert dialog._draft_name == "Sample A"
     assert dialog.get_profile_result()["created_profiles"] == []
+
+
+def test_creating_profile_preserves_the_synthesized_default(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Creating a custom profile must not replace the initial default.
+
+    On a profile-less fingerprint the "Default (<instrument>)" profile exists
+    only as the draft; creating a custom profile used to move the draft and
+    silently drop it (and Apply then crowned the new profile the default).
+    It is now materialized as a session profile and keeps the ★.
+    """
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _dialog(overridden=[])
+    original = dialog._draft_name
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Custom", True)))
+    dialog._create_new_profile(duplicate=False)
+
+    names = [dialog._profile_combo.itemData(i) for i in range(dialog._profile_combo.count())]
+    assert original in names and "Custom" in names
+    assert dialog._current_default_name() == original
+
+    result = dialog.get_profile_result()
+    assert sorted(p.name for p in result["created_profiles"]) == sorted([original, "Custom"])
+    assert result["default_profile"] == original
+    # Every run keeps following the original default, not the new profile.
+    assert result["assignments"] == {1: original, 2: original}

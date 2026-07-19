@@ -1549,6 +1549,12 @@ class GroupingDialog(QDialog):
         are edited, instead of living only in the draft and vanishing on the
         next switch. Apply commits every session-created profile; Cancel
         drops them.
+
+        When the outgoing draft is the auto-synthesized initial profile of a
+        profile-less fingerprint (never stored), it is materialized as a
+        session profile first — so creating a custom profile leaves the
+        "Default (<instrument>)" profile in the selector, still the ★
+        default, instead of silently replacing it.
         """
         from PySide6.QtWidgets import QInputDialog
 
@@ -1571,10 +1577,17 @@ class GroupingDialog(QDialog):
             )
             self._select_profile_in_combo(self._draft_name)
             return
-        if not self._confirm_discard_before_switch():
+        assert self._fingerprint is not None
+        materialize_outgoing = self._draft_name not in self._stored_names_for_fingerprint()
+        if materialize_outgoing:
+            # Nothing is discarded — the outgoing (never-stored) draft is kept
+            # as a session profile in its current form state — so no prompt.
+            self._sync_draft_from_form()
+            self._project_profiles.append(GroupingProfile.from_dict(self._draft.to_dict()))
+            self._session_created.append(self._draft_name)
+        elif not self._confirm_discard_before_switch():
             self._select_profile_in_combo(self._draft_name)
             return
-        assert self._fingerprint is not None
         if duplicate:
             self._sync_draft_from_form()
             self._draft = GroupingProfile.from_dict(self._draft.to_dict())
@@ -1585,7 +1598,11 @@ class GroupingDialog(QDialog):
             )
         self._draft.name = name
         self._draft_name = name
-        self._project_profiles.append(GroupingProfile.from_dict(self._draft.to_dict()))
+        registered = GroupingProfile.from_dict(self._draft.to_dict())
+        # Only the fingerprint's sole profile self-flags as default; otherwise
+        # the existing default keeps the ★ (see _stored_default_name).
+        registered.active = not self._profiles_for_fingerprint()
+        self._project_profiles.append(registered)
         self._session_created.append(name)
         # The creation itself is registered (and guarded via the structural
         # check), so the draft starts clean; edits dirty it as usual.
