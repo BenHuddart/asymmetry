@@ -244,11 +244,11 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 16 for the frequency shift-axis modes —
-    # frequency_plot_state gained ``frequency_axis_mode`` / ``frequency_reference_
-    # mode`` and the legacy relative-axis boolean migrates to shift+common
-    # (v15->v16). A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 16
+    # Baseline guard: bumped to 17 for explicit grouping-profile assignment —
+    # every dataset records the profile it follows, and a released dataset
+    # additionally keeps its base profile beside its ``grouping_overrides``
+    # (v16->v17). A future accidental bump must consciously update this literal.
+    assert CURRENT_SCHEMA_VERSION == 17
 
 
 def test_restore_state_tolerates_absent_moments():

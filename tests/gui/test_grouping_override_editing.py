@@ -278,3 +278,381 @@ def test_profile_change_blocked_when_all_released(qapp: QApplication) -> None:
     """With every run released there is no inheriting target, so the rule refuses."""
     dialog = _dialog(overridden=[1, 2], selected=2)
     assert dialog._select_inheriting_run_before_profile_change() is False
+
+
+# --------------------------------------------------------------------------- #
+# Multi-profile assignment model (schema v17, M2)
+# --------------------------------------------------------------------------- #
+
+from asymmetry.core.project.profiles import (  # noqa: E402
+    profile_fingerprint_for_run,
+    profile_from_payload,
+)
+
+
+def _two_profile_dialog(
+    assigned: dict[int, str] | None = None,
+    *,
+    overridden: list[int] | None = None,
+    selected: int | None = 1,
+) -> GroupingDialog:
+    """A dialog over two runs with stored profiles 'Sample A' (default) + 'Sample B'."""
+    ds_a = _dataset(1, alpha=1.0)
+    ds_b = _dataset(2, alpha=2.0)
+    fingerprint = profile_fingerprint_for_run(ds_a.run)
+    prof_a = profile_from_payload(dict(ds_a.run.grouping), "Sample A", fingerprint, active=True)
+    prof_b = profile_from_payload(dict(ds_b.run.grouping), "Sample B", fingerprint, active=False)
+    return GroupingDialog(
+        [ds_a, ds_b],
+        profiles=[prof_a, prof_b],
+        overridden_run_numbers=list(overridden or []),
+        assigned_profiles=dict(assigned or {}),
+        selected_run_number=selected,
+    )
+
+
+def test_runs_without_assignment_follow_the_default_profile(qapp: QApplication) -> None:
+    """Unassigned runs resolve to the default profile; Apply covers them all."""
+    dialog = _two_profile_dialog()
+    assert dialog._draft_name == "Sample A"  # editor opens on the default
+    result = dialog.get_grouping_result()
+    assert set(result["run_numbers"]) == {1, 2}
+    profile_result = dialog.get_profile_result()
+    assert profile_result["assignments"] == {1: "Sample A", 2: "Sample A"}
+    assert profile_result["newly_assigned"] == {}
+    assert profile_result["default_profile"] == "Sample A"
+
+
+def test_run_assigned_elsewhere_is_excluded_from_profile_apply(qapp: QApplication) -> None:
+    """A run assigned to another profile is not an Apply target of this one."""
+    dialog = _two_profile_dialog({2: "Sample B"})
+    result = dialog.get_grouping_result()
+    assert set(result["run_numbers"]) == {1}
+    profile_result = dialog.get_profile_result()
+    assert profile_result["assignments"] == {1: "Sample A", 2: "Sample B"}
+    # The editing strip counts only the followers of the edited profile.
+    assert "applies to 1 run" in dialog._editing_strip.text()
+
+
+def test_stale_assignment_falls_back_to_default(qapp: QApplication) -> None:
+    """An assignment naming a missing profile resolves to the default."""
+    dialog = _two_profile_dialog({2: "Ghost"})
+    profile_result = dialog.get_profile_result()
+    assert profile_result["assignments"][2] == "Sample A"
+
+
+def test_assign_runs_moves_between_profiles(qapp: QApplication) -> None:
+    """Assigning a run re-scopes Apply and reports the change."""
+    dialog = _two_profile_dialog()
+    dialog._scope_panel.assign_runs([2], "Sample B")
+
+    assert set(dialog.get_grouping_result()["run_numbers"]) == {1}
+    profile_result = dialog.get_profile_result()
+    assert profile_result["newly_assigned"] == {2: "Sample B"}
+    assert profile_result["assignments"][2] == "Sample B"
+
+
+def test_assignments_survive_switching_the_edited_profile(qapp: QApplication) -> None:
+    """Assign to B, then switch the combo to edit B: the assignment holds."""
+    dialog = _two_profile_dialog()
+    dialog._scope_panel.assign_runs([2], "Sample B")
+    dialog._draft_dirty = False  # the scope change armed the guard; disarm to switch
+
+    assert dialog._load_stored_profile_into_draft("Sample B")
+    assert dialog._draft_name == "Sample B"
+    # The session assignment survived the repopulate; Apply now targets run 2.
+    assert set(dialog.get_grouping_result()["run_numbers"]) == {2}
+    assert dialog.get_profile_result()["newly_assigned"] == {2: "Sample B"}
+
+
+def test_preview_cue_names_the_governing_profile(qapp: QApplication) -> None:
+    """Previewing a run that follows another profile is cued in the strip."""
+    dialog = _two_profile_dialog({2: "Sample B"})
+    dialog._scope_panel.set_current_run(2)
+    assert "preview run follows Sample B" in dialog._editing_strip.text()
+
+
+def test_default_checkbox_moves_the_default(qapp: QApplication) -> None:
+    """Checking 'Default for new runs' on another profile moves the star."""
+    dialog = _two_profile_dialog()
+    assert dialog._default_check.isChecked()  # editing the default profile
+    assert not dialog._default_check.isEnabled()  # locked while default
+
+    dialog._load_stored_profile_into_draft("Sample B")
+    assert not dialog._default_check.isChecked()
+    assert dialog._default_check.isEnabled()
+
+    dialog._default_check.setChecked(True)
+    profile_result = dialog.get_profile_result()
+    assert profile_result["default_profile"] == "Sample B"
+    # The combo star follows the pending default.
+    labels = [dialog._profile_combo.itemText(i) for i in range(dialog._profile_combo.count())]
+    assert "★ Sample B" in labels
+
+
+def test_rename_is_first_class_and_moves_references(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Renaming a stored profile records renamed_from and rewrites the maps."""
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample A2", True)))
+    dialog._on_rename_profile()
+
+    assert dialog._draft_name == "Sample A2"
+    profile_result = dialog.get_profile_result()
+    assert profile_result["renamed_from"] == "Sample A"
+    assert profile_result["profile"].name == "Sample A2"
+    # Every run that followed the old name now names the new one.
+    assert profile_result["assignments"] == {1: "Sample A2", 2: "Sample A2"}
+    assert profile_result["newly_assigned"] == {}  # a rename is not a reassignment
+    assert profile_result["default_profile"] == "Sample A2"
+
+
+def test_rename_rejects_an_existing_name(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample B", True)))
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a[2])))
+    dialog._on_rename_profile()
+
+    assert warnings and "already exists" in warnings[0]
+    assert dialog._draft_name == "Sample A"
+    assert dialog._renamed_from is None
+
+
+def test_delete_profile_reassigns_runs_and_switches_draft(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleting the edited profile moves its runs and the default to the target."""
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getItem", staticmethod(lambda *a, **k: ("Sample B", True)))
+    dialog._on_delete_profile()
+
+    assert dialog._draft_name == "Sample B"
+    profile_result = dialog.get_profile_result()
+    assert profile_result["deleted_profiles"] == ["Sample A"]
+    assert profile_result["assignments"] == {1: "Sample B", 2: "Sample B"}
+    assert profile_result["newly_assigned"] == {1: "Sample B", 2: "Sample B"}
+    assert profile_result["default_profile"] == "Sample B"
+    # The deleted profile is gone from the selector.
+    labels = [dialog._profile_combo.itemText(i) for i in range(dialog._profile_combo.count())]
+    assert all("Sample A" != label.removeprefix("★ ") for label in labels)
+
+
+def test_delete_refuses_the_last_profile(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    ds_a = _dataset(1, alpha=1.0)
+    fingerprint = profile_fingerprint_for_run(ds_a.run)
+    prof_a = profile_from_payload(dict(ds_a.run.grouping), "Only", fingerprint, active=True)
+    dialog = GroupingDialog([ds_a], profiles=[prof_a], selected_run_number=1)
+
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a[2])))
+    dialog._on_delete_profile()
+
+    assert warnings and "only profile" in warnings[0]
+    assert dialog.get_profile_result()["deleted_profiles"] == []
+
+
+def test_released_run_chip_names_its_base_profile(qapp: QApplication) -> None:
+    """A released run based on another profile shows that base in its chip."""
+    dialog = _two_profile_dialog({2: "Sample B"}, overridden=[2])
+    panel = dialog._scope_panel
+    assert panel.runs_following("Sample A") == {1}
+    # Chip text for run 2 names the base profile it would reattach to.
+    texts = [panel._list.item(i).text() for i in range(panel._list.count())]
+    assert any("override · Sample B" in t for t in texts)
+
+
+def test_created_profile_persists_in_selector(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A New… profile stays in the selector after switching away (the bug:
+    it lived only in the draft and vanished on the next switch)."""
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample C", True)))
+    dialog._create_new_profile(duplicate=False)
+    assert dialog._draft_name == "Sample C"
+
+    assert dialog._load_stored_profile_into_draft("Sample A")
+    names = [dialog._profile_combo.itemData(i) for i in range(dialog._profile_combo.count())]
+    assert "Sample C" in names
+    # It is assignable and re-editable, and reported for Apply to commit.
+    assert dialog._load_stored_profile_into_draft("Sample C")
+    result = dialog.get_profile_result()
+    assert [p.name for p in result["created_profiles"]] == ["Sample C"]
+    assert result["deleted_profiles"] == []
+
+
+def test_created_profile_edits_are_reported_on_apply(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Edits to a created profile reach created_profiles (not a stale copy)."""
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample C", True)))
+    dialog._create_new_profile(duplicate=False)
+    dialog._alpha_spin.setValue(2.5)
+
+    result = dialog.get_profile_result()
+    created = {p.name: p for p in result["created_profiles"]}
+    assert created["Sample C"].alpha_policy.value == pytest.approx(2.5)
+
+
+def test_created_profile_delete_leaves_no_deletion_record(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleting a never-stored created profile records no project deletion."""
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample C", True)))
+    dialog._create_new_profile(duplicate=False)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+    )
+    dialog._on_delete_profile()
+
+    result = dialog.get_profile_result()
+    assert result["deleted_profiles"] == []
+    assert result["created_profiles"] == []
+    names = [dialog._profile_combo.itemData(i) for i in range(dialog._profile_combo.count())]
+    assert "Sample C" not in names
+
+
+def test_created_profile_rename_keeps_it_created(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Renaming a created profile renames in place — no renamed_from record."""
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _two_profile_dialog()
+    answers = iter([("Sample C", True), ("Sample C2", True)])
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: next(answers)))
+    dialog._create_new_profile(duplicate=False)
+    dialog._on_rename_profile()
+
+    result = dialog.get_profile_result()
+    assert result["renamed_from"] is None
+    assert [p.name for p in result["created_profiles"]] == ["Sample C2"]
+
+
+def test_create_rejects_an_existing_profile_name(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample B", True)))
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a[2])))
+    dialog._create_new_profile(duplicate=False)
+
+    assert warnings and "already exists" in warnings[0]
+    assert dialog._draft_name == "Sample A"
+    assert dialog.get_profile_result()["created_profiles"] == []
+
+
+def test_creating_profile_preserves_the_synthesized_default(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Creating a custom profile must not replace the initial default.
+
+    On a profile-less fingerprint the "Default (<instrument>)" profile exists
+    only as the draft; creating a custom profile used to move the draft and
+    silently drop it (and Apply then crowned the new profile the default).
+    It is now materialized as a session profile and keeps the ★.
+    """
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _dialog(overridden=[])
+    original = dialog._draft_name
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Custom", True)))
+    dialog._create_new_profile(duplicate=False)
+
+    names = [dialog._profile_combo.itemData(i) for i in range(dialog._profile_combo.count())]
+    assert original in names and "Custom" in names
+    assert dialog._current_default_name() == original
+
+    result = dialog.get_profile_result()
+    assert sorted(p.name for p in result["created_profiles"]) == sorted([original, "Custom"])
+    assert result["default_profile"] == original
+    # Every run keeps following the original default, not the new profile.
+    assert result["assignments"] == {1: original, 2: original}
+
+
+def test_editing_strip_follows_profile_switch(qapp: QApplication) -> None:
+    """Switching the edited profile updates the strip (it went stale before)."""
+    dialog = _two_profile_dialog()
+    assert "Editing profile 'Sample A'" in dialog._editing_strip.text()
+
+    dialog._load_stored_profile_into_draft("Sample B")
+
+    assert "Editing profile 'Sample B'" in dialog._editing_strip.text()
+    assert "'Sample A'" not in dialog._editing_strip.text()
+
+
+def test_scope_rows_wear_profile_identity_colors(qapp: QApplication) -> None:
+    """Rows are coloured by their profile; the edited one is emphasised."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor
+
+    from asymmetry.gui.styles import tokens
+
+    dialog = _two_profile_dialog({2: "Sample B"})
+    panel = dialog._scope_panel
+    items = {
+        int(panel._list.item(i).data(Qt.ItemDataRole.UserRole)): panel._list.item(i)
+        for i in range(panel._list.count())
+    }
+    # The edited ★ default profile has no identity colour: its rows get the
+    # standard accent emphasis. The first non-default profile takes the first
+    # palette colour (the colourless default occupies no slot).
+    color_b = tokens.PROFILE_COLORS[0]
+    assert items[1].font().bold()
+    assert items[1].foreground().color() == QColor(tokens.ACCENT)
+    assert items[1].background().color().alpha() not in (0, 255)  # soft tint
+    # Run 2 follows Sample B: that profile's identity colour, unemphasised.
+    assert not items[2].font().bold()
+    assert items[2].foreground().color() == QColor(color_b)
+    # The editing strip falls back to the accent while editing the default.
+    assert tokens.ACCENT in dialog._editing_strip.styleSheet()
+
+    # Switching to Sample B: the strip and its rows wear B's identity colour.
+    dialog._load_stored_profile_into_draft("Sample B")
+    assert color_b in dialog._editing_strip.styleSheet()
+
+
+def test_created_profile_gets_a_fresh_identity_color(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A duplicate takes the first unused palette colour, not its source's."""
+    from PySide6.QtWidgets import QInputDialog
+
+    from asymmetry.gui.styles import tokens
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample C", True)))
+    dialog._create_new_profile(duplicate=True)
+
+    result = dialog.get_profile_result()
+    created = {p.name: p for p in result["created_profiles"]}
+    # The colourless default (Sample A) occupies no slot; Sample B occupies
+    # the first palette colour, leaving the second as first unused.
+    assert created["Sample C"].color == tokens.PROFILE_COLORS[1]

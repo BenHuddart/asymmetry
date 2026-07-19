@@ -11,8 +11,24 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 15)
+Current schema (version 17)
 ---------------------------
+
+Version 17 makes the run→profile link explicit so multiple grouping profiles
+can be in concurrent use (e.g. one per sample). Every resolvable dataset
+records the profile it is *assigned* to: an inheriting dataset's ``profile``
+key is now its explicit assignment, and a *released* dataset carries **both**
+its ``grouping_overrides`` payload (authoritative for resolution, as before)
+and a ``profile`` naming the base profile it was released from — the reattach
+target. A profile's ``active`` flag is reinterpreted as "default profile for
+newly loaded runs" of its fingerprint (still exactly one per fingerprint);
+the serialized shape is unchanged. See :func:`_migrate_v16_to_v17`.
+
+Version 16 replaces the frequency panel's boolean reference-relative axis flag
+with ``frequency_axis_mode`` (``"absolute"``/``"shift"``/``"relative_ppm"``)
+plus ``frequency_reference_mode`` (``"run"``/``"common"``) inside
+``plot_state`` and its nested ``frequency_plot_state``; see
+:func:`_migrate_v15_to_v16`.
 
 Version 15 unifies ``DataGroup`` and ``FitSeries`` (D1/D7/D9). Each top-level
 ``data_groups`` entry gains ``kind`` (``"user"``/``"auto"``, default
@@ -169,10 +185,10 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 16
+CURRENT_SCHEMA_VERSION: int = 17
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -283,6 +299,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 15
     if version == 15:
         migrated = _migrate_v15_to_v16(migrated)
+        version = 16
+    if version == 16:
+        migrated = _migrate_v16_to_v17(migrated)
     return migrated
 
 
@@ -821,6 +840,73 @@ def _migrate_v15_to_v16(data: dict) -> dict:
             plot_state["frequency_plot_state"] = _upgrade_freq_state(freq_state)
         migrated["plot_state"] = plot_state
 
+    return migrated
+
+
+def _migrate_v16_to_v17(data: dict) -> dict:
+    """Migrate schema v16 project state to v17.
+
+    v17 makes the run→profile link explicit so multiple profiles per
+    fingerprint can be in concurrent use:
+
+    * A dataset already naming a ``profile`` is unchanged — what used to mean
+      "inherits the fingerprint's active profile" is now simply its explicit
+      assignment.
+    * A dataset carrying only ``grouping_overrides`` (a *released* run) gains
+      ``profile: <name>`` — the fingerprint's active profile, i.e. the base
+      profile it was released from and the target Reattach returns it to —
+      while keeping its override payload verbatim (the payload stays
+      authoritative for resolution). When no active profile matches the
+      override's fingerprint, or the fingerprint cannot be inferred, the
+      dataset is left untouched and resolution falls back to the
+      fingerprint's default profile at load time.
+
+    The ``active`` flag on profiles is reinterpreted as "default profile for
+    newly loaded runs" of the fingerprint; its serialized shape is unchanged,
+    so the migration never rewrites the ``grouping_profiles`` block.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 17
+
+    datasets = migrated.get("datasets")
+    profiles = migrated.get("grouping_profiles")
+    if not isinstance(datasets, list) or not isinstance(profiles, list):
+        return migrated
+
+    # The v16 invariant guarantees at most one active profile per fingerprint;
+    # setdefault keeps the first should a hand-edited file violate it.
+    default_by_fingerprint: dict[tuple[str, int], str] = {}
+    for profile in profiles:
+        if not isinstance(profile, dict) or not profile.get("active"):
+            continue
+        fingerprint = profile.get("fingerprint")
+        name = profile.get("name")
+        if not isinstance(fingerprint, dict) or not name:
+            continue
+        instrument = str(fingerprint.get("instrument", "") or "").strip().lower()
+        try:
+            histogram_count = int(fingerprint.get("histogram_count"))
+        except (TypeError, ValueError):
+            continue
+        if instrument:
+            default_by_fingerprint.setdefault((instrument, histogram_count), str(name))
+
+    updated: list = []
+    for entry in datasets:
+        if not isinstance(entry, dict):
+            updated.append(entry)
+            continue
+        entry = dict(entry)
+        overrides = entry.get("grouping_overrides")
+        if "profile" not in entry and isinstance(overrides, dict):
+            instrument = str(overrides.get("instrument", "") or "").strip().lower()
+            histogram_count = _histogram_count_from_overrides(overrides)
+            if instrument and histogram_count is not None:
+                base = default_by_fingerprint.get((instrument, int(histogram_count)))
+                if base:
+                    entry["profile"] = base
+        updated.append(entry)
+    migrated["datasets"] = updated
     return migrated
 
 
