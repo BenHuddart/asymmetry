@@ -101,12 +101,13 @@ moved runs immediately:
   submenu appears once the selected runs' instrument has at least two
   profiles.
 
-When an instrument has several profiles, each run's row in the Data Browser
-carries a small superscript index (¹, ², …) beside the run number — the
-profile's position in the instrument's profile list — with the tooltip
-"Grouping profile: <name>" naming it, so a multi-sample project shows at a
-glance which runs belong to which sample. Single-profile projects show no
-marker.
+When an instrument has several profiles, the Data Browser tints the run
+number of every run assigned to a profile other than the instrument's ★
+default (a violet distinct from the blue used for derived runs), and the
+tooltip "Grouping profile: <name>" names each run's profile — so a
+multi-sample project shows at a glance which runs have been moved off the
+default. Default-following runs, and single-profile projects, look
+unchanged.
 
 Alpha, deadtime, and background policies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

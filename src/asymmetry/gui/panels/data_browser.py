@@ -164,15 +164,6 @@ _TITLE_COLUMN = 1
 # the trend panel.  Red is the FitSeries brand colour (ACCENT_RED_SOFT).
 _SERIES_HIGHLIGHT_BACKGROUND = QColor(tokens.ACCENT_RED_SOFT)
 
-#: Superscript digits for the per-run grouping-profile marker (schema v17) —
-#: distinct from the circled digits used by the group-membership marker.
-_SUPERSCRIPT_DIGITS = "⁰¹²³⁴⁵⁶⁷⁸⁹"
-
-
-def _superscript_index(index: int) -> str:
-    """Render a positive index (¹, ², … ¹⁰, …) for the profile marker."""
-    return "".join(_SUPERSCRIPT_DIGITS[int(digit)] for digit in str(int(index)))
-
 
 def _is_effectively_constant(values: list[float], *, abs_tol: float, rel_tol: float) -> bool:
     """Return True when finite values vary only within tolerance.
@@ -1738,18 +1729,19 @@ class DataBrowserPanel(QWidget):
             run_item.setToolTip(f"{existing_tip}\n{override_tip}" if existing_tip else override_tip)
 
         # Profile marker (schema v17): when the run's fingerprint has several
-        # grouping profiles in the project (e.g. one per sample), a superscript
-        # index beside the run number says which one the run follows — its
-        # position in the fingerprint's profile list — with the name in the
-        # tooltip. Single-profile projects show nothing.
+        # grouping profiles in the project (e.g. one per sample), a run
+        # assigned to a profile other than the instrument's ★ default shows a
+        # violet run number; the tooltip names every multi-profile run's
+        # profile. Default-following runs — and single-profile projects — look
+        # unchanged, and a derived run keeps its provenance accent.
         run_profiles, assigned_profile = self._grouping_profiles_for_run(dataset)
         if run_profiles and assigned_profile:
-            profile_names = [p.name for p in run_profiles]
-            marker = _superscript_index(profile_names.index(assigned_profile) + 1)
-            run_item.setText(f"{run_item.text()} {marker}")
             profile_tip = f"Grouping profile: {assigned_profile}"
             existing_tip = run_item.toolTip()
             run_item.setToolTip(f"{existing_tip}\n{profile_tip}" if existing_tip else profile_tip)
+            default_name = next((p.name for p in run_profiles if p.active), None)
+            if assigned_profile != default_name and not provenance_tip:
+                run_item.setForeground(QColor(tokens.PROFILE_ASSIGNED))
 
         # Copy-row marker (D2): a run under a non-primary group gets a circled
         # digit and an "Also in: …" tooltip naming its other memberships.

@@ -2434,9 +2434,12 @@ def _run_row(panel: DataBrowserPanel, run_number: int) -> int:
     raise AssertionError(f"run {run_number} not found in table")
 
 
-def test_profile_marker_shown_when_fingerprint_has_multiple_profiles(
+def test_non_default_profile_tints_the_run_number(
     qapp: QApplication,
 ) -> None:
+    """A run assigned off the default profile shows a violet run number."""
+    from asymmetry.gui.styles import tokens
+
     panel = DataBrowserPanel()
     ds1 = _dataset_with_run(1)
     ds2 = _dataset_with_run(2)
@@ -2448,15 +2451,17 @@ def test_profile_marker_shown_when_fingerprint_has_multiple_profiles(
 
     item1 = panel._table.item(_run_row(panel, 1), 0)
     item2 = panel._table.item(_run_row(panel, 2), 0)
-    # Run 1 has no recorded assignment → follows the default (index 1).
-    assert "¹" in item1.text()
+    # Run 1 follows the default: untinted, but its profile is in the tooltip.
+    assert item1.foreground().color() != QColor(tokens.PROFILE_ASSIGNED)
     assert "Grouping profile: Sample A" in item1.toolTip()
-    # Run 2 is assigned to Sample B (index 2).
-    assert "²" in item2.text()
+    # Run 2 is assigned to the non-default Sample B: violet run number.
+    assert item2.foreground().color() == QColor(tokens.PROFILE_ASSIGNED)
     assert "Grouping profile: Sample B" in item2.toolTip()
 
 
 def test_profile_marker_absent_for_single_profile_projects(qapp: QApplication) -> None:
+    from asymmetry.gui.styles import tokens
+
     panel = DataBrowserPanel()
     ds1 = _dataset_with_run(1)
     profiles = _two_profiles_for(ds1)[:1]
@@ -2464,7 +2469,7 @@ def test_profile_marker_absent_for_single_profile_projects(qapp: QApplication) -
     panel.add_dataset(ds1)
 
     item1 = panel._table.item(_run_row(panel, 1), 0)
-    assert "¹" not in item1.text()
+    assert item1.foreground().color() != QColor(tokens.PROFILE_ASSIGNED)
     assert "Grouping profile" not in item1.toolTip()
 
 

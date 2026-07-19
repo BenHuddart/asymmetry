@@ -51,6 +51,12 @@ AUTO_GROUP_HEADER_SEL_BG = "#d0b3ab"
 AUTO_GROUP_HEADER_FOCUS_BG = "#c29a8f"
 AUTO_GROUP_MEMBER_BG = "#f7efeb"
 
+#: Data Browser run-number tint for a run assigned to a grouping profile that
+#: is not its instrument's ★ default (schema v17 multi-profile projects, e.g.
+#: one profile per sample). A violet distinct from ACCENT (derived-run
+#: provenance) and the group ramps; default-following runs stay untinted.
+PROFILE_ASSIGNED = "#5f4a87"
+
 # ── Correction-stage identity (grouping dialog) ──────────────────────────────
 # One muted hue per correction stage, shared by the pipeline chip's outline and
 # its card's stripe/comparing tint so chip ↔ card read as the same thing at a
