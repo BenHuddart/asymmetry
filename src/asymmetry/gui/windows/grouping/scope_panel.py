@@ -191,19 +191,23 @@ class ScopePanel(QWidget):
             self._set_current_silent(target)
         self._update_button_states()
 
-    def _profile_color(self, name: str) -> QColor:
-        """The identity colour for profile *name* (accent when unmapped)."""
-        return QColor(self._profile_colors.get(str(name), tokens.ACCENT))
+    def _profile_color(self, name: str) -> QColor | None:
+        """The identity colour for profile *name*, or ``None`` (the default
+        profile has no colour — its rows render plain)."""
+        color = self._profile_colors.get(str(name))
+        return QColor(color) if color else None
 
     def _tint_item(self, item: QListWidgetItem, run_number: int) -> None:
         """Style a row by its profile identity and state.
 
         Every row's text wears its assigned profile's identity colour — the
-        same colour the Data Browser and the editing strip use. The runs
-        following the *edited* profile additionally get the strip's emphasis
-        (bold text on a soft tint of that colour), so the strip and the rows
-        it "applies to" read as one thing. Released rows are warning-tinted:
-        the diverged state outranks sample identity.
+        same colour the Data Browser and the editing strip use; the
+        uncoloured ★ default profile's rows stay plain. The runs following
+        the *edited* profile additionally get the strip's emphasis (bold
+        text on a soft tint of that colour — the standard accent when
+        editing the default), so the strip and the rows it "applies to" read
+        as one thing. Released rows are warning-tinted: the diverged state
+        outranks sample identity.
         """
         font = item.font()
         if self._released.get(run_number, False):
@@ -213,13 +217,15 @@ class ScopePanel(QWidget):
         else:
             assigned = self._assigned.get(run_number, self._profile_name)
             color = self._profile_color(assigned)
-            item.setForeground(color)
             if assigned == self._profile_name:
+                emphasis = color if color is not None else QColor(tokens.ACCENT)
+                item.setForeground(emphasis)
                 font.setBold(True)
-                soft = QColor(color)
+                soft = QColor(emphasis)
                 soft.setAlpha(30)
                 item.setBackground(soft)
             else:
+                item.setForeground(color if color is not None else QColor(tokens.TEXT))
                 font.setBold(False)
                 item.setBackground(QBrush())
         item.setFont(font)
@@ -301,9 +307,11 @@ class ScopePanel(QWidget):
         for name in self._profile_names:
             action = menu.addAction(name)
             action.setData(name)
-            swatch = QPixmap(10, 10)
-            swatch.fill(self._profile_color(name))
-            action.setIcon(QIcon(swatch))
+            color = self._profile_color(name)
+            if color is not None:
+                swatch = QPixmap(10, 10)
+                swatch.fill(color)
+                action.setIcon(QIcon(swatch))
         chosen = menu.exec(self._assign_btn.mapToGlobal(self._assign_btn.rect().bottomLeft()))
         if chosen is None:
             return

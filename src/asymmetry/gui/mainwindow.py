@@ -278,7 +278,7 @@ from asymmetry.gui.ui_manager import (
     UIManager,
 )
 from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
-from asymmetry.gui.utils.profile_colors import effective_profile_color, next_profile_color
+from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
 from asymmetry.gui.utils.reduction_cache import ReductionCache
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.dock_header import DockHeader
@@ -4337,14 +4337,6 @@ class MainWindow(QMainWindow):
                 if existing.name in replaced:
                     continue  # replaced below
             kept.append(existing)
-        if getattr(profile, "color", None) is None:
-            # Every saved profile carries an identity colour (worn by its runs
-            # in the browser and the grouping window): backfill from the
-            # palette, skipping colours the fingerprint's profiles wear.
-            siblings = [p for p in kept if p.fingerprint.matches(fingerprint)]
-            profile.color = next_profile_color(
-                effective_profile_color(p, siblings) for p in siblings
-            )
         kept.append(profile)
         desired = default_profile or previous_default or profile.name
         names = {p.name for p in kept if p.fingerprint.matches(fingerprint)}
@@ -4353,6 +4345,14 @@ class MainWindow(QMainWindow):
         for candidate in kept:
             if candidate.fingerprint.matches(fingerprint):
                 candidate.active = candidate.name == desired
+        if getattr(profile, "color", None) is None and not profile.active:
+            # Every saved non-default profile carries an identity colour (worn
+            # by its runs in the browser and the grouping window): backfill
+            # from the palette, skipping colours the fingerprint's other
+            # profiles wear. The ★ default stays colourless — it renders
+            # plain black.
+            siblings = [p for p in kept if p.fingerprint.matches(fingerprint) and p is not profile]
+            profile.color = next_profile_color(used_profile_colors(siblings))
         self._grouping_profiles = kept
 
     def _rename_profile_references(self, old_name: str, new_name: str, fingerprint) -> None:

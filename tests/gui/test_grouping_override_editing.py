@@ -621,17 +621,22 @@ def test_scope_rows_wear_profile_identity_colors(qapp: QApplication) -> None:
         int(panel._list.item(i).data(Qt.ItemDataRole.UserRole)): panel._list.item(i)
         for i in range(panel._list.count())
     }
-    # Colourless stored profiles fall back to their palette position.
-    color_a, color_b = tokens.PROFILE_COLORS[0], tokens.PROFILE_COLORS[1]
-    # Run 1 follows the edited profile: its identity colour, bold, soft tint.
+    # The edited ★ default profile has no identity colour: its rows get the
+    # standard accent emphasis. The first non-default profile takes the first
+    # palette colour (the colourless default occupies no slot).
+    color_b = tokens.PROFILE_COLORS[0]
     assert items[1].font().bold()
-    assert items[1].foreground().color() == QColor(color_a)
+    assert items[1].foreground().color() == QColor(tokens.ACCENT)
     assert items[1].background().color().alpha() not in (0, 255)  # soft tint
     # Run 2 follows Sample B: that profile's identity colour, unemphasised.
     assert not items[2].font().bold()
     assert items[2].foreground().color() == QColor(color_b)
-    # The editing strip wears the edited profile's colour too.
-    assert color_a in dialog._editing_strip.styleSheet()
+    # The editing strip falls back to the accent while editing the default.
+    assert tokens.ACCENT in dialog._editing_strip.styleSheet()
+
+    # Switching to Sample B: the strip and its rows wear B's identity colour.
+    dialog._load_stored_profile_into_draft("Sample B")
+    assert color_b in dialog._editing_strip.styleSheet()
 
 
 def test_created_profile_gets_a_fresh_identity_color(
@@ -648,5 +653,6 @@ def test_created_profile_gets_a_fresh_identity_color(
 
     result = dialog.get_profile_result()
     created = {p.name: p for p in result["created_profiles"]}
-    # Sample A/B (colourless, positions 0/1) leave position 2 as first unused.
-    assert created["Sample C"].color == tokens.PROFILE_COLORS[2]
+    # The colourless default (Sample A) occupies no slot; Sample B occupies
+    # the first palette colour, leaving the second as first unused.
+    assert created["Sample C"].color == tokens.PROFILE_COLORS[1]

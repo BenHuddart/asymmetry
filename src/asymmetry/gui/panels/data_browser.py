@@ -123,7 +123,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
 from asymmetry.gui.tasks import TaskRunner
-from asymmetry.gui.utils.profile_colors import effective_profile_color
+from asymmetry.gui.utils.profile_colors import display_profile_color
 from asymmetry.gui.utils.series_scoring import score_series_path
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
@@ -1748,8 +1748,10 @@ class DataBrowserPanel(QWidget):
             if not released:
                 assigned_obj = next((p for p in run_profiles if p.name == assigned_profile), None)
                 if assigned_obj is not None:
-                    color = effective_profile_color(assigned_obj, run_profiles)
-                    run_item.setForeground(QColor(color))
+                    # None for the ★ default — its runs stay plain black.
+                    color = display_profile_color(assigned_obj, run_profiles)
+                    if color:
+                        run_item.setForeground(QColor(color))
 
         # Copy-row marker (D2): a run under a non-primary group gets a circled
         # digit and an "Also in: …" tooltip naming its other memberships.

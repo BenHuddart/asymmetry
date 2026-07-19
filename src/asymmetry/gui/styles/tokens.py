@@ -52,17 +52,19 @@ AUTO_GROUP_HEADER_FOCUS_BG = "#c29a8f"
 AUTO_GROUP_MEMBER_BG = "#f7efeb"
 
 # ── Grouping-profile identity colours (schema v17 multi-profile projects) ────
-# Each grouping profile of an instrument carries a stable identity colour
-# (stored on the profile; assigned from this palette at first save), worn by
-# the run numbers in the Data Browser, the grouping window's scope rows and
-# editing strip, and the profile selector's swatches. Muted hues, curated to
-# avoid the meanings already taken: black (plain text), ACCENT (derived runs),
-# WARN (released overrides / staleness), and the ACCENT_RED family (fit
-# series / auto groups). Cycles when an instrument outgrows the palette.
+# Each NON-default grouping profile of an instrument carries a stable identity
+# colour (stored on the profile; assigned from this palette at first save),
+# worn by the run numbers in the Data Browser, the grouping window's scope
+# rows and editing strip, and the profile selector's swatches. The ★ default
+# profile stays uncoloured — plain black run numbers — so colour itself reads
+# as "moved off the default". Muted hues, curated for mutual distinguishability
+# and to avoid the meanings already taken: black (the default / plain text),
+# ACCENT (derived runs), WARN (released overrides / staleness), and the
+# ACCENT_RED family (fit series / auto groups). Cycles when an instrument
+# outgrows the palette.
 PROFILE_COLORS: tuple[str, ...] = (
     "#5f4a87",  # violet
     "#176e66",  # teal
-    "#2e7d46",  # forest green
     "#a34d7d",  # plum
     "#8a6d1f",  # ochre
     "#4a6d8a",  # slate

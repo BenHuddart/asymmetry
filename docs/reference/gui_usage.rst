@@ -200,8 +200,9 @@ Two further markers relate to detector grouping (see
 trailing **⊗** with an amber run number, and when a run's instrument has
 several grouping profiles in the project (one per sample, say) each run's
 number is coloured with its assigned profile's identity colour — the same
-colour the Grouping window uses for that profile — with the tooltip
-"Grouping profile: <name>" naming it. Right-clicking a run selection then
+colour the Grouping window uses for that profile, with runs on the ★
+default profile staying plain black — and the tooltip
+"Grouping profile: <name>" names it. Right-clicking a run selection then
 offers **Assign Grouping Profile** to move the runs to another of the
 instrument's profiles.
 

@@ -95,6 +95,7 @@ from asymmetry.gui.utils.profile_colors import (
     effective_profile_color,
     next_profile_color,
     soft_profile_background,
+    used_profile_colors,
 )
 from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollComboBox,
@@ -1132,32 +1133,40 @@ class GroupingDialog(QDialog):
         return names
 
     def _fingerprint_profile_colors(self) -> dict[str, str]:
-        """Each fingerprint profile's identity colour (draft included)."""
+        """Each fingerprint profile's identity colour (draft included).
+
+        The ★ default profile is deliberately absent — it stays plain black
+        on every surface, so a colour always means "off the default".
+        """
         stored = self._profiles_for_fingerprint()
-        colors = {p.name: effective_profile_color(p, stored) for p in stored}
-        if self._draft_name not in colors:
-            colors[self._draft_name] = self._draft.color or next_profile_color(colors.values())
-        elif self._draft.color:
-            # The draft's own colour is authoritative for the profile it edits.
-            colors[self._draft_name] = str(self._draft.color)
+        default_name = self._current_default_name()
+        colors = {
+            p.name: effective_profile_color(p, stored) for p in stored if p.name != default_name
+        }
+        if self._draft_name != default_name:
+            if self._draft.color:
+                # The draft's own colour is authoritative for the profile it edits.
+                colors[self._draft_name] = str(self._draft.color)
+            elif self._draft_name not in colors:
+                colors[self._draft_name] = next_profile_color(used_profile_colors(stored))
         return colors
 
     def _ensure_draft_color(self) -> None:
-        """Give the draft an identity colour if it has none yet.
+        """Give a non-default draft an identity colour if it has none yet.
 
-        Prefers the colour its stored counterpart already wears (position
-        fallback for colourless older saves), else the first palette colour
+        The default profile stays colourless (it renders plain black); a
+        colourless non-default draft takes its stored counterpart's colour
+        (position fallback for older saves), else the first palette colour
         unused by the fingerprint's other profiles.
         """
-        if self._draft.color:
+        if self._draft.color or self._draft_name == self._current_default_name():
             return
         stored = self._profiles_for_fingerprint()
         for profile in stored:
             if profile.name == self._draft_name:
                 self._draft.color = effective_profile_color(profile, stored)
                 return
-        used = [effective_profile_color(p, stored) for p in stored]
-        self._draft.color = next_profile_color(used)
+        self._draft.color = next_profile_color(used_profile_colors(stored))
 
     def _fingerprint_key(self) -> tuple[str, int]:
         """Hashable key for the current fingerprint (case-folded instrument)."""
@@ -1501,10 +1510,13 @@ class GroupingDialog(QDialog):
         colors = self._fingerprint_profile_colors()
         default_name = self._current_default_name()
         for name in names:
-            display = f"★ {name}" if name == default_name else name
+            if name == default_name:
+                # The default stays uncoloured — the ★ is its marker.
+                combo.addItem(f"★ {name}", name)
+                continue
             swatch = QPixmap(10, 10)
             swatch.fill(QColor(colors.get(name, tokens.ACCENT)))
-            combo.addItem(QIcon(swatch), display, name)
+            combo.addItem(QIcon(swatch), name, name)
         combo.addItem("New…", "__new__")
         combo.addItem("Duplicate…", "__duplicate__")
         idx = combo.findData(self._draft_name)
@@ -1640,9 +1652,11 @@ class GroupingDialog(QDialog):
         self._draft.name = name
         # A fresh identity colour for the new profile: the first palette
         # colour unused by the fingerprint's existing profiles (a Duplicate
-        # must not share its source's colour).
-        stored = self._profiles_for_fingerprint()
-        self._draft.color = next_profile_color(effective_profile_color(p, stored) for p in stored)
+        # must not share its source's colour; a colourless default occupies
+        # no slot).
+        self._draft.color = next_profile_color(
+            used_profile_colors(self._profiles_for_fingerprint())
+        )
         self._draft_name = name
         registered = GroupingProfile.from_dict(self._draft.to_dict())
         # Only the fingerprint's sole profile self-flags as default; otherwise
@@ -1988,8 +2002,9 @@ class GroupingDialog(QDialog):
             self._editing_strip.setText(text)
             # The strip wears the edited profile's identity colour — the same
             # colour its scope rows, combo swatch, and browser run numbers use.
+            # The uncoloured ★ default falls back to the standard accent.
             self._ensure_draft_color()
-            color = self._draft.color or tokens.ACCENT
+            color = self._fingerprint_profile_colors().get(self._draft_name, tokens.ACCENT)
             self._editing_strip.setStyleSheet(
                 f"color: {color}; font-weight: bold; "
                 f"background: {soft_profile_background(color)}; "

@@ -7397,17 +7397,18 @@ def test_store_grouping_profile_keeps_one_default_per_fingerprint(
 def test_store_grouping_profile_backfills_identity_color(
     mainwindow: MainWindow,
 ) -> None:
-    """Saving a colourless profile assigns the first unused palette colour."""
+    """Non-default profiles get palette colours; the ★ default stays plain."""
     from asymmetry.gui.styles import tokens
 
     ds = _make_dataset(7108, with_grouping=True)
     profile_a = _grouping_profile_from(ds, "A", alpha=1.1)
     mainwindow._store_grouping_profile(profile_a)
-    assert profile_a.color == tokens.PROFILE_COLORS[0]
+    # The first profile becomes the fingerprint default: no identity colour.
+    assert profile_a.color is None
 
     profile_b = _grouping_profile_from(ds, "B", alpha=1.2)
     mainwindow._store_grouping_profile(profile_b)
-    assert profile_b.color == tokens.PROFILE_COLORS[1]
+    assert profile_b.color == tokens.PROFILE_COLORS[0]
 
 
 def test_store_grouping_profile_rename_rewrites_assignments(

@@ -101,16 +101,18 @@ moved runs immediately:
   submenu appears once the selected runs' instrument has at least two
   profiles.
 
-Every profile of a multi-profile instrument carries its own **identity
-colour**, assigned from a fixed palette when the profile is first saved and
-stored with it in the project. The colour is worn consistently everywhere
-the profile appears: the Data Browser colours each run's number with its
-assigned profile's colour (with the tooltip "Grouping profile: <name>"
-naming it), the Grouping window's scope rows, editing strip, and selector
-swatches use the same colour, and a released run shows amber instead — the
-diverged state outranks sample identity. A multi-sample project therefore
-reads as a colour-coded sample map; single-profile projects stay entirely
-uncoloured.
+Every **non-default** profile of a multi-profile instrument carries its own
+**identity colour**, assigned from a fixed palette when the profile is first
+saved and stored with it in the project; the ★ default profile stays
+uncoloured, so its runs keep plain black run numbers and a coloured run
+number always means "assigned off the default". The colour is worn
+consistently everywhere the profile appears: the Data Browser colours each
+run's number with its assigned profile's colour (with the tooltip "Grouping
+profile: <name>" naming it), the Grouping window's scope rows, editing
+strip, and selector swatches use the same colour, and a released run shows
+amber instead — the diverged state outranks sample identity. A multi-sample
+project therefore reads as a colour-coded sample map; single-profile
+projects stay entirely uncoloured.
 
 Alpha, deadtime, and background policies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -205,8 +207,8 @@ draft is what gets applied to every run following the profile.
   offers **New…** and **Duplicate…** to start a fresh profile or branch one
   from the current settings (a new profile starts with no runs assigned —
   assign them from the scope panel). Only profiles for the selected
-  instrument are listed, each with its identity-colour swatch, and the
-  instrument's default-for-new-runs profile marked ★. Switching away from a
+  instrument are listed — non-default profiles with their identity-colour
+  swatch, and the instrument's default-for-new-runs profile marked ★. Switching away from a
   profile with unsaved edits prompts to discard them.
 
   **Rename…** renames the edited profile in place — the stored profile is
@@ -227,8 +229,10 @@ draft is what gets applied to every run following the profile.
   edits.
 * **Scope panel — the selector.** Headed "Runs of this instrument", it lists the
   runs of the selected instrument, each tagged **follows <profile>** (its
-  assigned profile, in that profile's identity colour — the edited profile's
-  runs additionally bold on a soft tint of the same colour) or **override**
+  assigned profile, in that profile's identity colour; the ★ default's rows
+  stay plain — the edited profile's runs additionally bold on a soft tint of
+  the same colour, or of the standard accent while editing the default) or
+  **override**
   (amber, with the base profile appended as **override · <profile>** when it
   is not the edited one).
   **Release from profile**, **Reattach to profile**, and **Assign to ▸**
@@ -244,8 +248,9 @@ draft is what gets applied to every run following the profile.
 * **Editing-target strip** — right-aligned in the dialog's top row, a
   persistent strip states
   what your edits currently apply to: **"Editing profile '<name>' — applies
-  to N runs"**, in the edited profile's identity colour, while a following
-  run is selected, or warning-tinted
+  to N runs"**, in the edited profile's identity colour (the standard accent
+  while editing the uncoloured ★ default), while a following run is
+  selected, or warning-tinted
   **"Editing override for run N — this run only"** while an overridden run is
   selected. The same tint highlights the selected row in the scope list, and a
   run with uncommitted override edits gains an **"override *"** marker there.

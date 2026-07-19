@@ -151,10 +151,11 @@ profile — its ``name``, ``fingerprint`` (``{"instrument": ...,
 background, and t0 policies. The ``active`` flag marks each fingerprint's
 **default-for-new-runs** profile (exactly one per fingerprint); several
 profiles of the same fingerprint may be in concurrent use. An optional
-``color`` (a ``#rrggbb`` string, assigned from the GUI palette when the
-profile is first saved) is the profile's identity colour, worn by its runs'
-numbers in the Data Browser and throughout the Grouping window; profiles
-saved before colours existed are tolerated and recoloured on next save.
+``color`` (a ``#rrggbb`` string, assigned from the GUI palette when a
+non-default profile is first saved; the ★ default stays colourless) is the
+profile's identity colour, worn by its runs' numbers in the Data Browser and
+throughout the Grouping window; profiles saved before colours existed are
+tolerated and recoloured on next save.
 
 Each dataset entry records which profile it follows (schema v17):
 

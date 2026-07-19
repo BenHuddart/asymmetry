@@ -2437,7 +2437,7 @@ def _run_row(panel: DataBrowserPanel, run_number: int) -> int:
 def test_run_numbers_wear_their_profiles_identity_colors(
     qapp: QApplication,
 ) -> None:
-    """Each run's number is coloured by its assigned profile's identity colour."""
+    """Non-default runs are coloured by profile; the ★ default stays plain."""
     from asymmetry.gui.styles import tokens
 
     panel = DataBrowserPanel()
@@ -2445,19 +2445,18 @@ def test_run_numbers_wear_their_profiles_identity_colors(
     ds2 = _dataset_with_run(2)
     ds2.metadata["grouping_profile"] = "Sample B"
     profiles = _two_profiles_for(ds1)
-    # A stored colour is honoured; colourless profiles fall back by position.
-    profiles[0].color = tokens.PROFILE_COLORS[3]
     panel.set_grouping_profile_provider(lambda: profiles)
     panel.add_dataset(ds1)
     panel.add_dataset(ds2)
 
     item1 = panel._table.item(_run_row(panel, 1), 0)
     item2 = panel._table.item(_run_row(panel, 2), 0)
-    # Run 1 follows the default (Sample A, stored colour): that colour.
-    assert item1.foreground().color() == QColor(tokens.PROFILE_COLORS[3])
+    # Run 1 follows the ★ default (Sample A): plain black, tooltip only.
+    assert all(item1.foreground().color() != QColor(c) for c in tokens.PROFILE_COLORS)
     assert "Grouping profile: Sample A" in item1.toolTip()
-    # Run 2 follows Sample B (no stored colour → its list position's colour).
-    assert item2.foreground().color() == QColor(tokens.PROFILE_COLORS[1])
+    # Run 2 follows Sample B — the first non-default profile takes the first
+    # palette colour (the colourless default occupies no slot).
+    assert item2.foreground().color() == QColor(tokens.PROFILE_COLORS[0])
     assert "Grouping profile: Sample B" in item2.toolTip()
 
 
