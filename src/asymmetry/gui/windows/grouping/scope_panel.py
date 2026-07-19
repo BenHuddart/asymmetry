@@ -116,9 +116,19 @@ class ScopePanel(QWidget):
         self._assign_btn.clicked.connect(self._on_assign_menu)
         button_row.addWidget(self._release_btn)
         button_row.addWidget(self._reattach_btn)
-        button_row.addWidget(self._assign_btn)
         button_row.addStretch()
         layout.addLayout(button_row)
+
+        # "Assign to ▸" rides its own row below Release/Reattach rather than
+        # widening the row further: a three-button row pushed the scope
+        # panel's minimum width past its 330px split of the dialog's fixed
+        # 1220px budget on Linux's wider default button metrics, squeezing
+        # the two-column layout into horizontal scroll
+        # (test_both_columns_fit_without_scroll_at_default_size).
+        assign_row = QHBoxLayout()
+        assign_row.addWidget(self._assign_btn)
+        assign_row.addStretch()
+        layout.addLayout(assign_row)
 
     def set_runs(
         self,
