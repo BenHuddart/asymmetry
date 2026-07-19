@@ -36,10 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows, the editing strip, and the selector swatches — the ★ default stays
   plain black, so colour reads as "off the default" — and the browser's
   **Assign Grouping Profile** context menu makes reassignment a two-click
-  action. A
-  released run now records the **base profile** Reattach returns it to,
-  named in its ⊗ tooltip. Project schema v17: every dataset records its
-  assigned profile; older projects migrate automatically, and
+  action. A released run now records the **base profile** Reattach returns
+  it to, named in its ⊗ tooltip. Project schema v17: every dataset records
+  its assigned profile; older projects migrate automatically, and
   single-profile projects behave exactly as before.
 
 ## [0.14.0] - 2026-07-18
