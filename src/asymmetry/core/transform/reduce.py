@@ -313,6 +313,7 @@ def reduce_grouped_asymmetry(
     use_background: bool,
     facility: str = "",
     reference_resolver: ReferenceResolver | None = None,
+    beta: float = 1.0,
 ) -> GroupedAsymmetryReduction:
     """Reduce grouped histograms to a forward/backward asymmetry curve.
 
@@ -367,6 +368,7 @@ def reduce_grouped_asymmetry(
             last_good_bin=last_good,
             forward_error=corrected.forward_error,
             backward_error=corrected.backward_error,
+            beta=beta,
         )
         perf.detail(
             bins=len(time_axis),

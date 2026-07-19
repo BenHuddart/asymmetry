@@ -56,9 +56,20 @@
   `python tools/harness.py structural` (docs screenshot map, test layout)
   and `lint`.
 
-## Outcomes (fill in during the implementation pass)
+## Outcomes (implementation pass, 2026-07-19)
 
-- [ ] Core identities 1–7 green.
-- [ ] Persistence 8–10 green.
-- [ ] GUI 11–13 green.
-- [ ] `validate` green at the standard tier.
+- [x] Core identities 1–7 green — `tests/core/test_beta_correction.py`
+      (β = 1 bit-identity, musrfit-form equivalence, ground-truth recovery,
+      both error closed forms, sentinels, lenient grouping reads, α-estimator
+      independence, integral parity + invalid-β rejection).
+- [x] Persistence 8–10 green — same file (`TestBetaPersistence`):
+      emit-only-when-≠1, round-trip, degenerate-value sanitising, resolution
+      end-to-end, vector-profile suppression, instrument-heal keep.
+- [x] GUI 11–13 green — `tests/gui/test_beta_section.py` (widget leniency,
+      card registration, payload round-trip + dirty marking, seeding, compare
+      availability/payload-invariance, pager stop in pipeline order,
+      vector-mode hide-and-omit).
+- [x] `validate` green at the standard tier (6539 passed, 2026-07-19; the
+      pre-existing single-`processEvents` race in
+      `test_both_columns_fit_without_scroll_at_default_size` was hardened to
+      assert on settled geometry after the fourth card widened its window).

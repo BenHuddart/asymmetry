@@ -1210,7 +1210,7 @@
     {
       "slug": "beta-correction",
       "feature_name": "Beta correction (musrfit asymmetry fit type 2: intrinsic detector-asymmetry balance)",
-      "status": "study",
+      "status": "implemented",
       "path": "docs/porting/beta-correction",
       "depends_on": [
         "correction-order-alpha-estimation",
@@ -1226,7 +1226,7 @@
         "test_data": "docs/porting/beta-correction/test-data.md",
         "verification_plan": "docs/porting/beta-correction/verification-plan.md"
       },
-      "tests_path": null,
+      "tests_path": "tests/core/test_beta_correction.py",
       "src_path": null,
       "updated": "2026-07-19",
       "notes": "Port of musrfit's beta (A0_b/A0_f intrinsic-asymmetry balance) applied with alpha in one formula: ours A=(F-alphaB)/(betaF+alphaB), beta identical in both conventions. Determination is independent of alpha (beta invisible to count-ratio estimators; beta does not move the corrected asymmetry's zero), so the GUI gets a separate blue Corrections card. v1: fixed user-entered scalar only, default 1, key emitted only when != 1 (no schema bump); exact Poisson error generalizes 2|a| -> |a|(1+b) with denominator betaF+alphaB. Deferred pending expert consult: data-driven estimator == fittable beta in the count-domain FB model; per-projection vector beta."

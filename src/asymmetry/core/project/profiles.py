@@ -100,6 +100,7 @@ values), and the ``*_correction`` flags (on/off derived from the policy mode).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -183,6 +184,19 @@ def _as_float(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _sanitize_beta(value: Any) -> float:
+    """Lenient beta read: unparseable, non-finite or non-positive → 1.0.
+
+    Mirrors the clamp ``group_forward_backward`` applies when reading the
+    grouping payload, so a degenerate stored value can never re-enter the
+    reduction through a profile.
+    """
+    beta = _as_float(value, 1.0)
+    if not math.isfinite(beta) or beta <= 0.0:
+        return 1.0
+    return beta
 
 
 # --------------------------------------------------------------------------- #
@@ -643,6 +657,11 @@ class GroupingProfile:
     deadtime_policy: DeadtimePolicy = field(default_factory=DeadtimePolicy)
     background_policy: BackgroundPolicy = field(default_factory=BackgroundPolicy)
     t0_policy: T0Policy = field(default_factory=T0Policy)
+    # Intrinsic-asymmetry balance beta = A_{0,B}/A_{0,F} (musrfit asymmetry fit
+    # type 2), applied with alpha as A = (F - aB)/(bF + aB). A plain fixed
+    # scalar for now — a BetaPolicy with calibration provenance is deliberately
+    # deferred until the estimator exists (docs/porting/beta-correction/).
+    beta: float = 1.0
 
     # Binning ----------------------------------------------------------------
     binning_mode: str = "fixed"
@@ -683,6 +702,9 @@ class GroupingProfile:
         # — no schema bump is needed.
         if self.t0_policy.mode != "from_file":
             data["t0_policy"] = self.t0_policy.to_dict()
+        # ``beta`` follows the same emit-only-when-non-default rule.
+        if self.beta != 1.0:
+            data["beta"] = float(self.beta)
         if self.bin0_us is not None:
             data["bin0_us"] = float(self.bin0_us)
         if self.bin10_us is not None:
@@ -748,6 +770,7 @@ class GroupingProfile:
             deadtime_policy=DeadtimePolicy.from_dict(data.get("deadtime_policy")),
             background_policy=BackgroundPolicy.from_dict(data.get("background_policy")),
             t0_policy=T0Policy.from_dict(data.get("t0_policy")),
+            beta=_sanitize_beta(data.get("beta", 1.0)),
             binning_mode=str(data.get("binning_mode", "fixed")),
             bin0_us=None if data.get("bin0_us") is None else _as_float(data.get("bin0_us"), 0.0),
             bin10_us=None if data.get("bin10_us") is None else _as_float(data.get("bin10_us"), 0.0),
@@ -886,6 +909,7 @@ def profile_from_payload(
         deadtime_policy=_deadtime_policy_from_payload(payload),
         background_policy=_background_policy_from_payload(payload),
         t0_policy=_t0_policy_from_payload(payload),
+        beta=_sanitize_beta(payload.get("beta", 1.0)),
         binning_mode=binning_mode,
         bin0_us=None if payload.get("bin0_us") is None else _as_float(payload.get("bin0_us"), 0.0),
         bin10_us=None
@@ -1067,6 +1091,15 @@ def resolve_effective_grouping(
         _apply_alpha_policy(
             grouping, profile.alpha_policy, run, n_hist, reference_resolver=reference_resolver
         )
+        # Beta is a fixed scalar (no per-run resolution); written only when
+        # active so a beta = 1 payload stays byte-identical to today's. It is
+        # scalar-only: a projection-carrying (vector) profile never emits it —
+        # a per-pair beta would be a different feature (docs/porting/
+        # beta-correction/), and a uniform one would be wrong for every pair
+        # but the one it was measured on.
+        beta = _sanitize_beta(profile.beta)
+        if beta != 1.0 and not profile.projections:
+            grouping["beta"] = beta
 
         perf.detail(n_detectors=n_hist, n_groups=len(grouping.get("groups", {})))
         return grouping

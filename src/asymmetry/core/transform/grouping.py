@@ -495,6 +495,7 @@ class GroupedForwardBackward:
     alpha: float
     forward_gid: int
     backward_gid: int
+    beta: float = 1.0
 
 
 def group_forward_backward(
@@ -506,7 +507,8 @@ def group_forward_backward(
     This is the shared core of the time-domain F-B asymmetry and the
     time-integral observable: it resolves the forward/backward group ids to
     detector indices, aligns each detector to a common ``t0``, sums the groups,
-    and reads the balance ``alpha`` (leniently, defaulting to ``1.0``).  Callers
+    and reads the balances ``alpha`` and ``beta`` (leniently, defaulting to
+    ``1.0``).  Callers
     own the good-bin window, the time axis, ``compute_asymmetry``, and any
     rebinning, so the two reductions agree on grouping by construction.
 
@@ -539,6 +541,12 @@ def group_forward_backward(
     # to 1.0 rather than propagate NaN/0 into the asymmetry.
     if not np.isfinite(alpha) or alpha <= 0.0:
         alpha = 1.0
+    try:
+        beta = float(grouping.get("beta", 1.0))
+    except (TypeError, ValueError):
+        beta = 1.0
+    if not np.isfinite(beta) or beta <= 0.0:
+        beta = 1.0
 
     detector_t0_bins = detector_t0_overrides(grouping, len(histograms))
     common_t0 = common_t0_for_groups(
@@ -557,4 +565,5 @@ def group_forward_backward(
         alpha=alpha,
         forward_gid=forward_gid,
         backward_gid=backward_gid,
+        beta=beta,
     )
