@@ -12,9 +12,13 @@ broadcast run-by-run and could silently drift apart.
 This module introduces **grouping profiles**: a :class:`GroupingProfile` holds
 only the shareable settings, is named and owned by the project, and applies to
 every run whose *fingerprint* — ``(instrument name, histogram count)`` — matches.
-Each fingerprint has exactly one *active* profile at a time (multiple saved
-profiles per fingerprint are allowed). A run inherits its fingerprint's active
-profile unless the user "releases" it with an explicit per-run override.
+Multiple profiles per fingerprint may be in concurrent use — e.g. one per
+sample in a multi-sample project — with each run recording which profile it is
+*assigned* to (schema v17; see :func:`assigned_profile_for_run`). One profile
+per fingerprint is flagged the **default** (the ``active`` field): freshly
+loaded runs are assigned to it. A run follows its assigned profile unless the
+user "releases" it with an explicit per-run override; a released run keeps its
+assignment as the *base* profile Reattach returns it to.
 
 :func:`resolve_effective_grouping` merges a profile with a run's file-derived
 facts and reproduces **exactly** today's ``run.grouping`` payload shape, so
@@ -641,6 +645,9 @@ class GroupingProfile:
 
     name: str
     fingerprint: ProfileFingerprint
+    #: Marks the fingerprint's *default* profile — the one freshly loaded runs
+    #: are assigned to (exactly one per fingerprint). Runs already in the
+    #: project follow their own recorded assignment, not this flag.
     active: bool = True
 
     # Grouping structure -----------------------------------------------------
@@ -1346,11 +1353,14 @@ def _apply_background_policy(grouping: dict[str, Any], policy: BackgroundPolicy)
 # --------------------------------------------------------------------------- #
 
 
-def active_profile_for_run(profiles: list[GroupingProfile], run: Run) -> GroupingProfile | None:
-    """Return the active profile matching *run*'s fingerprint, or ``None``.
+def default_profile_for_run(profiles: list[GroupingProfile], run: Run) -> GroupingProfile | None:
+    """Return the *default* profile for *run*'s fingerprint, or ``None``.
 
-    When several profiles share a fingerprint only the first active one is
-    returned (the project maintains a single active profile per fingerprint).
+    The ``active`` flag marks each fingerprint's default profile — the one
+    freshly loaded runs are assigned to. When several profiles share a
+    fingerprint only the first flagged one is returned (the project maintains
+    a single default per fingerprint). Runs already in the project follow
+    their own recorded assignment; see :func:`assigned_profile_for_run`.
     """
     fingerprint = profile_fingerprint_for_run(run)
     for profile in profiles:
@@ -1359,18 +1369,51 @@ def active_profile_for_run(profiles: list[GroupingProfile], run: Run) -> Groupin
     return None
 
 
+def named_profile_for_run(
+    profiles: list[GroupingProfile], name: str, run: Run
+) -> GroupingProfile | None:
+    """Return the profile called *name* matching *run*'s fingerprint, or ``None``.
+
+    Both the name and the fingerprint must match: a profile of another
+    instrument (or histogram count) that happens to share the name never
+    resolves onto the run.
+    """
+    fingerprint = profile_fingerprint_for_run(run)
+    for profile in profiles:
+        if profile.name == name and profile.fingerprint.matches(fingerprint):
+            return profile
+    return None
+
+
+def assigned_profile_for_run(
+    profiles: list[GroupingProfile], run: Run, assigned_name: str | None = None
+) -> GroupingProfile | None:
+    """Resolve the profile *run* should follow: its assignment, else the default.
+
+    *assigned_name* is the run's recorded assignment (schema v17). A missing or
+    stale assignment — the named profile was deleted, or the run's fingerprint
+    no longer matches it — falls back to the fingerprint's default profile, so
+    a project whose profile list changed underneath a run still resolves.
+    """
+    if assigned_name:
+        profile = named_profile_for_run(profiles, str(assigned_name), run)
+        if profile is not None:
+            return profile
+    return default_profile_for_run(profiles, run)
+
+
 def effective_grouping_for_loaded_run(profiles: list[GroupingProfile], run: Run) -> dict[str, Any]:
     """Grouping payload to attach to a freshly loaded run.
 
-    If an active profile matches the run's fingerprint, its resolved effective
+    If a default profile matches the run's fingerprint, its resolved effective
     grouping is returned; otherwise the run keeps the loader's own default
     grouping payload (a shallow copy so the caller can mutate it safely).
 
     The GUI calls this after loading a run so the run inherits its fingerprint's
-    active profile without the loader needing to know about profiles. No GUI
+    default profile without the loader needing to know about profiles. No GUI
     wiring lives here — this is the pure decision + resolution.
     """
-    profile = active_profile_for_run(profiles, run)
+    profile = default_profile_for_run(profiles, run)
     if profile is not None:
         return resolve_effective_grouping(profile, run)
     return dict(run.grouping) if isinstance(run.grouping, dict) else {}
@@ -1393,6 +1436,8 @@ __all__ = [
     "reconcile_instrument_for_payload",
     "profile_from_payload",
     "resolve_effective_grouping",
-    "active_profile_for_run",
+    "default_profile_for_run",
+    "named_profile_for_run",
+    "assigned_profile_for_run",
     "effective_grouping_for_loaded_run",
 ]

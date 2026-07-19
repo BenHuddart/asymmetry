@@ -20,9 +20,11 @@ from asymmetry.core.project.profiles import (
     GroupingProfile,
     ProfileFingerprint,
     T0Policy,
-    active_profile_for_run,
+    assigned_profile_for_run,
+    default_profile_for_run,
     detect_instrument_for_run,
     effective_grouping_for_loaded_run,
+    named_profile_for_run,
     profile_fingerprint_for_run,
     profile_from_payload,
     reconcile_instrument_for_payload,
@@ -179,13 +181,41 @@ def test_fingerprint_matching_is_case_insensitive_on_instrument():
     assert not ProfileFingerprint("EMU", 4).matches(ProfileFingerprint("MuSR", 4))
 
 
-def test_active_profile_selection_by_fingerprint():
+def test_default_profile_selection_by_fingerprint():
     emu = _base_profile(name="EMU-A", fingerprint=ProfileFingerprint("EMU", 4), active=True)
     musr = _base_profile(name="MuSR-A", fingerprint=ProfileFingerprint("MuSR", 4), active=True)
-    inactive = _base_profile(name="EMU-B", fingerprint=ProfileFingerprint("EMU", 4), active=False)
+    non_default = _base_profile(
+        name="EMU-B", fingerprint=ProfileFingerprint("EMU", 4), active=False
+    )
     run = _run(instrument="EMU", n_hist=4)
-    assert active_profile_for_run([inactive, musr, emu], run) is emu
-    assert active_profile_for_run([inactive, musr], run) is None
+    assert default_profile_for_run([non_default, musr, emu], run) is emu
+    assert default_profile_for_run([non_default, musr], run) is None
+
+
+def test_named_profile_requires_matching_name_and_fingerprint():
+    emu = _base_profile(name="Sample A", fingerprint=ProfileFingerprint("EMU", 4), active=True)
+    emu_b = _base_profile(name="Sample B", fingerprint=ProfileFingerprint("EMU", 4), active=False)
+    musr = _base_profile(name="Sample B", fingerprint=ProfileFingerprint("MuSR", 4), active=True)
+    run = _run(instrument="EMU", n_hist=4)
+    # Name + fingerprint both match — the default flag is irrelevant.
+    assert named_profile_for_run([emu, musr, emu_b], "Sample B", run) is emu_b
+    # A same-named profile of another fingerprint never resolves onto the run.
+    assert named_profile_for_run([musr], "Sample B", run) is None
+    assert named_profile_for_run([emu, emu_b], "Sample C", run) is None
+
+
+def test_assigned_profile_prefers_assignment_and_falls_back_to_default():
+    default = _base_profile(name="Sample A", fingerprint=ProfileFingerprint("EMU", 4), active=True)
+    other = _base_profile(name="Sample B", fingerprint=ProfileFingerprint("EMU", 4), active=False)
+    run = _run(instrument="EMU", n_hist=4)
+    profiles = [default, other]
+    # A recorded assignment wins over the default, even when not flagged default.
+    assert assigned_profile_for_run(profiles, run, "Sample B") is other
+    # No assignment (or a stale name) falls back to the fingerprint's default.
+    assert assigned_profile_for_run(profiles, run, None) is default
+    assert assigned_profile_for_run(profiles, run, "Deleted sample") is default
+    # No default either → None.
+    assert assigned_profile_for_run([other], run, "Deleted sample") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -732,7 +762,7 @@ def test_reconcile_does_not_inherit_wrong_fingerprint_profile():
         group_names={1: "Up", 2: "Down"},
     )
     reconcile_instrument_for_payload(run, {"instrument": "GPS", "groups": {1: [1]}})
-    assert active_profile_for_run([gps_profile], run) is None
+    assert default_profile_for_run([gps_profile], run) is None
 
 
 def test_reconcile_none_detection_keeps_stored_value():
