@@ -61,7 +61,7 @@ Step 1 — Load a run
 Open a run from **File → Open** (or drag it onto the window). The Data
 Browser lists one row per run; the central plot shows the
 currently-selected run's asymmetry. Loading several files at once is fine —
-any run of this instrument inherits the profile you build below
+any run of this instrument assigned to the profile follows what you build below
 automatically, with no separate step to push it out to the rest of the
 series.
 
@@ -101,7 +101,7 @@ whole calibration surface for that profile:
    * - **Profile selector**
      - Which named profile you are editing, with **Rename…** to relabel it.
    * - **Scope panel** ("Runs of this instrument")
-     - Every run of this instrument, tagged *inherits* or *override*. This is
+     - Every run of this instrument, tagged *follows <profile>* or *override*. This is
        the **selector**: the run you pick here is the one the form previews and
        edits, and its per-run facts (:math:`t_0`, good-bin window, file
        dead-time) seed the status rows. **Release from profile** /
@@ -221,7 +221,7 @@ simpler integral ratio (equivalent to the **Count ratio ΣF/ΣB** method) is
    print(round(est.alpha, 3))                        # 0.885
 
 Press **Apply** to write the calibrated :math:`\alpha` back to the profile.
-Any run of the same instrument inherits the profile — grouping and
+Any run of the same instrument assigned to the profile follows it — grouping and
 :math:`\alpha` included — the moment it is loaded (see `Reusing the
 calibration`_ below), so nothing further needs to be selected or applied on
 it by hand. Note, though, that :math:`\alpha` is a *sample* calibration:

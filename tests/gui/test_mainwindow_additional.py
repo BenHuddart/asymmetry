@@ -7460,6 +7460,29 @@ def test_apply_profile_assignments_reresolves_moved_runs(
     assert ds_a.run.grouping["alpha"] == pytest.approx(1.0)
 
 
+def test_assign_profile_from_browser_reresolves_following_runs(
+    mainwindow: MainWindow,
+) -> None:
+    """The Data Browser assign action stamps + re-resolves non-released runs."""
+    ds_a = _make_dataset(7106, with_grouping=True)
+    ds_b = _make_dataset(7107, with_grouping=True)
+    ds_b.metadata["grouping_overrides"] = True  # released: payload must survive
+    mainwindow._data_browser.add_dataset(ds_a)
+    mainwindow._data_browser.add_dataset(ds_b)
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds_a, "Sample A", alpha=1.1))
+    mainwindow._store_grouping_profile(_grouping_profile_from(ds_a, "Sample B", alpha=2.7))
+
+    mainwindow._on_assign_profile_requested([7106, 7107], "Sample B")
+
+    # The following run re-resolved onto Sample B.
+    assert ds_a.metadata.get("grouping_profile") == "Sample B"
+    assert ds_a.run.grouping["alpha"] == pytest.approx(2.7)
+    # The released run only retargets its base; its own payload is untouched.
+    assert ds_b.metadata.get("grouping_profile") == "Sample B"
+    assert ds_b.run.grouping["alpha"] == pytest.approx(1.0)
+    assert ds_b.metadata.get("grouping_overrides") is True
+
+
 def test_new_run_inherits_active_profile_grouping(mainwindow: MainWindow) -> None:
     """effective_grouping_for_loaded_run applies the active profile to a fresh run."""
     from asymmetry.core.project.profiles import effective_grouping_for_loaded_run

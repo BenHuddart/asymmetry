@@ -1851,6 +1851,12 @@ class MainWindow(QMainWindow):
             self._data_browser.get_info_requested.connect(self._on_get_info_requested)
         if hasattr(self._data_browser, "grouping_requested"):
             self._data_browser.grouping_requested.connect(self._on_grouping_requested)
+        if hasattr(self._data_browser, "assign_profile_requested"):
+            self._data_browser.assign_profile_requested.connect(self._on_assign_profile_requested)
+        if hasattr(self._data_browser, "set_grouping_profile_provider"):
+            # A provider (not a copy) — the profile list object is replaced on
+            # every grouping apply, so the browser reads it live.
+            self._data_browser.set_grouping_profile_provider(lambda: self._grouping_profiles)
         if hasattr(self._data_browser, "group_selected"):
             self._data_browser.group_selected.connect(self._on_group_selected)
         if hasattr(self._data_browser, "refit_coadded_requested"):
@@ -4476,6 +4482,49 @@ class MainWindow(QMainWindow):
                 self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
             applied_runs.append(int(run_number))
         return sorted(applied_runs)
+
+    def _on_assign_profile_requested(self, run_numbers, profile_name: str) -> None:
+        """Assign *run_numbers* to *profile_name* (Data Browser context menu).
+
+        Following (non-released) runs are re-resolved against the named
+        profile immediately; a released run only retargets the base profile
+        Reattach returns it to — its override payload stays authoritative.
+        """
+        name = str(profile_name)
+        updated: list[int] = []
+        changed = False
+        for rn in run_numbers or []:
+            dataset = self._data_browser.get_dataset(int(rn))
+            if dataset is None or dataset.run is None:
+                continue
+            if self._dataset_assigned_profile_name(dataset) == name:
+                continue
+            self._assign_dataset_profile(dataset, name)
+            changed = True
+            if self._dataset_has_grouping_override(dataset):
+                continue
+            payload = self._resolve_named_profile_for_run(name, dataset.run)
+            if payload is None:
+                continue
+            applied, _dt = self._apply_grouping_settings_to_dataset(dataset, payload)
+            if not applied:
+                continue
+            if dataset is self._current_dataset:
+                self._fit_panel.set_dataset(self._get_fit_dataset(dataset))
+            updated.append(int(rn))
+        if not changed:
+            return
+        self._mark_dirty()
+        self._data_browser._rebuild_table()
+        if updated:
+            self._render_current_selection_plot()
+            self._invalidate_fft_after_regroup(sorted(updated))
+        runs_txt = ", ".join(str(int(r)) for r in run_numbers)
+        suffix = f"; re-resolved {len(updated)} run(s)" if updated else ""
+        self._log_panel.log(
+            f"Assigned run(s) {runs_txt} to grouping profile '{name}'{suffix}",
+            tag="grouping",
+        )
 
     def _resolve_grouping_dialog_context(
         self,

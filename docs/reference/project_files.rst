@@ -141,13 +141,37 @@ These blocks are optional and backward-compatible. Older project files do not
 need them, but when present they allow wizard results to reopen immediately
 without rerunning the expensive analysis.
 
+Grouping profiles and assignments
+---------------------------------
+
+The project's named grouping profiles (see :doc:`detector_grouping`) are
+stored in a top-level ``grouping_profiles`` list. Each entry is a serialized
+profile — its ``name``, ``fingerprint`` (``{"instrument": ...,
+"histogram_count": ...}``), the grouping structure, and the alpha, deadtime,
+background, and t0 policies. The ``active`` flag marks each fingerprint's
+**default-for-new-runs** profile (exactly one per fingerprint); several
+profiles of the same fingerprint may be in concurrent use.
+
+Each dataset entry records which profile it follows (schema v17):
+
+``profile``
+    The name of the dataset's assigned grouping profile. A dataset carrying
+    only ``profile`` follows that profile — its grouping is re-resolved
+    against the profile on load. A dataset carrying **both** ``profile`` and
+    ``grouping_overrides`` is *released*: the override payload below is
+    authoritative for resolution, and ``profile`` names the base profile the
+    run stays assigned to (the reattach target). A dataset with neither key
+    follows its fingerprint's default profile, as does one whose assigned
+    name no longer resolves.
+
 Grouping overrides
 ------------------
 
 Each dataset entry in the project JSON may contain a ``grouping_overrides``
-block that stores the full custom grouping applied in the current session.
-When present, it is re-applied to the dataset on project load so that the
-exact detector grouping is preserved without re-running the Grouping dialog.
+block that stores the full custom grouping of a run *released* from its
+profile (or of a run whose fingerprint has no profile). When present, it is
+re-applied to the dataset on project load so that the exact detector grouping
+is preserved without re-running the Grouping dialog.
 
 ``grouping_overrides`` keys:
 
@@ -239,7 +263,7 @@ Save and load
    from asymmetry.core.project.schema import load_project, save_project
 
    state = {
-       "schema_version": 15,
+       "schema_version": 17,
        "created_with_app_version": "0.1.0",
        "datasets": [{"run_number": 3077, "source_file": "run3077.nxs", "metadata_overrides": {}}],
        "data_groups": [

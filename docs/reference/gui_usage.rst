@@ -195,6 +195,14 @@ Groups**, for a multi-row selection) removes just the clicked membership;
 removing a run's primary membership promotes its earliest remaining copy to
 primary.
 
+Two further markers relate to detector grouping (see
+:doc:`detector_grouping`): a run released from its grouping profile carries a
+trailing **⊗**, and when a run's instrument has several grouping profiles in
+the project (one per sample, say) a superscript index (¹, ², …) says which
+profile the run follows, with the tooltip "Grouping profile: <name>" naming
+it. Right-clicking a run selection then offers **Assign Grouping Profile**
+to move the runs to another of the instrument's profiles.
+
 Batch and global fits over an ad-hoc run selection (not bound to a group)
 automatically create — or, for an identical run set, reuse — a group for the
 fit, so every recorded batch series always has an owning group. These
