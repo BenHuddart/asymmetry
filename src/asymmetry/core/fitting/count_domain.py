@@ -111,6 +111,31 @@ def _guard_model_param_collisions(model_fn: Callable[..., NDArray]) -> None:
         )
 
 
+def _guard_beta_collision(model_fn: Callable[..., NDArray]) -> None:
+    """Reject a physics model owning a ``beta`` parameter on the β-estimation path.
+
+    The β-estimation path adds a structural shared ``beta`` scaling the backward
+    polarization amplitude. ``beta`` is deliberately **not** in
+    :data:`RESERVED_COUNT_PARAMS` (the stretched-exponential model's stretch
+    exponent is legitimately named ``beta``, and must stay usable on the ordinary
+    count-fit paths), so the clash is caught here — scoped to the β path only —
+    rather than globally.
+    """
+    parameters = list(inspect.signature(model_fn).parameters.values())
+    named = {
+        p.name
+        for p in parameters[1:]
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    if "beta" in named:
+        raise ValueError(
+            "Model parameter 'beta' collides with the β-estimation structural "
+            "parameter (which scales the backward polarization amplitude). Rename "
+            "the model parameter (e.g. the stretched-exponential exponent) or "
+            "disable β estimation."
+        )
+
+
 # --- cost functions ---------------------------------------------------------
 
 
@@ -755,6 +780,7 @@ def fit_fb_alpha(
     t_min: float | None = None,
     t_max: float | None = None,
     exclude: tuple[float, float] | None = None,
+    estimate_beta: bool = False,
     minos: bool = False,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> GroupedTimeDomainFitResult:
@@ -779,10 +805,24 @@ def fit_fb_alpha(
     model (the √α-tied model evaluated at ``t ± dpsep/2``); a ``tau`` parameter
     frees the shared muon lifetime (reported in ``shared_parameters``; not
     supported with the double-pulse model).
+
+    When ``estimate_beta`` is true a shared free ``beta`` is added (positive
+    lower-bound clamp, fit box [0.01, 10], seed 1.0) that scales the backward
+    polarization amplitude only — the musrfit fit-type-2 asymmetry balance
+    measured on a weak-TF calibration run. ``shared_parameters`` then also
+    reports ``beta``, and its correlation with ``alpha`` is available on either
+    group result's covariance block. This path rejects a physics model owning a
+    ``beta`` parameter (e.g. the stretched exponential) so the structural name is
+    unambiguous, and is not supported with the double-pulse model. Existing
+    ``estimate_beta=False`` callers are unaffected.
     """
     _validate_cost(cost)
     _validate_deadtime_model(deadtime_model)
     _guard_model_param_collisions(model_fn)
+    if estimate_beta:
+        _guard_beta_collision(model_fn)
+        if "dpsep" in params:
+            raise ValueError("β estimation is not supported with the double-pulse model")
     if "tau" in params and "dpsep" in params:
         raise ValueError("Free muon lifetime is not supported with the double-pulse model")
     for required in ("alpha", "N0", "background", "background_b"):
@@ -793,6 +833,10 @@ def fit_fb_alpha(
     # alpha is physically positive and the model is sign-degenerate (sqrt(abs)),
     # so enforce a positive lower bound rather than report a negative balance.
     params = _clamp_alpha_positive(params)
+    # beta scales the backward amplitude only and is likewise positive; add it
+    # (or clamp an existing free one) only on the β-estimation path.
+    if estimate_beta:
+        params = _ensure_beta_param(params)
 
     # A free dpsep is located by a grid scan, not migrad (non-smooth pulse gate).
     if _has_free_dpsep(params):
@@ -835,7 +879,9 @@ def fit_fb_alpha(
     double_pulse = "dpsep" in params
     free_lifetime = "tau" in params
     fb_dp_model = _double_pulse_fb_model(fraction_fn) if double_pulse else None
-    fb_corrected = None if double_pulse else build_fb_count_model(fraction_fn)
+    fb_corrected = (
+        None if double_pulse else build_fb_count_model(fraction_fn, with_beta=estimate_beta)
+    )
 
     frame_norm_f = _deadtime_frame_norm(dataset, forward_group)
     frame_norm_b = _deadtime_frame_norm(dataset, backward_group)
@@ -1073,6 +1119,48 @@ def _clamp_alpha_positive(params: ParameterSet) -> ParameterSet:
                     value=max(abs(float(p.value)), floor),
                     min=floor,
                     max=p.max,
+                    fixed=p.fixed,
+                    link_group=p.link_group,
+                )
+            )
+        else:
+            out.add(p)
+    return out
+
+
+#: Default fit box for the β-estimation shared parameter (the UI spin stays
+#: wider at [0.01, 1000]; the fit box is tight around physical values).
+_BETA_FIT_BOUNDS: tuple[float, float] = (0.01, 10.0)
+
+
+def _ensure_beta_param(params: ParameterSet) -> ParameterSet:
+    """Return a copy of ``params`` carrying a free, positive-clamped ``beta``.
+
+    The backward-amplitude balance ``beta`` scales only the backward polarization,
+    so — like ``alpha`` — it is physically positive and seeded at 1.0. A missing
+    ``beta`` is added at the default seed/box; an existing free ``beta`` gets a
+    positive lower bound (mirroring :func:`_clamp_alpha_positive`). A fixed
+    ``beta`` is left untouched.
+    """
+    floor, ceil = _BETA_FIT_BOUNDS
+    if "beta" not in params:
+        out = ParameterSet()
+        for p in params:
+            out.add(p)
+        out.add(Parameter(name="beta", value=1.0, min=floor, max=ceil))
+        return out
+    beta = params["beta"]
+    if beta.fixed or beta.min > 0.0:
+        return params
+    out = ParameterSet()
+    for p in params:
+        if p.name == "beta":
+            out.add(
+                Parameter(
+                    name=p.name,
+                    value=max(abs(float(p.value)), floor),
+                    min=floor,
+                    max=p.max if p.max != _INF else ceil,
                     fixed=p.fixed,
                     link_group=p.link_group,
                 )

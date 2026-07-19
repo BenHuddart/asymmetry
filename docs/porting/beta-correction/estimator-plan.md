@@ -76,7 +76,10 @@ independently floating ω/λ/φ (no shared physics — that is the point of B, a
 statistical weakness). Then:
 
 - β̂ = Â₀,b / Â₀,f, with σ_β = β̂·√[(σ_f/Â_f)² + (σ_b/Â_b)²] (independent fits).
-- α̂ = N̂₀,b / N̂₀,f reported alongside, same ratio-error treatment.
+- α̂ = N̂₀,f / N̂₀,b reported alongside, same ratio-error treatment. (Forward over
+  backward — the opposite direction to β. In our α-on-backward convention the fgFB
+  split is forward `N0·√α`, backward `N0/√α`, so α = N0,f/N0,b; the design note's
+  α = N0,b/N0,f is the musrfit convention, i.e. our 1/α. Caught during M1.)
 - No α–β correlation is available (report `None`); documented as a cross-check of A.
 
 ## Core API (new module `core/fitting/beta_calibration.py`)
