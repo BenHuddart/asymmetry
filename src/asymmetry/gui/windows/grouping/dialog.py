@@ -250,6 +250,11 @@ class GroupingDialog(QDialog):
         self._session_assignments: dict[int, str] = {}
         #: Stored profile names deleted this session (committed on Apply).
         self._deleted_profiles: list[str] = []
+        #: Names of profiles created this session (New…/Duplicate…). They are
+        #: registered in ``self._project_profiles`` immediately so they persist
+        #: in the selector and Assign-to menu; Apply commits them, Cancel
+        #: drops them with the dialog.
+        self._session_created: list[str] = []
         #: The stored name of the draft before an in-session rename, if any.
         self._renamed_from: str | None = None
         #: Pending per-fingerprint default-profile choice, keyed by fingerprint
@@ -1537,7 +1542,14 @@ class GroupingDialog(QDialog):
         return False
 
     def _create_new_profile(self, *, duplicate: bool) -> None:
-        """Prompt for a name and start a fresh (or duplicated) draft."""
+        """Prompt for a name and create a fresh (or duplicated) profile.
+
+        The new profile is registered in the session's working list at once —
+        it stays in the selector and the Assign-to menu while other profiles
+        are edited, instead of living only in the draft and vanishing on the
+        next switch. Apply commits every session-created profile; Cancel
+        drops them.
+        """
         from PySide6.QtWidgets import QInputDialog
 
         base = f"{self._draft_name} copy" if duplicate else self._default_draft_name()
@@ -1549,6 +1561,14 @@ class GroupingDialog(QDialog):
         )
         name = str(name).strip()
         if not accepted or not name:
+            self._select_profile_in_combo(self._draft_name)
+            return
+        if name in self._stored_names_for_fingerprint():
+            QMessageBox.warning(
+                self,
+                "Duplicate Profile" if duplicate else "New Profile",
+                f"A profile named '{name}' already exists for this instrument.",
+            )
             self._select_profile_in_combo(self._draft_name)
             return
         if not self._confirm_discard_before_switch():
@@ -1565,7 +1585,11 @@ class GroupingDialog(QDialog):
             )
         self._draft.name = name
         self._draft_name = name
-        self._draft_dirty = True
+        self._project_profiles.append(GroupingProfile.from_dict(self._draft.to_dict()))
+        self._session_created.append(name)
+        # The creation itself is registered (and guarded via the structural
+        # check), so the draft starts clean; edits dirty it as usual.
+        self._draft_dirty = False
         self._renamed_from = None
         self._reseed_form_from_draft()
 
@@ -1596,9 +1620,16 @@ class GroupingDialog(QDialog):
             )
             return
         old_name = self._draft_name
-        # Chained renames keep the original stored name; a draft never stored
-        # (New/Duplicate) has nothing to replace, so no rename record.
-        if self._renamed_from is None and old_name in self._stored_names_for_fingerprint():
+        if old_name in self._session_created:
+            # A session-created profile renames in place — nothing is stored
+            # in the project yet, so there is no rename to record.
+            assert self._fingerprint is not None
+            self._session_created[self._session_created.index(old_name)] = name
+            for profile in self._project_profiles:
+                if profile.fingerprint.matches(self._fingerprint) and profile.name == old_name:
+                    profile.name = name
+        elif self._renamed_from is None and old_name in self._stored_names_for_fingerprint():
+            # Chained renames keep the original stored name.
             self._renamed_from = old_name
         self._draft_name = name
         self._draft.name = name
@@ -1681,7 +1712,18 @@ class GroupingDialog(QDialog):
             if answer != QMessageBox.StandardButton.Yes:
                 return
             target = others[0]
-        self._deleted_profiles.append(stored_name)
+        if stored_name in self._session_created:
+            # Never stored in the project: dropping it from the working list
+            # is the whole deletion.
+            assert self._fingerprint is not None
+            self._session_created.remove(stored_name)
+            self._project_profiles = [
+                p
+                for p in self._project_profiles
+                if not (p.fingerprint.matches(self._fingerprint) and p.name == stored_name)
+            ]
+        else:
+            self._deleted_profiles.append(stored_name)
         self._renamed_from = None
         for rn, assigned in list(self._session_assignments.items()):
             if assigned == display_name:
@@ -3416,7 +3458,7 @@ class GroupingDialog(QDialog):
         stored) profile, and a moved default — each meaningful even when no run
         currently follows the edited profile.
         """
-        if self._newly_assigned() or self._deleted_profiles:
+        if self._newly_assigned() or self._deleted_profiles or self._session_created:
             return True
         if self._renamed_from is not None:
             return True
@@ -3468,6 +3510,7 @@ class GroupingDialog(QDialog):
         self._draft_dirty = False
         self._override_dirty_runs.clear()
         self._deleted_profiles.clear()
+        self._session_created.clear()
         self._renamed_from = None
         self._session_assignments = dict(self._initial_assignments)
 
@@ -3482,6 +3525,7 @@ class GroupingDialog(QDialog):
         pending = self._pending_override_runs()
         structural = (
             bool(self._deleted_profiles)
+            or bool(self._session_created)
             or self._renamed_from is not None
             or bool(self._newly_assigned())
         )
@@ -4915,6 +4959,16 @@ class GroupingDialog(QDialog):
         # a caller reads this without going through Apply. This captures the live
         # form into whichever draft it is currently editing.
         self._sync_draft_from_form()
+        # A session-created profile that is the current draft carries its live
+        # edits in the draft, not the registered working copy — sync it back so
+        # ``created_profiles`` below reports the edited state.
+        if self._draft_name in self._session_created and self._fingerprint is not None:
+            for index, profile in enumerate(self._project_profiles):
+                if profile.fingerprint.matches(self._fingerprint) and (
+                    profile.name == self._draft_name
+                ):
+                    self._project_profiles[index] = GroupingProfile.from_dict(self._draft.to_dict())
+                    break
         # Report every override edited this session: the still-dirty ones plus
         # any Apply just committed (Apply clears the dirty set before this runs).
         override_edits: dict[int, dict[str, Any]] = {}
@@ -4941,6 +4995,11 @@ class GroupingDialog(QDialog):
             "default_profile": self._current_default_name(),
             "renamed_from": self._renamed_from,
             "deleted_profiles": list(self._deleted_profiles),
+            "created_profiles": [
+                GroupingProfile.from_dict(p.to_dict())
+                for p in self._project_profiles
+                if p.name in self._session_created
+            ],
         }
 
     @property

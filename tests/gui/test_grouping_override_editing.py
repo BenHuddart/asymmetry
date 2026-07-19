@@ -473,3 +473,97 @@ def test_released_run_chip_names_its_base_profile(qapp: QApplication) -> None:
     # Chip text for run 2 names the base profile it would reattach to.
     texts = [panel._list.item(i).text() for i in range(panel._list.count())]
     assert any("override · Sample B" in t for t in texts)
+
+
+def test_created_profile_persists_in_selector(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A New… profile stays in the selector after switching away (the bug:
+    it lived only in the draft and vanished on the next switch)."""
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample C", True)))
+    dialog._create_new_profile(duplicate=False)
+    assert dialog._draft_name == "Sample C"
+
+    assert dialog._load_stored_profile_into_draft("Sample A")
+    names = [dialog._profile_combo.itemData(i) for i in range(dialog._profile_combo.count())]
+    assert "Sample C" in names
+    # It is assignable and re-editable, and reported for Apply to commit.
+    assert dialog._load_stored_profile_into_draft("Sample C")
+    result = dialog.get_profile_result()
+    assert [p.name for p in result["created_profiles"]] == ["Sample C"]
+    assert result["deleted_profiles"] == []
+
+
+def test_created_profile_edits_are_reported_on_apply(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Edits to a created profile reach created_profiles (not a stale copy)."""
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample C", True)))
+    dialog._create_new_profile(duplicate=False)
+    dialog._alpha_spin.setValue(2.5)
+
+    result = dialog.get_profile_result()
+    created = {p.name: p for p in result["created_profiles"]}
+    assert created["Sample C"].alpha_policy.value == pytest.approx(2.5)
+
+
+def test_created_profile_delete_leaves_no_deletion_record(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deleting a never-stored created profile records no project deletion."""
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample C", True)))
+    dialog._create_new_profile(duplicate=False)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+    )
+    dialog._on_delete_profile()
+
+    result = dialog.get_profile_result()
+    assert result["deleted_profiles"] == []
+    assert result["created_profiles"] == []
+    names = [dialog._profile_combo.itemData(i) for i in range(dialog._profile_combo.count())]
+    assert "Sample C" not in names
+
+
+def test_created_profile_rename_keeps_it_created(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Renaming a created profile renames in place — no renamed_from record."""
+    from PySide6.QtWidgets import QInputDialog
+
+    dialog = _two_profile_dialog()
+    answers = iter([("Sample C", True), ("Sample C2", True)])
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: next(answers)))
+    dialog._create_new_profile(duplicate=False)
+    dialog._on_rename_profile()
+
+    result = dialog.get_profile_result()
+    assert result["renamed_from"] is None
+    assert [p.name for p in result["created_profiles"]] == ["Sample C2"]
+
+
+def test_create_rejects_an_existing_profile_name(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample B", True)))
+    warnings: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: warnings.append(a[2])))
+    dialog._create_new_profile(duplicate=False)
+
+    assert warnings and "already exists" in warnings[0]
+    assert dialog._draft_name == "Sample A"
+    assert dialog.get_profile_result()["created_profiles"] == []

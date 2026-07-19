@@ -4046,8 +4046,19 @@ class MainWindow(QMainWindow):
         override_updated_runs: list[int] = []
         reassigned_runs: list[int] = []
         if profile_result is not None:
+            edited_profile = profile_result["profile"]
+            # Profiles created this session (New…/Duplicate…) that are not the
+            # edited draft itself: stored first, preserving the current
+            # default, so the edited profile and the assignment map below can
+            # reference them.
+            for created in profile_result.get("created_profiles") or []:
+                if created.name == edited_profile.name and created.fingerprint.matches(
+                    edited_profile.fingerprint
+                ):
+                    continue
+                self._store_grouping_profile(created)
             self._store_grouping_profile(
-                profile_result["profile"],
+                edited_profile,
                 default_profile=profile_result.get("default_profile"),
                 renamed_from=profile_result.get("renamed_from"),
             )
