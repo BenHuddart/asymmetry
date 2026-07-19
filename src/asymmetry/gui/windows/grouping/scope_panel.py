@@ -22,7 +22,7 @@ The dialog reconciles those maps into the project on Apply.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -67,6 +67,8 @@ class ScopePanel(QWidget):
         self._assigned: dict[int, str] = {}
         #: profile names of the current fingerprint (the Assign-to menu).
         self._profile_names: list[str] = []
+        #: profile name -> identity colour (hex), for row tints and swatches.
+        self._profile_colors: dict[str, str] = {}
         #: run numbers whose override draft has uncommitted edits this session.
         self._override_dirty: set[int] = set()
         self._profile_name = ""
@@ -124,6 +126,7 @@ class ScopePanel(QWidget):
         *,
         profile_name: str,
         profile_names: list[str] | None = None,
+        profile_colors: dict[str, str] | None = None,
     ) -> None:
         """Populate the panel.
 
@@ -135,13 +138,17 @@ class ScopePanel(QWidget):
             ``assigned_profile`` are the run's state at open.
         profile_name
             Name of the profile the editor is currently editing (rows assigned
-            to it are the accent-tinted "will receive edits" set).
+            to it are the emphasised "will receive edits" set).
         profile_names
             Every profile name of the fingerprint, for the Assign-to menu.
             Defaults to just *profile_name*.
+        profile_colors
+            Each profile's identity colour (hex), for the row tints and the
+            Assign-to menu swatches.
         """
         self._profile_name = str(profile_name)
         self._profile_names = [str(n) for n in (profile_names or [profile_name])]
+        self._profile_colors = {str(k): str(v) for k, v in (profile_colors or {}).items()}
         self._initial_overridden = {int(rn): bool(ov) for rn, _label, ov, _assigned in runs}
         self._released = dict(self._initial_overridden)
         self._labels = {int(rn): str(label) for rn, label, _ov, _assigned in runs}
@@ -184,28 +191,37 @@ class ScopePanel(QWidget):
             self._set_current_silent(target)
         self._update_button_states()
 
-    def _tint_item(self, item: QListWidgetItem, run_number: int) -> None:
-        """Style a row by its state, tying the edited profile's runs to the strip.
+    def _profile_color(self, name: str) -> QColor:
+        """The identity colour for profile *name* (accent when unmapped)."""
+        return QColor(self._profile_colors.get(str(name), tokens.ACCENT))
 
-        The runs following the *edited* profile wear the editing-target
-        strip's exact treatment — bold accent text on the soft accent
-        background — so the strip and the rows it "applies to" read as one
-        thing. Runs following another profile are muted plain text; released
-        runs are warning-tinted.
+    def _tint_item(self, item: QListWidgetItem, run_number: int) -> None:
+        """Style a row by its profile identity and state.
+
+        Every row's text wears its assigned profile's identity colour — the
+        same colour the Data Browser and the editing strip use. The runs
+        following the *edited* profile additionally get the strip's emphasis
+        (bold text on a soft tint of that colour), so the strip and the rows
+        it "applies to" read as one thing. Released rows are warning-tinted:
+        the diverged state outranks sample identity.
         """
         font = item.font()
         if self._released.get(run_number, False):
             item.setForeground(QColor(tokens.WARN))
             font.setBold(False)
             item.setBackground(QBrush())
-        elif self._assigned.get(run_number, self._profile_name) == self._profile_name:
-            item.setForeground(QColor(tokens.ACCENT))
-            font.setBold(True)
-            item.setBackground(QColor(tokens.ACCENT_SOFT))
         else:
-            item.setForeground(QColor(tokens.TEXT_MUTED))
-            font.setBold(False)
-            item.setBackground(QBrush())
+            assigned = self._assigned.get(run_number, self._profile_name)
+            color = self._profile_color(assigned)
+            item.setForeground(color)
+            if assigned == self._profile_name:
+                font.setBold(True)
+                soft = QColor(color)
+                soft.setAlpha(30)
+                item.setBackground(soft)
+            else:
+                font.setBold(False)
+                item.setBackground(QBrush())
         item.setFont(font)
 
     def _set_current_silent(self, run_number: int) -> None:
@@ -285,6 +301,9 @@ class ScopePanel(QWidget):
         for name in self._profile_names:
             action = menu.addAction(name)
             action.setData(name)
+            swatch = QPixmap(10, 10)
+            swatch.fill(self._profile_color(name))
+            action.setIcon(QIcon(swatch))
         chosen = menu.exec(self._assign_btn.mapToGlobal(self._assign_btn.rect().bottomLeft()))
         if chosen is None:
             return
@@ -312,6 +331,8 @@ class ScopePanel(QWidget):
         if self._profile_name == old_name:
             self._profile_name = new_name
         self._profile_names = [new_name if n == old_name else n for n in self._profile_names]
+        if old_name in self._profile_colors:
+            self._profile_colors[new_name] = self._profile_colors.pop(old_name)
         for mapping in (self._assigned, self._initial_assigned):
             for rn, name in list(mapping.items()):
                 if name == old_name:
@@ -327,6 +348,7 @@ class ScopePanel(QWidget):
         """
         name, reassign_to = str(name), str(reassign_to)
         self._profile_names = [n for n in self._profile_names if n != name]
+        self._profile_colors.pop(name, None)
         for rn, assigned in list(self._assigned.items()):
             if assigned == name:
                 self._assigned[rn] = reassign_to

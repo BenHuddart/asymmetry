@@ -826,3 +826,13 @@ def test_reconcile_gps_variants_are_same_family_no_heal():
     reconciled, note = reconcile_instrument_for_payload(run, payload)
     assert note is None
     assert reconciled is payload
+
+
+def test_profile_color_round_trips_and_defaults_none():
+    profile = _base_profile(color="#5f4a87")
+    data = profile.to_dict()
+    assert data["color"] == "#5f4a87"
+    assert GroupingProfile.from_dict(data).color == "#5f4a87"
+    colorless = _base_profile()
+    assert "color" not in colorless.to_dict()
+    assert GroupingProfile.from_dict(colorless.to_dict()).color is None

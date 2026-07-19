@@ -2434,10 +2434,10 @@ def _run_row(panel: DataBrowserPanel, run_number: int) -> int:
     raise AssertionError(f"run {run_number} not found in table")
 
 
-def test_non_default_profile_tints_the_run_number(
+def test_run_numbers_wear_their_profiles_identity_colors(
     qapp: QApplication,
 ) -> None:
-    """A run assigned off the default profile shows a violet run number."""
+    """Each run's number is coloured by its assigned profile's identity colour."""
     from asymmetry.gui.styles import tokens
 
     panel = DataBrowserPanel()
@@ -2445,18 +2445,38 @@ def test_non_default_profile_tints_the_run_number(
     ds2 = _dataset_with_run(2)
     ds2.metadata["grouping_profile"] = "Sample B"
     profiles = _two_profiles_for(ds1)
+    # A stored colour is honoured; colourless profiles fall back by position.
+    profiles[0].color = tokens.PROFILE_COLORS[3]
     panel.set_grouping_profile_provider(lambda: profiles)
     panel.add_dataset(ds1)
     panel.add_dataset(ds2)
 
     item1 = panel._table.item(_run_row(panel, 1), 0)
     item2 = panel._table.item(_run_row(panel, 2), 0)
-    # Run 1 follows the default: untinted, but its profile is in the tooltip.
-    assert item1.foreground().color() != QColor(tokens.PROFILE_ASSIGNED)
+    # Run 1 follows the default (Sample A, stored colour): that colour.
+    assert item1.foreground().color() == QColor(tokens.PROFILE_COLORS[3])
     assert "Grouping profile: Sample A" in item1.toolTip()
-    # Run 2 is assigned to the non-default Sample B: violet run number.
-    assert item2.foreground().color() == QColor(tokens.PROFILE_ASSIGNED)
+    # Run 2 follows Sample B (no stored colour → its list position's colour).
+    assert item2.foreground().color() == QColor(tokens.PROFILE_COLORS[1])
     assert "Grouping profile: Sample B" in item2.toolTip()
+
+
+def test_released_run_number_is_amber_not_profile_coloured(qapp: QApplication) -> None:
+    """The diverged (⊗) state outranks sample identity in the browser."""
+    from asymmetry.gui.styles import tokens
+
+    panel = DataBrowserPanel()
+    ds1 = _dataset_with_run(1)
+    ds1.metadata["grouping_overrides"] = True
+    ds1.metadata["grouping_profile"] = "Sample B"
+    profiles = _two_profiles_for(ds1)
+    panel.set_grouping_profile_provider(lambda: profiles)
+    panel.add_dataset(ds1)
+
+    item1 = panel._table.item(_run_row(panel, 1), 0)
+    assert "⊗" in item1.text()
+    assert item1.foreground().color() == QColor(tokens.WARN)
+    assert "Grouping profile: Sample B" in item1.toolTip()
 
 
 def test_profile_marker_absent_for_single_profile_projects(qapp: QApplication) -> None:
@@ -2469,7 +2489,7 @@ def test_profile_marker_absent_for_single_profile_projects(qapp: QApplication) -
     panel.add_dataset(ds1)
 
     item1 = panel._table.item(_run_row(panel, 1), 0)
-    assert item1.foreground().color() != QColor(tokens.PROFILE_ASSIGNED)
+    assert item1.foreground().color() != QColor(tokens.PROFILE_COLORS[0])
     assert "Grouping profile" not in item1.toolTip()
 
 

@@ -101,13 +101,16 @@ moved runs immediately:
   submenu appears once the selected runs' instrument has at least two
   profiles.
 
-When an instrument has several profiles, the Data Browser tints the run
-number of every run assigned to a profile other than the instrument's ★
-default (a violet distinct from the blue used for derived runs), and the
-tooltip "Grouping profile: <name>" names each run's profile — so a
-multi-sample project shows at a glance which runs have been moved off the
-default. Default-following runs, and single-profile projects, look
-unchanged.
+Every profile of a multi-profile instrument carries its own **identity
+colour**, assigned from a fixed palette when the profile is first saved and
+stored with it in the project. The colour is worn consistently everywhere
+the profile appears: the Data Browser colours each run's number with its
+assigned profile's colour (with the tooltip "Grouping profile: <name>"
+naming it), the Grouping window's scope rows, editing strip, and selector
+swatches use the same colour, and a released run shows amber instead — the
+diverged state outranks sample identity. A multi-sample project therefore
+reads as a colour-coded sample map; single-profile projects stay entirely
+uncoloured.
 
 Alpha, deadtime, and background policies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -202,9 +205,9 @@ draft is what gets applied to every run following the profile.
   offers **New…** and **Duplicate…** to start a fresh profile or branch one
   from the current settings (a new profile starts with no runs assigned —
   assign them from the scope panel). Only profiles for the selected
-  instrument are listed, with the instrument's default-for-new-runs profile
-  marked ★. Switching away from a profile with unsaved edits prompts to
-  discard them.
+  instrument are listed, each with its identity-colour swatch, and the
+  instrument's default-for-new-runs profile marked ★. Switching away from a
+  profile with unsaved edits prompts to discard them.
 
   **Rename…** renames the edited profile in place — the stored profile is
   replaced under its new name on Apply and every run's assignment follows;
@@ -224,9 +227,10 @@ draft is what gets applied to every run following the profile.
   edits.
 * **Scope panel — the selector.** Headed "Runs of this instrument", it lists the
   runs of the selected instrument, each tagged **follows <profile>** (its
-  assigned profile — accent-tinted for the edited profile's runs, muted for
-  runs following another profile) or **override** (with the base profile
-  appended, as **override · <profile>**, when it is not the edited one).
+  assigned profile, in that profile's identity colour — the edited profile's
+  runs additionally bold on a soft tint of the same colour) or **override**
+  (amber, with the base profile appended as **override · <profile>** when it
+  is not the edited one).
   **Release from profile**, **Reattach to profile**, and **Assign to ▸**
   buttons move the selected runs between those states. The run **selected**
   here is the one the form previews and edits: selecting a run shows that
@@ -239,8 +243,9 @@ draft is what gets applied to every run following the profile.
   profile, or default change waits.
 * **Editing-target strip** — right-aligned in the dialog's top row, a
   persistent strip states
-  what your edits currently apply to: accent-tinted **"Editing profile '<name>'
-  — applies to N runs"** while a following run is selected, or warning-tinted
+  what your edits currently apply to: **"Editing profile '<name>' — applies
+  to N runs"**, in the edited profile's identity colour, while a following
+  run is selected, or warning-tinted
   **"Editing override for run N — this run only"** while an overridden run is
   selected. The same tint highlights the selected row in the scope list, and a
   run with uncommitted override edits gains an **"override *"** marker there.

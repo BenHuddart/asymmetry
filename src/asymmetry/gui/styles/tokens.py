@@ -51,11 +51,22 @@ AUTO_GROUP_HEADER_SEL_BG = "#d0b3ab"
 AUTO_GROUP_HEADER_FOCUS_BG = "#c29a8f"
 AUTO_GROUP_MEMBER_BG = "#f7efeb"
 
-#: Data Browser run-number tint for a run assigned to a grouping profile that
-#: is not its instrument's ★ default (schema v17 multi-profile projects, e.g.
-#: one profile per sample). A violet distinct from ACCENT (derived-run
-#: provenance) and the group ramps; default-following runs stay untinted.
-PROFILE_ASSIGNED = "#5f4a87"
+# ── Grouping-profile identity colours (schema v17 multi-profile projects) ────
+# Each grouping profile of an instrument carries a stable identity colour
+# (stored on the profile; assigned from this palette at first save), worn by
+# the run numbers in the Data Browser, the grouping window's scope rows and
+# editing strip, and the profile selector's swatches. Muted hues, curated to
+# avoid the meanings already taken: black (plain text), ACCENT (derived runs),
+# WARN (released overrides / staleness), and the ACCENT_RED family (fit
+# series / auto groups). Cycles when an instrument outgrows the palette.
+PROFILE_COLORS: tuple[str, ...] = (
+    "#5f4a87",  # violet
+    "#176e66",  # teal
+    "#2e7d46",  # forest green
+    "#a34d7d",  # plum
+    "#8a6d1f",  # ochre
+    "#4a6d8a",  # slate
+)
 
 # ── Correction-stage identity (grouping dialog) ──────────────────────────────
 # One muted hue per correction stage, shared by the pipeline chip's outline and

@@ -123,6 +123,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.typography import header_font
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.profile_colors import effective_profile_color
 from asymmetry.gui.utils.series_scoring import score_series_path
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
@@ -1719,7 +1720,8 @@ class DataBrowserPanel(QWidget):
         # Custom-grouping marker: a run released from its fingerprint's grouping
         # profile carries its own per-run override, flagged in metadata. Show a
         # small ⊗ suffix + tooltip so it reads as diverging from the profile.
-        if meta.get("grouping_overrides"):
+        released = bool(meta.get("grouping_overrides"))
+        if released:
             run_item.setText(f"{run_item.text()} ⊗")
             base_profile = meta.get("grouping_profile")
             override_tip = "Custom grouping — this run is released from its grouping profile" + (
@@ -1727,21 +1729,27 @@ class DataBrowserPanel(QWidget):
             )
             existing_tip = run_item.toolTip()
             run_item.setToolTip(f"{existing_tip}\n{override_tip}" if existing_tip else override_tip)
+            # The diverged state outranks sample identity: amber, everywhere.
+            run_item.setForeground(QColor(tokens.WARN))
 
-        # Profile marker (schema v17): when the run's fingerprint has several
-        # grouping profiles in the project (e.g. one per sample), a run
-        # assigned to a profile other than the instrument's ★ default shows a
-        # violet run number; the tooltip names every multi-profile run's
-        # profile. Default-following runs — and single-profile projects — look
-        # unchanged, and a derived run keeps its provenance accent.
+        # Profile identity (schema v17): when the run's fingerprint has
+        # several grouping profiles in the project (e.g. one per sample), the
+        # run number wears its assigned profile's identity colour — the same
+        # colour the grouping window's scope rows, editing strip, and selector
+        # swatches use — with the tooltip naming the profile. Single-profile
+        # projects look unchanged. The profile colour outranks the derived-run
+        # accent (the provenance stays in the tooltip); released runs stay
+        # amber (above).
         run_profiles, assigned_profile = self._grouping_profiles_for_run(dataset)
         if run_profiles and assigned_profile:
             profile_tip = f"Grouping profile: {assigned_profile}"
             existing_tip = run_item.toolTip()
             run_item.setToolTip(f"{existing_tip}\n{profile_tip}" if existing_tip else profile_tip)
-            default_name = next((p.name for p in run_profiles if p.active), None)
-            if assigned_profile != default_name and not provenance_tip:
-                run_item.setForeground(QColor(tokens.PROFILE_ASSIGNED))
+            if not released:
+                assigned_obj = next((p for p in run_profiles if p.name == assigned_profile), None)
+                if assigned_obj is not None:
+                    color = effective_profile_color(assigned_obj, run_profiles)
+                    run_item.setForeground(QColor(color))
 
         # Copy-row marker (D2): a run under a non-primary group gets a circled
         # digit and an "Also in: …" tooltip naming its other memberships.

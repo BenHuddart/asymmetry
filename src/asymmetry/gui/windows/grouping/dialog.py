@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
     QApplication,
@@ -90,6 +91,11 @@ from asymmetry.gui.styles.widgets import (
     make_warning_banner,
 )
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.profile_colors import (
+    effective_profile_color,
+    next_profile_color,
+    soft_profile_background,
+)
 from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollComboBox,
     NoScrollDoubleSpinBox,
@@ -1125,6 +1131,34 @@ class GroupingDialog(QDialog):
             names.append(self._draft_name)
         return names
 
+    def _fingerprint_profile_colors(self) -> dict[str, str]:
+        """Each fingerprint profile's identity colour (draft included)."""
+        stored = self._profiles_for_fingerprint()
+        colors = {p.name: effective_profile_color(p, stored) for p in stored}
+        if self._draft_name not in colors:
+            colors[self._draft_name] = self._draft.color or next_profile_color(colors.values())
+        elif self._draft.color:
+            # The draft's own colour is authoritative for the profile it edits.
+            colors[self._draft_name] = str(self._draft.color)
+        return colors
+
+    def _ensure_draft_color(self) -> None:
+        """Give the draft an identity colour if it has none yet.
+
+        Prefers the colour its stored counterpart already wears (position
+        fallback for colourless older saves), else the first palette colour
+        unused by the fingerprint's other profiles.
+        """
+        if self._draft.color:
+            return
+        stored = self._profiles_for_fingerprint()
+        for profile in stored:
+            if profile.name == self._draft_name:
+                self._draft.color = effective_profile_color(profile, stored)
+                return
+        used = [effective_profile_color(p, stored) for p in stored]
+        self._draft.color = next_profile_color(used)
+
     def _fingerprint_key(self) -> tuple[str, int]:
         """Hashable key for the current fingerprint (case-folded instrument)."""
         assert self._fingerprint is not None
@@ -1438,6 +1472,7 @@ class GroupingDialog(QDialog):
             self._override_drafts[int(target)] = payload
             return
         assert self._fingerprint is not None
+        color = self._draft.color
         self._draft = profile_from_form_payload(
             payload,
             name=self._draft_name,
@@ -1447,6 +1482,9 @@ class GroupingDialog(QDialog):
         # The t0 mode is an explicit selector, not something to infer from the
         # per-run t0 value the form carries: set it on the draft directly.
         self._draft.t0_policy = self._current_t0_policy()
+        # The identity colour is profile metadata, not form state — carry it
+        # across the rebuild or every sync would strip it.
+        self._draft.color = color
 
     # -- profile selector -------------------------------------------------
 
@@ -1460,10 +1498,13 @@ class GroupingDialog(QDialog):
         combo.blockSignals(True)
         combo.clear()
         names = self._fingerprint_profile_names()
+        colors = self._fingerprint_profile_colors()
         default_name = self._current_default_name()
         for name in names:
             display = f"★ {name}" if name == default_name else name
-            combo.addItem(display, name)
+            swatch = QPixmap(10, 10)
+            swatch.fill(QColor(colors.get(name, tokens.ACCENT)))
+            combo.addItem(QIcon(swatch), display, name)
         combo.addItem("New…", "__new__")
         combo.addItem("Duplicate…", "__duplicate__")
         idx = combo.findData(self._draft_name)
@@ -1597,6 +1638,11 @@ class GroupingDialog(QDialog):
                 payload, name=name, fingerprint=self._fingerprint, active=True
             )
         self._draft.name = name
+        # A fresh identity colour for the new profile: the first palette
+        # colour unused by the fingerprint's existing profiles (a Duplicate
+        # must not share its source's colour).
+        stored = self._profiles_for_fingerprint()
+        self._draft.color = next_profile_color(effective_profile_color(p, stored) for p in stored)
         self._draft_name = name
         registered = GroupingProfile.from_dict(self._draft.to_dict())
         # Only the fingerprint's sole profile self-flags as default; otherwise
@@ -1907,10 +1953,12 @@ class GroupingDialog(QDialog):
             initial = self._initial_assignments.setdefault(rn, self._resolved_assignment(rn))
             assigned = self._session_assignments.setdefault(rn, initial)
             runs.append((rn, ds.run_label, rn in self._overridden_run_numbers, assigned))
+        self._ensure_draft_color()
         self._scope_panel.set_runs(
             runs,
             profile_name=self._draft_name,
             profile_names=self._fingerprint_profile_names(),
+            profile_colors=self._fingerprint_profile_colors(),
         )
         if hasattr(self, "_apply_btn"):
             self._update_apply_enabled()
@@ -1938,10 +1986,14 @@ class GroupingDialog(QDialog):
                 if assigned and assigned != self._draft_name:
                     text += f" (preview run follows {assigned})"
             self._editing_strip.setText(text)
+            # The strip wears the edited profile's identity colour — the same
+            # colour its scope rows, combo swatch, and browser run numbers use.
+            self._ensure_draft_color()
+            color = self._draft.color or tokens.ACCENT
             self._editing_strip.setStyleSheet(
-                f"color: {tokens.ACCENT}; font-weight: bold; "
-                f"background: {tokens.ACCENT_SOFT}; border: 1px solid {tokens.ACCENT}; "
-                f"border-radius: 3px; padding: 4px;"
+                f"color: {color}; font-weight: bold; "
+                f"background: {soft_profile_background(color)}; "
+                f"border: 1px solid {color}; border-radius: 3px; padding: 4px;"
             )
         else:
             self._editing_strip.setText(f"Editing override for run {int(target)} — this run only")

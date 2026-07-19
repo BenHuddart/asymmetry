@@ -30,10 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gains an **Assign to ▸** control; applying a profile reaches only the runs
   following it. Profiles can be **renamed in place** (every run's assignment
   follows) and **deleted** (assigned runs move to a profile you choose; the
-  last profile of an instrument cannot be deleted). The Data Browser tints
-  the run number of any run assigned to a non-default profile (a naming
-  tooltip covers every multi-profile run), and offers **Assign Grouping
-  Profile** on the context menu. A
+  last profile of an instrument cannot be deleted). Every profile carries a
+  stored **identity colour**, worn consistently by its runs' numbers in the
+  Data Browser (tooltip names the profile), the scope rows, the editing
+  strip, and the selector swatches; the browser and the context menu's
+  **Assign Grouping Profile** make reassignment a two-click action. A
   released run now records the **base profile** Reattach returns it to,
   named in its ⊗ tooltip. Project schema v17: every dataset records its
   assigned profile; older projects migrate automatically, and

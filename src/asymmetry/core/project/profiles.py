@@ -649,6 +649,12 @@ class GroupingProfile:
     #: are assigned to (exactly one per fingerprint). Runs already in the
     #: project follow their own recorded assignment, not this flag.
     active: bool = True
+    #: The profile's identity colour (a ``#rrggbb`` hex string), worn by its
+    #: runs in the Data Browser and by the grouping window's scope rows and
+    #: editing strip. Assigned from the GUI palette when first saved; ``None``
+    #: (older files) falls back to a palette position at display time. Stored
+    #: additively — absent keys round-trip as ``None``.
+    color: str | None = None
 
     # Grouping structure -----------------------------------------------------
     groups: dict[int, list[int]] = field(default_factory=dict)
@@ -712,6 +718,8 @@ class GroupingProfile:
         # ``beta`` follows the same emit-only-when-non-default rule.
         if self.beta != 1.0:
             data["beta"] = float(self.beta)
+        if self.color is not None:
+            data["color"] = str(self.color)
         if self.bin0_us is not None:
             data["bin0_us"] = float(self.bin0_us)
         if self.bin10_us is not None:
@@ -766,6 +774,7 @@ class GroupingProfile:
             name=str(data.get("name", "")),
             fingerprint=ProfileFingerprint.from_dict(data.get("fingerprint")),
             active=bool(data.get("active", True)),
+            color=None if data.get("color") is None else str(data.get("color")),
             groups=groups,
             group_names=group_names,
             included_groups=included,

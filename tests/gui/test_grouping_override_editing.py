@@ -608,8 +608,8 @@ def test_editing_strip_follows_profile_switch(qapp: QApplication) -> None:
     assert "'Sample A'" not in dialog._editing_strip.text()
 
 
-def test_scope_rows_wear_the_editing_strip_treatment(qapp: QApplication) -> None:
-    """The edited profile's rows are bold accent on the strip's soft accent."""
+def test_scope_rows_wear_profile_identity_colors(qapp: QApplication) -> None:
+    """Rows are coloured by their profile; the edited one is emphasised."""
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QColor
 
@@ -621,11 +621,32 @@ def test_scope_rows_wear_the_editing_strip_treatment(qapp: QApplication) -> None
         int(panel._list.item(i).data(Qt.ItemDataRole.UserRole)): panel._list.item(i)
         for i in range(panel._list.count())
     }
-    # Run 1 follows the edited profile: bold accent on the soft accent bg.
+    # Colourless stored profiles fall back to their palette position.
+    color_a, color_b = tokens.PROFILE_COLORS[0], tokens.PROFILE_COLORS[1]
+    # Run 1 follows the edited profile: its identity colour, bold, soft tint.
     assert items[1].font().bold()
-    assert items[1].foreground().color() == QColor(tokens.ACCENT)
-    assert items[1].background().color() == QColor(tokens.ACCENT_SOFT)
-    # Run 2 follows another profile: plain muted text, no tinted background.
+    assert items[1].foreground().color() == QColor(color_a)
+    assert items[1].background().color().alpha() not in (0, 255)  # soft tint
+    # Run 2 follows Sample B: that profile's identity colour, unemphasised.
     assert not items[2].font().bold()
-    assert items[2].foreground().color() == QColor(tokens.TEXT_MUTED)
-    assert items[2].background().color() != QColor(tokens.ACCENT_SOFT)
+    assert items[2].foreground().color() == QColor(color_b)
+    # The editing strip wears the edited profile's colour too.
+    assert color_a in dialog._editing_strip.styleSheet()
+
+
+def test_created_profile_gets_a_fresh_identity_color(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A duplicate takes the first unused palette colour, not its source's."""
+    from PySide6.QtWidgets import QInputDialog
+
+    from asymmetry.gui.styles import tokens
+
+    dialog = _two_profile_dialog()
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(lambda *a, **k: ("Sample C", True)))
+    dialog._create_new_profile(duplicate=True)
+
+    result = dialog.get_profile_result()
+    created = {p.name: p for p in result["created_profiles"]}
+    # Sample A/B (colourless, positions 0/1) leave position 2 as first unused.
+    assert created["Sample C"].color == tokens.PROFILE_COLORS[2]
