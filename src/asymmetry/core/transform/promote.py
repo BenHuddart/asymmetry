@@ -46,6 +46,34 @@ def promote_alpha_to_grouping(
     return {"before": before, "after": {"alpha": new_alpha}}
 
 
+def promote_beta_to_grouping(
+    grouping: dict,
+    beta: float,
+    *,
+    beta_error: float | None = None,
+    reference_run: int | None = None,
+) -> dict[str, dict[str, float]]:
+    """Write a count-fit intrinsic-asymmetry balance ``beta`` into the grouping.
+
+    The β-free simultaneous forward/backward count fit
+    (``count_domain.fit_fb_alpha`` with ``estimate_beta=True``,
+    ``beta_calibration.estimate_beta_detailed``) estimates β with the full
+    Poisson likelihood alongside α. This promotes that value to
+    ``grouping["beta"]`` with ``beta_method="count_fit"`` provenance, mirroring
+    :func:`promote_alpha_to_grouping`. Suggest-only; returns the before/after β
+    for the GUI to display.
+    """
+    before = {"beta": _as_float(grouping.get("beta"), 1.0)}
+    new_beta = float(beta)
+    grouping["beta"] = new_beta
+    grouping["beta_method"] = "count_fit"
+    if beta_error is not None:
+        grouping["beta_error"] = float(beta_error)
+    if reference_run is not None:
+        grouping["beta_reference_run"] = int(reference_run)
+    return {"before": before, "after": {"beta": new_beta}}
+
+
 def promote_t0_to_grouping(
     grouping: dict,
     t0_us: float,

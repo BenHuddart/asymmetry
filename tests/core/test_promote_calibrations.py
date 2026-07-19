@@ -12,6 +12,7 @@ import pytest
 from asymmetry.core.transform.promote import (
     promote_alpha_to_grouping,
     promote_background_to_grouping,
+    promote_beta_to_grouping,
     promote_t0_to_grouping,
 )
 
@@ -35,6 +36,28 @@ def test_promote_alpha_defaults_before_to_unity():
     assert out["before"] == {"alpha": 1.0}
     assert "alpha_error" not in grouping  # error optional
     assert "alpha_reference_run" not in grouping
+
+
+# --- beta: intrinsic-asymmetry balance --------------------------------------
+
+
+def test_promote_beta_writes_keys_and_before_after():
+    grouping = {"beta": 1.0}
+    out = promote_beta_to_grouping(grouping, 0.85, beta_error=0.004, reference_run=3039)
+    assert out["before"] == {"beta": 1.0}
+    assert out["after"] == {"beta": 0.85}
+    assert grouping["beta"] == pytest.approx(0.85)
+    assert grouping["beta_error"] == pytest.approx(0.004)
+    assert grouping["beta_method"] == "count_fit"
+    assert grouping["beta_reference_run"] == 3039
+
+
+def test_promote_beta_defaults_before_to_unity():
+    grouping = {}
+    out = promote_beta_to_grouping(grouping, 0.9)
+    assert out["before"] == {"beta": 1.0}
+    assert "beta_error" not in grouping  # error optional
+    assert "beta_reference_run" not in grouping
 
 
 # --- F5: t0 -----------------------------------------------------------------
