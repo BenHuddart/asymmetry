@@ -1034,6 +1034,23 @@ class GroupingDialog(QDialog):
             self._grouping_scroll, self._grouping_overflow_sections
         )
 
+        # A QScrollArea advertises a near-zero minimum (scrolling is its job), so
+        # when platform font metrics inflate every column's size hint past the
+        # dialog's fixed width budget, the box layout starves this stretch-0
+        # column below its content's minimum even while the stretch-1 corrections
+        # column holds slack — Linux CI overflowed it by 36px while macOS had
+        # 56px of headroom (PR #275; same platform asymmetry as PR #274).
+        # Advertise the content's real minimum so tightness is taken from
+        # columns with slack instead; the grouping column is the one the
+        # two-column redesign pins as never horizontally scrolled
+        # (test_both_columns_fit_without_scroll_at_default_size). Set once here:
+        # the row structure is fixed at construction (dataset-gated rows are
+        # decided by the dataset set, which does not change after __init__).
+        self._grouping_scroll.setMinimumWidth(
+            self._grouping_scroll.widget().minimumSizeHint().width()
+            + 2 * self._grouping_scroll.frameWidth()
+        )
+
         # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
         # the configured corrections, directly above the preview so it works from
         # either column (the preview is pinned below both). Pure wrapper over the
