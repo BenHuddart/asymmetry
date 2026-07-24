@@ -290,6 +290,13 @@ class BetaSectionWidget(QWidget):
         protocol_row.setContentsMargins(0, 0, 0, 0)
         protocol_row.addWidget(QLabel("Protocol"))
         self._protocol_combo = NoScrollComboBox()
+        # Same width discipline as the run combo above: the longest item
+        # ("Count fit (recommended)") must not set the row's minimum width —
+        # CI's wider fonts overflow the two-column no-scroll budget otherwise.
+        self._protocol_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._protocol_combo.setMinimumContentsLength(12)
         for label, key, explanation in BETA_PROTOCOL_ITEMS:
             self._protocol_combo.addItem(label, key)
             self._protocol_combo.setItemData(
