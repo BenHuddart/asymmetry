@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Parallel block-separable asymmetry series fit.** An F-B asymmetry batch with
+  independent (`as_provided`) seeding is embarrassingly parallel — each run is a
+  self-contained minimisation — so `fit_asymmetry_series` now fans the per-run
+  fits across a spawn-based process pool (the GUI auto-sizes it to the host's CPU
+  count), matching the grouped-series solver. Results are byte-identical to the
+  sequential path regardless of worker count; a pool that cannot start or an
+  unpicklable model/cost transparently falls back to the sequential loop. `chain`
+  seeding stays sequential (each run warm-starts from the previous good run with
+  trend-based reseeding), and a cancel tears the pool down immediately without
+  leaving orphaned workers.
+
 ## [0.16.0] - 2026-07-24
 
 ### Added
