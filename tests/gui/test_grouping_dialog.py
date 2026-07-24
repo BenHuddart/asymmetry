@@ -377,13 +377,69 @@ def test_both_columns_fit_without_scroll_at_default_size(qapp: QApplication) -> 
         except AssertionError:
             pass  # genuinely over budget — the asserts below name the culprit
 
-    for scroll in (dialog._grouping_scroll, dialog._corrections_scroll):
-        assert scroll.verticalScrollBar().maximum() == 0
-        assert scroll.horizontalScrollBar().maximum() == 0
+    diagnostic = _column_budget_diagnostic(dialog)
+    for name, scroll in (
+        ("grouping", dialog._grouping_scroll),
+        ("corrections", dialog._corrections_scroll),
+    ):
+        assert scroll.verticalScrollBar().maximum() == 0, f"{name} v-scroll\n{diagnostic}"
+        assert scroll.horizontalScrollBar().maximum() == 0, f"{name} h-scroll\n{diagnostic}"
     assert not dialog._corrections_overflow.isVisible()
     assert not dialog._grouping_overflow.isVisible()
 
     dialog.close()
+
+
+def _column_budget_diagnostic(dialog: GroupingDialog) -> str:
+    """Name the widget binding each pane's width, for overflow failures.
+
+    This budget regresses platform-asymmetrically (Linux's wider default font
+    and button metrics overflow panes that fit on macOS — see PR #274), so a
+    bare ``assert 36 == 0`` from CI is undebuggable from a Mac. Report every
+    pane's viewport vs minimum and the visible rows wide enough to be the
+    binding constraint, plus the font/DPI the measurement ran under.
+    """
+    from PySide6.QtWidgets import QWidget
+
+    app_font = QApplication.font()
+    screen = dialog.windowHandle().screen() if dialog.windowHandle() else None
+    lines = [
+        f"font={app_font.family()} {app_font.pointSizeF()}pt "
+        f"dpi={screen.logicalDotsPerInch() if screen else '?'}"
+    ]
+    panes: list[tuple[str, QWidget]] = []
+    scope = getattr(dialog, "_scope_panel", None)
+    if isinstance(scope, QWidget):
+        panes.append(("scope_panel", scope))
+    for name, scroll in (
+        ("grouping", dialog._grouping_scroll),
+        ("corrections", dialog._corrections_scroll),
+    ):
+        inner = scroll.widget()
+        lines.append(
+            f"{name}: viewport={scroll.viewport().width()} "
+            f"innerMin={inner.minimumSizeHint().width()} "
+            f"hmax={scroll.horizontalScrollBar().maximum()} "
+            f"vmax={scroll.verticalScrollBar().maximum()}"
+        )
+        panes.append((name, inner))
+    for pane_name, pane in panes:
+        if pane not in (dialog._grouping_scroll.widget(), dialog._corrections_scroll.widget()):
+            lines.append(f"{pane_name}: minHint={pane.minimumSizeHint().width()}")
+        layout = pane.layout()
+        if layout is None:
+            continue
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            widget = item.widget() if item is not None else None
+            if widget is not None and widget.isVisible():
+                min_w = widget.minimumSizeHint().width()
+                if min_w > 120:
+                    lines.append(
+                        f"  {pane_name}[{i}] {type(widget).__name__}"
+                        f" '{widget.objectName() or ''}': minHint={min_w}"
+                    )
+    return "\n".join(lines)
 
 
 def test_grouping_overflow_omits_periods_for_single_period_data(qapp: QApplication) -> None:
@@ -617,6 +673,126 @@ def test_vector_calibrated_alpha_provenance_survives_spin_rounding(qapp: QApplic
 
     assert spin.value() != policy.value  # rounded
     assert dialog._current_grouping_payload().get("alpha_x_reference_run") == 4010
+
+
+# --------------------------------------------------------------------------- #
+# β calibration provenance + staleness
+# --------------------------------------------------------------------------- #
+
+
+def _apply_beta(dialog, *, value=0.8732, error=0.0041, method="count_fit", run=4101):
+    from asymmetry.core.project.profiles import BetaPolicy
+
+    dialog._on_beta_section_estimated(
+        BetaPolicy(mode="calibrated", value=value, error=error, method=method, source_run=run)
+    )
+
+
+def test_beta_calibration_writes_provenance_and_digest(qapp: QApplication) -> None:
+    """Applying a calibrated β records provenance + the corrections digest."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    _apply_beta(dialog, value=0.873512, run=4101)
+
+    assert dialog._beta_is_calibrated()
+    assert dialog._beta_correction_digest is not None
+    payload = dialog._current_grouping_payload()
+    assert payload["beta"] == pytest.approx(0.873512, abs=1e-6)
+    assert payload["beta_method"] == "count_fit"
+    assert payload["beta_error"] == pytest.approx(0.0041)
+    assert payload["beta_reference_run"] == 4101
+    assert "beta_correction_digest" in payload
+
+
+def test_beta_provenance_only_persists_while_it_holds_and_active(qapp: QApplication) -> None:
+    """A manual β edit drops provenance; β = 1 omits every β key."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    _apply_beta(dialog, value=0.90)
+    assert "beta_method" in dialog._current_grouping_payload()
+
+    # Hand-edit → "manual": provenance keys drop, digest clears.
+    dialog._beta_section.set_value(0.95)
+    payload = dialog._current_grouping_payload()
+    assert payload["beta"] == pytest.approx(0.95)
+    assert "beta_method" not in payload
+    assert "beta_error" not in payload
+    assert "beta_reference_run" not in payload
+    assert "beta_correction_digest" not in payload
+    assert dialog._beta_correction_digest is None
+    assert not dialog._beta_is_calibrated()
+
+    # Back to the do-nothing default: no β keys at all.
+    _apply_beta(dialog, value=1.0)
+    assert "beta" not in dialog._current_grouping_payload()
+
+
+def test_beta_staleness_tracks_correction_changes(qapp: QApplication) -> None:
+    """The β banner + chip suffix fire when corrections change after calibration."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    banner = dialog._beta_section._stale_banner
+    assert banner.isHidden()  # fresh dialog: no calibrated β
+
+    _apply_beta(dialog, value=0.87)
+    assert dialog._beta_is_calibrated()
+    assert banner.isHidden()  # digests match right after calibration
+    assert not dialog._pipeline_summary("beta").endswith("· stale")
+
+    # Change a correction → β no longer balances the corrected amplitudes.
+    dialog._background_mode = "range"
+    dialog._refresh_beta_staleness()
+    assert not banner.isHidden()
+    assert dialog._pipeline_summary("beta").endswith("· stale")
+    assert dialog._correction_cards["beta"]._stale
+    assert "re-estimate" in dialog._pipeline_chips["beta"].toolTip()
+    # The digest is persisted so the badge survives a reopen.
+    assert "beta_correction_digest" in dialog._current_grouping_payload()
+
+    # Reverting the corrections clears the flag.
+    dialog._background_mode = "none"
+    dialog._refresh_beta_staleness()
+    assert banner.isHidden()
+    assert not dialog._pipeline_summary("beta").endswith("· stale")
+
+
+def test_beta_provenance_reseeds_from_grouping(qapp: QApplication) -> None:
+    """A resolved payload's β provenance is lifted back on open (mirrors α).
+
+    The policy keys (method/error/reference run) reseed via the profile round-trip,
+    so β reads as calibrated again and its provenance round-trips into the payload.
+    The correction digest is *not* part of the policy — exactly like
+    ``alpha_correction_digest`` it does not survive the fingerprint→profile→resolve
+    seed path, so β is not stale until re-stamped by a re-estimate this session.
+    """
+    dataset = _dataset_with_histograms()
+    assert dataset.run is not None
+    dataset.run.grouping.update(
+        {
+            "beta": 0.865,
+            "beta_method": "count_fit",
+            "beta_error": 0.003,
+            "beta_reference_run": 5005,
+        }
+    )
+    dialog = GroupingDialog([dataset])
+    assert dialog._beta_section.value() == pytest.approx(0.865)
+    assert dialog._beta_is_calibrated()
+    assert dialog._beta_method == "count_fit"
+    assert not dialog._beta_is_stale()  # digest not carried through the seed (as α)
+    payload = dialog._current_grouping_payload()
+    assert payload["beta_reference_run"] == 5005
+    assert payload["beta_method"] == "count_fit"
+    assert payload["beta_error"] == pytest.approx(0.003)
+
+
+def test_beta_provenance_never_emitted_in_vector_mode(qapp: QApplication) -> None:
+    """Vector mode omits β and its provenance even after an apply."""
+    dialog = GroupingDialog([_vector_dataset_with_histograms()])
+    assert bool(dialog._vector_axis_pairs)
+    _apply_beta(dialog, value=0.9)
+    payload = dialog._current_grouping_payload()
+    assert "beta" not in payload
+    assert "beta_method" not in payload
+    assert "beta_reference_run" not in payload
+    assert "beta_correction_digest" not in payload
 
 
 def test_get_grouping_result_contains_required_keys(qapp: QApplication) -> None:

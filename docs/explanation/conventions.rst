@@ -55,7 +55,9 @@ and the optional intrinsic-asymmetry balance
 :math:`\beta = A_{0,b}/A_{0,f}` (default 1, giving the familiar
 :math:`(F - \alpha B)/(F + \alpha B)`) applied to the forward group in the
 denominator — the musrfit asymmetry-fit (fit type 2) correction pair, set in
-the Grouping window's Corrections column.
+the Grouping window's Corrections column. :math:`\beta` is entered as a
+fixed scalar or measured from a weak-TF calibration run's precession fit;
+see :doc:`/reference/data_reduction/beta_calibration`.
 This convention is used consistently across the interface, the loaders, the
 grouping tools, and the fitting inputs. Some other programs place :math:`\alpha`
 on the forward group instead, so take care when comparing α values between

@@ -32,9 +32,11 @@ For a narrative introduction rather than isolated definitions, read the
       groups observing different asymmetry *amplitudes* (solid-angle and
       absorption effects), entering the corrected asymmetry as
       :math:`A = (F - \alpha B)/(\beta F + \alpha B)`. Unlike :math:`\alpha`
-      it is invisible to count totals, so it cannot be estimated from count
-      ratios; it is entered as a fixed value in the Grouping window's
-      **β (asymmetry balance)** card and defaults to 1.
+      it is invisible to count totals, so no count ratio can estimate it; it
+      is entered as a fixed value in the Grouping window's
+      **β (asymmetry balance)** card (defaulting to 1) or measured from a
+      weak-TF calibration run's forward/backward precession fit — see
+      :doc:`/reference/data_reduction/beta_calibration`.
 
    ALC
    avoided level crossing

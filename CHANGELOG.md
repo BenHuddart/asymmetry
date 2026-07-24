@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Data-driven β estimator.** The β (asymmetry balance) card's "Measure from
+  run" section can now fit β from a weak-TF calibration run instead of only
+  entering it by hand. **Count fit (recommended)** — the endorsed protocol
+  after expert consultation (`docs/porting/beta-correction/`) — fits the
+  forward and backward count histograms simultaneously with a single β free
+  on the backward amplitude, and reports the fitted α and the α–β correlation
+  alongside it; **Single-histogram ratio** instead fits each side
+  independently and forms β̂ = Â₀,b/Â₀,f, a statistically weaker but
+  independent cross-check. **Apply β** records `calibrated` provenance
+  (method, source run, uncertainty) exactly like α, with an **Also update α**
+  affordance to also apply the fitted α (stamped `count_fit` for both
+  protocols); a fitted β outside the typical 0.5–1.5 range is flagged in the
+  result row, and a calibrated β goes stale — amber banner, "· stale" chip
+  suffix — when the deadtime or background corrections change afterwards.
+
 ## [0.15.0] - 2026-07-19
 
 ### Added
