@@ -6,6 +6,11 @@ from asymmetry.core.fitting.axis_transforms import (
     AxisTransform,
     validate_axis_expression,
 )
+from asymmetry.core.fitting.beta_calibration import (
+    BETA_ESTIMATION_METHODS,
+    BetaEstimate,
+    estimate_beta_detailed,
+)
 from asymmetry.core.fitting.component_tags import (
     ComputationalCost,
     FieldGeometry,
@@ -214,6 +219,9 @@ __all__ = [
     "fit_grouped_series",
     "GlobalFitResult",
     "fit_global",
+    "BETA_ESTIMATION_METHODS",
+    "BetaEstimate",
+    "estimate_beta_detailed",
     "MuRelaxationSeriesResult",
     "BimolecularRateResult",
     "ArrheniusResult",

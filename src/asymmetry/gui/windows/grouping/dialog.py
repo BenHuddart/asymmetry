@@ -62,6 +62,7 @@ from asymmetry.core.io import resolve_background_reference
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
+    BetaPolicy,
     GroupingProfile,
     ProfileFingerprint,
     T0Policy,
@@ -363,6 +364,16 @@ class GroupingDialog(QDialog):
         # banner flags that. ``None`` until an alpha is calibrated in this session
         # or re-seeded from a saved payload's ``alpha_correction_digest``.
         self._alpha_correction_digest: str | None = None
+
+        # β calibration provenance (single scalar; β has no vector mode). The
+        # estimate state is (beta, beta_error, reference_run) while the β spin
+        # still holds the estimated value; ``_beta_method`` is the protocol id and
+        # ``_beta_correction_digest`` the deadtime/background surface β was measured
+        # under (drives the β staleness banner). All cleared on a manual β edit.
+        self._beta_estimate_state: tuple[float, float | None, int] | None = None
+        self._beta_method: str = ""
+        self._beta_correction_digest: str | None = None
+        self._suppress_beta_provenance_reset = False
 
         root = QVBoxLayout(self)
         root.setSpacing(6)
@@ -851,6 +862,12 @@ class GroupingDialog(QDialog):
         self._beta_section = BetaSectionWidget()
         self._beta_section.set_value(grouping.get("beta", 1.0))
         self._beta_section.changed.connect(self._on_beta_changed)
+        self._beta_section.beta_estimated.connect(self._on_beta_section_estimated)
+        # "Also update α" routes the count fit's α through the α apply path.
+        self._beta_section.alpha_estimated.connect(self._on_alpha_section_estimated)
+        self._reseed_beta_provenance_from_grouping(grouping)
+        # Note: the initial β staleness check runs at the end of __init__, once the
+        # whole form exists (_correction_digest reads the full payload).
 
         # Kept as an attribute: the Grouping-column overflow pill uses this row as
         # the "t0 and binning" landmark.
@@ -997,6 +1014,7 @@ class GroupingDialog(QDialog):
         self._update_deadtime_status()
         self._update_background_status()
         self._update_alpha_section()
+        self._update_beta_section()
 
         columns_row = QHBoxLayout()
         columns_row.setContentsMargins(0, 0, 0, 0)
@@ -1014,6 +1032,23 @@ class GroupingDialog(QDialog):
         )
         self._grouping_overflow = SectionOverflowIndicator(
             self._grouping_scroll, self._grouping_overflow_sections
+        )
+
+        # A QScrollArea advertises a near-zero minimum (scrolling is its job), so
+        # when platform font metrics inflate every column's size hint past the
+        # dialog's fixed width budget, the box layout starves this stretch-0
+        # column below its content's minimum even while the stretch-1 corrections
+        # column holds slack — Linux CI overflowed it by 36px while macOS had
+        # 56px of headroom (PR #275; same platform asymmetry as PR #274).
+        # Advertise the content's real minimum so tightness is taken from
+        # columns with slack instead; the grouping column is the one the
+        # two-column redesign pins as never horizontally scrolled
+        # (test_both_columns_fit_without_scroll_at_default_size). Set once here:
+        # the row structure is fixed at construction (dataset-gated rows are
+        # decided by the dataset set, which does not change after __init__).
+        self._grouping_scroll.setMinimumWidth(
+            self._grouping_scroll.widget().minimumSizeHint().width()
+            + 2 * self._grouping_scroll.frameWidth()
         )
 
         # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
@@ -1066,6 +1101,7 @@ class GroupingDialog(QDialog):
         self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()
         self._refresh_alpha_staleness()
+        self._refresh_beta_staleness()
         # Open focused on the α compare when α is already calibrated (single mode),
         # preserving the pre-tab auto-overlay; _sync_compare_toggles reflects it.
         if self._alpha_is_calibrated() and not bool(self._vector_axis_pairs):
@@ -2540,6 +2576,14 @@ class GroupingDialog(QDialog):
         self._alpha_result_label.setText("")
         self._refresh_alpha_provenance_label()
         self._refresh_alpha_staleness()
+        # β provenance reseed must follow the ``set_value`` above: at this point
+        # ``changed`` is connected, so the set fired ``_on_beta_changed`` and
+        # dropped any provenance — restore it from the resolved payload here.
+        self._beta_estimate_state = None
+        self._beta_method = ""
+        self._beta_correction_digest = None
+        self._reseed_beta_provenance_from_grouping(grouping)
+        self._refresh_beta_staleness()
         max_bin = self._max_bin_index_for_reference_dataset()
         index_base = self._bin_index_base(grouping)
         self._t0_spin.setRange(index_base, max_bin + index_base)
@@ -2587,6 +2631,7 @@ class GroupingDialog(QDialog):
         )
         self._update_background_status()
         self._update_alpha_section()
+        self._update_beta_section()
         mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
         self._bin0_spin.setValue(bin0_us)
         self._bin10_spin.setValue(bin10_us)
@@ -2898,11 +2943,16 @@ class GroupingDialog(QDialog):
     def _on_beta_changed(self) -> None:
         """Fold an inline β edit back into the draft + preview.
 
-        β sits after α in the compare cycle and never affects the α estimate
-        (it is invisible to count ratios), so no staleness refresh is needed —
-        only the chip/card summaries and the preview (``_refresh_preview``
-        syncs the compare surfaces on its way in).
+        A hand-edit (not an estimate apply, which sets the suppress flag) drops
+        β calibration provenance → the value is now "manual", so the β staleness
+        banner + chip flag clear. The preview (``_refresh_preview``) syncs the
+        compare surfaces on its way in.
         """
+        if not getattr(self, "_suppress_beta_provenance_reset", False):
+            self._beta_estimate_state = None
+            self._beta_method = ""
+            self._beta_correction_digest = None
+            self._refresh_beta_staleness()
         self._mark_dirty()
         self._refresh_preview()
 
@@ -3166,6 +3216,7 @@ class GroupingDialog(QDialog):
         if not hasattr(self, "_pipeline_chips"):
             return
         alpha_stale = self._alpha_is_stale()
+        beta_stale = self._beta_is_stale()
         for stage, chip in self._pipeline_chips.items():
             chip.setText(self._pipeline_summary(stage))
             available = self._compare_stage_available(stage)
@@ -3176,6 +3227,13 @@ class GroupingDialog(QDialog):
                     "α was calibrated under different corrections — re-estimate it "
                     "in the α section so it centres the corrected asymmetry."
                     if alpha_stale
+                    else "Compare this stage's before/after in the preview below."
+                )
+            elif stage == "beta":
+                chip.setToolTip(
+                    "β was calibrated under different corrections — re-estimate it "
+                    "in the β section so it balances the corrected amplitudes."
+                    if beta_stale
                     else "Compare this stage's before/after in the preview below."
                 )
         if hasattr(self, "_pipeline_alpha_widget"):
@@ -3199,6 +3257,8 @@ class GroupingDialog(QDialog):
             card.set_status(self._correction_card_status(stage))
             if stage == "alpha":
                 card.set_stale(self._alpha_is_stale())
+            elif stage == "beta":
+                card.set_stale(self._beta_is_stale())
             comparing = self._compare_stage == stage and self._compare_stage_available(stage)
             card.set_comparing(_CARD_COMPARING_TEXTS[stage] if comparing else None)
 
@@ -3250,7 +3310,8 @@ class GroupingDialog(QDialog):
         if stage == "deadtime":
             return deadtime_status_text(self._deadtime_section.get_policy())
         if stage == "beta":
-            return beta_status_text(self._beta_section.value())
+            stale_suffix = " · stale" if self._beta_is_stale() else ""
+            return beta_status_text(self._beta_section.value()) + stale_suffix
         if stage == "background":
             details = (
                 {"background_run": self._background_run_payload}
@@ -3660,7 +3721,8 @@ class GroupingDialog(QDialog):
         """Cancel and join every worker runner (idempotent).
 
         The preview pane owns its runner for the live-preview reduction; the
-        inline α section owns its single-α estimate runner;
+        inline α section owns its single-α estimate runner; the inline β section
+        owns its β estimate runner;
         ``self._vector_alpha_tasks`` runs the inline per-projection α estimates;
         and ``self._tasks`` is this dialog's runner for the background-configure
         preview grouping. Every ``shutdown()`` is safe to call more than once.
@@ -3671,6 +3733,9 @@ class GroupingDialog(QDialog):
         alpha_section = getattr(self, "_alpha_section", None)
         if alpha_section is not None:
             alpha_section.shutdown()
+        beta_section = getattr(self, "_beta_section", None)
+        if beta_section is not None:
+            beta_section.shutdown()
         vector_tasks = getattr(self, "_vector_alpha_tasks", None)
         if vector_tasks is not None:
             vector_tasks.shutdown()
@@ -4335,6 +4400,49 @@ class GroupingDialog(QDialog):
         if isinstance(policy, AlphaPolicy):
             self._apply_calibrated_policy("single", self._alpha_spin, policy)
 
+    def _update_beta_section(self) -> None:
+        """(Re)seed the inline β section's calibration-run list + context."""
+        section = getattr(self, "_beta_section", None)
+        if section is None:
+            return
+        section.configure(
+            datasets=self._fingerprint_datasets(),
+            selected_run_number=int(self._reference_dataset.run_number),
+            context_provider=self._alpha_estimate_context,
+            current_alpha_provider=lambda: float(self._alpha_spin.value()),
+        )
+
+    def _on_beta_section_estimated(self, policy: object) -> None:
+        """Apply an inline β estimate to the β spin + provenance + staleness.
+
+        Mirrors :meth:`_apply_calibrated_policy` for the (single, scalar) β: writes
+        the spin under the suppress flag so the ``changed`` handler does not drop
+        the provenance we are recording, stamps the corrections digest β was
+        measured under, refreshes staleness, and focuses the β compare.
+        """
+        if not isinstance(policy, BetaPolicy):
+            return
+        self._beta_estimate_state = (
+            float(policy.value),
+            policy.error,
+            int(policy.source_run) if policy.source_run is not None else -1,
+        )
+        self._beta_method = str(policy.method)
+        self._suppress_beta_provenance_reset = True
+        try:
+            self._beta_section.set_value(float(policy.value))
+        finally:
+            self._suppress_beta_provenance_reset = False
+        # β is now measured under the current corrections; stamp their digest so a
+        # later deadtime/background change re-raises the staleness banner.
+        self._beta_correction_digest = self._correction_digest()
+        self._refresh_beta_staleness()
+        if not bool(self._vector_axis_pairs):
+            self._set_compare_stage("beta")
+        if hasattr(self, "_beta_card"):
+            self._beta_card.set_expanded(True)
+        self._mark_dirty()
+
     def _calibration_correction_provider(self):
         """Build the per-dataset correction-payload provider for the alpha dialog.
 
@@ -4530,6 +4638,64 @@ class GroupingDialog(QDialog):
         )
         digest = grouping.get("alpha_correction_digest")
         self._alpha_correction_digest = str(digest) if digest is not None else None
+
+    def _reseed_beta_provenance_from_grouping(self, grouping: dict[str, Any]) -> None:
+        """Re-seed the β estimate state from a resolved payload.
+
+        A profile whose beta policy is ``calibrated`` resolves to a payload
+        carrying ``beta_reference_run`` (and optionally ``beta_method`` /
+        ``beta_error`` / ``beta_correction_digest``); lifting it back lets the β
+        staleness banner fire on reopen, not just within the session.
+        """
+        reference = grouping.get("beta_reference_run")
+        if reference is None:
+            return
+        try:
+            run = int(reference)
+        except (TypeError, ValueError):
+            return
+        error = grouping.get("beta_error")
+        try:
+            error_val = None if error is None else float(error)
+        except (TypeError, ValueError):
+            error_val = None
+        self._beta_estimate_state = (float(self._beta_section.value()), error_val, run)
+        self._beta_method = str(grouping.get("beta_method", ""))
+        digest = grouping.get("beta_correction_digest")
+        self._beta_correction_digest = str(digest) if digest is not None else None
+
+    def _beta_is_calibrated(self) -> bool:
+        """True when the β spin still holds a calibrated estimate."""
+        recorded = self._beta_estimate_state
+        if recorded is None:
+            return False
+        return self._alpha_provenance_holds(recorded[0], self._beta_section.value())
+
+    def _beta_is_stale(self) -> bool:
+        """True when a calibrated β no longer matches the current corrections.
+
+        The digest of the deadtime/background settings β was measured under has
+        diverged from the current one. Drives the β staleness banner and the
+        " · stale" suffix on the pipeline β chip.
+        """
+        return (
+            self._beta_is_calibrated()
+            and self._beta_correction_digest is not None
+            and self._beta_correction_digest != self._correction_digest()
+        )
+
+    def _refresh_beta_staleness(self) -> None:
+        """Show the β banner (and flag the pipeline β chip) when β went stale."""
+        section = getattr(self, "_beta_section", None)
+        if section is None:
+            return
+        section.set_stale_message(
+            "β was calibrated under different deadtime/background corrections — "
+            "re-estimate so it balances the corrected amplitudes."
+            if self._beta_is_stale()
+            else None
+        )
+        self._sync_pipeline_strip()
 
     #: Grouping keys whose change means a calibrated α no longer centres the
     #: corrected asymmetry (the deadtime + background correction surface).
@@ -4888,13 +5054,7 @@ class GroupingDialog(QDialog):
                 else {}
             )
             | alpha_provenance
-            # β: scalar-only, emitted only when active outside vector mode so a
-            # default payload stays byte-identical to a pre-β one.
-            | (
-                {"beta": float(self._beta_section.value())}
-                if not self._vector_axis_pairs and self._beta_section.is_active()
-                else {}
-            )
+            | self._beta_payload()
             | (self._vector_alpha_payload() if canonical else {})
             # Always emit projections (empty when none) so the apply path can
             # distinguish "no projections" from "key omitted / don't touch".
@@ -4902,6 +5062,32 @@ class GroupingDialog(QDialog):
             | {"projections": self._projection_payload(canonical)}
             | deadtime_payload
         )
+
+    def _beta_payload(self) -> dict[str, Any]:
+        """β plus calibration provenance for the grouping payload.
+
+        Scalar-only: emitted only when β is active (≠ 1) outside vector mode, so a
+        default payload stays byte-identical to a pre-β one. The provenance keys
+        (``beta_method``/``beta_error``/``beta_reference_run``/``beta_correction_digest``)
+        ride along only while the β spin still holds the estimated value — a
+        manual edit drops them — and M2's ``_beta_policy_from_payload`` lifts them
+        into a calibrated :class:`BetaPolicy` on profile save.
+        """
+        if self._vector_axis_pairs or not self._beta_section.is_active():
+            return {}
+        value = float(self._beta_section.value())
+        payload: dict[str, Any] = {"beta": value}
+        recorded = self._beta_estimate_state
+        if recorded is not None and self._alpha_provenance_holds(recorded[0], value):
+            if self._beta_method:
+                payload["beta_method"] = self._beta_method
+            if recorded[1] is not None:
+                payload["beta_error"] = float(recorded[1])
+            if recorded[2] >= 0:
+                payload["beta_reference_run"] = int(recorded[2])
+            if self._beta_correction_digest is not None:
+                payload["beta_correction_digest"] = self._beta_correction_digest
+        return payload
 
     def _projection_payload(self, canonical: bool) -> list[dict[str, Any]]:
         """Return the projections list, injecting per-projection alpha edits.

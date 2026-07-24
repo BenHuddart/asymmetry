@@ -17,6 +17,7 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.project.profiles import (
+    BetaPolicy,
     GroupingProfile,
     ProfileFingerprint,
     profile_from_payload,
@@ -249,6 +250,13 @@ def _run(*, grouping: dict | None = None) -> Run:
 
 
 def _profile(**kwargs) -> GroupingProfile:
+    # ``beta`` is a convenience alias for a fixed BetaPolicy at this scalar
+    # value — GroupingProfile itself only stores ``beta_policy`` (``beta`` is
+    # a read-only derived property), mirroring how ``alpha_policy`` callers
+    # never pass a bare ``alpha=``.
+    beta = kwargs.pop("beta", None)
+    if beta is not None and "beta_policy" not in kwargs:
+        kwargs["beta_policy"] = BetaPolicy(mode="fixed", value=beta)
     return GroupingProfile(
         name="Default (EMU)",
         fingerprint=ProfileFingerprint(instrument="EMU", histogram_count=4),
@@ -318,3 +326,151 @@ class TestBetaPersistence:
             assert reconciled.get("beta") == pytest.approx(0.9)
         else:  # detection inconclusive on the synthetic run — payload untouched
             assert reconciled is payload
+
+
+class TestBetaPolicy:
+    """``BetaPolicy`` itself, mirroring ``AlphaPolicy``'s dict round-trip."""
+
+    def test_fixed_round_trips(self):
+        policy = BetaPolicy(mode="fixed", value=0.87)
+        data = policy.to_dict()
+        assert data == {"mode": "fixed", "value": pytest.approx(0.87)}
+        assert BetaPolicy.from_dict(data) == policy
+
+    def test_calibrated_round_trips(self):
+        policy = BetaPolicy(
+            mode="calibrated", value=0.85, error=0.004, method="count_fit", source_run=3039
+        )
+        data = policy.to_dict()
+        assert BetaPolicy.from_dict(data) == policy
+
+    def test_calibrated_omits_absent_provenance(self):
+        """Only the fields actually set are emitted (mirrors AlphaPolicy)."""
+        policy = BetaPolicy(mode="calibrated", value=0.9)
+        data = policy.to_dict()
+        assert "error" not in data
+        assert "method" not in data
+        assert "source_run" not in data
+
+    def test_from_dict_rejects_unknown_mode(self):
+        assert BetaPolicy.from_dict({"mode": "per_run_estimate"}).mode == "fixed"
+        assert BetaPolicy.from_dict({"mode": "bogus"}).mode == "fixed"
+
+    def test_from_dict_non_dict_defaults(self):
+        assert BetaPolicy.from_dict(None) == BetaPolicy()
+
+    def test_from_dict_sanitizes_degenerate_value(self):
+        for bad in (float("nan"), float("inf"), -1.0, 0.0, "x"):
+            assert BetaPolicy.from_dict({"mode": "fixed", "value": bad}).value == 1.0
+
+
+class TestBetaPolicyProfileIntegration:
+    """``GroupingProfile.beta_policy`` — provenance emission and payload lift."""
+
+    def test_calibrated_provenance_emitted_only_in_calibrated_mode(self):
+        profile = _profile(
+            beta_policy=BetaPolicy(
+                mode="calibrated", value=0.85, error=0.004, method="count_fit", source_run=3039
+            )
+        )
+        data = profile.to_dict()
+        assert data["beta"] == pytest.approx(0.85)
+        assert data["beta_method"] == "count_fit"
+        assert data["beta_error"] == pytest.approx(0.004)
+        assert data["beta_reference_run"] == 3039
+
+    def test_fixed_never_emits_provenance_keys(self):
+        data = _profile(beta=0.8).to_dict()
+        assert "beta_method" not in data
+        assert "beta_error" not in data
+        assert "beta_reference_run" not in data
+
+    def test_default_policy_emits_nothing(self):
+        """A default (fixed, 1.0) beta_policy leaves the profile dict beta-free."""
+        data = _profile().to_dict()
+        assert "beta" not in data
+        assert "beta_method" not in data
+        assert "beta_error" not in data
+        assert "beta_reference_run" not in data
+
+    def test_profile_dict_round_trips_calibrated_policy(self):
+        profile = _profile(
+            beta_policy=BetaPolicy(
+                mode="calibrated", value=0.85, error=0.004, method="count_fit", source_run=3039
+            )
+        )
+        restored = GroupingProfile.from_dict(profile.to_dict())
+        assert restored.beta_policy == profile.beta_policy
+        assert restored.beta == pytest.approx(0.85)
+
+    def test_legacy_bare_beta_key_lifts_to_fixed_policy(self):
+        """A v0.15.0 profile dict (plain scalar, no provenance) still loads."""
+        legacy_data = {
+            "name": "Default (EMU)",
+            "fingerprint": ProfileFingerprint(instrument="EMU", histogram_count=4).to_dict(),
+            "groups": {1: [1, 2], 2: [3, 4]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "beta": 0.82,
+        }
+        restored = GroupingProfile.from_dict(legacy_data)
+        assert restored.beta_policy.mode == "fixed"
+        assert restored.beta == pytest.approx(0.82)
+
+    def test_resolution_writes_calibrated_provenance(self):
+        run = _run()
+        profile = _profile(
+            beta_policy=BetaPolicy(
+                mode="calibrated", value=0.85, error=0.004, method="count_fit", source_run=3039
+            )
+        )
+        resolved = resolve_effective_grouping(profile, run)
+        assert resolved["beta"] == pytest.approx(0.85)
+        assert resolved["beta_method"] == "count_fit"
+        assert resolved["beta_error"] == pytest.approx(0.004)
+        assert resolved["beta_reference_run"] == 3039
+
+    def test_resolution_fixed_non_default_omits_provenance(self):
+        run = _run()
+        resolved = resolve_effective_grouping(_profile(beta=0.9), run)
+        assert resolved["beta"] == pytest.approx(0.9)
+        assert "beta_method" not in resolved
+        assert "beta_error" not in resolved
+        assert "beta_reference_run" not in resolved
+
+    def test_vector_profile_never_emits_beta_provenance(self):
+        """Scalar-only: a projection-carrying profile drops calibrated provenance too."""
+        profile = _profile(
+            beta_policy=BetaPolicy(
+                mode="calibrated", value=0.85, error=0.004, method="count_fit", source_run=3039
+            ),
+            projections=[{"label": "P_z", "forward_group": 1, "backward_group": 2}],
+        )
+        resolved = resolve_effective_grouping(profile, _run())
+        assert "beta" not in resolved
+        assert "beta_method" not in resolved
+        assert "beta_error" not in resolved
+        assert "beta_reference_run" not in resolved
+
+    def test_profile_from_payload_lifts_calibrated_beta(self):
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "beta": 0.85,
+            "beta_method": "count_fit",
+            "beta_error": 0.004,
+            "beta_reference_run": 3039,
+        }
+        fingerprint = ProfileFingerprint(instrument="EMU", histogram_count=4)
+        profile = profile_from_payload(payload, "p", fingerprint)
+        assert profile.beta_policy.mode == "calibrated"
+        assert profile.beta_policy.method == "count_fit"
+        assert profile.beta_policy.error == pytest.approx(0.004)
+        assert profile.beta_policy.source_run == 3039
+        assert profile.beta == pytest.approx(0.85)
+
+    def test_profile_from_payload_bare_beta_is_fixed(self):
+        payload = {"groups": {1: [1], 2: [2]}, "beta": 0.9}
+        fingerprint = ProfileFingerprint(instrument="EMU", histogram_count=4)
+        profile = profile_from_payload(payload, "p", fingerprint)
+        assert profile.beta_policy.mode == "fixed"
+        assert profile.beta == pytest.approx(0.9)

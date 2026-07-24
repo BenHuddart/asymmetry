@@ -37,6 +37,9 @@ graphical interface where the feature lives.
    * - Calibrate α from a transverse-field run
      - :doc:`grouping_calibration`, :doc:`data_reduction/alpha_calibration`
      - Grouping window → Estimate α
+   * - Measure β (asymmetry balance) from a calibration run
+     - :doc:`data_reduction/beta_calibration`
+     - Grouping window → Estimate β
    * - Define forward and backward detector groups
      - :doc:`detector_grouping`
      - Detector Layout editor
@@ -166,6 +169,7 @@ the program.
    detector_grouping
    data_processing
    data_reduction/alpha_calibration
+   data_reduction/beta_calibration
    data_reduction/backgrounds
    data_reduction/background_ladder
    data_reduction/binning

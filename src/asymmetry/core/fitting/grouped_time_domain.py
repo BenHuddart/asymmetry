@@ -789,7 +789,7 @@ def build_grouped_count_model(polarization_model_fn):
     return grouped_count_model
 
 
-def build_fb_count_model(polarization_model_fn):
+def build_fb_count_model(polarization_model_fn, *, with_beta=False):
     """Forward/backward count model with the detector balance ``alpha`` free.
 
     Mirrors WiMDA ``fgFB``: one shared ``N0`` is split as ``N0·√alpha`` for the
@@ -799,6 +799,13 @@ def build_fb_count_model(polarization_model_fn):
     parameter (``+1`` forward, ``-1`` backward); ``alpha`` and ``N0`` are shared
     (global) and the physics-model parameters are global too, so ``alpha`` and
     its correlation with the amplitude fall straight out of the joint fit.
+
+    When ``with_beta`` is true the model consumes an extra shared ``beta``
+    parameter that scales the **backward** polarization amplitude only, so the
+    backward side becomes ``N0/√alpha · (1 − beta·A·P(t))`` while the forward side
+    is unchanged. This is the musrfit fit-type-2 asymmetry-balance β, measured on
+    a weak-TF calibration run. The default ``with_beta=False`` path is unchanged
+    (byte-identical to the pre-β model): ``beta`` is neither popped nor applied.
 
     The returned signal is on the **lifetime-corrected** count scale (the
     background carries ``exp(t / tau_mu)``); raw-count callers multiply the whole
@@ -811,6 +818,9 @@ def build_fb_count_model(polarization_model_fn):
         n0 = float(kwargs.pop("N0"))
         background = float(kwargs.pop("background"))
         sign = float(kwargs.pop("sign"))
+        # Pop beta unconditionally on the β path (for both sides) so it never
+        # reaches the physics model; it is applied only to the backward amplitude.
+        beta = float(kwargs.pop("beta", 1.0)) if with_beta else 1.0
 
         ralp = np.sqrt(abs(alpha))
         if sign >= 0.0:
@@ -819,6 +829,8 @@ def build_fb_count_model(polarization_model_fn):
             scale = 1.0 / ralp if ralp > 0.0 else 0.0
 
         polarization = np.asarray(polarization_model_fn(time, **kwargs), dtype=float)
+        if with_beta and sign < 0.0:
+            polarization = beta * polarization
         return n0 * scale * (1.0 + sign * polarization) + background * np.exp(
             time / float(MUON_LIFETIME_US)
         )

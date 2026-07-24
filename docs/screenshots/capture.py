@@ -255,6 +255,7 @@ def _import_scenarios() -> None:
         alpha_count_calibration,
         apodisation_comparison,
         batch_tab_group_binding,
+        beta_calibration_dialog,
         bunching_comparison,
         composite_fractions_dialog,
         composite_models_builder,

@@ -16,6 +16,7 @@ from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
+    BetaPolicy,
     DeadtimePolicy,
     GroupingProfile,
     ProfileFingerprint,
@@ -288,6 +289,41 @@ def test_resolve_per_run_estimate_computes_integral_ratio():
     assert resolved["alpha"] == pytest.approx(expected_alpha)
     assert resolved["alpha_method"] == "per_run_estimate"
     assert expected_alpha != 1.0  # the fixtures give an unbalanced ratio
+
+
+def test_resolve_calibrated_beta_carries_provenance():
+    """A calibrated BetaPolicy writes beta + its full provenance."""
+    run = _run(grouping=_per_run_facts())
+    profile = _base_profile(
+        beta_policy=BetaPolicy(
+            mode="calibrated", value=0.85, error=0.004, method="count_fit", source_run=3039
+        )
+    )
+    resolved = resolve_effective_grouping(profile, run)
+    assert resolved["beta"] == pytest.approx(0.85)
+    assert resolved["beta_method"] == "count_fit"
+    assert resolved["beta_error"] == pytest.approx(0.004)
+    assert resolved["beta_reference_run"] == 3039
+
+
+def test_resolve_fixed_beta_non_default_writes_value_only():
+    """A fixed, non-1.0 BetaPolicy writes ``beta`` with no provenance keys."""
+    run = _run(grouping=_per_run_facts())
+    profile = _base_profile(beta_policy=BetaPolicy(mode="fixed", value=0.8))
+    resolved = resolve_effective_grouping(profile, run)
+    assert resolved["beta"] == pytest.approx(0.8)
+    assert "beta_method" not in resolved
+    assert "beta_error" not in resolved
+    assert "beta_reference_run" not in resolved
+
+
+def test_resolve_fixed_beta_default_writes_nothing():
+    """A fixed BetaPolicy at the 1.0 default stays byte-identical to pre-β."""
+    run = _run(grouping=_per_run_facts())
+    profile = _base_profile(beta_policy=BetaPolicy(mode="fixed", value=1.0))
+    resolved = resolve_effective_grouping(profile, run)
+    assert "beta" not in resolved
+    assert "beta_method" not in resolved
 
 
 def test_resolve_deadtime_from_file_uses_run_values():

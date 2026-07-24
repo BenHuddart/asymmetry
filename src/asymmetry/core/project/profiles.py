@@ -52,6 +52,10 @@ alpha_x / alpha_y / alpha_z       shareable   per-axis vector alphas
 alpha_method                      shareable   provenance ("calibrated"/"count_fit"/…)
 alpha_error / alpha_reference_run shareable   calibration provenance
 alpha_*_error/_*_reference_run    shareable   per-axis provenance
+beta                              shareable*  value depends on beta_policy (see below);
+                                              scalar-only, never on a vector profile
+beta_method                       shareable   provenance ("count_fit"/"single_histogram")
+beta_error / beta_reference_run   shareable   calibration provenance
 excluded_detectors                shareable   1-based ids dropped from every group
 period_mode                       shareable   red/green/green_minus_red/green_plus_red
 binning_mode                      shareable   fixed/fixed_width/variable
@@ -130,6 +134,10 @@ from asymmetry.core.utils.perf import perf_timer
 
 #: Alpha policy modes.
 ALPHA_POLICY_MODES = ("fixed", "calibrated", "per_run_estimate")
+
+#: Beta policy modes — no ``per_run_estimate`` (not meaningful for β in v1;
+#: it is an instrument/detector-pair property, not a per-run quantity).
+BETA_POLICY_MODES = ("fixed", "calibrated")
 
 #: Deadtime policy modes (mirror the grouping dialog's deadtime modes).
 DEADTIME_POLICY_MODES = ("off", "from_file", "manual", "estimate")
@@ -250,6 +258,55 @@ class AlphaPolicy:
         return cls(
             mode=mode,
             value=_as_float(data.get("value", 1.0), 1.0),
+            error=None if data.get("error") is None else _as_float(data.get("error"), 0.0),
+            method=str(data.get("method", "")),
+            source_run=_as_int(data.get("source_run")),
+        )
+
+
+@dataclass
+class BetaPolicy:
+    """How a profile determines the intrinsic-asymmetry balance ``beta`` for a run.
+
+    * ``fixed`` — every run gets the same ``value`` (default 1.0, i.e. off).
+    * ``calibrated`` — a value measured once on a weak-TF calibration run
+      (``method``/``source_run``) and applied to every run, with an optional
+      ``error``.
+
+    Unlike :class:`AlphaPolicy` there is no ``per_run_estimate`` mode: beta is
+    broadly an instrument-dependent property of a detector pair, not something
+    resolution computes per run (docs/porting/beta-correction/).
+    """
+
+    mode: str = "fixed"
+    value: float = 1.0
+    error: float | None = None
+    method: str = ""
+    source_run: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
+        data: dict[str, Any] = {"mode": self.mode, "value": float(self.value)}
+        if self.mode == "calibrated":
+            if self.error is not None:
+                data["error"] = float(self.error)
+            if self.method:
+                data["method"] = str(self.method)
+            if self.source_run is not None:
+                data["source_run"] = int(self.source_run)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Any) -> BetaPolicy:
+        """Reconstruct a policy from :meth:`to_dict` output (lenient; defaults to ``fixed``)."""
+        if not isinstance(data, dict):
+            return cls()
+        mode = str(data.get("mode", "fixed")).strip().lower()
+        if mode not in BETA_POLICY_MODES:
+            mode = "fixed"
+        return cls(
+            mode=mode,
+            value=_sanitize_beta(data.get("value", 1.0)),
             error=None if data.get("error") is None else _as_float(data.get("error"), 0.0),
             method=str(data.get("method", "")),
             source_run=_as_int(data.get("source_run")),
@@ -671,10 +728,9 @@ class GroupingProfile:
     background_policy: BackgroundPolicy = field(default_factory=BackgroundPolicy)
     t0_policy: T0Policy = field(default_factory=T0Policy)
     # Intrinsic-asymmetry balance beta = A_{0,B}/A_{0,F} (musrfit asymmetry fit
-    # type 2), applied with alpha as A = (F - aB)/(bF + aB). A plain fixed
-    # scalar for now — a BetaPolicy with calibration provenance is deliberately
-    # deferred until the estimator exists (docs/porting/beta-correction/).
-    beta: float = 1.0
+    # type 2), applied with alpha as A = (F - aB)/(bF + aB). Mirrors
+    # alpha_policy minus per_run_estimate (docs/porting/beta-correction/).
+    beta_policy: BetaPolicy = field(default_factory=BetaPolicy)
 
     # Binning ----------------------------------------------------------------
     binning_mode: str = "fixed"
@@ -687,6 +743,11 @@ class GroupingProfile:
 
     # Free structure keys (grouping_preset, vector_axis, per-axis alphas) -----
     extra: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def beta(self) -> float:
+        """Effective, sanitized beta scalar (read-only; set via ``beta_policy``)."""
+        return _sanitize_beta(self.beta_policy.value)
 
     # -- serialization ------------------------------------------------------
 
@@ -715,9 +776,26 @@ class GroupingProfile:
         # — no schema bump is needed.
         if self.t0_policy.mode != "from_file":
             data["t0_policy"] = self.t0_policy.to_dict()
-        # ``beta`` follows the same emit-only-when-non-default rule.
+        # ``beta`` follows the same emit-only-when-non-default rule, flattened
+        # (not nested like the other policies) so a fixed, non-default beta
+        # round-trips through the exact ``beta`` key the v0.15.0 plain-scalar
+        # field already shipped — no schema bump, no format break for existing
+        # projects. Calibrated provenance rides alongside as sibling keys,
+        # mirroring the grouping payload's alpha_method/alpha_error/
+        # alpha_reference_run naming (``_apply_alpha_policy``). A calibrated
+        # policy whose measured value happens to equal 1.0 drops its
+        # provenance too — the same edge case a calibrated alpha of exactly
+        # 1.0 would not hit (alpha has no emit-only-when-default rule), but
+        # unavoidable while beta keeps that invariant.
         if self.beta != 1.0:
             data["beta"] = float(self.beta)
+            if self.beta_policy.mode == "calibrated":
+                if self.beta_policy.method:
+                    data["beta_method"] = str(self.beta_policy.method)
+                if self.beta_policy.error is not None:
+                    data["beta_error"] = float(self.beta_policy.error)
+                if self.beta_policy.source_run is not None:
+                    data["beta_reference_run"] = int(self.beta_policy.source_run)
         if self.color is not None:
             data["color"] = str(self.color)
         if self.bin0_us is not None:
@@ -786,7 +864,12 @@ class GroupingProfile:
             deadtime_policy=DeadtimePolicy.from_dict(data.get("deadtime_policy")),
             background_policy=BackgroundPolicy.from_dict(data.get("background_policy")),
             t0_policy=T0Policy.from_dict(data.get("t0_policy")),
-            beta=_sanitize_beta(data.get("beta", 1.0)),
+            # ``beta``'s profile-dict shape is identical to its grouping-payload
+            # shape (flat ``beta``/``beta_method``/``beta_error``/
+            # ``beta_reference_run`` keys, no nested policy dict — see
+            # ``to_dict``), so the same inference helper reconstructs the
+            # policy from either surface.
+            beta_policy=_beta_policy_from_payload(data),
             binning_mode=str(data.get("binning_mode", "fixed")),
             bin0_us=None if data.get("bin0_us") is None else _as_float(data.get("bin0_us"), 0.0),
             bin10_us=None if data.get("bin10_us") is None else _as_float(data.get("bin10_us"), 0.0),
@@ -925,7 +1008,7 @@ def profile_from_payload(
         deadtime_policy=_deadtime_policy_from_payload(payload),
         background_policy=_background_policy_from_payload(payload),
         t0_policy=_t0_policy_from_payload(payload),
-        beta=_sanitize_beta(payload.get("beta", 1.0)),
+        beta_policy=_beta_policy_from_payload(payload),
         binning_mode=binning_mode,
         bin0_us=None if payload.get("bin0_us") is None else _as_float(payload.get("bin0_us"), 0.0),
         bin10_us=None
@@ -960,6 +1043,35 @@ def _alpha_policy_from_payload(payload: dict[str, Any]) -> AlphaPolicy:
             source_run=reference,
         )
     return AlphaPolicy(mode="fixed", value=value)
+
+
+def _beta_policy_from_payload(payload: dict[str, Any]) -> BetaPolicy:
+    """Derive a :class:`BetaPolicy` from a payload's beta + provenance keys.
+
+    Mirrors :func:`_alpha_policy_from_payload`: a beta carrying a calibration
+    method or reference run (``beta_method`` or ``beta_reference_run``)
+    becomes ``calibrated``; a bare ``beta`` is a plain ``fixed`` value. Unlike
+    alpha's allow-list, any non-empty method name counts — beta has only the
+    two v1 estimator method ids (``count_fit``, ``single_histogram``) and no
+    legacy method vocabulary to filter out.
+
+    Also used to reconstruct ``beta_policy`` from a :class:`GroupingProfile`'s
+    own serialized dict (:meth:`GroupingProfile.from_dict`) — the profile-dict
+    shape is identical to the grouping-payload shape for these keys.
+    """
+    value = _sanitize_beta(payload.get("beta", 1.0))
+    method = str(payload.get("beta_method", "")).strip()
+    reference = _as_int(payload.get("beta_reference_run"))
+    error = payload.get("beta_error")
+    if reference is not None or method:
+        return BetaPolicy(
+            mode="calibrated",
+            value=value,
+            error=None if error is None else _as_float(error, 0.0),
+            method=method,
+            source_run=reference,
+        )
+    return BetaPolicy(mode="fixed", value=value)
 
 
 def _deadtime_policy_from_payload(payload: dict[str, Any]) -> DeadtimePolicy:
@@ -1107,15 +1219,14 @@ def resolve_effective_grouping(
         _apply_alpha_policy(
             grouping, profile.alpha_policy, run, n_hist, reference_resolver=reference_resolver
         )
-        # Beta is a fixed scalar (no per-run resolution); written only when
-        # active so a beta = 1 payload stays byte-identical to today's. It is
-        # scalar-only: a projection-carrying (vector) profile never emits it —
-        # a per-pair beta would be a different feature (docs/porting/
-        # beta-correction/), and a uniform one would be wrong for every pair
-        # but the one it was measured on.
-        beta = _sanitize_beta(profile.beta)
-        if beta != 1.0 and not profile.projections:
-            grouping["beta"] = beta
+        # Beta (fixed or calibrated; no per-run resolution) is written only
+        # when active so a beta = 1 payload stays byte-identical to today's.
+        # It is scalar-only: a projection-carrying (vector) profile never
+        # emits it or its provenance — a per-pair beta would be a different
+        # feature (docs/porting/beta-correction/), and a uniform one would be
+        # wrong for every pair but the one it was measured on.
+        if not profile.projections:
+            _apply_beta_policy(grouping, profile.beta_policy)
 
         perf.detail(n_detectors=n_hist, n_groups=len(grouping.get("groups", {})))
         return grouping
@@ -1241,6 +1352,31 @@ def _apply_alpha_policy(
             grouping["alpha_error"] = float(policy.error)
         if policy.source_run is not None:
             grouping["alpha_reference_run"] = int(policy.source_run)
+
+
+def _apply_beta_policy(grouping: dict[str, Any], policy: BetaPolicy) -> None:
+    """Write ``beta`` (and calibrated provenance) into the grouping per the policy.
+
+    Unlike :func:`_apply_alpha_policy`, beta has no ``per_run_estimate`` mode
+    and keeps the emit-only-when-≠1 invariant across both modes — a fixed or
+    calibrated beta of exactly 1.0 writes nothing, so a payload that never
+    departs from 1.0 stays byte-identical to a pre-β one. Provenance keys
+    (``beta_method``/``beta_error``/``beta_reference_run``) are written only in
+    calibrated mode, mirroring ``_apply_alpha_policy``'s naming. Callers must
+    skip this entirely for a projection-carrying (vector) profile — see
+    :func:`resolve_effective_grouping`.
+    """
+    beta = _sanitize_beta(policy.value)
+    if beta == 1.0:
+        return
+    grouping["beta"] = beta
+    if policy.mode == "calibrated":
+        if policy.method:
+            grouping["beta_method"] = str(policy.method)
+        if policy.error is not None:
+            grouping["beta_error"] = float(policy.error)
+        if policy.source_run is not None:
+            grouping["beta_reference_run"] = int(policy.source_run)
 
 
 def _estimate_run_alpha(
@@ -1430,10 +1566,12 @@ def effective_grouping_for_loaded_run(profiles: list[GroupingProfile], run: Run)
 
 __all__ = [
     "ALPHA_POLICY_MODES",
+    "BETA_POLICY_MODES",
     "DEADTIME_POLICY_MODES",
     "BACKGROUND_POLICY_MODES",
     "T0_POLICY_MODES",
     "AlphaPolicy",
+    "BetaPolicy",
     "DeadtimePolicy",
     "BackgroundPolicy",
     "T0Policy",
