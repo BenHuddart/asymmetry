@@ -247,11 +247,36 @@ _BOOTSTRAP_XATOL = 1e-4
 
 
 @dataclass(frozen=True)
+class SubtractedBackground:
+    """A constant background *already removed* from counts fed to the estimator.
+
+    Background-subtracted counts do not carry the information needed to
+    propagate their own uncertainty: the subtracted level is gone from the
+    Poisson variance, and the single estimated baseline's own error is shared by
+    every bin in the window rather than averaging away. Both are recoverable
+    only if the caller says what was subtracted, which is what this carries.
+
+    ``forward``/``backward`` are the per-bin levels that were subtracted from
+    each group; ``forward_error``/``backward_error`` their standard errors (for
+    a mean of ``n`` Poisson bins, ``√(total)/n``). Build it from a reduction
+    result with
+    :meth:`~asymmetry.core.transform.reduce.CorrectedGroupedCounts.subtracted_background`
+    rather than by hand.
+    """
+
+    forward: float
+    backward: float
+    forward_error: float
+    backward_error: float
+
+
+@dataclass(frozen=True)
 class AlphaEstimate:
     """Result of an alpha estimation.
 
-    ``alpha_error`` is a seeded Poisson-bootstrap standard deviation (``None``
-    when bootstrapping was disabled or too few replicas survived).
+    ``alpha_error`` is a seeded Poisson-bootstrap standard deviation for the
+    optimising methods, and the closed-form propagation for ``ratio`` (``None``
+    when uncertainty estimation was disabled or too few replicas survived).
     ``objective_value`` is the minimised objective for the optimising methods
     and ``None`` for the ``ratio`` method.
     """
@@ -486,6 +511,66 @@ def _single_alpha_estimate(
     return _general_two_window_alpha(f, b, t)
 
 
+def _ratio_alpha_error(
+    alpha: float,
+    f: NDArray[np.float64],
+    b: NDArray[np.float64],
+    background: SubtractedBackground | None,
+) -> float | None:
+    r"""Closed-form σ on the windowed count ratio α = ΣF/ΣB.
+
+    Derivation. Write ``n`` for the number of bins in the window, ``S_F = ΣF``
+    and ``S_B = ΣB`` for the sums of the counts as handed in, and ``k_F``/``k_B``
+    for a constant background already subtracted from every bin of each group
+    (zero when none was). Two independent contributions:
+
+    1. *Poisson.* The raw per-bin counts are Poisson, and subtracting a constant
+       shifts the mean without changing the variance, so the window sum's
+       variance is the **raw** total ``S_F + n·k_F`` — larger than ``S_F``
+       itself whenever a background was removed. Numerator and denominator come
+       from different detectors and are independent, so the ratio's relative
+       variance is the sum of theirs:
+       ``(σ/α)²_Poisson = (S_F + n·k_F)/S_F² + (S_B + n·k_B)/S_B²``.
+
+    2. *Baseline.* One estimated level is subtracted from all ``n`` bins, so its
+       error is fully correlated across the window: the total removed from the
+       numerator is ``n·k_F`` with uncertainty ``n·σ_kF`` — linear in ``n``, not
+       ``√n``. The two groups' baselines are independent, so
+       ``(σ/α)²_baseline = (n·σ_kF/S_F)² + (n·σ_kB/S_B)²``.
+
+    The two are independent, hence ``σ_α = α·√((σ/α)²_Poisson + (σ/α)²_baseline)``.
+
+    Resampling the *subtracted* counts — the obvious bootstrap — reproduces
+    neither term: it uses ``S_F`` where the variance is ``S_F + n·k_F``, and it
+    has no way to see the baseline term at all. In a late, low-counts window
+    where the background is a sizeable fraction of the signal that under-states
+    σ by roughly a factor of two.
+
+    Returns ``None`` when either window sum is non-positive (the ratio itself is
+    then degenerate).
+    """
+    n_bins = float(f.size)
+    sum_f = float(np.sum(f))
+    sum_b = float(np.sum(b))
+    if sum_f <= 0.0 or sum_b <= 0.0:
+        return None
+
+    level_f = background.forward if background is not None else 0.0
+    level_b = background.backward if background is not None else 0.0
+    error_f = background.forward_error if background is not None else 0.0
+    error_b = background.backward_error if background is not None else 0.0
+
+    relative_variance = (
+        (sum_f + n_bins * level_f) / sum_f**2
+        + (sum_b + n_bins * level_b) / sum_b**2
+        + (n_bins * error_f / sum_f) ** 2
+        + (n_bins * error_b / sum_b) ** 2
+    )
+    if not np.isfinite(relative_variance) or relative_variance < 0.0:
+        return None
+    return float(alpha * np.sqrt(relative_variance))
+
+
 def estimate_alpha_detailed(
     forward: NDArray[np.float64],
     backward: NDArray[np.float64],
@@ -496,6 +581,7 @@ def estimate_alpha_detailed(
     last_good_bin: int | None = None,
     n_bootstrap: int = 200,
     seed: int = 0,
+    subtracted_background: SubtractedBackground | None = None,
 ) -> AlphaEstimate:
     """Estimate alpha with an uncertainty, by one of three methods.
 
@@ -514,12 +600,25 @@ def estimate_alpha_detailed(
       :func:`estimate_alpha`). Only unbiased when the polarization
       integrates to zero over the window (many-cycle TF data).
 
-    The uncertainty is a Poisson bootstrap: per-bin counts are resampled as
-    Poisson(observed) ``n_bootstrap`` times with a seeded generator and the
-    estimator re-run; ``alpha_error`` is the robust (percentile) standard
-    error of the replicas (``None`` when ``n_bootstrap`` is 0 or fewer than
-    10 replicas survive). WiMDA reports a bare number; the uncertainty is an
-    Asymmetry improvement (study divergence D2).
+    For the optimising methods the uncertainty is a Poisson bootstrap: per-bin
+    counts are resampled as Poisson(observed) ``n_bootstrap`` times with a
+    seeded generator and the estimator re-run; ``alpha_error`` is the robust
+    (percentile) standard error of the replicas (``None`` when ``n_bootstrap``
+    is 0 or fewer than 10 replicas survive). WiMDA reports a bare number; the
+    uncertainty is an Asymmetry improvement (study divergence D2).
+
+    ``ratio`` instead propagates in closed form (see :func:`_ratio_alpha_error`),
+    which is exact for a ratio of window sums and, unlike a bootstrap, can
+    account for a background that was subtracted *before* the counts arrived.
+    Pass ``subtracted_background`` whenever the counts came from
+    :func:`~asymmetry.core.transform.reduce.corrected_grouped_counts` with
+    ``use_background=True`` — get it from
+    :meth:`~asymmetry.core.transform.reduce.CorrectedGroupedCounts.subtracted_background`.
+    Without it the reported σ omits both the subtracted level's Poisson
+    variance and the baseline estimate's own (window-wide correlated)
+    uncertainty, and under-states σ by roughly a factor of two in a late,
+    low-counts window. ``n_bootstrap=0`` still suppresses ``alpha_error``
+    entirely, for callers that only want the value.
 
     Parameters mirror :func:`estimate_alpha`.
     """
@@ -530,6 +629,13 @@ def estimate_alpha_detailed(
         )
     if method == "general" and time_us is None:
         raise ValueError("The 'general' method requires time_us (bin centres in µs)")
+    if subtracted_background is not None and method != "ratio":
+        # The optimising objectives are non-linear in the counts, so a constant
+        # offset cannot be propagated this way — and they are run on packed,
+        # positive-masked bins where "the window sum" is not even well defined.
+        raise ValueError(
+            f"subtracted_background only applies to the 'ratio' method; got method={method!r}"
+        )
 
     f, b, t = _alpha_window(forward, backward, time_us, first_good_bin, last_good_bin)
     if method == "diamagnetic":
@@ -574,31 +680,28 @@ def estimate_alpha_detailed(
     alpha_error: float | None = None
     message = ""
     ok = True
-    if n_bootstrap > 0:
+    if n_bootstrap > 0 and method == "ratio":
+        # Closed form, not a bootstrap: the ratio is an explicit function of the
+        # two window sums, so the propagation is exact — and it is the only
+        # route that can carry a background subtracted upstream of this call.
+        alpha_error = _ratio_alpha_error(alpha, f, b, subtracted_background)
+    elif n_bootstrap > 0:
         rng = np.random.default_rng(seed)
         f_lam = np.clip(f, 0.0, None)
         b_lam = np.clip(b, 0.0, None)
         replicas: list[float] = []
-        if method == "ratio":
-            # The ratio only sees the two window sums, and a sum of
-            # independent Poisson counts is Poisson(sum of means) — draw the
-            # totals directly instead of full per-bin replicas.
-            totals_f = rng.poisson(float(np.sum(f_lam)), int(n_bootstrap)).astype(np.float64)
-            totals_b = rng.poisson(float(np.sum(b_lam)), int(n_bootstrap)).astype(np.float64)
-            replicas = [float(tf / tb) for tf, tb in zip(totals_f, totals_b) if tb > 0.0]
-        else:
-            for _ in range(int(n_bootstrap)):
-                fr = rng.poisson(f_lam).astype(np.float64)
-                br = rng.poisson(b_lam).astype(np.float64)
-                if method == "diamagnetic":
-                    fr, br, t_rep = _positive_mask(fr, br, t)
-                    replica = _single_alpha_estimate(
-                        method, fr, br, t_rep, center=alpha, xatol=_BOOTSTRAP_XATOL
-                    )
-                else:
-                    replica = _single_alpha_estimate(method, fr, br, t)
-                if replica is not None and np.isfinite(replica):
-                    replicas.append(replica)
+        for _ in range(int(n_bootstrap)):
+            fr = rng.poisson(f_lam).astype(np.float64)
+            br = rng.poisson(b_lam).astype(np.float64)
+            if method == "diamagnetic":
+                fr, br, t_rep = _positive_mask(fr, br, t)
+                replica = _single_alpha_estimate(
+                    method, fr, br, t_rep, center=alpha, xatol=_BOOTSTRAP_XATOL
+                )
+            else:
+                replica = _single_alpha_estimate(method, fr, br, t)
+            if replica is not None and np.isfinite(replica):
+                replicas.append(replica)
         if len(replicas) >= 10:
             # Robust standard error: half-width of the central 68.27%
             # interval — equals the standard deviation for well-behaved

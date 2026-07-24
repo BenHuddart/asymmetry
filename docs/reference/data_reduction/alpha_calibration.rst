@@ -21,9 +21,10 @@ cooldown.
 The grouping dialog's **Estimate α** control determines :math:`\alpha` from
 the reference run and applies it to all selected datasets (the same
 reference-run convention as deadtime estimation). Three methods are offered;
-all report the estimate with a statistical uncertainty, e.g. 1.3702(45),
-obtained from a seeded Poisson bootstrap of the histogram counts. WiMDA
-reports a bare number for the same operations.
+all report the estimate with a statistical uncertainty, e.g. 1.3702(45)
+— from a seeded Poisson bootstrap of the histogram counts for the two
+optimising methods, and from an exact closed-form propagation for the count
+ratio. WiMDA reports a bare number for the same operations.
 
 Choosing a method
 -----------------
@@ -140,8 +141,49 @@ of summed counts is the efficiency ratio. On relaxing LF/ZF data the
 positive polarisation does **not** integrate to zero and the ratio is biased
 upward by approximately :math:`a_0 \langle P_z \rangle` — typically several
 percent, which is an order of magnitude larger than the statistical
-uncertainty of a good calibration. The reported bootstrap uncertainty does
-not include this bias.
+uncertainty of a good calibration. The reported uncertainty does not include
+this bias.
+
+.. _alpha-ratio-subtracted-background:
+
+*Uncertainty when a background has already been subtracted.* Because the ratio
+is an explicit function of the two window sums, its uncertainty is propagated in
+closed form rather than bootstrapped:
+
+.. math::
+
+   \left( \frac{\sigma_\alpha}{\alpha} \right)^2 =
+     \frac{S_F + n\,k_F}{S_F^2} + \frac{S_B + n\,k_B}{S_B^2}
+     + \left( \frac{n\,\sigma_{k_F}}{S_F} \right)^2
+     + \left( \frac{n\,\sigma_{k_B}}{S_B} \right)^2 ,
+
+where :math:`S_F`, :math:`S_B` are the summed counts over the :math:`n`-bin
+window and :math:`k`, :math:`\sigma_k` are a constant background already
+subtracted from every bin of each group and its standard error. The first two
+terms are Poisson: subtracting a constant shifts the mean but not the variance,
+so the relevant total is the **raw** :math:`S + n k`. The last two are the
+baseline's own error, which is *fully correlated* across the window — one
+estimate is removed from all :math:`n` bins, so it enters as :math:`n\sigma_k`,
+not :math:`\sqrt{n}\,\sigma_k`.
+
+Subtracted counts cannot reveal either quantity on their own, so a caller
+working from :func:`~asymmetry.core.transform.reduce.corrected_grouped_counts`
+must hand them over::
+
+    corrected = corrected_grouped_counts(..., use_background=True)
+    estimate = estimate_alpha_detailed(
+        corrected.forward,
+        corrected.backward,
+        method="ratio",
+        first_good_bin=lo,
+        last_good_bin=hi,
+        subtracted_background=corrected.subtracted_background(),
+    )
+
+The grouping dialog does this for you. Omit it and the last two terms — and the
+:math:`n k` in the first two — are simply missing, which on a late, low-counts
+window where the background is a sizeable fraction of the signal under-states
+:math:`\sigma_\alpha` by roughly a factor of two.
 
 Count-fit α
 ------------
@@ -175,15 +217,33 @@ controls and the sibling t₀/background promotes.
 Uncertainties
 -------------
 
-All three methods report a statistical uncertainty from a Poisson bootstrap:
-the histogram counts are resampled 200 times from their observed values, the
-estimator is re-run on each replica, and the spread of the replicas (a
-percentile-based standard error, robust against the heavy tails the General
-method develops near its identifiability limit) is quoted. The bootstrap is
-seeded, so repeating an estimate gives identical digits. The uncertainty is
-statistical only — it does not include the count-ratio method's polarisation
-bias, nor systematic effects such as a mis-set t0 or an uncorrected
-background.
+The diamagnetic and General methods report a statistical uncertainty from a
+Poisson bootstrap: the histogram counts are resampled 200 times from their
+observed values, the estimator is re-run on each replica, and the spread of the
+replicas (a percentile-based standard error, robust against the heavy tails the
+General method develops near its identifiability limit) is quoted. The bootstrap
+is seeded, so repeating an estimate gives identical digits. The count ratio
+instead propagates in closed form (see
+:ref:`alpha-ratio-subtracted-background`), which is exact for a ratio of window
+sums and, unlike a bootstrap of the counts as handed in, can account for a
+background subtracted before the estimate was made. Setting ``n_bootstrap=0``
+suppresses the uncertainty for every method.
+
+The uncertainty is statistical only — it does not include the count-ratio
+method's polarisation bias, nor systematic effects such as a mis-set t0 or an
+uncorrected background.
+
+The diamagnetic estimate additionally carries a small **method** systematic that
+no amount of statistics removes. Its stationary point is
+:math:`\alpha^4 = \sum F^3/(B(F+B)) \big/ \sum B^3/(F(F+B))`; expanded in the
+oscillation amplitude :math:`u = a_0 P_z(t)`, the estimating equation is
+:math:`\sum s\,u = \frac{\alpha - 1}{\alpha + 1}\sum s\,u^2 + O(u^3)`. The
+second-order term survives even for a perfectly zero-mean oscillation, so the
+estimate is displaced by roughly :math:`a_0^2 (\alpha-1)/(\alpha+1)` — a few
+tenths of a percent at a typical 20 % asymmetry, growing quadratically with the
+asymmetry and reversing sign for :math:`\alpha < 1`. It does **not** depend on
+the precession frequency, so a calibration that drifts with applied field points
+at the instrument rather than at the estimator.
 
 For the most demanding work, :math:`\alpha` can instead be treated as a free
 parameter of a count-level fit (the WiMDA manual's "most accurate way"). That

@@ -72,7 +72,7 @@ from asymmetry.core.fitting.peak_detection import (
     match_multiplets,
     merge_user_peaks,
 )
-from asymmetry.core.fitting.process_pool import open_spawn_pool
+from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
 from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
     EffortTier,
@@ -201,6 +201,10 @@ _HIGH_DIMENSION_FREE_COUNT = 40
 _EXTREME_DIMENSION_FREE_COUNT = 70
 _MAX_TEMPLATE_WORKERS = 4
 _MAX_WAVEFRONT_WORKERS = 12
+#: How often the phase-1 single-fit-table drain re-checks ``cancel_callback``
+#: while waiting on the pool. Each table is a minutes-long job, so without this
+#: the stage is uncancellable in practice.
+_PHASE_ONE_CANCEL_POLL_SECONDS = 0.2
 _OSCILLATORY_RESCUE_RESIDUAL_FFT_SNR = 6.0
 _OSCILLATORY_RESCUE_MEDIAN_FFT_SNR = 6.5
 _OSCILLATORY_RESCUE_RUNS_Z = 2.5
@@ -613,9 +617,14 @@ def _wavefront_worker_count(task_count: int) -> int:
 
 
 def _single_fit_table_worker_count(task_count: int) -> int:
+    # Bounded by the host's CPU count as well as the template cap: each phase-1
+    # table is minutes of CPU-bound fitting, so running more of them than there
+    # are cores only lengthens the time to the *first* completed table — which
+    # is the stage's only sign of life.
     if task_count <= 0:
         return 1
-    return max(1, min(task_count, _MAX_TEMPLATE_WORKERS))
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(task_count, cpu_count, _MAX_TEMPLATE_WORKERS))
 
 
 def _try_open_process_pool(
@@ -979,8 +988,19 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     """Return a complete per-run single-fit table set for one global-wizard portfolio.
 
     ``cancel_callback`` is polled cooperatively between per-run single-fit tasks
-    on the serial path (the process-pool path cannot poll into in-flight
-    subprocess futures); a truthy callback raises :class:`FitCancelledError`.
+    on the serial path and, on the process-pool path, *while draining* the
+    submitted futures: a ``wait`` with a ``_PHASE_ONE_CANCEL_POLL_SECONDS``
+    timeout re-checks the callback each iteration, so a cancel is honoured
+    within one poll interval instead of one in-flight table's duration (a fit
+    already running in a worker still cannot be interrupted). A truthy callback
+    raises :class:`FitCancelledError` and tears the pool down with
+    :func:`terminate_spawn_pool` — non-blocking, and force-killing the workers
+    so nothing is orphaned. This matters because a phase-1 single-fit table is a
+    *minutes*-long job: a drain that only blocks on completion, followed by a
+    ``shutdown(wait=True)``, is indistinguishable from a deadlock from the
+    caller's side, and a caller that gives up and kills the parent leaves the
+    spawn workers alive (blocked forever writing their results into a pipe
+    nobody reads). Each completed table is logged so the stage visibly advances.
     """
     if cancel_callback is not None and cancel_callback():
         raise FitCancelledError("Global fit wizard analysis cancelled.")
@@ -1090,11 +1110,39 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
                             SelectionMetric.AICC,
                         )
                     ] = dataset
-                for future in as_completed(future_to_dataset):
-                    run_number, recommendation = future.result()
-                    complete_by_run[run_number] = recommendation
-                    generated_run_numbers.append(run_number)
-            finally:
+
+                # Poll cancel *while waiting* rather than blocking on the next
+                # completion: each ``wait`` returns after a completion or after
+                # one poll interval, so a cancel is noticed in well under a
+                # second instead of after the remaining minutes of fits.
+                pending = set(future_to_dataset)
+                total = len(pending)
+                while pending:
+                    if cancel_callback is not None and cancel_callback():
+                        raise FitCancelledError("Global fit wizard analysis cancelled.")
+                    done, pending = wait(
+                        pending,
+                        timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
+                        return_when=FIRST_COMPLETED,
+                    )
+                    for future in done:
+                        run_number, recommendation = future.result()
+                        complete_by_run[run_number] = recommendation
+                        generated_run_numbers.append(run_number)
+                        _progress_log(
+                            progress_callback,
+                            f"Single-fit table {future_to_dataset[future].run_label}: "
+                            f"done ({len(generated_run_numbers)}/{total}).",
+                        )
+            except BaseException:
+                # Cancel, a worker crash, or a Ctrl-C: never wait on the fits
+                # still in flight (that is the minutes-long block this stage is
+                # trying to escape). Drop queued work and force-kill the
+                # workers, so the caller gets control back at once and no spawn
+                # worker is left orphaned.
+                terminate_spawn_pool(executor)
+                raise
+            else:
                 _shutdown_process_pool(executor)
 
     complete_by_run = _sync_single_fit_recommendation_store(
