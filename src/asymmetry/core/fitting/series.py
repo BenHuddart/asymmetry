@@ -29,12 +29,19 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
+from concurrent.futures import BrokenExecutor, as_completed
 from dataclasses import dataclass, field
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import CostFactory, FitEngine, FitResult
+from asymmetry.core.fitting.engine import (
+    CostFactory,
+    FitCancelledError,
+    FitEngine,
+    FitResult,
+)
 from asymmetry.core.fitting.member_quality import MemberQuality, assess_member_quality
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
 from asymmetry.core.fitting.series_seeding import (
     SeriesPoint,
     diagnose_series,
@@ -243,6 +250,142 @@ def _better_result(
     return first, first_point
 
 
+def _resolve_series_workers(max_workers: int | None, n_runs: int) -> int:
+    """Resolve the worker count for an ``as_provided`` batch (clamped to ``[1, n_runs]``).
+
+    Parallelism is opt-in: ``None`` (the default) keeps the sequential, in-process
+    path so programmatic callers and injected fake engines are unaffected. A positive
+    count is honoured but never exceeds the run count (extra workers would sit idle).
+    The GUI passes ``os.cpu_count()`` to auto-size the pool to the host, mirroring the
+    grouped-series solver.
+    """
+    if max_workers is None or n_runs <= 1:
+        return 1
+    return max(1, min(int(max_workers), n_runs))
+
+
+def _series_payload_picklable(model_fn: object, cost_factory: object) -> bool:
+    """Whether the per-run payload can cross a process boundary.
+
+    Datasets and :class:`ParameterSet` seeds are always picklable; the real risks are
+    the model function and the cost factory (e.g. a user-defined model or objective
+    captured as a closure). If either cannot be pickled the caller falls back to the
+    in-process sequential path — identical results — rather than crashing on dispatch.
+    """
+    import pickle
+
+    try:
+        pickle.dumps(model_fn)
+        pickle.dumps(cost_factory)
+    except Exception:
+        return False
+    return True
+
+
+def _series_run_worker(payload):
+    """Process-pool entry point: fit one run and return ``(run, result)``.
+
+    Module-level (so it survives the ``spawn`` start method) and engine-free — each
+    worker builds its own stateless :class:`FitEngine`. Cancellation is handled in the
+    parent between completions, so no cancel callback crosses the boundary.
+    """
+    (
+        run,
+        dataset,
+        model_fn,
+        seed,
+        t_min,
+        t_max,
+        method,
+        minos,
+        cost_factory,
+        error_oversampling,
+    ) = payload
+    result = FitEngine().fit(
+        dataset,
+        model_fn,
+        seed,
+        t_min=t_min,
+        t_max=t_max,
+        method=method,
+        minos=minos,
+        cancel_callback=None,
+        cost_factory=cost_factory,
+        error_oversampling=error_oversampling,
+    )
+    return run, result
+
+
+def _fit_runs_parallel(
+    run_order: Sequence[int],
+    dataset_by_run: dict[int, MuonDataset],
+    model_fn: Callable[..., object],
+    initial_params: dict[int, ParameterSet],
+    *,
+    t_min: float | None,
+    t_max: float | None,
+    method: str,
+    minos: bool,
+    cost_factory: CostFactory | None,
+    error_oversampling: float,
+    cancel_callback: Callable[[], bool] | None,
+    workers: int,
+) -> dict[int, FitResult] | None:
+    """Fit every ``as_provided`` run across a process pool; return ``{run: result}``.
+
+    The runs share no state, so each per-run fit is a self-contained, deterministic
+    problem dispatched to a spawn-based pool and collected as it completes (the caller
+    folds results back by run number, so completion order does not matter). Results are
+    bit-identical to the sequential path regardless of worker count. Returns ``None`` —
+    signalling the caller to run sequentially instead — when a spawn-safe pool cannot
+    start or breaks mid-run (a constrained or frozen environment); raises
+    :class:`FitCancelledError` on a cooperative cancel.
+
+    Cancellation is coarse: a requested cancel stops collecting further results and
+    tears the pool down at once (``terminate_spawn_pool``), leaving no orphaned
+    workers; an in-flight fit is abandoned rather than observed mid-minimisation.
+    """
+    if cancel_callback is not None and bool(cancel_callback()):
+        raise FitCancelledError("Fit cancelled.")
+    executor = open_spawn_pool(workers)
+    if executor is None:
+        return None
+    payloads = [
+        (
+            run,
+            dataset_by_run[run],
+            model_fn,
+            initial_params[run],
+            t_min,
+            t_max,
+            method,
+            minos,
+            cost_factory,
+            error_oversampling,
+        )
+        for run in run_order
+    ]
+    results: dict[int, FitResult] = {}
+    try:
+        futures = {executor.submit(_series_run_worker, payload): payload[0] for payload in payloads}
+        for future in as_completed(futures):
+            if cancel_callback is not None and bool(cancel_callback()):
+                # Kill workers now instead of blocking on in-flight fits, then abort.
+                terminate_spawn_pool(executor)
+                raise FitCancelledError("Fit cancelled.")
+            run, result = future.result()
+            results[run] = result
+    except BrokenExecutor:
+        # A worker died for an environmental reason (not a fit failure — failed fits
+        # return success=False without raising). Abandon parallelism and let the caller
+        # re-run the batch sequentially rather than report partial results.
+        return None
+    finally:
+        # Drop pending work immediately; in-flight processes finish on their own.
+        executor.shutdown(wait=False, cancel_futures=True)
+    return results
+
+
 def fit_asymmetry_series(
     datasets: Sequence[MuonDataset],
     model_fn: Callable[..., object],
@@ -262,6 +405,7 @@ def fit_asymmetry_series(
     amplitude_param: str | None = None,
     frequency_param: str | None = None,
     error_oversampling: float = 1.0,
+    max_workers: int | None = None,
 ) -> AsymmetrySeriesResult:
     """Fit a block-separable F-B asymmetry batch with optional robust chaining.
 
@@ -271,6 +415,14 @@ def fit_asymmetry_series(
     warm-starts from the previous good run and a converged-but-spurious run is
     reseeded from the good-run trend and refit. ``"auto"`` resolves to one of those via
     :func:`recommend_series_seeding` over the ``order_key``.
+
+    max_workers
+        Opt-in process-level parallelism for the ``as_provided`` mode only, whose runs
+        share no state and are thus embarrassingly parallel. ``None`` (default) or ``1``
+        — and a spawn-safe pool that cannot start, or an injected non-default engine —
+        keep the sequential loop, producing byte-identical results. ``chain`` seeding is
+        inherently sequential (each run warm-starts from the previous good run with
+        trend-based reseeding) and always runs sequentially regardless of this value.
 
     error_oversampling
         Correlated-samples correction forwarded unchanged to every per-run
@@ -335,48 +487,88 @@ def fit_asymmetry_series(
     final_points: dict[int, SeriesPoint] = {}
     last_good: FitResult | None = None
 
-    for run in run_order:
-        provided = initial_params[run]
-        order = float(order_key.get(run, run)) if order_key else float(run)
-
-        if resolved == "chain" and last_good is not None:
-            seed = _chain_seed(last_good, provided, local_params)
-        else:
-            seed = provided
-
-        result = _fit_one(run, seed)
-        point = _summarize(run, order, result, amplitude_param, frequency_param)
-
-        # Detect-and-reseed: only for a converged run that looks spurious — a hard
-        # non-convergence is handled by the chain-reset path below, not reseeded.
+    # Fan the independent per-run fits across processes when parallelism is opted into.
+    # Only ``as_provided`` runs share no state, so only they are dispatched; the pool is
+    # skipped for ``chain`` (sequential warm-start/reseed), a non-default injected engine
+    # (a worker rebuilds a stateless ``FitEngine`` and cannot honour a custom one), and an
+    # unpicklable model/cost. On any of those — or a pool that cannot start — the loop
+    # below runs, byte-identical.
+    parallel_results: dict[int, FitResult] | None = None
+    if resolved != "chain":
+        workers = _resolve_series_workers(max_workers, len(run_order))
         if (
-            resolved == "chain"
-            and result.success
-            and _is_spurious(point, history, amplitude_param, frequency_param)
+            workers > 1
+            and type(engine) is FitEngine
+            and _series_payload_picklable(model_fn, cost_factory)
         ):
-            reseed = _reseed_from_trend(
-                provided, history, order, local_params, amplitude_param, frequency_param
+            parallel_results = _fit_runs_parallel(
+                run_order,
+                dataset_by_run,
+                model_fn,
+                initial_params,
+                t_min=t_min,
+                t_max=t_max,
+                method=method,
+                minos=minos,
+                cost_factory=cost_factory,
+                error_oversampling=error_oversampling,
+                cancel_callback=cancel_callback,
+                workers=workers,
             )
-            if reseed is not None:
-                retry = _fit_one(run, reseed)
-                retry_point = _summarize(run, order, retry, amplitude_param, frequency_param)
-                chosen, point = _better_result(
-                    result, point, retry, retry_point, history, amplitude_param, frequency_param
+
+    if parallel_results is not None:
+        # ``as_provided`` is embarrassingly parallel: each run is fit from its provided
+        # seed with no cross-run state, so there is no chain warm-start and no
+        # detect-and-reseed (both chain-only). Summarise in ``run_order`` so the results
+        # dict and the diagnosis list match the sequential path exactly.
+        for run in run_order:
+            result = parallel_results[run]
+            order = float(order_key.get(run, run)) if order_key else float(run)
+            results[run] = result
+            final_points[run] = _summarize(run, order, result, amplitude_param, frequency_param)
+    else:
+        for run in run_order:
+            provided = initial_params[run]
+            order = float(order_key.get(run, run)) if order_key else float(run)
+
+            if resolved == "chain" and last_good is not None:
+                seed = _chain_seed(last_good, provided, local_params)
+            else:
+                seed = provided
+
+            result = _fit_one(run, seed)
+            point = _summarize(run, order, result, amplitude_param, frequency_param)
+
+            # Detect-and-reseed: only for a converged run that looks spurious — a hard
+            # non-convergence is handled by the chain-reset path below, not reseeded.
+            if (
+                resolved == "chain"
+                and result.success
+                and _is_spurious(point, history, amplitude_param, frequency_param)
+            ):
+                reseed = _reseed_from_trend(
+                    provided, history, order, local_params, amplitude_param, frequency_param
                 )
-                if chosen is retry:
-                    reseeded.append(run)
-                result = chosen
+                if reseed is not None:
+                    retry = _fit_one(run, reseed)
+                    retry_point = _summarize(run, order, retry, amplitude_param, frequency_param)
+                    chosen, point = _better_result(
+                        result, point, retry, retry_point, history, amplitude_param, frequency_param
+                    )
+                    if chosen is retry:
+                        reseeded.append(run)
+                    result = chosen
 
-        results[run] = result
-        final_points[run] = point
+            results[run] = result
+            final_points[run] = point
 
-        spurious = _is_spurious(point, history, amplitude_param, frequency_param)
-        if result.success and not spurious:
-            last_good = result
-            history.append(point)
-        elif not result.success:
-            # Failed outright → do not chain a diverged fit into the next run.
-            last_good = None
+            spurious = _is_spurious(point, history, amplitude_param, frequency_param)
+            if result.success and not spurious:
+                last_good = result
+                history.append(point)
+            elif not result.success:
+                # Failed outright → do not chain a diverged fit into the next run.
+                last_good = None
 
     # Batch-wide off-trend diagnosis over the final chosen points (independent of
     # seeding mode, so a plain block-separable batch is diagnosed too). Runs whose
