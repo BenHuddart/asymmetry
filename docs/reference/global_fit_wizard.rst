@@ -281,3 +281,21 @@ the GUI. To share fit-function parameters across runs **programmatically**, use
 the **count-domain** API ``fit_grouped_series(relationship="global", ...)`` —
 see :ref:`grouped-cross-run-global-api` in
 :doc:`grouped_time_domain_fitting`.
+
+Calling the global wizard from a script
+---------------------------------------
+
+``build_global_fit_wizard_screening_recommendation`` first builds a per-run
+single-fit comparison table for every dataset in the series. Each of those
+tables is a full candidate sweep for one run, so on a long series the screening
+pass legitimately runs for **many minutes** before it returns; it reports each
+completed table through ``progress_callback`` so you can see it advancing rather
+than guessing whether it has stalled. Pass a ``cancel_callback`` if you need to
+be able to stop it — it is polled several times a second throughout, including
+while the fits are running in worker processes.
+
+The screening pass fans those tables across a process pool, so the
+``if __name__ == "__main__":`` rule in
+:ref:`fit-wizard-scripting-and-parallelism` applies here too: an unguarded
+script degrades to serial execution with a ``SpawnUnsafeWarning`` rather than
+crashing.

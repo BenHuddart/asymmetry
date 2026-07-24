@@ -6,6 +6,8 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
+import time
+from concurrent.futures import Future
 from dataclasses import replace
 
 import numpy as np
@@ -15,7 +17,7 @@ import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 from asymmetry.core import fitting as fitting_api
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import FitEngine, FitResult
+from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     CandidateTemplate,
     SelectionMetric,
@@ -366,13 +368,6 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
 
     created_with: dict[str, object] = {}
 
-    class _FakeFuture:
-        def __init__(self, value):
-            self._value = value
-
-        def result(self):
-            return self._value
-
     class _FakeExecutor:
         def __enter__(self):
             return self
@@ -381,7 +376,11 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
             return False
 
         def submit(self, fn, *args):
-            return _FakeFuture(fn(*args))
+            # A real, already-resolved Future: the drain waits on these through
+            # ``concurrent.futures.wait``, which reaches into Future internals.
+            future: Future = Future()
+            future.set_result(fn(*args))
+            return future
 
         def shutdown(self, *args, **kwargs):
             return None
@@ -392,7 +391,8 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
 
     # Pool creation is delegated to the shared spawn-safe helper; intercept it there.
     monkeypatch.setattr(global_fit_wizard_module, "open_spawn_pool", _fake_open)
-    monkeypatch.setattr(global_fit_wizard_module, "as_completed", lambda futures: list(futures))
+    # Pin the host width so this asserts the template cap, not the runner's cores.
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 8)
 
     _portfolio, recommendations_by_run, generated_runs = (
         build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
@@ -2983,3 +2983,158 @@ def test_cancel_callback_false_completes_normally(
     )
 
     assert recommendation.recommended_key is not None
+
+
+# --------------------------------------------------------------------------- #
+# Phase-1 single-fit table fan-out. Reported from a downstream continuous-source
+# ZF/TF analysis as "screening never returns": the fits themselves are minutes
+# long, and the drain used to block in ``as_completed`` with no cancel poll and
+# then tear the pool down with a *blocking* shutdown, so neither a Cancel nor a
+# KeyboardInterrupt could get the call back — indistinguishable from a deadlock,
+# and a killed parent left the spawn workers orphaned.
+# --------------------------------------------------------------------------- #
+
+
+def _exponential_decay_datasets(count: int = 4) -> list[MuonDataset]:
+    """Synthetic exponentially relaxing ZF runs built from bare arrays."""
+    time_us = np.linspace(0.0, 8.0, 200)
+    datasets: list[MuonDataset] = []
+    for index in range(count):
+        rate = 0.4 + 0.05 * index
+        datasets.append(
+            MuonDataset(
+                time=time_us,
+                asymmetry=20.0 * np.exp(-rate * time_us),
+                error=np.full_like(time_us, 0.3),
+                metadata={
+                    "run_number": 900 + index,
+                    "temperature": 5.0 + index,
+                    "field": 0.0,
+                    "field_direction": "ZF",
+                },
+            )
+        )
+    return datasets
+
+
+class _NeverCompletingPool:
+    """Stand-in for a spawn pool whose submitted fits never finish.
+
+    Models the real regime — a phase-1 single-fit table takes minutes — without
+    paying for it. ``shutdown`` records its arguments so the test can prove the
+    teardown does not wait on the in-flight work.
+    """
+
+    def __init__(self) -> None:
+        self.shutdown_calls: list[dict[str, object]] = []
+        self.submitted = 0
+
+    def submit(self, *_args: object, **_kwargs: object) -> Future:
+        self.submitted += 1
+        return Future()  # deliberately never resolved
+
+    def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
+        self.shutdown_calls.append({"wait": wait, "cancel_futures": cancel_futures})
+
+
+@pytest.mark.timeout(90)
+def test_phase_one_screening_cancel_does_not_block_on_the_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel is polled *while draining* phase 1, and teardown never blocks.
+
+    On the pre-fix drain this test fails by timeout: ``as_completed`` waits for
+    futures that never resolve, and the ``finally`` shutdown then waits again.
+    """
+    pool = _NeverCompletingPool()
+    monkeypatch.setattr(
+        global_fit_wizard_module,
+        "_try_open_process_pool",
+        lambda **_kwargs: pool,
+    )
+    datasets = _exponential_decay_datasets(4)
+
+    def _cancel_once_dispatched() -> bool:
+        # Stays false through the guards that precede the fan-out, so only a
+        # poll from *inside* the drain loop can see it fire.
+        return pool.submitted >= len(datasets)
+
+    started = time.monotonic()
+    with pytest.raises(FitCancelledError):
+        build_global_fit_wizard_screening_recommendation(
+            datasets,
+            cancel_callback=_cancel_once_dispatched,
+        )
+    elapsed = time.monotonic() - started
+
+    assert pool.submitted == len(datasets)
+    assert elapsed < 30.0
+    # Non-blocking teardown: queued work dropped, no wait on the in-flight fits.
+    assert pool.shutdown_calls == [{"wait": False, "cancel_futures": True}]
+
+
+class _ImmediatePool:
+    """Spawn-pool stand-in that runs each task inline and resolves at once."""
+
+    def __init__(self) -> None:
+        self.shutdown_calls: list[dict[str, object]] = []
+
+    def submit(self, fn, /, *args: object, **kwargs: object) -> Future:
+        future: Future = Future()
+        try:
+            future.set_result(fn(*args, **kwargs))
+        except BaseException as error:  # pragma: no cover - defensive
+            future.set_exception(error)
+        return future
+
+    def shutdown(self, wait: bool = True, cancel_futures: bool = False) -> None:
+        self.shutdown_calls.append({"wait": wait, "cancel_futures": cancel_futures})
+
+
+@pytest.mark.timeout(300)
+def test_phase_one_screening_reports_progress_per_completed_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The uncancelled drain still completes, and each finished table is logged.
+
+    Without a per-completion message the stage is silent for its whole (many
+    minute) duration, which is what made the downstream report read as a hang.
+    """
+    pool = _ImmediatePool()
+    monkeypatch.setattr(
+        global_fit_wizard_module,
+        "_try_open_process_pool",
+        lambda **_kwargs: pool,
+    )
+    datasets = _exponential_decay_datasets(2)
+    messages: list[str] = []
+
+    _portfolio, recommendations, generated = (
+        build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+            datasets,
+            progress_callback=messages.append,
+        )
+    )
+
+    assert sorted(generated) == [900, 901]
+    assert set(recommendations) == {900, 901}
+    completed = [text for text in messages if "single-fit table" in text.lower() and "/" in text]
+    assert len(completed) == len(datasets)
+    assert pool.shutdown_calls == [{"wait": True, "cancel_futures": False}]
+
+
+def test_single_fit_table_worker_count_never_oversubscribes_the_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase-1 width is bounded by the CPU count, like the wavefront's.
+
+    A fixed width of four on a two-core host runs four minutes-long fits over
+    two cores, which is slower than two workers *and* looks stalled.
+    """
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 2)
+    assert global_fit_wizard_module._single_fit_table_worker_count(37) == 2
+
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 16)
+    assert global_fit_wizard_module._single_fit_table_worker_count(37) == 4
+    assert global_fit_wizard_module._single_fit_table_worker_count(1) == 1
+    assert global_fit_wizard_module._single_fit_table_worker_count(0) == 1

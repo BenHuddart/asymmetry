@@ -51,6 +51,12 @@ class BackgroundCorrectionResult:
     values: tuple[float, float] | None = None
     ranges: tuple[tuple[int, int], tuple[int, int]] | None = None
     details: dict[str, Any] | None = None
+    #: Standard error on each subtracted ``values`` level. Non-zero only for
+    #: modes that *estimate* the background from data (a user-fixed level is
+    #: exact by declaration); needed downstream because one estimated level is
+    #: subtracted from every bin, so its error is correlated across the window
+    #: rather than averaging away.
+    value_errors: tuple[float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -357,6 +363,7 @@ def apply_grouped_background_correction(
             applied=True,
             method="tail_fit",
             values=(f_value, b_value),
+            value_errors=(f_sigma, b_sigma),
             ranges=(forward_fit.window, backward_fit.window),
             details={
                 "forward_rate_per_us": forward_fit.rate_per_us,
@@ -397,6 +404,8 @@ def apply_grouped_background_correction(
             applied=True,
             method="fixed",
             values=fixed,
+            # A user-declared level carries no estimation error of its own.
+            value_errors=(0.0, 0.0),
             ranges=None,
         )
 
@@ -440,6 +449,7 @@ def apply_grouped_background_correction(
         method="estimated",
         values=(f_value, b_value),
         ranges=(f_range, b_range),
+        value_errors=(f_bkg_error, b_bkg_error),
     )
 
 
