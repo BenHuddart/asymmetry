@@ -8,12 +8,14 @@ metadata, and a fitting round-trip.  See docs/porting/dynamic-relaxation/.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from asymmetry.core.fitting import COMPONENTS, MODELS, CompositeModel
 from asymmetry.core.fitting.component_docs import get_component_applicability
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.models import (
     _strong_collision_solve,
+    _strong_collision_solve_reference,
     abragam,
     dynamic_gaussian_kt,
     dynamic_lorentzian_kt,
@@ -278,3 +280,56 @@ def test_dynamic_gaussian_kt_round_trip() -> None:
     assert res.success
     assert abs(res.parameters["Delta"].value - delta_true) < 0.05
     assert abs(res.parameters["nu"].value - nu_true) < 0.6
+
+
+# --- Strong-collision solver: fast blocked path vs. scalar reference ----------
+def _static_gs(kind: str, grid: np.ndarray, width: float, b_l: float) -> np.ndarray:
+    if kind == "gaussian":
+        gs = (
+            static_gkt_zf(grid, 1.0, width, 0.0)
+            if abs(b_l) < 1e-9
+            else longitudinal_field_kubo_toyabe(grid, 1.0, width, b_l, 0.0)
+        )
+    else:
+        gs = (
+            static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
+            if abs(b_l) < 1e-9
+            else static_lorentzian_kt_lf(grid, 1.0, width, b_l, 0.0)
+        )
+    return np.asarray(gs, dtype=float)
+
+
+@pytest.mark.parametrize("kind", ["gaussian", "lorentzian"])
+@pytest.mark.parametrize("nu", [0.05, 0.5, 3.0, 6.0, 11.9])
+def test_strong_collision_fast_matches_reference(kind: str, nu: float) -> None:
+    # The fast blocked/FFT solver must reproduce the scalar O(n^2) recursion to
+    # machine precision across widths, B_L (incl. zero field), grid sizes (small
+    # edge cases, a non-power-of-two, a single-block and a multi-block size) and
+    # steps with nu*h straddling the 0.02 the caller targets.
+    for width in (0.1, 0.5):
+        for b_l in (0.0, 25.0):
+            for h in (0.02 / nu, 0.018 / nu):
+                for n in (2, 3, 64, 777, 1000):
+                    grid = np.linspace(0.0, (n - 1) * h, n)
+                    gs = _static_gs(kind, grid, width, b_l)
+                    fast = _strong_collision_solve(gs, nu, h)
+                    ref = _strong_collision_solve_reference(gs, nu, h)
+                    assert np.allclose(fast, ref, rtol=1e-9, atol=1e-12)
+
+
+@pytest.mark.parametrize("kind", ["gaussian", "lorentzian"])
+@pytest.mark.parametrize("nu", [0.5, 11.9])
+def test_strong_collision_fast_matches_reference_large_grid(kind: str, nu: float) -> None:
+    # 20001 points is the caller's grid cap and exercises the multi-block FFT
+    # cross-coupling path (n >> the 512-point block).
+    n, h = 20001, 0.02 / nu
+    grid = np.linspace(0.0, (n - 1) * h, n)
+    gs = _static_gs(kind, grid, 0.3, 0.0)
+    fast = _strong_collision_solve(gs, nu, h)
+    ref = _strong_collision_solve_reference(gs, nu, h)
+    assert np.allclose(fast, ref, rtol=1e-9, atol=1e-12)
+
+
+def test_strong_collision_single_point_grid() -> None:
+    # Degenerate one-sample grid: G_d(0) = 1 with no recursion.
+    assert _strong_collision_solve(np.array([1.0]), 3.0, 0.02) == np.array([1.0])
