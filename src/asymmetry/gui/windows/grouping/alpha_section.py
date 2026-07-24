@@ -218,6 +218,12 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
         time_us=time_us,
         first_good_bin=request.first_good_bin,
         last_good_bin=request.last_good_bin,
+        # Ratio-only, and only meaningful when a constant background was
+        # actually removed — without it the reported σ omits the subtraction
+        # entirely and reads far too small on a late, low-counts window.
+        subtracted_background=(
+            corrected.subtracted_background() if request.method == "ratio" else None
+        ),
     )
     note_text, note_warn = correction_note(request.grouping, corrected)
     return AlphaEstimateResult(

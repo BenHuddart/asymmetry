@@ -318,6 +318,39 @@ usually means the spectrum is well described by a plain relaxation (or is
 flat within the noise), and chasing a more elaborate model would be
 over-fitting.
 
+.. _fit-wizard-scripting-and-parallelism:
+
+Calling the wizard from a script
+--------------------------------
+
+``build_fit_wizard_recommendation`` evaluates its candidate models across a
+process pool. Python starts those worker processes with the ``spawn`` method,
+and every spawn worker begins by **re-importing the calling script's**
+``__main__`` **module**. Put your analysis behind a guard so the workers do not
+re-run it:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.fit_wizard import build_fit_wizard_recommendation
+
+   def main():
+       recommendation = build_fit_wizard_recommendation(dataset)
+       print(recommendation.recommended_key)
+
+   if __name__ == "__main__":
+       main()
+
+Without the guard the wizard detects the situation before starting any worker,
+runs **serially** instead, and warns once with ``SpawnUnsafeWarning`` — the
+results are identical, only slower. Interactive sessions, ``python -c ...`` and
+notebooks are unaffected: there is no module for a worker to re-import, so they
+keep full parallelism.
+
+Passing ``max_workers=1`` is always a safe escape hatch — it never starts a
+worker process at all, and it also makes runs bit-for-bit reproducible when you
+need to compare two invocations exactly. The same rules apply to
+:doc:`global_fit_wizard`, which uses the same machinery.
+
 Limitations
 -----------
 

@@ -15,13 +15,16 @@ import numpy as np
 import pytest
 from scipy.optimize import brentq
 
+from asymmetry.core.data.dataset import Histogram
 from asymmetry.core.transform import estimate_alpha, estimate_alpha_detailed
 from asymmetry.core.transform.asymmetry import (
+    SubtractedBackground,
     _alpha_window,
     _diamagnetic_objective,
     _pack_for_estimation,
     _positive_mask,
 )
+from asymmetry.core.transform.reduce import corrected_grouped_counts
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 ALPHA_TRUE = 1.37
@@ -318,3 +321,258 @@ def test_good_bin_window_is_respected():
         n_bootstrap=0,
     )
     assert poisoned.alpha == pytest.approx(clean.alpha, rel=1e-12)
+
+
+# --- ratio uncertainty with a subtracted background ---------------------------
+#
+# Reported from a downstream continuous-source ZF/TF analysis: on a late,
+# low-counts window of *background-subtracted* grouped counts the ratio method's
+# reported σ_α covered the truth about half as often as it should. Resampling
+# the already-subtracted counts loses two variance terms — the subtracted
+# constant is missing from the Poisson variance, and the uncertainty on the
+# single estimated baseline is fully correlated across every bin in the window.
+
+RATIO_ALPHA_TRUE = 1.42
+
+
+def _late_window_counts(seed: int, *, n_bkg_bins: int = 120):
+    """Late-window F/B counts with a pre-t0 baseline estimated and subtracted.
+
+    Both groups share one signal shape, so ΣF_signal/ΣB_signal is exactly
+    ``RATIO_ALPHA_TRUE`` and the ratio estimator is unbiased by construction —
+    any coverage failure is the *uncertainty*, not the value. Counts per bin are
+    small and the flat background is a sizeable fraction of them, which is the
+    regime where the two missing terms dominate.
+    """
+    rng = np.random.default_rng(seed)
+    n_bins = 200
+    signal_backward = np.full(n_bins, 9.0)
+    level_forward, level_backward = 6.0, 5.0
+
+    raw_forward = rng.poisson(RATIO_ALPHA_TRUE * signal_backward + level_forward)
+    raw_backward = rng.poisson(signal_backward + level_backward)
+
+    # The baseline is *estimated* from a separate pre-t0 window, exactly as the
+    # reduction does — so it carries its own uncertainty.
+    bkg_forward = rng.poisson(level_forward, n_bkg_bins).astype(np.float64)
+    bkg_backward = rng.poisson(level_backward, n_bkg_bins).astype(np.float64)
+    k_forward = float(np.mean(bkg_forward))
+    k_backward = float(np.mean(bkg_backward))
+
+    background = SubtractedBackground(
+        forward=k_forward,
+        backward=k_backward,
+        forward_error=float(np.sqrt(np.sum(bkg_forward)) / n_bkg_bins),
+        backward_error=float(np.sqrt(np.sum(bkg_backward)) / n_bkg_bins),
+    )
+    return (
+        raw_forward.astype(np.float64) - k_forward,
+        raw_backward.astype(np.float64) - k_backward,
+        background,
+    )
+
+
+def _ratio_coverage(*, with_background: bool, realizations: int = 400) -> float:
+    inside = 0
+    for seed in range(realizations):
+        forward, backward, background = _late_window_counts(seed)
+        est = estimate_alpha_detailed(
+            forward,
+            backward,
+            method="ratio",
+            subtracted_background=background if with_background else None,
+        )
+        assert est.ok and est.alpha_error is not None
+        if abs(est.alpha - RATIO_ALPHA_TRUE) <= est.alpha_error:
+            inside += 1
+    return inside / realizations
+
+
+def test_ratio_error_ignoring_the_subtracted_background_under_covers():
+    """Without the background terms the interval is far too narrow.
+
+    This is the reported defect, kept as an executable statement of it: the
+    nominal 68.3 % interval covers well under 60 % of realizations because both
+    the subtracted counts' Poisson variance and the baseline's own (fully
+    correlated) uncertainty are missing.
+    """
+    assert _ratio_coverage(with_background=False) < 0.58
+
+
+def test_ratio_error_with_the_subtracted_background_is_calibrated():
+    assert 0.63 < _ratio_coverage(with_background=True) < 0.74
+
+
+def test_ratio_error_grows_when_the_background_is_declared():
+    forward, backward, background = _late_window_counts(seed=99)
+    naive = estimate_alpha_detailed(forward, backward, method="ratio")
+    aware = estimate_alpha_detailed(
+        forward, backward, method="ratio", subtracted_background=background
+    )
+    assert naive.alpha == pytest.approx(aware.alpha, rel=1e-12)
+    assert aware.alpha_error is not None and naive.alpha_error is not None
+    assert aware.alpha_error > 1.5 * naive.alpha_error
+
+
+def test_ratio_error_matches_the_closed_form_propagation():
+    """Pin the algebra: Poisson window sums plus the correlated baseline term."""
+    forward, backward, background = _late_window_counts(seed=7)
+    est = estimate_alpha_detailed(
+        forward, backward, method="ratio", subtracted_background=background
+    )
+
+    n_window = float(forward.size)
+    sum_f = float(np.sum(forward))
+    sum_b = float(np.sum(backward))
+    raw_f = sum_f + n_window * background.forward
+    raw_b = sum_b + n_window * background.backward
+    expected = est.alpha * np.sqrt(
+        raw_f / sum_f**2
+        + raw_b / sum_b**2
+        + (n_window * background.forward_error / sum_f) ** 2
+        + (n_window * background.backward_error / sum_b) ** 2
+    )
+    assert est.alpha_error == pytest.approx(expected, rel=1e-12)
+
+
+def test_ratio_error_without_a_background_is_the_plain_poisson_form():
+    """The no-background answer is unchanged (α·√(1/ΣF + 1/ΣB))."""
+    forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=4)
+    est = estimate_alpha_detailed(
+        forward, backward, method="ratio", first_good_bin=10, last_good_bin=1500
+    )
+    window_f = forward[10:1501]
+    window_b = backward[10:1501]
+    expected = est.alpha * np.sqrt(1.0 / np.sum(window_f) + 1.0 / np.sum(window_b))
+    assert est.alpha_error == pytest.approx(expected, rel=1e-12)
+
+
+def test_subtracted_background_is_ratio_only():
+    forward, backward = _synthetic_counts(600.0, _tf_polarization(), seed=4)
+    background = SubtractedBackground(1.0, 1.0, 0.1, 0.1)
+    with pytest.raises(ValueError, match="ratio"):
+        estimate_alpha_detailed(
+            forward, backward, method="diamagnetic", subtracted_background=background
+        )
+
+
+def test_ratio_error_is_suppressed_when_bootstrap_is_disabled():
+    forward, backward, background = _late_window_counts(seed=3)
+    est = estimate_alpha_detailed(
+        forward,
+        backward,
+        method="ratio",
+        n_bootstrap=0,
+        subtracted_background=background,
+    )
+    assert est.ok
+    assert est.alpha_error is None
+
+
+def test_corrected_counts_expose_the_subtracted_background() -> None:
+    """The reduction hands the estimator what it cannot infer from the arrays."""
+    n_bins = 400
+    t0_bin = 150
+    rng = np.random.default_rng(5)
+    histograms = [
+        Histogram(
+            counts=rng.poisson(40.0, n_bins).astype(np.float64),
+            bin_width=0.016,
+            t0_bin=t0_bin,
+        )
+        for _index in range(2)
+    ]
+    grouping = {
+        "background_correction": True,
+        "background_mode": "range",
+        "background_ranges": [[10, 120], [10, 120]],
+    }
+
+    corrected = corrected_grouped_counts(
+        histograms=histograms,
+        grouping=grouping,
+        forward_idx=[0],
+        backward_idx=[1],
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=True,
+    )
+
+    background = corrected.subtracted_background()
+    assert background is not None
+    assert background.forward == pytest.approx(35.0, abs=15.0)
+    # σ on a mean of n Poisson bins: √(total)/n — small but not negligible.
+    assert background.forward_error == pytest.approx(np.sqrt(background.forward / 111), rel=0.05)
+    assert background.backward_error > 0.0
+
+
+# --- diamagnetic systematics vs precession frequency --------------------------
+#
+# Investigated after a downstream report of the diamagnetic α drifting a few
+# percent low as the precession frequency rose. Synthetically it does not: the
+# estimator carries a small bias that is set by the *asymmetry amplitude* and
+# the distance of α from 1, and is flat in frequency. See
+# docs/reference/data_reduction/alpha_calibration for the write-up.
+
+
+def _diamagnetic_bias(
+    *, alpha_true: float, amplitude: float, frequency_mhz: float, seeds: int = 12
+) -> float:
+    """Mean fractional bias of the diamagnetic estimate on synthetic TF data."""
+    n_bins = 6000
+    bin_width = 0.0008
+    times = (np.arange(n_bins) + 0.5) * bin_width
+    decay = np.exp(-times / MUON_LIFETIME_US)
+    polarization = np.cos(2.0 * np.pi * frequency_mhz * times) * np.exp(-0.15 * times)
+
+    estimates = []
+    for seed in range(seeds):
+        rng = np.random.default_rng(4000 + seed)
+        forward = rng.poisson(alpha_true * 30.0 * decay * (1.0 + amplitude * polarization))
+        backward = rng.poisson(30.0 * decay * (1.0 - amplitude * polarization))
+        est = estimate_alpha_detailed(
+            forward.astype(np.float64),
+            backward.astype(np.float64),
+            method="diamagnetic",
+            n_bootstrap=0,
+        )
+        assert est.ok
+        estimates.append(est.alpha)
+    return float(np.mean(estimates) - alpha_true) / alpha_true
+
+
+def test_diamagnetic_bias_does_not_track_precession_frequency():
+    """The reported symptom is absent: no drift from 5 MHz to 27 MHz.
+
+    Each point is small and negative for the same reason (below); what this
+    pins is that the *frequency* is not the driver, so a frequency-dependent
+    dip in real calibration data points at the instrument, not the estimator.
+    """
+    biases = [
+        _diamagnetic_bias(alpha_true=1.37, amplitude=0.22, frequency_mhz=frequency)
+        for frequency in (5.0, 15.0, 27.0)
+    ]
+    assert all(abs(bias) < 0.012 for bias in biases)
+    assert max(biases) - min(biases) < 0.006
+
+
+def test_diamagnetic_bias_is_set_by_amplitude_and_the_distance_of_alpha_from_one():
+    r"""The real systematic: an :math:`O(A^2)` term that changes sign at α = 1.
+
+    Minimising WiMDA's Σ(A/σ)² has the closed-form stationary point
+    :math:`α^4 = Σ F^3/(B(F+B)) \big/ Σ B^3/(F(F+B))`. Expanding it in the
+    oscillation amplitude ``u = A·P(t)`` leaves the estimating equation
+    ``Σ s·u = ((α−1)/(α+1))·Σ s·u²+ O(u³)``: the second-order term does **not**
+    vanish for a perfectly zero-mean oscillation, so the estimate is displaced
+    by roughly ``A²·(α−1)/(α+1)`` regardless of how much data is collected.
+    That is why the residual is a fraction of a percent at a typical 20 %
+    asymmetry, grows quadratically with it, and reverses for α < 1.
+    """
+    small = _diamagnetic_bias(alpha_true=1.37, amplitude=0.08, frequency_mhz=15.0)
+    large = _diamagnetic_bias(alpha_true=1.37, amplitude=0.30, frequency_mhz=15.0)
+    assert large < small < 0.0
+    assert abs(large) > 2.0 * abs(small)
+
+    below_one = _diamagnetic_bias(alpha_true=0.73, amplitude=0.25, frequency_mhz=15.0)
+    above_one = _diamagnetic_bias(alpha_true=1.37, amplitude=0.25, frequency_mhz=15.0)
+    assert below_one > 0.0 > above_one

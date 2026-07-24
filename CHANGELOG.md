@@ -7,7 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Background-aware uncertainty for the ratio α estimate.**
+  `estimate_alpha_detailed(method="ratio", ...)` takes a new optional
+  `subtracted_background=` (a `SubtractedBackground`), and
+  `corrected_grouped_counts` now carries the constant level it removed plus that
+  level's standard error, exposed as
+  `CorrectedGroupedCounts.subtracted_background()`. Feed one to the other and the
+  reported σ_α accounts for the subtraction; the grouping window's α card does
+  this automatically. Reported from a downstream continuous-source ZF/TF
+  analysis, where the ratio σ on a late, low-counts window came out roughly a
+  factor of two small.
+
+### Fixed
+
+- **Global fit wizard: screening could not be interrupted and looked hung.**
+  Each phase-1 per-run single-fit table is a minutes-long job, and the drain
+  that collected them blocked on completion without polling `cancel_callback`,
+  then tore the pool down with a *blocking* shutdown — so neither Cancel nor
+  Ctrl-C returned control, and a caller that gave up and killed the process left
+  the spawn workers orphaned. `build_global_fit_wizard_screening_recommendation`
+  now polls cancel while it waits, force-kills the pool on cancel/error/Ctrl-C,
+  logs each completed table so the stage visibly advances, and no longer starts
+  more workers than the host has cores.
+- **Unguarded scripts no longer crash or re-run themselves in the fit wizards.**
+  Under `spawn`, every worker re-imports the caller's `__main__`, so a script
+  with no `if __name__ == "__main__":` guard re-ran its whole body in each worker
+  — either tripping multiprocessing's bootstrap `RuntimeError` or silently
+  repeating the analysis N times over. The shared pool helper now detects that
+  (and the nested re-import that would cascade), degrades to serial execution,
+  and warns once with `SpawnUnsafeWarning` naming the fix. `max_workers=1` is
+  now guaranteed never to start a worker process.
+
 ### Changed
+
+- **The ratio α uncertainty is now a closed-form propagation, not a bootstrap.**
+  It is exact for a ratio of window sums, deterministic, and is the only form
+  that can carry a background subtracted before the call. On unsubtracted counts
+  it agrees with the previous bootstrap (α·√(1/ΣF + 1/ΣB)); `n_bootstrap=0` still
+  suppresses `alpha_error`. Passing `subtracted_background=` with any method
+  other than `"ratio"` raises `ValueError`.
 
 - **Faster dynamic Kubo–Toyabe fits.** The strong-collision Volterra solver
   behind the dynamic Gaussian/Lorentzian KT components now solves its

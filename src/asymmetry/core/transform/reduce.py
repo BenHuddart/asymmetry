@@ -32,6 +32,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram
+from asymmetry.core.transform.asymmetry import SubtractedBackground
 from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     resolve_background_mode,
@@ -130,6 +131,13 @@ class CorrectedGroupedCounts:
     spectra the reduction applies it to. ``forward_error``/``backward_error`` are
     the propagated per-bin count errors when background subtraction supplied them
     (both-or-neither), else ``None``. Arrays are truncated to their common length.
+
+    ``background_level``/``background_level_error`` record the *constant* level
+    subtracted from each group and its standard error, for the modes that
+    subtract one (``None`` for ``reference_run``, which subtracts a per-bin
+    spectrum, and when no background was applied). They exist because the
+    corrected arrays alone cannot tell a downstream estimator what was taken
+    out of them — see :meth:`subtracted_background`.
     """
 
     forward: NDArray[np.float64]
@@ -140,6 +148,26 @@ class CorrectedGroupedCounts:
     bin_width: float
     deadtime_applied: bool
     background_state: dict[str, object] | None
+    background_level: tuple[float, float] | None = None
+    background_level_error: tuple[float, float] | None = None
+
+    def subtracted_background(self) -> SubtractedBackground | None:
+        """The constant background removed here, in the alpha estimator's form.
+
+        Hand this to
+        :func:`~asymmetry.core.transform.asymmetry.estimate_alpha_detailed` with
+        ``method="ratio"`` so its uncertainty accounts for the subtraction;
+        without it the reported σ is roughly a factor of two small in a late,
+        low-counts window. ``None`` when nothing constant was subtracted.
+        """
+        if self.background_level is None or self.background_level_error is None:
+            return None
+        return SubtractedBackground(
+            forward=float(self.background_level[0]),
+            backward=float(self.background_level[1]),
+            forward_error=float(self.background_level_error[0]),
+            backward_error=float(self.background_level_error[1]),
+        )
 
 
 def corrected_grouped_counts(
@@ -289,6 +317,20 @@ def corrected_grouped_counts(
             deadtime_applied=dt_applied,
             background_applied=bool(background_state),
         )
+        background_level: tuple[float, float] | None = None
+        background_level_error: tuple[float, float] | None = None
+        if (
+            bkg_result is not None
+            and bkg_result.applied
+            and bkg_result.values is not None
+            and bkg_result.value_errors is not None
+        ):
+            background_level = (float(bkg_result.values[0]), float(bkg_result.values[1]))
+            background_level_error = (
+                float(bkg_result.value_errors[0]),
+                float(bkg_result.value_errors[1]),
+            )
+
         return CorrectedGroupedCounts(
             forward=forward,
             backward=backward,
@@ -298,6 +340,8 @@ def corrected_grouped_counts(
             bin_width=float(bin_width),
             deadtime_applied=dt_applied,
             background_state=background_state,
+            background_level=background_level,
+            background_level_error=background_level_error,
         )
 
 
