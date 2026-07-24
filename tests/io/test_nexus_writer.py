@@ -285,6 +285,10 @@ def _first_file(root: str, suffix: str) -> str | None:
         return None
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in sorted(filenames):
+            # A corpus copied from macOS carries AppleDouble stubs ("._foo.nxs",
+            # not HDF5) that sort before the real files; skip anything hidden.
+            if name.startswith("."):
+                continue
             if name.lower().endswith(suffix):
                 return os.path.join(dirpath, name)
     return None
