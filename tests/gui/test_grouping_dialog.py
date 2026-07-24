@@ -377,13 +377,69 @@ def test_both_columns_fit_without_scroll_at_default_size(qapp: QApplication) -> 
         except AssertionError:
             pass  # genuinely over budget — the asserts below name the culprit
 
-    for scroll in (dialog._grouping_scroll, dialog._corrections_scroll):
-        assert scroll.verticalScrollBar().maximum() == 0
-        assert scroll.horizontalScrollBar().maximum() == 0
+    diagnostic = _column_budget_diagnostic(dialog)
+    for name, scroll in (
+        ("grouping", dialog._grouping_scroll),
+        ("corrections", dialog._corrections_scroll),
+    ):
+        assert scroll.verticalScrollBar().maximum() == 0, f"{name} v-scroll\n{diagnostic}"
+        assert scroll.horizontalScrollBar().maximum() == 0, f"{name} h-scroll\n{diagnostic}"
     assert not dialog._corrections_overflow.isVisible()
     assert not dialog._grouping_overflow.isVisible()
 
     dialog.close()
+
+
+def _column_budget_diagnostic(dialog: GroupingDialog) -> str:
+    """Name the widget binding each pane's width, for overflow failures.
+
+    This budget regresses platform-asymmetrically (Linux's wider default font
+    and button metrics overflow panes that fit on macOS — see PR #274), so a
+    bare ``assert 36 == 0`` from CI is undebuggable from a Mac. Report every
+    pane's viewport vs minimum and the visible rows wide enough to be the
+    binding constraint, plus the font/DPI the measurement ran under.
+    """
+    from PySide6.QtWidgets import QWidget
+
+    app_font = QApplication.font()
+    screen = dialog.windowHandle().screen() if dialog.windowHandle() else None
+    lines = [
+        f"font={app_font.family()} {app_font.pointSizeF()}pt "
+        f"dpi={screen.logicalDotsPerInch() if screen else '?'}"
+    ]
+    panes: list[tuple[str, QWidget]] = []
+    scope = getattr(dialog, "_scope_panel", None)
+    if isinstance(scope, QWidget):
+        panes.append(("scope_panel", scope))
+    for name, scroll in (
+        ("grouping", dialog._grouping_scroll),
+        ("corrections", dialog._corrections_scroll),
+    ):
+        inner = scroll.widget()
+        lines.append(
+            f"{name}: viewport={scroll.viewport().width()} "
+            f"innerMin={inner.minimumSizeHint().width()} "
+            f"hmax={scroll.horizontalScrollBar().maximum()} "
+            f"vmax={scroll.verticalScrollBar().maximum()}"
+        )
+        panes.append((name, inner))
+    for pane_name, pane in panes:
+        if pane not in (dialog._grouping_scroll.widget(), dialog._corrections_scroll.widget()):
+            lines.append(f"{pane_name}: minHint={pane.minimumSizeHint().width()}")
+        layout = pane.layout()
+        if layout is None:
+            continue
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            widget = item.widget() if item is not None else None
+            if widget is not None and widget.isVisible():
+                min_w = widget.minimumSizeHint().width()
+                if min_w > 120:
+                    lines.append(
+                        f"  {pane_name}[{i}] {type(widget).__name__}"
+                        f" '{widget.objectName() or ''}': minHint={min_w}"
+                    )
+    return "\n".join(lines)
 
 
 def test_grouping_overflow_omits_periods_for_single_period_data(qapp: QApplication) -> None:
