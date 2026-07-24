@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Faster dynamic Kubo–Toyabe fits.** The strong-collision Volterra solver
+  behind the dynamic Gaussian/Lorentzian KT components now solves its
+  trapezoidal discretisation as a blocked lower-triangular Toeplitz system
+  (FFT cross-block coupling, dense within-block triangular solve) instead of an
+  O(n²) Python recursion. On a 20001-point grid this is a >20× speedup at
+  machine-precision equivalence, removing the model layer's hottest inner loop
+  as a bottleneck during fits where ν or the width are free.
+
 ## [0.16.0] - 2026-07-24
 
 ### Added

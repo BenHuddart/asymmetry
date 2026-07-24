@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import NDArray
 from scipy import integrate
+from scipy.linalg import solve_triangular, toeplitz
 from scipy.special import erfcx, j0, sici
 
 from asymmetry.core.fitting.parameters import ParamInfo, param_info_map
@@ -682,6 +683,13 @@ def gaussian_broadened_kt(
     return float(out[0]) if scalar else out
 
 
+# Forward-substitution block size for _strong_collision_solve: cross-block
+# coupling is an O(n log n) FFT convolution, within-block coupling a dense
+# BxB triangular solve, so total cost is ~O(n log n + n B).  512 keeps both
+# terms small while holding the FFT products at machine precision.
+_STRONG_COLLISION_BLOCK = 512
+
+
 def _strong_collision_solve(
     gs_grid: NDArray,
     nu: float,
@@ -693,6 +701,60 @@ def _strong_collision_solve(
     f(t) = e^{-nu t} G_s(t), discretised with the trapezoidal rule on a uniform
     grid of spacing ``h``.  ``gs_grid`` is the static G_s sampled on that grid
     (gs_grid[0] = G_s(0) = 1).
+
+    The trapezoidal discretisation is a unit-lower-triangular Toeplitz system
+    for g[1:] (see ``_strong_collision_solve_reference`` for the equivalent
+    scalar recursion):
+
+        denom * g[i] - nu*h * sum_{j=1}^{i-1} f[i-j] * g[j] = f[i] * (1 + nu*h/2)
+
+    with ``denom = 1 - nu*h*f[0]/2``.  It is solved by blocked forward
+    substitution -- cross-block contributions via FFT convolution of the
+    already-known g against the (bounded) kernel f, the within-block coupling
+    via a dense triangular solve of the block's Toeplitz matrix -- for
+    O(n log n + n B) cost in place of the O(n^2) scalar recursion.
+    """
+    n = gs_grid.shape[0]
+    idx = np.arange(n)
+    f = np.exp(np.clip(-nu * idx * h, -700, 0)) * gs_grid
+    g = np.empty(n, dtype=float)
+    g[0] = 1.0
+    if n == 1:
+        return g
+    denom = 1.0 - 0.5 * nu * h * f[0]
+    coef = 1.0 + 0.5 * nu * h
+    block = _STRONG_COLLISION_BLOCK
+    for start in range(1, n, block):
+        end = min(start + block, n)
+        bs = end - start
+        rhs = f[start:end] * coef
+        if start > 1:
+            gk = g[1:start]
+            fk = f[1:end]
+            size = 1 << (gk.shape[0] + fk.shape[0] - 2).bit_length()
+            conv = np.fft.irfft(np.fft.rfft(gk, size) * np.fft.rfft(fk, size), size)
+            rhs = rhs + nu * h * conv[start - 2 : start - 2 + bs]
+        col = np.empty(bs)
+        col[0] = denom
+        if bs > 1:
+            col[1:] = -nu * h * f[1:bs]
+        trow = np.zeros(bs)
+        trow[0] = denom
+        block_mat = toeplitz(col, trow)
+        g[start:end] = solve_triangular(block_mat, rhs, lower=True, check_finite=False)
+    return g
+
+
+def _strong_collision_solve_reference(
+    gs_grid: NDArray,
+    nu: float,
+    h: float,
+) -> NDArray:
+    """Scalar O(n^2) trapezoidal recursion, kept as the reference solution.
+
+    This is the original, obviously-correct implementation of
+    ``_strong_collision_solve``; the fast solver is validated against it in the
+    tests (``tests/core/test_dynamic_relaxation.py``).
     """
     n = gs_grid.shape[0]
     idx = np.arange(n)
