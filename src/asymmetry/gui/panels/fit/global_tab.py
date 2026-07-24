@@ -2049,6 +2049,9 @@ class GlobalFitTab(FitTabBase):
                     order_key=self._asymmetry_series_order_key(),
                     amplitude_param=amplitude_param,
                     frequency_param=frequency_param,
+                    # Independent (as_provided) batches are embarrassingly parallel; let
+                    # the engine fan the per-run fits across processes (no-op for chain).
+                    max_workers=os.cpu_count(),
                     **fit_kwargs,
                 ),
                 on_finished=self._on_asymmetry_series_finished,
