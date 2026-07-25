@@ -477,19 +477,34 @@ def _lorentzian_lf_lineshape(a_L: float, omega0: float, t: NDArray, n_w: int = 2
         whi = w_hi[:, None]
         wlo = w_lo[:, None]
 
-        def _f1(wv: NDArray) -> NDArray:
-            return (np.cos(wv * tp) + wv * tp * np.sin(wv * tp)) / tp**2
+        # ``I1`` and ``I3`` are elementary antiderivatives of the same
+        # oscillatory kernel, evaluated at the same two limits. Written
+        # separately they cost four sin/cos passes over the (n_w, n_t) grid
+        # instead of two, and re-derive tp**2..tp**4 four times over — and this
+        # kernel is the dominant cost of every longitudinal-field Lorentzian
+        # Kubo-Toyabe evaluation, hence of any wizard candidate carrying one.
+        # Computing sin/cos once per limit and sharing the inverse powers of tp
+        # is a pure arithmetic rearrangement: same expressions, same order of
+        # accumulation, half the transcendental work.
+        inv_tp = 1.0 / tp
+        inv_tp2 = inv_tp * inv_tp
+        inv_tp3 = inv_tp2 * inv_tp
+        inv_tp4 = inv_tp2 * inv_tp2
 
-        def _f3(wv: NDArray) -> NDArray:
-            return (
-                (wv**3 / tp) * np.sin(wv * tp)
-                + (3.0 * wv**2 / tp**2) * np.cos(wv * tp)
-                - (6.0 * wv / tp**3) * np.sin(wv * tp)
-                - (6.0 / tp**4) * np.cos(wv * tp)
-            )
+        def _f1_f3(wv: NDArray) -> tuple[NDArray, NDArray]:
+            x = wv * tp
+            sin_x = np.sin(x)
+            cos_x = np.cos(x)
+            f1 = (cos_x + x * sin_x) * inv_tp2
+            f3 = (wv**3 * inv_tp - 6.0 * wv * inv_tp3) * sin_x + (
+                3.0 * wv**2 * inv_tp2 - 6.0 * inv_tp4
+            ) * cos_x
+            return f1, f3
 
-        i1 = _f1(whi) - _f1(wlo)
-        i3 = _f3(whi) - _f3(wlo)
+        f1_hi, f3_hi = _f1_f3(whi)
+        f1_lo, f3_lo = _f1_f3(wlo)
+        i1 = f1_hi - f1_lo
+        i3 = f3_hi - f3_lo
         _, ci_hi = sici(whi * tp)
         _, ci_lo = sici(np.clip(wlo * tp, 1e-300, None))
         c_term = np.where(near[:, None], 0.0, (c[:, None] ** 2 / (4.0 * w0**2)) * (ci_hi - ci_lo))

@@ -3126,15 +3126,19 @@ def test_phase_one_screening_reports_progress_per_completed_table(
 def test_single_fit_table_worker_count_never_oversubscribes_the_host(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Phase-1 width is bounded by the CPU count, like the wavefront's.
+    """Phase-1 width is the CPU count, bounded only by how many tables there are.
 
     A fixed width of four on a two-core host runs four minutes-long fits over
-    two cores, which is slower than two workers *and* looks stalled.
+    two cores, which is slower than two workers *and* looks stalled — and the
+    same fixed four on a large host left a 14-dataset series running at well
+    under one core while the stage looked hung from outside. Phase-1 tables are
+    independent whole-dataset jobs, so the host's core count is the right bound.
     """
     monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 2)
     assert global_fit_wizard_module._single_fit_table_worker_count(37) == 2
 
     monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 16)
-    assert global_fit_wizard_module._single_fit_table_worker_count(37) == 4
+    assert global_fit_wizard_module._single_fit_table_worker_count(37) == 16
+    assert global_fit_wizard_module._single_fit_table_worker_count(9) == 9
     assert global_fit_wizard_module._single_fit_table_worker_count(1) == 1
     assert global_fit_wizard_module._single_fit_table_worker_count(0) == 1

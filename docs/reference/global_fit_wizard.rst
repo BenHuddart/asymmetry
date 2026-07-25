@@ -299,3 +299,81 @@ The screening pass fans those tables across a process pool, so the
 :ref:`fit-wizard-scripting-and-parallelism` applies here too: an unguarded
 script degrades to serial execution with a ``SpawnUnsafeWarning`` rather than
 crashing.
+
+Screening never sets ``recommended_key``. That is deliberate — a pre-screen score
+comes from independent per-dataset fits, which are not evidence about a *coupled*
+global fit — but it means a script that reads ``recommended_key`` alone gets
+``None`` from a perfectly good screen. Read the ranked table instead
+(``sorted_prescreen_assessments()``), or read ``summary``, which now names how
+many candidates scored and which one ranks first, and says explicitly when a
+screen scored *nothing* — the failure case that used to be indistinguishable
+from an ordinary one.
+
+.. _global-fit-wizard-effort-tiers:
+
+Buying a cheaper answer: effort tiers
+-------------------------------------
+
+Screening cost is (candidates × datasets × per-fit cost), and the portfolio
+offered for a broad scope includes numerically integrated dynamic Kubo-Toyabe
+candidates that can cost an order of magnitude more than the rest of the
+portfolio combined. On a fourteen-dataset series that is the difference between
+a screen that returns and one that does not.
+
+``effort_tier`` controls it:
+
+``EffortTier.LOW``
+   Screens a small portfolio of the cheapest, most parsimonious candidates.
+   Coarse, and fast enough to be interactive.
+
+``EffortTier.BALANCED``
+   Drops only the numerically expensive candidates.
+
+``EffortTier.THOROUGH`` / ``EffortTier.EXHAUSTIVE`` (the default)
+   Screen the whole portfolio, exactly as before.
+
+Candidates named by a multiplet pattern match are never dropped — those are
+identified by the data, so removing them would change the answer rather than
+coarsen it. Whatever *is* skipped is announced through ``progress_callback`` and
+listed in ``instrumentation["screening_skipped_template_keys"]``, so a coarser
+answer always says what it was coarsened by.
+
+.. _global-fit-wizard-timing:
+
+Timing: telling "slow" apart from "hung"
+----------------------------------------
+
+Both wizards fill in a standard timing block when you pass an ``instrumentation``
+dict, and emit structured per-stage events to a ``stage_callback``:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.global_fit_wizard import (
+       build_global_fit_wizard_screening_recommendation,
+   )
+   from asymmetry.core.fitting.wizard_scope import EffortTier
+
+   def main():
+       instrumentation = {}
+       events = []
+       recommendation = build_global_fit_wizard_screening_recommendation(
+           datasets,
+           effort_tier=EffortTier.BALANCED,
+           instrumentation=instrumentation,
+           stage_callback=events.append,
+       )
+       timing = instrumentation["timing"]
+       print(timing["elapsed_seconds"], timing["cpu_seconds"], timing["cpu_cores"])
+       for stage in timing["stages"]:
+           print(stage["stage"], stage["elapsed_seconds"], stage["cpu_cores"])
+
+   if __name__ == "__main__":
+       main()
+
+``cpu_seconds`` covers this process **and its reaped pool workers**, so
+``cpu_cores`` is what distinguishes a slow computation (several cores busy) from
+a stalled one (near zero) — the question that otherwise sends a caller to the
+process table. Each ``stage_callback`` event carries the stage name, a
+``start``/``item``/``end`` marker, items done and total, and the elapsed and CPU
+time so far, which is what you want a timeout to watch: absence of *progress*
+rather than total runtime.

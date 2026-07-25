@@ -45,6 +45,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _residual_diagnostics,
     _residual_gate_reasons,
     _scipy_fit_fallback,
+    _template_cost_rank,
     build_candidate_templates,
     build_fit_wizard_recommendation_for_templates,
     build_wizard_families,
@@ -79,6 +80,10 @@ from asymmetry.core.fitting.wizard_scope import (
     ScopeResolution,
     WizardScope,
     resolve_scope_for_datasets,
+)
+from asymmetry.core.fitting.wizard_timing import (
+    WizardStageProgress,
+    stage_timer,
 )
 
 _ROLE_DELTA_THRESHOLD = 2.0
@@ -223,23 +228,98 @@ _OSCILLATORY_RESCUE_MAX_SCOUTS = 3
 # lower-level enumerator selector so existing callers/tests that pass
 # ``search_engine=`` directly are unaffected.
 #
-# REVISION (PR 5 rework): every tier now resolves to the exact bounded-wavefront
-# engine. PR 2's exact bounds made Exhaustive near-minimal (~1000 fits) and
-# 12-way parallel, so empirically the heuristic Low/Balanced engines — serial by
-# construction — were *slower* (up to 15x) on real workloads with no fit-count
-# headroom left to reclaim. The user-facing slider therefore collapses to one
-# honest mode; the heuristic engines are retained only behind the low-level
-# ``search_engine`` string (the PR 4 seam) for future large-P use and regression
-# coverage. Because every tier maps to ``SEARCH_ENGINE_EXHAUSTIVE``, the extra
-# tier knobs (I portfolio cap / J identifiability demotion / K screening
-# decimation) — all gated on the *heuristic engine string*, never on
-# ``effort_tier`` — are inert for every user-facing tier by construction.
+# REVISION (PR 5 rework): every tier resolves to the exact bounded-wavefront
+# engine for the *role search*. PR 2's exact bounds made Exhaustive near-minimal
+# (~1000 fits) and 12-way parallel, so empirically the heuristic Low/Balanced
+# engines — serial by construction — were *slower* (up to 15x) on real workloads
+# with no fit-count headroom left to reclaim. That measurement still stands and
+# the mapping below is unchanged; the heuristic engines remain reachable only
+# behind the low-level ``search_engine`` string (the PR 4 seam) for future
+# large-P use and regression coverage.
+#
+# REVISION (screening tiers): the search engine was never where a real series
+# spends its time. Profiling the screening stage on a 14-dataset synthetic
+# series shows ~95 s of CPU *per dataset*, of which ~88 % is the numerically
+# integrated longitudinal-field Kubo-Toyabe family — candidate templates the
+# portfolio offers on every series whether or not the data ask for them. Because
+# the tier knobs above (I portfolio cap / J identifiability demotion /
+# K screening decimation) are all gated on the heuristic engine string, no tier
+# could buy a cheaper answer at all: the slider was inert end to end.
+#
+# ``_EFFORT_TIER_SCREENING`` fixes that at the stage that dominates, by giving
+# each tier a *portfolio* budget for screening (see ``ScreeningEffortProfile``).
+# Low and Balanced drop the numerically expensive candidates and cap the
+# portfolio; Thorough and Exhaustive screen everything, exactly as before, so no
+# existing caller's answer changes.
 # --------------------------------------------------------------------------- #
 _EFFORT_TIER_SEARCH_ENGINE: dict[EffortTier, str] = {
     EffortTier.LOW: SEARCH_ENGINE_EXHAUSTIVE,
     EffortTier.BALANCED: SEARCH_ENGINE_EXHAUSTIVE,
     EffortTier.THOROUGH: SEARCH_ENGINE_EXHAUSTIVE,
     EffortTier.EXHAUSTIVE: SEARCH_ENGINE_EXHAUSTIVE,
+}
+
+
+@dataclass(frozen=True)
+class ScreeningEffortProfile:
+    """What one :class:`EffortTier` may spend on the *screening* stage.
+
+    Screening fits every portfolio template to every dataset independently, so
+    its cost is (templates x datasets x per-fit cost) and the only levers that
+    matter are which templates are offered and how many. A tier that trims the
+    portfolio returns a coarser ranking over a smaller candidate set — a real,
+    honest trade, and the one a caller reaches for when the exhaustive answer
+    will not finish.
+    """
+
+    #: Hard cap on screened templates, or ``None`` for "no cap". Retained
+    #: templates are the cheapest, most parsimonious ones (plus every
+    #: pattern-matched candidate, which is never dropped).
+    max_templates: int | None
+    #: Drop templates whose slowest component is tagged
+    #: :attr:`ComputationalCost.EXPENSIVE`. These are the numerically integrated
+    #: dynamic Kubo-Toyabe / powder-average models; one of them can be an order
+    #: of magnitude more expensive than the rest of the portfolio combined.
+    drop_expensive_templates: bool
+    #: Drop templates with more than this many additive terms, or ``None``.
+
+    max_additive_terms: int | None
+
+    @property
+    def prunes(self) -> bool:
+        """Does this profile restrict the portfolio at all?"""
+        return (
+            self.max_templates is not None
+            or self.drop_expensive_templates
+            or self.max_additive_terms is not None
+        )
+
+
+#: Per-tier screening budget. Thorough/Exhaustive are unrestricted, so every
+#: caller that does not pass ``effort_tier`` (the default is
+#: :data:`~asymmetry.core.fitting.wizard_scope.DEFAULT_EFFORT_TIER`, i.e.
+#: Exhaustive) screens exactly the portfolio it screened before.
+_EFFORT_TIER_SCREENING: dict[EffortTier, ScreeningEffortProfile] = {
+    EffortTier.LOW: ScreeningEffortProfile(
+        max_templates=6,
+        drop_expensive_templates=True,
+        max_additive_terms=3,
+    ),
+    EffortTier.BALANCED: ScreeningEffortProfile(
+        max_templates=10,
+        drop_expensive_templates=True,
+        max_additive_terms=None,
+    ),
+    EffortTier.THOROUGH: ScreeningEffortProfile(
+        max_templates=None,
+        drop_expensive_templates=False,
+        max_additive_terms=None,
+    ),
+    EffortTier.EXHAUSTIVE: ScreeningEffortProfile(
+        max_templates=None,
+        drop_expensive_templates=False,
+        max_additive_terms=None,
+    ),
 }
 
 #: Technique I (Low portfolio cap): Low shortlists at most this many templates
@@ -617,14 +697,22 @@ def _wavefront_worker_count(task_count: int) -> int:
 
 
 def _single_fit_table_worker_count(task_count: int) -> int:
-    # Bounded by the host's CPU count as well as the template cap: each phase-1
-    # table is minutes of CPU-bound fitting, so running more of them than there
-    # are cores only lengthens the time to the *first* completed table — which
-    # is the stage's only sign of life.
+    """Workers for phase-1 single-fit table generation — one task per *dataset*.
+
+    Bounded by the host's CPU count: each table is minutes of CPU-bound fitting,
+    so running more of them than there are cores only lengthens the time to the
+    *first* completed table — which is the stage's only sign of life.
+
+    It is deliberately **not** bounded by ``_MAX_TEMPLATE_WORKERS``. That cap
+    sizes template-level fan-out inside one series fit, where the tasks share
+    caches and the deeper stages fan out again; phase-1 tables are independent
+    whole-dataset jobs, and capping them at four left a 14-dataset series using
+    a fraction of a large host while taking 3.5 sequential rounds to finish.
+    """
     if task_count <= 0:
         return 1
     cpu_count = os.cpu_count() or 1
-    return max(1, min(task_count, cpu_count, _MAX_TEMPLATE_WORKERS))
+    return max(1, min(task_count, cpu_count))
 
 
 def _try_open_process_pool(
@@ -975,6 +1063,101 @@ def build_global_fit_wizard_candidate_portfolio(
     )
 
 
+#: Cost rank at or above which a template counts as numerically expensive.
+_EXPENSIVE_COST_RANK = 2
+
+
+def screening_templates_for_effort_tier(
+    templates: Sequence[CandidateTemplate],
+    effort_tier: EffortTier,
+    *,
+    pattern_template_keys: Sequence[str] = (),
+) -> tuple[tuple[CandidateTemplate, ...], tuple[CandidateTemplate, ...]]:
+    """Split a candidate portfolio into ``(screened, skipped)`` for one effort tier.
+
+    Templates named by a multiplet *pattern match* are never skipped: those are
+    positively identified by the data, so dropping them would change the answer
+    rather than coarsen it. Everything else is ranked cheapest-and-simplest
+    first — the order in which a shorter portfolio should be spent — and the
+    tier's budget applied.
+
+    Model order of the retained templates is preserved, so a caller comparing
+    two tiers' tables reads the same rows in the same order.
+    """
+    profile = _EFFORT_TIER_SCREENING.get(effort_tier)
+    ordered = tuple(templates)
+    if profile is None or not profile.prunes or not ordered:
+        return ordered, ()
+
+    protected = set(pattern_template_keys)
+    index_by_key = {template.key: index for index, template in enumerate(ordered)}
+
+    def _priority(template: CandidateTemplate) -> tuple[int, int, int, int]:
+        return (
+            0 if template.key in protected else 1,
+            _template_cost_rank(template),
+            int(template.additive_terms),
+            index_by_key[template.key],
+        )
+
+    kept_keys: set[str] = set()
+    for template in sorted(ordered, key=_priority):
+        if template.key in protected:
+            kept_keys.add(template.key)
+            continue
+        if profile.drop_expensive_templates and _template_cost_rank(template) >= (
+            _EXPENSIVE_COST_RANK
+        ):
+            continue
+        if (
+            profile.max_additive_terms is not None
+            and int(template.additive_terms) > profile.max_additive_terms
+        ):
+            continue
+        if profile.max_templates is not None and len(kept_keys) >= profile.max_templates:
+            continue
+        kept_keys.add(template.key)
+
+    screened = tuple(template for template in ordered if template.key in kept_keys)
+    skipped = tuple(template for template in ordered if template.key not in kept_keys)
+    return screened, skipped
+
+
+def _apply_screening_effort_tier(
+    portfolio: GlobalFitWizardCandidatePortfolio,
+    effort_tier: EffortTier,
+    *,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+) -> GlobalFitWizardCandidatePortfolio:
+    """Return ``portfolio`` narrowed to what ``effort_tier`` will screen.
+
+    The skipped templates are announced, never silently dropped: a coarser answer
+    is only honest if the caller can see what it was coarsened by.
+    """
+    screened, skipped = screening_templates_for_effort_tier(
+        portfolio.templates,
+        effort_tier,
+        pattern_template_keys=portfolio.pattern_template_keys,
+    )
+    if not skipped:
+        return portfolio
+    _progress_log(
+        progress_callback,
+        f"Effort tier '{effort_tier.value}': screening {len(screened)} of "
+        f"{len(portfolio.templates)} candidates; skipping "
+        + ", ".join(template.key for template in skipped)
+        + ".",
+    )
+    _set_metric(instrumentation, "screening_effort_tier", effort_tier.value)
+    _set_metric(
+        instrumentation,
+        "screening_skipped_template_keys",
+        [template.key for template in skipped],
+    )
+    return replace(portfolio, templates=screened)
+
+
 def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     datasets: list[MuonDataset],
     current_model: CompositeModel | None = None,
@@ -984,8 +1167,18 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    instrumentation: dict[str, object] | None = None,
+    stage_callback: Callable[[WizardStageProgress], None] | None = None,
 ) -> tuple[GlobalFitWizardCandidatePortfolio, dict[int, FitWizardRecommendation], tuple[int, ...]]:
     """Return a complete per-run single-fit table set for one global-wizard portfolio.
+
+    ``effort_tier`` sizes the screened portfolio (see
+    :func:`screening_templates_for_effort_tier`): Low and Balanced trade candidate
+    coverage for a table that finishes, Thorough and Exhaustive screen everything.
+    ``instrumentation`` and ``stage_callback`` carry the standard timing block and
+    per-stage progress events described in
+    :mod:`asymmetry.core.fitting.wizard_timing`.
 
     ``cancel_callback`` is polled cooperatively between per-run single-fit tasks
     on the serial path and, on the process-pool path, *while draining* the
@@ -1010,6 +1203,12 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         current_model=current_model,
         scope=scope,
         user_frequencies_mhz=user_frequencies_mhz,
+    )
+    portfolio = _apply_screening_effort_tier(
+        portfolio,
+        effort_tier,
+        progress_callback=progress_callback,
+        instrumentation=instrumentation,
     )
     expected_template_keys = candidate_template_keys(portfolio.templates)
     existing = (
@@ -1053,33 +1252,15 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
 
     generated_run_numbers: list[int] = []
 
-    worker_count = _single_fit_table_worker_count(len(missing_datasets))
-    if worker_count <= 1:
-        for dataset in missing_datasets:
-            if cancel_callback is not None and cancel_callback():
-                raise FitCancelledError("Global fit wizard analysis cancelled.")
-            _progress_log(
-                progress_callback,
-                f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
-            )
-            run_number, recommendation = _single_fit_recommendation_task(
-                dataset,
-                portfolio.templates,
-                SelectionMetric.AICC,
-            )
-            complete_by_run[run_number] = recommendation
-            generated_run_numbers.append(run_number)
-    else:
-        _progress_log(
-            progress_callback,
-            f"Running phase-1 single-fit table generation with {worker_count} spawn-safe workers.",
-        )
-        executor = _try_open_process_pool(
-            max_workers=worker_count,
-            progress_callback=progress_callback,
-            activity="Phase-1 single-fit table generation",
-        )
-        if executor is None:
+    with stage_timer(
+        instrumentation,
+        "screening.single_fit_tables",
+        items_total=len(missing_datasets),
+        stage_callback=stage_callback,
+        message=(f"Preparing single-fit comparison tables for {len(missing_datasets)} dataset(s)."),
+    ) as advance:
+        worker_count = _single_fit_table_worker_count(len(missing_datasets))
+        if worker_count <= 1:
             for dataset in missing_datasets:
                 if cancel_callback is not None and cancel_callback():
                     raise FitCancelledError("Global fit wizard analysis cancelled.")
@@ -1094,56 +1275,92 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
                 )
                 complete_by_run[run_number] = recommendation
                 generated_run_numbers.append(run_number)
+                advance(
+                    len(generated_run_numbers),
+                    f"Single-fit table {dataset.run_label}: done "
+                    f"({len(generated_run_numbers)}/{len(missing_datasets)}).",
+                )
         else:
-            try:
-                future_to_dataset = {}
+            _progress_log(
+                progress_callback,
+                f"Running phase-1 single-fit table generation with {worker_count} spawn-safe workers.",
+            )
+            executor = _try_open_process_pool(
+                max_workers=worker_count,
+                progress_callback=progress_callback,
+                activity="Phase-1 single-fit table generation",
+            )
+            if executor is None:
                 for dataset in missing_datasets:
+                    if cancel_callback is not None and cancel_callback():
+                        raise FitCancelledError("Global fit wizard analysis cancelled.")
                     _progress_log(
                         progress_callback,
                         f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
                     )
-                    future_to_dataset[
-                        executor.submit(
-                            _single_fit_recommendation_task,
-                            dataset,
-                            portfolio.templates,
-                            SelectionMetric.AICC,
-                        )
-                    ] = dataset
-
-                # Poll cancel *while waiting* rather than blocking on the next
-                # completion: each ``wait`` returns after a completion or after
-                # one poll interval, so a cancel is noticed in well under a
-                # second instead of after the remaining minutes of fits.
-                pending = set(future_to_dataset)
-                total = len(pending)
-                while pending:
-                    if cancel_callback is not None and cancel_callback():
-                        raise FitCancelledError("Global fit wizard analysis cancelled.")
-                    done, pending = wait(
-                        pending,
-                        timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
-                        return_when=FIRST_COMPLETED,
+                    run_number, recommendation = _single_fit_recommendation_task(
+                        dataset,
+                        portfolio.templates,
+                        SelectionMetric.AICC,
                     )
-                    for future in done:
-                        run_number, recommendation = future.result()
-                        complete_by_run[run_number] = recommendation
-                        generated_run_numbers.append(run_number)
+                    complete_by_run[run_number] = recommendation
+                    generated_run_numbers.append(run_number)
+                    advance(
+                        len(generated_run_numbers),
+                        f"Single-fit table {dataset.run_label}: done "
+                        f"({len(generated_run_numbers)}/{len(missing_datasets)}).",
+                    )
+            else:
+                try:
+                    future_to_dataset = {}
+                    for dataset in missing_datasets:
                         _progress_log(
                             progress_callback,
-                            f"Single-fit table {future_to_dataset[future].run_label}: "
-                            f"done ({len(generated_run_numbers)}/{total}).",
+                            f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
                         )
-            except BaseException:
-                # Cancel, a worker crash, or a Ctrl-C: never wait on the fits
-                # still in flight (that is the minutes-long block this stage is
-                # trying to escape). Drop queued work and force-kill the
-                # workers, so the caller gets control back at once and no spawn
-                # worker is left orphaned.
-                terminate_spawn_pool(executor)
-                raise
-            else:
-                _shutdown_process_pool(executor)
+                        future_to_dataset[
+                            executor.submit(
+                                _single_fit_recommendation_task,
+                                dataset,
+                                portfolio.templates,
+                                SelectionMetric.AICC,
+                            )
+                        ] = dataset
+
+                    # Poll cancel *while waiting* rather than blocking on the next
+                    # completion: each ``wait`` returns after a completion or after
+                    # one poll interval, so a cancel is noticed in well under a
+                    # second instead of after the remaining minutes of fits.
+                    pending = set(future_to_dataset)
+                    total = len(pending)
+                    while pending:
+                        if cancel_callback is not None and cancel_callback():
+                            raise FitCancelledError("Global fit wizard analysis cancelled.")
+                        done, pending = wait(
+                            pending,
+                            timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
+                            return_when=FIRST_COMPLETED,
+                        )
+                        for future in done:
+                            run_number, recommendation = future.result()
+                            complete_by_run[run_number] = recommendation
+                            generated_run_numbers.append(run_number)
+                            message = (
+                                f"Single-fit table {future_to_dataset[future].run_label}: "
+                                f"done ({len(generated_run_numbers)}/{total})."
+                            )
+                            _progress_log(progress_callback, message)
+                            advance(len(generated_run_numbers), message)
+                except BaseException:
+                    # Cancel, a worker crash, or a Ctrl-C: never wait on the fits
+                    # still in flight (that is the minutes-long block this stage is
+                    # trying to escape). Drop queued work and force-kill the
+                    # workers, so the caller gets control back at once and no spawn
+                    # worker is left orphaned.
+                    terminate_spawn_pool(executor)
+                    raise
+                else:
+                    _shutdown_process_pool(executor)
 
     complete_by_run = _sync_single_fit_recommendation_store(
         existing_recommendations_by_run,
@@ -1165,8 +1382,29 @@ def build_global_fit_wizard_screening_recommendation(
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    instrumentation: dict[str, object] | None = None,
+    stage_callback: Callable[[WizardStageProgress], None] | None = None,
 ) -> GlobalFitWizardRecommendation:
-    """Build the ranking table from per-run single-fit wizard results only."""
+    """Build the ranking table from per-run single-fit wizard results only.
+
+    This stage fits every portfolio candidate to every dataset independently, so
+    its cost is (candidates x datasets x per-fit cost) and it dominates the
+    wizard's runtime on a real temperature or field series.
+
+    ``effort_tier`` is the lever for that cost: Low and Balanced screen a trimmed
+    portfolio (see :func:`screening_templates_for_effort_tier`) and return a
+    coarser ranking that finishes, while Thorough and Exhaustive — the default —
+    screen the full portfolio exactly as before. The skipped candidates are
+    announced through ``progress_callback`` and recorded in ``instrumentation``.
+
+    ``instrumentation`` additionally receives the standard timing block
+    (:mod:`asymmetry.core.fitting.wizard_timing`): wall-clock, CPU seconds
+    including reaped pool workers, and a per-stage breakdown. ``stage_callback``
+    receives :class:`~asymmetry.core.fitting.wizard_timing.WizardStageProgress`
+    events as each stage starts, advances and ends, which is what a caller needs
+    to time out on *lack of progress* rather than on total runtime.
+    """
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
 
@@ -1182,6 +1420,12 @@ def build_global_fit_wizard_screening_recommendation(
         current_model=current_model,
         scope=scope,
         user_frequencies_mhz=user_frequencies_mhz,
+    )
+    portfolio = _apply_screening_effort_tier(
+        portfolio,
+        effort_tier,
+        progress_callback=progress_callback,
+        instrumentation=instrumentation,
     )
     templates = list(portfolio.templates)
     if portfolio.mixed_axes_warning:
@@ -1225,22 +1469,32 @@ def build_global_fit_wizard_screening_recommendation(
                 scope=scope,
                 user_frequencies_mhz=user_frequencies_mhz,
                 cancel_callback=cancel_callback,
+                effort_tier=effort_tier,
+                instrumentation=instrumentation,
+                stage_callback=stage_callback,
             )
         )
 
-    assessments_by_key, _template_contexts = _build_single_fit_prescreen_assessments(
-        list(portfolio.ordered_datasets),
-        portfolio.fingerprints_by_run,
-        templates,
-        single_fit_recommendations_by_run=recommendations_by_run,
-        current_parameter_types=current_parameter_types,
-        current_values=current_values,
-        parameter_bounds=parameter_bounds,
-        axis_key=portfolio.series_axis_key,
-        metric=metric,
-        fit_engine=FitEngine(),
-        progress_callback=progress_callback,
-    )
+    with stage_timer(
+        instrumentation,
+        "screening.aggregate_assessments",
+        items_total=len(templates),
+        stage_callback=stage_callback,
+        message=f"Aggregating single-fit screening scores for {len(templates)} candidate(s).",
+    ):
+        assessments_by_key, _template_contexts = _build_single_fit_prescreen_assessments(
+            list(portfolio.ordered_datasets),
+            portfolio.fingerprints_by_run,
+            templates,
+            single_fit_recommendations_by_run=recommendations_by_run,
+            current_parameter_types=current_parameter_types,
+            current_values=current_values,
+            parameter_bounds=parameter_bounds,
+            axis_key=portfolio.series_axis_key,
+            metric=metric,
+            fit_engine=FitEngine(),
+            progress_callback=progress_callback,
+        )
     return rerank_global_fit_wizard_recommendation(
         GlobalFitWizardRecommendation(
             series_axis_key=portfolio.series_axis_key,
@@ -1337,30 +1591,50 @@ def _build_single_fit_prescreen_assessments(
     template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]] = {}
     fit_engine = fit_engine or FitEngine()
 
-    for template in templates:
-        fixed_param_names = _fixed_param_names(template, current_parameter_types)
-        seed_assessments_by_run = _single_fit_assessment_by_run(
+    fixed_names_by_key = {
+        template.key: _fixed_param_names(template, current_parameter_types)
+        for template in templates
+    }
+    seeds_by_key = {
+        template.key: _single_fit_assessment_by_run(
             single_fit_recommendations_by_run,
             template.key,
         )
-        if repair_partial_incomplete:
-            seed_assessments_by_run = _repair_partial_single_fit_prescreen_assessments(
+        for template in templates
+    }
+    if repair_partial_incomplete:
+        # NOTE (measured, deliberately still serial): repair is a *fit* per failed
+        # (template, run) pair and is the largest remaining serial section of the
+        # screening stage — 22 s of one-core time on a 14-dataset synthetic series
+        # against 3.5 s for the whole parallel phase-1 stage. Fanning it out over
+        # a spawn pool was tried and reverted: the repair path is the one place a
+        # caller can inject a fit engine and observe per-template progress, and a
+        # process boundary silently breaks both for a stage whose visible cost is
+        # now bounded by the effort tier anyway. The stage timer below reports
+        # what it costs, so the trade is measurable rather than assumed.
+        for template in templates:
+            seeds_by_key[template.key] = _repair_partial_single_fit_prescreen_assessments(
                 datasets,
                 fingerprints_by_run,
                 template,
-                assessments_by_run=seed_assessments_by_run,
+                assessments_by_run=seeds_by_key[template.key],
                 current_values=current_values,
                 parameter_bounds=parameter_bounds,
-                fixed_param_names=fixed_param_names,
+                fixed_param_names=fixed_names_by_key[template.key],
                 metric=metric,
                 fit_engine=fit_engine,
                 progress_callback=progress_callback,
             )
+        for template in templates:
             _merge_repaired_assessments_into_single_fit_recommendations(
                 single_fit_recommendations_by_run,
                 template.key,
-                seed_assessments_by_run,
+                seeds_by_key[template.key],
             )
+
+    for template in templates:
+        fixed_param_names = fixed_names_by_key[template.key]
+        seed_assessments_by_run = seeds_by_key[template.key]
         base_by_run = _initial_parameter_sets_for_candidate(
             datasets,
             fingerprints_by_run,
@@ -2059,6 +2333,64 @@ def _build_global_fit_wizard_recommendation_staged(
     )
 
 
+def _screening_no_recommendation_summary(
+    recommendation: GlobalFitWizardRecommendation,
+) -> str:
+    """Say *why* screening produced no recommendation, not merely that it did.
+
+    A screening-only pass *always* returns ``recommended_key=None``: a
+    pre-screen assessment is ``prescreen_only``, hence never ``is_successful``,
+    because independent per-dataset fits are not evidence about a coupled global
+    fit. The caller is meant to read the ranked table and select candidates for
+    optimisation. That is by design — but the previous single generic sentence
+    said the same thing whether the table held a clean ranking of every
+    candidate or nothing scoreable at all, which let a *failed* screen (no
+    candidate could be scored, because per-run single-fit tables were missing or
+    failed) pass for an ordinary one. A caller reading ``recommended_key``, as
+    the natural reading of "recommendation" invites, saw ``None`` either way and
+    silently proceeded with an empty selection.
+
+    So the two cases now name themselves, with counts, the top-ranked key to
+    select, and the underlying per-candidate reasons when there is no ranking.
+    """
+    assessments = tuple(recommendation.assessments)
+    if not assessments:
+        return (
+            "Screening produced no candidate assessments at all. This is a failure, "
+            "not a ranking: the candidate portfolio was empty for this series, so "
+            "there was nothing to score."
+        )
+    scored = sorted(
+        (
+            assessment
+            for assessment in assessments
+            if np.isfinite(assessment.metric_value(recommendation.metric))
+        ),
+        key=lambda assessment: assessment.metric_value(recommendation.metric),
+    )
+    if scored:
+        return (
+            f"Single-fit screening complete: {len(scored)} of {len(assessments)} "
+            "candidates scored, best-ranked "
+            f"'{scored[0].template.key}'. These scores come from independent "
+            "per-dataset fits only and have not yet been optimized for coupled "
+            "global fitting, so no candidate is recommended yet — select one or "
+            "more from the ranked screening table to continue."
+        )
+    reasons: list[str] = []
+    for assessment in assessments:
+        for warning in assessment.series_warnings:
+            if warning not in reasons:
+                reasons.append(warning)
+    detail = (" Reported causes: " + " ".join(reasons[:5])) if reasons else ""
+    return (
+        f"Screening scored none of its {len(assessments)} candidates: every one is "
+        "missing a successful single-fit assessment for at least one run, so the "
+        "table carries no usable ranking. Treat this as a failed screen rather than "
+        "an absence of structure." + detail
+    )
+
+
 def rerank_global_fit_wizard_recommendation(
     recommendation: GlobalFitWizardRecommendation,
     metric: SelectionMetric,
@@ -2105,11 +2437,7 @@ def rerank_global_fit_wizard_recommendation(
                 metric=metric,
                 recommended_key=None,
                 comparable_keys=(),
-                summary=(
-                    "Single-fit screening complete. These scores come from independent "
-                    "per-dataset fits only and have not yet been optimized for coupled "
-                    "global fitting. Select one or more candidates to continue."
-                ),
+                summary=_screening_no_recommendation_summary(recommendation),
             )
         return replace(
             recommendation,

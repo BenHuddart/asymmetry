@@ -398,8 +398,12 @@ def test_fit_wizard_recommends_three_exponentials_for_three_rate_spectrum(
     # confidence-tier policy the recommendation is the metric winner outright,
     # not a gate-passing runner-up, so the third (slow) rate must be resolvable.
     # ``_dataset_for``'s 8 µs / 140-point window leaves the slow rate degenerate
-    # with the constant, so build a longer window inline.
-    t = np.linspace(0.0, 12.0, 240)
+    # with the constant, so build a longer window inline. The sampling has to
+    # carry the *fast* rate too: at 240 points over 12 µs the 8 µs⁻¹ branch has a
+    # 1/e time of only 2.5 time bins, which the component-resolution rule
+    # (rightly) reports as unresolved at that binning — the fixture was asserting
+    # a truth its own sampling could not measure. 600 points give it 6.3 bins.
+    t = np.linspace(0.0, 12.0, 600)
     params = dict(A_1=0.10, Lambda_1=8.0, A_2=0.08, Lambda_2=1.2, A_3=0.06, Lambda_3=0.2, A_bg=0.01)
     dataset = MuonDataset(
         time=t,

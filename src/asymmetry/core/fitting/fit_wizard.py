@@ -48,6 +48,12 @@ from asymmetry.core.fitting.peak_detection import (
     serialize_peak_analysis,
 )
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
+from asymmetry.core.fitting.resolution import (
+    DEFAULT_MIN_BINS_PER_E_FOLDING,
+    ComponentResolutionAssessment,
+    assess_component_resolution,
+    relaxation_rate_parameter_names,
+)
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.wizard_scope import (
     ScopeResolution,
@@ -55,6 +61,7 @@ from asymmetry.core.fitting.wizard_scope import (
     dataset_suggests_fluorine,
     resolve_scope_for_dataset,
 )
+from asymmetry.core.fitting.wizard_timing import WizardStageProgress, stage_timer
 from asymmetry.core.fourier.fft import fft_asymmetry
 
 # ``ComputationalCost`` is a ``str``-Enum, so ``max()``/``<`` compares members
@@ -261,6 +268,17 @@ class CandidateAssessment:
     #: as a "no significant structure" reference; these never win a normal
     #: recommendation and are excluded from the ranked candidate pool.
     is_null_baseline: bool = False
+    #: χ² this candidate gained when re-fitted with a deeper seed ladder
+    #: (``old χ² − new χ²``, so positive means the deeper search found a better
+    #: minimum). ``0.0`` when no refinement pass ran for this candidate.
+    #: Additive — old payloads deserialize to ``0.0``.
+    refinement_delta_chi_squared: float = 0.0
+    #: True when the refinement pass moved this candidate's χ² by more than
+    #: ``_UNDER_CONVERGENCE_CHI2_TOLERANCE``. Its *reported* score is the deeper
+    #: one, so the flag is not a warning that the number is wrong — it is the
+    #: measured statement that this candidate's ranking is search-limited, and
+    #: that any family compared against it at the shallower budget was too.
+    under_converged: bool = False
 
     @property
     def is_disqualified(self) -> bool:
@@ -1194,6 +1212,36 @@ _ZERO_AMPLITUDE_SIGMA = 2.0
 #: cycle in the window is indistinguishable from a smooth envelope.
 _FREQUENCY_FLOOR_SLACK = 0.05
 
+#: Number of relaxation-rate parameters (see
+#: :func:`~asymmetry.core.fitting.resolution.relaxation_rate_parameter_names`) at
+#: or above which a candidate is put through the component-resolution check.
+#: The pathology the check exists for — one branch railing to a 1/e time inside
+#: the leading bins, or collapsing into the free baseline, while the information
+#: criterion still "prefers" the extra component — is a *composite* failure: it
+#: needs a second channel to hide behind. Gating here also keeps the cost off
+#: single-rate candidates, which include most of the numerically expensive
+#: Kubo-Toyabe family.
+_RESOLUTION_MIN_RATE_PARAMS = 2
+
+#: How many top-ranked candidates the convergence-quality refinement pass
+#: re-fits with the full seed ladder. Three covers the recommendation and the
+#: candidates it is compared against, which is where a search-limited ranking
+#: actually does damage.
+_REFINEMENT_CANDIDATES = 3
+
+#: χ² improvement above which the refinement pass calls a candidate's original
+#: ranking search-limited. One χ² unit is the same scale as the Δχ² ≤ 1
+#: neighbourhood the resolution rule uses, and it is well below the ~2 AICc that
+#: separates "comparable" models — so anything larger genuinely could have
+#: reordered the table.
+_UNDER_CONVERGENCE_CHI2_TOLERANCE = 1.0
+
+#: Fast-edge tolerance the wizard applies. Deliberately the library default; an
+#: analysis with a specific binning argument should call
+#: :func:`~asymmetry.core.fitting.resolution.assess_component_resolution`
+#: directly with its own ``min_bins_per_e_folding``.
+_RESOLUTION_MIN_BINS = DEFAULT_MIN_BINS_PER_E_FOLDING
+
 #: Template keys of the two null baselines fitted unconditionally.
 _NULL_CONSTANT_KEY = "null_constant"
 _NULL_EXPONENTIAL_KEY = "null_exp"
@@ -1523,6 +1571,22 @@ _STAGE2_UNSUPPORTED_VARIANT_BUDGET = 2
 # safe win; EXPENSIVE members keep the adaptive drive so their final AICc is
 # unchanged.
 
+#: Extra Stage-2 variants granted per relaxation-rate parameter beyond the
+#: first — the SEEDING-PARITY rule.
+#:
+#: A model comparison is only meaningful when the compared families are given
+#: comparable search depth, and "comparable" cannot mean "the same number of
+#: seeds": a one-rate family's ladder covers its whole 1-D rate space, while the
+#: same five seeds cover a vanishing slice of a three-rate family's 3-D one. A
+#: fixed budget therefore hands the simpler family a systematically better-
+#: converged χ² and under-ranks exactly the multi-component candidates that the
+#: resolution rule above exists to scrutinise. Scaling the ladder with the
+#: family's rate dimensionality restores parity per dimension. The extra seeds
+#: are the wider rate splays at the tail of
+#: :func:`_additive_relaxation_mixture_variants`, so a raised budget buys real
+#: coverage of the rate *separation* rather than repeats of the same ratio.
+_STAGE2_VARIANTS_PER_EXTRA_RATE = 2
+
 #: Families whose Stage-2 effort is never trimmed regardless of support, because
 #: their promotion is a structural guard-rail rather than a score/hint hedge:
 #: ``relaxation`` is the always-expanded smooth-relaxation reference, ``baseline``
@@ -1531,12 +1595,18 @@ _STAGE2_UNSUPPORTED_VARIANT_BUDGET = 2
 _STAGE2_NEVER_TRIM_FAMILY_KEYS = frozenset({"relaxation", "baseline"})
 
 
+def _rate_dimension(template: CandidateTemplate) -> int:
+    """How many independent relaxation rates the template's model carries."""
+    return len(relaxation_rate_parameter_names(template.model))
+
+
 def _stage2_variant_budget(
     *,
     is_expensive: bool,
     is_peak_seeded: bool,
     family_key: str,
     supported: bool,
+    rate_dimension: int = 1,
 ) -> int:
     """Pure per-member Stage-2 variant budget (no fits — unit-testable).
 
@@ -1554,12 +1624,23 @@ def _stage2_variant_budget(
       keep the full ladder.
     * Everything else — an unsupported family that reached Stage 2 only by
       score / Δ-margin / gates — gets the reduced ladder.
+
+    Whichever ladder applies is then widened by ``_STAGE2_VARIANTS_PER_EXTRA_RATE``
+    for every relaxation rate past the first (``rate_dimension``), so families
+    are compared at comparable depth *per rate dimension* rather than at the
+    same absolute seed count. EXPENSIVE members are widened too — their reduced
+    base ladder is about per-fit cost, not about their search space being
+    smaller, and a two-rate expensive member is exactly as under-searched by two
+    seeds as a cheap one.
     """
     if is_expensive:
-        return _STAGE2_UNSUPPORTED_VARIANT_BUDGET
-    if is_peak_seeded or family_key in _STAGE2_NEVER_TRIM_FAMILY_KEYS or supported:
-        return _STAGE2_FULL_VARIANT_BUDGET
-    return _STAGE2_UNSUPPORTED_VARIANT_BUDGET
+        base = _STAGE2_UNSUPPORTED_VARIANT_BUDGET
+    elif is_peak_seeded or family_key in _STAGE2_NEVER_TRIM_FAMILY_KEYS or supported:
+        base = _STAGE2_FULL_VARIANT_BUDGET
+    else:
+        base = _STAGE2_UNSUPPORTED_VARIANT_BUDGET
+    extra_rates = max(0, int(rate_dimension) - 1)
+    return base + _STAGE2_VARIANTS_PER_EXTRA_RATE * extra_rates
 
 
 @dataclass(frozen=True)
@@ -1752,6 +1833,9 @@ def build_fit_wizard_recommendation(
     max_workers: int | None = None,
     progress_callback: Callable[[str], None] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    refine_top_candidates: int = _REFINEMENT_CANDIDATES,
+    instrumentation: dict[str, object] | None = None,
+    stage_callback: Callable[[WizardStageProgress], None] | None = None,
 ) -> FitWizardRecommendation:
     """Analyze one asymmetry spectrum and recommend a fit candidate.
 
@@ -1768,6 +1852,16 @@ def build_fit_wizard_recommendation(
     pool, cancellation instead takes effect only between fits (a
     cancel_callback cannot cross a process boundary) — either way,
     cancellation raises :class:`FitCancelledError`.
+
+    ``refine_top_candidates`` re-fits that many top-ranked candidates with the
+    full seed ladder and records the χ² gained
+    (:attr:`CandidateAssessment.refinement_delta_chi_squared` /
+    :attr:`~CandidateAssessment.under_converged`); ``0`` disables the pass.
+
+    ``instrumentation`` receives the standard timing block and ``stage_callback``
+    the structured per-stage progress events described in
+    :mod:`asymmetry.core.fitting.wizard_timing`, so a headless caller can tell a
+    slow run from a stalled one without inspecting the process tree.
     """
     fingerprint = fingerprint_spectrum(dataset)
     resolution: ScopeResolution | None = None
@@ -1849,12 +1943,19 @@ def build_fit_wizard_recommendation(
 
     pool_terminated = False
     try:
-        flat_stage1 = _run_template_assessments(
-            [_stage1_task(template) for template in flat_stage1_templates],
-            max_workers=max_workers,
-            cancel_callback=cancel_callback,
-            executor=shared_pool,
-        )
+        with stage_timer(
+            instrumentation,
+            "single_fit.stage1",
+            items_total=len(flat_stage1_templates),
+            stage_callback=stage_callback,
+            message=f"Stage 1: screening {len(families)} candidate families",
+        ):
+            flat_stage1 = _run_template_assessments(
+                [_stage1_task(template) for template in flat_stage1_templates],
+                max_workers=max_workers,
+                cancel_callback=cancel_callback,
+                executor=shared_pool,
+            )
 
         # Regroup and pick each family's screening representative: gate-passers
         # first, then best metric (a family screens on the best of its cheap
@@ -2038,6 +2139,7 @@ def build_fit_wizard_recommendation(
                 is_peak_seeded=is_peak_seeded,
                 family_key=family_key,
                 supported=supported,
+                rate_dimension=_rate_dimension(template),
             )
             return _AssessmentTask(
                 dataset=dataset,
@@ -2050,12 +2152,19 @@ def build_fit_wizard_recommendation(
                 screening_cap=False,
             )
 
-        stage2_assessments = _run_template_assessments(
-            [_stage2_task(template) for template in stage2_templates],
-            max_workers=max_workers,
-            cancel_callback=cancel_callback,
-            executor=shared_pool,
-        )
+        with stage_timer(
+            instrumentation,
+            "single_fit.stage2",
+            items_total=len(stage2_templates),
+            stage_callback=stage_callback,
+            message=f"Stage 2: fitting {len(stage2_templates)} expanded candidates",
+        ):
+            stage2_assessments = _run_template_assessments(
+                [_stage2_task(template) for template in stage2_templates],
+                max_workers=max_workers,
+                cancel_callback=cancel_callback,
+                executor=shared_pool,
+            )
 
         _check_cancelled()
         # Null baselines: fitted unconditionally (independent of scope/promotion
@@ -2117,6 +2226,25 @@ def build_fit_wizard_recommendation(
         tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments),
         peak_analysis,
     )
+
+    with stage_timer(
+        instrumentation,
+        "single_fit.refinement",
+        items_total=refine_top_candidates if refine_top_candidates > 0 else 0,
+        stage_callback=stage_callback,
+        message="Refinement: re-fitting top candidates with the full seed ladder",
+    ):
+        all_assessments = _refine_top_candidates(
+            dataset=dataset,
+            fingerprint=fingerprint,
+            assessments=all_assessments,
+            metric=metric,
+            seed_context=stage2_context,
+            max_workers=max_workers,
+            cancel_callback=cancel_callback,
+            refine_top_candidates=refine_top_candidates,
+            progress=_progress,
+        )
 
     return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
@@ -2874,6 +3002,8 @@ def _serialize_candidate_assessment(
         "stage": assessment.stage,
         "disqualification_reasons": list(assessment.disqualification_reasons),
         "is_null_baseline": bool(assessment.is_null_baseline),
+        "refinement_delta_chi_squared": float(assessment.refinement_delta_chi_squared),
+        "under_converged": bool(assessment.under_converged),
     }
 
 
@@ -2921,6 +3051,8 @@ def _deserialize_candidate_assessment(
                 if isinstance(reason, str)
             ),
             is_null_baseline=bool(payload.get("is_null_baseline", False)),
+            refinement_delta_chi_squared=float(payload.get("refinement_delta_chi_squared", 0.0)),
+            under_converged=bool(payload.get("under_converged", False)),
         )
     except (TypeError, ValueError):
         return None
@@ -3772,6 +3904,19 @@ def _component_rate_scales(component_count: int) -> tuple[float, ...]:
     return tuple(float(scale) for scale in scales)
 
 
+#: Rate-separation splays for the mixture seed ladder, widest last.
+#:
+#: Each entry is the ratio between the fastest and slowest seeded rate: the
+#: component rates are laid on a geometric ladder spanning ``sqrt(ratio)`` above
+#: to ``sqrt(ratio)`` below the single fingerprint rate guess. The first entry
+#: reproduces the original 3× spread; the wider ones are what the seeding-parity
+#: budget (``_STAGE2_VARIANTS_PER_EXTRA_RATE``) spends its extra seeds on, and
+#: they matter because every non-mixture variant scales *all* rates by the same
+#: factor — leaving the seeded rate *separation* unexplored, which is precisely
+#: the dimension a multi-component family is fitted to determine.
+_MIXTURE_RATE_SPREADS = (3.0, 12.0, 50.0)
+
+
 def _additive_relaxation_mixture_variants(
     base_parameters: ParameterSet,
     template: CandidateTemplate,
@@ -3782,36 +3927,61 @@ def _additive_relaxation_mixture_variants(
 
     front_loaded_amp = tuple(float(scale) for scale in np.linspace(1.3, 0.75, component_count))
     back_loaded_amp = tuple(reversed(front_loaded_amp))
-    front_loaded_rate = tuple(float(scale) for scale in np.geomspace(1.8, 0.6, component_count))
-    back_loaded_rate = tuple(reversed(front_loaded_rate))
+    flat_amp = tuple(1.0 for _ in relaxing_components)
 
-    return (
+    def _rate_ladder(spread: float) -> tuple[float, ...]:
+        high = float(np.sqrt(spread))
+        return tuple(float(scale) for scale in np.geomspace(high, 1.0 / high, component_count))
+
+    narrow = _rate_ladder(_MIXTURE_RATE_SPREADS[0])
+    variants: list[ParameterSet] = [
         base,
         _mixture_component_variant(
             base_parameters,
             template,
-            component_amplitude_scales=tuple(1.0 for _ in relaxing_components),
-            component_shape_scales=front_loaded_rate,
+            component_amplitude_scales=flat_amp,
+            component_shape_scales=narrow,
         ),
         _mixture_component_variant(
             base_parameters,
             template,
-            component_amplitude_scales=tuple(1.0 for _ in relaxing_components),
-            component_shape_scales=back_loaded_rate,
+            component_amplitude_scales=flat_amp,
+            component_shape_scales=tuple(reversed(narrow)),
         ),
         _mixture_component_variant(
             base_parameters,
             template,
             component_amplitude_scales=front_loaded_amp,
-            component_shape_scales=front_loaded_rate,
+            component_shape_scales=narrow,
         ),
         _mixture_component_variant(
             base_parameters,
             template,
             component_amplitude_scales=back_loaded_amp,
-            component_shape_scales=back_loaded_rate,
+            component_shape_scales=tuple(reversed(narrow)),
         ),
-    )
+    ]
+    # Wider separations, front- and back-loaded, appended in increasing width so
+    # a truncated ladder always keeps the tightest (most likely) seeds first.
+    for spread in _MIXTURE_RATE_SPREADS[1:]:
+        ladder = _rate_ladder(spread)
+        variants.append(
+            _mixture_component_variant(
+                base_parameters,
+                template,
+                component_amplitude_scales=front_loaded_amp,
+                component_shape_scales=ladder,
+            )
+        )
+        variants.append(
+            _mixture_component_variant(
+                base_parameters,
+                template,
+                component_amplitude_scales=back_loaded_amp,
+                component_shape_scales=tuple(reversed(ladder)),
+            )
+        )
+    return tuple(variants)
 
 
 def _mixture_component_variant(
@@ -4152,6 +4322,158 @@ def _apply_frequency_support_disqualifiers(
     return tuple(updated)
 
 
+def _refinement_variant_budget(template: CandidateTemplate) -> int:
+    """Deepest seed ladder the refinement pass will spend on one candidate.
+
+    The full mixture ladder for the template's rate dimensionality — i.e. what a
+    caller would get if every parity allowance applied at once. Deliberately not
+    unbounded: the pass measures whether the *ranking* is search-limited, and a
+    budget nobody could reach in Stage 2 would measure something else.
+    """
+    return _stage2_variant_budget(
+        is_expensive=False,
+        is_peak_seeded=False,
+        family_key="relaxation",
+        supported=True,
+        rate_dimension=_rate_dimension(template),
+    )
+
+
+def _refine_top_candidates(
+    *,
+    dataset: MuonDataset,
+    fingerprint: SpectrumFingerprint,
+    assessments: tuple[CandidateAssessment, ...],
+    metric: SelectionMetric,
+    seed_context: TemplateSeedContext,
+    max_workers: int | None,
+    cancel_callback: Callable[[], bool] | None,
+    refine_top_candidates: int,
+    progress: Callable[[str], None],
+) -> tuple[CandidateAssessment, ...]:
+    """Re-fit the top-ranked candidates deeper and record what that bought.
+
+    Model comparison is only meaningful when the compared families reached
+    comparable search depth. Stage 2's per-family budget aims at that, but it
+    cannot *verify* it: the only way to know whether a candidate's score is its
+    family's minimum or merely the best of a short ladder is to search harder
+    and see whether the number moves. This pass does exactly that for the
+    candidates the recommendation rests on, keeps the better fit, and records
+    the χ² gained so a caller can see when a ranking was search-limited rather
+    than having to re-derive it with an independent multistart.
+    """
+    if refine_top_candidates <= 0 or not assessments:
+        return assessments
+
+    ranked = sorted(
+        (
+            assessment
+            for assessment in assessments
+            if assessment.is_successful
+            and not assessment.is_null_baseline
+            and math.isfinite(assessment.metric_value(metric))
+        ),
+        key=lambda assessment: assessment.metric_value(metric),
+    )[: int(refine_top_candidates)]
+    targets = {
+        assessment.template.key: assessment
+        for assessment in ranked
+        if _refinement_variant_budget(assessment.template) > 0
+    }
+    if not targets:
+        return assessments
+
+    progress(f"Refinement: re-fitting {len(targets)} top candidates with the full seed ladder")
+    refined = _run_template_assessments(
+        [
+            _AssessmentTask(
+                dataset=dataset,
+                fingerprint=fingerprint,
+                template=assessment.template,
+                metric=metric,
+                seed_context=seed_context,
+                variant_budget=_refinement_variant_budget(assessment.template),
+                stage=2,
+                screening_cap=False,
+            )
+            for assessment in targets.values()
+        ],
+        max_workers=max_workers,
+        cancel_callback=cancel_callback,
+    )
+
+    refined_by_key = {assessment.template.key: assessment for assessment in refined}
+    updated: list[CandidateAssessment] = []
+    for assessment in assessments:
+        deeper = refined_by_key.get(assessment.template.key)
+        if deeper is None or assessment.template.key not in targets:
+            updated.append(assessment)
+            continue
+        if not deeper.is_successful:
+            updated.append(assessment)
+            continue
+        gain = float(assessment.fit_result.chi_squared - deeper.fit_result.chi_squared)
+        if gain <= 0.0:
+            # The deeper ladder did not improve on the Stage-2 minimum: keep the
+            # original assessment and record a converged (zero-gain) verdict.
+            updated.append(
+                replace(assessment, refinement_delta_chi_squared=0.0, under_converged=False)
+            )
+            continue
+        updated.append(
+            replace(
+                deeper,
+                refinement_delta_chi_squared=gain,
+                under_converged=gain > _UNDER_CONVERGENCE_CHI2_TOLERANCE,
+            )
+        )
+    return tuple(updated)
+
+
+def component_resolution_for_assessment(
+    dataset: MuonDataset,
+    template: CandidateTemplate,
+    fit_result: FitResult,
+    *,
+    min_bins_per_e_folding: float = _RESOLUTION_MIN_BINS,
+) -> ComponentResolutionAssessment | None:
+    """Resolution assessment for one wizard candidate, or ``None`` if not applicable.
+
+    Applicable means: a successful fit of a template carrying at least
+    ``_RESOLUTION_MIN_RATE_PARAMS`` relaxation-rate parameters. Everything else
+    — single-channel templates, oscillation-only templates, failed fits — has no
+    composite identifiability question to answer.
+    """
+    if not fit_result.success:
+        return None
+    rate_names = relaxation_rate_parameter_names(template.model, fit_result.parameters)
+    if len(rate_names) < _RESOLUTION_MIN_RATE_PARAMS:
+        return None
+    try:
+        return assess_component_resolution(
+            fit_result,
+            template.model,
+            dataset,
+            min_bins_per_e_folding=min_bins_per_e_folding,
+        )
+    except (ValueError, KeyError):
+        # A malformed window or a parameter set that does not match the model is
+        # a missing diagnostic, never a disqualification: an absent verdict must
+        # not silently condemn a candidate.
+        return None
+
+
+def _component_resolution_reasons(
+    dataset: MuonDataset,
+    template: CandidateTemplate,
+    fit_result: FitResult,
+) -> list[str]:
+    assessment = component_resolution_for_assessment(dataset, template, fit_result)
+    if assessment is None:
+        return []
+    return list(assessment.disqualification_reasons())
+
+
 def _disqualification_reasons(
     dataset: MuonDataset,
     template: CandidateTemplate,
@@ -4173,9 +4495,16 @@ def _disqualification_reasons(
     * **Zero-consistent amplitude** — the paired oscillation amplitude with
       ``|A| < k·σ_A`` (``k = _ZERO_AMPLITUDE_SIGMA``). Skipped when the fitted
       error is missing/non-finite (we do not suppress on unknown uncertainty).
+
+    Composite candidates additionally carry the **component-resolution** rule
+    (:func:`~asymmetry.core.fitting.resolution.assess_component_resolution`): a
+    branch whose rate is railed past what the binning resolves, collapsed
+    slower than the fit window, or simply undetermined over the Δχ² ≤ 1
+    neighbourhood is not a measured component, however much χ² it buys.
     """
     if not fit_result.success:
         return []
+    reasons = _component_resolution_reasons(dataset, template, fit_result)
     parameters = fit_result.parameters
     freq_params = [
         parameter
@@ -4183,9 +4512,8 @@ def _disqualification_reasons(
         if split_parameter_name(parameter.name)[0] == "frequency"
     ]
     if not freq_params:
-        return []
+        return reasons
 
-    reasons: list[str] = []
     duration = _fit_window_duration(dataset)
     floor = 1.0 / duration if duration > _EPS else 0.0
     bound_hit_set = set(bound_hits)
