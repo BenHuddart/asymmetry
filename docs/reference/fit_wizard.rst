@@ -289,6 +289,8 @@ mode rather than general residual shape:
 - a free-running oscillation frequency with no supporting line in the
   detected-peaks table and too few cycles inside the statistically
   informative part of the window to stand on its own
+- a **relaxation component the data do not resolve** — see
+  :ref:`fit-wizard-component-resolution` below
 
 A disqualified candidate is still shown in the comparison table (step 4 of
 the trail), with its title suffixed "(disqualified)" and the specific reason
@@ -317,6 +319,98 @@ fitting," and treats it as a legitimate result rather than a failure: it
 usually means the spectrum is well described by a plain relaxation (or is
 flat within the noise), and chasing a more elaborate model would be
 over-fitting.
+
+.. _fit-wizard-component-resolution:
+
+Are the components actually resolved?
+-------------------------------------
+
+A composite relaxation model will happily converge with one branch railed to a
+rate so fast that its 1/e time falls inside the first few time bins, or collapsed
+so slow that it never decays inside the fit window. Neither is a measured rate:
+the first is absorbing the leading bins, the second is indistinguishable from a
+free constant baseline. Both still buy χ², so AICc will "prefer" the extra
+component — which is exactly how an extra exponential ends up in a published
+model.
+
+The wizard therefore checks every candidate that carries **two or more relaxation
+rates**. For each rate it asks whether the value lies inside the window the data
+can resolve:
+
+- the 1/e time must span at least a few time bins (the *fast* edge), and
+- the 1/e time must be no longer than the fit window (the *slow* edge).
+
+The check is two-sided on purpose. A fast-edge-only rule silently admits the
+collapsed-to-zero branch, which is the same pathology seen from the other end.
+
+Crucially, the verdict is not read off the fitted value alone. Where the
+likelihood has a flat ridge in a rate, two optimisers landing in statistically
+indistinguishable minima can return opposite answers on the same data — one
+"resolved", one "railed". So the wizard judges the whole Δχ² ≤ 1 neighbourhood:
+it pins the rate just outside each edge, re-fits everything else, and asks
+whether the data can tell the difference. That gives three distinct outcomes:
+
+``resolved``
+   The rate, and every value the data cannot distinguish from it, sit inside the
+   resolvable window.
+
+``unresolved_fast`` / ``unresolved_slow``
+   The fitted rate itself is outside the window — railed into the leading bins,
+   or degenerate with the baseline.
+
+``undetermined``
+   The fitted rate is inside the window but the admissible interval reaches
+   outside it. This is the honest third answer: the data do not determine the
+   component either way, and neither "resolved" nor "railed" would be true.
+
+Anything other than ``resolved`` disqualifies the candidate, with the reason
+carried on the row exactly like the oscillation disqualifiers above.
+
+The same rule is available on its own for scripted analyses, where you can set
+the bin tolerance your binning justifies and supply your own multistart
+solutions as the neighbourhood instead of paying for the probe re-fits:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.resolution import assess_component_resolution
+
+   assessment = assess_component_resolution(
+       fit_result,
+       model,
+       dataset,
+       min_bins_per_e_folding=20.0,      # a rebinned corpus can justify far more
+   )
+   if not assessment.is_resolved:
+       for reason in assessment.disqualification_reasons():
+           print(reason)
+
+Pass ``solutions=[(chi_squared, {"Lambda_1": ..., "Lambda_2": ...}), ...]`` to
+use converged multistart seeds you already have; pass
+``probe_neighbourhood=False`` to fall back to the point estimate, which is
+cheapest and documented as optimiser-dependent.
+
+.. _fit-wizard-convergence-quality:
+
+Convergence quality
+-------------------
+
+Comparing two models is only meaningful when both were searched to comparable
+depth. Two things guard that:
+
+- the Stage-2 seed ladder scales with a candidate's **rate dimensionality**, so a
+  three-rate family is not judged on the same handful of seeds that fully covers
+  a one-rate family's search space; the extra seeds widen the seeded rate
+  *separation*, which is the dimension a multi-component fit exists to determine;
+- after ranking, the top few candidates are **re-fitted with the full seed
+  ladder**. Whichever fit is better is the one reported, and the χ² gained is
+  recorded on the assessment as ``refinement_delta_chi_squared``, with
+  ``under_converged`` set when it exceeds one χ² unit.
+
+``under_converged`` is not a warning that the reported number is wrong — the
+reported number is the deeper fit. It is the measured statement that this
+candidate's original ranking was search-limited, and therefore that the whole
+table around it should be read with that in mind. Pass
+``refine_top_candidates=0`` to skip the pass.
 
 .. _fit-wizard-scripting-and-parallelism:
 

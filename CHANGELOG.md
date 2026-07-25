@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Component resolution / identifiability diagnostic for composite fits.**
+  New `asymmetry.core.fitting.resolution.assess_component_resolution()` judges
+  every relaxation-rate parameter of a fitted composite model against the window
+  the data can actually resolve: two-sided, so a branch railed past the binning
+  (1/e time inside the leading bins) and one collapsed slower than the fit window
+  (degenerate with a free baseline) are both caught. The verdict is taken over
+  the Δχ² ≤ 1 neighbourhood rather than the point estimate — a point-estimate
+  rule gives optimiser-dependent answers on a flat ridge — which yields a third,
+  honest outcome, `undetermined`, distinct from resolved and railed. The
+  neighbourhood is probed by pinning each rate just outside the edge and
+  re-fitting, or taken from multistart solutions the caller already has. The fit
+  wizard runs it on every candidate carrying two or more rates and disqualifies
+  those that fail, so ranked tables no longer reward an extra component that only
+  buys χ². Reported from a downstream continuous-source ZF/LF analysis, which had
+  to hand-roll the rule twice.
+- **Effort tiers now buy a cheaper global-fit-wizard screen.** `effort_tier=` on
+  `build_global_fit_wizard_screening_recommendation()` (and on
+  `build_or_complete_single_fit_wizard_recommendations_for_global_portfolio()`)
+  trims the screened candidate portfolio: `LOW` and `BALANCED` drop the
+  numerically expensive Kubo-Toyabe candidates and cap the portfolio, while
+  `THOROUGH`/`EXHAUSTIVE` — the default — screen everything exactly as before.
+  Pattern-matched candidates are never dropped, and whatever is skipped is logged
+  and recorded in `instrumentation["screening_skipped_template_keys"]`. On a
+  synthetic 14-dataset series that had not returned inside a 40-minute cap, `LOW`
+  now returns in ~2 s and `BALANCED` in ~20 s.
+- **Standard timing instrumentation for both wizards.** New
+  `asymmetry.core.fitting.wizard_timing`. Passing an `instrumentation` dict to
+  `build_fit_wizard_recommendation()` or
+  `build_global_fit_wizard_screening_recommendation()` fills in a `"timing"`
+  block with wall-clock, CPU seconds (this process **and** its reaped pool
+  workers) and a per-stage breakdown; a new `stage_callback=` receives
+  `WizardStageProgress` events as each stage starts, advances and ends. A caller
+  can now tell a slow run from a hung one, and time out on absence of progress,
+  without reading the child process tree's CPU out of `/proc`.
+- **Convergence-quality flags on wizard candidates.** After ranking, the top few
+  candidates are re-fitted with the full seed ladder; the better fit is the one
+  reported and the χ² gained is recorded as
+  `CandidateAssessment.refinement_delta_chi_squared`, with `under_converged` set
+  past one χ² unit — the measured statement that a ranking was search-limited.
+  `refine_top_candidates=0` disables the pass.
+
 - **Background-aware uncertainty for the ratio α estimate.**
   `estimate_alpha_detailed(method="ratio", ...)` takes a new optional
   `subtracted_background=` (a `SubtractedBackground`), and
@@ -22,6 +63,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Global fit wizard: phase-1 screening used a fraction of the host.** The
+  per-dataset single-fit tables — independent, minutes-long, CPU-bound jobs —
+  were capped at four workers regardless of core count, so a 14-dataset series on
+  a large machine ran at well under one core while looking stalled. The cap is
+  now the host's core count (the wavefront's `_MAX_TEMPLATE_WORKERS` cap sizes
+  template-level fan-out and never applied here); measured utilisation on a
+  14-dataset synthetic series went from ~0.65 cores to ~12.
+- **Longitudinal-field Lorentzian Kubo-Toyabe evaluation was ~1.6× slower than
+  needed.** The line-shape kernel — the dominant cost of any wizard candidate
+  carrying a dynamic Lorentzian KT, and ~88 % of screening CPU on a broad
+  zero-field scope — computed `sin`/`cos` over its full (frequency × time) grid
+  four times per call instead of twice, and re-derived the inverse powers of `t`
+  each time. Fused into one pass per integration limit; results are unchanged to
+  floating-point round-off.
+- **A global-fit-wizard screen that scored nothing looked exactly like one that
+  scored everything.** Screening always returns `recommended_key=None` by
+  design, and the summary said the same thing whether every candidate had been
+  ranked or none could be scored at all — so a caller reading `recommended_key`
+  proceeded silently with an empty selection. The summary now names how many
+  candidates scored and which ranks first, and states plainly when a screen
+  failed, with the per-candidate causes.
 - **Global fit wizard: screening could not be interrupted and looked hung.**
   Each phase-1 per-run single-fit table is a minutes-long job, and the drain
   that collected them blocked on completion without polling `cancel_callback`,
@@ -42,6 +104,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Seeding parity: the fit wizard's seed ladder now scales with a candidate's
+  rate dimensionality.** Every Stage-2 family previously got the same fixed seed
+  count, which covers a one-rate family's whole search space but a vanishing
+  slice of a three-rate family's — so multi-component candidates were
+  systematically compared at shallower effective depth than the simpler models
+  they were being ranked against. The budget now grows with the number of
+  relaxation rates, and the extra seeds are wider rate *separations* (the
+  mixture ladder spans up to a 50× ratio, was 3×), because every other seed
+  variant scales all rates by the same factor and therefore leaves the rate
+  separation — the dimension a multi-component fit exists to determine —
+  unexplored.
 - **The ratio α uncertainty is now a closed-form propagation, not a bootstrap.**
   It is exact for a ratio of window sums, deterministic, and is the only form
   that can carry a background subtracted before the call. On unsubtracted counts
