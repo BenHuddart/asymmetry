@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from asymmetry.core.negmu.model import CaptureComponent
@@ -103,6 +103,29 @@ class InstrumentTemplate:
     instrument_name: str = ""
     field_state: str = "ZF"
     detector_orientation: str = "Longitudinal"
+    #: Override the plain forward/backward pair with an arbitrary N-group
+    #: layout (e.g. an azimuthal ring) — group id -> its detector ids. When
+    #: set, this (plus :attr:`group_names`, :attr:`default_forward_group` and
+    #: :attr:`default_backward_group`) replaces the two-group
+    #: :attr:`forward_detectors` / :attr:`backward_detectors` convention;
+    #: those two fields are still required by the dataclass but are unused.
+    groups: Mapping[int, tuple[int, ...]] | None = None
+    #: Group id -> display name, paired with :attr:`groups`. Falls back to
+    #: ``f"Group {gid}"`` per group when ``groups`` is set but this is not.
+    group_names: Mapping[int, str] | None = None
+    #: Group id -> azimuthal angle in degrees, for a ring-style
+    #: :attr:`groups` layout. Carried into ``grouping["group_azimuths_deg"]``
+    #: (see :func:`group_azimuths_deg`) so downstream code — a multi-group
+    #: fit seed, a phase-vs-geometry plot — can read each group's detector
+    #: phase without re-deriving the instrument's numbering convention.
+    group_azimuths: Mapping[int, float] | None = None
+    #: Forward/backward group ids to use with :attr:`groups`. Default to the
+    #: lowest group id and, for an even group count, the id diametrically
+    #: opposite it (``groups`` count // 2 further around), giving a sensible
+    #: default F/B pair for a ring even though the layout is not a plain
+    #: two-group split.
+    default_forward_group: int | None = None
+    default_backward_group: int | None = None
 
     def build(self) -> Run:
         """Materialise an empty-histogram :class:`Run` with this geometry."""
@@ -118,15 +141,43 @@ class InstrumentTemplate:
             )
             for _ in range(self.n_detectors)
         ]
-        groups = {
-            1: list(self.forward_detectors),
-            2: list(self.backward_detectors),
-        }
-        grouping = {
+        if self.groups is not None:
+            groups: dict[int, list[int]] = {
+                int(gid): list(dets) for gid, dets in self.groups.items()
+            }
+            ordered_ids = sorted(groups)
+            group_names = (
+                {int(gid): str(name) for gid, name in self.group_names.items()}
+                if self.group_names is not None
+                else {gid: f"Group {gid}" for gid in ordered_ids}
+            )
+            forward_group = (
+                self.default_forward_group
+                if self.default_forward_group is not None
+                else ordered_ids[0]
+            )
+            if self.default_backward_group is not None:
+                backward_group = self.default_backward_group
+            elif len(ordered_ids) % 2 == 0 and len(ordered_ids) >= 2:
+                opposite = (ordered_ids.index(forward_group) + len(ordered_ids) // 2) % len(
+                    ordered_ids
+                )
+                backward_group = ordered_ids[opposite]
+            else:
+                backward_group = ordered_ids[-1]
+        else:
+            groups = {
+                1: list(self.forward_detectors),
+                2: list(self.backward_detectors),
+            }
+            group_names = {1: "Forward", 2: "Backward"}
+            forward_group = 1
+            backward_group = 2
+        grouping: dict[str, Any] = {
             "groups": groups,
-            "group_names": {1: "Forward", 2: "Backward"},
-            "forward_group": 1,
-            "backward_group": 2,
+            "group_names": group_names,
+            "forward_group": forward_group,
+            "backward_group": backward_group,
             "alpha": float(self.alpha),
             "t0_bin": self.t0_bin,
             "t_good_offset": 0,
@@ -137,8 +188,12 @@ class InstrumentTemplate:
             "good_frames": float(self.good_frames),
             "deadtime_correction": False,
             "dead_time_us": [0.0] * self.n_detectors,
-            "included_groups": {1: True, 2: True},
+            "included_groups": dict.fromkeys(groups, True),
         }
+        if self.group_azimuths is not None:
+            grouping["group_azimuths_deg"] = {
+                int(gid): float(angle) for gid, angle in self.group_azimuths.items()
+            }
         return Run(
             run_number=0,
             histograms=histograms,
@@ -198,11 +253,58 @@ BUILTIN_TEMPLATES: dict[str, InstrumentTemplate] = {
         default_background_per_bin=10.0,
         instrument_name="IDEAL-CONTINUOUS",
     ),
+    "ideal_continuous_ring8": InstrumentTemplate(
+        key="ideal_continuous_ring8",
+        label="Ideal continuous octant ring (PSI-style)",
+        description=(
+            "Continuous-source azimuthal ring: 8 detector groups at 45° "
+            "spacing (one detector each), 1 ns bins over a 10 µs window "
+            "with a flat uncorrelated background (10 counts/bin/detector) "
+            "— the geometry ingredient for PSI HAL-9500-style high-TF data."
+        ),
+        n_detectors=8,
+        n_bins=10000,
+        bin_width_us=0.001,
+        t0_bin=1000,
+        # forward_detectors/backward_detectors are unused: groups below
+        # supplies the 8-fold layout instead of the plain F/B pair.
+        forward_detectors=(1,),
+        backward_detectors=(5,),
+        alpha=1.0,
+        good_frames=1.0,
+        default_total_events=20.0e6,
+        default_background_per_bin=10.0,
+        instrument_name="IDEAL-CONTINUOUS-RING8",
+        field_state="TF",
+        detector_orientation="Transverse",
+        groups={gid: (gid,) for gid in range(1, 9)},
+        group_names={gid: f"Ring {gid}" for gid in range(1, 9)},
+        # k = gid - 1 at 0-based sector index; angle 0 = top (90°), numbering
+        # clockwise at 45° pitch — the same azimuth convention HAL-9500's
+        # Per-octant preset uses (see instrument.py's _build_hal), reused
+        # here only as a numbering convention, not any HAL-specific geometry.
+        group_azimuths={gid: (90.0 - (gid - 1) * 45.0) % 360.0 for gid in range(1, 9)},
+        default_forward_group=1,
+        default_backward_group=5,
+    ),
 }
 
 
-def build_builtin_template(key: str) -> Run:
+def build_builtin_template(
+    key: str,
+    *,
+    n_bins: int | None = None,
+    bin_width_us: float | None = None,
+    t0_bin: int | None = None,
+) -> Run:
     """Build an empty-histogram :class:`Run` for a named built-in instrument.
+
+    ``n_bins``, ``bin_width_us`` and ``t0_bin`` override the template's own
+    values (e.g. a finer or coarser ring binning than
+    :data:`BUILTIN_TEMPLATES`'s defaults) without needing a bespoke
+    :class:`InstrumentTemplate`; the good-bin window follows the (possibly
+    overridden) ``n_bins``/``t0_bin`` exactly as :meth:`InstrumentTemplate.build`
+    computes it. Omitted arguments keep the template's own value.
 
     Raises :class:`KeyError` for an unknown key. See :data:`BUILTIN_TEMPLATES`
     for the available instruments.
@@ -213,7 +315,39 @@ def build_builtin_template(key: str) -> Run:
         raise KeyError(
             f"Unknown built-in instrument template {key!r}; available: {sorted(BUILTIN_TEMPLATES)}."
         ) from None
+    overrides: dict[str, Any] = {}
+    if n_bins is not None:
+        overrides["n_bins"] = int(n_bins)
+    if bin_width_us is not None:
+        overrides["bin_width_us"] = float(bin_width_us)
+    if t0_bin is not None:
+        overrides["t0_bin"] = int(t0_bin)
+    if overrides:
+        template = replace(template, **overrides)
     return template.build()
+
+
+def group_azimuths_deg(run: Run) -> dict[int, float]:
+    """Per-group azimuthal angle (degrees), if the run's template recorded one.
+
+    Reads ``run.grouping["group_azimuths_deg"]`` — populated by
+    :meth:`InstrumentTemplate.build` for a ring-style built-in template (e.g.
+    ``"ideal_continuous_ring8"``) and carried through unchanged by every
+    synthetic-run builder in this module (it is not one of the period keys
+    stripped by :func:`_synthetic_run_grouping`). Returns an empty dict for a
+    template with no azimuthal ring structure.
+    """
+    grouping = run.grouping if isinstance(run.grouping, dict) else {}
+    raw = grouping.get("group_azimuths_deg")
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[int, float] = {}
+    for key, value in raw.items():
+        try:
+            result[int(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -391,19 +525,48 @@ def _signal_values(
     return values
 
 
+def _resolve_background_per_bin(
+    background_per_bin: float | Mapping[int, float],
+) -> Callable[[int | None], float]:
+    """Validate ``background_per_bin`` and return a per-group lookup.
+
+    Accepts either a single flat rate (applied to every detector regardless
+    of group, the original contract) or a ``group_id -> counts/bin`` mapping
+    (a group absent from the mapping gets zero); returns ``bg_of(gid)``, the
+    background for a detector in group ``gid`` (``gid=None`` for a detector
+    the grouping does not assign anywhere).
+    """
+    if isinstance(background_per_bin, Mapping):
+        resolved = {int(gid): float(value) for gid, value in background_per_bin.items()}
+        if any(not np.isfinite(value) or value < 0 for value in resolved.values()):
+            raise ValueError("background_per_bin values must be non-negative and finite.")
+
+        def bg_of(gid: int | None) -> float:
+            return resolved.get(gid, 0.0) if gid is not None else 0.0
+
+        return bg_of
+
+    flat = float(background_per_bin)
+    if not np.isfinite(flat) or flat < 0:
+        raise ValueError("background_per_bin must be non-negative and finite.")
+    return lambda _gid: flat
+
+
 def expected_counts(
     template: Run,
     group_signals: Mapping[int, GroupSignal],
     *,
     total_events: float,
     group_weights: Mapping[int, float] | None = None,
-    background_per_bin: float = 0.0,
+    background_per_bin: float | Mapping[int, float] = 0.0,
+    on_negative_expected: Literal["clip", "raise"] = "clip",
 ) -> list[NDArray[np.float64]]:
     """Expected (noise-free) per-detector count histograms.
 
-    The deterministic core of :func:`simulate_run_from_group_signals`,
-    exposed so tests and diagnostics can compare the sampled histograms (or a
-    reduction of them) against the exact expectation.
+    The deterministic core of :func:`simulate_run_from_group_signals` and
+    :func:`simulate_signal_run`, exposed so tests and diagnostics can compare
+    the sampled histograms (or a reduction of them) against the exact
+    expectation.
 
     ``total_events`` is the expected number of detected decay events summed
     over all detectors and the post-t0 histogram window — the per-bin rate at
@@ -417,13 +580,30 @@ def expected_counts(
     normalised over the assigned detectors so the total event budget is
     independent of the weighting (this is how the α split is applied without
     distorting the run-level rate).
+
+    ``background_per_bin`` is either one flat rate shared by every detector
+    (the original contract) or a ``group_id -> counts/bin`` mapping for a
+    per-group background; a group absent from the mapping gets zero.
+
+    A signal is allowed to be negative and to exceed ``|a| > 1`` — only the
+    *resulting* expected count is constrained. ``on_negative_expected``
+    chooses what happens when ``N0·exp(−t/τ)·(1 + a(t)) + b`` would go
+    negative for some detector/bin: ``"clip"`` (the default, matching every
+    existing caller) floors it at the background level, silently discarding
+    the excess; ``"raise"`` (used by :func:`simulate_signal_run`, where the
+    signal is caller-supplied and a silent floor would hide a modelling
+    mistake) raises :class:`ValueError` naming the offending group, detector
+    and time instead.
     """
     if not template.histograms:
         raise ValueError("Simulation requires a template run with detector histograms.")
     if not np.isfinite(total_events) or total_events <= 0:
         raise ValueError("total_events must be a positive, finite event budget.")
-    if background_per_bin < 0:
-        raise ValueError("background_per_bin must be non-negative.")
+    bg_of = _resolve_background_per_bin(background_per_bin)
+    if on_negative_expected not in ("clip", "raise"):
+        raise ValueError(
+            f"on_negative_expected must be 'clip' or 'raise', got {on_negative_expected!r}."
+        )
 
     histograms = template.histograms
     n_det = len(histograms)
@@ -453,8 +633,10 @@ def expected_counts(
         bin_width = float(hist.bin_width)
         n_post = max(0, n_bins - t0_bin)
         t_post = np.arange(n_post, dtype=float) * bin_width
+        gid = det_group.get(det)
+        background = bg_of(gid)
 
-        clean = np.full(n_bins, float(background_per_bin), dtype=float)
+        clean = np.full(n_bins, background, dtype=float)
         if n_post:
             # Exact per-bin envelope normalisation: summing
             # n0·exp(−i·Δt/τ) over the window telescopes to
@@ -462,14 +644,26 @@ def expected_counts(
             # (WiMDA uses the first-order N_d·Δt/τ.)
             n_events_det = total_events * weights[det] / total_weight
             n0 = n_events_det * (1.0 - np.exp(-bin_width / MUON_LIFETIME_US))
-            gid = det_group.get(det)
             cache_key = (gid, n_post, bin_width)
             signal = signal_cache.get(cache_key)
             if signal is None:
                 signal = _signal_values(group_signals.get(gid), t_post)
                 signal_cache[cache_key] = signal
             envelope = n0 * np.exp(-t_post / MUON_LIFETIME_US) * (1.0 + signal)
-            clean[t0_bin:] += np.clip(envelope, 0.0, None)
+            if on_negative_expected == "raise":
+                total_post = envelope + background
+                if np.any(total_post < 0):
+                    idx = int(np.argmin(total_post))
+                    raise ValueError(
+                        f"expected_counts: group {gid!r} detector {det} would have negative "
+                        f"expected counts ({total_post[idx]:.6g}) at t={t_post[idx]:.6g} µs "
+                        f"(post-t0 bin {idx}) — the signal drives 1 + a(t) more negative than "
+                        "the background can offset. Reduce the signal amplitude or raise "
+                        "background_per_bin for this group."
+                    )
+                clean[t0_bin:] = total_post
+            else:
+                clean[t0_bin:] += np.clip(envelope, 0.0, None)
         expected.append(clean)
     return expected
 
@@ -481,7 +675,7 @@ def simulate_run_from_group_signals(
     total_events: float,
     seed: int = 0,
     group_weights: Mapping[int, float] | None = None,
-    background_per_bin: float = 0.0,
+    background_per_bin: float | Mapping[int, float] = 0.0,
     run_number: int | None = None,
     title: str | None = None,
     simulation_metadata: Mapping[str, Any] | None = None,
@@ -496,10 +690,15 @@ def simulate_run_from_group_signals(
     drawing ``poisson(expected)`` per detector, in detector order — a fixed
     seed reproduces the run bit-for-bit.
 
+    ``background_per_bin`` accepts a single flat rate or a per-group
+    ``group_id -> counts/bin`` mapping (see :func:`expected_counts`).
+
     The returned :class:`Run` carries ``metadata["synthetic"] = True`` and a
     ``metadata["simulation"]`` provenance dict; deadtimes are zeroed in the
     grouping (the synthetic counts contain no deadtime distortion, so zero is
-    the true instrument description).
+    the true instrument description). See :func:`simulate_signal_run` for the
+    validating front end this shares its machinery with, when the signal is
+    caller-supplied rather than drawn from the fit-model registry.
     """
     expected = expected_counts(
         template,
@@ -519,6 +718,134 @@ def simulate_run_from_group_signals(
         title=title,
         default_title="Simulated run",
         simulation_metadata=simulation_metadata,
+    )
+
+
+def _validate_group_signals(template: Run, group_signals: Mapping[int, GroupSignal]) -> None:
+    """Validate group ids and array-signal shapes against ``template``.
+
+    Raises :class:`ValueError` for a group id absent from the template's
+    grouping, or an array signal whose length does not exactly match the
+    post-t0 bin count of every detector assigned to that group. A callable
+    signal is evaluated on the real per-detector grid inside
+    :func:`expected_counts` and needs no such check; only a pre-sampled array
+    can silently mismatch its target grid.
+    """
+    n_det = len(template.histograms)
+    det_group = _detector_group_map(template.grouping, n_det)
+    valid_group_ids = sorted(set(det_group.values()))
+    for gid, signal in group_signals.items():
+        if gid not in valid_group_ids:
+            raise ValueError(
+                f"simulate_signal_run: group id {gid!r} is not in the template's grouping "
+                f"(available groups: {valid_group_ids})."
+            )
+        if callable(signal):
+            continue
+        arr = np.asarray(signal, dtype=float)
+        if arr.ndim != 1:
+            raise ValueError(
+                f"simulate_signal_run: the array signal for group {gid} must be "
+                f"one-dimensional, got shape {arr.shape}."
+            )
+        expected_lengths = sorted(
+            {
+                max(0, int(hist.n_bins) - max(0, int(hist.t0_bin)))
+                for det, hist in enumerate(template.histograms)
+                if det_group.get(det) == gid
+            }
+        )
+        if arr.size not in expected_lengths:
+            raise ValueError(
+                f"simulate_signal_run: the array signal for group {gid} has length "
+                f"{arr.size}, but the template's post-t0 bin grid for this group has "
+                f"length {expected_lengths}; pass a callable a(t_us) instead, or an "
+                "array matching exactly."
+            )
+
+
+def simulate_signal_run(
+    template: Run,
+    signals: Mapping[int, GroupSignal],
+    *,
+    total_events: float,
+    seed: int = 0,
+    group_weights: Mapping[int, float] | None = None,
+    background_per_bin: float | Mapping[int, float] = 0.0,
+    run_number: int | None = None,
+    title: str | None = None,
+    simulation_metadata: Mapping[str, Any] | None = None,
+) -> Run:
+    """Simulate a run from arbitrary, externally supplied per-group signals.
+
+    The first-class entry point for a signal a_g(t) that does not come from
+    the fit-model registry — PSI HAL-9500-style high-transverse-field data,
+    for instance, where each ring group sees an independent, possibly
+    non-analytic polarization trace computed elsewhere (a forward model, a
+    lookup table, a numerical simulation). ``signals`` maps a detector group
+    id (a key of ``template.grouping["groups"]``) to a :data:`GroupSignal` —
+    either a callable ``a(t_us) -> array`` in fractional units, or an array
+    pre-sampled *exactly* on the group's post-t0 bin grid (see Raises).
+    Groups with no entry in ``signals`` receive the bare lifetime envelope
+    (a(t) = 0).
+
+    This is a thin, validating front end over the same
+    :func:`expected_counts` / :func:`_sample_and_build_run` machinery as
+    :func:`simulate_run_from_group_signals` (which already accepts arbitrary
+    per-group signals for the fit-model entry points) — it adds the checks a
+    hand-authored signal needs and the model-driven entry points do not:
+    strict array-length validation against the template, a per-group
+    background, and a hard failure (rather than a silent clip to zero) when a
+    signal would drive the expected counts negative.
+
+    Parameters
+    ----------
+    template
+        Instrument template — bin structure, t0, grouping. Counts are
+        ignored (see :func:`build_builtin_template` when no run is loaded,
+        e.g. the ``"ideal_continuous_ring8"`` octant-ring template).
+    signals
+        Group id -> :data:`GroupSignal`. Values may be negative and exceed
+        ``|a| > 1``; this is only rejected when it would make the expected
+        counts negative (see Raises).
+    total_events
+        Expected number of detected decay events, summed over all detectors
+        and the post-t0 window (see :func:`expected_counts`).
+    group_weights
+        Optional per-group relative count-rate (N0) weight, normalised over
+        each group's own detectors.
+    background_per_bin
+        Flat background counts per bin, either one value shared by every
+        group or a per-group mapping (``group_id -> counts/bin``); a group
+        absent from the mapping gets zero.
+
+    Raises
+    ------
+    ValueError
+        If a signal's group id is not in the template's grouping, if an
+        array signal's length does not exactly match the post-t0 bin count
+        of every detector in its group, or if the generation would produce
+        negative expected counts for any detector/bin.
+    """
+    _validate_group_signals(template, signals)
+    expected = expected_counts(
+        template,
+        signals,
+        total_events=total_events,
+        group_weights=group_weights,
+        background_per_bin=background_per_bin,
+        on_negative_expected="raise",
+    )
+    return _sample_and_build_run(
+        template,
+        expected,
+        seed=seed,
+        total_events=total_events,
+        background_per_bin=background_per_bin,
+        run_number=run_number,
+        title=title,
+        default_title="Simulated signal run",
+        simulation_metadata={"signal_mode": True, **dict(simulation_metadata or {})},
     )
 
 
@@ -551,13 +878,22 @@ def _synthetic_run_grouping(template: Run, n_histograms: int) -> dict[str, Any]:
     return grouping
 
 
+def _background_provenance(
+    background_per_bin: float | Mapping[int, float],
+) -> float | dict[int, float]:
+    """Provenance-friendly form of a flat or per-group background."""
+    if isinstance(background_per_bin, Mapping):
+        return {int(gid): float(value) for gid, value in background_per_bin.items()}
+    return float(background_per_bin)
+
+
 def _synthetic_run_metadata(
     template: Run,
     *,
     number: int,
     seed: int,
     total_events: float,
-    background_per_bin: float,
+    background_per_bin: float | Mapping[int, float],
     title: str | None,
     default_title: str,
     simulation_metadata: Mapping[str, Any] | None,
@@ -573,7 +909,7 @@ def _synthetic_run_metadata(
     provenance: dict[str, Any] = {
         "seed": int(seed),
         "total_events": float(total_events),
-        "background_per_bin": float(background_per_bin),
+        "background_per_bin": _background_provenance(background_per_bin),
         "template_run_number": template.run_number,
         "template_source_file": template.source_file,
     }
@@ -603,7 +939,7 @@ def _sample_and_build_run(
     *,
     seed: int,
     total_events: float,
-    background_per_bin: float,
+    background_per_bin: float | Mapping[int, float],
     run_number: int | None,
     title: str | None,
     default_title: str,
