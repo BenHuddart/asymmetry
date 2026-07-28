@@ -133,7 +133,7 @@ The dialog opens without a loaded run and offers two idealised instruments
 that supply the geometry a real template would, so you can go straight from a
 model to a synthetic run.
 
-The two built-ins are the contrasting source archetypes of the field. The
+The two F/B built-ins are the contrasting source archetypes of the field. The
 **ideal pulsed F/B** mirrors an ISIS-style spectrometer — 32 forward and 32
 backward detectors, 16 ns bins over a 32 μs window, and no uncorrelated
 background, since a pulsed source has essentially none. The **ideal
@@ -145,6 +145,21 @@ Select either from the *Template run* list; the event budget and background
 spinners pre-fill with sensible values for the chosen instrument. Everything
 downstream — generation, the NeXus round trip, refitting — behaves exactly as
 for a loaded-run template.
+
+A third built-in, the **ideal continuous octant ring**
+(``"ideal_continuous_ring8"``), supplies the geometry for a PSI HAL-9500-style
+high-transverse-field ring instead of a plain F/B pair: 8 detector groups (one
+detector each) at 45° azimuthal spacing, the same fine 1 ns binning and flat
+background as the continuous F/B template. Each group's azimuth (0° at 90°/top,
+numbering clockwise) is recorded on the template's grouping and carried
+through to every synthetic run built from it — see :func:`group_azimuths_deg`
+and `Arbitrary per-group signals`_ below. The default forward/backward pair
+(group 1 vs. its 180°-opposite group 5) makes the plain **Generate Synthetic
+Run…** dialog work on it too, exactly like a loaded run; the ring's own value
+is the per-group azimuths a multi-group or arbitrary-signal simulation needs.
+Any built-in template's binning can be resized from a script with
+:func:`build_builtin_template`'s ``n_bins``/``bin_width_us``/``t0_bin``
+keywords, without hand-building a new :class:`InstrumentTemplate`.
 
 The archetype gallery
 ---------------------
@@ -202,6 +217,46 @@ the grouped time-domain fit expects. If you have just run a grouped fit on the
 selected run, the table is **seeded from that fit's per-group amplitudes and
 phases**, so "simulate what I just fitted" is one click. The reduction
 recovers each group's seeded signal bin-for-bin in expectation.
+
+Arbitrary per-group signals
+----------------------------
+
+**When to use this.** The forward/backward and multi-group tools above both
+drive their signal from a *registered* fit model. Some signals do not come
+from one — a forward model computed elsewhere, a numerical lookup table, a
+measured trace being replayed as a synthetic instrument test — and PSI
+HAL-9500-style high-transverse-field data in particular needs an independent,
+non-analytic polarization per octant. :func:`asymmetry.core.simulate.simulate_signal_run`
+is the scriptable entry point for that case; it has no dialog, since a
+caller-supplied signal is by definition not something a GUI form can capture.
+
+Each entry of ``signals`` assigns one detector group a callable
+:math:`a(t)` (time in μs, fractional units) or an array pre-sampled *exactly*
+on that group's post-t0 bin grid — no implicit padding or truncation, unlike
+the lower-level :func:`~asymmetry.core.simulate.simulate_run_from_group_signals`
+it shares its Poisson-sampling machinery with. Groups with no entry get the
+bare lifetime envelope. The same forward model applies,
+
+.. math::
+
+   N_g(t) = N_{0,g}\, e^{-t/\tau_\mu} \left[1 + a_g(t)\right] + b_g,
+
+with an optional per-group count-rate weight (``group_weights``) and an
+optional per-group background (``background_per_bin`` as a
+``group_id -> counts/bin`` mapping, or one flat rate for every group). A
+signal may be negative and exceed :math:`|a| > 1` — a transverse-field ring
+routinely has both — but if it would drive the *expected* count negative for
+some detector and bin, generation fails loudly with a
+:class:`ValueError` naming the group, detector and time, rather than silently
+flooring the count at the background level the way the model-driven tools do.
+
+The result is an ordinary synthetic :class:`~asymmetry.core.data.dataset.Run`:
+it reduces through :func:`~asymmetry.core.simulate.reduce_run_to_dataset` and
+degrades through :func:`~asymmetry.core.simulate.degrade_run` exactly like
+every other synthetic run, and a ring template's per-group azimuths
+(:func:`~asymmetry.core.simulate.group_azimuths_deg`) survive both unchanged —
+they are ordinary grouping metadata, not something the signal path has to
+know about.
 
 Degrade statistics
 ------------------
@@ -342,6 +397,30 @@ forward/backward dialog exposes only the single-signal α-split case.
    run = simulate_multi_group_run(template, ring, specs,
                                   total_events=40e6,
                                   base_parameters={"frequency": 2.7})
+
+An arbitrary, caller-supplied signal — not drawn from the fit-model registry —
+uses :func:`asymmetry.core.simulate.simulate_signal_run` directly, one
+callable or array per group. Building it on the ``"ideal_continuous_ring8"``
+built-in gives a PSI HAL-9500-style ring with no run to hand, and
+:func:`~asymmetry.core.simulate.group_azimuths_deg` reads back each group's
+azimuth for a signal that itself depends on the detector's angle:
+
+.. code-block:: python
+
+   import numpy as np
+
+   from asymmetry.core.simulate import (
+       build_builtin_template, group_azimuths_deg, simulate_signal_run,
+   )
+
+   ring = build_builtin_template("ideal_continuous_ring8")  # 8 groups, 45 deg apart
+   azimuths = group_azimuths_deg(ring)                      # {1: 90.0, 2: 45.0, ...}
+
+   def signal_at(phase_rad):
+       return lambda t: 0.2 * np.cos(2 * np.pi * 5.0 * t + phase_rad)
+
+   signals = {gid: signal_at(np.deg2rad(az)) for gid, az in azimuths.items()}
+   run = simulate_signal_run(ring, signals, total_events=40e6, seed=7)
 
 A pull-distribution check makes the strongest validation pattern, and
 :func:`asymmetry.core.pull_diagnostic.run_pull_distribution` packages it:

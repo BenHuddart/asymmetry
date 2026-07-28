@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Arbitrary per-group synthetic signals and a continuous octant-ring
+  template.** `asymmetry.core.simulate.simulate_signal_run()` synthesises a
+  run from a caller-supplied `a_g(t)` per detector group — a callable or an
+  array pre-sampled exactly on the group's post-t0 grid, not just a
+  registered fit model — with an optional per-group background
+  (`background_per_bin` as a `group_id -> counts/bin` mapping) and a hard
+  failure instead of a silent floor when a signal would drive the expected
+  counts negative (`expected_counts()`'s new `on_negative_expected="raise"`).
+  A new built-in template, `"ideal_continuous_ring8"`
+  (`BUILTIN_TEMPLATES`), supplies an 8-group, 45°-spaced continuous-source
+  ring — the geometry ingredient for PSI HAL-9500-style high-transverse-field
+  data — recording each group's azimuth for `group_azimuths_deg()` to read
+  back; `build_builtin_template()` gained `n_bins`/`bin_width_us`/`t0_bin`
+  overrides so any built-in's binning can be resized from a script without a
+  bespoke `InstrumentTemplate`.
 - **Component resolution / identifiability diagnostic for composite fits.**
   New `asymmetry.core.fitting.resolution.assess_component_resolution()` judges
   every relaxation-rate parameter of a fitted composite model against the window
