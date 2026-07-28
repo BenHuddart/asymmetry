@@ -13,7 +13,9 @@ import pytest
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.count_domain import fit_fb_alpha, fit_single_histogram
+from asymmetry.core.fitting.grouped_time_domain import build_grouped_time_domain_datasets
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fourier.fft import estimate_fft_phase, fft_complex_asymmetry
 from asymmetry.core.io.periods import select_period
 from asymmetry.core.simulate import (
     BUILTIN_TEMPLATES,
@@ -24,6 +26,7 @@ from asymmetry.core.simulate import (
     build_run_from_detector_asymmetries,
     degrade_run,
     expected_counts,
+    group_azimuths_deg,
     group_specs_from_grouped_fit,
     poisson_asymmetry_errors,
     reduce_run_to_dataset,
@@ -31,6 +34,7 @@ from asymmetry.core.simulate import (
     simulate_multi_group_run,
     simulate_run,
     simulate_run_from_group_signals,
+    simulate_signal_run,
     simulate_two_period_run,
 )
 from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
@@ -1098,6 +1102,253 @@ class TestMultiGroupSimulation:
         assert spec2.amplitude == pytest.approx(0.19)
         assert spec2.relative_phase == pytest.approx(1.57)
         assert spec2.n0_weight == pytest.approx(1.2)
+
+
+# ---------------------------------------------------------------------------
+# WP2: arbitrary per-group signals + the continuous octant-ring template
+# ---------------------------------------------------------------------------
+
+
+def _grouped_datasets_by_id(dataset: MuonDataset) -> dict[int, MuonDataset]:
+    """Per-group lifetime-corrected datasets, keyed by group id."""
+    return {
+        gd.metadata["group_id"]: gd
+        for gd in build_grouped_time_domain_datasets(dataset, lifetime_corrected=True)
+    }
+
+
+class TestRingTemplate:
+    def test_geometry_and_azimuths(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8")
+        assert len(template.histograms) == 8
+        azimuths = group_azimuths_deg(template)
+        assert set(azimuths) == set(range(1, 9))
+        # 45-degree spacing starting at 90 deg (top), numbering clockwise.
+        expected = {gid: (90.0 - (gid - 1) * 45.0) % 360.0 for gid in range(1, 9)}
+        for gid, angle in expected.items():
+            assert azimuths[gid] == pytest.approx(angle)
+        assert template.grouping["forward_group"] == 1
+        assert template.grouping["backward_group"] == 5
+        assert template.grouping["groups"][1] == [1]
+        assert set(template.grouping["included_groups"]) == set(range(1, 9))
+
+    def test_no_azimuths_for_a_plain_fb_template(self) -> None:
+        template = build_builtin_template("ideal_continuous_fb")
+        assert group_azimuths_deg(template) == {}
+
+    def test_build_builtin_template_overrides_binning(self) -> None:
+        default = build_builtin_template("ideal_continuous_ring8")
+        coarse = build_builtin_template(
+            "ideal_continuous_ring8", n_bins=4000, bin_width_us=0.002, t0_bin=400
+        )
+        assert default.histograms[0].n_bins == 10000
+        assert coarse.histograms[0].n_bins == 4000
+        assert coarse.histograms[0].bin_width == pytest.approx(0.002)
+        assert coarse.histograms[0].t0_bin == 400
+        assert coarse.grouping["first_good_bin"] == 400
+        assert coarse.grouping["last_good_bin"] == 3999
+        # Overriding binning leaves the ring grouping/azimuths intact.
+        assert group_azimuths_deg(coarse) == group_azimuths_deg(default)
+
+    def test_azimuths_survive_the_synthetic_run_and_degrade(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=1000, t0_bin=100)
+        run = simulate_signal_run(template, {}, total_events=1e6, seed=1)
+        assert group_azimuths_deg(run) == group_azimuths_deg(template)
+        degraded = degrade_run(run, 0.5, seed=2)
+        assert group_azimuths_deg(degraded) == group_azimuths_deg(template)
+
+
+class TestSignalRunValidation:
+    def test_rejects_unknown_group_id(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=1000, t0_bin=100)
+        with pytest.raises(ValueError, match="group id"):
+            simulate_signal_run(template, {99: lambda t: 0.0 * t}, total_events=1e6)
+
+    def test_rejects_mismatched_array_length(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=1000, t0_bin=100)
+        bad_array = np.zeros(50)  # the post-t0 grid is 900 bins, not 50
+        with pytest.raises(ValueError, match="length"):
+            simulate_signal_run(template, {1: bad_array}, total_events=1e6)
+
+    def test_exact_length_array_is_accepted(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=1000, t0_bin=100)
+        n_post = template.histograms[0].n_bins - template.histograms[0].t0_bin
+        run = simulate_signal_run(template, {1: np.zeros(n_post)}, total_events=1e6)
+        assert run.metadata["synthetic"] is True
+        assert run.metadata["simulation"]["signal_mode"] is True
+
+    def test_negative_signal_within_background_headroom_is_fine(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=1000, t0_bin=100)
+        run = simulate_signal_run(
+            template,
+            {1: lambda t: -0.5 + 0.0 * t},
+            total_events=1e6,
+            background_per_bin=1.0,
+        )
+        assert np.all(run.histograms[0].counts >= 0.0)
+
+    def test_signal_driving_negative_expected_counts_raises(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=1000, t0_bin=100)
+        with pytest.raises(ValueError, match="negative"):
+            simulate_signal_run(
+                template,
+                {1: lambda t: -1.5 + 0.0 * t},
+                total_events=1e6,
+                background_per_bin=0.0,
+            )
+
+    def test_expected_counts_clip_mode_is_unchanged(self) -> None:
+        """The pre-existing ``on_negative_expected="clip"`` default still floors."""
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=1000, t0_bin=100)
+        expected = expected_counts(
+            template,
+            {1: lambda t: -1.5 + 0.0 * t},
+            total_events=1e6,
+            background_per_bin=0.0,
+        )
+        assert np.all(expected[0] >= 0.0)
+
+    def test_per_group_background(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=1000, t0_bin=100)
+        run = simulate_signal_run(
+            template,
+            {},
+            total_events=1e6,
+            background_per_bin={1: 20.0, 2: 5.0},
+        )
+        # Pre-t0 bins carry only that detector's own group background.
+        assert run.histograms[0].counts[:100].mean() == pytest.approx(20.0, rel=0.3)
+        assert run.histograms[1].counts[:100].mean() == pytest.approx(5.0, rel=0.3)
+        assert run.histograms[2].counts[:100].mean() == pytest.approx(0.0, abs=1.0)
+
+
+class TestSignalRunRingRecovery:
+    """§Task-3 (1): per-group frequency/phase recovery from a_d(t) = A cos(2πft+φ_d)."""
+
+    def test_recovers_ring_frequency_and_phase_per_group(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8")
+        azimuths = group_azimuths_deg(template)
+        amplitude = 0.25
+        freq = 5.0  # MHz; the 9 us window holds exactly 45 cycles (no leakage)
+
+        def make_signal(phase_rad: float):
+            def signal(t: np.ndarray) -> np.ndarray:
+                return amplitude * np.cos(2.0 * np.pi * freq * t + phase_rad)
+
+            return signal
+
+        signals = {gid: make_signal(np.deg2rad(az)) for gid, az in azimuths.items()}
+        run = simulate_signal_run(template, signals, total_events=3.2e7, seed=21)
+        dataset = reduce_run_to_dataset(run)
+        group_datasets = _grouped_datasets_by_id(dataset)
+        assert set(group_datasets) == set(azimuths)
+
+        for gid, az in azimuths.items():
+            freqs, spectrum = fft_complex_asymmetry(group_datasets[gid])
+            band = (freqs > 4.0) & (freqs < 6.0)
+            peak_freq = freqs[band][np.argmax(np.abs(spectrum[band]))]
+            assert peak_freq == pytest.approx(freq, abs=0.15), gid
+
+            phase_deg = estimate_fft_phase(freqs, spectrum, min_frequency=4.0, max_frequency=6.0)
+            expected_phase = ((az + 180.0) % 360.0) - 180.0
+            diff = (phase_deg - expected_phase + 180.0) % 360.0 - 180.0
+            assert abs(diff) < 5.0, (gid, phase_deg, expected_phase)
+
+
+class TestSignalRunTwoLineFFT:
+    """§Task-3 (2): a sharp + a broad damped line, built as bare numpy arrays."""
+
+    def test_two_component_array_signal_shows_both_lines(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8")
+        hist = template.histograms[0]
+        n_post = hist.n_bins - hist.t0_bin
+        t_post = np.arange(n_post) * hist.bin_width
+
+        f_sharp, f_broad = 5.0, 7.0  # MHz; both land on exact FFT bins
+        a_sharp = 0.15 * np.cos(2.0 * np.pi * f_sharp * t_post)
+        a_broad = 0.15 * np.cos(2.0 * np.pi * f_broad * t_post + 0.7) * np.exp(-1.0 * t_post)
+        signal_array = a_sharp + a_broad  # plain numpy array, not the fit-model registry
+
+        run = simulate_signal_run(template, {1: signal_array}, total_events=3.2e7, seed=5)
+        dataset = reduce_run_to_dataset(run)
+        group1 = _grouped_datasets_by_id(dataset)[1]
+
+        freqs, spectrum = fft_complex_asymmetry(group1)
+        magnitude = np.abs(spectrum)
+
+        sharp_band = (freqs > 4.0) & (freqs < 6.0)
+        broad_band = (freqs > 6.0) & (freqs < 8.0)
+        sharp_peak_freq = freqs[sharp_band][np.argmax(magnitude[sharp_band])]
+        broad_peak_freq = freqs[broad_band][np.argmax(magnitude[broad_band])]
+        assert sharp_peak_freq == pytest.approx(f_sharp, abs=0.2)
+        assert broad_peak_freq == pytest.approx(f_broad, abs=0.2)
+
+        # Both lines rise well clear of the shot-noise floor.
+        floor_band = (freqs > 9.0) & (freqs < 15.0)
+        floor = np.median(magnitude[floor_band])
+        assert magnitude[sharp_band].max() > 8.0 * floor
+        assert magnitude[broad_band].max() > 8.0 * floor
+
+        # The damped line is broader: more bins sit above half its own peak.
+        def half_max_width(band: np.ndarray) -> int:
+            peak = magnitude[band].max()
+            return int(np.sum(magnitude[band] > 0.5 * peak))
+
+        assert half_max_width(broad_band) > half_max_width(sharp_band)
+
+
+class TestSignalRunPoissonAndDegrade:
+    """§Task-3 (3): Poisson correctness and composition with degrade_run."""
+
+    def test_poisson_variance_matches_expectation(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=2000, t0_bin=200)
+        signal = {1: lambda t: 0.2 * np.cos(2.0 * np.pi * 3.0 * t)}
+        run = simulate_signal_run(
+            template, signal, total_events=4.0e6, seed=3, background_per_bin=5.0
+        )
+        expected = expected_counts(template, signal, total_events=4.0e6, background_per_bin=5.0)
+        exp = expected[0]
+        residual_sq = (run.histograms[0].counts - exp) ** 2
+        # Reduced chi-square over all bins should sit near 1: Poisson variance = mean.
+        reduced_chi2 = float(np.sum(residual_sq / np.clip(exp, 1.0, None)) / exp.size)
+        assert abs(reduced_chi2 - 1.0) < 6.0 * np.sqrt(2.0 / exp.size)
+
+    def test_degrade_composes_with_signal_run(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=2000, t0_bin=200)
+        signal = {1: lambda t: 0.2 * np.cos(2.0 * np.pi * 3.0 * t)}
+        run = simulate_signal_run(template, signal, total_events=4.0e6, seed=3)
+        half = degrade_run(run, 0.5, seed=9)
+
+        full_total = sum(float(h.counts.sum()) for h in run.histograms)
+        half_total = sum(float(h.counts.sum()) for h in half.histograms)
+        assert half_total < full_total
+        assert half_total == pytest.approx(0.5 * full_total, rel=0.05)
+        assert group_azimuths_deg(half) == group_azimuths_deg(run)
+        # The degraded run still reduces through the normal chain.
+        dataset = reduce_run_to_dataset(half)
+        assert dataset.asymmetry.size > 0
+
+
+class TestSignalRunDeterminism:
+    """§Task-3 (4): determinism under seed."""
+
+    def test_same_seed_is_bit_identical(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=2000, t0_bin=200)
+        signals = {
+            gid: (lambda t, g=gid: 0.15 * np.cos(2 * np.pi * 4.0 * t + 0.3 * g))
+            for gid in range(1, 9)
+        }
+        run_a = simulate_signal_run(template, signals, total_events=8.0e6, seed=77)
+        run_b = simulate_signal_run(template, signals, total_events=8.0e6, seed=77)
+        for ha, hb in zip(run_a.histograms, run_b.histograms, strict=True):
+            assert np.array_equal(ha.counts, hb.counts)
+
+    def test_different_seed_differs(self) -> None:
+        template = build_builtin_template("ideal_continuous_ring8", n_bins=2000, t0_bin=200)
+        signals = {1: lambda t: 0.15 * np.cos(2 * np.pi * 4.0 * t)}
+        run_a = simulate_signal_run(template, signals, total_events=4.0e6, seed=1)
+        run_b = simulate_signal_run(template, signals, total_events=4.0e6, seed=2)
+        assert not np.array_equal(run_a.histograms[0].counts, run_b.histograms[0].counts)
 
 
 class TestRunStatistics:
