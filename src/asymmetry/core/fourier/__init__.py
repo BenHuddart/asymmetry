@@ -1,7 +1,10 @@
 """Frequency-domain analysis: FFT, grouped inputs, and apodization."""
 
 from asymmetry.core.fourier.apodisation import (
+    ApodisationEarlySignalWarning,
     ApodisationSuggestion,
+    EarlySignalApodisationLoss,
+    early_signal_apodisation_loss,
     suggest_matched_apodisation,
 )
 from asymmetry.core.fourier.burg import (
@@ -20,12 +23,16 @@ from asymmetry.core.fourier.fft import (
     canonical_fourier_display_mode,
     estimate_fft_phase,
     exclude_frequency_ranges,
+    fft_arrays,
     fft_asymmetry,
+    fft_complex_arrays,
     fft_complex_asymmetry,
     fourier_display_values,
     fourier_mode_uses_entropy_optimizer,
     fourier_mode_uses_phase_correction,
     optimize_phase_entropy,
+    prepare_fft_arrays,
+    prepare_fft_time_signal,
 )
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.spectrum import (
@@ -51,7 +58,10 @@ from asymmetry.core.fourier.units import (
 from asymmetry.core.fourier.window import apply_window
 
 __all__ = [
+    "ApodisationEarlySignalWarning",
     "ApodisationSuggestion",
+    "EarlySignalApodisationLoss",
+    "early_signal_apodisation_loss",
     "suggest_matched_apodisation",
     "FieldUnit",
     "axis_label",
@@ -63,7 +73,9 @@ __all__ = [
     "mhz_to_tesla",
     "tesla_to_gauss",
     "tesla_to_mhz",
+    "fft_arrays",
     "fft_asymmetry",
+    "fft_complex_arrays",
     "fft_complex_asymmetry",
     "exclude_frequency_ranges",
     "average_fourier_display_values",
@@ -73,6 +85,8 @@ __all__ = [
     "fourier_mode_uses_entropy_optimizer",
     "fourier_mode_uses_phase_correction",
     "optimize_phase_entropy",
+    "prepare_fft_arrays",
+    "prepare_fft_time_signal",
     "build_group_signal_dataset",
     "apply_spectrum_conditioning",
     "pulse_compensation_gain",

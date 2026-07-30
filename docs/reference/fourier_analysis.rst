@@ -118,6 +118,113 @@ spectrum.
    plt.ylabel(r"$|\\mathcal{F}|$")
    plt.show()
 
+.. _fft-arrays-without-a-dataset:
+
+Arrays without a dataset
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Not every curve worth transforming is a dataset's default reduction. A custom
+detector pairing, a background-corrected or detrended export, a residual, a
+hand-assembled model curve — each is a bare :math:`(t, A, \sigma)` triple, and
+building a :class:`~asymmetry.core.data.dataset.MuonDataset` around one just to
+call ``fft_asymmetry`` puts every use one slip away from mismatched errors or
+scales. Three array front doors take the triple directly, matching their
+dataset counterparts keyword for keyword:
+
+.. code-block:: python
+
+   from asymmetry.core.fourier.fft import (
+       fft_arrays,             # -> frequencies, real_part, magnitude
+       fft_complex_arrays,     # -> frequencies, complex spectrum
+       prepare_fft_arrays,     # -> the preprocessed time signal only
+   )
+
+   frequencies, real_part, magnitude = fft_arrays(
+       time, asymmetry, error,
+       window="none",
+       t_min=0.0, t_max=0.06,
+       padding_factor=8,
+   )
+
+``error`` is optional (omit it and the error-weighted average subtraction and
+fractional baseline fall back to their unweighted forms); every other argument
+is keyword-only. This is the frequency-domain counterpart of
+:meth:`~asymmetry.core.fitting.engine.FitEngine.fit_arrays` on the fitting side
+(:doc:`fitting`), and it shares its shape: the dataset and array paths run one
+internal core, so ``fft_arrays(ds.time, ds.asymmetry, ds.error, …)`` returns
+exactly what ``fft_asymmetry(ds, …)`` returns — the same frequencies, real part
+and magnitude, equal bit for bit with no tolerance, across every window,
+padding factor, crop, phase rotation and calibration setting.
+
+Like ``fit_arrays``, and unlike the dataset path, the array path validates what
+a dataset would otherwise have carried implicitly: a non-1-D shape, a length
+mismatch, an empty triple, non-finite values, or a ``t_min``/``t_max`` window
+that leaves no points each raise ``ValueError`` naming both the offending array
+and the entry point you called.
+
+.. note::
+
+   **The FFT is scale-linear: percent in, percent-scaled spectrum out.**
+   Nothing on the array path rescales the input, so the spectrum carries
+   whatever asymmetry scale the curve did — the percent (0–100) convention
+   :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry` uses, or the
+   dimensionless fraction :math:`A \in [-1, 1]` that
+   :func:`~asymmetry.core.transform.compute_asymmetry` and
+   :func:`~asymmetry.core.transform.binned_fb_asymmetry` return. The two differ
+   by a factor of 100 in every amplitude and area you read off the result. See
+   :doc:`asymmetry_units`. (``amplitude_calibration=True`` is the one place a
+   scale is *asserted*: it targets the percent convention, so feed it a
+   fractional-footing signal — see `Normalisation`_.)
+
+.. _fft-baseline-removal:
+
+Baseline removal: mean or trend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``subtract_average_signal`` removes a **constant** — WiMDA's error-weighted
+average of the cropped signal. A signal that *relaxes* across the record does
+not ride on a constant, and the trend the mean leaves behind dumps power into
+the low-frequency bins, where it can swamp a genuine line. ``detrend=`` removes
+a trend instead, on both the dataset and the array front doors:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 78
+
+   * - ``detrend``
+     - Effect
+   * - ``None``
+     - The default. No detrend; ``subtract_average_signal`` behaves as it
+       always has.
+   * - ``int`` :math:`n`
+     - An **error-weighted least-squares polynomial** of order :math:`n` is
+       fitted to the cropped, post-fractional signal and subtracted. Orders
+       ``0``–``3`` only.
+   * - callable
+     - ``f(time) -> baseline``, subtracted verbatim, for removing a slow model
+       fitted elsewhere. It receives the cropped time axis and must return an
+       array of the same shape.
+
+.. code-block:: python
+
+   # A relaxing zero-field signal: remove the trend, not the mean.
+   frequencies, real_part, magnitude = fft_arrays(time, asymmetry, error, detrend=2)
+
+``detrend`` is applied **instead of** the average subtraction, never after it —
+a fitted polynomial already subsumes the mean. ``subtract_average_signal``
+therefore defaults to ``None``, meaning "the historical ``True``, unless
+``detrend`` takes over"; passing ``detrend=`` together with an explicit
+``subtract_average_signal=True`` raises ``ValueError`` rather than guessing an
+order for the two.
+
+.. warning::
+
+   **Keep the polynomial order low.** A polynomial flexible enough to follow
+   the oscillation will remove *it* rather than the trend it rides on — a cubic
+   over half a cycle deletes the line almost entirely. Orders above 3 are
+   rejected for that reason; if a cubic is not enough, crop the record or
+   subtract a fitted model through the callable form.
+
 Signal source
 ~~~~~~~~~~~~~
 
@@ -188,7 +295,58 @@ For a Lorentzian filter, Asymmetry follows WiMDA's two cases:
 
 The Gaussian mode uses the same WiMDA-style softened start with squared
 arguments. ``Subtract average signal`` is applied before the filter, matching
-WiMDA's default preprocessing path.
+WiMDA's default preprocessing path (see `Baseline removal: mean or trend`_ for
+the alternative when the signal relaxes).
+
+.. _fft-early-time-apodisation:
+
+Early-time work: never use a taper
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The three modes above are **filters**: with ``Filter start = 0`` they are
+weight-1 at :math:`t = 0` and decay from there, so they leave the beginning of
+the record intact. The core API additionally accepts the two legacy
+whole-trace **tapers**, ``window="hann"`` and ``window="cosine"``, and these
+behave completely differently — they are exactly zero at the first sample and
+climb as :math:`(t/T)^2`, so they *delete* the first few percent of the record.
+
+.. danger::
+
+   **A symmetric taper deletes early-time signal, and a heavily damped
+   oscillation lives entirely there.** When the envelope's lifetime is a small
+   fraction of the record — :math:`\lambda \gg 1/T` — a Hann or cosine window
+   multiplies the whole signal by ~0 and the line vanishes into the noise
+   floor. The same data can be many standard deviations significant with no
+   window at all. This is not a resolution/leakage trade: it is the signal
+   being thrown away.
+
+Tapers are for the opposite regime — late-time, narrow-line work, where the
+oscillation survives the whole record and the truncation sidelobes are what
+you are fighting. For a heavily damped line use one of:
+
+* ``window="none"`` with a time crop (``t_max``) that ends where the signal
+  does. Zero-pad (``padding_factor``) to interpolate the resulting short
+  transform onto a readable grid;
+* the exponential filter — ``window="lorentzian"`` with
+  ``filter_time_constant_us`` :math:`\approx 1/\lambda` and
+  ``filter_start_us = 0``. This is the **matched** apodisation for a
+  Lorentzian-broadened line: weight-1 at the start, and it maximises the
+  line's peak signal-to-noise (at roughly double its apparent width, so do not
+  read a width off it — see the note at the top of this page).
+
+Asymmetry checks for this case actively. After apodisation, the shared FFT
+preprocessing measures how much of the signal's error-weighted power lies in
+the leading 15 % of the record and how much of that power the window keeps;
+when the power is concentrated early (≥ 75 %) *and* the window removes most of
+it (keeps ≤ 20 %), it raises
+:class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`
+naming both numbers and both alternatives. The warning is advisory — nothing
+about the returned spectrum changes — and it reaches the dataset and array
+front doors alike, because it lives in the preprocessing they share. The
+thresholds are calibrated so that ``window="none"`` and the matched exponential
+filter (which keeps ~half the early power by construction) never trip it, and
+neither does a conventional transverse-field record whose line is alive across
+the whole window.
 
 Matched-filter suggestion
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -231,6 +389,20 @@ found. "No clear line" now means no line at any scanned width — only then,
 or when the dominant line is resolution-limited (its width is the
 transform's, not the sample's), does the status read *"No clear line to
 match — leave apodisation off."* and nothing is filled.
+
+.. caution::
+
+   **The suggester reasons from the spectrum only, and cannot see a dead
+   time-domain envelope.** If the spectrum it is given was itself computed
+   under a taper that already deleted the early-time signal
+   (`Early-time work: never use a taper`_), the line it is asked to match is
+   simply not in the data it can see, and it will report "no clear line" on a
+   record that is many-sigma without the taper. It never suggests a taper — the
+   two kinds it returns are the weight-1-at-:math:`t = 0` filters, which are
+   safe for early-time work — but it will not tell you that a taper is why it
+   found nothing. That is what
+   :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`
+   is for.
 
 How the GUI FFT is built
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -484,6 +656,25 @@ Engine API
 
 .. warning::
 
+   **There is no asymmetry-domain MaxEnt, and there cannot be one.** MaxEnt
+   reconstructs :math:`P(B)` by fitting a forward model of the raw detector
+   *counts*: it weights every time bin by its own Poisson error and carries a
+   phase, an amplitude and a background for each detector group. An asymmetry
+   curve has already combined the detectors, divided out the normalisations and
+   discarded exactly those per-group statistics, so there is nothing left to
+   hand the algorithm — no amount of API would make it work. If what you have
+   is an asymmetry curve, the frequency-domain estimators for it are the FFT
+   (:ref:`fft-arrays-without-a-dataset`) and a frequency-domain fit
+   (:doc:`frequency_domain_fitting`).
+
+   If you have **counts but no** ``Run`` to carry them — a re-grouped detector
+   sum, a simulation, counts reconstructed from an export — use
+   :func:`~asymmetry.core.maxent.maxent_from_counts`
+   (`Reconstructing from count arrays`_), which shares ``maxent``'s entire
+   implementation.
+
+.. warning::
+
    ``MaxEntConfig`` is a dataclass whose **first** positional field is
    ``n_spectrum_points`` — *not* ``f_min_mhz``. Always construct it with
    **keyword arguments**. A positional call such as ``MaxEntConfig(0.0, 5.0)``
@@ -507,6 +698,59 @@ back in via ``state=`` to add further cycles incrementally rather than starting
 over. Reusing a ``state`` after changing the configuration raises
 ``ValueError`` (``"MaxEnt state is incompatible with the current
 configuration; restart."``) — build a fresh state for the new settings.
+
+.. _maxent-from-counts:
+
+Reconstructing from count arrays
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``maxent_from_counts`` is the entry point for counts that are not inside a
+``Run``:
+
+.. code-block:: python
+
+   from asymmetry.core.maxent import MaxEntConfig, maxent_from_counts
+
+   result = maxent_from_counts(
+       {1: forward_counts, 2: backward_counts, 3: up_counts, 4: down_counts},
+       MaxEntConfig(n_spectrum_points=2048, f_min_mhz=0.0, f_max_mhz=5.0),
+       bin_width_us=0.016,
+       t0_bin=310,
+       field_gauss=200.0,
+       cycles=10,
+   )
+
+``counts`` is a mapping ``{group_id: counts}`` or a plain sequence of arrays
+(numbered ``1…n`` in order); every group must share one time axis. The keyword
+arguments are exactly the count-domain calibration the algorithm cannot infer
+from the arrays:
+
+* ``bin_width_us`` — required; the counts alone carry no time axis.
+* ``t0_bin`` — index of :math:`t = 0` within the supplied arrays (fractional
+  values allowed); the axis is ``(bin − t0_bin) · bin_width_us``.
+* ``field_gauss`` — used only for the field-centred automatic window and the
+  binning auto-steer, exactly as ``run.metadata["field"]`` is on the ``Run``
+  path.
+* ``alpha`` — used only in ``mode="zf_lf"``. Without run metadata to designate
+  the pair, **the order of** ``counts`` **decides**: the first group is forward
+  (pinned to 0°), the second backward (180°).
+* ``group_names``, ``run_number`` — labels only.
+
+Everything else stays in ``MaxEntConfig`` — spectrum points, frequency window,
+time window and exclusions, cycles and inner iterations, prior level, mode,
+pulse shape, binning, backend — because that object is already the algorithm's
+configuration and duplicating it here would only let the two drift.
+
+These are **counts**, not an asymmetry: values must be finite and
+non-negative, and the Poisson :math:`\sigma = \sqrt{N}` (floored at one count)
+is derived from them. There is deliberately no way to supply your own errors —
+a :math:`\sigma` that is not the counting error breaks the algorithm's premise.
+Passing an asymmetry curve is caught by the non-negativity guard with a message
+saying so.
+
+``maxent_from_counts`` and ``maxent`` share one implementation: both build a
+``MaxEntInput`` through the same core and run the same cycle loop, so the same
+counts give the same spectrum, pinned bit for bit by test.
 
 .. _maxent-gpu-acceleration:
 

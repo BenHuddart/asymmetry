@@ -9,6 +9,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Transform a bare `(t, A, σ)` triple: `fft_arrays()`,
+  `fft_complex_arrays()`, `prepare_fft_arrays()`.** Every Fourier entry point
+  took a `MuonDataset`, so transforming a curve that is not a dataset's default
+  reduction — a custom detector pairing, a detrended or background-corrected
+  export, a residual, a hand-built model curve — meant synthesising a dataset to
+  carry it, the same construction `FitEngine.fit_arrays` exists to remove on the
+  fitting side. The three new front doors match `fft_asymmetry`,
+  `fft_complex_asymmetry` and `prepare_fft_time_signal` keyword for keyword
+  (`window`, `padding_factor`, `t_min`/`t_max`, `phase_degrees`,
+  `t0_offset_us`, `subtract_average_signal`, `filter_start_us`,
+  `filter_time_constant_us`, `fractional`, `amplitude_calibration`,
+  `diagnostics`) and share their entire implementation: the array-consuming body
+  of the preprocessing was extracted into one internal core, both paths crop
+  through one seam, and the spectral half (padding, coherent-gain calibration,
+  phase rotation, diagnostics stamp) is likewise one core. Equivalence is exact
+  and pinned by test with no tolerance — identical frequencies, real part,
+  magnitude and complex spectrum across every kwarg combination worth testing.
+  `error` is optional on the array path (the error-weighted average subtraction
+  and fractional baseline fall back to their unweighted forms without it), and
+  the array path validates what a dataset would otherwise have carried
+  implicitly, raising `ValueError` naming both the offending array and the entry
+  point for a non-1-D shape, a length mismatch, empty input, non-finite values,
+  or a crop that leaves no points. The dataset front doors keep their signatures
+  and behaviour. The FFT is scale-linear — percent in, percent-scaled spectrum
+  out — and the new reference section says so, cross-linking "Asymmetry units
+  across the API".
+- **Remove a trend, not just a mean, before the FFT: `detrend=`.**
+  `subtract_average_signal` removes a constant, which is the wrong baseline for
+  a signal that relaxes across the record: the trend it leaves behind dumps
+  power into the low-frequency bins, where it can swamp a genuine line. The new
+  `detrend=` argument on the shared prepare core — so it reaches the dataset and
+  array front doors alike — takes `None` (today's behaviour, unchanged), an
+  integer polynomial order `0`–`3` fitted **error-weighted** to the cropped,
+  post-fractional signal, or a callable `f(time) -> baseline` subtracted
+  verbatim so a caller can remove a slow model fitted elsewhere. It is applied
+  *instead of* the mean subtraction rather than after it, since a fitted
+  polynomial subsumes the mean; `subtract_average_signal` therefore now defaults
+  to `None` meaning "the historical `True`, unless `detrend` takes over", and
+  passing `detrend=` together with an explicit `subtract_average_signal=True`
+  raises rather than guessing an order for the two. Orders above 3 are rejected:
+  a polynomial flexible enough to follow the oscillation removes *it* rather
+  than the trend it rides on.
+- **Reconstruct MaxEnt from count arrays: `maxent_from_counts()`.** MaxEnt fits
+  a forward model of the raw detector counts — weighting every bin by its own
+  Poisson error and carrying a phase, amplitude and background per detector
+  group — so it needs a `Run`'s histograms, and an asymmetry curve has already
+  destroyed exactly those statistics. That boundary was real but undocumented,
+  and there was no supported way to drive the algorithm from counts that are not
+  inside a `Run` (a re-grouped detector sum, a simulation, counts reconstructed
+  from an export): only the low-level `MaxEntInput` / `MaxEntGroupInput` /
+  `run_cycles` path. `maxent_from_counts(counts, config, bin_width_us=…,
+  t0_bin=…, field_gauss=…, alpha=…, group_names=…, run_number=…)` takes per-group
+  count arrays (a mapping or a sequence) plus exactly the count-domain
+  calibration the arrays cannot carry; everything else stays in `MaxEntConfig`,
+  which is already the algorithm's configuration object. `σ = √N` is derived
+  from the counts and deliberately not overridable — a σ that is not the
+  counting error breaks the algorithm's premise. It shares `maxent`'s whole
+  implementation: the per-group normalisation, interior exclusion, frequency
+  window, phase seeding and pulse response moved into one core behind a
+  `GroupCountSignal` seam, and the auto-steering and frequency-window resolvers
+  now take the field value rather than reaching into a `Run`. The same counts
+  therefore give the same spectrum, pinned bit for bit by test across time
+  windows, binning, exclusions, the automatic window, group selection, phase
+  seeding, a non-zero t0 bin and ZF/LF mode. `build_maxent_input_from_counts` is
+  exported alongside it, and the docs and both docstrings now state plainly that
+  there is no asymmetry-domain MaxEnt and point asymmetry-curve callers at
+  `fft_arrays`.
 - **Fit a bare `(t, A, σ)` triple: `FitEngine.fit_arrays()`.** `FitEngine.fit`
   only accepted a `MuonDataset`, so fitting a curve that is not a dataset's
   default reduction — a custom detector pairing, a background-corrected export,
@@ -142,6 +209,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factor of two small.
 
 ### Fixed
+
+- **An apodisation window that deletes the early-time signal now says so.** The
+  `"hann"` and `"cosine"` windows are symmetric tapers: exactly zero at the
+  first sample, rising as `(t/T)²`. They are for late-time / narrow-line work,
+  and on a heavily damped oscillation — lifetime a small fraction of the record
+  — they multiply away the entire signal, so a line that is many standard
+  deviations significant with no window reads as flat noise with one. Nothing
+  warned about this, and `suggest_matched_apodisation` cannot detect it because
+  it reasons from the spectrum only and so sees an envelope that is already
+  dead. The shared FFT prepare core now measures, after apodisation, what share
+  of the pre-window error-weighted power lies in the leading 15 % of the record
+  and what share of that the window keeps; when the power is concentrated early
+  (≥ 75 %) *and* the window removes most of it (keeps ≤ 20 %) it raises the new
+  `ApodisationEarlySignalWarning`, naming both numbers and both alternatives —
+  `window="none"` with a crop, or the exponential (`"lorentzian"`) filter at
+  `filter_time_constant_us ≈ 1/λ`, which is weight-1 at `t = 0` and is the
+  matched apodisation for a Lorentzian line. No returned value changes, and the
+  guard reaches the dataset and array paths alike because it lives in the core
+  they share. The thresholds come from a synthetic study documented and pinned
+  in the tests: the binding constraints are the matched exponential filter,
+  which keeps ~½ of the early power and must not trip the warning it is
+  recommended by, and realistic `1/σ²` error growth, which tilts the
+  concentration statistic to 0.43 on an *undamped* record before any damping at
+  all. Every apodisation-adjacent docstring and the Fourier reference page now
+  separate the weight-1-at-`t = 0` filters from the tapers and state the failure
+  mode concretely, and `suggest_matched_apodisation` carries the caveat that it
+  cannot see a dead time-domain envelope. The fit wizard's and peak detector's
+  internal seeding FFTs suppress the warning — the window there is theirs, not
+  the user's — and now go through `fft_arrays` instead of synthesising a
+  dataset.
 
 - **`mu_relaxation_from_amplitude` documented `reference_amplitude` as a
   "fraction".** The code has always pinned `A_Mu` on the percent scale — it is
