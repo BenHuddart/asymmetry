@@ -662,6 +662,13 @@ def fit_single_histogram(
     ``params`` supplies the nuisances ``N0`` and ``background`` plus the physics
     model parameters; the muon lifetime is held fixed at the physical value.
 
+    Scale: the physics model's asymmetry parameters (``A``/``A0``, ``baseline``)
+    are **in percent (0–100)**, as everywhere else in the fitting layer —
+    :func:`_percent_to_fraction` divides the 100 out internally so ``1 + a``
+    combines a true fraction with the counts. Seed and read ``A`` in percent. The
+    *data* here is raw counts, so the percent/fraction question touches only the
+    parameters, not the arrays.
+
     Optional window/nuisance flexibility, all no-ops unless requested:
     ``exclude`` drops an interior time window from the fit; a free ``t0``
     parameter shifts the model time axis; free ``lambda_base`` / ``beta_base``
@@ -798,7 +805,9 @@ def fit_fb_alpha(
     run the statistically proper way (WiMDA ``fgFB``), reporting its correlation
     with the physics amplitude — strong in TF runs. ``params`` must contain the
     shared ``alpha``, a forward background ``background`` and a backward
-    background ``background_b``, plus the physics model parameters.
+    background ``background_b``, plus the physics model parameters — whose
+    asymmetry amplitudes (``A``/``A0``, ``baseline``) are **in percent (0–100)**,
+    as in :func:`fit_single_histogram`.
 
     Returns a :class:`GroupedTimeDomainFitResult` whose ``group_results`` are
     keyed by ``forward_group`` / ``backward_group`` and whose
