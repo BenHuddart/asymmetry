@@ -306,10 +306,11 @@ def _characteristic_function(
     SciPy's z-transform convention carries the inverse power, and the two signs
     cancel. Cost is ``O((n_bins + N_t) log(n_bins + N_t))``.
 
-    Tier 2 is used only when ``t`` is uniform within :data:`_UNIFORM_T_RTOL`, has
-    at least two points, and the histogram has at least :data:`_CZT_MIN_BINS`
-    bins; everything else (scalar, empty, log-spaced, ragged, coarse-binned)
-    takes Tier 1, which is itself ~10–40× faster than the exp matrix it replaces.
+    Tier 2 is used only when ``t`` is a 1-D vector of at least two points that is
+    uniform within :data:`_UNIFORM_T_RTOL`, and the histogram has at least
+    :data:`_CZT_MIN_BINS` bins; everything else (scalar, empty, log-spaced,
+    ragged, non-vector, coarse-binned) takes Tier 1, which is itself ~10–40×
+    faster than the exp matrix it replaces.
     """
     n_bins = centres.size
     if t.size == 0:
