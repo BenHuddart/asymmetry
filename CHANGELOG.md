@@ -78,6 +78,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`estimate_alpha_detailed(method="general")` reported a badly wrong alpha as a
+  good one.** The closed-form flatness solution assumes the counts decay at
+  exactly τ_µ, and the two-window equation cannot tell a detector imbalance from
+  counts that decay slightly faster or slower — so an effective lifetime a few
+  tenths of a per cent off τ_µ (pile-up rejection, or a marginally
+  over-subtracted background) was absorbed entirely into alpha and returned with
+  `ok=True` and a small bootstrap error. A 0.5 % lifetime error shifts alpha by
+  10 % at a 20 % asymmetry and by tens of per cent on weakly asymmetric data. The
+  solution is now gated on the flatness it assumes: flatness is re-tested across
+  eight equal-statistics sub-windows *with alpha re-freed* (testing the trend at
+  the solved alpha does not work — the solver's own two-window condition cancels
+  exactly that trend), and what survives is read back as an effective lifetime. A
+  deviation above 0.2 % that is resolved at 3σ now returns `ok=False` naming the
+  deviation and pointing at the count ratio on a fully depolarised window.
+  `objective_value`, previously `None` for this method, carries the flatness χ²
+  either way. The reported alpha is unchanged for data that passes. Reported from
+  a downstream continuous-source analysis where the method returned 2.4× and
+  1.14× the true balance, silently.
 - **Global fit wizard: phase-1 screening used a fraction of the host.** The
   per-dataset single-fit tables — independent, minutes-long, CPU-bound jobs —
   were capped at four workers regardless of core count, so a 14-dataset series on

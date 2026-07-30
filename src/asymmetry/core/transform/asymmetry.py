@@ -363,6 +363,181 @@ def _general_two_window_alpha(
     return float(alpha)
 
 
+# --- General-method goodness gate -------------------------------------------
+#
+# The closed-form solver imposes flatness of the lifetime-corrected balanced
+# count between exactly two windows: one equation for one unknown. The
+# combination is polarization-free at the true alpha for *any* P(t), but only if
+# the counts really decay at τ_μ — so counts decaying with an effective lifetime
+# slightly different from τ_μ (pile-up rejection, a slightly over-subtracted
+# background) are indistinguishable from a detector imbalance, and the whole
+# mismatch lands in alpha with `ok=True` and a small bootstrap error.
+#
+# Testing that by fitting a straight line to the residual log-trend at the
+# *solved* alpha does not work: the two-window condition has already set the two
+# window means equal, which cancels the linear component of exactly that trend
+# (verified on synthetic data — a 0.5% lifetime error that shifts alpha by 12%
+# leaves a residual slope of only ~0.05%). The gate therefore re-frees alpha:
+# the sub-window log-levels are fitted with a three-term basis
+# {constant, time, ∂ln N/∂alpha}, so the lifetime term is measured *after*
+# alpha has been allowed to re-absorb what it can. What survives is the part of
+# the mismatch alpha cannot absorb, and it is reported as an effective lifetime.
+
+#: Sub-windows the gate splits the estimation window into (equal combined
+#: counts, so every sub-window carries comparable Poisson error), and the
+#: minimum needed for the three-parameter fit to have any degrees of freedom.
+_GENERAL_GATE_WINDOWS = 8
+_GENERAL_GATE_MIN_WINDOWS = 5
+
+#: Gate tolerances. The effective lifetime of the balanced count must agree with
+#: τ_μ to within :data:`_GENERAL_GATE_TAU_TOLERANCE` (a fraction), *and* any
+#: larger deviation must be resolved at :data:`_GENERAL_GATE_SIGMA` standard
+#: errors before the estimate is rejected. Both clauses are needed: the relative
+#: clause alone would fail clean low-statistics data, whose fitted lifetime
+#: scatters by more than a per cent; the significance clause alone would reject
+#: high-statistics data over a lifetime error far too small to matter.
+#:
+#: 0.2% / 3σ come from a synthetic Poisson study over 30 seeds per point
+#: (relaxing LF polarization, alpha = 1.37, ~20% asymmetry), pinned by
+#: ``tests/core/test_alpha_estimation.py``:
+#:
+#: * a 0.5% lifetime mismatch — which drives the estimate ~10% wrong at 20%
+#:   asymmetry and ~70% wrong at 5% — is flagged in 23/30 datasets at 2·10⁷
+#:   counts and 30/30 at 10⁸;
+#: * a 1% mismatch (~22% wrong) is flagged in 30/30 at 2·10⁷;
+#: * clean data is flagged in 0/30 at 2·10⁷ and above, and 1/30 at 2·10⁶ —
+#:   a few-per-cent conservative false alarm where alpha's own statistical
+#:   error is already per-cent-sized.
+#:
+#: 0.2% is below the 0.3–1% mismatches seen in practice and above the scatter
+#: of the fitted lifetime on clean data at any statistics that resolve it;
+#: raising the significance to 4σ would halve the detection rate at 2·10⁷
+#: without removing the low-statistics false alarm, and lowering the tolerance
+#: buys nothing because the significance clause binds first.
+_GENERAL_GATE_TAU_TOLERANCE = 0.002
+_GENERAL_GATE_SIGMA = 3.0
+
+
+@dataclass(frozen=True)
+class _GeneralFlatness:
+    """Flatness diagnostics of the lifetime-corrected balanced count."""
+
+    n_windows: int
+    #: Flatness χ² of the sub-window levels about their inverse-variance-weighted
+    #: mean — the ``general`` analogue of the diamagnetic objective.
+    chi2: float
+    #: Effective-lifetime deviation from τ_μ implied by the residual trend once
+    #: alpha is re-freed, as a fraction (``tau_eff / tau_mu - 1``), and its
+    #: standard error.
+    tau_deviation: float
+    tau_deviation_error: float
+
+
+def _equal_count_edges(combined: NDArray[np.float64], n_windows: int) -> NDArray[np.int64]:
+    """Sub-window edges placed at equal cumulative combined counts."""
+    total = float(np.sum(combined))
+    cum = np.cumsum(combined)
+    targets = (np.arange(1, n_windows) * total) / n_windows
+    edges = np.concatenate(([0], np.searchsorted(cum, targets) + 1, [combined.size]))
+    return np.unique(edges)
+
+
+def _general_flatness(
+    f: NDArray[np.float64],
+    b: NDArray[np.float64],
+    time_us: NDArray[np.float64],
+    alpha: float,
+) -> _GeneralFlatness | None:
+    """Flatness of ``(F/√α + B√α)·exp(t/τ_μ)`` across equal-statistics windows.
+
+    Returns ``None`` when the window cannot be split into at least
+    :data:`_GENERAL_GATE_MIN_WINDOWS` usable sub-windows (the gate then makes no
+    statement rather than a noise-driven one).
+
+    Each sub-window contributes the same inverse-variance-weighted density the
+    solver uses — weights ``exp(-2t/τ_μ)``, the variance scale of a corrected
+    count — with its Poisson error propagated from the raw counts. ``ln N`` is
+    then fitted against ``{1, t, ∂ln N/∂alpha}``; the ``t`` coefficient is the
+    residual rate ``s = 1/τ_μ − 1/τ_eff`` that alpha could *not* absorb, which
+    inverts to the effective lifetime.
+    """
+    root_alpha = float(np.sqrt(alpha))
+    combined = np.clip(f, 0.0, None) + np.clip(b, 0.0, None)
+    if float(np.sum(combined)) <= 0.0:
+        return None
+    edges = _equal_count_edges(combined, _GENERAL_GATE_WINDOWS)
+    if edges.size - 1 < _GENERAL_GATE_MIN_WINDOWS:
+        return None
+
+    weight = np.exp(-2.0 * time_us / MUON_LIFETIME_US)
+    corrected = np.exp(time_us / MUON_LIFETIME_US)
+    balanced = f / root_alpha + b * root_alpha
+    # d/dln(alpha) of the balanced count: (B√α − F/√α)/2.
+    d_balanced = 0.5 * (b * root_alpha - f / root_alpha)
+    # var(F/√α + B√α) = F/α + Bα under Poisson counts.
+    variance = np.clip(f, 0.0, None) / alpha + np.clip(b, 0.0, None) * alpha
+
+    levels: list[float] = []
+    errors: list[float] = []
+    times: list[float] = []
+    derivatives: list[float] = []
+    for lo, hi in zip(edges[:-1], edges[1:], strict=False):
+        w = weight[lo:hi]
+        w_sum = float(np.sum(w))
+        if w_sum <= 0.0:
+            continue
+        wc = w * corrected[lo:hi]
+        level = float(np.sum(wc * balanced[lo:hi]) / w_sum)
+        var = float(np.sum(np.square(wc) * variance[lo:hi])) / (w_sum * w_sum)
+        if level <= 0.0 or var <= 0.0:
+            continue
+        levels.append(level)
+        errors.append(float(np.sqrt(var)))
+        times.append(float(np.sum(w * time_us[lo:hi]) / w_sum))
+        derivatives.append(float(np.sum(wc * d_balanced[lo:hi]) / w_sum) / level)
+    if len(levels) < _GENERAL_GATE_MIN_WINDOWS:
+        return None
+
+    n = np.asarray(levels, dtype=np.float64)
+    sigma = np.asarray(errors, dtype=np.float64)
+    # Flatness chi-square about the inverse-variance-weighted mean level.
+    inverse_variance = 1.0 / np.square(sigma)
+    mean_level = float(np.sum(inverse_variance * n) / np.sum(inverse_variance))
+    chi2 = float(np.sum(np.square((n - mean_level) / sigma)))
+
+    # Weighted three-parameter fit of ln N on {1, t, dlnN/dln(alpha)}:
+    # sigma(ln N) = sigma(N)/N, and freeing alpha is what stops the two-window
+    # condition from cancelling the lifetime term.
+    design = np.column_stack(
+        [np.ones_like(n), np.asarray(times, dtype=np.float64), np.asarray(derivatives)]
+    )
+    w_fit = np.square(n / sigma)
+    normal = design.T @ (w_fit[:, None] * design)
+    try:
+        covariance = np.linalg.inv(normal)
+    except np.linalg.LinAlgError:
+        return None
+    solution = covariance @ (design.T @ (w_fit * np.log(n)))
+    slope = float(solution[1])
+    slope_variance = float(covariance[1, 1])
+    if not np.isfinite(slope) or not np.isfinite(slope_variance) or slope_variance <= 0.0:
+        return None
+    slope_error = float(np.sqrt(slope_variance))
+
+    # N ∝ exp(t·(1/τ_μ − 1/τ_eff)) ⇒ τ_eff/τ_μ = 1/(1 − s·τ_μ).
+    scaled = slope * MUON_LIFETIME_US
+    if scaled >= 1.0:
+        return None
+    deviation = scaled / (1.0 - scaled)
+    deviation_error = slope_error * MUON_LIFETIME_US / (1.0 - scaled) ** 2
+    return _GeneralFlatness(
+        n_windows=len(levels),
+        chi2=chi2,
+        tau_deviation=float(deviation),
+        tau_deviation_error=float(deviation_error),
+    )
+
+
 def _alpha_window(
     forward: NDArray[np.float64],
     backward: NDArray[np.float64],
@@ -595,7 +770,9 @@ def estimate_alpha_detailed(
       equal-statistics time windows; works on *relaxing* LF/ZF data, where
       no zero-mean oscillation exists, and fails informatively when the
       polarization does not relax. Requires ``time_us`` (bin centres
-      relative to t0, microseconds).
+      relative to t0, microseconds). The solution is then **gated on the
+      flatness it assumes** (see below), because the two-window equation
+      cannot itself tell a detector imbalance from a residual time trend.
     - ``"ratio"`` — ΣF/ΣB (Mantid ``AlphaCalc``; the legacy
       :func:`estimate_alpha`). Only unbiased when the polarization
       integrates to zero over the window (many-cycle TF data).
@@ -606,6 +783,27 @@ def estimate_alpha_detailed(
     (percentile) standard error of the replicas (``None`` when ``n_bootstrap``
     is 0 or fewer than 10 replicas survive). WiMDA reports a bare number; the
     uncertainty is an Asymmetry improvement (study divergence D2).
+
+    Goodness gate (``general`` only)
+    -------------------------------
+    The closed-form solution equates the balanced count between two windows,
+    which is one equation for one unknown: a *residual trend* in that count —
+    counts decaying with an effective lifetime slightly different from τ_μ
+    (pile-up rejection, a slightly over-subtracted background) — is absorbed
+    into alpha rather than reported, and used to come back with ``ok=True`` and
+    a small bootstrap error while being 10–100% wrong. After solving, the
+    flatness is therefore re-tested across ``_GENERAL_GATE_WINDOWS``
+    equal-statistics sub-windows *with alpha re-freed*, so the surviving time
+    trend measures the effective lifetime instead of being absorbed again (see
+    :func:`_general_flatness`). ``objective_value`` carries the flatness χ² of
+    those sub-window levels about their weighted mean — the ``general`` analogue
+    of the diamagnetic objective, and likewise a plain rather than reduced χ².
+    The estimate is rejected with ``ok=False`` when the effective lifetime
+    differs from τ_μ by more than :data:`_GENERAL_GATE_TAU_TOLERANCE` (0.2%)
+    *and* that deviation is resolved at :data:`_GENERAL_GATE_SIGMA` (3) standard
+    errors; see those constants for the synthetic study behind the numbers. The
+    reported ``alpha`` is unchanged either way — only ``ok``, ``message`` and
+    ``objective_value`` react.
 
     ``ratio`` instead propagates in closed form (see :func:`_ratio_alpha_error`),
     which is exact for a ratio of window sums and, unlike a bootstrap, can
@@ -674,12 +872,36 @@ def estimate_alpha_detailed(
         )
 
     objective_value: float | None = None
+    flatness: _GeneralFlatness | None = None
     if method == "diamagnetic":
         objective_value = _diamagnetic_objective(alpha, f, b)
+    elif method == "general" and t is not None:
+        flatness = _general_flatness(f, b, t, alpha)
+        if flatness is not None:
+            objective_value = flatness.chi2
 
     alpha_error: float | None = None
     message = ""
     ok = True
+    if method == "general":
+        if flatness is None:
+            message = (
+                "Flatness gate not applied: the window does not split into "
+                f"{_GENERAL_GATE_MIN_WINDOWS} usable sub-windows, so the General "
+                "estimate is unverified"
+            )
+        elif (
+            abs(flatness.tau_deviation) > _GENERAL_GATE_TAU_TOLERANCE
+            and abs(flatness.tau_deviation) > _GENERAL_GATE_SIGMA * flatness.tau_deviation_error
+        ):
+            ok = False
+            message = (
+                "Balanced count is not flat after lifetime correction; effective "
+                f"lifetime differs from tau_mu by {100.0 * flatness.tau_deviation:+.2f}% "
+                f"(+/- {100.0 * flatness.tau_deviation_error:.2f}%) — the 'general' "
+                "method is unreliable on this data; consider 'ratio' on a "
+                "fully-depolarized window"
+            )
     if n_bootstrap > 0 and method == "ratio":
         # Closed form, not a bootstrap: the ratio is an explicit function of the
         # two window sums, so the propagation is exact — and it is the only
@@ -709,7 +931,7 @@ def estimate_alpha_detailed(
             # estimator develops near its identifiability limit.
             lo_q, hi_q = np.percentile(replicas, [15.865, 84.135])
             alpha_error = float((hi_q - lo_q) / 2.0)
-        if method == "general" and len(replicas) < 0.9 * int(n_bootstrap):
+        if method == "general" and ok and len(replicas) < 0.9 * int(n_bootstrap):
             ok = False
             message = (
                 "Polarization contrast is marginal — the General estimate is "

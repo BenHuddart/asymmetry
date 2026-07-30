@@ -125,6 +125,30 @@ the same :math:`N(\alpha, t)`; that functional loses its interior minimum at
 realistic counting statistics, so Asymmetry replaces it with the closed-form
 flatness condition above (study record: divergence D14).
 
+.. _alpha-general-goodness-gate:
+
+*Goodness gate: the lifetime assumption.* The flatness condition holds only if
+the counts decay at exactly :math:`\tau_\mu`. Two windows give one equation for
+one unknown, so counts whose *effective* lifetime differs slightly from
+:math:`\tau_\mu` — through pile-up rejection, or a background subtracted a
+little too generously — are indistinguishable from a detector imbalance, and the
+whole mismatch is absorbed into :math:`\alpha`. A 0.5 % lifetime error is enough
+to shift :math:`\alpha` by 10 % at a 20 % asymmetry, and by tens of per cent
+when the asymmetry is small.
+
+Asymmetry therefore re-tests the flatness after solving, across eight
+equal-statistics sub-windows and with :math:`\alpha` re-freed, and reads the
+surviving time trend back as an effective lifetime. When that lifetime differs
+from :math:`\tau_\mu` by more than 0.2 % *and* the deviation is resolved at
+three standard errors, the estimate comes back with ``ok`` false and a message
+naming the deviation, so a wrong number is not presented as a good one. The
+value itself is never altered by the gate, and ``objective_value`` carries the
+flatness :math:`\chi^2` of the sub-window levels for inspection either way. If
+your data trips the gate, calibrate :math:`\alpha` from a fully depolarised
+late-time window with the count ratio instead: where
+:math:`P_z(t) \rightarrow 0` the ratio is exact and assumes nothing about the
+lifetime.
+
 Count ratio
 -----------
 

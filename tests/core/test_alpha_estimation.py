@@ -21,6 +21,8 @@ from asymmetry.core.transform.asymmetry import (
     SubtractedBackground,
     _alpha_window,
     _diamagnetic_objective,
+    _general_flatness,
+    _general_two_window_alpha,
     _pack_for_estimation,
     _positive_mask,
 )
@@ -205,6 +207,157 @@ def test_general_requires_time_axis():
     forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=1)
     with pytest.raises(ValueError, match="time_us"):
         estimate_alpha_detailed(forward, backward, method="general")
+
+
+# --- general: goodness gate on the lifetime assumption ------------------------
+#
+# The closed-form solution is only valid if the counts decay at exactly tau_mu:
+# the two-window flatness equation cannot tell a detector imbalance from counts
+# that decay slightly faster or slower, so a small lifetime mismatch lands in
+# alpha instead — silently, with ok=True and a small bootstrap error. These
+# fixtures inject exactly that defect and nothing else.
+
+
+def _mismatched_lifetime_counts(
+    rate_backward: float,
+    tau_fraction: float,
+    seed: int,
+    *,
+    relaxation_rate: float = 0.3,
+    amplitude: float = A0,
+):
+    """Poisson F/B counts decaying with ``tau_mu * (1 + tau_fraction)``."""
+    rng = np.random.default_rng(seed)
+    decay = np.exp(-TIME_US / (MUON_LIFETIME_US * (1.0 + tau_fraction)))
+    polarization = np.exp(-relaxation_rate * TIME_US)
+    forward = rng.poisson(ALPHA_TRUE * rate_backward * decay * (1.0 + amplitude * polarization))
+    backward = rng.poisson(rate_backward * decay * (1.0 - amplitude * polarization))
+    return forward.astype(np.float64), backward.astype(np.float64)
+
+
+def test_general_populates_flatness_objective():
+    """``objective_value`` used to be ``None`` for the General method; it now
+    carries the flatness chi-square of the lifetime-corrected balanced count."""
+    forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=5)
+    est = estimate_alpha_detailed(
+        forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+    )
+    assert est.objective_value is not None
+    assert est.objective_value > 0.0
+
+
+def test_general_flatness_gate_flags_a_lifetime_mismatch():
+    """The reported failure mode: a 0.5% effective-lifetime error drives the
+    estimate ~10% wrong and used to come back ok=True."""
+    forward, backward = _mismatched_lifetime_counts(60000.0, -0.005, seed=11)
+    est = estimate_alpha_detailed(
+        forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+    )
+    # The estimate really is wrong; the fix is that it stops claiming otherwise.
+    assert abs(est.alpha / ALPHA_TRUE - 1.0) > 0.05
+    assert not est.ok
+    assert "lifetime" in est.message.lower()
+    assert "flat" in est.message.lower()
+
+
+def test_general_flatness_gate_flags_a_mismatch_on_weak_contrast():
+    """Low asymmetry is the worst case — the same 0.5% mismatch throws alpha off
+    by tens of per cent, which is the regime the gate exists for."""
+    forward, backward = _mismatched_lifetime_counts(60000.0, -0.005, seed=17, amplitude=0.05)
+    est = estimate_alpha_detailed(
+        forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+    )
+    assert abs(est.alpha / ALPHA_TRUE - 1.0) > 0.3
+    assert not est.ok
+
+
+def test_general_flatness_gate_measures_the_injected_deviation():
+    """The gate's number is the injected defect, not an arbitrary residual: it is
+    what makes the message ("effective lifetime differs by X%") actionable."""
+    for tau_fraction in (-0.01, -0.005, 0.01):
+        deviations = []
+        for seed in range(12, 17):
+            forward, backward = _mismatched_lifetime_counts(60000.0, tau_fraction, seed=seed)
+            est = estimate_alpha_detailed(
+                forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+            )
+            f, b, t = _alpha_window(forward, backward, TIME_US, None, None)
+            flatness = _general_flatness(f, b, t, est.alpha)
+            assert flatness is not None
+            deviations.append(flatness.tau_deviation)
+        assert float(np.mean(deviations)) == pytest.approx(tau_fraction, abs=0.0015)
+
+
+def test_general_flatness_gate_detection_rate_pins_the_tolerance():
+    """The tolerance/significance pair (0.2%, 3σ) is a calibration, so pin the
+    calibration: at ~2e7 counts a 0.5% lifetime mismatch is caught most of the
+    time and a 1% mismatch always, while clean data is never flagged."""
+
+    def flagged(tau_fraction: float) -> int:
+        count = 0
+        for seed in range(20):
+            forward, backward = _mismatched_lifetime_counts(60000.0, tau_fraction, seed=seed)
+            est = estimate_alpha_detailed(
+                forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+            )
+            count += int(not est.ok)
+        return count
+
+    assert flagged(-0.01) == 20
+    assert flagged(-0.005) >= 14
+    clean = sum(
+        int(
+            not estimate_alpha_detailed(
+                *_synthetic_counts(60000.0, _lf_polarization(), seed=seed),
+                method="general",
+                time_us=TIME_US,
+                n_bootstrap=0,
+            ).ok
+        )
+        for seed in range(20)
+    )
+    assert clean == 0
+
+
+def test_general_flatness_gate_passes_clean_data_at_every_statistics_level():
+    """No false alarm on clean relaxing data across four decades of counts."""
+    for rate in (60.0, 600.0, 6000.0, 60000.0):
+        forward, backward = _synthetic_counts(rate, _lf_polarization(), seed=13)
+        est = estimate_alpha_detailed(
+            forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+        )
+        assert est.ok, f"clean data flagged at rate={rate}: {est.message}"
+
+
+def test_general_flatness_gate_leaves_the_estimate_untouched():
+    """The gate reports; it never moves the number, on clean or defective data."""
+    for forward, backward in (
+        _synthetic_counts(6000.0, _lf_polarization(), seed=14),
+        _mismatched_lifetime_counts(60000.0, -0.005, seed=14),
+    ):
+        est = estimate_alpha_detailed(
+            forward, backward, method="general", time_us=TIME_US, n_bootstrap=0
+        )
+        f, b, t = _alpha_window(forward, backward, TIME_US, None, None)
+        assert est.alpha == pytest.approx(_general_two_window_alpha(f, b, t), rel=1e-12)
+
+
+def test_general_flatness_gate_says_so_when_it_cannot_run():
+    """Too few usable sub-windows: report that the estimate is unverified rather
+    than gate on noise — or, as before, say nothing at all."""
+    forward, backward = _synthetic_counts(600.0, _lf_polarization(), seed=15)
+    est = estimate_alpha_detailed(
+        forward,
+        backward,
+        method="general",
+        time_us=TIME_US,
+        first_good_bin=0,
+        last_good_bin=3,
+        n_bootstrap=0,
+    )
+    assert est.ok
+    assert est.objective_value is None
+    assert "not applied" in est.message
 
 
 # --- ratio --------------------------------------------------------------------
