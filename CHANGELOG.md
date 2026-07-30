@@ -97,6 +97,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pre-t0 background windows were not trimmed to whole accelerator periods for
+  core-API callers.** `apply_grouped_background_correction`,
+  `corrected_grouped_counts` and `reduce_grouped_asymmetry` took a `facility`
+  string defaulting to `""` — which means "no facility, no beam-period trimming",
+  silently. The GUI reads the label off the run metadata and passes it, so GUI and
+  script reductions of the same PSI or TRIUMF run quietly disagreed. The default
+  is now `None`, meaning *derive it from the data*: the two reduction functions
+  take a new `metadata=` argument (they receive histograms rather than a run, so
+  they cannot fetch it themselves) and resolve the label through the new
+  `transform.resolve_facility()`, which is now the one place that resolution
+  lives — the four duplicated `metadata.get("facility", metadata.get("instrument",
+  …))` expressions across the core and GUI call it instead. `facility=""` stays
+  available as the deliberate opt-out and any non-empty string still overrides, so
+  every existing call site is unchanged.
+- **`fit_fb_alpha` converged cleanly on a spurious minimum when `N0` was seeded
+  generically.** The right `N0` is a per-run count level, and a caller driving the
+  forward/backward count fit directly — as you must to free the muon lifetime,
+  which `estimate_beta_detailed` does not expose — had no way to know it: only the
+  β-calibration wrapper's private first-good-bin seeder did. With a generic seed
+  the fit did not fail but walked to a tiny α with a compensating amplitude
+  balance and reported it as converged, with credible errors. `N0` may now be
+  **omitted**, or given the new `count_domain.SEED_FROM_DATA` sentinel, and is
+  then seeded from the fit window's own counts (first positive bin lifted back to
+  t = 0 — the same rule the wrapper used, which now relies on it too). A fixed
+  `N0` is never overruled. Because that spurious minimum is a genuine minimum, a
+  converged fit is additionally checked against the data: α within a factor of
+  three of the window's forward/backward count ratio, and `N0·√α` within two
+  decades of the observed count level at t = 0. A violation returns
+  `success=False` with a message naming the discrepancy — also appended to each
+  group result's `warnings` — instead of a clean-looking convergence, and
+  `estimate_beta_detailed` now passes that message through rather than reporting
+  "did not converge". Neither check applies to a parameter the caller fixed.
+- **`estimate_alpha_detailed(method="general")` reported a badly wrong alpha as a
+  good one.** The closed-form flatness solution assumes the counts decay at
+  exactly τ_µ, and the two-window equation cannot tell a detector imbalance from
+  counts that decay slightly faster or slower — so an effective lifetime a few
+  tenths of a per cent off τ_µ (pile-up rejection, or a marginally
+  over-subtracted background) was absorbed entirely into alpha and returned with
+  `ok=True` and a small bootstrap error. A 0.5 % lifetime error shifts alpha by
+  10 % at a 20 % asymmetry and by tens of per cent on weakly asymmetric data. The
+  solution is now gated on the flatness it assumes: flatness is re-tested across
+  eight equal-statistics sub-windows *with alpha re-freed* (testing the trend at
+  the solved alpha does not work — the solver's own two-window condition cancels
+  exactly that trend), and what survives is read back as an effective lifetime. A
+  deviation above 0.15 % that is resolved at 2.5σ now returns `ok=False` naming the
+  deviation and pointing at the count ratio on a fully depolarised window.
+  `objective_value`, previously `None` for this method, carries the flatness χ²
+  either way. The reported alpha is unchanged for data that passes. Reported from
+  a downstream continuous-source analysis where the method returned 2.4× and
+  1.14× the true balance, silently.
 - **15-histogram GPS ROOT exports were silently mis-grouped.**
   `_labels_match_gps_subdetectors` matched on the presence of the half-counter
   labels alone, so the 15-histogram export (which carries the combined *and*

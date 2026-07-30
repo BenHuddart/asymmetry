@@ -22,13 +22,18 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting import beta_calibration
 from asymmetry.core.fitting.beta_calibration import (
     BETA_ESTIMATION_METHODS,
     BetaEstimate,
+    _n0_seed,
     estimate_beta_detailed,
 )
 from asymmetry.core.fitting.count_domain import fit_fb_alpha, fit_single_histogram
-from asymmetry.core.fitting.grouped_time_domain import build_fb_count_model
+from asymmetry.core.fitting.grouped_time_domain import (
+    GroupedTimeDomainFitResult,
+    build_fb_count_model,
+)
 from asymmetry.core.fitting.models import oscillatory, stretched_exponential
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.simulate import (
@@ -238,6 +243,56 @@ def test_non_precessing_reports_failure(method):
     est = estimate_beta_detailed(ds, 1, 2, method=method)
     assert not est.ok
     assert "degenerate" in est.message or "precession" in est.message or "converge" in est.message
+
+
+def test_count_fit_matches_a_hand_seeded_n0():
+    """Protocol A now leaves ``N0`` to the count-fit driver's data seed, which is
+    the same first-good-bin rule it used to apply itself — so nothing moves."""
+    f = 0.5
+    ds = _fb_beta_run(alpha=1.15, beta=0.85, f=f, seed=11)
+    est = estimate_beta_detailed(
+        ds, 1, 2, method="count_fit", field_tesla=f / MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+    )
+    assert est.ok, est.message
+    hand_seeded = fit_fb_alpha(
+        ds,
+        1,
+        2,
+        oscillatory,
+        ParameterSet(
+            [
+                Parameter("alpha", 1.0, min=1.0e-6, max=100.0),
+                Parameter("N0", _n0_seed(ds, 1), min=0.0),
+                Parameter("background", 0.0, min=0.0),
+                Parameter("background_b", 0.0, min=0.0),
+                Parameter("A0", 20.0, min=0.0, max=100.0),
+                Parameter("frequency", f, min=0.0),
+                Parameter("phase", 0.0),
+                Parameter("Lambda", 0.1, min=0.0),
+                Parameter("baseline", 0.0, fixed=True),
+            ]
+        ),
+        estimate_beta=True,
+    )
+    assert hand_seeded.success
+    assert est.beta == pytest.approx(float(hand_seeded.shared_parameters["beta"].value), rel=1e-9)
+    assert est.alpha == pytest.approx(float(hand_seeded.shared_parameters["alpha"].value), rel=1e-9)
+
+
+def test_count_fit_passes_the_underlying_failure_message_through(monkeypatch):
+    """A fit rejected for an implausible converged scale must not be flattened
+    into "did not converge" — the caller needs to know the scale is the problem."""
+    ds = _fb_beta_run(f=0.5, field_gauss=_field_gauss_for_frequency(0.5))
+    rejected = GroupedTimeDomainFitResult(
+        success=False,
+        group_results={},
+        shared_parameters=ParameterSet(),
+        message="Forward/backward count fit converged at a spurious minimum",
+    )
+    monkeypatch.setattr(beta_calibration, "fit_fb_alpha", lambda *a, **k: rejected)
+    est = estimate_beta_detailed(ds, 1, 2, method="count_fit")
+    assert not est.ok
+    assert est.message == rejected.message
 
 
 def test_same_group_reports_failure():

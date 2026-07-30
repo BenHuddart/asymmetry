@@ -244,7 +244,8 @@ def _apply_group_background_correction(
         grouping=payload,
         t0_bin=int(t0_bin),
         bin_width_us=float(bin_width),
-        facility=str(metadata.get("facility", "")),
+        # facility left to derive from the run metadata this helper already has.
+        metadata=metadata,
         last_good_bin=last_good_bin,
     )
     background_value = correction.values[0] if correction.values is not None else None

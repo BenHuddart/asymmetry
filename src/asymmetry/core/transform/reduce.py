@@ -13,7 +13,11 @@ implementation of the numerics rather than forking them. The GUI-specific pieces
 that method still owned are passed in as plain values / a callback so this
 function stays Qt-free:
 
-* ``facility`` — the string the GUI reads off the run/dataset metadata.
+* ``facility`` — the accelerator-period label. Defaults to ``None``, meaning
+  "derive it from ``metadata``" (:func:`~asymmetry.core.transform.background.resolve_facility`),
+  because these functions take histograms rather than a run and so cannot read
+  the metadata themselves; pass ``metadata=run.metadata`` and it resolves the way
+  the GUI's explicit string always did.
 * ``reference_resolver`` — resolves the ``reference_run`` background mode's
   reference histograms + frame-scale (the GUI supplies the loaded-dataset
   registry; the preview supplies a no-op that skips the subtraction).
@@ -179,7 +183,8 @@ def corrected_grouped_counts(
     use_deadtime: bool,
     deadtime_mode: str,
     use_background: bool,
-    facility: str = "",
+    facility: str | None = None,
+    metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
 ) -> CorrectedGroupedCounts:
     """Run the reduction's correction stages up to (not including) the asymmetry.
@@ -191,6 +196,16 @@ def corrected_grouped_counts(
     feeds to :func:`binned_fb_asymmetry`, and what the alpha estimate must
     consume so ``alpha`` balances the corrected spectra rather than the raw
     totals (see ``docs/porting/correction-order-alpha-estimation``).
+
+    ``facility`` decides whether a ``range``-mode background window is trimmed to
+    whole accelerator periods. The default ``None`` means *derive it* — from
+    ``metadata`` when given (pass ``run.metadata``; this function receives
+    histograms rather than a run, so it cannot fetch them itself), otherwise from
+    the grouping payload's canonical instrument name. Pass ``""`` for the explicit
+    "no facility, no trimming" opt-out. It used to default to ``""``, so a script
+    that did not know to pass a facility silently reduced with an untrimmed
+    window while the GUI, which does pass one, trimmed — the same run reduced two
+    ways.
     """
     with perf_timer(
         "core.reduce.corrected_counts",
@@ -276,6 +291,7 @@ def corrected_grouped_counts(
                 t0_bin=common_t0,
                 bin_width_us=bin_width,
                 facility=facility,
+                metadata=metadata,
                 last_good_bin=last_good,
                 reference_forward=reference_forward,
                 reference_backward=reference_backward,
@@ -355,7 +371,8 @@ def reduce_grouped_asymmetry(
     use_deadtime: bool,
     deadtime_mode: str,
     use_background: bool,
-    facility: str = "",
+    facility: str | None = None,
+    metadata: dict[str, Any] | None = None,
     reference_resolver: ReferenceResolver | None = None,
     beta: float = 1.0,
 ) -> GroupedAsymmetryReduction:
@@ -366,6 +383,11 @@ def reduce_grouped_asymmetry(
     the final :func:`binned_fb_asymmetry` step. The returned arrays are final —
     the good window is applied, the binning (fixed bunching included) is applied,
     and no further slicing or bunching is left for the caller.
+
+    ``facility``/``metadata`` behave exactly as in
+    :func:`corrected_grouped_counts`: leave ``facility`` at ``None`` and pass
+    ``metadata=run.metadata`` to have the accelerator-period trimming of a
+    pre-t0 background window engage by itself.
     """
     with perf_timer(
         "core.reduce.grouped_asymmetry",
@@ -383,6 +405,7 @@ def reduce_grouped_asymmetry(
             deadtime_mode=deadtime_mode,
             use_background=use_background,
             facility=facility,
+            metadata=metadata,
             reference_resolver=reference_resolver,
         )
         forward = corrected.forward

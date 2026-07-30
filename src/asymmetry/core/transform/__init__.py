@@ -16,6 +16,7 @@ from asymmetry.core.transform.background import (
     available_background_modes,
     fit_tail_background,
     resolve_background_mode,
+    resolve_facility,
     subtract_scaled_counts,
     supports_background_correction,
 )
@@ -96,6 +97,7 @@ __all__ = [
     "estimate_alpha",
     "BackgroundCorrectionResult",
     "apply_grouped_background_correction",
+    "resolve_facility",
     "supports_background_correction",
     "apply_deadtime_correction",
     "calibrate_deadtime_from_histograms",

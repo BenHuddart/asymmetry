@@ -1405,7 +1405,6 @@ def _estimate_run_alpha(
     if not forward_idx or not backward_idx:
         return 1.0
     flags = correction_flags_from_grouping(grouping)
-    facility = str((run.metadata or {}).get("facility", grouping.get("instrument", "")))
     corrected = corrected_grouped_counts(
         histograms=run.histograms,
         grouping=grouping,
@@ -1414,7 +1413,9 @@ def _estimate_run_alpha(
         use_deadtime=flags.use_deadtime,
         deadtime_mode=flags.deadtime_mode,
         use_background=flags.use_background,
-        facility=facility,
+        # facility left to derive from the run's own metadata (falling back to
+        # the grouping's canonical instrument name).
+        metadata=run.metadata,
         reference_resolver=reference_resolver,
     )
     first_good = _as_int(grouping.get("first_good_bin"))

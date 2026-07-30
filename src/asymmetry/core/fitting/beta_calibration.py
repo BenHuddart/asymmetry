@@ -39,7 +39,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.count_domain import fit_fb_alpha, fit_single_histogram
+from asymmetry.core.fitting.count_domain import (
+    SEED_FROM_DATA,
+    fit_fb_alpha,
+    fit_single_histogram,
+)
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.grouped_time_domain import build_count_group
 from asymmetry.core.fitting.models import oscillatory
@@ -231,7 +235,9 @@ def _estimate_beta_count_fit(
     params = ParameterSet(
         [
             Parameter("alpha", 1.0, min=1.0e-6, max=100.0),
-            Parameter("N0", _n0_seed(dataset, forward_group), min=0.0),
+            # fit_fb_alpha seeds N0 from the fitted window itself; no caller
+            # should have to know the run's count scale to drive it.
+            Parameter("N0", SEED_FROM_DATA, min=0.0),
             Parameter("background", 0.0, min=0.0),
             Parameter("background_b", 0.0, min=0.0),
             Parameter("A0", _SEED_AMPLITUDE_PERCENT, min=0.0, max=100.0),
@@ -258,7 +264,14 @@ def _estimate_beta_count_fit(
     bwd = result.group_results.get(int(backward_group))
     n_bins = int(np.size(fwd.residuals)) if fwd is not None else 0
     if not result.success or fwd is None or bwd is None:
-        return _fail(method, "Forward/backward count fit did not converge.", n_bins_used=n_bins)
+        # The underlying fit distinguishes "no minimum" from "converged on an
+        # implausible scale"; pass its own words through rather than flattening
+        # both into "did not converge".
+        return _fail(
+            method,
+            result.message or "Forward/backward count fit did not converge.",
+            n_bins_used=n_bins,
+        )
 
     amplitude = fwd.parameters["A0"].value if "A0" in fwd.parameters.names else None
     amplitude_err = fwd.uncertainties.get("A0")

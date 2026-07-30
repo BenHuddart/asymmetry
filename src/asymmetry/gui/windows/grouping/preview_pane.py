@@ -55,6 +55,7 @@ from asymmetry.core.transform import (
     corrected_grouped_counts,
     correction_flags_from_grouping,
     effective_group_indices,
+    resolve_facility,
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
@@ -267,7 +268,7 @@ class GroupingPreviewPane(QWidget):
                 generation=self._next_generation(),
                 histograms=list(histograms),
                 grouping=dict(grouping),
-                facility=str(facility or grouping.get("instrument", "") or ""),
+                facility=str(facility or "") or resolve_facility(grouping=grouping),
                 run_number=run_number,
                 overlay=bool(overlay),
                 compare_stage=compare_stage,
@@ -566,7 +567,7 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     # always read off the fully-corrected curve.
     use_deadtime = flags.use_deadtime
     use_background = flags.use_background
-    facility = request.facility or str(grouping.get("instrument", "") or "")
+    facility = request.facility or resolve_facility(grouping=grouping)
 
     def _reduce(dt: bool, bg: bool):
         return corrected_grouped_counts(
