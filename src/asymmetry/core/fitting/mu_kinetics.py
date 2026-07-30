@@ -293,12 +293,21 @@ def mu_relaxation_from_amplitude(
 ) -> tuple[float, float]:
     """Single-run ``λ_Mu`` with ``A_Mu`` *fixed* to a reference amplitude.
 
-    The analytic limit of the shared fit: fixing ``A_Mu`` to the known muonium
-    fraction (``reference_amplitude``, e.g. the shared value from
+    The analytic limit of the shared fit: fixing ``A_Mu`` to a known muonium
+    amplitude (``reference_amplitude``, e.g. the shared value from
     :func:`fit_mu_relaxation_series`) breaks the per-run degeneracy directly, so a
     single truncated run yields ``λ_Mu``. Returns ``(λ_Mu, σ_λ)`` in µs⁻¹. Use as
     an independent cross-check of the series fit, or as a manual fallback when a
-    full series is unavailable but the Mu fraction is known.
+    full series is unavailable but the Mu amplitude is known.
+
+    Parameters
+    ----------
+    reference_amplitude
+        Amplitude to pin ``A_Mu`` at, **in percent (0–100)** — the same scale as
+        ``dataset.asymmetry`` and as
+        :attr:`MuRelaxationSeriesResult.shared_amplitude`, which is what this
+        normally receives. (Earlier wording called it the muonium "fraction",
+        which reads as the 0–1 scale; the code has always treated it as percent.)
     """
     model_fn = CompositeModel.from_expression(_MU_MODEL_EXPRESSION).function
     params = [

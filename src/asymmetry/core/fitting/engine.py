@@ -627,7 +627,16 @@ COST_FACTORIES: dict[str, CostFactory] = {
 
 @dataclass
 class FitResult:
-    """Container for the outcome of a fit."""
+    """Container for the outcome of a fit.
+
+    Scale: :attr:`residuals`, and every asymmetry-valued entry of
+    :attr:`parameters` / :attr:`uncertainties` (an ``A0``, ``A``, ``baseline``),
+    are **on the scale of the data that was fitted** — percent (0–100) for a
+    :class:`~asymmetry.core.data.dataset.MuonDataset` and for the built-in models'
+    seeds. Nothing here rescales, so a fit run on fraction-scale arrays reports
+    fraction-scale amplitudes. See "Asymmetry units across the API" in the
+    documentation.
+    """
 
     success: bool
     chi_squared: float = 0.0
@@ -636,6 +645,7 @@ class FitResult:
     uncertainties: dict[str, float] = field(default_factory=dict)
     covariance: NDArray[np.float64] | None = None
     covariance_parameters: list[str] = field(default_factory=list)
+    #: ``data − model`` over the fitted window, on the **data's** asymmetry scale.
     residuals: NDArray[np.float64] | None = None
     message: str = ""
     function_calls: int = 0
@@ -1245,7 +1255,12 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         Parameters
         ----------
         datasets
-            List of datasets to fit simultaneously.
+            List of datasets to fit simultaneously. Their ``asymmetry``/``error``
+            arrays are **in percent (0–100)** by the
+            :class:`~asymmetry.core.data.dataset.MuonDataset` convention, exactly
+            as in :meth:`fit`, and every dataset must be on that one scale —
+            concatenating a fraction-scale curve with percent-scale ones puts an
+            unresolvable factor of 100 inside a shared amplitude.
         model_fn
             Model function applied to each dataset.
         global_params

@@ -2,6 +2,25 @@
 
 Each model is a callable ``f(t, **params) -> array`` plus metadata describing
 its parameters.  Models are collected in the :data:`MODELS` registry.
+
+Scale
+-----
+Every asymmetry-valued parameter of every model here — the amplitudes ``A0`` /
+``A`` and the additive ``baseline`` — is **in percent (0–100)**, and so is the
+curve each model returns.  That is the WiMDA-style convention
+:attr:`asymmetry.core.data.dataset.MuonDataset.asymmetry` uses, which is why the
+seeds in :data:`MODELS` default ``A0`` to ``25`` rather than ``0.25``, and why
+``PARAM_INFO_REGISTRY`` gives ``A``/``A0``/``A_bg`` the unit string ``"%"``.
+Fitting these models against fraction-scale data (what
+:func:`asymmetry.core.transform.compute_asymmetry` and
+:func:`asymmetry.core.transform.binned_fb_asymmetry` return) converges to the
+wrong minimum and trips
+:class:`~asymmetry.core.fitting.engine.AsymmetryScaleWarning`; scale the data with
+:func:`asymmetry.core.transform.units.to_percent` first.  The polarization-shape
+functions that carry no amplitude (:func:`risch_kehr`,
+:func:`bessel_oscillation`, and the ``P(t)`` kernels in the muonium /
+muon-fluorine / nuclear-dipole modules) are unit-normalised and therefore
+scale-free.  See "Asymmetry units across the API" in the documentation.
 """
 
 from __future__ import annotations
