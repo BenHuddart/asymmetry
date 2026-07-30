@@ -54,6 +54,7 @@ from functools import lru_cache
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.signal import czt
 
 from asymmetry.core.fitting.sc.constants import FLUX_QUANTUM_WB
 from asymmetry.core.fitting.sc.models import (
@@ -211,6 +212,166 @@ def _calibrated_field_histogram(
     return centres, weights
 
 
+#: Relative tolerance on the spread of ``np.diff(t)`` for the time axis to count
+#: as uniform (and so unlock the czt fast path). A µSR time axis is generated as
+#: ``t0 + j·dt`` (or ``np.linspace``), so its diffs agree to a few ulp — 1e-9
+#: relative is many orders of magnitude looser than that yet far tighter than any
+#: physically deliberate non-uniformity (rebinned/log axes differ by ≫1e-9).
+_UNIFORM_T_RTOL = 1.0e-9
+
+#: Bin count at or above which the czt fast path beats the Horner recurrence.
+#: The crossover is set by ``n_bins``, not by ``N_t``: Horner pays ``n_bins - 1``
+#: Python-level array ops whatever the axis length, so its cost has a large
+#: ``n_bins``-proportional floor, while czt pays one ``O((n_bins+N_t)log)`` FFT
+#: pair. Measured ratio Horner/czt (>1 means czt wins), this machine, uniform
+#: axis, ``python 3.12 / numpy 2.2.6 / scipy 1.17.1``::
+#:
+#:      N_t ->      2      16     128     512    2048    8192
+#:   n_bins=8    0.25    0.25    0.21    0.16    0.13    0.12
+#:   n_bins=32   0.80    0.79    0.64    0.43    0.29    0.22
+#:   n_bins=128  2.02    2.06    2.23    1.48    0.88    0.77
+#:   n_bins=512  3.60    3.70    3.92    5.26    3.46    2.96
+#:   n_bins=2048 4.63    4.66    5.09    7.06   11.88   10.49
+#:
+#: 128 is the smallest tabulated bin count that wins across the axis lengths a
+#: µSR fit actually sees (worst case at n_bins=128 is 1.3× *slower* on a
+#: 8192-point axis; the shipped default is 512, where czt wins 3–5× everywhere).
+_CZT_MIN_BINS = 128
+
+
+def _characteristic_function(
+    centres: ArrayLikeFloat,
+    weights: ArrayLikeFloat,
+    t: ArrayLikeFloat,
+) -> NDArray[np.complex128]:
+    r"""``Σ_k w_k e^{i 2π γ c_k t}`` without ever forming the ``n_bins × N_t`` matrix.
+
+    The naive evaluation is a complex ``exp`` of an ``n_bins × N_t`` outer product,
+    which dominates the cost of *every* model evaluation during a fit (the
+    histogram cache keys on ``λ``, so a minimiser's line search misses it on
+    essentially every call). Both tiers below exploit the one structural fact the
+    naive form throws away: :func:`np.histogram` bin centres are **uniform**,
+    ``c_k = c₀ + kΔ``, so
+
+    .. math::
+
+        R(t) = e^{i\gamma c_0 t}\sum_k w_k z^k, \qquad z = e^{i\gamma\Delta t},
+        \qquad \gamma \equiv 2\pi\gamma_\mu .
+
+    **Tier 1 — geometric (Horner) recurrence, any time axis.** Evaluate the
+    polynomial ``Σ_k w_k z^k`` by Horner's rule in ``z``, so only ``N_t`` complex
+    exponentials are needed (for ``z`` itself) and the powers come from
+    ``n_bins - 1`` in-place complex multiply-adds over length-``N_t`` arrays. No
+    ``n_bins × N_t`` temporary is ever materialised: peak memory drops from
+    ``O(n_bins·N_t)`` to ``O(N_t)``. Numerically ``|z| = 1``, so the recurrence is
+    neutrally stable — 512 unit-modulus steps accumulate only ~``n_bins·ε`` of
+    phase, ~1e-13, confirmed at ≤1e-10 against the reference by
+    ``tests/core/test_sc_vl_lineshape_evaluation.py``.
+
+    **Tier 2 — chirp z-transform, uniform time axis (the µSR norm).** With
+    ``t_j = t₀ + j·δt`` the inner sum becomes
+
+    .. math::
+
+        S_j = \sum_k w_k A^k W^{jk}, \qquad
+        A = e^{i\gamma\Delta t_0}, \quad W = e^{i\gamma\Delta\,\delta t},
+
+    which is exactly a chirp z-transform of the weight vector. SciPy evaluates
+    ``X[j] = Σ_k x_k z_j^{-k}`` at ``z_j = a·w^{-j}``, i.e. ``X[j] = Σ_k x_k
+    a^{-k} w^{jk}``; matching term by term gives ``w = W = exp(+iγΔ·δt)`` and
+    ``a = A⁻¹ = exp(-iγΔ·t₀)`` — the ``t₀`` offset is absorbed entirely into the
+    czt starting point ``a``, and the ``e^{iγc₀t}`` carrier is applied afterwards
+    using the *caller's* ``t`` (not a reconstructed one), so a t-axis that is
+    uniform only to floating-point round-off stays exact in the carrier.
+    Note the ``+`` in ``w``: the physics convention here is ``e^{+iγBt}`` while
+    SciPy's z-transform convention carries the inverse power, and the two signs
+    cancel. Cost is ``O((n_bins + N_t) log(n_bins + N_t))``.
+
+    Tier 2 is used only when ``t`` is uniform within :data:`_UNIFORM_T_RTOL`, has
+    at least two points, and the histogram has at least :data:`_CZT_MIN_BINS`
+    bins; everything else (scalar, empty, log-spaced, ragged, coarse-binned)
+    takes Tier 1, which is itself ~10–40× faster than the exp matrix it replaces.
+    """
+    n_bins = centres.size
+    if t.size == 0:
+        return np.zeros(0, dtype=np.complex128)
+    if n_bins == 1:
+        return np.asarray(
+            weights[0] * np.exp(1j * _TWO_PI_GAMMA * centres[0] * t), dtype=np.complex128
+        )
+
+    c0 = float(centres[0])
+    # Uniform by construction (np.histogram edges are linspace); the endpoint
+    # form is the best-conditioned estimate of the common spacing.
+    delta = (float(centres[-1]) - c0) / (n_bins - 1)
+    carrier = np.exp(1j * _TWO_PI_GAMMA * c0 * t)
+
+    inner = _czt_inner_sum(weights, t, delta)
+    if inner is None:
+        inner = _horner_inner_sum(weights, t, delta)
+    return carrier * inner
+
+
+def _horner_inner_sum(
+    weights: ArrayLikeFloat, t: ArrayLikeFloat, delta: float
+) -> NDArray[np.complex128]:
+    """``Σ_k w_k z^k`` with ``z = e^{iγΔt}`` by Horner's rule (Tier 1; any ``t``)."""
+    z = np.exp(1j * _TWO_PI_GAMMA * delta * t)
+    acc = np.full(t.shape, weights[-1], dtype=np.complex128)
+    for k in range(weights.size - 2, -1, -1):
+        acc *= z
+        acc += weights[k]
+    return acc
+
+
+def _czt_inner_sum(
+    weights: ArrayLikeFloat, t: ArrayLikeFloat, delta: float
+) -> NDArray[np.complex128] | None:
+    """``Σ_k w_k z_j^k`` via ``scipy.signal.czt`` (Tier 2), or ``None`` when the
+    axis is not uniform or the transform would not pay for itself."""
+    n_t = t.size
+    if n_t < 2 or weights.size < _CZT_MIN_BINS:
+        return None
+    t0 = float(t[0])
+    step = (float(t[-1]) - t0) / (n_t - 1)
+    if step == 0.0 or not np.all(np.abs(np.diff(t) - step) <= _UNIFORM_T_RTOL * abs(step)):
+        return None
+    phase = _TWO_PI_GAMMA * delta
+    return np.asarray(
+        czt(weights, n_t, np.exp(1j * phase * step), np.exp(-1j * phase * t0)),
+        dtype=np.complex128,
+    )
+
+
+def _reference_relaxation(
+    t_us: ArrayLikeFloat | list[float] | float,
+    lambda_nm: float,
+    B0_gauss: float,
+    Bc2_tesla: float,
+    *,
+    powder: bool = True,
+    n_g: int = _DEFAULT_N_G,
+    n_grid: int = _DEFAULT_N_GRID,
+    n_bins: int = _DEFAULT_N_BINS,
+) -> NDArray[np.complex128]:
+    """Straight-line ``R(t)`` definition, kept **only** as a test oracle.
+
+    This is the pre-optimisation body of :func:`vortex_lattice_relaxation`: the
+    explicit ``n_bins × N_t`` complex-exponential matrix contracted against the
+    weights. It is the unambiguous statement of what ``R(t)`` means, so the two
+    tiers in :func:`_characteristic_function` are pinned against it rather than
+    against each other. Not part of the public API and not used at runtime.
+    """
+    t = np.atleast_1d(np.asarray(t_us, dtype=float))
+    histogram = _calibrated_field_histogram(
+        lambda_nm, B0_gauss, Bc2_tesla, powder, n_g, n_grid, n_bins
+    )
+    if histogram is None:
+        return np.ones(t.shape, dtype=np.complex128)
+    centres, weights = histogram
+    return weights @ np.exp(1j * _TWO_PI_GAMMA * centres[:, None] * t[None, :])
+
+
 def vortex_lattice_relaxation(
     t_us: ArrayLikeFloat | list[float] | float,
     lambda_nm: float,
@@ -232,9 +393,13 @@ def vortex_lattice_relaxation(
 
     ``R(t)`` is the characteristic function of the field distribution,
     ``Σ_B p(B) e^{i 2π γ B t}``, evaluated over the cached ``n_bins``-bin ``p(B)``
-    histogram rather than over every real-space grid point — the per-call cost is
-    ``O(n_bins · N_t)`` instead of ``O(n_grid² · N_t)``, with ``n_bins`` chosen so
-    the fitted ``λ_ab`` is unchanged within tolerance.
+    histogram rather than over every real-space grid point — so the sum is over
+    ``n_bins`` terms, not ``n_grid²``, with ``n_bins`` chosen so the fitted
+    ``λ_ab`` is unchanged within tolerance. The sum itself is evaluated by
+    :func:`_characteristic_function`, which uses the uniformity of the histogram
+    bin centres to avoid the ``n_bins × N_t`` complex-exponential matrix
+    entirely (chirp z-transform on a uniform time axis, geometric recurrence
+    otherwise).
     """
     t = np.atleast_1d(np.asarray(t_us, dtype=float))
     histogram = _calibrated_field_histogram(
@@ -243,7 +408,7 @@ def vortex_lattice_relaxation(
     if histogram is None:
         return np.ones(t.shape, dtype=np.complex128)
     centres, weights = histogram
-    return weights @ np.exp(1j * _TWO_PI_GAMMA * centres[:, None] * t[None, :])
+    return _characteristic_function(centres, weights, t)
 
 
 def vortex_lattice_powder_relaxation(
