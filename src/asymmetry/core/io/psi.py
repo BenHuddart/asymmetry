@@ -20,7 +20,11 @@ from typing import Any
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.instrument import detect_instrument, get_instrument_layout
+from asymmetry.core.instrument import (
+    detect_instrument,
+    get_instrument_layout,
+    preset_grouping_for_run,
+)
 from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
     apply_grouping_aligned,
@@ -1042,7 +1046,11 @@ class PsiLoader(BaseLoader):
             n_hist,
         )
         canonical_instrument = self._detect_canonical_instrument(raw, n_hist)
-        preset_override = self._instrument_default_preset(canonical_instrument, n_hist)
+        preset_override = self._instrument_default_preset(
+            canonical_instrument,
+            n_hist,
+            labels=list(raw.histogram_labels),
+        )
         preset_name: str | None = None
         preset_projections: list[dict[str, Any]] = []
         if preset_override is not None:
@@ -1202,6 +1210,8 @@ class PsiLoader(BaseLoader):
         self,
         instrument_name: str | None,
         n_hist: int,
+        *,
+        labels: list[str] | None = None,
     ) -> tuple[dict[int, list[int]], dict[int, str], int, int, str, list[dict[str, Any]]] | None:
         """Return the default-preset grouping to apply on load, or ``None``.
 
@@ -1226,11 +1236,25 @@ class PsiLoader(BaseLoader):
         shipping only the forward ring (``MV, F1…F8``) therefore still adopts
         Per-octant, each octant degrading to its present forward wedge.
 
+        The concrete grouping comes from
+        :func:`~asymmetry.core.instrument.preset_grouping_for_run`, which validates
+        the layout against this run's histogram count and labels first: a layout
+        that describes a different detector arrangement would map the preset's
+        positional detector ids onto the wrong histograms, which is silently wrong
+        rather than detectably broken.
+
         Returns ``None`` — leaving the loader's label-based grouping untouched —
         when detection is inconclusive, the instrument does not opt in, or an
         *analysis* slot (the forward or backward group) has no detector present
         in this run, since then no asymmetry can be formed (e.g. a preset whose
         backward group is an entirely absent ring).
+
+        Raises
+        ------
+        ~asymmetry.core.instrument.PresetLayoutMismatchError
+            If the resolved layout does not describe this run.  Deliberately not
+            swallowed: a wrong-layout preset produces a plausible-looking but
+            wrong asymmetry, so it must surface at load time.
         """
         if not instrument_name:
             return None
@@ -1241,15 +1265,17 @@ class PsiLoader(BaseLoader):
         if preset is None:
             return None
 
-        groups: dict[int, list[int]] = {}
-        group_names: dict[int, str] = {}
-        for gid, gdef in preset.groups.items():
-            detector_ids = sorted(int(d) for d in gdef.detector_ids)
-            if not detector_ids:
-                continue
-            groups[int(gid)] = detector_ids
-            if gdef.name:
-                group_names[int(gid)] = str(gdef.name)
+        groups = preset_grouping_for_run(
+            layout,
+            layout.default_preset_name,
+            n_histograms=n_hist,
+            labels=labels,
+        )
+        group_names: dict[int, str] = {
+            int(gid): str(gdef.name)
+            for gid, gdef in preset.groups.items()
+            if int(gid) in groups and gdef.name
+        }
 
         forward_gid = int(preset.forward_group)
         backward_gid = int(preset.backward_group)

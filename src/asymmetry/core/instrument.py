@@ -1,10 +1,12 @@
 """Instrument layout definitions for muon spectrometers.
 
 This module provides static geometric descriptions of the detector arrangements
-for HiFi, EMU, MuSR, PSI FLAME, PSI HAL-9500, and PSI GPS (in two variants — the
-6-detector PSI-BIN layout ``GPS`` and the 11-detector ROOT sub-detector layout
-``GPS-RD``, both shown to the user as "GPS"), along with standard grouping
-presets.  The data here is used by the interactive detector layout editor
+for HiFi, EMU, MuSR, PSI FLAME, PSI HAL-9500, and PSI GPS (in three variants — the
+6-detector PSI-BIN layout ``GPS``, the 11-detector ROOT sub-detector layout
+``GPS-RD``, and the 15-detector ROOT layout ``GPS-RD15`` that exports the combined
+counters *and* the sub-detectors, all shown to the user as "GPS"), along with
+standard grouping presets.  The data here is used by the interactive detector
+layout editor
 (:class:`~asymmetry.gui.windows.detector_layout_dialog.DetectorLayoutDialog`)
 but has no GUI dependencies and can be used independently.
 
@@ -32,6 +34,7 @@ __all__ = [
     "GroupDefinition",
     "AsymmetryProjection",
     "PresetGrouping",
+    "PresetLayoutMismatchError",
     "ReferenceArrow",
     "InstrumentLayout",
     "INSTRUMENT_NAMES",
@@ -40,6 +43,8 @@ __all__ = [
     "TRANSVERSE_PROJECTION_TINTS",
     "derive_projection_pairs",
     "get_instrument_layout",
+    "layout_detector_labels",
+    "preset_grouping_for_run",
     "recommend_grouping_preset",
     "recommend_grouping_preset_for_run",
     "instrument_display_name",
@@ -276,8 +281,9 @@ class InstrumentLayout:
     display_name:
         Optional user-facing name shown in the instrument dropdown.  Defaults to
         :attr:`name`.  Layout *variants* of one physical instrument (e.g. the
-        6-detector PSI GPS BIN layout ``"GPS"`` and the 11-detector ROOT
-        sub-detector layout ``"GPS-RD"``) share a display name so the user only
+        6-detector PSI GPS BIN layout ``"GPS"``, the 11-detector ROOT
+        sub-detector layout ``"GPS-RD"`` and the 15-detector combined+sub-detector
+        ROOT layout ``"GPS-RD15"``) share a display name so the user only
         ever sees the variant matching their loaded data, while ``name`` stays a
         distinct registry key for detection and persistence.
     apply_default_preset_on_load:
@@ -435,9 +441,11 @@ def derive_projection_pairs(
 # ---------------------------------------------------------------------------
 
 #: Registry keys of all supported instrument layouts.  ``"GPS"`` (6-detector
-#: PSI-BIN) and ``"GPS-RD"`` (11-detector ROOT sub-detectors) are two variants of
-#: the one physical GPS instrument; they share the display name "GPS" and are
-#: collapsed to a single dropdown entry by :func:`instrument_choices_for`.
+#: PSI-BIN), ``"GPS-RD"`` (11-detector ROOT sub-detectors) and ``"GPS-RD15"``
+#: (15-detector ROOT export carrying the combined counters *and* the
+#: sub-detectors) are three variants of the one physical GPS instrument; they
+#: share the display name "GPS" and are collapsed to a single dropdown entry by
+#: :func:`instrument_choices_for`.
 INSTRUMENT_NAMES: Final[tuple[str, ...]] = (
     "HiFi",
     "MuSR",
@@ -446,6 +454,7 @@ INSTRUMENT_NAMES: Final[tuple[str, ...]] = (
     "HAL",
     "GPS",
     "GPS-RD",
+    "GPS-RD15",
 )
 
 
@@ -1323,6 +1332,112 @@ def _build_gps_subdetectors() -> InstrumentLayout:
     )
 
 
+def _build_gps_combined_and_subdetectors() -> InstrumentLayout:
+    """Build the PSI GPS **combined + sub-detector ROOT** layout (15 histograms).
+
+    Some GPS MusrRoot exports ship *both* views of the same events: the six
+    combined counters of :func:`_build_gps` **and** the eight half-counters and
+    mobile detector of :func:`_build_gps_subdetectors`, in this fixed order::
+
+        Forw, Back, Up, Down, Right, Left,          -> detector IDs 1…6
+        Up_B, Up_F, Down_B, Down_F,                 -> detector IDs 7…10
+        Right_B, Right_F, Left_B, Left_F,           -> detector IDs 11…14
+        Mob-RL                                      -> detector ID 15
+
+    (Detector *N* → histogram ``N − 1``, as everywhere in this module.)
+
+    **The six combined counters are the t0-aligned sums of their halves**, so
+    they already contain every recorded event exactly once::
+
+        Up    = Up_B    + Up_F
+        Down  = Down_B  + Down_F
+        Left  = Left_B  + Left_F
+        Right = Right_B + Right_F  (+ Mob-RL, when the mobile detector is
+                                    mounted on the Right cryostat port)
+
+    Two consequences drive the design here:
+
+    * **The presets group the combined counters only** (IDs 1–6, the same
+      transverse ids as the 6-detector BIN layout: U=3, D=4, R=5, L=6).  Adding
+      the halves — or the mobile detector — to a group would double-count, since
+      the combined counter already contains them.  IDs 7–15 are still individually
+      selectable so a user can exclude a misbehaving half-counter or build a
+      custom grouping from the finer view, but no preset touches them.
+    * **The mobile detector needs no port guess.**  :func:`_build_gps_subdetectors`
+      leaves ``Mob-RL`` ungrouped because the 11-histogram export does not record
+      which cryostat port it is on; here that information arrives implicitly, in
+      whichever combined transverse counter includes it.
+
+    This is the 15-detector variant of :func:`_build_gps`; all three GPS layouts
+    share the display name "GPS" (see :class:`InstrumentLayout.display_name`) and
+    the same two-panel (top + side) presentation.  Each combined counter is drawn
+    as the full plate with its two halves as smaller boxes immediately outboard,
+    which is exactly the redundancy the file carries.
+    """
+    top = BankLayout(
+        name="Top view",
+        segments=(
+            _plan_rectangle(1, "Forward", 2.95, 0.0, 0.78, 1.70),
+            _plan_rectangle(2, "Backward", -2.95, 0.0, 0.78, 1.70),
+            # In-plane Left (top) / Right (bottom): the combined plate, with its
+            # _B (−z) / _F (+z) halves drawn just outboard of it.
+            _plan_rectangle(6, "Left", 0.0, 1.95, 1.70, 0.75),
+            _plan_rectangle(13, "Left_B", -0.50, 2.80, 0.85, 0.62),
+            _plan_rectangle(14, "Left_F", 0.50, 2.80, 0.85, 0.62),
+            _plan_rectangle(5, "Right", 0.0, -1.95, 1.70, 0.75),
+            _plan_rectangle(11, "Right_B", -0.50, -2.80, 0.85, 0.62),
+            _plan_rectangle(12, "Right_F", 0.50, -2.80, 0.85, 0.62),
+            # Mobile bar at the top of the chamber, above the sample (it rides the
+            # horizontal Left-Right axis between the two cryostat ports).
+            _plan_rectangle(15, "Mob-RL", 0.0, 1.25, 0.95, 0.42),
+            # Up/Down point out of the page here -> end-on context markers, each
+            # combined counter flanked by its two halves.
+            _gps_endon(7, "Up_B", -0.62, 0.62, into=False),
+            _gps_endon(3, "Up", 0.0, 0.62, into=False),
+            _gps_endon(8, "Up_F", 0.62, 0.62, into=False),
+            _gps_endon(9, "Down_B", -0.62, -0.62, into=True),
+            _gps_endon(4, "Down", 0.0, -0.62, into=True),
+            _gps_endon(10, "Down_F", 0.62, -0.62, into=True),
+        ),
+    )
+    side = BankLayout(
+        name="Side view",
+        segments=(
+            # In-plane Up (top) / Down (bottom), each with its halves outboard.
+            _plan_rectangle(3, "Up", 0.0, 1.95, 1.70, 0.75),
+            _plan_rectangle(7, "Up_B", -0.50, 2.80, 0.85, 0.62),
+            _plan_rectangle(8, "Up_F", 0.50, 2.80, 0.85, 0.62),
+            _plan_rectangle(4, "Down", 0.0, -1.95, 1.70, 0.75),
+            _plan_rectangle(9, "Down_B", -0.50, -2.80, 0.85, 0.62),
+            _plan_rectangle(10, "Down_F", 0.50, -2.80, 0.85, 0.62),
+            _plan_rectangle(1, "Forward", 2.95, 0.0, 0.78, 1.70, read_only=True),
+            _plan_rectangle(2, "Backward", -2.95, 0.0, 0.78, 1.70, read_only=True),
+            # Left/Right point out of the page here; Mobile rides this same axis.
+            _gps_endon(13, "Left_B", -0.62, 0.62, into=False),
+            _gps_endon(6, "Left", 0.0, 0.62, into=False),
+            _gps_endon(14, "Left_F", 0.62, 0.62, into=False),
+            _gps_endon(11, "Right_B", -0.62, -0.62, into=True),
+            _gps_endon(5, "Right", 0.0, -0.62, into=True),
+            _gps_endon(12, "Right_F", 0.62, -0.62, into=True),
+            _gps_endon(15, "Mob-RL", 0.0, 1.25, into=False),
+        ),
+    )
+
+    # Group the *combined* counters only — they already contain the halves (and
+    # the mobile detector) exactly once, so U=3, D=4, L=6, R=5 as in the
+    # 6-detector BIN layout. IDs 7-15 are deliberately left out of every preset.
+    presets = _gps_presets((3,), (4,), (6,), (5,))
+
+    return InstrumentLayout(
+        name="GPS-RD15",
+        n_detectors=15,
+        banks=(top, side),
+        presets=presets,
+        view="plan",
+        display_name="GPS",
+    )
+
+
 # ---------------------------------------------------------------------------
 # HAL-9500 layout builder
 # ---------------------------------------------------------------------------
@@ -1482,6 +1597,7 @@ def _build_registry() -> dict[str, InstrumentLayout]:
         "HAL": _build_hal(),
         "GPS": _build_gps(),
         "GPS-RD": _build_gps_subdetectors(),
+        "GPS-RD15": _build_gps_combined_and_subdetectors(),
     }
 
 
@@ -1653,8 +1769,9 @@ def _variant_families() -> dict[str, list[str]]:
     """Map each display name to its registry keys, in ``INSTRUMENT_NAMES`` order.
 
     Two layouts that share a ``display_name`` are variants of one physical
-    instrument (e.g. the 6-detector ``"GPS"`` and the 11-detector ``"GPS-RD"``
-    both display "GPS"); the first key listed is the family default.  The family
+    instrument (e.g. the 6-detector ``"GPS"``, the 11-detector ``"GPS-RD"`` and
+    the 15-detector ``"GPS-RD15"`` all display "GPS"); the first key listed is the
+    family default.  The family
     relationship is derived from the layouts themselves, so adding a variant only
     requires giving it the shared ``display_name`` — no separate registry to keep
     in sync.
@@ -1668,9 +1785,10 @@ def _variant_families() -> dict[str, list[str]]:
 def instrument_choices_for(active_name: str | None = None) -> list[tuple[str, str]]:
     """Return ``[(display_name, registry_key)]`` for the instrument dropdown.
 
-    Variant families (e.g. the 6-detector PSI-BIN ``"GPS"`` and the 11-detector
-    ROOT ``"GPS-RD"``) collapse to a single entry under their shared display
-    name, so the user only ever sees one "GPS".  The variant exposed for a family
+    Variant families (e.g. the 6-detector PSI-BIN ``"GPS"``, the 11-detector ROOT
+    ``"GPS-RD"`` and the 15-detector ROOT ``"GPS-RD15"``) collapse to a single
+    entry under their shared display name, so the user only ever sees one "GPS".
+    The variant exposed for a family
     is the one whose key equals *active_name* (the currently-loaded layout);
     otherwise the family default (first registry key) is used.
     """
@@ -1688,11 +1806,16 @@ def variant_for_histograms(name: str, n_histograms: int) -> str:
     """Return the registry key of *name*'s variant whose detector count fits the run.
 
     Layout variants that share a display name (e.g. GPS BIN with 6 detectors vs
-    GPS ROOT with 11) are distinguished by detector count.  Given a layout *name*
-    and a run's ``n_histograms``, return the sibling variant whose
-    ``n_detectors`` equals that count, so the layout always matches the data.
-    Returns *name* unchanged when it has no sibling, the count is unknown, or no
-    sibling fits.
+    the GPS ROOT exports with 11 or 15) are distinguished by detector count.
+    Given a layout *name* and a run's ``n_histograms``, return the sibling variant
+    whose ``n_detectors`` equals that count, so the layout always matches the
+    data.  Returns *name* unchanged when it has no sibling, the count is unknown,
+    or no sibling fits.
+
+    A returned key whose ``n_detectors`` still disagrees with the run (no sibling
+    fitted) is a *mismatch*, not a silent fallback: turning a preset into a
+    concrete grouping through :func:`preset_grouping_for_run` rejects it rather
+    than mapping the preset's detector ids onto the wrong histograms.
     """
     keys = _variant_families().get(instrument_display_name(name), [name])
     if len(keys) <= 1 or not n_histograms:
@@ -1704,6 +1827,168 @@ def variant_for_histograms(name: str, n_histograms: int) -> str:
         except KeyError:
             continue
     return name
+
+
+# ---------------------------------------------------------------------------
+# Preset -> concrete grouping (validated against the run)
+# ---------------------------------------------------------------------------
+
+
+class PresetLayoutMismatchError(ValueError):
+    """A grouping preset does not fit the run it is being applied to.
+
+    Raised by :func:`preset_grouping_for_run` when the layout supplying the preset
+    describes a different detector arrangement than the run actually carries, so
+    the preset's detector ids would land on the wrong histograms.  This is always
+    a resolution bug in the caller (usually a stale or hand-picked layout variant
+    where :func:`variant_for_histograms` should have been used), never something
+    the data can be at fault for — hence a hard error rather than a silent
+    best-effort grouping.
+    """
+
+
+#: Detector-label spellings that mean the same counter.  Instrument layouts use
+#: the manual's full words while data files use the terse export spellings, so
+#: the two are compared through this map.
+_DETECTOR_LABEL_ALIASES: Final[dict[str, str]] = {
+    "forw": "forward",
+    "fwd": "forward",
+    "back": "backward",
+    "bwd": "backward",
+    "righ": "right",
+}
+
+
+def _detector_label_key(label: object) -> str:
+    """Return the comparison key for one detector label.
+
+    Lower-cased, stripped of non-alphanumerics, then mapped through
+    :data:`_DETECTOR_LABEL_ALIASES` so a layout's ``"Forward"`` and a file's
+    ``"Forw"`` compare equal.
+    """
+    compact = re.sub(r"[^a-z0-9]+", "", str(label).lower())
+    return _DETECTOR_LABEL_ALIASES.get(compact, compact)
+
+
+def layout_detector_labels(layout: InstrumentLayout) -> dict[int, str]:
+    """Return ``{detector_id: label}`` for the detectors *layout* names.
+
+    One entry per clickable detector that declares a label (label-free banks such
+    as HiFi/MuSR/EMU return an empty mapping).  This is the layout's *expectation*
+    of what each histogram index holds, and is what
+    :func:`preset_grouping_for_run` checks against the run's own labels.
+    """
+    return {seg.detector_id: seg.label for seg in layout.active_segments if seg.label is not None}
+
+
+def preset_grouping_for_run(
+    layout: InstrumentLayout,
+    preset_name: str,
+    *,
+    n_histograms: int,
+    labels: list[str] | None = None,
+) -> dict[int, list[int]]:
+    """Resolve a preset into ``{group_id: [detector_ids]}`` for a specific run.
+
+    The supported way to turn an :class:`InstrumentLayout` preset into a concrete
+    grouping, because it *checks the layout against the run first*.  Detector ids
+    in this module are positional (detector *N* → histogram ``N − 1``), so a
+    layout that describes a different arrangement than the run carries produces a
+    grouping that is wrong without being empty, invalid, or in any other way
+    detectable downstream.  That is exactly how the 15-histogram GPS ROOT export
+    used to be grouped with the 11-histogram ``GPS-RD`` layout, silently summing
+    the Down counter into the "up" group.
+
+    Two checks, both raising :class:`PresetLayoutMismatchError`:
+
+    1. **Wrong variant.**  Another variant of the same physical instrument (a
+       sibling sharing *layout*'s display name) has exactly *n_histograms*
+       detectors while *layout* does not — i.e. :func:`variant_for_histograms`
+       would have picked a different layout and the caller did not ask it.
+    2. **Labels do not line up.**  The layout's expected label for a detector id
+       (:func:`layout_detector_labels`) disagrees with the run's own label at that
+       position.  Spelling differences between the manual and the export are
+       absorbed by :func:`_detector_label_key`, so a surviving disagreement means
+       the ids address different counters.
+
+    Both checks are deliberately narrow, because a run legitimately *smaller* than
+    its layout is an ordinary partial file, not a mismatch: a HAL ``.mdu`` shipping
+    only the forward ring keeps the full 17-detector layout and lets reduction drop
+    the absent ring.  So check 1 fires only when a sibling fits exactly (never when
+    no registered variant matches the count), and check 2 only when the run has at
+    least as many labels as the layout has detectors — the case where positional
+    alignment is actually being asserted end to end.
+
+    Parameters
+    ----------
+    layout:
+        The layout supplying the preset.  Resolve it with
+        :func:`variant_for_histograms` when the instrument has variants.
+    preset_name:
+        A key of ``layout.presets``.
+    n_histograms:
+        Number of histograms in the run.  ``0``/unknown skips check 1.
+    labels:
+        The run's per-histogram labels in histogram order (``run.grouping[
+        "histogram_labels"]`` / ``metadata["histogram_labels"]``), if known.
+        Fewer labels than the layout has detectors skips check 2.
+
+    Returns
+    -------
+    dict
+        ``{group_id: [detector_ids]}`` with 1-based detector ids, sorted, empty
+        groups dropped.  Ids the run does not carry are **kept**, matching what
+        the grouping window's manual *Apply* produces: reduction drops absent
+        detectors at reduction time, so a partial file (e.g. a HAL ``.mdu``
+        shipping only the forward ring) still adopts the full preset with each
+        group degrading to its present members.
+
+    Raises
+    ------
+    KeyError
+        If *preset_name* is not a preset of *layout*.
+    PresetLayoutMismatchError
+        If the layout does not describe this run (see above).
+    """
+    preset = layout.presets[preset_name]
+
+    count = int(n_histograms or 0)
+    if count > 0 and layout.n_detectors != count:
+        fitted = variant_for_histograms(layout.name, count)
+        if fitted != layout.name:
+            raise PresetLayoutMismatchError(
+                f"Layout {layout.name!r} describes {layout.n_detectors} detectors but the "
+                f"run has {count} histograms, so preset {preset_name!r} would map its "
+                f"detector ids onto the wrong histograms — use the {fitted!r} variant instead."
+            )
+
+    expected = layout_detector_labels(layout)
+    actual = list(labels or [])
+    if expected and len(actual) >= layout.n_detectors:
+        conflicts: list[str] = []
+        for det_id in sorted(
+            {int(d) for gdef in preset.groups.values() for d in gdef.detector_ids}
+        ):
+            if not 1 <= det_id <= len(actual):
+                continue
+            want = expected.get(det_id)
+            if want is None:
+                continue
+            got = actual[det_id - 1]
+            if _detector_label_key(want) != _detector_label_key(got):
+                conflicts.append(f"detector {det_id}: layout says {want!r}, run says {got!r}")
+        if conflicts:
+            raise PresetLayoutMismatchError(
+                f"Layout {layout.name!r} does not match the run's detector labels, so preset "
+                f"{preset_name!r} would group the wrong counters — " + "; ".join(conflicts) + "."
+            )
+
+    groups: dict[int, list[int]] = {}
+    for gid, gdef in preset.groups.items():
+        detector_ids = sorted(int(d) for d in gdef.detector_ids)
+        if detector_ids:
+            groups[int(gid)] = detector_ids
+    return groups
 
 
 def _canonical_instrument_name(raw: object) -> str | None:
@@ -1838,21 +2123,83 @@ def _labels_match_gps_classic(labels: list[str], n_histograms: int) -> bool:
     )
 
 
+#: The eight ``_B``/``_F`` half-counter labels of the GPS ROOT exports, compacted.
+_GPS_HALF_COUNTER_TOKENS: Final[frozenset[str]] = frozenset(
+    {"upb", "upf", "downb", "downf", "rightb", "rightf", "leftb", "leftf"}
+)
+
+
+def _gps_label_tokens(labels: list[str]) -> set[str]:
+    """Return the compacted (lower-case, alphanumeric-only) label token set."""
+    return {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
+
+
+def _has_gps_forward_backward(compact: set[str]) -> bool:
+    """Return True when the token set carries both beam-axis counters."""
+    return bool({"forw", "forward"} & compact) and bool({"back", "backward"} & compact)
+
+
+def _has_gps_combined_transverse(compact: set[str]) -> bool:
+    """Return True when the token set carries all four *combined* transverse counters."""
+    return (
+        "up" in compact
+        and "down" in compact
+        and bool({"righ", "right"} & compact)
+        and "left" in compact
+    )
+
+
 def _labels_match_gps_subdetectors(labels: list[str]) -> bool:
     """Return True when detector labels match the GPS ROOT sub-detector layout.
 
-    GPS ``deltat_tdc_gps_*.root`` (MusrRoot) files store the raw sub-detectors:
-    ``Forw, Back, Up_B, Up_F, Down_B, Down_F, Right_B, Right_F, Left_B, Left_F,
-    Mob-RL``.  Matching is on the label set alone (not the histogram count) so it
-    also serves as a fallback when the count is reported unexpectedly.
+    The 11-histogram GPS ``deltat_tdc_gps_*.root`` (MusrRoot) export stores the
+    raw sub-detectors and nothing else: ``Forw, Back, Up_B, Up_F, Down_B, Down_F,
+    Right_B, Right_F, Left_B, Left_F, Mob-RL``.  Matching is on the label set
+    alone (not the histogram count) so it also serves as a fallback when the count
+    is reported unexpectedly.
+
+    The *combined* counters must be **absent**: an export that carries both views
+    is the 15-histogram layout (:func:`_labels_match_gps_combined_subdetectors`),
+    whose detector ids mean something different, and matching it here is what
+    silently mis-assigned Up/Down before.
     """
-    compact = {re.sub(r"[^a-z0-9]+", "", label.lower()) for label in labels}
+    compact = _gps_label_tokens(labels)
     if not compact:
         return False
-    needed = {"upb", "upf", "downb", "downf", "rightb", "rightf", "leftb", "leftf"}
-    has_fb = bool({"forw", "forward"} & compact) and bool({"back", "backward"} & compact)
+    if _has_gps_combined_transverse(compact):
+        return False
     has_mobile = any("mob" in token for token in compact)
-    return has_fb and needed.issubset(compact) and has_mobile
+    return (
+        _has_gps_forward_backward(compact)
+        and _GPS_HALF_COUNTER_TOKENS.issubset(compact)
+        and has_mobile
+    )
+
+
+def _labels_match_gps_combined_subdetectors(labels: list[str]) -> bool:
+    """Return True when detector labels match the 15-histogram GPS ROOT export.
+
+    That export carries *both* views of the same events — the six combined
+    counters and the eight half-counters plus the mobile detector::
+
+        Forw, Back, Up, Down, Right, Left, Up_B, Up_F, Down_B, Down_F,
+        Right_B, Right_F, Left_B, Left_F, Mob-RL
+
+    so it is identified by requiring the combined transverse labels *and* the
+    half-counter labels together (plus the beam-axis pair and the mobile
+    detector).  Like the other GPS label matchers this is count-independent, so it
+    still resolves when the histogram count is reported unexpectedly.
+    """
+    compact = _gps_label_tokens(labels)
+    if not compact:
+        return False
+    has_mobile = any("mob" in token for token in compact)
+    return (
+        _has_gps_forward_backward(compact)
+        and _has_gps_combined_transverse(compact)
+        and _GPS_HALF_COUNTER_TOKENS.issubset(compact)
+        and has_mobile
+    )
 
 
 def _is_psi_gps(metadata: dict, source_file: str | None, n_histograms: int) -> bool:
@@ -1861,9 +2208,10 @@ def _is_psi_gps(metadata: dict, source_file: str | None, n_histograms: int) -> b
     GPS files report a ``GPS`` instrument string (BIN: ``"GPS"``; ROOT:
     ``"LMU_BULKMUSR_GPS"``) and run names of the form ``deltat_tdc_gps_*``; both
     carry the ``gps`` token (distinct from the GPD decay-channel instrument's
-    ``gpd`` token).  As a fallback, either the six-counter BIN label set or the
-    eleven-counter ROOT sub-detector label set identifies GPS.  Caller must
-    already have established that the data is from PSI.
+    ``gpd`` token).  As a fallback, any of the GPS label sets identifies GPS: the
+    six-counter BIN set, the eleven-counter ROOT sub-detector set, or the
+    fifteen-counter ROOT combined+sub-detector set.  Caller must already have
+    established that the data is from PSI.
     """
     tokens = [
         str(metadata.get(key, ""))
@@ -1879,17 +2227,33 @@ def _is_psi_gps(metadata: dict, source_file: str | None, n_histograms: int) -> b
         _labels_match_gps(labels, n_histograms)
         or _labels_match_gps_classic(labels, n_histograms)
         or _labels_match_gps_subdetectors(labels)
+        or _labels_match_gps_combined_subdetectors(labels)
     )
 
 
 def _gps_variant(metadata: dict, n_histograms: int) -> str:
     """Return the GPS layout registry key for a recognised GPS run.
 
-    The ROOT sub-detector export has 11 histograms; the PSI-BIN export has the 6
-    combined detectors.  Returns ``"GPS-RD"`` for the former and ``"GPS"`` for
-    the latter.
+    Three exports exist and their detector ids mean different things, so picking
+    the wrong one silently mis-assigns counters:
+
+    * **15 histograms** — the ROOT export carrying the six combined counters
+      *and* the eight half-counters plus the mobile detector → ``"GPS-RD15"``.
+    * **11 histograms** — the ROOT sub-detector-only export → ``"GPS-RD"``.
+    * **6 histograms** — the PSI-BIN combined-counter export → ``"GPS"``.
+
+    The histogram count decides when it is one of the three known values; a count
+    reported unexpectedly falls back to the label sets, **most specific first**
+    (the 15-histogram set contains the 11-histogram one, so the order matters).
     """
-    if n_histograms == 11 or _labels_match_gps_subdetectors(_metadata_labels(metadata)):
+    if n_histograms == 15:
+        return "GPS-RD15"
+    if n_histograms == 11:
+        return "GPS-RD"
+    labels = _metadata_labels(metadata)
+    if _labels_match_gps_combined_subdetectors(labels):
+        return "GPS-RD15"
+    if _labels_match_gps_subdetectors(labels):
         return "GPS-RD"
     return "GPS"
 
@@ -1933,8 +2297,9 @@ def detect_instrument(
             return "HAL"
         # PSI GPS (General Purpose Spectrometer): route by its "gps" token or the
         # GPS label sets, before the generic PSI return-None path below would
-        # discard it.  Pick the 6-detector BIN ("GPS") or 11-detector ROOT
-        # sub-detector ("GPS-RD") variant by histogram count.
+        # discard it.  Pick the 6-detector BIN ("GPS"), 11-detector ROOT
+        # sub-detector ("GPS-RD") or 15-detector ROOT combined+sub-detector
+        # ("GPS-RD15") variant by histogram count / label set.
         if psi_data and _is_psi_gps(metadata, source_file, n_histograms):
             return _gps_variant(metadata, n_histograms)
         for key in (
