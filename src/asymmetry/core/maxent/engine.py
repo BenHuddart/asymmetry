@@ -12,7 +12,7 @@ projected-gradient V1 implementation for Asymmetry's GUI and tests.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from types import SimpleNamespace
@@ -37,7 +37,9 @@ from asymmetry.core.maxent.pulse import pulse_amplitude_phase
 from asymmetry.core.maxent.specbg import apply_maxent_specbg
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import group_names
+from asymmetry.core.transform.rebin import rebin_counts
 from asymmetry.core.utils.coerce import optional_float
+from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 _MAX_SPECTRUM_POINTS = 1 << 20
 _MIN_POSITIVE = 1.0e-15
@@ -590,7 +592,17 @@ def _good_bin_time_axis(run: Run) -> tuple[NDArray[np.float64], float, int] | No
     return time_us, bin_width, base_bunch
 
 
-def _steering_frequency_ceiling(run: Run, config: MaxEntConfig) -> float | None:
+def _run_field_value(run: Run) -> object:
+    """Return the run's raw ``metadata["field"]`` (gauss), or ``None``.
+
+    Kept raw rather than coerced: the window resolvers below already tolerate an
+    unparseable value, and the count-domain entry point supplies its own field
+    through the same seam.
+    """
+    return run.metadata.get("field") if isinstance(run.metadata, dict) else None
+
+
+def _steering_frequency_ceiling(field_value: object, config: MaxEntConfig) -> float | None:
     """Return the window's top frequency when it is known *without* the data.
 
     Binning steering may only trust a field-derived auto window or explicit
@@ -600,7 +612,6 @@ def _steering_frequency_ceiling(run: Run, config: MaxEntConfig) -> float | None:
     line the data-aware window exists to find.  Returning ``None`` here
     disables binning steering for that case.
     """
-    field_value = run.metadata.get("field") if isinstance(run.metadata, dict) else None
     try:
         center = _field_to_frequency_mhz(float(field_value))
     except (TypeError, ValueError):
@@ -650,9 +661,22 @@ def resolve_maxent_auto_steering(
        ordinary-resolution runs bit-identical to the unsteered path.
     """
     resolved = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
+    axis = _good_bin_time_axis(run)
+    return _resolve_auto_steering_core(axis, _run_field_value(run), resolved)
+
+
+def _resolve_auto_steering_core(
+    axis: tuple[NDArray[np.float64], float, int] | None,
+    field_value: object,
+    resolved: MaxEntConfig,
+) -> MaxEntConfig:
+    """Apply the steering rules to a prepared time axis and field value.
+
+    The one implementation behind :func:`resolve_maxent_auto_steering` and the
+    count-domain entry point, so both size the same grid from the same rules.
+    """
     if not resolved.auto_steer:
         return resolved
-    axis = _good_bin_time_axis(run)
     if axis is None:
         return resolved
     time_us, bin_width, base_bunch = axis
@@ -667,7 +691,7 @@ def resolve_maxent_auto_steering(
 
     dt_base = bin_width * float(base_bunch)
     nyquist_base = 1.0 / (2.0 * dt_base) if dt_base > 0.0 else 0.0
-    f_ceiling = _steering_frequency_ceiling(run, resolved)
+    f_ceiling = _steering_frequency_ceiling(field_value, resolved)
 
     steer_binning = resolved.time_binning_factor
     if (
@@ -815,9 +839,10 @@ def _data_aware_zf_window(
 
 
 def _resolve_frequency_window(
-    run: Run, config: MaxEntConfig, groups: Sequence[MaxEntGroupInput] | None = None
+    field_value: object,
+    config: MaxEntConfig,
+    groups: Sequence[MaxEntGroupInput] | None = None,
 ) -> tuple[float, float]:
-    field_value = run.metadata.get("field") if isinstance(run.metadata, dict) else None
     try:
         center = _field_to_frequency_mhz(float(field_value))
     except (TypeError, ValueError):
@@ -1054,11 +1079,10 @@ def build_maxent_input(
         if not np.isfinite(zf_lf_alpha) or zf_lf_alpha <= 0.0:
             zf_lf_alpha = 1.0
 
-    groups: list[MaxEntGroupInput] = []
-    max_points = 0
     # Shared across the sweep so a reference_run background loads + deadtime-
     # prepares once, not once per group.
     background_reference_cache: dict = {}
+    group_signals: list[GroupCountSignal] = []
     for group_id in selected:
         dataset = build_group_signal_dataset(
             run,
@@ -1070,9 +1094,67 @@ def build_maxent_input(
             prepared_histograms=prepared_histograms,
             background_reference_cache=background_reference_cache,
         )
-        time = np.asarray(dataset.time, dtype=np.float64)
-        signal = np.asarray(dataset.asymmetry, dtype=np.float64)
-        sigma = np.asarray(dataset.error, dtype=np.float64)
+        group_signals.append(
+            GroupCountSignal(
+                group_id=int(group_id),
+                group_name=str(names_by_group.get(group_id, f"Group {group_id}")),
+                time_us=np.asarray(dataset.time, dtype=np.float64),
+                signal=np.asarray(dataset.asymmetry, dtype=np.float64),
+                sigma=np.asarray(dataset.error, dtype=np.float64),
+            )
+        )
+
+    return _maxent_input_from_group_signals(
+        group_signals,
+        resolved_config,
+        run_number=int(run.run_number),
+        field_value=_run_field_value(run),
+        zf_lf_alpha=zf_lf_alpha,
+        zf_lf_phase_map=zf_lf_phase_map,
+        steered_fields=steered_fields,
+    )
+
+
+@dataclass(frozen=True)
+class GroupCountSignal:
+    """One detector group's lifetime-corrected count signal, before normalisation.
+
+    The seam between "where the counts came from" (a :class:`Run`'s histograms,
+    or arrays handed straight in) and the MaxEnt input builder proper.
+    """
+
+    group_id: int
+    group_name: str
+    time_us: NDArray[np.float64]
+    signal: NDArray[np.float64]
+    sigma: NDArray[np.float64]
+
+
+def _maxent_input_from_group_signals(
+    group_signals: Sequence[GroupCountSignal],
+    resolved_config: MaxEntConfig,
+    *,
+    run_number: int,
+    field_value: object,
+    zf_lf_alpha: float | None,
+    zf_lf_phase_map: dict[int, float],
+    steered_fields: dict[str, Any],
+) -> MaxEntInput:
+    """Normalise per-group count signals into a :class:`MaxEntInput`.
+
+    The one implementation behind :func:`build_maxent_input` and
+    :func:`build_maxent_input_from_counts`: masking, the 1/σ²-weighted baseline
+    normalisation, interior exclusion, the frequency window, the phase seeds and
+    the pulse response all live here, so a count-array caller and a
+    :class:`Run` caller cannot drift.
+    """
+    groups: list[MaxEntGroupInput] = []
+    max_points = 0
+    for group_signal in group_signals:
+        group_id = group_signal.group_id
+        time = group_signal.time_us
+        signal = group_signal.signal
+        sigma = group_signal.sigma
         mask = np.isfinite(time) & np.isfinite(signal) & np.isfinite(sigma) & (sigma > 0.0)
         if resolved_config.t_min_us is not None:
             mask &= time >= float(resolved_config.t_min_us)
@@ -1112,7 +1194,7 @@ def build_maxent_input(
         groups.append(
             MaxEntGroupInput(
                 group_id=int(group_id),
-                group_name=names_by_group.get(group_id, f"Group {group_id}"),
+                group_name=group_signal.group_name,
                 time_us=time,
                 signal=normalized,
                 sigma=normalized_sigma,
@@ -1140,7 +1222,7 @@ def build_maxent_input(
         )
 
     n_points = resolved_config.n_spectrum_points or default_n_spectrum_points(max_points)
-    f_min, f_max = _resolve_frequency_window(run, resolved_config, groups)
+    f_min, f_max = _resolve_frequency_window(field_value, resolved_config, groups)
     if f_max <= f_min:
         f_max = f_min + 1.0
 
@@ -1169,7 +1251,7 @@ def build_maxent_input(
         n_pulses=n_pulses,
     )
     return MaxEntInput(
-        run_number=int(run.run_number),
+        run_number=int(run_number),
         groups=tuple(groups),
         n_spectrum_points=n_points,
         f_min_mhz=float(f_min),
@@ -1180,7 +1262,7 @@ def build_maxent_input(
         mode=str(resolved_config.mode),
         zf_lf_alpha=zf_lf_alpha,
         metadata={
-            "field": run.metadata.get("field") if isinstance(run.metadata, dict) else None,
+            "field": field_value,
             "group_ids": [group.group_id for group in groups],
             "time_binning_factor": int(resolved_config.time_binning_factor),
             "pulse_mode": str(resolved_config.pulse_mode),
@@ -2015,6 +2097,16 @@ def maxent(
 
     *cycles* is an upper bound: the run stops early at the χ² plateau unless
     *early_stop* is ``False``.
+
+    **There is no asymmetry-domain MaxEnt, and there cannot be one.** This
+    algorithm fits a forward model of the raw *counts*, weighting every bin by
+    its own Poisson error and carrying per-group phases, amplitudes and
+    backgrounds; an asymmetry curve has already combined detectors, divided out
+    the normalisations and destroyed exactly those statistics. If what you have
+    is an asymmetry curve, use
+    :func:`asymmetry.core.fourier.fft.fft_arrays` (or a frequency-domain fit)
+    instead. If you have counts but no :class:`Run` to carry them, use
+    :func:`maxent_from_counts`, which shares this function's implementation.
     """
     run = _require_run(run)
     # The cycle loop's state signature reads the config's binning/time-window
@@ -2024,6 +2116,301 @@ def maxent(
     resolved_config = resolve_maxent_auto_steering(run, config)
     _check_cancel(cancel_callback)
     maxent_input = build_maxent_input(run, config)
+    return run_cycles(
+        maxent_input,
+        resolved_config,
+        state=state,
+        cycles=cycles,
+        early_stop=early_stop,
+        progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
+    )
+
+
+def _counts_bin_count(counts: Mapping[int, Any] | Sequence[Any]) -> int:
+    """Bin count of the first group, for sizing the steering time axis."""
+    values = next(iter(counts.values())) if isinstance(counts, Mapping) else counts[0]
+    return int(np.asarray(values).size)
+
+
+def _counts_steering_axis(
+    n_bins: int, bin_width_us: float, t0_bin: float
+) -> tuple[NDArray[np.float64], float, int]:
+    """The ``(time_us, bin_width, base_bunching)`` triple auto-steering sizes from.
+
+    The count-domain analogue of :func:`_good_bin_time_axis`: the supplied
+    arrays *are* the good-bin window, and they carry no prior bunching.
+    """
+    time_us = (np.arange(int(n_bins), dtype=np.float64) - float(t0_bin)) * float(bin_width_us)
+    return time_us, float(bin_width_us), 1
+
+
+def _coerce_count_groups(
+    counts: Mapping[int, Any] | Sequence[Any],
+    group_names: Mapping[int, str] | None,
+) -> list[tuple[int, str, NDArray[np.float64]]]:
+    """Normalise the ``counts`` argument into ``(group_id, name, counts)`` rows."""
+    if isinstance(counts, Mapping):
+        items = [(int(gid), np.asarray(values, dtype=np.float64)) for gid, values in counts.items()]
+    elif isinstance(counts, (str, bytes)) or not isinstance(counts, Sequence):
+        raise TypeError(
+            "maxent_from_counts: counts must be a mapping {group_id: counts} or a "
+            f"sequence of per-group count arrays; got {type(counts).__name__}."
+        )
+    else:
+        items = [
+            (index + 1, np.asarray(values, dtype=np.float64)) for index, values in enumerate(counts)
+        ]
+    if not items:
+        raise ValueError("maxent_from_counts: counts is empty — MaxEnt needs at least one group.")
+
+    names = {int(k): str(v) for k, v in (group_names or {}).items()}
+    rows: list[tuple[int, str, NDArray[np.float64]]] = []
+    for group_id, values in items:
+        if values.ndim != 1:
+            raise ValueError(
+                f"maxent_from_counts: group {group_id} counts must be a one-dimensional "
+                f"array, got shape {values.shape}."
+            )
+        if values.size == 0:
+            raise ValueError(f"maxent_from_counts: group {group_id} has no count bins.")
+        if not np.all(np.isfinite(values)):
+            raise ValueError(
+                f"maxent_from_counts: group {group_id} counts contain non-finite values."
+            )
+        if np.any(values < 0.0):
+            raise ValueError(
+                f"maxent_from_counts: group {group_id} counts contain negative values; "
+                "MaxEnt needs raw (or background-subtracted, still non-negative) "
+                "detector counts, not an asymmetry curve."
+            )
+        rows.append((group_id, names.get(group_id, f"Group {group_id}"), values))
+
+    lengths = {row[2].size for row in rows}
+    if len(lengths) != 1:
+        raise ValueError(
+            "maxent_from_counts: every group must have the same number of count bins; "
+            f"got {sorted(lengths)}."
+        )
+    return sorted(rows, key=lambda row: row[0]) if isinstance(counts, Mapping) else rows
+
+
+def _count_group_signal(
+    group_id: int,
+    group_name: str,
+    counts: NDArray[np.float64],
+    *,
+    bin_width_us: float,
+    t0_bin: float,
+    binning_factor: int,
+) -> GroupCountSignal:
+    """Build one lifetime-corrected count signal from raw grouped counts.
+
+    Reproduces exactly what
+    :func:`~asymmetry.core.fourier.grouped.build_group_signal_dataset` produces
+    for the :class:`Run` path: the time axis measured from ``t0_bin``, optional
+    bunching that *sums* counts, the ``e^{t/τ_μ}`` lifetime correction, and the
+    Poisson ``σ = √N`` (floored at one count) carried through the same factor.
+    """
+    time = (np.arange(counts.size, dtype=np.float64) - float(t0_bin)) * float(bin_width_us)
+    if binning_factor > 1:
+        time, counts = rebin_counts(time, counts, binning_factor)
+    scale = np.exp(time / float(MUON_LIFETIME_US)) if counts.size else np.ones_like(counts)
+    return GroupCountSignal(
+        group_id=int(group_id),
+        group_name=str(group_name),
+        time_us=time,
+        signal=counts * scale,
+        sigma=np.sqrt(np.clip(counts, 1.0, None)) * scale,
+    )
+
+
+def build_maxent_input_from_counts(
+    counts: Mapping[int, Any] | Sequence[Any],
+    config: MaxEntConfig | dict | None = None,
+    *,
+    bin_width_us: float,
+    t0_bin: float = 0.0,
+    group_names: Mapping[int, str] | None = None,
+    field_gauss: float | None = None,
+    alpha: float | None = None,
+    run_number: int = 0,
+) -> MaxEntInput:
+    """Build MaxEnt input from per-group raw counts — no :class:`Run` required.
+
+    The array-taking counterpart to :func:`build_maxent_input`. Both convert
+    their per-group count signals through one shared core
+    (:func:`_maxent_input_from_group_signals`), so the resulting
+    :class:`MaxEntInput` is identical when the counts are.
+
+    See :func:`maxent_from_counts` for the full argument documentation.
+    """
+    rows = _coerce_count_groups(counts, group_names)
+    bin_width = float(bin_width_us)
+    if not np.isfinite(bin_width) or bin_width <= 0.0:
+        raise ValueError(
+            f"maxent_from_counts: bin_width_us must be a positive number of "
+            f"microseconds; got {bin_width_us!r}."
+        )
+
+    pre_steer = config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config)
+    resolved_config = _resolve_auto_steering_core(
+        _counts_steering_axis(rows[0][2].size, bin_width, t0_bin), field_gauss, pre_steer
+    )
+    steered_fields = {
+        name: getattr(resolved_config, name)
+        for name in ("time_binning_factor", "t_max_us", "n_spectrum_points")
+        if getattr(resolved_config, name) != getattr(pre_steer, name)
+    }
+
+    if resolved_config.selected_group_ids is not None:
+        wanted = {int(g) for g in resolved_config.selected_group_ids}
+        rows = [row for row in rows if row[0] in wanted]
+        if not rows:
+            raise ValueError("MaxEnt requires at least one selected group.")
+
+    zf_lf_phase_map: dict[int, float] = {}
+    zf_lf_alpha: float | None = None
+    if resolved_config.mode == "zf_lf":
+        if len(rows) != 2:
+            raise ValueError("ZF/LF mode requires exactly two selected groups (forward/backward).")
+        # No grouping metadata here, so the caller's own order designates the
+        # pair: the first group is forward (0°), the second backward (180°).
+        zf_lf_phase_map = {rows[0][0]: 0.0, rows[1][0]: 180.0}
+        zf_lf_alpha = _float_or_default(alpha, 1.0)
+        if not np.isfinite(zf_lf_alpha) or zf_lf_alpha <= 0.0:
+            zf_lf_alpha = 1.0
+
+    binning_factor = _parse_positive_int(resolved_config.time_binning_factor)
+    group_signals = [
+        _count_group_signal(
+            group_id,
+            group_name,
+            values,
+            bin_width_us=bin_width,
+            t0_bin=t0_bin,
+            binning_factor=binning_factor,
+        )
+        for group_id, group_name, values in rows
+    ]
+    return _maxent_input_from_group_signals(
+        group_signals,
+        resolved_config,
+        run_number=int(run_number),
+        field_value=field_gauss,
+        zf_lf_alpha=zf_lf_alpha,
+        zf_lf_phase_map=zf_lf_phase_map,
+        steered_fields=steered_fields,
+    )
+
+
+def maxent_from_counts(
+    counts: Mapping[int, Any] | Sequence[Any],
+    config: MaxEntConfig | dict | None = None,
+    *,
+    bin_width_us: float,
+    t0_bin: float = 0.0,
+    group_names: Mapping[int, str] | None = None,
+    field_gauss: float | None = None,
+    alpha: float | None = None,
+    run_number: int = 0,
+    cycles: int | None = None,
+    state: MaxEntState | None = None,
+    early_stop: bool = True,
+    progress_callback: MaxEntProgressCallback | None = None,
+    cancel_callback: MaxEntCancelCallback | None = None,
+) -> MaxEntResult:
+    """Reconstruct a MaxEnt spectrum from per-group raw counts — no :class:`Run`.
+
+    **There is no asymmetry-domain MaxEnt, and there cannot be one.** MaxEnt
+    reconstructs P(B) by fitting a forward model of the *counts*, weighting every
+    bin by its own Poisson error and carrying per-group phases, amplitudes and
+    backgrounds. An asymmetry curve has already combined detectors, divided out
+    the normalisations and destroyed exactly the per-group statistics the
+    algorithm needs, so there is nothing to hand it. If what you have is an
+    asymmetry curve — a custom pairing, a derived or exported trace — use
+    :func:`asymmetry.core.fourier.fft.fft_arrays` (or a frequency-domain fit)
+    instead; that is the array-based frequency estimator for the asymmetry
+    domain.
+
+    This entry point exists for the case where you *do* have counts but no
+    :class:`Run` to carry them: a re-grouped detector sum, a simulation, counts
+    reconstructed from an export. It shares its whole implementation with
+    :func:`maxent` — both build a :class:`MaxEntInput` through one core and run
+    the same :func:`run_cycles` — so the same counts give the same result.
+
+    Parameters
+    ----------
+    counts
+        Per-group raw detector counts: a mapping ``{group_id: counts}`` or a
+        sequence of arrays (numbered ``1…n`` in order). Every group must have
+        the same number of bins, on the same time axis. These are **counts**,
+        not an asymmetry: values must be finite and non-negative, and the
+        Poisson ``σ = √N`` (floored at one count) is derived from them — there
+        is deliberately no way to override it, because a supplied σ that is not
+        the counting error breaks the algorithm's premise.
+    config
+        The usual :class:`MaxEntConfig` (or dict). Everything the algorithm
+        needs that is *not* count-domain calibration lives here: spectrum
+        points, frequency window, time window and exclusions, cycles and inner
+        iterations, prior level, mode, pulse shape, binning, backend.
+    bin_width_us
+        Time-bin width in microseconds. Required — the counts alone carry no
+        time axis.
+    t0_bin
+        Index of ``t = 0`` within the supplied arrays; the time axis is
+        ``(bin - t0_bin) · bin_width_us``. Fractional values are allowed.
+        Default ``0.0`` (the first bin is ``t = 0``).
+    group_names
+        Optional ``{group_id: name}`` labels for the reconstruction output.
+    field_gauss
+        Applied field in gauss, used only for the field-centred automatic
+        frequency window (``config.auto_window``) and the binning auto-steer —
+        exactly what ``run.metadata["field"]`` supplies on the :class:`Run`
+        path. ``None`` behaves as a run with no recorded field: the window falls
+        back to the data-aware or explicit bounds.
+    alpha
+        Forward/backward α, used only in ``mode="zf_lf"`` to tie the pair's
+        amplitudes and backgrounds. Without run metadata to designate them, the
+        **order of** ``counts`` **decides**: the first group is forward (pinned
+        to 0°), the second backward (180°).
+    run_number
+        Label carried into :attr:`MaxEntResult` and the reconstruction output.
+    cycles, state, early_stop, progress_callback, cancel_callback
+        Exactly as documented on :func:`maxent`.
+
+    Returns
+    -------
+    MaxEntResult
+        As :func:`maxent`.
+
+    Raises
+    ------
+    ValueError
+        When ``counts`` is empty, ragged, non-finite, negative or not
+        one-dimensional, or when ``bin_width_us`` is not positive.
+    """
+    _check_cancel(cancel_callback)
+    maxent_input = build_maxent_input_from_counts(
+        counts,
+        config,
+        bin_width_us=bin_width_us,
+        t0_bin=t0_bin,
+        group_names=group_names,
+        field_gauss=field_gauss,
+        alpha=alpha,
+        run_number=run_number,
+    )
+    # The cycle loop's state signature reads the config's binning/time-window
+    # fields, so give it the steered configuration, while the builder above
+    # received the *original* so its metadata records which knobs steering
+    # filled — mirroring :func:`maxent` exactly (the resolver is idempotent, so
+    # both see the same effective values).
+    resolved_config = _resolve_auto_steering_core(
+        _counts_steering_axis(_counts_bin_count(counts), bin_width_us, t0_bin),
+        field_gauss,
+        config if isinstance(config, MaxEntConfig) else MaxEntConfig.from_dict(config),
+    )
     return run_cycles(
         maxent_input,
         resolved_config,
