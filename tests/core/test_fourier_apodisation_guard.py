@@ -6,54 +6,107 @@ depends on measured data.
 
 The study
 ---------
-The guard fires on two conditions measured over the leading
+The guard applies the same two conditions over the leading
 ``_EARLY_WINDOW_FRACTION`` (15 %) of the record, on the error-weighted power
-``|signal/σ|²`` of the pre-window signal:
+``|signal/σ|²``:
 
-1. ``early_power_fraction ≥ 0.75`` — the signal's power is concentrated early;
+1. ``early_power_fraction ≥ 0.75`` — the power is concentrated early;
 2. ``early_retained_fraction ≤ 0.2`` — the window removes that early power.
 
-Measured on the synthetic cases below (noiseless unless stated):
+**It runs them twice**: once on the signal's own power (the ``"signal"`` pass)
+and once on the power left after an error-weighted moving mean is subtracted
+(the ``"oscillatory"`` pass), firing if either says the window deleted a
+front-loaded signal.
 
-====================================================  ===========  ========  =====
-case                                                  early power  retained  fires
-====================================================  ===========  ========  =====
-λ = 60 µs⁻¹, 0.3 µs record, ``hann``                        0.996  7.6e-04   yes
-λ = 60 µs⁻¹, 0.3 µs record, ``cosine``                      0.996  1.3e-02   yes
-λ = 60 µs⁻¹, 0.3 µs record, ``none``                        0.996  1.00      no
-λ = 60 µs⁻¹, 0.3 µs record, matched ``lorentzian``          0.996  0.533     no
-λ = 0.05 µs⁻¹, 8 µs record (alive), ``hann``                0.206  8.4e-03   no
-λ = 0, 8 µs record (undamped), ``hann``                     0.150  8.7e-03   no
-λ = 0, 8 µs record, σ ∝ e^{t/2τ_μ}, ``hann``                0.433  7.2e-03   no
-λ = 0.2 µs⁻¹, 8 µs record, σ ∝ e^{t/2τ_μ}, ``hann``         0.644  6.0e-03   no
-λ = 0.4 µs⁻¹, 8 µs record, σ ∝ e^{t/2τ_μ}, ``hann``         0.780  5.0e-03   yes
-====================================================  ===========  ========  =====
+The second pass exists because a real ordered-state μSR curve is never a bare
+damped cosine — it carries a slowly relaxing tail whose amplitude can exceed the
+oscillation's. No constant or low-order baseline removal takes out that tail's
+residual curvature, so its power spreads across the whole record and *dilutes*
+the concentration statistic: on the headline case below the signal pass reads
+0.41, far under the trigger, even though the window has kept only 0.04 % of the
+oscillatory content. High-passing first asks the question the guard means to
+ask, and the same case reads 0.998.
 
-Each threshold is set by the rows that must *not* fire while the first two must.
+Measured (noiseless unless stated); "pass" is the one that decided:
 
-The matched exponential filter (``window="lorentzian"``,
-``filter_time_constant_us = 1/λ``) is the binding constraint on the
-retained-power threshold: it keeps ~½ of the early power (weight ``e^{-λt}``
-against power ``e^{-2λt}`` gives ``∫e^{-4λt}/∫e^{-2λt} → ½``), and it is the
-apodisation the warning *recommends*, so the threshold must sit well below 0.5 —
-0.2 leaves a factor of 2.7 of margin.
+=========================================================  =====  ========  ===========  =====
+case                                                       early  retained  pass         fires
+=========================================================  =====  ========  ===========  =====
+**MUST FIRE**
+damped cosine + tail(20, 2.0 µs⁻¹), ``hann``               0.998  3.6e-04   oscillatory  yes
+damped cosine + tail(20, 2.0 µs⁻¹), ``cosine``             0.998  8.6e-03   oscillatory  yes
+damped cosine + tail(50, 0.5 µs⁻¹), ``hann``               0.998  3.6e-04   oscillatory  yes
+damped cosine + tail(6, 2.0 µs⁻¹), ``hann``                0.998  3.6e-04   oscillatory  yes
+damped cosine + tail(2.5, 0.5 µs⁻¹), ``hann``              0.978  8.1e-04   signal       yes
+damped cosine, no tail, ``hann``                           0.996  7.6e-04   signal       yes
+damped cosine, no tail, ``cosine``                         0.996  1.3e-02   signal       yes
+fast pure relaxation, no oscillation, ``hann``             0.906  4.1e-04   signal       yes
+**MUST NOT — safe apodisations on the headline signal**
+``none``                                                   0.998  1.00      oscillatory  no
+matched ``lorentzian``, τ = 1/λ                            0.998  0.538     oscillatory  no
+``lorentzian``, τ = 2/λ                                    0.998  0.707     oscillatory  no
+``lorentzian``, τ = 0.5/λ                                  0.998  0.354     oscillatory  no
+``gaussian``, τ = 1/λ                                      0.998  0.720     oscillatory  no
+**MUST NOT — line alive across a long record**
+λ = 0, 8 µs, ``hann``                                      0.150  8.7e-03   signal       no
+λ = 0.05 µs⁻¹, 8 µs, ``hann``                              0.206  8.4e-03   signal       no
+λ = 0, 8 µs, σ ∝ e^{t/2τ_μ}, ``hann``                      0.433  7.2e-03   signal       no
+λ = 0.1 µs⁻¹, 8 µs, σ ∝ e^{t/2τ_μ}, ``hann``               0.549  6.6e-03   signal       no
+λ = 0.2 µs⁻¹, 8 µs, σ ∝ e^{t/2τ_μ}, ``hann``               0.644  6.0e-03   signal       no
+λ = 0.4 µs⁻¹, 8 µs, σ ∝ e^{t/2τ_μ}, ``hann``               0.780  5.0e-03   signal       yes
+**MUST NOT — no oscillation to delete**
+straight line, ``hann``                                    0.329  6.9e-03   signal       no
+quadratic, ``hann``                                        0.032  1.0e-03   signal       no
+gentle exponential λ = 0.05 µs⁻¹, ``hann``                 0.361  6.6e-03   signal       no
+exponential λ = 0.3 µs⁻¹, ``hann``                         0.524  5.4e-03   signal       no
+pure noise, ``hann``                                       0.155  9.3e-03   signal       no
+=========================================================  =====  ========  ===========  =====
 
-The concentration threshold is set by the **error weighting**, not by the flat
-case: real μSR errors grow with time as the counts decay, and 1/σ² weighting
-tilts the statistic early on its own. A flat-error record alive across the whole
-window reads 0.15; the *same* record with realistic ``σ ∝ e^{t/2τ_μ}`` growth
-already reads 0.43 with no damping at all, and 0.64 at λ = 0.2 µs⁻¹. 0.75 clears
-that pure-weighting tilt with margin while a lifetime well inside the record
-(λ = 0.4 µs⁻¹ over 8 µs, i.e. dead to 4 % by the end) still trips it. The last
-row is a deliberate yes: a taper's zero at t = 0 does throw away the strongest
-part of such a record, and the advice is sound there.
+Each threshold is set by the rows that must *not* fire while the must-fire rows
+do.
+
+**Retained-power threshold (0.2).** The binding constraint is the exponential
+filter, because it is what the warning *recommends*: at the matched
+τ = 1/λ it keeps 0.538 of the early power (weight ``e^{-λt}`` against power
+``e^{-2λt}`` gives ``∫e^{-4λt}/∫e^{-2λt} → ½``), and even at τ = 0.5/λ — twice
+as aggressive as matched — it keeps 0.354, still 1.8× clear of the threshold. A
+taper on the same signal keeps 4e-04. Below about τ = 0.35/λ the guard does
+start firing on the exponential filter, and that is intended: filtering three
+times faster than the signal decays *is* deleting it, and the message's advice
+(τ ≈ 1/λ) is the fix.
+
+**Concentration threshold (0.75).** Set by the **error weighting**, not by the
+flat case: real μSR errors grow with time as the counts decay, and 1/σ²
+weighting tilts the statistic early on its own. A flat-error record alive across
+the whole window reads 0.15; the *same* record with realistic ``σ ∝ e^{t/2τ_μ}``
+growth already reads 0.43 with no damping at all, and 0.64 at λ = 0.2 µs⁻¹. 0.75
+clears that tilt with margin while a lifetime well inside the record
+(λ = 0.4 µs⁻¹ over 8 µs, dead to 4 % by the end) still trips it — a deliberate
+yes, since a taper's zero at t = 0 does throw away the strongest part of such a
+record. The oscillatory pass leaves every one of those benign rows within a few percent
+of its signal-pass value and far below the trigger (an undamped 8 µs record
+reads 0.150 on the signal pass and 0.184 on the oscillatory one — the
+moving-mean kernel spans ~32 cycles of a 27 MHz line, so it passes the
+oscillation essentially untouched), which is why one threshold serves both
+passes.
+
+**Odd padding is load-bearing.** The slow baseline is estimated with the record
+odd-padded at both ends rather than the kernel truncated there. With truncation
+the moving mean at the first sample is the mean of the *following* half-kernel,
+a systematic ``slope · k/4`` error that lands inside the early window: a plain
+straight line then leaves a residual concentrated 80 % early and trips the
+guard. Odd padding reproduces a linear continuation exactly, cutting the
+straight-line residual by ~150× and dropping every smooth-baseline row above
+below the trigger.
 
 Sensitivity limit (measured, and deliberately accepted): the statistic is a
-*time-domain* power concentration, so a per-bin noise pedestal flattens it. On
-the λ = 60 µs⁻¹ row above the guard fires down to a per-bin peak SNR of ~16 and
-stands down below it (measured: fires at 16, silent at 12). False negatives are
-the safe direction for an advisory warning — the documentation steering is the
-primary defence, and the guard is the safety net for the unambiguous case.
+*time-domain* power concentration, so a per-bin noise pedestal flattens it. The
+guard fires down to a per-bin peak SNR of ~8 and stands down below it (measured:
+fires at 8, silent at 6) — and, because the slow baseline is now removed first,
+that limit is the **same with and without the tail**, where the whole-signal
+statistic used to need ~16. False negatives are the safe direction for an
+advisory warning — the documentation steering is the primary defence, and the
+guard is the safety net for the unambiguous case.
 """
 
 from __future__ import annotations
@@ -102,6 +155,21 @@ def _damped(lam: float, record_us: float, n: int, frequency_mhz: float, noise: f
 
 def _heavily_damped():
     return _damped(_FAST_LAMBDA_PER_US, _FAST_RECORD_US, _FAST_POINTS, _FAST_FREQUENCY_MHZ)
+
+
+# The physically standard shape: the damped line rides on a slowly relaxing
+# tail of larger amplitude (the powder tail an ordered state always carries).
+# Invented round numbers, chosen so the tail's residual curvature survives the
+# constant baseline removal and dilutes the whole-signal statistic to 0.41.
+_TAIL_AMPLITUDE = 20.0
+_TAIL_LAMBDA_PER_US = 2.0
+
+
+def _heavily_damped_on_a_slow_tail(
+    amplitude: float = _TAIL_AMPLITUDE, lam: float = _TAIL_LAMBDA_PER_US
+):
+    time, signal, error = _heavily_damped()
+    return time, signal + amplitude * np.exp(-lam * time), error
 
 
 def _transverse_field(lam: float = _TF_LAMBDA_PER_US):
@@ -335,12 +403,12 @@ def test_the_guard_sees_the_cropped_window() -> None:
     assert _fires(time, signal, error, window="hann", t_max=0.1)
 
 
-@pytest.mark.parametrize(("peak_snr", "expected"), [(16.0, True), (12.0, False)])
+@pytest.mark.parametrize(("peak_snr", "expected"), [(8.0, True), (6.0, False)])
 def test_the_documented_noise_sensitivity_limit(peak_snr: float, expected: bool) -> None:
     """Pins the sensitivity claim in this module's docstring.
 
     The statistic is a time-domain power concentration, so a per-bin noise
-    pedestal flattens it. The guard fires down to a peak signal-to-noise of ~16
+    pedestal flattens it. The guard fires down to a peak signal-to-noise of ~8
     on the heavily damped case and stands down below that — a false negative,
     which is the safe direction for an advisory warning.
     """
@@ -349,3 +417,211 @@ def test_the_documented_noise_sensitivity_limit(peak_snr: float, expected: bool)
     noisy = clean + np.random.default_rng(20260730).normal(0.0, sigma, _FAST_POINTS)
 
     assert _fires(time, noisy, np.full(_FAST_POINTS, sigma), window="hann") is expected
+
+
+# --- the slow tail: the shape a real ordered state actually has --------------
+
+
+@pytest.mark.parametrize("window", ["hann", "cosine"])
+def test_a_damped_line_on_a_slow_tail_warns(window: str) -> None:
+    """The headline must-fire case.
+
+    A bare damped cosine is not what an ordered-state μSR record looks like: the
+    oscillation rides on a slowly relaxing tail, often of larger amplitude. The
+    tail's residual curvature survives any constant baseline removal and spreads
+    its power across the whole record, so a whole-signal concentration statistic
+    reads far below the trigger even though the taper has deleted essentially
+    all of the oscillatory content.
+    """
+    time, signal, error = _heavily_damped_on_a_slow_tail()
+
+    with pytest.warns(ApodisationEarlySignalWarning, match="deleted the early-time signal"):
+        prepare_fft_arrays(time, signal, error, window=window)
+
+
+@pytest.mark.parametrize(
+    ("amplitude", "lam"),
+    [(20.0, 2.0), (50.0, 0.5), (6.0, 2.0), (6.0, 0.5), (2.5, 0.5), (50.0, 2.0)],
+)
+def test_the_tail_case_warns_across_tail_shapes(amplitude: float, lam: float) -> None:
+    time, signal, error = _heavily_damped_on_a_slow_tail(amplitude, lam)
+
+    assert _fires(time, signal, error, window="hann")
+
+
+def test_the_tail_dilutes_the_whole_signal_statistic_but_not_the_oscillatory_one() -> None:
+    """The mechanism, measured: this is *why* the second pass exists."""
+    time, signal, error = _heavily_damped_on_a_slow_tail()
+    weights = apply_window(np.ones(_FAST_POINTS), "hann")
+    baseline_free = signal - np.sum(signal / error) / np.sum(1.0 / error)
+
+    loss = early_signal_apodisation_loss(time, baseline_free, weights, error)
+
+    assert loss is not None
+    # The pass that fires is the high-passed one, and it is not marginal.
+    assert loss.measured_on == "oscillatory"
+    assert loss.early_power_fraction > 0.99
+    assert loss.early_retained_fraction < 0.01
+    assert loss.triggered
+
+
+def test_the_tail_case_is_safe_under_every_recommended_apodisation() -> None:
+    """The warning's own advice must not trip the warning."""
+    time, signal, error = _heavily_damped_on_a_slow_tail()
+
+    assert not _fires(time, signal, error, window="none")
+    for scale in (0.5, 1.0, 2.0):
+        assert not _fires(
+            time,
+            signal,
+            error,
+            window="lorentzian",
+            filter_time_constant_us=scale / _FAST_LAMBDA_PER_US,
+        )
+    assert not _fires(
+        time,
+        signal,
+        error,
+        window="gaussian",
+        filter_time_constant_us=1.0 / _FAST_LAMBDA_PER_US,
+    )
+
+
+def test_a_heavily_over_filtered_exponential_does_warn() -> None:
+    """Documented, and intended: τ well below 1/λ really is deleting signal."""
+    time, signal, error = _heavily_damped_on_a_slow_tail()
+
+    assert _fires(
+        time,
+        signal,
+        error,
+        window="lorentzian",
+        filter_time_constant_us=0.25 / _FAST_LAMBDA_PER_US,
+    )
+
+
+def test_the_message_names_the_oscillatory_pass_when_that_is_what_fired() -> None:
+    time, signal, error = _heavily_damped_on_a_slow_tail()
+
+    with pytest.warns(ApodisationEarlySignalWarning) as caught:
+        prepare_fft_arrays(time, signal, error, window="hann")
+
+    message = str(caught[0].message)
+    assert "oscillatory (slow-baseline-removed) power" in message
+    assert 'window="none"' in message
+    assert 'window="lorentzian"' in message
+
+
+# --- the slow-baseline estimator, and the edge artefact it must not create ---
+
+
+@pytest.mark.parametrize(
+    ("label", "builder"),
+    [
+        ("straight line", lambda t: 20.0 - 2.0 * t),
+        ("quadratic", lambda t: 20.0 - 2.0 * t + 0.3 * t**2),
+        ("gentle exponential", lambda t: 20.0 * np.exp(-0.05 * t)),
+        ("exponential", lambda t: 20.0 * np.exp(-0.3 * t)),
+    ],
+)
+def test_a_smooth_baseline_with_no_oscillation_does_not_warn(label: str, builder) -> None:
+    """Regression: the truncated-kernel edge artefact fired on a straight line.
+
+    A moving mean whose window is truncated at the record's ends is biased by
+    ``slope · k/4`` there, and that bias lands inside the early window — so a
+    plain straight line, with no curvature and nothing a baseline removal could
+    not take out, produced a large "oscillatory" residual concentrated at the
+    start and tripped the guard. Odd padding removes it.
+    """
+    time = np.linspace(0.0, _TF_RECORD_US, _TF_POINTS)
+
+    assert not _fires(time, builder(time), np.full(_TF_POINTS, 0.5), window="hann")
+
+
+def test_odd_padding_leaves_a_straight_line_essentially_untouched() -> None:
+    """The property that kills the edge artefact, pinned directly."""
+    from asymmetry.core.fourier.apodisation import _slow_baseline
+
+    time = np.linspace(0.0, _TF_RECORD_US, _TF_POINTS)
+    ramp = 20.0 - 2.0 * time
+    weights = np.ones(_TF_POINTS)
+    kernel = max(1, int(round(0.15 * _TF_POINTS)))
+
+    residual = ramp - _slow_baseline(ramp, weights, kernel)
+
+    # A linear continuation is reproduced exactly; only rounding survives.
+    assert np.max(np.abs(residual)) < 1e-2
+    assert np.max(np.abs(residual)) < 1e-3 * float(np.ptp(ramp))
+
+
+def test_the_slow_baseline_removes_the_tail_and_keeps_the_oscillation() -> None:
+    from asymmetry.core.fourier.apodisation import _slow_baseline
+
+    time, signal, error = _heavily_damped_on_a_slow_tail()
+    tail = _TAIL_AMPLITUDE * np.exp(-_TAIL_LAMBDA_PER_US * time)
+    oscillation = signal - tail
+    inverse_variance = 1.0 / np.square(error)
+    kernel = max(1, int(round(0.15 * _FAST_POINTS)))
+
+    def high_pass(values: np.ndarray) -> np.ndarray:
+        return values - _slow_baseline(values, inverse_variance, kernel)
+
+    # The tail on its own is almost entirely absorbed into the baseline...
+    assert np.sum(high_pass(tail) ** 2) < 0.01 * np.sum((tail - np.mean(tail)) ** 2)
+    # ...while the oscillation survives essentially intact.
+    assert np.sum(high_pass(oscillation) ** 2) > 0.9 * np.sum(oscillation**2)
+
+
+def test_the_oscillatory_pass_is_skipped_when_there_is_nothing_oscillatory() -> None:
+    """A signal that is pure slow baseline must decide on the signal pass."""
+    time = np.linspace(0.0, _TF_RECORD_US, _TF_POINTS)
+    ramp = 20.0 - 2.0 * time
+    error = np.full(_TF_POINTS, 0.5)
+    weights = apply_window(np.ones(_TF_POINTS), "hann")
+    baseline_free = ramp - np.sum(ramp / error) / np.sum(1.0 / error)
+
+    loss = early_signal_apodisation_loss(time, baseline_free, weights, error)
+
+    assert loss is not None
+    assert loss.measured_on == "signal"
+
+
+def test_a_long_record_line_reads_the_same_on_both_passes() -> None:
+    """Why one concentration threshold serves both passes."""
+    from asymmetry.core.fourier.apodisation import _measure_early_loss, _slow_baseline
+
+    time, signal, error = _transverse_field(lam=0.0)
+    weights = apply_window(np.ones(_TF_POINTS), "hann")
+    n_early = max(1, int(round(0.15 * _TF_POINTS)))
+    inverse_variance = 1.0 / np.square(error)
+
+    power = np.square(signal) * inverse_variance
+    high_passed = signal - _slow_baseline(signal, inverse_variance, n_early)
+    oscillatory_power = np.square(high_passed) * inverse_variance
+
+    on_signal = _measure_early_loss(power, weights[:n_early], n_early, "signal")
+    on_oscillatory = _measure_early_loss(
+        oscillatory_power, weights[:n_early], n_early, "oscillatory"
+    )
+
+    assert on_signal is not None and on_oscillatory is not None
+    # Both read the same to within a few percent, and both sit far below the
+    # 0.75 trigger — which is why one threshold serves the two passes.
+    assert on_oscillatory.early_power_fraction == pytest.approx(
+        on_signal.early_power_fraction, abs=0.05
+    )
+    assert on_oscillatory.early_power_fraction < 0.5
+    assert not on_signal.triggered and not on_oscillatory.triggered
+
+
+def test_the_guard_still_changes_no_returned_value_on_the_tail_case() -> None:
+    time, signal, error = _heavily_damped_on_a_slow_tail()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ApodisationEarlySignalWarning)
+        _freqs, real, magnitude = fft_arrays(time, signal, error, window="hann")
+        prepared = prepare_fft_arrays(time, signal, error, window="hann")
+
+    expected = np.fft.rfft(prepared.signal)
+    assert np.array_equal(magnitude, np.abs(expected))
+    assert np.array_equal(real, expected.real)

@@ -336,7 +336,9 @@ def _warn_on_early_signal_suppression(
     ``tests/core/test_fourier_apodisation_guard.py``):
 
     * a heavily damped cosine (λ ≫ 1/record length) under ``hann`` or
-      ``cosine`` **must** warn;
+      ``cosine`` **must** warn, including when it rides on a slowly relaxing
+      tail of comparable or larger amplitude — the standard ordered-state
+      shape, whose tail power otherwise dilutes a whole-signal statistic;
     * the same signal with ``window="none"``, or with the matched exponential
       filter (``window="lorentzian"``, ``filter_time_constant_us ≈ 1/λ``),
       **must not**;
@@ -346,9 +348,14 @@ def _warn_on_early_signal_suppression(
     loss = early_signal_apodisation_loss(time, signal, weights, error)
     if loss is None or not loss.triggered:
         return
+    measured = (
+        "oscillatory (slow-baseline-removed)"
+        if loss.measured_on == "oscillatory"
+        else "error-weighted"
+    )
     warnings.warn(
         f"Apodisation window {window!r} has deleted the early-time signal: "
-        f"{loss.early_power_fraction:.1%} of this record's error-weighted power "
+        f"{loss.early_power_fraction:.1%} of this record's {measured} power "
         f"lies in its first {loss.early_window_fraction:.0%}, and the window keeps "
         f"only {loss.early_retained_fraction:.2%} of it. A symmetric taper is zero "
         "at t = 0, so a heavily damped oscillation can vanish entirely under it "
