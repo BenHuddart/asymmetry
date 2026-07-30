@@ -23,6 +23,31 @@ interactive session, ``python -c ...``, a pytest-xdist worker — are *safe*:
 multiprocessing skips the re-import entirely there, so they keep their
 parallelism. ``max_workers <= 1`` never starts a worker at all, so it is always
 a safe escape hatch.
+
+``max_workers`` does not bound total CPU
+----------------------------------------
+It bounds *fits in flight*, not threads. A run with ``max_workers=1`` can still
+saturate several cores, and measurably does: the superconducting line-shape
+kernel forms its spectrum as one complex matrix product
+(``weights @ exp(...)`` in :mod:`asymmetry.core.fitting.sc.lineshape`), which
+NumPy dispatches to a **multi-threaded BLAS** — so every vortex-lattice
+evaluation, of which a fit makes thousands, fans out across the machine from
+inside a single process. Measured on a 1500-point transverse-field record with
+``max_workers=1``: 153 s wall for 2697 s of CPU, ~17x, essentially all of it in
+the two vortex-lattice candidates.
+
+This is not the pool, and no pool setting reaches it. The threading is decided
+by the BLAS at load time, so the knob is the environment, before the
+interpreter starts::
+
+    OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m your.analysis
+
+On that same record pinning took CPU/wall from ~17 to 1.0 **and wall-clock from
+153 s to 55 s** — the oversubscription was costing nearly three times the run,
+not buying anything. Bounding it in-process would need either a thread-pool control
+dependency the project does not carry or a rewrite of the line-shape kernel to
+stop materialising the (n_field x n_time) matrix; both are out of scope here and
+neither is a property of the pool, so this is documented rather than patched.
 """
 
 from __future__ import annotations

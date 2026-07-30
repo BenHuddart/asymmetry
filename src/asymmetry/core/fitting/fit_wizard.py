@@ -40,6 +40,7 @@ from asymmetry.core.fitting.peak_detection import (
     MultipletMatch,
     PeakAnalysis,
     analyze_dataset_peaks,
+    analyze_early_window_peaks,
     deserialize_multiplet_match,
     deserialize_peak_analysis,
     effective_analysis_window,
@@ -215,6 +216,23 @@ class SpectrumFingerprint:
     oscillatory_hint: bool
     kt_like_hint: bool
     multi_rate_hint: bool
+    #: Strongest line the unwindowed early-window pass found (MHz), or ``0.0``
+    #: when it found none.  The fingerprint's own seeding FFT is Hann-windowed
+    #: and so is structurally blind to a line whose lifetime is a small fraction
+    #: of the record; this field is how that line reaches family gating.
+    #: Additive — old payloads deserialize to ``0.0``.
+    damped_line_frequency_mhz: float = 0.0
+    #: SNR of that line, measured on its own crop.  NOT comparable with
+    #: ``dominant_fft_snr`` (different window, different noise floor).
+    damped_line_snr: float = 0.0
+    #: Duration (µs) of the crop it was found in; its resolution is the
+    #: reciprocal.
+    damped_line_crop_us: float = 0.0
+
+    @property
+    def has_damped_line_candidate(self) -> bool:
+        """True when the early-window pass found a heavily damped line."""
+        return self.damped_line_frequency_mhz > 0.0
 
 
 @dataclass(frozen=True)
@@ -406,8 +424,19 @@ def compute_information_criteria(
     return aic, aicc, bic
 
 
-def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
-    """Extract deterministic features used to shortlist candidate models."""
+def fingerprint_spectrum(
+    dataset: MuonDataset, *, peak_analysis: PeakAnalysis | None = None
+) -> SpectrumFingerprint:
+    """Extract deterministic features used to shortlist candidate models.
+
+    ``peak_analysis`` lets a caller that has already run
+    :func:`~asymmetry.core.fitting.peak_detection.analyze_dataset_peaks` hand
+    the result in.  That is not (only) about saving a transform: without it the
+    damped-line candidate carried here and the ``early_fft`` peaks that seed the
+    candidates are two independent computations of the same thing, free to
+    disagree once the merge policy drops one of them.  Passed in, they are the
+    same peaks by construction.
+    """
     n_points = max(int(dataset.n_points), 1)
     early_count = min(n_points, max(5, n_points // 20))
     late_count = min(n_points, max(5, n_points // 10))
@@ -454,6 +483,17 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
     duration = max(float(t_win[-1] - t_win[0]), _EPS) if t_win.size > 1 else 1.0
     dominant_fft_cycles_in_window = float(dominant_fft_frequency_mhz * duration)
 
+    # The Hann view above cannot contain a heavily damped line, so the
+    # unwindowed early-window pass answers separately.  Its strongest line (if
+    # any) is carried on the fingerprint so family gating knows a fast line
+    # exists — exactly the information ``dominant_fft_*`` structurally cannot
+    # supply.
+    if peak_analysis is not None:
+        early_peaks = tuple(peak for peak in peak_analysis.peaks if peak.source == "early_fft")
+    else:
+        early_peaks = analyze_early_window_peaks(t_win, centered_win, error_win).peaks
+    damped_line = early_peaks[0] if early_peaks else None
+
     curvature_count = min(n_points, max(8, n_points // 6))
     early_time_curvature = _quadratic_curvature(t[:curvature_count], centered[:curvature_count])
     monotonic_decay_fraction, monotonic_decay_informative = _monotonic_decay_fraction(
@@ -488,12 +528,21 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
     monotonic_decay_not_oscillatory = (
         not monotonic_decay_informative
     ) or monotonic_decay_fraction <= 0.85
-    oscillatory_hint = bool(
+    hann_view_oscillatory = bool(
         dominant_fft_snr >= 3.0
         and dominant_fft_cycles_in_window >= 1.5
         and smoothed_turning_points >= 2
         and monotonic_decay_not_oscillatory
     )
+    # A heavily damped line satisfies NONE of the Hann-view clauses, and not
+    # because the data are unoscillatory: the window deleted the oscillation
+    # (so ``dominant_fft_snr`` is a noise peak) and the smoothing kernel — sized
+    # for a line alive across the record — averages a nanosecond-scale
+    # oscillation flat (so ``smoothed_turning_points`` is 0). The early-window
+    # pass is the measurement those clauses cannot make, and it clears a gate
+    # calibrated so three null families contribute nothing, so it sets the hint
+    # on its own rather than being ANDed into a test it must fail.
+    oscillatory_hint = hann_view_oscillatory or damped_line is not None
     kt_like_hint = bool(late_time_dip_recovery_score >= 0.05 and initial_amplitude_estimate > 0.0)
     multi_rate_hint = bool(
         semilog_slope_ratio >= 1.5 and monotonic_decay_fraction >= 0.7 and not oscillatory_hint
@@ -515,6 +564,11 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
         oscillatory_hint=oscillatory_hint,
         kt_like_hint=kt_like_hint,
         multi_rate_hint=multi_rate_hint,
+        damped_line_frequency_mhz=(float(damped_line.frequency_mhz) if damped_line else 0.0),
+        damped_line_snr=(float(damped_line.snr) if damped_line else 0.0),
+        damped_line_crop_us=(
+            float(damped_line.crop_us) if damped_line and damped_line.crop_us else 0.0
+        ),
     )
 
 
@@ -1192,8 +1246,23 @@ _STAGE1_PROMOTE_DELTA = 10.0
 #: baseline families never count against it.
 _STAGE2_MAX_FAMILIES = 4
 #: Detected peaks need this SNR to seed a component in a multiplet template
-#: (user-declared peaks always qualify).
+#: (user-declared and early-window peaks always qualify — see
+#: ``_multiplet_seed_peaks``).
 _MULTIPLET_MIN_SNR = 4.0
+
+#: Hard ceiling on the number of damped cosines a multiplet template may carry.
+#: Three is already a 13-free-parameter fit; a fourth is not a model the wizard
+#: should be proposing from detected lines alone.  This, not the seed count, is
+#: what bounds multiplet cost — measured on a synthetic carrying three damped
+#: lines, the two multiplet templates together cost 0.55 s of a 375 s wizard
+#: run, the rest of it in the vortex-lattice candidates (see
+#: :mod:`asymmetry.core.fitting.process_pool`).
+_MULTIPLET_MAX_COMPONENTS = 3
+
+#: Envelope lifetimes assumed to fit inside the crop that found an early-window
+#: line; see :func:`_damped_envelope_rate`.
+_EARLY_ENVELOPE_LIFETIMES_PER_CROP = 3.0
+
 
 #: The best template must beat the better *strictly-simpler* null baseline by at
 #: least this much AICc to count as describing significant structure. Burnham &
@@ -1302,27 +1371,71 @@ class TemplateSeedContext:
 def _multiplet_seed_peaks(
     analysis: PeakAnalysis | None, max_components: int
 ) -> tuple[DetectedPeak, ...]:
-    """Peaks strong enough to seed one oscillatory component each."""
+    """Peaks strong enough to seed one oscillatory component each.
+
+    An ``early_fft`` peak is eligible on arrival: it has already cleared
+    ``peak_detection._EARLY_MIN_SNR``, a gate derived against that pass's own
+    null distribution.  Re-testing it against ``_MULTIPLET_MIN_SNR`` would be
+    comparing SNRs measured on different windows against different noise
+    floors — the exact thing the merge policy refuses to do.
+
+    The seeds are then taken in order and capped at ``max_components``.  That
+    order is per-pass by construction — user peaks first, then each pass's block
+    in that pass's own SNR order (see
+    :class:`~asymmetry.core.fitting.peak_detection.PeakAnalysis`) — which is the
+    only ranking available: "the strongest k peaks" is not a well-defined
+    selection across passes whose SNRs are measured against different noise
+    floors.  ``max_components`` is what bounds the cost, and every seed past the
+    first two costs a whole damped cosine: three components is a 13-parameter
+    fit.
+    """
     if analysis is None:
         return ()
     eligible = [
-        peak for peak in analysis.peaks if peak.source == "user" or peak.snr >= _MULTIPLET_MIN_SNR
+        peak
+        for peak in analysis.peaks
+        if peak.source in ("user", "early_fft") or peak.snr >= _MULTIPLET_MIN_SNR
     ]
     return tuple(eligible[:max_components])
+
+
+def _damped_envelope_rate(peak: DetectedPeak | None) -> float | None:
+    """Envelope rate (µs⁻¹) implied by the crop an early-window peak was found in.
+
+    ``None`` for any peak that did not come from the early-window pass.
+
+    A line that the Hann pass cannot see has an envelope whose lifetime is a
+    small fraction of the record, and the fingerprint's ``lambda_guess`` — a
+    slope over the leading 5 % of the record — measures the slow tail instead,
+    landing three orders of magnitude low.  Worse, ``_parameter_bounds`` then
+    caps ``Lambda`` at ``8×`` that guess, so the true envelope is not merely
+    badly seeded but *outside the fit's bounds*.
+
+    The crop that found the line is the available scale: study step 1 measured
+    the best-scoring rung at ``λ·T_crop`` between ~0.9 and ~6.8 across envelope
+    rates from 2 to 60 µs⁻¹, so ``3/T_crop`` sits within a factor ~2.3 of the
+    truth over that whole range — and the seed ladder's 0.5×/2× rungs cover a
+    factor of two either way.
+    """
+    if peak is None or peak.crop_us is None or peak.crop_us <= 0.0:
+        return None
+    return _EARLY_ENVELOPE_LIFETIMES_PER_CROP / float(peak.crop_us)
 
 
 def build_oscillatory_multiplet_templates(
     analysis: PeakAnalysis | None,
     *,
-    max_components: int = 3,
+    max_components: int = _MULTIPLET_MAX_COMPONENTS,
     envelopes: tuple[str, ...] = ("Exponential", "Gaussian"),
 ) -> tuple[CandidateTemplate, ...]:
     """Build ``(Osc×Env) + … + Const`` templates, one component per strong peak.
 
     Returns an empty tuple below two qualifying peaks — a single line is already
-    covered by the plain oscillatory candidates.
+    covered by the plain oscillatory candidates.  The order is bounded by
+    ``max_components`` (default ``_MULTIPLET_MAX_COMPONENTS``) and the seed set
+    is pruned per detection pass — see :func:`_multiplet_seed_peaks`.
     """
-    peaks = _multiplet_seed_peaks(analysis, max_components)
+    peaks = _multiplet_seed_peaks(analysis, min(int(max_components), _MULTIPLET_MAX_COMPONENTS))
     n = len(peaks)
     if n < 2:
         return ()
@@ -1846,8 +1959,16 @@ def build_fit_wizard_recommendation(
     ``_STAGE1_PROMOTE_DELTA`` of the best, or are named by a multiplet pattern
     match expand to their full Stage-2 portfolios. ``scope`` restricts the
     families physically (``None`` screens the default superset);
-    ``user_frequencies_mhz`` adds trusted peak seeds; ``max_workers=1`` gives
-    a deterministic serial path. ``cancel_callback`` is polled between and
+    ``user_frequencies_mhz`` adds trusted peak seeds — blind runs get the same
+    seeds from the unwindowed early-window pass when the data carry a heavily
+    damped line (see
+    :func:`~asymmetry.core.fitting.peak_detection.analyze_early_window_peaks`);
+    ``max_workers=1`` gives a deterministic serial path. Note that
+    ``max_workers`` bounds fits in flight, **not** CPU: the vortex-lattice
+    candidates reach a multi-threaded BLAS from inside a single fit, so a
+    ``max_workers=1`` run can still saturate the machine — see
+    :mod:`asymmetry.core.fitting.process_pool` for the measurement and the
+    environment knob. ``cancel_callback`` is polled between and
     inside fits when running serially or on the thread-pool fallback (engine
     in-fit abort); when the resolved worker count allows a shared *process*
     pool, cancellation instead takes effect only between fits (a
@@ -1864,7 +1985,11 @@ def build_fit_wizard_recommendation(
     :mod:`asymmetry.core.fitting.wizard_timing`, so a headless caller can tell a
     slow run from a stalled one without inspecting the process tree.
     """
-    fingerprint = fingerprint_spectrum(dataset)
+    # Peak pass A first, so the fingerprint's damped-line candidate and the
+    # peaks that seed the candidates are one computation rather than two that
+    # can disagree.  Nothing in the peak pass depends on the fingerprint.
+    peak_analysis = analyze_dataset_peaks(dataset)
+    fingerprint = fingerprint_spectrum(dataset, peak_analysis=peak_analysis)
     resolution: ScopeResolution | None = None
     if scope is not None:
         resolution = resolve_scope_for_dataset(dataset, scope)
@@ -1904,8 +2029,7 @@ def build_fit_wizard_recommendation(
     geometry = geometry_from_field_direction(direction_text)
     geometry_token = geometry.value if geometry is not None else None
 
-    # Peak pass A: tail-subtracted spectrum, plus any user-declared seeds.
-    peak_analysis = analyze_dataset_peaks(dataset)
+    # Any user-declared seeds fold into peak pass A here.
     if user_frequencies_mhz:
         peak_analysis = merge_user_peaks(peak_analysis, tuple(user_frequencies_mhz))
 
@@ -2762,6 +2886,9 @@ def _serialize_spectrum_fingerprint(fingerprint: SpectrumFingerprint) -> dict[st
         "oscillatory_hint": fingerprint.oscillatory_hint,
         "kt_like_hint": fingerprint.kt_like_hint,
         "multi_rate_hint": fingerprint.multi_rate_hint,
+        "damped_line_frequency_mhz": fingerprint.damped_line_frequency_mhz,
+        "damped_line_snr": fingerprint.damped_line_snr,
+        "damped_line_crop_us": fingerprint.damped_line_crop_us,
     }
 
 
@@ -2785,6 +2912,9 @@ def _deserialize_spectrum_fingerprint(payload: object) -> SpectrumFingerprint | 
             oscillatory_hint=bool(payload.get("oscillatory_hint", False)),
             kt_like_hint=bool(payload.get("kt_like_hint", False)),
             multi_rate_hint=bool(payload.get("multi_rate_hint", False)),
+            damped_line_frequency_mhz=float(payload.get("damped_line_frequency_mhz", 0.0)),
+            damped_line_snr=float(payload.get("damped_line_snr", 0.0)),
+            damped_line_crop_us=float(payload.get("damped_line_crop_us", 0.0)),
         )
     except (TypeError, ValueError):
         return None
@@ -3508,6 +3638,8 @@ def _initial_parameters_for_template(
             "Lambda": lambda_guess,
             "A_bg": fingerprint.tail_estimate,
         }
+        if (rate := _damped_envelope_rate(seed_peaks[0] if seed_peaks else None)) is not None:
+            overrides["Lambda"] = rate
     elif template.key == "oscillatory_gaussian_constant":
         amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
         overrides = {
@@ -3517,6 +3649,8 @@ def _initial_parameters_for_template(
             "sigma": gaussian_width,
             "A_bg": fingerprint.tail_estimate,
         }
+        if (rate := _damped_envelope_rate(seed_peaks[0] if seed_peaks else None)) is not None:
+            overrides["sigma"] = rate
     elif (multiplet := _MULTIPLET_TEMPLATE_KEY_RE.match(template.key)) is not None:
         # One damped cosine per detected line: frequencies/amplitudes from the
         # peaks; the envelope amplitude of each (Osc x Env) pair is fixed at 1
@@ -3544,6 +3678,12 @@ def _initial_parameters_for_template(
             if k < len(pair_peaks):
                 overrides[f"frequency_{osc}"] = pair_peaks[k].frequency_mhz
                 _narrow_frequency_bounds(f"frequency_{osc}", pair_peaks[k])
+                # Per component: an early-pass line brings its own envelope
+                # scale, so each damped cosine is seeded and bounded on the crop
+                # that found *it* rather than on the record's slow-tail slope.
+                if (rate := _damped_envelope_rate(pair_peaks[k])) is not None:
+                    overrides[f"Lambda_{env}"] = rate
+                    overrides[f"sigma_{env}"] = rate
             else:
                 overrides[f"frequency_{osc}"] = min(frequency_guess, 0.98 * nyquist)
     elif template.key in _MUONIUM_TF_TEMPLATE_KEYS:
@@ -3610,6 +3750,12 @@ def _initial_parameters_for_template(
     # and Bessel templates reach here via their branches or the generic one).
     if seed_peaks and "frequency" not in bounds_overrides:
         _narrow_frequency_bounds("frequency", seed_peaks[0])
+        # ...and an early-pass line brings the matching envelope scale with it,
+        # for the same templates (Bessel × Exponential is the one that matters).
+        if (rate := _damped_envelope_rate(seed_peaks[0])) is not None and "Lambda" in {
+            split_parameter_name(name)[0] for name in template.model.param_names
+        }:
+            overrides["Lambda"] = rate
 
     # Applied-field parameters: seed from run metadata and pin them — the
     # field is measured, not fitted (muonium/vortex 'field'; LF 'B_L' is
