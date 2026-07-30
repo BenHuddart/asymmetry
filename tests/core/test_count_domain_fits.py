@@ -276,6 +276,17 @@ def test_fb_alpha_scale_guard_respects_a_fixed_alpha():
     assert "spurious" not in result.message
 
 
+def test_fb_alpha_scale_guard_reads_a_fixed_alpha_for_the_n0_scale():
+    """A fixed alpha is not complained about, but it still sets the forward count
+    scale N0*sqrt(alpha) the N0 check compares against the data."""
+    ds = _pulsed_tf_run(alpha=1.25, seed=11)
+    params = _fb_seed_params(1.5e5)
+    params.add(Parameter("alpha", 4.0, fixed=True))
+    result = fit_fb_alpha(ds, 1, 2, _tf, params)
+    assert "spurious" not in result.message
+    assert result.group_results[1].warnings == []
+
+
 def test_fb_alpha_never_overrules_a_fixed_n0():
     ds = _spurious_seed_run()
     params = _fb_seed_params(1.0)

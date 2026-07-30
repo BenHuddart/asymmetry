@@ -1052,13 +1052,10 @@ def fit_fb_alpha(
         "Forward/backward count fit successful" if success else "Forward/backward count fit failed"
     )
     if success:
+        free_values = dict(zip(free_names, fitted, strict=True))
         complaint = _fb_scale_complaint(
             params,
-            {
-                name: float(m.values[free_names.index(name)])
-                for name in ("alpha", "N0")
-                if name in free_names
-            },
+            {name: float(free_values[name]) for name in ("alpha", "N0") if name in free_values},
             counts_f=counts_f,
             counts_b=counts_b,
             n0_seed=n0_seed,
@@ -1315,9 +1312,13 @@ def _fb_scale_complaint(
     at a tiny alpha with a compensating amplitude balance, and it converges there
     cleanly. These two checks compare the converged scale against the counts
     themselves, which is what a caller cannot see from ``success`` alone.
+
+    ``fitted`` holds the *free* parameters' converged values; a parameter the
+    caller fixed is a declaration and is never complained about, though a fixed
+    alpha is still read (from ``params``) to form the forward count scale.
     """
-    alpha = fitted.get("alpha")
-    if alpha is not None and not params["alpha"].fixed:
+    alpha = fitted.get("alpha", float(params["alpha"].value))
+    if "alpha" in fitted:
         sum_f = float(np.sum(np.clip(counts_f, 0.0, None)))
         sum_b = float(np.sum(np.clip(counts_b, 0.0, None)))
         if sum_f > 0.0 and sum_b > 0.0 and alpha > 0.0:
@@ -1334,8 +1335,8 @@ def _fb_scale_complaint(
                     "data) and the fit window"
                 )
     n0 = fitted.get("N0")
-    if n0 is not None and n0_seed is not None and "N0" in params and not params["N0"].fixed:
-        scale = n0 * float(np.sqrt(abs(alpha))) if alpha else n0
+    if n0 is not None and n0_seed is not None:
+        scale = n0 * float(np.sqrt(abs(alpha))) if np.isfinite(alpha) else n0
         if scale > 0.0 and not (
             n0_seed / _FB_N0_SCALE_FACTOR <= scale <= n0_seed * _FB_N0_SCALE_FACTOR
         ):
