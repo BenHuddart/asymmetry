@@ -349,7 +349,11 @@ def _czt_inner_sum(
     """``Σ_k w_k z_j^k`` via ``scipy.signal.czt`` (Tier 2), or ``None`` when the
     axis is not uniform or the transform would not pay for itself."""
     n_t = t.size
-    if n_t < 2 or weights.size < _CZT_MIN_BINS:
+    # ndim: the transform is over a single axis, and a (N, 1)-shaped ``t`` would
+    # otherwise broadcast the flat czt result against the 2-D carrier into a
+    # silently wrong (N, N). Anything but a plain vector takes the recurrence,
+    # which broadcasts elementwise and so keeps ``t``'s shape whatever it is.
+    if t.ndim != 1 or n_t < 2 or weights.size < _CZT_MIN_BINS:
         return None
     t0 = float(t[0])
     step = (float(t[-1]) - t0) / (n_t - 1)
