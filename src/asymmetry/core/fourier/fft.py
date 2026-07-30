@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -133,6 +134,147 @@ class PreparedFFTSignal:
     fractional_applied: bool = False
 
 
+def _clip_fft_window(
+    time: NDArray[np.float64],
+    asymmetry: NDArray[np.float64],
+    error: NDArray[np.float64] | None,
+    t_min: float | None,
+    t_max: float | None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None]:
+    """Restrict a ``(t, A, σ)`` triple to ``[t_min, t_max]`` inclusive.
+
+    The single crop seam shared by :func:`prepare_fft_time_signal` and
+    :func:`prepare_fft_arrays`, reproducing
+    :meth:`asymmetry.core.data.dataset.MuonDataset.time_range` exactly: the
+    bounds are inclusive, ``None`` for both is a no-op that passes the arrays
+    through untouched, and a clipped result is a copy. ``error`` may be ``None``
+    (a bare array caller need not supply one).
+    """
+    if t_min is None and t_max is None:
+        return time, asymmetry, error
+    mask = np.ones(len(time), dtype=bool)
+    if t_min is not None:
+        mask &= time >= t_min
+    if t_max is not None:
+        mask &= time <= t_max
+    return (
+        time[mask].copy(),
+        asymmetry[mask].copy(),
+        None if error is None else error[mask].copy(),
+    )
+
+
+def _validated_fft_arrays(
+    time: NDArray[np.float64] | Sequence[float],
+    asymmetry: NDArray[np.float64] | Sequence[float],
+    error: NDArray[np.float64] | Sequence[float] | None,
+    *,
+    caller: str,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64] | None]:
+    """Coerce and validate a raw ``(t, A, σ)`` triple for the array front doors.
+
+    Returns the arrays as ``float64`` (``error`` stays ``None`` when omitted).
+    Raises :class:`ValueError` with a message naming the offending array for a
+    non-1-D shape, a length mismatch, an empty triple, or any non-finite entry —
+    the validation domain a
+    :class:`~asymmetry.core.data.dataset.MuonDataset` would otherwise have
+    carried implicitly. Mirrors ``FitEngine.fit_arrays``' guards; *caller* names
+    the public entry point in the message.
+    """
+    coerced: dict[str, NDArray[np.float64]] = {}
+    named: list[tuple[str, object]] = [("time", time), ("asymmetry", asymmetry)]
+    if error is not None:
+        named.append(("error", error))
+    for name, values in named:
+        arr = np.asarray(values, dtype=np.float64)
+        if arr.ndim != 1:
+            raise ValueError(
+                f"{caller}: {name} must be a one-dimensional array, got shape {arr.shape}."
+            )
+        coerced[name] = arr
+
+    n_time = coerced["time"].size
+    for name in ("asymmetry", "error"):
+        arr = coerced.get(name)
+        if arr is not None and arr.size != n_time:
+            raise ValueError(
+                f"{caller}: time, asymmetry and error must have the same length; "
+                f"time has {n_time} point(s) but {name} has {arr.size}."
+            )
+    if n_time == 0:
+        raise ValueError(f"{caller}: time and asymmetry are empty — nothing to transform.")
+
+    for name, arr in coerced.items():
+        n_bad = int(np.count_nonzero(~np.isfinite(arr)))
+        if n_bad:
+            raise ValueError(
+                f"{caller}: {name} contains {n_bad} non-finite value(s) (NaN or inf). "
+                "Drop or interpolate those points before transforming."
+            )
+    return coerced["time"], coerced["asymmetry"], coerced.get("error")
+
+
+def _prepare_fft_core(
+    time: NDArray[np.float64],
+    asymmetry: NDArray[np.float64],
+    error: NDArray[np.float64] | None,
+    *,
+    window: str,
+    subtract_average_signal: bool,
+    filter_start_us: float,
+    filter_time_constant_us: float,
+    fractional: bool,
+) -> PreparedFFTSignal:
+    """Preprocess an already-cropped ``(t, A, σ)`` triple for the FFT.
+
+    The one implementation behind :func:`prepare_fft_time_signal` and
+    :func:`prepare_fft_arrays`; the arrays arrive pre-cropped to the transform
+    window by :func:`_clip_fft_window`, so the two front doors cannot drift.
+    """
+    times = np.asarray(time, dtype=np.float64)
+    signal = np.asarray(asymmetry, dtype=np.float64).copy()
+    err = np.asarray(error, dtype=np.float64) if error is not None else None
+    dt = np.mean(np.diff(times)) if times.size > 1 else 1.0
+
+    fractional_baseline: float | None = None
+    fractional_applied = False
+    if fractional:
+        baseline = _weighted_average_signal(signal, err)
+        if np.isfinite(baseline) and baseline > 0.0:
+            signal = signal / baseline
+            if err is not None:
+                err = err / baseline
+            fractional_baseline = float(baseline)
+            fractional_applied = True
+        # Degenerate baseline (empty/zero/negative mean): fall back to the raw
+        # footing rather than dividing by ~0. The caller stamps a note.
+
+    if subtract_average_signal:
+        signal = _subtract_average_signal(signal, err)
+
+    window_key = str(window).strip().lower()
+    if window_key in {"none", "gaussian", "lorentzian"}:
+        weights = apply_fft_filter(
+            np.ones_like(signal),
+            times,
+            mode=window_key,
+            start_time_us=float(filter_start_us),
+            time_constant_us=float(filter_time_constant_us),
+        )
+    else:
+        weights = apply_window(np.ones_like(signal), window_key)
+    windowed = signal * weights
+
+    window_sum = float(np.sum(weights, dtype=np.float64))
+    return PreparedFFTSignal(
+        signal=windowed,
+        dt=float(dt),
+        window_sum=window_sum,
+        fractional_baseline=fractional_baseline,
+        fractional_applied=fractional_applied,
+    )
+
+
 def prepare_fft_time_signal(
     dataset: MuonDataset,
     *,
@@ -151,58 +293,138 @@ def prepare_fft_time_signal(
     preprocessing :func:`fft_complex_asymmetry` feeds to the FFT, so an all-poles
     (Burg) estimate can share the same input.
 
+    To preprocess a bare ``(t, A, σ)`` triple with no dataset in hand, use
+    :func:`prepare_fft_arrays`, which shares this function's entire
+    implementation.
+
     When ``fractional`` is set the signal (a lifetime-corrected count scale) and
     its error are divided by the error-weighted baseline ``N₀`` so a
     ``N₀·(1 + A·cos)`` signal becomes ``1 + A·cos``; the subsequent average
     subtraction then removes the residual DC, leaving ``A·cos``.  This puts the
     spectrum on a fractional-asymmetry footing invariant to counting statistics.
     """
-    ds = dataset.time_range(t_min, t_max) if (t_min is not None or t_max is not None) else dataset
+    time, asymmetry, error = _clip_fft_window(
+        dataset.time,
+        dataset.asymmetry,
+        np.asarray(dataset.error, dtype=np.float64) if dataset.error is not None else None,
+        t_min,
+        t_max,
+    )
+    return _prepare_fft_core(
+        time,
+        asymmetry,
+        error,
+        window=window,
+        subtract_average_signal=subtract_average_signal,
+        filter_start_us=filter_start_us,
+        filter_time_constant_us=filter_time_constant_us,
+        fractional=fractional,
+    )
 
-    signal = ds.asymmetry.copy()
-    error = np.asarray(ds.error, dtype=np.float64) if ds.error is not None else None
-    dt = np.mean(np.diff(ds.time)) if len(ds.time) > 1 else 1.0
 
-    fractional_baseline: float | None = None
-    fractional_applied = False
-    if fractional:
-        baseline = _weighted_average_signal(signal, error)
-        if np.isfinite(baseline) and baseline > 0.0:
-            signal = signal / baseline
-            if error is not None:
-                error = error / baseline
-            fractional_baseline = float(baseline)
-            fractional_applied = True
-        # Degenerate baseline (empty/zero/negative mean): fall back to the raw
-        # footing rather than dividing by ~0. The caller stamps a note.
+def prepare_fft_arrays(
+    time: NDArray[np.float64] | Sequence[float],
+    asymmetry: NDArray[np.float64] | Sequence[float],
+    error: NDArray[np.float64] | Sequence[float] | None = None,
+    *,
+    window: str = "none",
+    t_min: float | None = None,
+    t_max: float | None = None,
+    subtract_average_signal: bool = True,
+    filter_start_us: float = 0.0,
+    filter_time_constant_us: float = 1.5,
+    fractional: bool = False,
+) -> PreparedFFTSignal:
+    """Preprocess a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
 
-    if subtract_average_signal:
-        signal = _subtract_average_signal(signal, error)
+    The array-taking front door onto the same preprocessing as
+    :func:`prepare_fft_time_signal`: both crop through one seam and then run one
+    shared internal core, so
+    ``prepare_fft_arrays(ds.time, ds.asymmetry, ds.error, …)`` returns exactly
+    what ``prepare_fft_time_signal(ds, …)`` returns.
 
-    window_key = str(window).strip().lower()
-    times = np.asarray(ds.time, dtype=np.float64)
-    if window_key in {"none", "gaussian", "lorentzian"}:
-        weights = apply_fft_filter(
-            np.ones_like(signal),
-            times,
-            mode=window_key,
-            start_time_us=float(filter_start_us),
-            time_constant_us=float(filter_time_constant_us),
+    Parameters
+    ----------
+    time : array_like
+        Time axis in microseconds, one dimension.
+    asymmetry : array_like
+        Signal values to transform. The FFT is scale-linear, so whatever scale
+        goes in comes out: a percent-scale curve (the
+        :class:`~asymmetry.core.data.dataset.MuonDataset` convention) yields a
+        percent-scaled spectrum, a fraction-scale curve a fraction-scaled one.
+        Nothing here rescales the input — see "Asymmetry units across the API".
+    error : array_like, optional
+        1σ uncertainty on ``asymmetry``, on the same scale. Used only for the
+        error-weighted average subtraction and the fractional baseline; omit it
+        (``None``) and those fall back to their unweighted forms.
+    window, t_min, t_max, subtract_average_signal, filter_start_us, \
+filter_time_constant_us, fractional
+        Exactly as documented on :func:`prepare_fft_time_signal`.
+        ``t_min``/``t_max`` crop the arrays with the same inclusive bounds
+        :meth:`~asymmetry.core.data.dataset.MuonDataset.time_range` applies.
+
+    Raises
+    ------
+    ValueError
+        When the arrays are not one-dimensional, have unequal lengths, are
+        empty, contain non-finite values, or when ``t_min``/``t_max`` leave no
+        points. :func:`prepare_fft_time_signal` does not validate its dataset
+        this way (its behaviour is unchanged); these guards exist because a raw
+        triple has no container to have checked them earlier.
+    """
+    return _prepare_fft_arrays(
+        time,
+        asymmetry,
+        error,
+        caller="prepare_fft_arrays",
+        window=window,
+        t_min=t_min,
+        t_max=t_max,
+        subtract_average_signal=subtract_average_signal,
+        filter_start_us=filter_start_us,
+        filter_time_constant_us=filter_time_constant_us,
+        fractional=fractional,
+    )
+
+
+def _prepare_fft_arrays(
+    time: NDArray[np.float64] | Sequence[float],
+    asymmetry: NDArray[np.float64] | Sequence[float],
+    error: NDArray[np.float64] | Sequence[float] | None,
+    *,
+    caller: str,
+    window: str,
+    t_min: float | None,
+    t_max: float | None,
+    subtract_average_signal: bool,
+    filter_start_us: float,
+    filter_time_constant_us: float,
+    fractional: bool,
+) -> PreparedFFTSignal:
+    """Validate, crop and preprocess a bare triple on behalf of *caller*.
+
+    Shared by every array front door so they report the same guard messages
+    under their own names.
+    """
+    time_arr, asym_arr, err_arr = _validated_fft_arrays(time, asymmetry, error, caller=caller)
+    clipped_time, clipped_asym, clipped_err = _clip_fft_window(
+        time_arr, asym_arr, err_arr, t_min, t_max
+    )
+    if clipped_time.size == 0:
+        raise ValueError(
+            f"{caller}: no data points remain in the transform window "
+            f"t_min={t_min!r}, t_max={t_max!r} (the input spans "
+            f"{float(time_arr.min()):g}–{float(time_arr.max()):g} µs)."
         )
-        signal = signal * weights
-    elif window_key != "none":
-        weights = apply_window(np.ones_like(signal), window_key)
-        signal = signal * weights
-    else:  # pragma: no cover - "none" is handled by the filter branch above
-        weights = np.ones_like(signal)
-
-    window_sum = float(np.sum(weights, dtype=np.float64))
-    return PreparedFFTSignal(
-        signal=signal,
-        dt=float(dt),
-        window_sum=window_sum,
-        fractional_baseline=fractional_baseline,
-        fractional_applied=fractional_applied,
+    return _prepare_fft_core(
+        clipped_time,
+        clipped_asym,
+        clipped_err,
+        window=window,
+        subtract_average_signal=subtract_average_signal,
+        filter_start_us=filter_start_us,
+        filter_time_constant_us=filter_time_constant_us,
+        fractional=fractional,
     )
 
 
@@ -279,6 +501,32 @@ def fft_complex_asymmetry(
         filter_time_constant_us=filter_time_constant_us,
         fractional=fractional,
     )
+    return _fft_complex_core(
+        prepared,
+        padding_factor=padding_factor,
+        phase_degrees=phase_degrees,
+        t0_offset_us=t0_offset_us,
+        amplitude_calibration=amplitude_calibration,
+        diagnostics=diagnostics,
+    )
+
+
+def _fft_complex_core(
+    prepared: PreparedFFTSignal,
+    *,
+    padding_factor: int,
+    phase_degrees: float,
+    t0_offset_us: float,
+    amplitude_calibration: bool,
+    diagnostics: dict | None,
+) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
+    """Transform an already-preprocessed signal into a calibrated complex spectrum.
+
+    The one implementation behind :func:`fft_complex_asymmetry` and
+    :func:`fft_complex_arrays`: everything downstream of
+    :class:`PreparedFFTSignal` — padding, the coherent-gain calibration, the
+    phase rotation, and the diagnostics stamp — lives here once.
+    """
     signal, dt = prepared.signal, prepared.dt
 
     n = len(signal)
@@ -308,6 +556,115 @@ def fft_complex_asymmetry(
         diagnostics["amplitude_calibrated"] = bool(amplitude_calibration)
 
     return freqs, spectrum
+
+
+def fft_complex_arrays(
+    time: NDArray[np.float64] | Sequence[float],
+    asymmetry: NDArray[np.float64] | Sequence[float],
+    error: NDArray[np.float64] | Sequence[float] | None = None,
+    *,
+    window: str = "none",
+    padding_factor: int = 1,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    phase_degrees: float = 0.0,
+    t0_offset_us: float = 0.0,
+    subtract_average_signal: bool = True,
+    filter_start_us: float = 0.0,
+    filter_time_constant_us: float = 1.5,
+    fractional: bool = False,
+    amplitude_calibration: bool = False,
+    diagnostics: dict | None = None,
+) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
+    """Complex FFT of a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
+
+    The array-taking front door onto the same transform as
+    :func:`fft_complex_asymmetry`: both preprocess through one shared core and
+    then run one shared spectral core, so
+    ``fft_complex_arrays(ds.time, ds.asymmetry, ds.error, …)`` returns exactly
+    the frequencies and spectrum ``fft_complex_asymmetry(ds, …)`` returns —
+    equal bit for bit, with no tolerance. Use it for any curve that is not a
+    dataset's default reduction (a custom detector pairing, a detrended or
+    background-corrected export, a hand-built model curve) instead of
+    synthesising a ``MuonDataset`` to carry it.
+
+    Parameters
+    ----------
+    time, asymmetry, error
+        As documented on :func:`prepare_fft_arrays`. The FFT is *scale-linear*:
+        percent in, percent-scaled spectrum out.
+    window, padding_factor, t_min, t_max, phase_degrees, t0_offset_us, \
+subtract_average_signal, filter_start_us, filter_time_constant_us, fractional, \
+amplitude_calibration, diagnostics
+        Exactly as documented on :func:`fft_complex_asymmetry`, keyword-only
+        here because ``error`` is optional.
+
+    Raises
+    ------
+    ValueError
+        As :func:`prepare_fft_arrays`.
+    """
+    return _fft_complex_arrays(
+        time,
+        asymmetry,
+        error,
+        caller="fft_complex_arrays",
+        window=window,
+        padding_factor=padding_factor,
+        t_min=t_min,
+        t_max=t_max,
+        phase_degrees=phase_degrees,
+        t0_offset_us=t0_offset_us,
+        subtract_average_signal=subtract_average_signal,
+        filter_start_us=filter_start_us,
+        filter_time_constant_us=filter_time_constant_us,
+        fractional=fractional,
+        amplitude_calibration=amplitude_calibration,
+        diagnostics=diagnostics,
+    )
+
+
+def _fft_complex_arrays(
+    time: NDArray[np.float64] | Sequence[float],
+    asymmetry: NDArray[np.float64] | Sequence[float],
+    error: NDArray[np.float64] | Sequence[float] | None,
+    *,
+    caller: str,
+    window: str,
+    padding_factor: int,
+    t_min: float | None,
+    t_max: float | None,
+    phase_degrees: float,
+    t0_offset_us: float,
+    subtract_average_signal: bool,
+    filter_start_us: float,
+    filter_time_constant_us: float,
+    fractional: bool,
+    amplitude_calibration: bool,
+    diagnostics: dict | None,
+) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
+    """Transform a bare triple on behalf of *caller* (whose name the guards use)."""
+    prepared = _prepare_fft_arrays(
+        time,
+        asymmetry,
+        error,
+        caller=caller,
+        window=window,
+        t_min=t_min,
+        t_max=t_max,
+        subtract_average_signal=subtract_average_signal,
+        filter_start_us=filter_start_us,
+        filter_time_constant_us=filter_time_constant_us,
+        fractional=fractional,
+    )
+    return _fft_complex_core(
+        prepared,
+        padding_factor=padding_factor,
+        phase_degrees=phase_degrees,
+        t0_offset_us=t0_offset_us,
+        amplitude_calibration=amplitude_calibration,
+        diagnostics=diagnostics,
+    )
 
 
 def fft_asymmetry(
@@ -371,6 +728,75 @@ def fft_asymmetry(
         filter_time_constant_us=filter_time_constant_us,
         fractional=fractional,
         amplitude_calibration=amplitude_calibration,
+    )
+
+    return freqs, spectrum.real, np.abs(spectrum)
+
+
+def fft_arrays(
+    time: NDArray[np.float64] | Sequence[float],
+    asymmetry: NDArray[np.float64] | Sequence[float],
+    error: NDArray[np.float64] | Sequence[float] | None = None,
+    *,
+    window: str = "none",
+    padding_factor: int = 1,
+    t_min: float | None = None,
+    t_max: float | None = None,
+    phase_degrees: float = 0.0,
+    t0_offset_us: float = 0.0,
+    subtract_average_signal: bool = True,
+    filter_start_us: float = 0.0,
+    filter_time_constant_us: float = 1.5,
+    fractional: bool = False,
+    amplitude_calibration: bool = False,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """FFT a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
+
+    The array-taking front door matching :func:`fft_asymmetry` kwarg for kwarg,
+    running the same complex transform as :func:`fft_complex_arrays` and
+    deriving the same two channels :func:`fft_asymmetry` derives from
+    :func:`fft_complex_asymmetry`. ``fft_arrays(ds.time, ds.asymmetry,
+    ds.error, …)`` returns exactly what ``fft_asymmetry(ds, …)`` returns — the
+    same frequencies, real part and magnitude, bit for bit.
+
+    Parameters
+    ----------
+    time, asymmetry, error
+        As documented on :func:`prepare_fft_arrays`. The FFT is *scale-linear*:
+        percent in, percent-scaled spectrum out.
+    window, padding_factor, t_min, t_max, phase_degrees, t0_offset_us, \
+subtract_average_signal, filter_start_us, filter_time_constant_us, fractional, \
+amplitude_calibration
+        Exactly as documented on :func:`fft_asymmetry`, keyword-only here
+        because ``error`` is optional.
+
+    Returns
+    -------
+    frequencies, real_part, magnitude
+        Frequency axis (MHz) and the real and magnitude spectra.
+
+    Raises
+    ------
+    ValueError
+        As :func:`prepare_fft_arrays`.
+    """
+    freqs, spectrum = _fft_complex_arrays(
+        time,
+        asymmetry,
+        error,
+        caller="fft_arrays",
+        window=window,
+        padding_factor=padding_factor,
+        t_min=t_min,
+        t_max=t_max,
+        phase_degrees=phase_degrees,
+        t0_offset_us=t0_offset_us,
+        subtract_average_signal=subtract_average_signal,
+        filter_start_us=filter_start_us,
+        filter_time_constant_us=filter_time_constant_us,
+        fractional=fractional,
+        amplitude_calibration=amplitude_calibration,
+        diagnostics=None,
     )
 
     return freqs, spectrum.real, np.abs(spectrum)
