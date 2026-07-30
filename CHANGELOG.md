@@ -78,6 +78,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`fit_fb_alpha` converged cleanly on a spurious minimum when `N0` was seeded
+  generically.** The right `N0` is a per-run count level, and a caller driving the
+  forward/backward count fit directly — as you must to free the muon lifetime,
+  which `estimate_beta_detailed` does not expose — had no way to know it: only the
+  β-calibration wrapper's private first-good-bin seeder did. With a generic seed
+  the fit did not fail but walked to a tiny α with a compensating amplitude
+  balance and reported it as converged, with credible errors. `N0` may now be
+  **omitted**, or given the new `count_domain.SEED_FROM_DATA` sentinel, and is
+  then seeded from the fit window's own counts (first positive bin lifted back to
+  t = 0 — the same rule the wrapper used, which now relies on it too). A fixed
+  `N0` is never overruled. Because that spurious minimum is a genuine minimum, a
+  converged fit is additionally checked against the data: α within a factor of
+  five of the window's forward/backward count ratio, and `N0·√α` within two
+  decades of the observed count level at t = 0. A violation returns
+  `success=False` with a message naming the discrepancy — also appended to each
+  group result's `warnings` — instead of a clean-looking convergence, and
+  `estimate_beta_detailed` now passes that message through rather than reporting
+  "did not converge". Neither check applies to a parameter the caller fixed.
 - **`estimate_alpha_detailed(method="general")` reported a badly wrong alpha as a
   good one.** The closed-form flatness solution assumes the counts decay at
   exactly τ_µ, and the two-window equation cannot tell a detector imbalance from

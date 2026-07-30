@@ -17,6 +17,7 @@ import pytest
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.count_domain import (
     COUNT_COSTS,
+    SEED_FROM_DATA,
     _apply_deadtime,
     _percent_to_fraction,
     _raw_model,
@@ -182,6 +183,105 @@ def test_fb_requires_background_b():
     )
     with pytest.raises(ValueError, match="background_b"):
         fit_fb_alpha(ds, 1, 2, _tf, params)
+
+
+# --- forward/backward: N0 seeding and the spurious minimum -------------------
+#
+# The right N0 is a per-run count level, so a caller who does not know it lands
+# in a spurious minimum at a tiny alpha with a compensating amplitude balance —
+# and Migrad calls that minimum valid. Low statistics reach it most reliably.
+
+
+def _fb_seed_params(n0=None, **overrides):
+    """Forward/backward seed set; ``n0=None`` omits ``N0`` altogether."""
+    entries = [
+        Parameter("alpha", 1.0, min=1.0e-6, max=100.0),
+        Parameter("background", 0.0, min=0.0),
+        Parameter("background_b", 0.0, min=0.0),
+        Parameter("A", 18.0, min=0.0, max=50.0),
+        Parameter("f", 1.5, min=0.0),
+        Parameter("phi", 0.2),
+    ]
+    if n0 is not None:
+        entries.insert(1, Parameter("N0", n0, min=0.0))
+    params = ParameterSet(entries)
+    for name, value in overrides.items():
+        params.add(Parameter(name, value))
+    return params
+
+
+def _spurious_seed_run():
+    """A run and seed that reach the spurious minimum from a generic ``N0``."""
+    return _pulsed_tf_run(alpha=1.25, seed=3, total_events=4e5)
+
+
+def test_fb_alpha_seeds_n0_from_the_data_when_omitted():
+    ds = _spurious_seed_run()
+    result = fit_fb_alpha(ds, 1, 2, _tf, _fb_seed_params())
+    assert result.success, result.message
+    assert result.shared_parameters["alpha"].value == pytest.approx(1.25, abs=0.05)
+    assert result.shared_parameters["N0"].value > 0.0
+
+
+def test_fb_alpha_seeds_n0_from_the_sentinel():
+    ds = _spurious_seed_run()
+    result = fit_fb_alpha(ds, 1, 2, _tf, _fb_seed_params(SEED_FROM_DATA))
+    assert result.success, result.message
+    assert result.shared_parameters["alpha"].value == pytest.approx(1.25, abs=0.05)
+
+
+def test_fb_alpha_data_seed_matches_the_first_good_bin_rule():
+    """The public seed reproduces the private first-good-bin rule the
+    beta-calibration module used, so switching to it changes no result."""
+    ds = _spurious_seed_run()
+    expected = float(build_count_group(ds, 1, lifetime_corrected=False).counts[0])
+    seeded = fit_fb_alpha(ds, 1, 2, _tf, _fb_seed_params(SEED_FROM_DATA))
+    explicit = fit_fb_alpha(ds, 1, 2, _tf, _fb_seed_params(expected))
+    assert seeded.shared_parameters["N0"].value == pytest.approx(
+        explicit.shared_parameters["N0"].value, rel=1e-9
+    )
+
+
+def test_fb_alpha_flags_the_spurious_minimum_from_a_generic_seed():
+    """The regression: a generic N0 seed converges cleanly on a tiny alpha, which
+    Migrad calls valid and the caller has no way to tell from a real balance."""
+    ds = _spurious_seed_run()
+    result = fit_fb_alpha(ds, 1, 2, _tf, _fb_seed_params(1.0))
+    alpha = float(result.shared_parameters["alpha"].value)
+    assert alpha < 0.5  # nowhere near the true 1.25 — a spurious minimum
+    assert not result.success
+    assert "spurious minimum" in result.message
+    assert "count ratio" in result.message
+    # Also surfaced through the per-group advisory channel the GUI reads.
+    assert any("spurious minimum" in w for w in result.group_results[1].warnings)
+    assert any("spurious minimum" in w for w in result.group_results[2].warnings)
+
+
+def test_fb_alpha_scale_guard_leaves_a_good_fit_alone():
+    """No false alarm across the alphas the module already covers."""
+    for alpha_true in (0.8, 1.0, 1.3):
+        ds = _pulsed_tf_run(alpha=alpha_true, seed=11)
+        result = fit_fb_alpha(ds, 1, 2, _tf, _fb_seed_params(1.5e5))
+        assert result.success, f"alpha={alpha_true}: {result.message}"
+        assert result.group_results[1].warnings == []
+
+
+def test_fb_alpha_scale_guard_respects_a_fixed_alpha():
+    """A fixed alpha is a declaration; the guard must not second-guess it."""
+    ds = _pulsed_tf_run(alpha=1.25, seed=11)
+    params = _fb_seed_params(1.5e5)
+    params.add(Parameter("alpha", 0.02, fixed=True))
+    result = fit_fb_alpha(ds, 1, 2, _tf, params)
+    assert result.shared_parameters["alpha"].value == pytest.approx(0.02)
+    assert "spurious" not in result.message
+
+
+def test_fb_alpha_never_overrules_a_fixed_n0():
+    ds = _spurious_seed_run()
+    params = _fb_seed_params(1.0)
+    params.add(Parameter("N0", 1.0, fixed=True))
+    result = fit_fb_alpha(ds, 1, 2, _tf, params)
+    assert result.shared_parameters["N0"].value == pytest.approx(1.0)
 
 
 # --- single histogram -------------------------------------------------------
