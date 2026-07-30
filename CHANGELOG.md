@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The fit wizard now sees heavily damped oscillations, blind.** An
+  oscillation whose envelope dies in the first tens or hundreds of nanoseconds
+  lives entirely in the leading fraction of the record, and every symmetric
+  apodisation window is zero at the first sample — so both of the wizard's
+  seeding FFTs deleted exactly the region such a line occupies. A damped-cosine
+  recommendation was therefore only reachable by handing the wizard the
+  frequencies through `user_frequencies_mhz`; run blind, it would recommend a
+  Kubo-Toyabe or a multi-rate relaxation and never offer a precession candidate
+  at all. `analyze_dataset_peaks` now runs a second, **unwindowed early-window
+  pass** over a short ladder of leading crops of the SNR-truncated record
+  (`analyze_early_window_peaks`), each first-order detrended and each carrying
+  its own honest `resolution_mhz = 1/T_crop`. Its lines are merged into the
+  peak set (`merge_early_peaks`) under an explicit policy: the windowed pass
+  wins any collision within the coarser of the two resolutions, because for a
+  line it can see at all its frequency estimate is the better one, so
+  early-pass peaks are only ever *additions*; SNRs are never compared across
+  passes; and `max_peaks` survives the merge with two slots reserved for early
+  additions, so a full windowed peak set cannot starve the pass that exists to
+  see what it cannot. Peaks carry `source="early_fft"` and the crop that found
+  them (`DetectedPeak.crop_us`), appear in the wizard's peaks table, are drawn
+  on the FFT plot with a dotted marker (that plot is the *windowed* transform,
+  so the line is legitimately not visible under its own marker), and never
+  reach the Burg cross-check — Burg is unreliable on short damped windows and
+  would veto exactly the lines this pass exists to find. The wizard consumes
+  them exactly as it consumes user frequencies: the fingerprint carries the
+  candidate (`damped_line_frequency_mhz` / `_snr` / `_crop_us`) so precession
+  is no longer gated *off* by a windowed view that cannot contain the line, and
+  the crop supplies the envelope rate — without which the true damping sat
+  outside the fit's own `Lambda` bounds, the blind guess being a slope over the
+  leading 5 % of the record, which on such a signal measures the slow tail. The
+  threshold admitting an early-pass line is derived against that pass's own
+  null rather than inherited: across 1400 draws of pure noise, relaxing tails
+  without oscillation, and conventional narrow lines it contributes zero peaks,
+  while a damped line is found in 40/40 draws at envelope rates from 2 to
+  100 µs⁻¹. Beyond roughly 120 µs⁻¹ the line is not recoverable at any crop and
+  no damped-cosine candidate is offered — a documented limit, not a silent
+  failure.
 - **Transform a bare `(t, A, σ)` triple: `fft_arrays()`,
   `fft_complex_arrays()`, `prepare_fft_arrays()`.** Every Fourier entry point
   took a `MuonDataset`, so transforming a curve that is not a dataset's default
