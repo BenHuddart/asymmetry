@@ -78,6 +78,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pre-t0 background windows were not trimmed to whole accelerator periods for
+  core-API callers.** `apply_grouped_background_correction`,
+  `corrected_grouped_counts` and `reduce_grouped_asymmetry` took a `facility`
+  string defaulting to `""` — which means "no facility, no beam-period trimming",
+  silently. The GUI reads the label off the run metadata and passes it, so GUI and
+  script reductions of the same PSI or TRIUMF run quietly disagreed. The default
+  is now `None`, meaning *derive it from the data*: the two reduction functions
+  take a new `metadata=` argument (they receive histograms rather than a run, so
+  they cannot fetch it themselves) and resolve the label through the new
+  `transform.resolve_facility()`, which is now the one place that resolution
+  lives — the four duplicated `metadata.get("facility", metadata.get("instrument",
+  …))` expressions across the core and GUI call it instead. `facility=""` stays
+  available as the deliberate opt-out and any non-empty string still overrides, so
+  every existing call site is unchanged.
 - **`fit_fb_alpha` converged cleanly on a spurious minimum when `N0` was seeded
   generically.** The right `N0` is a per-run count level, and a caller driving the
   forward/backward count fit directly — as you must to free the muon lifetime,

@@ -233,6 +233,7 @@ from asymmetry.core.transform import (
     prepare_histograms_with_deadtime,
     reduce_grouped_asymmetry,
     resolve_background_mode,
+    resolve_facility,
 )
 from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
@@ -5595,7 +5596,9 @@ class MainWindow(QMainWindow):
 
         Thin GUI wrapper over the Qt-free
         :func:`asymmetry.core.transform.reduce_grouped_asymmetry` chokepoint: it
-        resolves the facility string off the run/dataset metadata and binds the
+        resolves the facility string off the run/dataset metadata (the core can
+        derive it from a single metadata dict, but only the GUI knows to prefer
+        the run's over the dataset's) and binds the
         ``reference_run`` background resolver to the loaded-dataset registry, so
         the numerics stay shared with the grouping window's preview pane.
 
@@ -5603,11 +5606,8 @@ class MainWindow(QMainWindow):
         per-axis value; ``beta`` is scalar-only and is read leniently from the
         grouping payload here (matching ``group_forward_backward``).
         """
-        facility = str(
-            run.metadata.get(
-                "facility",
-                dataset.metadata.get("facility", dataset.metadata.get("instrument", "")),
-            )
+        facility = resolve_facility(metadata=run.metadata, grouping=grouping) or resolve_facility(
+            metadata=dataset.metadata
         )
         try:
             beta = float(grouping.get("beta", 1.0))

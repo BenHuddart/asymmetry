@@ -81,6 +81,39 @@ class TailFitResult:
     message: str = ""
 
 
+def resolve_facility(
+    *,
+    metadata: dict[str, Any] | None = None,
+    grouping: dict[str, Any] | None = None,
+) -> str:
+    """Resolve the facility label from run metadata, or ``""`` when unknown.
+
+    The single place this resolution lives. The loaders record the facility in
+    ``metadata["facility"]`` (``"PSI"`` for the PSI reader, the MusrRoot
+    ``Laboratory`` header for ROOT files); ``metadata["instrument"]`` is the
+    fallback, since the facility can be read off an instrument name where the
+    label is missing, and ``metadata["psi_format"]`` is decisive on its own. A
+    grouping payload's ``instrument`` — the canonical registry identity the
+    loaders stamp there — is the last resort.
+
+    The string matters because :func:`apply_grouped_background_correction` trims
+    a pre-t0 background window to whole accelerator periods only for facilities
+    it recognises (see :func:`_beam_period_us`). It used to be the caller's job
+    to pass it, and a caller who did not know that silently lost the trimming.
+    """
+    metadata = metadata if isinstance(metadata, dict) else {}
+    grouping = grouping if isinstance(grouping, dict) else {}
+    facility = str(metadata.get("facility", "") or "").strip()
+    if facility:
+        return facility
+    if metadata.get("psi_format"):
+        return "PSI"
+    instrument = str(metadata.get("instrument", "") or "").strip()
+    if instrument:
+        return instrument
+    return str(grouping.get("instrument", "") or "").strip()
+
+
 def supports_background_correction(
     *,
     metadata: dict[str, Any] | None = None,
@@ -284,7 +317,8 @@ def apply_grouped_background_correction(
     grouping: dict[str, Any] | None,
     t0_bin: int,
     bin_width_us: float,
-    facility: str = "",
+    facility: str | None = None,
+    metadata: dict[str, Any] | None = None,
     last_good_bin: int | None = None,
     reference_forward: NDArray[np.float64] | None = None,
     reference_backward: NDArray[np.float64] | None = None,
@@ -307,8 +341,14 @@ def apply_grouped_background_correction(
     bin_width_us
         Histogram bin width in microseconds.
     facility
-        Optional facility label. PSI and TRIUMF ranges are shortened to an
-        integer number of accelerator periods, following musrfit.
+        Facility label. PSI and TRIUMF ``range``-mode windows are shortened to
+        an integer number of accelerator periods, following musrfit. The default
+        ``None`` means *derive it* from ``metadata``/``grouping`` via
+        :func:`resolve_facility` — the trimming used to be silently skipped for
+        every caller who did not know to pass this. Pass ``""`` to opt out
+        explicitly (no facility, no trimming); any non-empty string overrides.
+    metadata
+        Run metadata, used only to resolve ``facility`` when it is not given.
     last_good_bin
         End of the good window; bounds the tail-fit window.
     reference_forward, reference_backward, reference_scale
@@ -320,6 +360,8 @@ def apply_grouped_background_correction(
     f = np.asarray(forward, dtype=np.float64)
     b = np.asarray(backward, dtype=np.float64)
     grouping = grouping if isinstance(grouping, dict) else {}
+    if facility is None:
+        facility = resolve_facility(metadata=metadata, grouping=grouping)
     mode = resolve_background_mode(grouping)
 
     if mode == "none":

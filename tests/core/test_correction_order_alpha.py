@@ -199,3 +199,130 @@ def test_per_run_estimate_alpha_uses_background_subtracted_counts():
 
     assert abs(float(without_bg["alpha"]) - A_TRUE) > 0.05
     assert abs(float(with_bg["alpha"]) - A_TRUE) < 1e-9
+
+
+# --- facility defaulting reaches the reduction chain -------------------------
+#
+# A pre-t0 ``range`` window is trimmed to whole accelerator periods only when the
+# facility is known. That used to be the caller's job, so a script driving the
+# reduction directly reduced with an untrimmed window while the GUI, which passes
+# the string, trimmed — the same run, two different numbers.
+
+PSI_BIN_WIDTH = 0.005  # µs; the PSI 0.01975 µs period spans just under four bins
+PSI_T0_BIN = 150
+
+
+def _psi_style_run(*, facility: str = "PSI", instrument: str = "GPS") -> Run:
+    """Continuous-source-shaped run with a genuine pre-t0 region."""
+    counts = np.concatenate(
+        [
+            np.full(PSI_T0_BIN, 40.0) + np.arange(PSI_T0_BIN) * 0.5,
+            2000.0 * np.exp(-np.arange(250) * PSI_BIN_WIDTH / TAU) + 40.0,
+        ]
+    )
+    histograms = [
+        Histogram(
+            counts=counts * scale,
+            bin_width=PSI_BIN_WIDTH,
+            t0_bin=PSI_T0_BIN,
+            good_bin_start=PSI_T0_BIN,
+            good_bin_end=counts.size - 1,
+        )
+        for scale in (A_TRUE, 1.0)
+    ]
+    metadata: dict = {"instrument": instrument}
+    if facility:
+        metadata["facility"] = facility
+    return Run(run_number=2, histograms=histograms, metadata=metadata)
+
+
+def _psi_grouping() -> dict:
+    return {
+        "groups": {1: [1], 2: [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "first_good_bin": PSI_T0_BIN,
+        "last_good_bin": 399,
+        "background_correction": True,
+        "background_mode": "range",
+    }
+
+
+def _reduced_background(run: Run, **kwargs):
+    corrected = corrected_grouped_counts(
+        histograms=run.histograms,
+        grouping=_psi_grouping(),
+        forward_idx=[0],
+        backward_idx=[1],
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=True,
+        **kwargs,
+    )
+    state = corrected.background_state
+    assert state is not None
+    return state["ranges"][0], corrected.background_level
+
+
+def test_reduction_derives_the_facility_from_run_metadata():
+    """The regression: without ``facility=`` the window was silently untrimmed."""
+    run = _psi_style_run()
+    untrimmed_range, untrimmed_level = _reduced_background(run, facility="")
+    derived_range, derived_level = _reduced_background(run, metadata=run.metadata)
+    explicit_range, explicit_level = _reduced_background(run, facility="PSI")
+
+    assert derived_range == explicit_range
+    assert derived_level == explicit_level
+    # And the trimming is not a no-op on this window, so the assertion has teeth.
+    assert derived_range != untrimmed_range
+    assert derived_level != untrimmed_level
+
+
+def test_reduction_facility_empty_string_is_still_the_opt_out():
+    run = _psi_style_run()
+    assert _reduced_background(run, facility="", metadata=run.metadata) == _reduced_background(
+        run, facility=""
+    )
+
+
+def test_reduce_grouped_asymmetry_defaults_the_facility_too():
+    """Not just the counts helper — the full reduction takes the same route."""
+    run = _psi_style_run()
+    kwargs = dict(
+        histograms=run.histograms,
+        grouping=_psi_grouping(),
+        forward_idx=[0],
+        backward_idx=[1],
+        alpha=A_TRUE,
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=True,
+    )
+    derived = reduce_grouped_asymmetry(**kwargs, metadata=run.metadata)
+    explicit = reduce_grouped_asymmetry(**kwargs, facility="PSI")
+    untrimmed = reduce_grouped_asymmetry(**kwargs, facility="")
+    assert derived.background_state == explicit.background_state
+    assert derived.background_state != untrimmed.background_state
+    np.testing.assert_allclose(derived.asymmetry, explicit.asymmetry, rtol=0, atol=0)
+
+
+def test_reduction_falls_back_to_the_groupings_instrument_without_metadata():
+    """Last resort when a caller passes neither: the canonical instrument name the
+    loaders stamp into the grouping. It resolves nothing for an instrument whose
+    name is not a facility, which is the honest outcome — see the module note."""
+    run = _psi_style_run(facility="", instrument="PSI")
+    grouping = _psi_grouping()
+    grouping["instrument"] = "PSI"
+    corrected = corrected_grouped_counts(
+        histograms=run.histograms,
+        grouping=grouping,
+        forward_idx=[0],
+        backward_idx=[1],
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=True,
+    )
+    state = corrected.background_state
+    assert state is not None
+    trimmed, _ = _reduced_background(run, facility="PSI")
+    assert state["ranges"][0] == trimmed

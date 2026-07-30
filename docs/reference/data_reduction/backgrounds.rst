@@ -57,6 +57,22 @@ is unavailable for them.
 measurement, not a fit — prefer it over the tail fit whenever a pre-t0
 region exists.
 
+.. note::
+
+   *Scripting note: the beam-period trimming engages by itself.* Trimming the
+   window to a whole number of accelerator periods needs to know the facility,
+   and :func:`~asymmetry.core.transform.background.apply_grouped_background_correction`,
+   :func:`~asymmetry.core.transform.reduce.corrected_grouped_counts` and
+   :func:`~asymmetry.core.transform.reduce.reduce_grouped_asymmetry` used to take
+   a ``facility`` string defaulting to ``""`` — no facility, no trimming, no
+   warning. The GUI passed it; a script that did not know to reduced the same run
+   with an untrimmed window. The default is now ``None``, meaning *derive it*:
+   pass ``metadata=run.metadata`` (the reduction functions receive histograms
+   rather than a run, so they cannot fetch it themselves) and the label resolves
+   through :func:`~asymmetry.core.transform.background.resolve_facility`, exactly
+   as the GUI's explicit string always did. ``facility=""`` remains available as
+   the deliberate "no trimming" opt-out, and any non-empty string still overrides.
+
 Tail fit (late-time)
 --------------------
 

@@ -81,6 +81,7 @@ from asymmetry.core.transform import (
     parse_detector_list,
     resolve_background_mode,
     resolve_binning_mode,
+    resolve_facility,
 )
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
@@ -3555,7 +3556,7 @@ class GroupingDialog(QDialog):
         if self._reference_dataset is not None:
             metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(getattr(run, "metadata", {}) or {})
-        facility = str(metadata.get("facility", metadata.get("instrument", "")))
+        facility = resolve_facility(metadata=metadata, grouping=getattr(run, "grouping", None))
         # Keep the toggles' enabled/checked state in step with the current draft,
         # and drop the focus if the focused stage is no longer available.
         self._sync_compare_toggles()
@@ -4502,8 +4503,11 @@ class GroupingDialog(QDialog):
 
     def _calibration_facility(self) -> str:
         """Facility label for the alpha dialog's background tail-fit shortening."""
-        metadata = (self._run.metadata if self._run is not None else None) or {}
-        return str(metadata.get("facility", metadata.get("instrument", "")))
+        run = self._run
+        return resolve_facility(
+            metadata=(run.metadata if run is not None else None),
+            grouping=(run.grouping if run is not None else None),
+        )
 
     # ------------------------------------------------------------------
     # Inline per-projection (vector) α estimate
