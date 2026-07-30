@@ -44,12 +44,12 @@ Instrument and scope
 A profile applies to every run of one **instrument** — matched, internally, on
 the pair ``(instrument, histogram count)``. The histogram count disambiguates
 layout variants of the same physical instrument, such as PSI GPS's
-six-detector PSI-BIN export and eleven-detector MusrRoot export (see `PSI GPS`_
-below): both are shown as one instrument, but a GPS PSI-BIN profile is never
-offered to an eleven-detector GPS ROOT run. The window names the instrument
-plainly — "GPS" — and appends the detector count only when two variants of the
-same instrument are both loaded, so they can be told apart: "GPS (6 detectors)"
-and "GPS (11 detectors)".
+six-detector PSI-BIN export and its eleven- and fifteen-detector MusrRoot
+exports (see `PSI GPS`_ below): all are shown as one instrument, but a GPS
+PSI-BIN profile is never offered to an eleven-detector GPS ROOT run. The window
+names the instrument plainly — "GPS" — and appends the detector count only when
+several variants of the same instrument are loaded together, so they can be told
+apart: "GPS (6 detectors)", "GPS (11 detectors)", "GPS (15 detectors)".
 
 A project may hold several profiles per instrument **in concurrent use** —
 the typical case is one profile per sample, each with its own background,
@@ -818,8 +818,10 @@ kept as separate visible groups with numeric suffixes.
 ROOT files with ``RunInfo/Instrument`` set to ``FLAME`` are opened with the
 FLAME detector layout available by default. If that metadata field is absent,
 Asymmetry also recognises ``flame`` in the source filename. GPS MusrRoot files
-(instrument ``LMU_BULKMUSR_GPS``) expose eleven raw sub-detectors and open with
-the eleven-detector GPS variant (see `PSI GPS`_ below).
+(instrument ``LMU_BULKMUSR_GPS``) expose the raw sub-detectors and open with the
+matching GPS variant, selected from the histogram count: eleven histograms for
+the sub-detector-only export, fifteen when the file also carries the six
+combined counters (see `PSI GPS`_ below).
 
 ROOT ``DetectorInfo`` entries can provide detector-specific ``Time Zero Bin``,
 ``First Good Bin``, and ``Last Good Bin`` values. Asymmetry stores these in the
@@ -980,22 +982,32 @@ PSI GPS
    shown read-only for context in the other.
 
 GPS is recognised automatically from PSI data carrying a ``GPS`` instrument
-string or a ``deltat_tdc_gps_*`` run name. Two histogram conventions are
+string or a ``deltat_tdc_gps_*`` run name. Three histogram conventions are
 supported and presented to the user as a single "GPS" layout, selected
 automatically from the histogram count — and, per `Grouping profiles`_ above,
 each carries its own separate grouping profile:
 
 * the **PSI-BIN** export with six combined detectors (``Forw, Back, Up, Down,
-  Righ, Left``); and
+  Righ, Left``);
 * the **MusrRoot** export with eleven raw sub-detectors (``Forw, Back, Up_B,
   Up_F, Down_B, Down_F, Right_B, Right_F, Left_B, Left_F, Mob-RL``), where each
   transverse plate is split into an upstream (``_B``) and downstream (``_F``)
-  half and a Mobile detector is added. Both variants are registered as one
-  physical GPS instrument (the eleven-detector variant is `GPS-RD` internally
-  — "ROOT sub-detectors" — but shown to the user simply as "GPS").
+  half and a Mobile detector is added; and
+* the **MusrRoot** export with fifteen histograms, which carries *both* views of
+  the same events — the six combined counters **and** the eight half-counters
+  plus the Mobile detector (``Forw, Back, Up, Down, Right, Left, Up_B, Up_F,
+  Down_B, Down_F, Right_B, Right_F, Left_B, Left_F, Mob-RL``).
+
+All three variants are registered as one physical GPS instrument (the
+eleven-detector variant is `GPS-RD` internally — "ROOT sub-detectors" — and the
+fifteen-detector one `GPS-RD15`, but both are shown to the user simply as "GPS").
 
 Detector IDs match the histogram order in each format (detector *N* maps to
-histogram *N − 1*).
+histogram *N − 1*), so the variant has to match the file: in the
+fifteen-histogram export IDs 3–6 are the combined ``Up/Down/Right/Left``, while
+in the eleven-histogram one the same IDs are ``Up_B/Up_F/Down_B/Down_F``.
+Applying a preset built for one export to the other would group the wrong
+counters, so Asymmetry refuses rather than doing it silently.
 
 .. _Beam vs analysis convention:
 
@@ -1042,9 +1054,17 @@ Presets:
   offsets musrfit uses to encode the rotation are a
   fitting detail and are not stored in the layout.
 
-The Mobile sub-detector (``Mob-RL``) is left ungrouped by default: it is added
-to either the Right or Left detector depending on the cryostat port in use,
-which the data file does not record.
+In the eleven-histogram export the Mobile sub-detector (``Mob-RL``) is left
+ungrouped by default: it is added to either the Right or Left detector depending
+on the cryostat port in use, which the data file does not record.
+
+In the fifteen-histogram export the presets group the six **combined** counters
+only (IDs 1–6). Those already contain every recorded event exactly once — each is
+the t0-aligned sum of its halves, and whichever transverse counter the Mobile
+detector is wired into includes it — so adding any of IDs 7–15 to a group would
+double-count. The half-counters and the Mobile detector stay individually
+selectable, for excluding a misbehaving half or building a custom grouping from
+the finer view.
 
 .. _Beam vs analysis convention (ISIS):
 
