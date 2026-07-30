@@ -343,11 +343,17 @@ def _warn_on_early_signal_suppression(
       filter (``window="lorentzian"``, ``filter_time_constant_us ≈ 1/λ``),
       **must not**;
     * a conventional transverse-field record whose oscillation is alive across
-      the whole window **must not**, under any apodisation.
+      the whole window **must not**, under any apodisation;
+    * pure noise **must not**, at any binning — the statistic is measured on
+      power *above the noise expectation*, and a record whose excess does not
+      clear the significance gate is reported as unassessable rather than
+      judged.
     """
     loss = early_signal_apodisation_loss(time, signal, weights, error)
     if loss is None or not loss.triggered:
         return
+    # ``triggered`` already implies the excess cleared the significance gate;
+    # an unassessable record reports "insufficient_statistics" and stays quiet.
     measured = (
         "oscillatory (slow-baseline-removed)"
         if loss.measured_on == "oscillatory"
@@ -355,9 +361,10 @@ def _warn_on_early_signal_suppression(
     )
     warnings.warn(
         f"Apodisation window {window!r} has deleted the early-time signal: "
-        f"{loss.early_power_fraction:.1%} of this record's {measured} power "
-        f"lies in its first {loss.early_window_fraction:.0%}, and the window keeps "
-        f"only {loss.early_retained_fraction:.2%} of it. A symmetric taper is zero "
+        f"{loss.early_power_fraction:.1%} of this record's {measured} power above "
+        f"the noise floor lies in its first {loss.early_window_fraction:.0%}, and "
+        f"the window keeps only {loss.early_retained_fraction:.2%} of it. "
+        "A symmetric taper is zero "
         "at t = 0, so a heavily damped oscillation can vanish entirely under it "
         "while being many-sigma without it. For early-time work use "
         'window="none" with a t_max crop, or the exponential filter '

@@ -220,22 +220,25 @@ _EARLY_RETAINED_POWER_TRIGGER = 0.2
 #: statistics to mean anything, and the guard stands down.
 _EARLY_GUARD_MIN_POINTS = 16
 
-#: The oscillatory pass is only consulted when the high-passed residual carries
-#: at least this share of the signal's own power. Below it the "oscillation" is
-#: discretisation dust left over from the slow-baseline subtraction, and a
-#: concentration ratio computed from dust is an arbitrary number that any taper's
-#: tiny retention would happily turn into a warning. The measured separation is
-#: wide: the synthetic must-fire cases carry 0.14–2.7 (the damped line is a real
-#: fraction of the record's power), while a smooth baseline with no oscillation
-#: at all leaves ≤ 4e-04 after odd-padded subtraction — so 5e-03 sits ~27x below
-#: the weakest genuine case and ~12x above the largest artefact.
-_OSCILLATORY_PASS_MIN_POWER_FRACTION = 5.0e-3
-
 #: Fast bail-out: when the window's smallest weight over the early portion is
 #: above this, it cannot have removed most of the early power, so the rest of
 #: the statistic is skipped. Keeps the guard off the hot path for
 #: ``window="none"`` and for gentle filters.
 _EARLY_GUARD_MIN_WEIGHT_TO_CHECK = 0.9
+
+#: How many standard deviations of the null distribution the measured excess
+#: power must clear before the guard is willing to decide at all.
+#:
+#: Under pure noise each bin contributes ``|n/σ|² − 1``, mean zero and variance
+#: 2, so a record of ``n`` bins has an excess-power null of ``0 ± √(2n)``. The
+#: gate is that scale times this factor; below it the guard reports
+#: ``"insufficient_statistics"`` rather than a confident verdict, because a
+#: concentration ratio computed from a sum consistent with zero is an arbitrary
+#: number. Measured on pure noise (200 draws, both passes, n = 750 and 3000) the
+#: realised excess sits at ~0.4 √(2n) with a spread of ~0.7 √(2n), so 4 is
+#: comfortably clear of the null while costing nothing on a record carrying real
+#: signal — where the excess runs orders of magnitude above the gate.
+_EXCESS_SIGNIFICANCE_SIGMA = 4.0
 
 
 @dataclass(frozen=True)
@@ -252,30 +255,64 @@ class EarlySignalApodisationLoss:
     #: own power, ``"oscillatory"`` for the power left after the slow baseline
     #: is removed (see :func:`early_signal_apodisation_loss`).
     measured_on: str
-    #: True when both trigger conditions are met on the reported pass.
-    triggered: bool
+    #: ``"triggered"``, ``"clear"``, or ``"insufficient_statistics"`` — the last
+    #: meaning the record's excess power did not clear the significance gate, so
+    #: the guard declined to decide rather than deciding on noise. Distinct from
+    #: ``"clear"``, which is a confident "this apodisation is fine".
+    verdict: str
+    #: Total noise-excess power the verdict rests on (the larger of the whole
+    #: record's and the early window's), in units of ``|s/σ|²``.
+    excess_power: float
+    #: The significance gate that excess was compared against,
+    #: ``_EXCESS_SIGNIFICANCE_SIGMA · √(2n)``.
+    significance_floor: float
+
+    @property
+    def triggered(self) -> bool:
+        """True when both trigger conditions were met on the reported pass."""
+        return self.verdict == "triggered"
+
+    @property
+    def assessable(self) -> bool:
+        """False when there was too little excess power to judge either way."""
+        return self.verdict != "insufficient_statistics"
 
 
-def _slow_baseline(values: np.ndarray, weights: np.ndarray, kernel_points: int) -> np.ndarray:
-    """Return an error-weighted centred moving mean of *values*.
+def _slow_baseline(
+    values: np.ndarray, weights: np.ndarray, kernel_points: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return an error-weighted centred moving mean, and each bin's self-weight.
 
     The slow-baseline estimate the oscillatory pass subtracts. The kernel is
-    ``kernel_points`` wide in *samples* (truncated at the record's ends), and
-    each sample is weighted by ``weights`` so poorly-measured bins do not drag
-    the baseline — the same 1/σ² weighting the power statistic itself uses.
+    ``kernel_points`` wide in *samples*, and each sample is weighted by
+    ``weights`` so poorly-measured bins do not drag the baseline — the same
+    1/σ² weighting the power statistic itself uses.
 
-    The record is **odd-padded** at both ends before the mean is taken — the
-    signal is extended antisymmetrically about its endpoint,
-    ``s[-i] = 2·s[0] − s[i]`` — rather than the window being truncated there.
-    This matters more than it sounds: a truncated window's mean at the first
-    sample is the mean over the *following* half-kernel, which for any sloped
-    baseline sits a systematic ``slope · k/4`` away from the true value. That
-    bias lands squarely inside the early window and is indistinguishable from
-    early-time signal, so a plain straight line — no curvature, nothing a
-    baseline removal could not take out — would produce a large "oscillatory"
-    residual concentrated at the start and trip the guard. Odd padding
-    reproduces a linear continuation exactly, so a straight line leaves
-    *nothing* behind and only genuine curvature survives.
+    The second return value is ``wᵢ / Σ_{j∈window} wⱼ``, the share of its own
+    window each bin carries. It is what the oscillatory pass needs to know how
+    much noise power the subtraction removed: for independent noise the
+    high-passed residual has variance ``σᵢ²(1 − wᵢ/Wᵢ)``, so that is the noise
+    pedestal to subtract on that pass rather than a flat 1.
+
+    Edges are handled by **odd padding about a locally fitted intercept**: the
+    record is extended antisymmetrically, ``s[−i] = 2·L(0) − s[i]``, where
+    ``L`` is a straight line least-squares fitted to the leading (or trailing)
+    kernel. Two things make this the right anchor, and both were measured:
+
+    * Against a *truncated* window, odd padding removes a systematic
+      ``slope · k/4`` bias at the first sample. That bias lands squarely inside
+      the early window and is indistinguishable from early-time signal, so a
+      plain straight line — no curvature at all — produced a residual
+      concentrated at the start and tripped the guard. Odd padding reproduces a
+      linear continuation exactly, cutting that residual ~150×.
+    * Against reflecting about the endpoint *sample* ``s[0]``, the fitted
+      intercept averages down that sample's own noise instead of doubling it
+      into the whole pad. Reflecting about a single noisy sample inflated the
+      high-passed noise pedestal by ~3× (0.056 vs 0.019 per bin) and, worse,
+      *amplified* a damped oscillation's power by 2.7× when ``s[0]`` happened to
+      sit on a peak. The fitted anchor is neutral on both (0.996 of the
+      oscillation's power kept) while keeping the straight-line residual
+      identical.
 
     Computed from cumulative sums, so it stays O(n) on records that can reach
     several hundred thousand bins.
@@ -284,49 +321,117 @@ def _slow_baseline(values: np.ndarray, weights: np.ndarray, kernel_points: int) 
     k = int(np.clip(kernel_points, 1, n))
     pad = int(min(k // 2, n - 1))
     if pad > 0:
+        anchor_left = _fitted_edge_intercept(values[:k])
+        anchor_right = _fitted_edge_intercept(values[-k:][::-1])
         padded_values = np.concatenate(
             (
-                2.0 * values[0] - values[pad:0:-1],
+                2.0 * anchor_left - values[pad:0:-1],
                 values,
-                2.0 * values[-1] - values[-2 : -pad - 2 : -1],
+                2.0 * anchor_right - values[-2 : -pad - 2 : -1],
             )
         )
         padded_weights = np.concatenate((weights[pad:0:-1], weights, weights[-2 : -pad - 2 : -1]))
+        offset = pad
     else:
-        padded_values, padded_weights = values, weights
+        padded_values, padded_weights, offset = values, weights, 0
 
     cum_w = np.concatenate(([0.0], np.cumsum(padded_weights, dtype=np.float64)))
     cum_ws = np.concatenate(([0.0], np.cumsum(padded_weights * padded_values, dtype=np.float64)))
     total = padded_values.size
-    starts = np.clip(np.arange(pad, pad + n) - k // 2, 0, total)
+    starts = np.clip(np.arange(offset, offset + n) - k // 2, 0, total)
     stops = np.clip(starts + k, 0, total)
     denominator = cum_w[stops] - cum_w[starts]
     numerator = cum_ws[stops] - cum_ws[starts]
     safe = denominator > 0.0
-    return np.where(safe, numerator / np.where(safe, denominator, 1.0), values)
+    baseline = np.where(safe, numerator / np.where(safe, denominator, 1.0), values)
+    self_weight = np.where(safe, weights / np.where(safe, denominator, 1.0), 0.0)
+    return baseline, self_weight
+
+
+def _fitted_edge_intercept(edge: np.ndarray) -> float:
+    """Least-squares intercept of a straight line through *edge*.
+
+    ``edge`` runs outward from the record's end, so the intercept is the fitted
+    value *at* that end. Averaging the edge kernel this way keeps the odd-padding
+    anchor from carrying one sample's full noise (see :func:`_slow_baseline`).
+    """
+    m = edge.size
+    if m < 2:
+        return float(edge[0]) if m else 0.0
+    x = np.arange(m, dtype=np.float64)
+    x_mean = x.mean()
+    centred = x - x_mean
+    denominator = float(np.dot(centred, centred))
+    y_mean = float(edge.mean())
+    if denominator <= 0.0:
+        return y_mean
+    slope = float(np.dot(centred, edge)) / denominator
+    return y_mean - slope * x_mean
 
 
 def _measure_early_loss(
-    power: np.ndarray, early_weights: np.ndarray, n_early: int, measured_on: str
-) -> EarlySignalApodisationLoss | None:
-    """Run the two-condition test over one power profile."""
-    total = float(np.sum(power, dtype=np.float64))
-    early = float(np.sum(power[:n_early], dtype=np.float64))
-    if not np.isfinite(total) or total <= 0.0 or early <= 0.0:
-        return None
+    excess: np.ndarray,
+    early_weights: np.ndarray,
+    n_early: int,
+    measured_on: str,
+    *,
+    calibrated: bool = True,
+) -> EarlySignalApodisationLoss:
+    """Run the two-condition test over one profile of noise-excess power.
 
-    retained = float(np.sum(power[:n_early] * np.square(early_weights), dtype=np.float64)) / early
-    early_fraction = early / total
-    return EarlySignalApodisationLoss(
-        early_window_fraction=float(_EARLY_WINDOW_FRACTION),
-        early_power_fraction=early_fraction,
-        early_retained_fraction=retained,
-        measured_on=measured_on,
-        triggered=(
-            early_fraction >= _EARLY_POWER_CONCENTRATION_TRIGGER
-            and retained <= _EARLY_RETAINED_POWER_TRIGGER
-        ),
+    *excess* is ``|s/σ|² − pedestal`` per bin: the power the data carries *above
+    what noise alone would produce*. Working in excess rather than raw power is
+    what makes the statistic binning-invariant — a real signal's excess is
+    unchanged by rebinning (σ falls as ``1/√f`` while the bin count falls as
+    ``f``) whereas raw power carries a ``+1`` per bin, so the noise pedestal, and
+    therefore the dilution, grew with however finely the record happened to be
+    binned.
+
+    Individual bins may be negative (a noise dip); that is correct and keeps the
+    estimator unbiased. The verdict rests on the larger of the whole record's
+    and the early window's excess: a signal confined to the early window can
+    leave the record's total *below* the early sum, because the empty late
+    portion contributes its own negative fluctuation.
+    """
+    n = excess.size
+    total = float(np.sum(excess, dtype=np.float64))
+    early = float(np.sum(excess[:n_early], dtype=np.float64))
+    reference = max(total, early)
+    # Without calibrated errors there is no noise scale, so no pedestal was
+    # subtracted and √(2n) is not in the same units as the power: the gate is
+    # meaningless and is stood down rather than applied wrongly.
+    floor = _EXCESS_SIGNIFICANCE_SIGMA * np.sqrt(2.0 * n) if calibrated else 0.0
+
+    def _result(verdict: str, concentration: float, retained: float):
+        return EarlySignalApodisationLoss(
+            early_window_fraction=float(_EARLY_WINDOW_FRACTION),
+            early_power_fraction=concentration,
+            early_retained_fraction=retained,
+            measured_on=measured_on,
+            verdict=verdict,
+            excess_power=reference,
+            significance_floor=float(floor),
+        )
+
+    if not np.isfinite(reference) or reference < floor or early <= 0.0:
+        return _result("insufficient_statistics", float("nan"), float("nan"))
+
+    concentration = float(np.clip(early / reference, 0.0, 1.0))
+    # Individual excess bins can be negative, so the weighted sum can dip just
+    # below zero on a record whose early window is almost entirely signal-free
+    # after the window. Report it as the fraction it is meant to be.
+    retained = float(
+        np.clip(
+            np.sum(excess[:n_early] * np.square(early_weights), dtype=np.float64) / early,
+            0.0,
+            1.0,
+        )
     )
+    triggered = (
+        concentration >= _EARLY_POWER_CONCENTRATION_TRIGGER
+        and retained <= _EARLY_RETAINED_POWER_TRIGGER
+    )
+    return _result("triggered" if triggered else "clear", concentration, retained)
 
 
 def early_signal_apodisation_loss(
@@ -369,10 +474,10 @@ def early_signal_apodisation_loss(
     baseline first asks the question the guard means to ask: where does the
     *oscillatory* power live, and how much of it survives?
 
-    The oscillatory pass is skipped when its residual carries less than
-    ``_OSCILLATORY_PASS_MIN_POWER_FRACTION`` of the signal's power — there was
-    no oscillation to find, and a concentration ratio computed from
-    subtraction dust would be meaningless.
+    Either pass may return ``"insufficient_statistics"`` when its excess power
+    does not clear the significance gate — there was not enough signal above the
+    noise to judge, and a ratio computed from a sum consistent with zero would be
+    meaningless. That is reported distinctly from a confident ``"clear"``.
 
     The kernel is wide enough to pass any oscillation with more than a handful
     of cycles across the record. A very slow oscillation — fewer than about
@@ -401,6 +506,7 @@ def early_signal_apodisation_loss(
     finite = np.isfinite(values)
     clean = np.where(finite, values, 0.0)
     inverse_variance = np.ones(n, dtype=np.float64)
+    calibrated = False
     if error is not None:
         sigma = np.asarray(error, dtype=np.float64)
         if sigma.shape == values.shape:
@@ -409,35 +515,42 @@ def early_signal_apodisation_loss(
                 inverse_variance = np.where(
                     usable, 1.0 / np.square(np.where(usable, sigma, 1.0)), 0.0
                 )
+                calibrated = True
     power = np.where(np.isfinite(clean), np.square(clean) * inverse_variance, 0.0)
+    # Pure noise contributes exactly 1 per bin to |s/σ|²; subtracting it leaves
+    # the power the data carries above the noise expectation. Without calibrated
+    # errors there is no such expectation to subtract, and the statistic falls
+    # back to raw power — losing the noise robustness and the binning invariance
+    # that the subtraction buys, which is the price of not supplying σ.
+    signal_excess = power - 1.0 if calibrated else power
 
-    oscillatory = clean - _slow_baseline(clean, inverse_variance, n_early)
+    baseline, self_weight = _slow_baseline(clean, inverse_variance, n_early)
+    oscillatory = clean - baseline
     oscillatory_power = np.where(
         np.isfinite(oscillatory), np.square(oscillatory) * inverse_variance, 0.0
     )
-
-    signal_total = float(np.sum(power, dtype=np.float64))
-    oscillatory_total = float(np.sum(oscillatory_power, dtype=np.float64))
-    oscillatory_is_real = (
-        signal_total > 0.0
-        and oscillatory_total >= _OSCILLATORY_PASS_MIN_POWER_FRACTION * signal_total
+    # The high-pass removes some of the noise along with the baseline: for
+    # independent noise the residual has variance σ²(1 − wᵢ/Wᵢ), so that — not a
+    # flat 1 — is this pass's pedestal.
+    oscillatory_excess = (
+        oscillatory_power - (1.0 - self_weight) if calibrated else oscillatory_power
     )
 
     passes = [
-        _measure_early_loss(power, early_weights, n_early, "signal"),
-        _measure_early_loss(oscillatory_power, early_weights, n_early, "oscillatory")
-        if oscillatory_is_real
-        else None,
+        _measure_early_loss(signal_excess, early_weights, n_early, "signal", calibrated=calibrated),
+        _measure_early_loss(
+            oscillatory_excess, early_weights, n_early, "oscillatory", calibrated=calibrated
+        ),
     ]
-    measured = [entry for entry in passes if entry is not None]
-    if not measured:
-        return None
-    # Report the pass that fired; when neither does, the signal pass is the
-    # plain description of what happened.
-    for entry in measured:
-        if entry.triggered:
+    # Report the pass that fired; failing that, a confident "clear" from either
+    # pass; failing that, the honest "there was not enough excess power to say".
+    for entry in passes:
+        if entry.verdict == "triggered":
             return entry
-    return measured[0]
+    for entry in passes:
+        if entry.verdict == "clear":
+            return entry
+    return passes[0]
 
 
 @dataclass(frozen=True)

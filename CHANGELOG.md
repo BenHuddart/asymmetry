@@ -227,9 +227,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `filter_time_constant_us ≈ 1/λ`, which is weight-1 at `t = 0` and is the
   matched apodisation for a Lorentzian line. No returned value changes, and the
   guard reaches the dataset and array paths alike because it lives in the core
-  they share. The test is applied **twice** — once to the signal's own power and
-  once to the power left after a slow baseline is subtracted — and fires if
-  either pass does. The second pass is what makes the guard work on real data: an
+  they share. It measures power **above the noise floor** — `|s/σ|²` minus the
+  expectation noise alone would produce — not raw power. That matters for more
+  than robustness: raw power carries a `+1` per bin from noise, so the pedestal,
+  and with it the dilution of the concentration ratio, grew with however finely
+  the record happened to be binned, and the same data could pass or fail the test
+  purely on its binning. Subtracting the noise expectation removes that
+  dependence (a real signal's excess is invariant under rebinning), and the
+  verdict is now measured to be identical across a sixteenfold binning sweep for
+  both firing and non-firing cases. Because individual bins can fall below the
+  noise expectation, the total can be consistent with zero; a significance gate
+  (`4√(2n)`, the χ²₁ fluctuation scale) then makes the guard report
+  **`"insufficient_statistics"`** — a third verdict state, distinct from a
+  confident `"clear"` — rather than reading a ratio off a sum indistinguishable
+  from noise. `EarlySignalApodisationLoss` gains `verdict`, `excess_power` and
+  `significance_floor`, with `triggered` and `assessable` as derived properties.
+  Pure noise now fires 0 times in 1500 draws across three binnings, all correctly
+  reported as unassessable, and the per-bin signal-to-noise floor drops from ~8 to
+  ~3.5. The test is applied **twice** — once to the signal's own excess and once
+  to the excess left after a slow baseline is subtracted — and fires if either
+  pass does. The second pass is what makes the guard work on real data: an
   ordered-state record is never a bare damped cosine, its oscillation rides on a
   slowly relaxing tail (the powder tail) whose residual curvature no constant or
   low-order baseline removal takes out, and that tail's power spreads across the
@@ -242,14 +259,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `slope · k/4` error landing inside the early window that made a plain straight
   line — no curvature at all — leave a residual concentrated 80 % early and trip
   the guard. The high-passed pass is skipped entirely when its residual carries
-  under 0.5 % of the signal's power, so subtraction dust can never decide. The
-  thresholds come from a synthetic study documented and pinned in the tests: the
+  under the significance gate, so subtraction dust can never decide. That
+  padding anchors on a locally fitted intercept rather than the endpoint sample:
+  reflecting about one noisy sample doubled its variance into the whole pad and,
+  when that sample sat on an oscillation peak, amplified the line's apparent
+  power by 2.7×. The thresholds come from a synthetic study documented and pinned in the tests: the
   binding constraints are the exponential filter, which keeps ~½ of the early
   power at the matched `τ = 1/λ` and a third even at `τ = 0.5/λ` and must not trip
   the warning it is recommended by, and realistic `1/σ²` error growth, which
   tilts the concentration statistic to 0.43 on an *undamped* record before any
   damping at all. Noise sensitivity improves as a side effect, from a per-bin
-  peak SNR of ~16 to ~8, and no longer depends on whether a tail is present.
+  peak SNR of ~16 to ~3.5, and no longer depends on whether a tail is present.
+  One limit is documented rather than papered over: a weak, heavily damped line
+  on a finely binned record can be clearly visible in an unwindowed spectrum — the
+  FFT sums it coherently, gaining √N — while carrying too little excess power for
+  any time-domain statistic to judge. The guard reports insufficient statistics
+  there, and the docs say plainly that its silence is not an assurance.
   Every apodisation-adjacent docstring and the Fourier reference page now
   separate the weight-1-at-`t = 0` filters from the tapers and state the failure
   mode concretely, and `suggest_matched_apodisation` carries the caveat that it
