@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -114,6 +114,101 @@ def _subtract_average_signal(
     return values
 
 
+#: Highest polynomial order :func:`_detrend_baseline` will fit. A baseline
+#: removal is meant to take out a *trend* the oscillation rides on; past cubic a
+#: polynomial starts fitting the oscillation itself and quietly deletes the line
+#: the transform exists to find, so the cap is enforced rather than advised.
+_MAX_DETREND_ORDER = 3
+
+
+def _detrend_baseline(
+    time: NDArray[np.float64],
+    signal: NDArray[np.float64],
+    error: NDArray[np.float64] | None,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]],
+    *,
+    caller: str,
+) -> NDArray[np.float64]:
+    """Return the baseline ``detrend`` asks to be subtracted from *signal*.
+
+    An ``int`` fits an error-weighted least-squares polynomial of that order
+    (weights ``1/σ``, so the fit minimises ``Σ (residual/σ)²`` — the standard
+    least-squares weighting, *not* the ``1/σ`` WiMDA average weighting of
+    :func:`_weighted_average_signal`) and returns it evaluated on *time*. A
+    callable is invoked as ``f(time)`` and its return used as-is, letting a
+    caller subtract a slow model they fitted elsewhere.
+    """
+    times = np.asarray(time, dtype=np.float64)
+    if callable(detrend):
+        baseline = np.asarray(detrend(times), dtype=np.float64)
+        if baseline.shape != signal.shape:
+            raise ValueError(
+                f"{caller}: the detrend callable returned shape {baseline.shape}, "
+                f"but the cropped signal has shape {signal.shape}."
+            )
+        if not np.all(np.isfinite(baseline)):
+            raise ValueError(
+                f"{caller}: the detrend callable returned non-finite values (NaN or inf)."
+            )
+        return baseline
+
+    if isinstance(detrend, bool) or not isinstance(detrend, (int, np.integer)):
+        raise ValueError(
+            f"{caller}: detrend must be None, an integer polynomial order, or a "
+            f"callable f(time) -> baseline; got {detrend!r}."
+        )
+    order = int(detrend)
+    if order < 0 or order > _MAX_DETREND_ORDER:
+        raise ValueError(
+            f"{caller}: detrend={order} is outside the supported polynomial "
+            f"orders 0–{_MAX_DETREND_ORDER}. A higher-order polynomial fits the "
+            "oscillation itself rather than the trend it rides on; crop the "
+            "record or subtract a fitted model through the callable form instead."
+        )
+
+    usable = np.isfinite(times) & np.isfinite(signal)
+    weights: NDArray[np.float64] | None = None
+    if error is not None and error.shape == signal.shape:
+        weighted = usable & np.isfinite(error) & (error > 0.0)
+        if int(np.count_nonzero(weighted)) > order:
+            usable = weighted
+            weights = 1.0 / error[usable]
+    if int(np.count_nonzero(usable)) <= order:
+        raise ValueError(
+            f"{caller}: detrend={order} needs more than {order} usable point(s); "
+            f"the cropped signal has {int(np.count_nonzero(usable))}."
+        )
+    fitted = np.polynomial.Polynomial.fit(times[usable], signal[usable], deg=order, w=weights)
+    return np.asarray(fitted(times), dtype=np.float64)
+
+
+def _resolve_baseline_removal(
+    subtract_average_signal: bool | None,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None,
+    *,
+    caller: str,
+) -> bool:
+    """Return whether the WiMDA average subtraction runs, rejecting ambiguity.
+
+    ``subtract_average_signal`` defaults to ``None`` meaning "the historical
+    ``True``, unless ``detrend`` takes over". A fitted baseline subsumes the
+    mean, so the two are alternatives, and asking for both explicitly is
+    ambiguous (a callable baseline need not be mean-free) — that combination
+    raises rather than being guessed at.
+    """
+    if detrend is None:
+        return True if subtract_average_signal is None else bool(subtract_average_signal)
+    if subtract_average_signal:
+        raise ValueError(
+            f"{caller}: detrend= and subtract_average_signal=True are alternatives, "
+            "not a sequence — a fitted baseline already removes the mean, and a "
+            "callable baseline need not be mean-free. Pass detrend= alone (leave "
+            "subtract_average_signal unset) or pass subtract_average_signal=False "
+            "explicitly."
+        )
+    return False
+
+
 @dataclass
 class PreparedFFTSignal:
     """Preprocessed FFT time-domain input plus the calibration it enables.
@@ -219,18 +314,23 @@ def _prepare_fft_core(
     asymmetry: NDArray[np.float64],
     error: NDArray[np.float64] | None,
     *,
+    caller: str,
     window: str,
-    subtract_average_signal: bool,
+    subtract_average_signal: bool | None,
     filter_start_us: float,
     filter_time_constant_us: float,
     fractional: bool,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None,
 ) -> PreparedFFTSignal:
     """Preprocess an already-cropped ``(t, A, σ)`` triple for the FFT.
 
     The one implementation behind :func:`prepare_fft_time_signal` and
     :func:`prepare_fft_arrays`; the arrays arrive pre-cropped to the transform
-    window by :func:`_clip_fft_window`, so the two front doors cannot drift.
+    window by :func:`_clip_fft_window`, so the two front doors cannot drift, and
+    the baseline-removal and apodisation-safety behaviour reaches both paths
+    from one place.
     """
+    subtract_average = _resolve_baseline_removal(subtract_average_signal, detrend, caller=caller)
     times = np.asarray(time, dtype=np.float64)
     signal = np.asarray(asymmetry, dtype=np.float64).copy()
     err = np.asarray(error, dtype=np.float64) if error is not None else None
@@ -249,8 +349,10 @@ def _prepare_fft_core(
         # Degenerate baseline (empty/zero/negative mean): fall back to the raw
         # footing rather than dividing by ~0. The caller stamps a note.
 
-    if subtract_average_signal:
+    if subtract_average:
         signal = _subtract_average_signal(signal, err)
+    elif detrend is not None:
+        signal = signal - _detrend_baseline(times, signal, err, detrend, caller=caller)
 
     window_key = str(window).strip().lower()
     if window_key in {"none", "gaussian", "lorentzian"}:
@@ -281,10 +383,11 @@ def prepare_fft_time_signal(
     window: str = "none",
     t_min: float | None = None,
     t_max: float | None = None,
-    subtract_average_signal: bool = True,
+    subtract_average_signal: bool | None = None,
     filter_start_us: float = 0.0,
     filter_time_constant_us: float = 1.5,
     fractional: bool = False,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
 ) -> PreparedFFTSignal:
     """Return the preprocessed real time-domain signal and its calibration.
 
@@ -302,6 +405,31 @@ def prepare_fft_time_signal(
     ``N₀·(1 + A·cos)`` signal becomes ``1 + A·cos``; the subsequent average
     subtraction then removes the residual DC, leaving ``A·cos``.  This puts the
     spectrum on a fractional-asymmetry footing invariant to counting statistics.
+
+    Baseline removal
+    ----------------
+    ``subtract_average_signal`` removes a *constant* — WiMDA's error-weighted
+    average. A signal that relaxes across the record does not ride on a
+    constant, and the residual trend dumps power into the low-frequency bins,
+    where it can swamp a genuine line. ``detrend`` removes a trend instead:
+
+    * ``None`` (the default) — no detrend; ``subtract_average_signal`` behaves
+      exactly as it always has.
+    * an ``int`` ``n`` (``0 ≤ n ≤ 3``) — an **error-weighted least-squares
+      polynomial** of order ``n`` is fitted to the cropped, post-fractional
+      signal and subtracted. Keep the order low: a high-order polynomial fits
+      the oscillation itself, so orders above 3 are rejected rather than
+      silently deleting the line.
+    * a **callable** ``f(time) -> baseline`` — subtracted as given, for
+      removing a slow model fitted elsewhere. It receives the cropped time axis
+      and must return an array of the same shape.
+
+    ``detrend`` is applied **instead of** the average subtraction, not after it
+    (a fitted polynomial already subsumes the mean). ``subtract_average_signal``
+    therefore defaults to ``None``, meaning "the historical ``True``, unless
+    ``detrend`` takes over"; passing ``detrend=`` together with an explicit
+    ``subtract_average_signal=True`` raises :class:`ValueError` rather than
+    guessing an order for the two.
     """
     time, asymmetry, error = _clip_fft_window(
         dataset.time,
@@ -314,11 +442,13 @@ def prepare_fft_time_signal(
         time,
         asymmetry,
         error,
+        caller="prepare_fft_time_signal",
         window=window,
         subtract_average_signal=subtract_average_signal,
         filter_start_us=filter_start_us,
         filter_time_constant_us=filter_time_constant_us,
         fractional=fractional,
+        detrend=detrend,
     )
 
 
@@ -330,10 +460,11 @@ def prepare_fft_arrays(
     window: str = "none",
     t_min: float | None = None,
     t_max: float | None = None,
-    subtract_average_signal: bool = True,
+    subtract_average_signal: bool | None = None,
     filter_start_us: float = 0.0,
     filter_time_constant_us: float = 1.5,
     fractional: bool = False,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
 ) -> PreparedFFTSignal:
     """Preprocess a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
 
@@ -358,8 +489,9 @@ def prepare_fft_arrays(
         error-weighted average subtraction and the fractional baseline; omit it
         (``None``) and those fall back to their unweighted forms.
     window, t_min, t_max, subtract_average_signal, filter_start_us, \
-filter_time_constant_us, fractional
-        Exactly as documented on :func:`prepare_fft_time_signal`.
+filter_time_constant_us, fractional, detrend
+        Exactly as documented on :func:`prepare_fft_time_signal` (including its
+        "Baseline removal" section for ``detrend``).
         ``t_min``/``t_max`` crop the arrays with the same inclusive bounds
         :meth:`~asymmetry.core.data.dataset.MuonDataset.time_range` applies.
 
@@ -384,6 +516,7 @@ filter_time_constant_us, fractional
         filter_start_us=filter_start_us,
         filter_time_constant_us=filter_time_constant_us,
         fractional=fractional,
+        detrend=detrend,
     )
 
 
@@ -396,10 +529,11 @@ def _prepare_fft_arrays(
     window: str,
     t_min: float | None,
     t_max: float | None,
-    subtract_average_signal: bool,
+    subtract_average_signal: bool | None,
     filter_start_us: float,
     filter_time_constant_us: float,
     fractional: bool,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None,
 ) -> PreparedFFTSignal:
     """Validate, crop and preprocess a bare triple on behalf of *caller*.
 
@@ -420,11 +554,13 @@ def _prepare_fft_arrays(
         clipped_time,
         clipped_asym,
         clipped_err,
+        caller=caller,
         window=window,
         subtract_average_signal=subtract_average_signal,
         filter_start_us=filter_start_us,
         filter_time_constant_us=filter_time_constant_us,
         fractional=fractional,
+        detrend=detrend,
     )
 
 
@@ -436,12 +572,13 @@ def fft_complex_asymmetry(
     t_max: float | None = None,
     phase_degrees: float = 0.0,
     t0_offset_us: float = 0.0,
-    subtract_average_signal: bool = True,
+    subtract_average_signal: bool | None = None,
     filter_start_us: float = 0.0,
     filter_time_constant_us: float = 1.5,
     fractional: bool = False,
     amplitude_calibration: bool = False,
     diagnostics: dict | None = None,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
     """Compute the phase-rotated complex FFT of the asymmetry signal.
 
@@ -463,7 +600,8 @@ def fft_complex_asymmetry(
         frequency-dependent phase term ``exp(-i * 2π f t0)`` after the FFT.
     subtract_average_signal
         When true, subtract the WiMDA-style pre-FFT average signal before any
-        window is applied.
+        window is applied. Defaults to ``None``, which means ``True`` unless
+        ``detrend`` takes the baseline removal over.
     filter_start_us
         WiMDA-style filter start time in microseconds for ``"gaussian"`` and
         ``"lorentzian"`` FFT filtering.
@@ -485,6 +623,12 @@ def fft_complex_asymmetry(
         ``window_sum``, ``fractional_baseline``, ``fractional_applied`` and
         ``amplitude_calibrated`` used, so callers can stamp provenance/guard
         notes without a second pass.
+    detrend
+        Baseline removal for a signal that relaxes across the record:
+        ``None``, an integer polynomial order (``0``–``3``, fitted
+        error-weighted), or a callable ``f(time) -> baseline``. Applied
+        *instead of* ``subtract_average_signal`` — see "Baseline removal" in
+        :func:`prepare_fft_time_signal`.
 
     Returns
     -------
@@ -500,6 +644,7 @@ def fft_complex_asymmetry(
         filter_start_us=filter_start_us,
         filter_time_constant_us=filter_time_constant_us,
         fractional=fractional,
+        detrend=detrend,
     )
     return _fft_complex_core(
         prepared,
@@ -569,12 +714,13 @@ def fft_complex_arrays(
     t_max: float | None = None,
     phase_degrees: float = 0.0,
     t0_offset_us: float = 0.0,
-    subtract_average_signal: bool = True,
+    subtract_average_signal: bool | None = None,
     filter_start_us: float = 0.0,
     filter_time_constant_us: float = 1.5,
     fractional: bool = False,
     amplitude_calibration: bool = False,
     diagnostics: dict | None = None,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
     """Complex FFT of a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
 
@@ -595,7 +741,7 @@ def fft_complex_arrays(
         percent in, percent-scaled spectrum out.
     window, padding_factor, t_min, t_max, phase_degrees, t0_offset_us, \
 subtract_average_signal, filter_start_us, filter_time_constant_us, fractional, \
-amplitude_calibration, diagnostics
+amplitude_calibration, diagnostics, detrend
         Exactly as documented on :func:`fft_complex_asymmetry`, keyword-only
         here because ``error`` is optional.
 
@@ -621,6 +767,7 @@ amplitude_calibration, diagnostics
         fractional=fractional,
         amplitude_calibration=amplitude_calibration,
         diagnostics=diagnostics,
+        detrend=detrend,
     )
 
 
@@ -636,12 +783,13 @@ def _fft_complex_arrays(
     t_max: float | None,
     phase_degrees: float,
     t0_offset_us: float,
-    subtract_average_signal: bool,
+    subtract_average_signal: bool | None,
     filter_start_us: float,
     filter_time_constant_us: float,
     fractional: bool,
     amplitude_calibration: bool,
     diagnostics: dict | None,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None,
 ) -> tuple[NDArray[np.float64], NDArray[np.complex128]]:
     """Transform a bare triple on behalf of *caller* (whose name the guards use)."""
     prepared = _prepare_fft_arrays(
@@ -656,6 +804,7 @@ def _fft_complex_arrays(
         filter_start_us=filter_start_us,
         filter_time_constant_us=filter_time_constant_us,
         fractional=fractional,
+        detrend=detrend,
     )
     return _fft_complex_core(
         prepared,
@@ -675,11 +824,12 @@ def fft_asymmetry(
     t_max: float | None = None,
     phase_degrees: float = 0.0,
     t0_offset_us: float = 0.0,
-    subtract_average_signal: bool = True,
+    subtract_average_signal: bool | None = None,
     filter_start_us: float = 0.0,
     filter_time_constant_us: float = 1.5,
     fractional: bool = False,
     amplitude_calibration: bool = False,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Compute the FFT of the asymmetry signal.
 
@@ -702,13 +852,20 @@ def fft_asymmetry(
         derived.
     subtract_average_signal
         When true, subtract the WiMDA-style pre-FFT average signal before any
-        window is applied.
+        window is applied. Defaults to ``None``, which means ``True`` unless
+        ``detrend`` takes the baseline removal over.
     filter_start_us
         WiMDA-style filter start time in microseconds for ``"gaussian"`` and
         ``"lorentzian"`` FFT filtering.
     filter_time_constant_us
         WiMDA-style filter time constant in microseconds for ``"gaussian"`` and
         ``"lorentzian"`` FFT filtering.
+    detrend
+        Baseline removal for a signal that relaxes across the record:
+        ``None``, an integer polynomial order (``0``–``3``, fitted
+        error-weighted), or a callable ``f(time) -> baseline``. Applied
+        *instead of* ``subtract_average_signal`` — see "Baseline removal" in
+        :func:`prepare_fft_time_signal`.
 
     Returns
     -------
@@ -728,6 +885,7 @@ def fft_asymmetry(
         filter_time_constant_us=filter_time_constant_us,
         fractional=fractional,
         amplitude_calibration=amplitude_calibration,
+        detrend=detrend,
     )
 
     return freqs, spectrum.real, np.abs(spectrum)
@@ -744,11 +902,12 @@ def fft_arrays(
     t_max: float | None = None,
     phase_degrees: float = 0.0,
     t0_offset_us: float = 0.0,
-    subtract_average_signal: bool = True,
+    subtract_average_signal: bool | None = None,
     filter_start_us: float = 0.0,
     filter_time_constant_us: float = 1.5,
     fractional: bool = False,
     amplitude_calibration: bool = False,
+    detrend: int | Callable[[NDArray[np.float64]], NDArray[np.float64]] | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """FFT a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
 
@@ -766,7 +925,7 @@ def fft_arrays(
         percent in, percent-scaled spectrum out.
     window, padding_factor, t_min, t_max, phase_degrees, t0_offset_us, \
 subtract_average_signal, filter_start_us, filter_time_constant_us, fractional, \
-amplitude_calibration
+amplitude_calibration, detrend
         Exactly as documented on :func:`fft_asymmetry`, keyword-only here
         because ``error`` is optional.
 
@@ -797,6 +956,7 @@ amplitude_calibration
         fractional=fractional,
         amplitude_calibration=amplitude_calibration,
         diagnostics=None,
+        detrend=detrend,
     )
 
     return freqs, spectrum.real, np.abs(spectrum)
