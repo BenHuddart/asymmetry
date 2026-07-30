@@ -42,9 +42,9 @@ interpreter starts::
 
     OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 python -m your.analysis
 
-On a heavily damped 2000-point record that took CPU/wall from 6.7 to 0.9 **and
-wall-clock from 151 s to 131 s** — the oversubscription was costing time, not
-buying it. Bounding it in-process would need either a thread-pool control
+On that same record pinning took CPU/wall from ~17 to 1.0 **and wall-clock from
+153 s to 55 s** — the oversubscription was costing nearly three times the run,
+not buying anything. Bounding it in-process would need either a thread-pool control
 dependency the project does not carry or a rewrite of the line-shape kernel to
 stop materialising the (n_field x n_time) matrix; both are out of scope here and
 neither is a property of the pool, so this is documented rather than patched.
