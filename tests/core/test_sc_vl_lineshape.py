@@ -268,9 +268,11 @@ def test_grid_finer_than_reciprocal_range_is_rejected() -> None:
 
 def test_relaxation_hot_path_stays_cheap() -> None:
     """Perf regression guard: R(t) reduces over the n_bins histogram, not the
-    n_grid² grid, so a warm evaluation is milliseconds. Reverting to a per-grid-
-    point spatial average (~30x more work) blows this generous bound. The best of
-    several batches is taken so a one-off scheduler stall on CI cannot flake it."""
+    n_grid² grid, *and* it factors the uniform bin centres out instead of forming
+    the n_bins × N_t exponential matrix. Reverting either — to a per-grid-point
+    spatial average (~30x more work) or to the explicit matrix (~50x) — blows this
+    generous bound. The best of several batches is taken so a one-off scheduler
+    stall on CI cannot flake it."""
     import time
 
     t = np.linspace(0.0, 8.0, 500)
@@ -281,7 +283,9 @@ def test_relaxation_hot_path_stays_cheap() -> None:
         for _ in range(100):
             vortex_lattice_relaxation(t, 195.0, 400.0, 25.0, powder=True)
         best_ms = min(best_ms, (time.perf_counter() - start) / 100 * 1e3)
-    assert best_ms < 40.0  # actual ~5 ms; the pre-optimisation average was ~165 ms
+    # Actual ~0.1 ms. Was ~5 ms with the exponential matrix over the histogram,
+    # ~165 ms with the full real-space average, so 2 ms still has 20x headroom.
+    assert best_ms < 2.0
 
 
 def test_synthetic_round_trip_recovers_lambda() -> None:
