@@ -6,10 +6,12 @@ the opposite check — it measures how much early-time signal power an
 apodisation already in force has *removed*, and backs
 :class:`ApodisationEarlySignalWarning`, which the FFT prepare path raises when a
 symmetric taper (``hann``/``cosine``, zero at the record's ends) has deleted a
-heavily damped oscillation. That failure mode is concrete: a signal whose
-lifetime is a small fraction of the record can read as flat noise under Hann
-while being many-sigma with no window and a crop, or under the exponential
-("lorentzian") filter with ``filter_time_constant_us ≈ 1/λ``.
+heavily damped oscillation — including when that oscillation rides on a slowly
+relaxing tail whose own power would otherwise mask the loss. That failure mode
+is concrete: a signal whose lifetime is a small fraction of the record can read
+as flat noise under Hann while being many-sigma with no window and a crop, or
+under the exponential ("lorentzian") filter with
+``filter_time_constant_us ≈ 1/λ``.
 
 Advisory only — nothing in the core (or the GUI) ever applies a suggested
 filter automatically. A matched filter maximises a line's peak S/N at the cost
@@ -172,7 +174,10 @@ class ApodisationEarlySignalWarning(UserWarning):
 
     Raised by the shared FFT prepare core (so both the dataset and the array
     front doors carry it) when a front-loaded signal meets a symmetric taper
-    window. Advisory only: no returned value changes.
+    window — including the standard case where the damped oscillation rides on a
+    slowly relaxing tail that hides it from a whole-signal power statistic (see
+    :func:`early_signal_apodisation_loss`). Advisory only: no returned value
+    changes.
     """
 
 
@@ -184,16 +189,18 @@ class ApodisationEarlySignalWarning(UserWarning):
 #: an undamped signal puts only 15 % of its power inside it.
 _EARLY_WINDOW_FRACTION = 0.15
 
-#: Trigger condition 1: this much of the record's error-weighted power must
-#: live in the early window. With flat errors a signal alive across the whole
-#: record puts exactly ``_EARLY_WINDOW_FRACTION`` (0.15) of its power there —
-#: but real μSR errors grow with time as the counts decay, and the 1/σ²
+#: Trigger condition 1: this much of the error-weighted power must live in the
+#: early window, on either pass. With flat errors a signal alive across the
+#: whole record puts exactly ``_EARLY_WINDOW_FRACTION`` (0.15) of its power
+#: there — but real μSR errors grow with time as the counts decay, and the 1/σ²
 #: weighting tilts the statistic early on its own: an *undamped* line with
-#: ``σ ∝ e^{t/2τ_μ}`` over an 8 µs record already reads 0.43. The threshold has
-#: to clear that pure-weighting tilt, so it sits at 0.75, which an undamped or
-#: weakly damped line cannot reach and a lifetime well inside the record does
-#: comfortably (λ = 0.4 µs⁻¹ over 8 µs reads 0.78, λ = 60 µs⁻¹ over 0.3 µs
-#: reads 0.996).
+#: ``σ ∝ e^{t/2τ_μ}`` over a long record already reads 0.43, and 0.64 at a
+#: relaxation of 0.2 µs⁻¹. The threshold has to clear that pure-weighting tilt,
+#: so it sits at 0.75. The oscillatory pass leaves those benign cases untouched
+#: (a long-record line is unaffected by the slow-baseline subtraction, reading
+#: within 0.001 of its signal-pass value), so the same threshold serves both
+#: passes; what the second pass changes is the *damped* side, where a
+#: tail-diluted case moves from ~0.4 to ~0.99.
 _EARLY_POWER_CONCENTRATION_TRIGGER = 0.75
 
 #: Trigger condition 2: the window must keep no more than this share of that
@@ -203,13 +210,26 @@ _EARLY_POWER_CONCENTRATION_TRIGGER = 0.75
 #: gives ``∫e^{-4λt}/∫e^{-2λt} → 1/2`` — so the threshold has to sit well below
 #: 0.5, or the very cure the warning recommends would trip it. A Hann window on
 #: the same signal keeps ~1e-3. 0.2 splits those with more than a factor of two
-#: of margin on each side. Both thresholds are pinned by the synthetic study in
+#: of margin on each side; on the oscillatory pass the matched filter reads
+#: higher still (~0.54), so that pass has more margin, not less. Both thresholds
+#: are pinned by the synthetic study in
 #: ``tests/core/test_fourier_apodisation_guard.py``.
 _EARLY_RETAINED_POWER_TRIGGER = 0.2
 
 #: Below this many samples the early window holds too few bins for the power
 #: statistics to mean anything, and the guard stands down.
 _EARLY_GUARD_MIN_POINTS = 16
+
+#: The oscillatory pass is only consulted when the high-passed residual carries
+#: at least this share of the signal's own power. Below it the "oscillation" is
+#: discretisation dust left over from the slow-baseline subtraction, and a
+#: concentration ratio computed from dust is an arbitrary number that any taper's
+#: tiny retention would happily turn into a warning. The measured separation is
+#: wide: the synthetic must-fire cases carry 0.14–2.7 (the damped line is a real
+#: fraction of the record's power), while a smooth baseline with no oscillation
+#: at all leaves ≤ 4e-04 after odd-padded subtraction — so 5e-03 sits ~27x below
+#: the weakest genuine case and ~12x above the largest artefact.
+_OSCILLATORY_PASS_MIN_POWER_FRACTION = 5.0e-3
 
 #: Fast bail-out: when the window's smallest weight over the early portion is
 #: above this, it cannot have removed most of the early power, so the rest of
@@ -224,12 +244,89 @@ class EarlySignalApodisationLoss:
 
     #: Leading share of the record measured (``_EARLY_WINDOW_FRACTION``).
     early_window_fraction: float
-    #: Share of the pre-window signal's error-weighted power living there.
+    #: Share of the error-weighted power living there, on the deciding pass.
     early_power_fraction: float
     #: Share of *that* power the window keeps (1.0 = untouched, 0.0 = deleted).
     early_retained_fraction: float
-    #: True when both trigger conditions are met.
+    #: Which pass the reported numbers come from: ``"signal"`` for the signal's
+    #: own power, ``"oscillatory"`` for the power left after the slow baseline
+    #: is removed (see :func:`early_signal_apodisation_loss`).
+    measured_on: str
+    #: True when both trigger conditions are met on the reported pass.
     triggered: bool
+
+
+def _slow_baseline(values: np.ndarray, weights: np.ndarray, kernel_points: int) -> np.ndarray:
+    """Return an error-weighted centred moving mean of *values*.
+
+    The slow-baseline estimate the oscillatory pass subtracts. The kernel is
+    ``kernel_points`` wide in *samples* (truncated at the record's ends), and
+    each sample is weighted by ``weights`` so poorly-measured bins do not drag
+    the baseline — the same 1/σ² weighting the power statistic itself uses.
+
+    The record is **odd-padded** at both ends before the mean is taken — the
+    signal is extended antisymmetrically about its endpoint,
+    ``s[-i] = 2·s[0] − s[i]`` — rather than the window being truncated there.
+    This matters more than it sounds: a truncated window's mean at the first
+    sample is the mean over the *following* half-kernel, which for any sloped
+    baseline sits a systematic ``slope · k/4`` away from the true value. That
+    bias lands squarely inside the early window and is indistinguishable from
+    early-time signal, so a plain straight line — no curvature, nothing a
+    baseline removal could not take out — would produce a large "oscillatory"
+    residual concentrated at the start and trip the guard. Odd padding
+    reproduces a linear continuation exactly, so a straight line leaves
+    *nothing* behind and only genuine curvature survives.
+
+    Computed from cumulative sums, so it stays O(n) on records that can reach
+    several hundred thousand bins.
+    """
+    n = values.size
+    k = int(np.clip(kernel_points, 1, n))
+    pad = int(min(k // 2, n - 1))
+    if pad > 0:
+        padded_values = np.concatenate(
+            (
+                2.0 * values[0] - values[pad:0:-1],
+                values,
+                2.0 * values[-1] - values[-2 : -pad - 2 : -1],
+            )
+        )
+        padded_weights = np.concatenate((weights[pad:0:-1], weights, weights[-2 : -pad - 2 : -1]))
+    else:
+        padded_values, padded_weights = values, weights
+
+    cum_w = np.concatenate(([0.0], np.cumsum(padded_weights, dtype=np.float64)))
+    cum_ws = np.concatenate(([0.0], np.cumsum(padded_weights * padded_values, dtype=np.float64)))
+    total = padded_values.size
+    starts = np.clip(np.arange(pad, pad + n) - k // 2, 0, total)
+    stops = np.clip(starts + k, 0, total)
+    denominator = cum_w[stops] - cum_w[starts]
+    numerator = cum_ws[stops] - cum_ws[starts]
+    safe = denominator > 0.0
+    return np.where(safe, numerator / np.where(safe, denominator, 1.0), values)
+
+
+def _measure_early_loss(
+    power: np.ndarray, early_weights: np.ndarray, n_early: int, measured_on: str
+) -> EarlySignalApodisationLoss | None:
+    """Run the two-condition test over one power profile."""
+    total = float(np.sum(power, dtype=np.float64))
+    early = float(np.sum(power[:n_early], dtype=np.float64))
+    if not np.isfinite(total) or total <= 0.0 or early <= 0.0:
+        return None
+
+    retained = float(np.sum(power[:n_early] * np.square(early_weights), dtype=np.float64)) / early
+    early_fraction = early / total
+    return EarlySignalApodisationLoss(
+        early_window_fraction=float(_EARLY_WINDOW_FRACTION),
+        early_power_fraction=early_fraction,
+        early_retained_fraction=retained,
+        measured_on=measured_on,
+        triggered=(
+            early_fraction >= _EARLY_POWER_CONCENTRATION_TRIGGER
+            and retained <= _EARLY_RETAINED_POWER_TRIGGER
+        ),
+    )
 
 
 def early_signal_apodisation_loss(
@@ -247,16 +344,45 @@ def early_signal_apodisation_loss(
     so the well-measured bins dominate exactly as they do in a fit.
 
     Two numbers are computed over the leading ``_EARLY_WINDOW_FRACTION`` of the
-    record: how much of the signal's total power lives there
-    (``early_power_fraction``) and how much of that the window keeps
-    (``early_retained_fraction``). ``triggered`` is set when the power is
-    concentrated early *and* the window removes it — a heavily damped
-    oscillation under a symmetric taper, which the taper's zero at ``t = 0``
-    can erase entirely.
+    record: how much of the power lives there (``early_power_fraction``) and how
+    much of that the window keeps (``early_retained_fraction``). Both conditions
+    must hold to trigger — a heavily damped oscillation under a symmetric taper,
+    which the taper's zero at ``t = 0`` can erase entirely.
+
+    **The test runs twice**, and triggers if either pass fires:
+
+    ``"signal"``
+        The signal's own power, as measured.
+    ``"oscillatory"``
+        The power left after an error-weighted moving mean
+        (:func:`_slow_baseline`, kernel ``_EARLY_WINDOW_FRACTION`` of the record)
+        is subtracted — a high-pass that removes the slow component and leaves
+        the oscillation.
+
+    The second pass exists because a real ordered-state μSR curve is not a bare
+    damped cosine: it carries a slowly relaxing tail (the powder 1/3 tail) whose
+    amplitude can exceed the oscillation's. A constant or low-order baseline
+    removal cannot take out that tail's residual curvature, so its power spreads
+    across the whole record and *dilutes* the concentration statistic — the
+    signal pass then reads well under the trigger even when the window has
+    deleted essentially all of the oscillatory content. Subtracting the slow
+    baseline first asks the question the guard means to ask: where does the
+    *oscillatory* power live, and how much of it survives?
+
+    The oscillatory pass is skipped when its residual carries less than
+    ``_OSCILLATORY_PASS_MIN_POWER_FRACTION`` of the signal's power — there was
+    no oscillation to find, and a concentration ratio computed from
+    subtraction dust would be meaningless.
+
+    The kernel is wide enough to pass any oscillation with more than a handful
+    of cycles across the record. A very slow oscillation — fewer than about
+    ``1 / _EARLY_WINDOW_FRACTION`` (~7) cycles — is partly absorbed into the
+    baseline, which costs sensitivity on that pass only; the signal pass still
+    sees it, and a false negative is the safe direction for an advisory warning.
 
     Returns ``None`` when the measurement is not meaningful: too few samples,
-    mismatched shapes, no finite power, or an apodisation that plainly cannot
-    have done damage.
+    mismatched shapes, no finite power on either pass, or an apodisation that
+    plainly cannot have done damage.
     """
     times = np.asarray(time_us, dtype=np.float64)
     values = np.asarray(signal, dtype=np.float64)
@@ -272,31 +398,46 @@ def early_signal_apodisation_loss(
     if float(np.min(early_weights)) > _EARLY_GUARD_MIN_WEIGHT_TO_CHECK:
         return None
 
-    power = np.square(values)
+    finite = np.isfinite(values)
+    clean = np.where(finite, values, 0.0)
+    inverse_variance = np.ones(n, dtype=np.float64)
     if error is not None:
         sigma = np.asarray(error, dtype=np.float64)
         if sigma.shape == values.shape:
-            usable = np.isfinite(sigma) & (sigma > 0.0)
+            usable = finite & np.isfinite(sigma) & (sigma > 0.0)
             if np.any(usable):
-                power = np.where(usable, np.square(values / np.where(usable, sigma, 1.0)), 0.0)
-    power = np.where(np.isfinite(power), power, 0.0)
+                inverse_variance = np.where(
+                    usable, 1.0 / np.square(np.where(usable, sigma, 1.0)), 0.0
+                )
+    power = np.where(np.isfinite(clean), np.square(clean) * inverse_variance, 0.0)
 
-    total = float(np.sum(power, dtype=np.float64))
-    early = float(np.sum(power[:n_early], dtype=np.float64))
-    if not np.isfinite(total) or total <= 0.0 or early <= 0.0:
-        return None
-
-    retained = float(np.sum(power[:n_early] * np.square(early_weights), dtype=np.float64)) / early
-    early_fraction = early / total
-    return EarlySignalApodisationLoss(
-        early_window_fraction=float(_EARLY_WINDOW_FRACTION),
-        early_power_fraction=early_fraction,
-        early_retained_fraction=retained,
-        triggered=(
-            early_fraction >= _EARLY_POWER_CONCENTRATION_TRIGGER
-            and retained <= _EARLY_RETAINED_POWER_TRIGGER
-        ),
+    oscillatory = clean - _slow_baseline(clean, inverse_variance, n_early)
+    oscillatory_power = np.where(
+        np.isfinite(oscillatory), np.square(oscillatory) * inverse_variance, 0.0
     )
+
+    signal_total = float(np.sum(power, dtype=np.float64))
+    oscillatory_total = float(np.sum(oscillatory_power, dtype=np.float64))
+    oscillatory_is_real = (
+        signal_total > 0.0
+        and oscillatory_total >= _OSCILLATORY_PASS_MIN_POWER_FRACTION * signal_total
+    )
+
+    passes = [
+        _measure_early_loss(power, early_weights, n_early, "signal"),
+        _measure_early_loss(oscillatory_power, early_weights, n_early, "oscillatory")
+        if oscillatory_is_real
+        else None,
+    ]
+    measured = [entry for entry in passes if entry is not None]
+    if not measured:
+        return None
+    # Report the pass that fired; when neither does, the signal pass is the
+    # plain description of what happened.
+    for entry in measured:
+        if entry.triggered:
+            return entry
+    return measured[0]
 
 
 @dataclass(frozen=True)

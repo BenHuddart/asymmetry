@@ -227,12 +227,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `filter_time_constant_us ≈ 1/λ`, which is weight-1 at `t = 0` and is the
   matched apodisation for a Lorentzian line. No returned value changes, and the
   guard reaches the dataset and array paths alike because it lives in the core
-  they share. The thresholds come from a synthetic study documented and pinned
-  in the tests: the binding constraints are the matched exponential filter,
-  which keeps ~½ of the early power and must not trip the warning it is
-  recommended by, and realistic `1/σ²` error growth, which tilts the
-  concentration statistic to 0.43 on an *undamped* record before any damping at
-  all. Every apodisation-adjacent docstring and the Fourier reference page now
+  they share. The test is applied **twice** — once to the signal's own power and
+  once to the power left after a slow baseline is subtracted — and fires if
+  either pass does. The second pass is what makes the guard work on real data: an
+  ordered-state record is never a bare damped cosine, its oscillation rides on a
+  slowly relaxing tail (the powder tail) whose residual curvature no constant or
+  low-order baseline removal takes out, and that tail's power spreads across the
+  record and *dilutes* the concentration statistic. A record whose taper had kept
+  a ten-thousandth of the oscillatory content still measured 0.41 on the
+  whole-signal statistic and stayed silent; on the high-passed one it measures
+  0.998. The slow baseline is an error-weighted moving mean, kernel-width the
+  early window, **odd-padded** at both ends: with a truncated kernel the mean at
+  the first sample is the mean of the following half-kernel, a systematic
+  `slope · k/4` error landing inside the early window that made a plain straight
+  line — no curvature at all — leave a residual concentrated 80 % early and trip
+  the guard. The high-passed pass is skipped entirely when its residual carries
+  under 0.5 % of the signal's power, so subtraction dust can never decide. The
+  thresholds come from a synthetic study documented and pinned in the tests: the
+  binding constraints are the exponential filter, which keeps ~½ of the early
+  power at the matched `τ = 1/λ` and a third even at `τ = 0.5/λ` and must not trip
+  the warning it is recommended by, and realistic `1/σ²` error growth, which
+  tilts the concentration statistic to 0.43 on an *undamped* record before any
+  damping at all. Noise sensitivity improves as a side effect, from a per-bin
+  peak SNR of ~16 to ~8, and no longer depends on whether a tail is present.
+  Every apodisation-adjacent docstring and the Fourier reference page now
   separate the weight-1-at-`t = 0` filters from the tapers and state the failure
   mode concretely, and `suggest_matched_apodisation` carries the caveat that it
   cannot see a dead time-domain envelope. The fit wizard's and peak detector's

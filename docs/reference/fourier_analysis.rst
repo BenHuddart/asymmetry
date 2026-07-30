@@ -335,18 +335,44 @@ you are fighting. For a heavily damped line use one of:
   read a width off it — see the note at the top of this page).
 
 Asymmetry checks for this case actively. After apodisation, the shared FFT
-preprocessing measures how much of the signal's error-weighted power lies in
-the leading 15 % of the record and how much of that power the window keeps;
-when the power is concentrated early (≥ 75 %) *and* the window removes most of
-it (keeps ≤ 20 %), it raises
+preprocessing measures how much of the error-weighted power lies in the leading
+15 % of the record and how much of that power the window keeps; when the power
+is concentrated early (≥ 75 %) *and* the window removes most of it (keeps
+≤ 20 %), it raises
 :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`
 naming both numbers and both alternatives. The warning is advisory — nothing
 about the returned spectrum changes — and it reaches the dataset and array
 front doors alike, because it lives in the preprocessing they share. The
-thresholds are calibrated so that ``window="none"`` and the matched exponential
-filter (which keeps ~half the early power by construction) never trip it, and
-neither does a conventional transverse-field record whose line is alive across
-the whole window.
+thresholds are calibrated so that ``window="none"`` and the exponential filter
+(which keeps ~half the early power at the matched τ = 1/λ, and a third of it
+even at τ = 0.5/λ) never trip it, and neither does a conventional
+transverse-field record whose line is alive across the whole window.
+
+That test is applied **twice**: once to the signal's own power, and once to the
+power that remains after a slow baseline is subtracted. The second pass is the
+one that matters in practice, because a real ordered-state record is never a
+bare damped cosine — the oscillation rides on a slowly relaxing tail (the
+powder tail), often of larger amplitude. No constant or low-order baseline
+removal takes out that tail's residual curvature, so its power spreads across
+the whole record and *dilutes* the concentration statistic: a record whose
+taper had kept a ten-thousandth of the oscillatory content still read only 0.41
+on the whole-signal measure, well under the trigger. Removing the slow
+component first asks the question the guard means to ask — where does the
+*oscillatory* power live, and how much of it survives? — and the same record
+then reads 0.998.
+
+.. note::
+
+   The slow baseline is an error-weighted moving mean whose kernel spans the
+   early window (15 % of the record), so it passes any oscillation with more
+   than a handful of cycles across the record while tracking the tail. A very
+   slow oscillation — fewer than about seven cycles — is partly absorbed into
+   the baseline and so is less visible to that pass; the whole-signal pass
+   still sees it, and a missed warning is the safe direction for an advisory
+   check. The guard also stands down on a low signal-to-noise record: it
+   measures a *time-domain* power concentration, which a per-bin noise pedestal
+   flattens. In testing it fires down to a per-bin peak signal-to-noise of
+   roughly eight.
 
 Matched-filter suggestion
 ~~~~~~~~~~~~~~~~~~~~~~~~~
