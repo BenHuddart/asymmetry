@@ -239,6 +239,25 @@ _UNIFORM_T_RTOL = 1.0e-9
 _CZT_MIN_BINS = 128
 
 
+# Measured on the realistic minimiser pattern — λ different on every call, so the
+# p(B) histogram lru_cache misses every time, as it does during an iminuit line
+# search — powder line at (λ=195 nm, B0=400 G, Bc2=25 T), ms per call, against
+# the retained `_reference_relaxation` (the pre-optimisation body):
+#
+#     axis                     before     after   speedup
+#     uniform      N_t=1024    15.09      0.27      56x     (czt)
+#     uniform      N_t=4096    56.70      0.87      65x     (czt)
+#     uniform      N_t=8192   100.81      1.12      90x     (czt)
+#     non-uniform  N_t=1024    15.36      0.94      16x     (Horner)
+#     non-uniform  N_t=4096    56.93      1.62      35x     (Horner)
+#     non-uniform  N_t=8192   103.81      2.78      37x     (Horner)
+#
+# End to end a six-parameter curve_fit of the powder component runs 25× (N_t=400)
+# to 50× (N_t=8192) faster, at an identical fitted λ_ab (≤4e-7 nm apart).
+# The rest of a cache-missing call is now the p(B) rebuild — 0.14 ms for the 96²
+# ifft2 field map plus the Brandt calibration, 0.27 ms including the 9216-point
+# histogram, against 0.30 ms for the characteristic function itself at N_t=4096.
+# Both were negligible before this change and neither is worth optimising now.
 def _characteristic_function(
     centres: ArrayLikeFloat,
     weights: ArrayLikeFloat,

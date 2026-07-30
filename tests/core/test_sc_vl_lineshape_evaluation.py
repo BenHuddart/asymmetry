@@ -165,6 +165,55 @@ def test_single_bin_histogram_is_a_pure_phase() -> None:
     assert np.abs(new - ref).max() < 1.0e-13
 
 
+def test_fitted_lambda_is_identical_through_either_evaluator() -> None:
+    """The whole point: a real fit returns the same λ_ab through the fast
+    evaluator and through the pre-optimisation definition.
+
+    ``test_sc_vl_lineshape.test_fitted_lambda_unchanged_vs_full_average`` already
+    pins the fit against the full real-space average at 0.5 nm; this pins it
+    against the *exact same* histogram sum, where any difference can only come
+    from the evaluator, so the tolerance is five orders of magnitude tighter.
+    """
+    from scipy.optimize import curve_fit
+
+    from asymmetry.core.fitting.sc.lineshape import vortex_lattice_powder_component
+    from asymmetry.core.utils.constants import (
+        GAUSS_TO_TESLA,
+        MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
+    )
+
+    t = np.linspace(0.0, 8.0, 400)
+    true_lam, B0, Bc2 = 195.0, 400.0, 25.0
+    freq = MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA * B0
+    rng = np.random.default_rng(7)
+    nuclear = np.exp(-0.5 * (0.20 * t) ** 2)
+    signal = (
+        vortex_lattice_powder_component(t, 18.0, B0, 0.3, true_lam, Bc2) * nuclear
+        + 3.0 * np.cos(2 * np.pi * freq * t + 0.3)
+        + 0.4
+    )
+    y = signal + rng.normal(0.0, 0.15, t.size)
+    err = np.full_like(t, 0.15)
+
+    def make_model(relax):
+        def model(tt, amp, lam, phi, sig_n, a_bg, c):
+            nu = np.exp(-0.5 * (sig_n * tt) ** 2)
+            carrier = np.exp(1j * (2 * np.pi * freq * tt + phi))
+            vl = amp * np.real(carrier * relax(tt, lam, B0, Bc2, powder=True)) * nu
+            return vl + a_bg * np.cos(2 * np.pi * freq * tt + phi) + c
+
+        return model
+
+    p0 = [15.0, 230.0, 0.0, 0.25, 2.0, 0.0]
+    bounds = ([0, 120, -np.pi, 0, 0, -2], [50, 360, np.pi, 1, 20, 2])
+    kwargs = {"p0": p0, "sigma": err, "bounds": bounds, "maxfev": 40000}
+    fast, _ = curve_fit(make_model(vortex_lattice_relaxation), t, y, **kwargs)
+    ref, _ = curve_fit(make_model(_reference_relaxation), t, y, **kwargs)
+    # Measured difference is ~3e-8 nm — pure minimiser path sensitivity.
+    assert abs(fast[1] - ref[1]) < 1.0e-4
+    assert np.abs(fast - ref).max() < 1.0e-4
+
+
 def test_no_large_intermediate_is_materialised() -> None:
     """The point of the rewrite: peak allocation is O(N_t), not O(n_bins·N_t).
 
