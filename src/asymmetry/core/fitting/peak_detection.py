@@ -64,18 +64,97 @@ _MIN_WINDOW_POINTS = 32
 #: overlapping leakage tails routinely lift the first sidelobe past it.
 _SIDELOBE_CEILING = 0.05
 _SIDELOBE_ANCHOR_RESOLUTIONS = 3.0
+_SIDELOBE_EXPONENT = 3.0
+
+#: Rectangular (unwindowed) leakage, used by the early-window pass: a boxcar's
+#: worst sidelobe is -13.3 dB (~22 % of the main lobe) at ~1.4 resolution
+#: elements and decays at only -6 dB/octave — two orders of magnitude worse than
+#: Hann near the line and far slower far from it.  Applying the Hann profile to
+#: an unwindowed crop mistook a strong slow line's sinc tails for real lines
+#: (the first two peak-detection regression tests caught exactly this).  As with
+#: the Hann ceiling the level carries headroom over the textbook envelope
+#: (``1/(pi·Δ/resolution)``), here ~3×: measured leakage ran at 1.5-2.2× the
+#: single-line envelope on crops holding a strong line that completes only one
+#: or two cycles, because two truncated lines' tails add and the first-order
+#: detrend leaves its own step-like residual.
+_RECT_SIDELOBE_CEILING = 0.65
+_RECT_SIDELOBE_ANCHOR_RESOLUTIONS = 1.5
+_RECT_SIDELOBE_EXPONENT = 1.0
+
+#: Leakage profiles selectable on :func:`detect_peaks_in_spectrum`:
+#: ``(ceiling, anchor_resolutions, exponent)``.
+_LEAKAGE_PROFILES: dict[str, tuple[float, float, float]] = {
+    "hann": (_SIDELOBE_CEILING, _SIDELOBE_ANCHOR_RESOLUTIONS, _SIDELOBE_EXPONENT),
+    "rect": (
+        _RECT_SIDELOBE_CEILING,
+        _RECT_SIDELOBE_ANCHOR_RESOLUTIONS,
+        _RECT_SIDELOBE_EXPONENT,
+    ),
+}
+
+# --------------------------------------------------------------------------- #
+# Early-window (damped-line) pass — constants settled by the synthetic study
+# documented on :func:`analyze_early_window_peaks`.
+# --------------------------------------------------------------------------- #
+
+#: Crop ladder for the early pass, as divisors of the SNR-truncated record.
+#: Fractions of the record rather than absolute times, so the ladder scales with
+#: the run's duration instead of its binning.  Two rungs: study step 1 on
+#: :func:`analyze_early_window_peaks` records why both longer and shorter rungs
+#: were dropped.
+_EARLY_CROP_DIVISORS = (16, 64)
+
+#: Never crop below this many points: a shorter transform has too few
+#: independent bins for the noise floor to mean anything.
+_EARLY_MIN_POINTS = 24
+
+#: DC/Nyquist guard band for the early pass, in resolution elements (the Hann
+#: pass keeps its historical 0.5).  On a short unwindowed crop the running
+#: median floor is edge-biased low at both ends and the final ``rfft`` bin is
+#: real-only, so noise excursions in the outermost resolution elements cleared
+#: the gate far more often than the look-elsewhere correction allows for.
+_EARLY_GUARD_RESOLUTIONS = 3.0
+
+#: A line must complete this many cycles inside the crop to be an early-pass
+#: candidate.  Below that it is not a resolvable oscillation in that crop, and
+#: the region is exactly where the residual curvature of the relaxing tail —
+#: what a first-order detrend leaves behind — piles up.
+_EARLY_MIN_CYCLES_IN_CROP = 4.0
+
+#: Peaks kept per crop before the cross-crop dedupe.
+_EARLY_MAX_PEAKS_PER_CROP = 3
+
+#: Re-derived SNR gate for the early pass — NOT inherited from the Hann pass.
+#: The early pass runs on a short, noisy, unwindowed crop with far fewer
+#: resolution elements, so the look-elsewhere correction that governs the Hann
+#: pass does not transfer.  Set from the null study (step 3): across 1400 draws
+#: of three signal-free / oscillation-free record types the largest early-pass
+#: SNR was 5.31, so the gate sits above it with margin and the measured
+#: false-seed count at this threshold is zero on every null family.
+_EARLY_MIN_SNR = 6.0
+
+#: Early-pass additions guaranteed a slot in the merged peak set even when the
+#: Hann pass already filled ``max_peaks``.  A full Hann peak set must not be
+#: able to starve the pass that exists precisely to see what Hann cannot.
+_EARLY_RESERVED_PEAKS = 2
 
 
-def _sidelobe_ceiling(delta_mhz: float, resolution_mhz: float) -> float:
+def _sidelobe_ceiling(
+    delta_mhz: float,
+    resolution_mhz: float,
+    profile: tuple[float, float, float] = _LEAKAGE_PROFILES["hann"],
+) -> float:
     """Max amplitude ratio a genuine line needs at ``delta_mhz`` from a stronger one.
 
-    Anchored just above the Hann window's worst sidelobe (-31.5 dB near the main
-    lobe) and rolled off as ``delta^-3`` (the window's -18 dB/octave sidelobe
-    decay), so leakage structure is rejected while genuine weak lines — which sit
-    above the local sidelobe level — survive at any separation.
+    Anchored just above the analysis window's worst sidelobe and rolled off at
+    that window's sidelobe decay, so leakage structure is rejected while genuine
+    weak lines — which sit above the local sidelobe level — survive at any
+    separation.  The Hann profile (-31.5 dB, -18 dB/octave, hence ``delta^-3``)
+    is the default; the early-window pass selects the rectangular one.
     """
-    anchor = _SIDELOBE_ANCHOR_RESOLUTIONS * resolution_mhz
-    return _SIDELOBE_CEILING * (anchor / max(delta_mhz, anchor)) ** 3
+    ceiling, anchor_resolutions, exponent = profile
+    anchor = anchor_resolutions * resolution_mhz
+    return ceiling * (anchor / max(delta_mhz, anchor)) ** exponent
 
 
 @dataclass(frozen=True)
@@ -96,10 +175,18 @@ class DetectedPeak:
     prominence
         Peak prominence from ``scipy.signal.find_peaks``.
     source
-        Provenance: ``"fft"``, ``"residual_fft"`` or ``"user"``.
+        Provenance: ``"fft"``, ``"residual_fft"``, ``"early_fft"`` or
+        ``"user"``.  An ``"early_fft"`` SNR is measured on a short unwindowed
+        crop against a different noise floor and is **not** comparable with an
+        ``"fft"`` SNR from the full record — rank within a pass, never across.
     burg_confirmed
         ``True``/``False`` when a Burg cross-check ran and did / did not find a
         matching all-poles local maximum; ``None`` when no cross-check ran.
+        Always ``None`` for ``"early_fft"`` peaks: Burg is scoped to the Hann
+        pass (it is unreliable on short, heavily damped windows).
+    crop_us
+        Duration of the early-window crop that found this peak, in µs; its
+        spectral resolution is ``1/crop_us``.  ``None`` for every other source.
     """
 
     frequency_mhz: float
@@ -109,6 +196,7 @@ class DetectedPeak:
     prominence: float
     source: str
     burg_confirmed: bool | None = None
+    crop_us: float | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +231,7 @@ def serialize_detected_peak(peak: DetectedPeak) -> dict[str, object]:
         "prominence": float(peak.prominence),
         "source": str(peak.source),
         "burg_confirmed": peak.burg_confirmed,
+        "crop_us": (float(peak.crop_us) if peak.crop_us is not None else None),
     }
 
 
@@ -151,6 +240,7 @@ def deserialize_detected_peak(payload: object) -> DetectedPeak | None:
     if not isinstance(payload, dict):
         return None
     burg = payload.get("burg_confirmed", None)
+    crop = payload.get("crop_us", None)
     return DetectedPeak(
         frequency_mhz=float(payload.get("frequency_mhz", 0.0)),
         amplitude=float(payload.get("amplitude", 0.0)),
@@ -159,6 +249,7 @@ def deserialize_detected_peak(payload: object) -> DetectedPeak | None:
         prominence=float(payload.get("prominence", 0.0)),
         source=str(payload.get("source", "fft")),
         burg_confirmed=(bool(burg) if burg is not None else None),
+        crop_us=(float(crop) if crop is not None else None),
     )
 
 
@@ -259,6 +350,43 @@ def _local_noise_floor(
     return floor
 
 
+def _global_noise_floor(in_band: NDArray[np.float64]) -> float:
+    """One sigma-clipped median floor for a whole (short) spectrum.
+
+    The running-median floor of :func:`_local_noise_floor` estimates the noise
+    *near* each bin, which is right for a long record where the floor varies
+    across the band.  On a short early-window crop it is wrong twice over: the
+    band holds only ~10-50 resolution elements, so a median window spanning
+    eight of them sits largely inside the line it is supposed to be a floor
+    *for*, and a heavily damped line is a broad Lorentzian whose own skirt then
+    becomes its "noise".  Measured consequence (study step 2): the local-floor
+    SNR of a damped line saturated near 5 however much its amplitude was
+    raised — it had become a line-shape ratio, not a significance — while pure
+    noise reached 6.4, so no threshold separated signal from noise at all.  A
+    single clipped median over the guarded band restores an
+    amplitude-proportional statistic (SNR ∝ amplitude across an 8× sweep) and
+    drops the pure-noise maximum below the weakest real detection.
+    """
+    values = np.asarray(in_band, dtype=float)
+    if values.size == 0:
+        return 0.0
+    floor = float(np.median(values))
+    for _ in range(3):
+        residual = values - floor
+        mad = float(np.median(np.abs(residual - np.median(residual))))
+        sigma = 1.4826 * mad
+        if sigma <= _EPS:
+            break
+        kept = values[residual <= 3.0 * sigma]
+        if kept.size < 5:
+            break
+        updated = float(np.median(kept))
+        if abs(updated - floor) <= _EPS:
+            break
+        floor = updated
+    return floor
+
+
 def _parabolic_interpolation(log_mag: NDArray[np.float64], idx: int) -> tuple[float, float]:
     """3-point parabolic vertex offset and interpolated log-amplitude at ``idx``.
 
@@ -296,6 +424,11 @@ def detect_peaks_in_spectrum(
     max_peaks: int = 6,
     min_snr: float = 2.5,
     source: str = "fft",
+    min_frequency_mhz: float = 0.0,
+    guard_resolutions: float = 0.5,
+    noise_floor_scope: str = "local",
+    leakage_profile: str = "hann",
+    crop_us: float | None = None,
 ) -> PeakAnalysis:
     """Detect spectral lines in a positive-frequency magnitude spectrum.
 
@@ -308,6 +441,32 @@ def detect_peaks_in_spectrum(
         ``df`` when the spectrum is zero-padded.
     max_peaks, min_snr, source
         Cap, SNR threshold and provenance tag.
+    min_frequency_mhz
+        Extra low-frequency guard, widening the default DC guard.  Used by the
+        early-window pass, where an unwindowed short crop of a relaxing record
+        leaves residual trend curvature in the first couple of resolution
+        elements; a line that completes only a cycle or two inside such a crop
+        is not a resolvable oscillation there in any case.
+    guard_resolutions
+        Width of the DC and Nyquist guard bands in resolution elements.  The
+        default ``0.5`` is the historical Hann-pass value.  The early-window
+        pass widens it (see :func:`analyze_dataset_peaks`): on a short
+        unwindowed crop the running-median noise floor is edge-biased low at
+        both ends of the spectrum, and the last bin of an ``rfft`` is real-only
+        (half-normal, not Rayleigh), so noise excursions in the outermost few
+        resolution elements clear the SNR gate far more often than the
+        look-elsewhere correction allows for.
+    noise_floor_scope
+        ``"local"`` (default, the historical running-median floor) or
+        ``"global"`` — one sigma-clipped median over the guarded band, which is
+        what a short crop needs (see :func:`_global_noise_floor`).
+    leakage_profile
+        ``"hann"`` (default) or ``"rect"`` — which window's sidelobe envelope the
+        leakage guard rejects against (see :func:`_sidelobe_ceiling`).  The
+        early-window pass transforms unwindowed and must use ``"rect"``.
+    crop_us
+        Stamped onto every returned peak's :attr:`DetectedPeak.crop_us` for
+        provenance; the early-window pass passes its crop duration here.
 
     Returns
     -------
@@ -339,8 +498,19 @@ def detect_peaks_in_spectrum(
     # relaxation/leakage hump at the bottom edge; the mirrored top-edge guard
     # rejects artifact lines hard against Nyquist (aliased structure, filter
     # roll-off), which — like DC — carry no genuine oscillation frequency.
-    guard = max(3.0 * df, 0.5 * resolution_mhz)
-    valid = (freqs > guard) & (freqs < nyquist - guard)
+    guard = max(3.0 * df, float(guard_resolutions) * resolution_mhz)
+    low_guard = max(guard, float(min_frequency_mhz))
+    valid = (freqs > low_guard) & (freqs < nyquist - guard)
+    # Leakage parents may live BELOW the reporting band: when the guards are
+    # widened (``min_frequency_mhz`` / ``guard_resolutions``, i.e. the early
+    # pass), the strong low line — or the residual trend hump at DC — whose
+    # sidelobes we are rejecting is itself outside the reported band, and a guard
+    # that only knows about reported peaks cannot attribute the leakage to
+    # anything.  The leakage guard therefore sees everything above the bare
+    # DC-bin guard, while only the reporting band is returned.  With the default
+    # guards ``parent_valid`` is exactly ``valid``, so the Hann pass is unchanged.
+    parent_guard = 3.0 * df
+    parent_valid = (freqs > parent_guard) & (freqs < nyquist - parent_guard)
     empty = PeakAnalysis(
         peaks=(),
         noise_floor=0.0,
@@ -352,7 +522,10 @@ def detect_peaks_in_spectrum(
         return empty
 
     bins_per_resolution = max(1, int(round(resolution_mhz / df)))
-    local_floor = _local_noise_floor(mags, bins_per_resolution)
+    if str(noise_floor_scope).strip().lower() == "global":
+        local_floor = np.full_like(mags, _global_noise_floor(mags[valid]))
+    else:
+        local_floor = _local_noise_floor(mags, bins_per_resolution)
     representative_floor = float(np.median(local_floor[valid]))
 
     # Look-elsewhere-corrected SNR gate.  For Gaussian time-domain noise the
@@ -360,7 +533,7 @@ def detect_peaks_in_spectrum(
     # ~n_res independent resolution elements the tallest noise excursion
     # reaches ~sqrt(log2(n_res)) median units; gate at the level where the
     # expected false-peak count is _FALSE_PEAK_RATE.
-    span = float(freqs[-1] - guard)
+    span = float(freqs[-1] - low_guard)
     n_res = max(2.0, span / resolution_mhz)
     adaptive_min_snr = float(np.sqrt(np.log2(n_res / _FALSE_PEAK_RATE)))
     effective_min_snr = max(float(min_snr), adaptive_min_snr)
@@ -373,8 +546,9 @@ def detect_peaks_in_spectrum(
         find_kwargs["prominence"] = prominence
     peak_indices, properties = find_peaks(mags, **find_kwargs)
 
-    # Restrict to the guarded positive band.
-    keep = valid[peak_indices]
+    # Restrict to the guarded positive band (plus any sub-guard leakage parents).
+    keep = parent_valid[peak_indices]
+    reported = valid[peak_indices][keep]
     peak_indices = peak_indices[keep]
     if peak_indices.size == 0:
         return replace(empty, noise_floor=representative_floor)
@@ -389,8 +563,9 @@ def detect_peaks_in_spectrum(
     widths_samples, _wh, _lips, _rips = peak_widths(mags, peak_indices, rel_height=0.5)
 
     log_mag = np.log(np.maximum(mags, _EPS))
+    profile = _LEAKAGE_PROFILES.get(str(leakage_profile).strip().lower(), _LEAKAGE_PROFILES["hann"])
 
-    detected: list[DetectedPeak] = []
+    candidates: list[tuple[DetectedPeak, bool]] = []
     for k, idx in enumerate(peak_indices):
         idx = int(idx)
         delta_bins, peak_log = _parabolic_interpolation(log_mag, idx)
@@ -401,33 +576,43 @@ def detect_peaks_in_spectrum(
         if snr < effective_min_snr:
             continue
         width_mhz = float(max(widths_samples[k], 0.0) * df)
-        detected.append(
-            DetectedPeak(
-                frequency_mhz=freq,
-                amplitude=amplitude,
-                snr=float(snr),
-                width_mhz=width_mhz,
-                prominence=float(prominences[k]),
-                source=source,
+        candidates.append(
+            (
+                DetectedPeak(
+                    frequency_mhz=freq,
+                    amplitude=amplitude,
+                    snr=float(snr),
+                    width_mhz=width_mhz,
+                    prominence=float(prominences[k]),
+                    source=source,
+                    crop_us=(float(crop_us) if crop_us is not None else None),
+                ),
+                bool(reported[k]),
             )
         )
 
     # Windowing-leakage guard: walk peaks strongest-first and drop any peak
     # sitting below the sidelobe ceiling of an already-accepted stronger line.
-    detected.sort(key=lambda p: p.amplitude, reverse=True)
+    candidates.sort(key=lambda entry: entry[0].amplitude, reverse=True)
     accepted: list[DetectedPeak] = []
-    for peak in detected:
+    surviving: list[DetectedPeak] = []
+    for peak, is_reported in candidates:
         is_sidelobe = any(
             peak.amplitude
             < other.amplitude
-            * _sidelobe_ceiling(abs(peak.frequency_mhz - other.frequency_mhz), resolution_mhz)
+            * _sidelobe_ceiling(
+                abs(peak.frequency_mhz - other.frequency_mhz), resolution_mhz, profile
+            )
             for other in accepted
         )
-        if not is_sidelobe:
-            accepted.append(peak)
+        if is_sidelobe:
+            continue
+        accepted.append(peak)
+        if is_reported:
+            surviving.append(peak)
 
-    accepted.sort(key=lambda p: p.snr, reverse=True)
-    detected = accepted[: max(0, int(max_peaks))]
+    surviving.sort(key=lambda p: p.snr, reverse=True)
+    detected = surviving[: max(0, int(max_peaks))]
 
     return PeakAnalysis(
         peaks=tuple(detected),
@@ -507,6 +692,230 @@ def _centered_signal(
     return y - tail, False
 
 
+def early_window_crops(n_points: int) -> tuple[int, ...]:
+    """Point counts of the early-window crop ladder for an ``n_points`` record.
+
+    Each rung is ``n_points // divisor`` for the divisors in
+    ``_EARLY_CROP_DIVISORS``, floored at ``_EARLY_MIN_POINTS`` and de-duplicated,
+    so a short record collapses the ladder rather than transforming the same crop
+    several times.
+    """
+    crops: list[int] = []
+    total = int(n_points)
+    for divisor in _EARLY_CROP_DIVISORS:
+        crop = int(round(total / divisor))
+        crop = min(max(crop, _EARLY_MIN_POINTS), total)
+        if crops and crop == crops[-1]:
+            continue
+        crops.append(crop)
+    return tuple(crops)
+
+
+def analyze_early_window_peaks(
+    time: NDArray[np.float64],
+    signal: NDArray[np.float64],
+    error: NDArray[np.float64],
+    *,
+    max_peaks: int = _EARLY_MAX_PEAKS_PER_CROP,
+    min_snr: float = _EARLY_MIN_SNR,
+) -> PeakAnalysis:
+    """Find heavily damped lines the Hann pass structurally cannot see.
+
+    Every windowed transform (``hann``/``cosine``/``gaussian``) is zero at the
+    first sample, so it deletes exactly the leading nanoseconds where a heavily
+    damped oscillation lives — the failure the library's
+    :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`
+    exists to flag.  This pass is the seeding-side answer: an **unwindowed**
+    (``window="none"``), first-order-detrended transform of a short leading crop
+    of the record, repeated over a small ladder of crops
+    (:func:`early_window_crops`), each with its own honest
+    ``resolution_mhz = 1/T_crop``.
+
+    ``time``/``signal``/``error`` are the already-centred, already SNR-truncated
+    arrays :func:`analyze_dataset_peaks` transforms; the returned analysis
+    carries the peaks from every rung, de-duplicated across rungs, tagged
+    ``source="early_fft"`` and stamped with the crop that found them
+    (:attr:`DetectedPeak.crop_us`).  ``resolution_mhz`` is the ladder's finest
+    (longest crop); a peak's own resolution is ``1/peak.crop_us``.
+
+    **The synthetic study behind the constants.**  All parameters invented; the
+    record is a damped cosine at 300 MHz on a relaxing tail, 1 ns binning over
+    8 µs, with μSR-like errors growing as ``exp(t/2τ_μ)`` capped at 100 %.
+
+    1. *Which crops — a fixed ladder, not an envelope-estimated crop.*  Both
+       shapes the plan called for were built and scored.  The adaptive one —
+       high-pass with the apodisation guard's moving-mean machinery, fit the
+       decay of the high-passed envelope, crop to ~3/λ_est — tracks λ well while
+       λ is *slow* (10.7 against a true 10, 2.2 against 2) and fails exactly
+       where the feature is needed: at λ = 60 µs⁻¹ it returned an estimate on
+       only 3 draws in 30 and read ~35, because a moving-mean kernel wide enough
+       to be a baseline is already wider than the lifetime being measured.
+       Recovering that would mean scanning kernel scales — which *is* the crop
+       ladder, with extra machinery in front.  It was also the worse citizen on
+       a conventional record, contributing a spurious peak on ~1 draw in 3 where
+       the ladder contributed none.  So: a fixed ladder.  Ladders of two to four
+       rungs drawn from 1/8 … 1/512 of the record were then scored.  Detection
+       is flat across all of them (median SNR within ~5 % at every λ), so the
+       null decides, and short rungs are what damage it: a crop below ~1/128 of
+       the record leaves a band only ~10 resolution elements wide, where the
+       clipped median floor is itself noisy.  Adding a 1/256 rung raised the
+       pure-noise maximum from 5.07 to 6.85 and a 1/512 rung to 9.12, neither
+       detecting anything the surviving rungs missed.  1/16 and 1/64 — ~440 ns
+       and ~110 ns on an 8 µs informative window — cover envelope rates from
+       ~2 µs⁻¹ (where the Hann pass sees the line too) to ~100 µs⁻¹ (where it is
+       entirely blind).  Beyond ~120 µs⁻¹ the line is not recoverable at any
+       crop at these amplitudes; that is a limit of the pass, not a claim.
+    2. *Which noise floor.*  With the default running-median floor the reported
+       SNR of the damped line **saturated near 5 whatever its amplitude** — on a
+       band ten resolution elements wide the median window sits inside the
+       line's own Lorentzian skirt, so the ratio measures line shape, not
+       significance — while pure noise reached 6.4.  Nothing separated them.
+       The global clipped floor (:func:`_global_noise_floor`) restores
+       SNR ∝ amplitude over an 8× amplitude sweep.
+    3. *Which threshold* (``_EARLY_MIN_SNR``, re-derived, not inherited).  Three
+       null families were drawn through the shipped ladder with the gate open:
+       500 pure-noise records, 500 relaxing tails with no oscillation, and 400
+       conventional narrow-line records whose line is alive across the whole
+       record.  Raw peaks arrive at 0.08-0.14 per draw and the largest SNR any
+       of them reached was 5.31.  The gate sits at 6.0.  At that gate all three
+       families contribute exactly zero early-pass peaks, the conventional
+       record's Hann-pass peaks are bit-identical with the pass on and off, and
+       the damped line is still found (median SNR 9.3 at λ = 60 µs⁻¹).
+    """
+    t = np.asarray(time, dtype=float)
+    y = np.asarray(signal, dtype=float)
+    err = np.asarray(error, dtype=float)
+    total = t.size
+    empty = PeakAnalysis(
+        peaks=(),
+        noise_floor=0.0,
+        resolution_mhz=_EPS,
+        nyquist_mhz=0.0,
+        detrended=False,
+    )
+    if total < _EARLY_MIN_POINTS:
+        return empty
+
+    collected: list[DetectedPeak] = []
+    floors: list[float] = []
+    finest_resolution = float("inf")
+    nyquist_mhz = 0.0
+    for crop in early_window_crops(total):
+        t_crop = t[:crop]
+        duration = float(t_crop[-1] - t_crop[0])
+        if duration <= 0.0:
+            continue
+        resolution = 1.0 / duration
+        # window="none" is the whole point; detrend=1 removes the slow tail's
+        # local slope across the crop without touching an oscillation that
+        # completes _EARLY_MIN_CYCLES_IN_CROP cycles inside it.
+        frequencies, _real, magnitude = fft_arrays(
+            t_crop,
+            y[:crop],
+            err[:crop],
+            window="none",
+            padding_factor=4,
+            detrend=1,
+        )
+        nyquist_mhz = max(nyquist_mhz, float(frequencies[-1]) if frequencies.size else 0.0)
+        crop_analysis = detect_peaks_in_spectrum(
+            frequencies,
+            magnitude,
+            resolution_mhz=resolution,
+            max_peaks=max_peaks,
+            min_snr=min_snr,
+            source="early_fft",
+            min_frequency_mhz=_EARLY_MIN_CYCLES_IN_CROP * resolution,
+            guard_resolutions=_EARLY_GUARD_RESOLUTIONS,
+            noise_floor_scope="global",
+            leakage_profile="rect",
+            crop_us=duration,
+        )
+        if crop_analysis.peaks:
+            finest_resolution = min(finest_resolution, resolution)
+        collected.extend(crop_analysis.peaks)
+        floors.append(crop_analysis.noise_floor)
+
+    if not collected:
+        return replace(empty, nyquist_mhz=nyquist_mhz)
+
+    # Cross-rung dedupe: the same line seen at two crops is one line.  Keep the
+    # strongest (its crop is the one best matched to the envelope) and drop
+    # anything within the coarser of the two crops' resolutions.
+    collected.sort(key=lambda p: p.snr, reverse=True)
+    kept: list[DetectedPeak] = []
+    for peak in collected:
+        if any(_within_pass_resolution(peak, other) for other in kept):
+            continue
+        kept.append(peak)
+
+    return PeakAnalysis(
+        peaks=tuple(kept),
+        noise_floor=float(np.median(floors)) if floors else 0.0,
+        resolution_mhz=float(finest_resolution),
+        nyquist_mhz=nyquist_mhz,
+        detrended=False,
+    )
+
+
+def _peak_resolution_mhz(peak: DetectedPeak, fallback_mhz: float) -> float:
+    """Resolution of the pass that found ``peak`` — its crop's, or ``fallback``."""
+    if peak.crop_us is not None and peak.crop_us > 0.0:
+        return 1.0 / peak.crop_us
+    return float(fallback_mhz)
+
+
+def _within_pass_resolution(peak: DetectedPeak, other: DetectedPeak) -> bool:
+    coarser = max(_peak_resolution_mhz(peak, _EPS), _peak_resolution_mhz(other, _EPS))
+    return abs(peak.frequency_mhz - other.frequency_mhz) <= coarser
+
+
+def merge_early_peaks(
+    analysis: PeakAnalysis,
+    early: PeakAnalysis,
+    *,
+    max_peaks: int = 6,
+) -> PeakAnalysis:
+    """Fold early-window peaks into a Hann-pass analysis.
+
+    Merge policy, in full:
+
+    * **The Hann pass wins a collision.**  An early-pass peak within the
+      *coarser* of the two resolutions of an existing Hann-pass peak is dropped:
+      the Hann pass looked at the whole informative record, so for a line it can
+      see at all its frequency estimate is the better one.  Early-pass peaks are
+      only ever *additions* — lines the Hann pass missed.
+    * **SNRs are never compared across passes.**  An early-pass SNR is measured
+      on a short crop against a different noise floor; the merged tuple keeps the
+      Hann peaks in their own SNR order, then the early additions in theirs, and
+      each peak keeps its ``source`` (and ``crop_us``) so downstream consumers
+      can rank within a pass.
+    * **The ``max_peaks`` cap survives the merge**, with ``_EARLY_RESERVED_PEAKS``
+      slots reserved for early additions — otherwise a full Hann peak set could
+      starve the pass that exists to see what Hann cannot.
+    """
+    additions = [
+        peak
+        for peak in early.peaks
+        if not any(
+            abs(peak.frequency_mhz - existing.frequency_mhz)
+            <= max(
+                _peak_resolution_mhz(peak, early.resolution_mhz),
+                _peak_resolution_mhz(existing, analysis.resolution_mhz),
+            )
+            for existing in analysis.peaks
+        )
+    ]
+    if not additions:
+        return analysis
+
+    cap = max(0, int(max_peaks))
+    reserved = min(len(additions), _EARLY_RESERVED_PEAKS)
+    kept_existing = list(analysis.peaks)[: max(0, cap - reserved)]
+    merged = kept_existing + additions[: max(0, cap - len(kept_existing))]
+    return replace(analysis, peaks=tuple(merged))
+
+
 def analyze_dataset_peaks(
     dataset: MuonDataset,
     *,
@@ -515,6 +924,7 @@ def analyze_dataset_peaks(
     max_peaks: int = 6,
     min_snr: float = 2.5,
     burg_check: str = "auto",
+    early_pass: bool = True,
 ) -> PeakAnalysis:
     """Detect oscillation lines in a time-domain dataset via FFT + Burg check.
 
@@ -522,6 +932,12 @@ def analyze_dataset_peaks(
     is transformed with a Hann window and 4× zero-padding, then passed to
     :func:`detect_peaks_in_spectrum`.  A Burg (all-poles) cross-check may confirm
     but never add peaks — see ``burg_check``.
+
+    A second, **unwindowed early-window pass** then runs over a ladder of leading
+    crops (:func:`analyze_early_window_peaks`) and its peaks are merged in
+    (:func:`merge_early_peaks`).  That pass is what lets the wizard see an
+    oscillation whose lifetime is a small fraction of the record — the case the
+    Hann window structurally deletes.
 
     Parameters
     ----------
@@ -532,7 +948,13 @@ def analyze_dataset_peaks(
         Provenance label recorded on the analysis when ``detrend_curve`` is used.
     burg_check
         ``"auto"`` (run when ``n_points < 512`` or two peaks fall within
-        ``2·resolution``), ``"always"`` or ``"never"``.
+        ``2·resolution``), ``"always"`` or ``"never"``.  The cross-check is
+        scoped to the Hann pass: Burg is known to return a featureless
+        1/f-like spectrum on a short, heavily damped window, so letting it
+        judge early-pass peaks would veto exactly the lines this pass exists
+        to find.
+    early_pass
+        Set ``False`` to run the historical Hann-only detection.
     """
     t_full = np.asarray(dataset.time, dtype=float)
     err_full = np.asarray(dataset.error, dtype=float)
@@ -590,10 +1012,17 @@ def analyze_dataset_peaks(
         detrend_template_key=(detrend_template_key if detrend_curve is not None else None),
     )
 
-    if not _should_run_burg(burg_check, n, analysis.peaks, resolution_mhz):
+    if _should_run_burg(burg_check, n, analysis.peaks, resolution_mhz):
+        analysis = _apply_burg_cross_check(analysis, signal, frequencies, dt, resolution_mhz)
+
+    if not early_pass:
         return analysis
 
-    return _apply_burg_cross_check(analysis, signal, frequencies, dt, resolution_mhz)
+    # Merged AFTER the Burg cross-check so early-pass peaks never reach it: Burg
+    # is unreliable on short damped windows and would veto them (see the
+    # ``burg_check`` note above).
+    early = analyze_early_window_peaks(t, signal, error)
+    return merge_early_peaks(analysis, early, max_peaks=max_peaks)
 
 
 def _should_run_burg(
@@ -661,11 +1090,16 @@ def merge_user_peaks(
 ) -> PeakAnalysis:
     """Fold user-declared frequencies into an analysis.
 
-    A user frequency within one ``resolution_mhz`` of an existing detected peak
+    A user frequency within one resolution element of an existing detected peak
     *replaces* it — keeping the detected amplitude/width but flagging
-    ``source="user"`` with the sentinel SNR.  Otherwise it is added as a fresh
-    user peak.  User peaks sort first (sentinel SNR) and are never dropped; no
-    ``max_peaks`` cap is re-applied here.
+    ``source="user"`` with the sentinel SNR.  The radius is the matched peak's
+    OWN pass resolution (an early-window peak's crop resolution, not the Hann
+    pass's), so a user frequency and the early-pass line it corresponds to
+    collapse into one seed rather than two.  Otherwise the frequency is added as
+    a fresh user peak.  User peaks sort first and are never dropped; no
+    ``max_peaks`` cap is re-applied here, and the relative order of the detected
+    peaks — which is per-pass, since SNRs are not comparable across passes — is
+    preserved.
     """
     user_freqs = [float(f) for f in np.atleast_1d(np.asarray(user_frequencies_mhz, dtype=float))]
     resolution = float(max(analysis.resolution_mhz, _EPS))
@@ -674,10 +1108,11 @@ def merge_user_peaks(
     merged: list[DetectedPeak] = []
     for freq in user_freqs:
         match_idx: int | None = None
-        best = resolution
+        best = 0.0
         for i, peak in enumerate(remaining):
+            radius = _peak_resolution_mhz(peak, resolution)
             distance = abs(peak.frequency_mhz - freq)
-            if distance <= best:
+            if distance <= radius and (match_idx is None or distance < best):
                 best = distance
                 match_idx = i
         if match_idx is not None:
@@ -704,8 +1139,9 @@ def merge_user_peaks(
                 )
             )
 
+    # Stable: user peaks first, everything else in the order the passes set.
     combined = merged + remaining
-    combined.sort(key=lambda p: p.snr, reverse=True)
+    combined.sort(key=lambda p: p.source != "user")
     return replace(analysis, peaks=tuple(combined))
 
 
