@@ -1235,6 +1235,22 @@ _STAGE2_MAX_FAMILIES = 4
 #: ``_multiplet_seed_peaks``).
 _MULTIPLET_MIN_SNR = 4.0
 
+#: Hard ceiling on the number of damped cosines a multiplet template may carry.
+#: Three is already a 13-free-parameter fit; a fourth is not a model the wizard
+#: should be proposing from detected lines alone.
+_MULTIPLET_MAX_COMPONENTS = 3
+
+#: Detected peaks any single detection pass may contribute to a multiplet seed
+#: set (user-declared frequencies are exempt); see ``_multiplet_seed_peaks``.
+#: Equal to ``_MULTIPLET_MAX_COMPONENTS``, so one pass can still fill the whole
+#: template: the per-pass rule exists to make the *ranking* well defined, not to
+#: throttle a record that genuinely carries three lines. Measurement backs that
+#: choice — on a synthetic carrying three damped lines the two multiplet
+#: templates together cost 0.55 s of a 375 s wizard run, so cutting seeds buys
+#: nothing here (the runtime lives in the vortex-lattice candidates; see
+#: :mod:`asymmetry.core.fitting.process_pool`).
+_MULTIPLET_MAX_SEEDS_PER_PASS = _MULTIPLET_MAX_COMPONENTS
+
 #: Envelope lifetimes assumed to fit inside the crop that found an early-window
 #: line; see :func:`_damped_envelope_rate`.
 _EARLY_ENVELOPE_LIFETIMES_PER_CROP = 3.0
@@ -1358,14 +1374,30 @@ def _multiplet_seed_peaks(
     null distribution.  Re-testing it against ``_MULTIPLET_MIN_SNR`` would be
     comparing SNRs measured on different windows against different noise
     floors — the exact thing the merge policy refuses to do.
+
+    The seed set is then pruned **by rank within each pass**, at most
+    ``_MULTIPLET_MAX_SEEDS_PER_PASS`` from any one of them, before the
+    ``max_components`` cap applies.  Two reasons, and they are the same reason
+    twice: "the strongest k peaks" is only a well-defined selection inside one
+    pass, and every extra seed costs a damped cosine — three components is a
+    13-parameter fit whose seed ladder and per-fit cost both grow with the
+    order.  User frequencies are exempt: they are declarations, not detections.
     """
     if analysis is None:
         return ()
-    eligible = [
-        peak
-        for peak in analysis.peaks
-        if peak.source in ("user", "early_fft") or peak.snr >= _MULTIPLET_MIN_SNR
-    ]
+    per_pass: dict[str, int] = {}
+    eligible: list[DetectedPeak] = []
+    for peak in analysis.peaks:
+        if peak.source != "user" and not (
+            peak.source == "early_fft" or peak.snr >= _MULTIPLET_MIN_SNR
+        ):
+            continue
+        if peak.source != "user":
+            taken = per_pass.get(peak.source, 0)
+            if taken >= _MULTIPLET_MAX_SEEDS_PER_PASS:
+                continue
+            per_pass[peak.source] = taken + 1
+        eligible.append(peak)
     return tuple(eligible[:max_components])
 
 
@@ -1395,15 +1427,17 @@ def _damped_envelope_rate(peak: DetectedPeak | None) -> float | None:
 def build_oscillatory_multiplet_templates(
     analysis: PeakAnalysis | None,
     *,
-    max_components: int = 3,
+    max_components: int = _MULTIPLET_MAX_COMPONENTS,
     envelopes: tuple[str, ...] = ("Exponential", "Gaussian"),
 ) -> tuple[CandidateTemplate, ...]:
     """Build ``(Osc×Env) + … + Const`` templates, one component per strong peak.
 
     Returns an empty tuple below two qualifying peaks — a single line is already
-    covered by the plain oscillatory candidates.
+    covered by the plain oscillatory candidates.  The order is bounded by
+    ``max_components`` (default ``_MULTIPLET_MAX_COMPONENTS``) and the seed set
+    is pruned per detection pass — see :func:`_multiplet_seed_peaks`.
     """
-    peaks = _multiplet_seed_peaks(analysis, max_components)
+    peaks = _multiplet_seed_peaks(analysis, min(int(max_components), _MULTIPLET_MAX_COMPONENTS))
     n = len(peaks)
     if n < 2:
         return ()
@@ -1927,8 +1961,16 @@ def build_fit_wizard_recommendation(
     ``_STAGE1_PROMOTE_DELTA`` of the best, or are named by a multiplet pattern
     match expand to their full Stage-2 portfolios. ``scope`` restricts the
     families physically (``None`` screens the default superset);
-    ``user_frequencies_mhz`` adds trusted peak seeds; ``max_workers=1`` gives
-    a deterministic serial path. ``cancel_callback`` is polled between and
+    ``user_frequencies_mhz`` adds trusted peak seeds — blind runs get the same
+    seeds from the unwindowed early-window pass when the data carry a heavily
+    damped line (see
+    :func:`~asymmetry.core.fitting.peak_detection.analyze_early_window_peaks`);
+    ``max_workers=1`` gives a deterministic serial path. Note that
+    ``max_workers`` bounds fits in flight, **not** CPU: the vortex-lattice
+    candidates reach a multi-threaded BLAS from inside a single fit, so a
+    ``max_workers=1`` run can still saturate the machine — see
+    :mod:`asymmetry.core.fitting.process_pool` for the measurement and the
+    environment knob. ``cancel_callback`` is polled between and
     inside fits when running serially or on the thread-pool fallback (engine
     in-fit abort); when the resolved worker count allows a shared *process*
     pool, cancellation instead takes effect only between fits (a

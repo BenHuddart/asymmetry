@@ -104,9 +104,22 @@ _LEAKAGE_PROFILES: dict[str, tuple[float, float, float]] = {
 #: were dropped.
 _EARLY_CROP_DIVISORS = (16, 64)
 
-#: Never crop below this many points: a shorter transform has too few
-#: independent bins for the noise floor to mean anything.
-_EARLY_MIN_POINTS = 24
+#: Never crop below this many points.  This is really a floor on the *width of
+#: the search band*, which is what governs the pass's null: a crop of ``n``
+#: points spans ``n/2`` resolution elements up to Nyquist, of which the guards
+#: take four — so 64 points leaves ~28 independent elements, enough for the
+#: clipped median floor to be a floor rather than an estimate of a handful of
+#: correlated bins.  Study step 1 measured the cost of going below it: a rung
+#: leaving ~10 elements raised the pure-noise maximum from 5.07 to 6.85 while
+#: detecting nothing extra.
+_EARLY_MIN_POINTS = 64
+
+#: A ladder rung is kept only if it is at most this fraction of the previous one.
+#: The divisors are a factor of four apart by construction, but
+#: ``_EARLY_MIN_POINTS`` can collapse two of them onto nearly the same crop on a
+#: short record — two transforms of the same window, two looks at the same noise,
+#: no extra reach.
+_EARLY_CROP_SHRINK = 0.5
 
 #: DC/Nyquist guard band for the early pass, in resolution elements (the Hann
 #: pass keeps its historical 0.5).  On a short unwindowed crop the running
@@ -696,16 +709,17 @@ def early_window_crops(n_points: int) -> tuple[int, ...]:
     """Point counts of the early-window crop ladder for an ``n_points`` record.
 
     Each rung is ``n_points // divisor`` for the divisors in
-    ``_EARLY_CROP_DIVISORS``, floored at ``_EARLY_MIN_POINTS`` and de-duplicated,
-    so a short record collapses the ladder rather than transforming the same crop
-    several times.
+    ``_EARLY_CROP_DIVISORS``, floored at ``_EARLY_MIN_POINTS``.  A rung that is
+    not at least ``_EARLY_CROP_SHRINK`` shorter than the one before it is
+    dropped, so a short record collapses the ladder rather than transforming
+    nearly the same crop twice.
     """
     crops: list[int] = []
     total = int(n_points)
     for divisor in _EARLY_CROP_DIVISORS:
         crop = int(round(total / divisor))
         crop = min(max(crop, _EARLY_MIN_POINTS), total)
-        if crops and crop == crops[-1]:
+        if crops and crop > _EARLY_CROP_SHRINK * crops[-1]:
             continue
         crops.append(crop)
     return tuple(crops)
