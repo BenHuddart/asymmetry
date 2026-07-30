@@ -42,6 +42,14 @@ multi-period runs, select the period upstream with
 :func:`asymmetry.core.io.periods.select_period` and pass the resulting dataset
 in.
 
+Scale: every integral asymmetry this module produces is the dimensionless
+**fraction** ``A ∈ [-1, 1]`` — the scale the field-scan / ALC parameter models
+expect — *not* the percent of a loaded
+:class:`~asymmetry.core.data.dataset.MuonDataset`. The exception is
+:func:`integrate_curve`, which averages a caller-supplied curve and so returns
+whatever scale it was given. See :mod:`asymmetry.core.transform.units` and
+"Asymmetry units across the API" in the documentation.
+
 This module must stay free of Qt / matplotlib / ``asymmetry.gui`` imports.
 """
 
@@ -55,6 +63,7 @@ import numpy as np
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
+from asymmetry.core.transform.units import ASYMMETRY_FRACTION, AsymmetryUnit
 from asymmetry.core.utils.constants import ORDER_KEYS
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -124,10 +133,10 @@ def integrate_asymmetry(
     Returns
     -------
     (value, error)
-        The integral asymmetry (dimensionless, fractional) and its error.  The
-        error uses the same Mantid-compatible model as
-        :func:`compute_asymmetry`, so the integral and time-domain observables
-        share one error formula.
+        The integral asymmetry **as a fraction** (``A ∈ [-1, 1]``) and its error
+        on the same scale — *not* percent.  The error uses the same
+        Mantid-compatible model as :func:`compute_asymmetry`, so the integral and
+        time-domain observables share one error formula.
     """
     _validate_method(method)
     _validate_alpha(alpha)
@@ -174,8 +183,25 @@ def integrate_curve(
 
     Useful when only the reduced curve is available (for example a combined
     green∓red spectrum) rather than the forward/backward counts.  The error is
-    the error on the mean, ``sqrt(Σ eᵢ²) / N``.  Output units match the input
-    asymmetry units (the loader's reduced datasets are in percent).
+    the error on the mean, ``sqrt(Σ eᵢ²) / N``.
+
+    Parameters
+    ----------
+    time
+        Time axis in µs.
+    asymmetry, error
+        The reduced curve, on **either** asymmetry scale — fraction or percent.
+        This is the one function in the module that does not fix the scale.
+    t_min, t_max
+        Inclusive averaging window in µs.
+
+    Returns
+    -------
+    (value, error)
+        **On the same scale as the input** ``asymmetry`` — a mean is
+        unit-preserving. Pass ``ds.asymmetry`` and the result is percent; pass
+        ``ds.asymmetry_fraction`` and it is a fraction, matching
+        :func:`integrate_asymmetry` and :func:`integrate_run`.
     """
     t = np.asarray(time, dtype=np.float64)
     a = np.asarray(asymmetry, dtype=np.float64)
@@ -227,6 +253,14 @@ def integrate_run(
         window) merged over ``run.grouping`` — the same ``grouping_ref`` a
         :class:`TimeFBAsymmetry` recipe carries, so a GUI can pass the user's
         effective grouping and the scan matches the displayed asymmetry.
+
+    Returns
+    -------
+    (value, error)
+        **As a fraction** (``A ∈ [-1, 1]``), from :func:`integrate_asymmetry` —
+        *not* the percent scale of ``data.asymmetry`` when ``data`` is a
+        :class:`MuonDataset`. This function reduces the run's **counts**, so the
+        dataset's own percent-scale curve is never involved.
     """
     _validate_method(method)
     run = _resolve_run(data)
@@ -257,7 +291,12 @@ def integrate_run(
 
 @dataclass
 class FieldScanPoint:
-    """One run's contribution to a field scan."""
+    """One run's contribution to a field scan.
+
+    ``value``/``error`` are the integral asymmetry **as a fraction**
+    (``A ∈ [-1, 1]``), carried straight from the owning
+    :class:`FieldScan` — see its ``units`` field.
+    """
 
     run_number: int
     x: float
@@ -274,12 +313,14 @@ class FieldScan:
     ``(run_number, reason)`` for runs that could not contribute (for example a
     missing field log — Mantid skips such runs rather than failing the scan).
 
-    Scale note: ``value``/``error`` are the **fractional** integral asymmetry
-    (``A ∈ [-1, 1]``, from :func:`compute_asymmetry` on summed counts), which is
-    the scale the field-scan / ALC parameter models expect (e.g. ``GaussianLCR``
-    seeds ``f`` near 0.1). This differs from a loaded
-    :class:`~asymmetry.core.data.dataset.MuonDataset`, whose ``asymmetry`` is on
-    the percent scale; multiply by 100 if you need to compare the two directly.
+    Scale note: ``value``/``error`` are the integral asymmetry **as a fraction**
+    (``A ∈ [-1, 1]``, from :func:`compute_asymmetry` on summed counts) — the
+    scale the field-scan / ALC parameter models expect (e.g. ``GaussianLCR``
+    seeds ``f`` near 0.1), and the one the ``units`` field records. This differs
+    from a loaded :class:`~asymmetry.core.data.dataset.MuonDataset`, whose
+    ``asymmetry`` is on the **percent** scale; multiply by 100 (or call
+    :func:`asymmetry.core.transform.units.to_percent`) if you need to compare the
+    two directly.
     """
 
     x: NDArray[np.float64]
@@ -292,6 +333,14 @@ class FieldScan:
     x_label: str = ""
     y_label: str = "Integral asymmetry"
     excluded: list[tuple[int, str]] = field(default_factory=list)
+    #: Scale of :attr:`value` and :attr:`error`. Always
+    #: :data:`~asymmetry.core.transform.units.ASYMMETRY_FRACTION` — the
+    #: counterpart of
+    #: :attr:`~asymmetry.core.transform.reduce.GroupedAsymmetryReduction.units`
+    #: on the other side of the divide. For a ``derivative`` scan the values are
+    #: fraction *per x-unit* (:func:`differentiate_scan` divides by Δx, which
+    #: leaves the asymmetry scale untouched).
+    units: AsymmetryUnit = ASYMMETRY_FRACTION
 
     @property
     def n_points(self) -> int:
@@ -362,7 +411,11 @@ def build_field_scan(
     Returns
     -------
     FieldScan
-        Sorted parallel arrays plus the list of excluded runs.
+        Whose ``value``/``error`` are **as a fraction** (``A ∈ [-1, 1]``, with
+        ``units`` set to
+        :data:`~asymmetry.core.transform.units.ASYMMETRY_FRACTION`) — *not*
+        percent, since every point comes from :func:`integrate_run`. Sorted
+        parallel arrays plus the list of excluded runs.
     """
     _validate_method(method)
     if order_key not in ORDER_KEYS:
@@ -419,6 +472,7 @@ def build_field_scan(
         method=method,
         x_label=_X_LABELS[order_key],
         excluded=excluded,
+        units=ASYMMETRY_FRACTION,
     )
 
 
@@ -429,6 +483,13 @@ def differentiate_scan(scan: FieldScan, *, max_gap: float | None = None) -> Fiel
     ``dA/dx = (A₂ - A₁) / (x₂ - x₁)`` and error ``sqrt(e₁² + e₂²) / |Δx|``.
     Pairs with non-positive spacing, or spacing greater than ``max_gap`` (when
     given), are skipped — mirroring WiMDA's adjacent-field threshold.
+
+    Returns
+    -------
+    FieldScan
+        With ``derivative=True``. Dividing by Δx leaves the asymmetry scale
+        untouched, so the values stay **on the input scan's scale** — a fraction
+        per x-unit, and ``units`` is carried through unchanged.
     """
     if scan.derivative:
         raise ValueError("differentiate_scan expects an integral scan, not a derivative.")
@@ -459,6 +520,7 @@ def differentiate_scan(scan: FieldScan, *, max_gap: float | None = None) -> Fiel
         x_label=scan.x_label,
         y_label=f"d({scan.y_label})/d{scan.order_key}",
         excluded=list(scan.excluded),
+        units=scan.units,
     )
 
 

@@ -70,6 +70,12 @@ _MIN_REFERENCE_MHZ = 0.1
 #: ~100× percent-vs-fraction trap.
 _SCALE_MISMATCH_RATIO = 10.0
 
+#: ``stacklevel`` for the pre-fit advisory guards, so each warning is attributed
+#: to the *user's* call site rather than to engine internals. Counts three frames
+#: of engine: the guard helper itself, :meth:`FitEngine._fit_core`, and the
+#: public entry point (:meth:`FitEngine.fit` / :meth:`FitEngine.fit_arrays`).
+_ADVISORY_STACKLEVEL = 4
+
 
 def _warn_on_scale_mismatch(
     time: NDArray[np.float64],
@@ -125,7 +131,7 @@ def _warn_on_scale_mismatch(
         "Loaded MuonDataset.asymmetry is on the percent scale (×100); seed amplitudes "
         "to match, or pass ds.asymmetry_fraction / ds.asymmetry_percent explicitly.",
         AsymmetryScaleWarning,
-        stacklevel=3,
+        stacklevel=_ADVISORY_STACKLEVEL,
     )
 
 
@@ -180,10 +186,77 @@ def _warn_on_fixed_frequency_far_from_field(
                 f"T_c). Let {p.name!r} float (Parameter.fixed=False) to remove the "
                 "bias, or correct the pinned value to match the field.",
                 FixedFrequencyFieldMismatchWarning,
-                stacklevel=3,
+                stacklevel=_ADVISORY_STACKLEVEL,
             )
     except Exception:  # noqa: BLE001 - a guard must never break the fit it guards
         return
+
+
+def _clip_time_window(
+    time: NDArray[np.float64],
+    asymmetry: NDArray[np.float64],
+    error: NDArray[np.float64],
+    t_min: float | None,
+    t_max: float | None,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Restrict a ``(t, A, σ)`` triple to ``[t_min, t_max]`` inclusive.
+
+    The single clipping seam shared by :meth:`FitEngine.fit` and
+    :meth:`FitEngine.fit_arrays`, reproducing
+    :meth:`asymmetry.core.data.dataset.MuonDataset.time_range` exactly: the
+    bounds are inclusive, a falsy pair (``None``/``0``) is a no-op that passes
+    the arrays through untouched, and a clipped result is a copy.
+    """
+    if not (t_min or t_max):
+        return time, asymmetry, error
+    mask = np.ones(len(time), dtype=bool)
+    if t_min is not None:
+        mask &= time >= t_min
+    if t_max is not None:
+        mask &= time <= t_max
+    return time[mask].copy(), asymmetry[mask].copy(), error[mask].copy()
+
+
+def _validated_fit_arrays(
+    time: NDArray[np.float64] | Sequence[float],
+    asymmetry: NDArray[np.float64] | Sequence[float],
+    error: NDArray[np.float64] | Sequence[float],
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Coerce and validate a raw ``(t, A, σ)`` triple for :meth:`FitEngine.fit_arrays`.
+
+    Returns the three arrays as ``float64``. Raises :class:`ValueError` with a
+    message naming the offending array for a non-1-D shape, a length mismatch,
+    an empty triple, or any non-finite entry — the validation domain a
+    :class:`~asymmetry.core.data.dataset.MuonDataset` would otherwise have
+    carried implicitly.
+    """
+    coerced: dict[str, NDArray[np.float64]] = {}
+    for name, values in (("time", time), ("asymmetry", asymmetry), ("error", error)):
+        arr = np.asarray(values, dtype=np.float64)
+        if arr.ndim != 1:
+            raise ValueError(
+                f"fit_arrays: {name} must be a one-dimensional array, got shape {arr.shape}."
+            )
+        coerced[name] = arr
+
+    n_time = coerced["time"].size
+    for name in ("asymmetry", "error"):
+        if coerced[name].size != n_time:
+            raise ValueError(
+                "fit_arrays: time, asymmetry and error must have the same length; "
+                f"time has {n_time} point(s) but {name} has {coerced[name].size}."
+            )
+    if n_time == 0:
+        raise ValueError("fit_arrays: time, asymmetry and error are empty — nothing to fit.")
+
+    for name, arr in coerced.items():
+        n_bad = int(np.count_nonzero(~np.isfinite(arr)))
+        if n_bad:
+            raise ValueError(
+                f"fit_arrays: {name} contains {n_bad} non-finite value(s) (NaN or inf). "
+                "Drop or interpolate those points before fitting."
+            )
+    return coerced["time"], coerced["asymmetry"], coerced["error"]
 
 
 class FitCancelledError(RuntimeError):
@@ -554,7 +627,16 @@ COST_FACTORIES: dict[str, CostFactory] = {
 
 @dataclass
 class FitResult:
-    """Container for the outcome of a fit."""
+    """Container for the outcome of a fit.
+
+    Scale: :attr:`residuals`, and every asymmetry-valued entry of
+    :attr:`parameters` / :attr:`uncertainties` (an ``A0``, ``A``, ``baseline``),
+    are **on the scale of the data that was fitted** — percent (0–100) for a
+    :class:`~asymmetry.core.data.dataset.MuonDataset` and for the built-in models'
+    seeds. Nothing here rescales, so a fit run on fraction-scale arrays reports
+    fraction-scale amplitudes. See "Asymmetry units across the API" in the
+    documentation.
+    """
 
     success: bool
     chi_squared: float = 0.0
@@ -563,6 +645,7 @@ class FitResult:
     uncertainties: dict[str, float] = field(default_factory=dict)
     covariance: NDArray[np.float64] | None = None
     covariance_parameters: list[str] = field(default_factory=list)
+    #: ``data − model`` over the fitted window, on the **data's** asymmetry scale.
     residuals: NDArray[np.float64] | None = None
     message: str = ""
     function_calls: int = 0
@@ -628,12 +711,22 @@ class FitEngine:
     ) -> FitResult:
         """Run a single-dataset fit.
 
+        To fit a bare ``(t, A, σ)`` triple with no dataset in hand — a custom
+        detector pairing, a background-corrected export — use
+        :meth:`fit_arrays`, which shares this method's entire implementation.
+
         Parameters
         ----------
         dataset : MuonDataset
             The data to fit. The engine uses the dataset object's ``time``,
             ``asymmetry``, and ``error`` arrays as provided, optionally clipped
-            only by ``t_min``/``t_max``.
+            only by ``t_min``/``t_max``. Those arrays are **in percent (0–100)**
+            by the :class:`~asymmetry.core.data.dataset.MuonDataset` scale
+            convention, so parameter seeds must be percent-scale too (the
+            built-in models default ``A0`` to ``25``); a fraction-scale seed
+            against percent data converges to the wrong minimum and trips
+            :class:`AsymmetryScaleWarning`. See "Asymmetry units across the API"
+            in the docs.
         model_fn : callable
             ``f(t, **params) -> array``.
         parameters : ParameterSet
@@ -703,8 +796,154 @@ class FitEngine:
         FitResult
             Container with fit results including χ², parameters, and uncertainties.
         """
-        ds = dataset.time_range(t_min, t_max) if (t_min or t_max) else dataset
+        time, asymmetry, error = _clip_time_window(
+            dataset.time, dataset.asymmetry, dataset.error, t_min, t_max
+        )
+        return self._fit_core(
+            time,
+            asymmetry,
+            error,
+            model_fn,
+            parameters,
+            method=method,
+            minos=minos,
+            cancel_callback=cancel_callback,
+            frequency_offsets=frequency_offsets,
+            cost_factory=cost_factory,
+            migrad_kwargs=migrad_kwargs,
+            error_oversampling=error_oversampling,
+            field_source=dataset,
+        )
 
+    def fit_arrays(
+        self,
+        time: NDArray[np.float64] | Sequence[float],
+        asymmetry: NDArray[np.float64] | Sequence[float],
+        error: NDArray[np.float64] | Sequence[float],
+        model_fn: Callable[..., NDArray],
+        parameters: ParameterSet,
+        t_min: float | None = None,
+        t_max: float | None = None,
+        method: str = "migrad",
+        minos: bool = False,
+        cancel_callback: Callable[[], bool] | None = None,
+        frequency_offsets: dict[str, float] | None = None,
+        cost_factory: CostFactory | None = None,
+        migrad_kwargs: dict | None = None,
+        *,
+        error_oversampling: float = 1.0,
+    ) -> FitResult:
+        """Fit a bare ``(t, A, σ)`` triple — no :class:`MuonDataset` required.
+
+        The array-taking front door onto the same engine as :meth:`fit`: both
+        methods clip through one seam and then run one shared internal core, so
+        ``fit_arrays(ds.time, ds.asymmetry, ds.error, …)`` returns a
+        :class:`FitResult` identical to ``fit(ds, …)`` — same parameter values,
+        uncertainties, covariance, χ², dof and residuals. Use it for any curve
+        that is not a dataset's default reduction (a custom detector pairing, a
+        background-corrected export, a hand-built model curve) instead of
+        smuggling arrays through ``dataclasses.replace(ds, time=…, asymmetry=…,
+        error=…)``.
+
+        Parameters
+        ----------
+        time : array_like
+            Time axis in microseconds, one dimension.
+        asymmetry : array_like
+            Asymmetry values, **in percent (0–100)** — the scale
+            :attr:`asymmetry.core.data.dataset.MuonDataset.asymmetry` and the
+            built-in fit models share (``A0`` defaults to ``25``). A
+            fraction-scale curve (:math:`A \\in [-1, 1]`, what
+            :func:`asymmetry.core.transform.compute_asymmetry` and
+            :func:`asymmetry.core.transform.binned_fb_asymmetry` return) must be
+            multiplied by 100 first, or the seeds scaled to match — see
+            :class:`AsymmetryScaleWarning`, the
+            :func:`asymmetry.core.transform.units.to_percent` helper, and
+            "Asymmetry units across the API" in the docs. Nothing here rescales
+            the input; the units are the caller's to state.
+        error : array_like
+            1σ uncertainty on ``asymmetry``, on the **same scale as**
+            ``asymmetry`` (percent when it is percent).
+        model_fn, parameters, t_min, t_max, method, minos, cancel_callback, \
+frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
+            Exactly as documented on :meth:`fit`. ``t_min``/``t_max`` clip the
+            arrays with the same inclusive bounds
+            :meth:`~asymmetry.core.data.dataset.MuonDataset.time_range` applies.
+
+        Returns
+        -------
+        FitResult
+            As :meth:`fit`. ``residuals`` are ``asymmetry − model`` on the input
+            scale, over the clipped window.
+
+        Raises
+        ------
+        ValueError
+            When the arrays are not one-dimensional, have unequal lengths, are
+            empty, contain non-finite values, or when ``t_min``/``t_max`` leave
+            no points. :meth:`fit` does not validate its dataset this way (its
+            behaviour is unchanged); these guards exist because a raw triple has
+            no container to have checked them earlier.
+
+        Notes
+        -----
+        The one behavioural difference from :meth:`fit` is the advisory
+        fixed-frequency guard (:class:`FixedFrequencyFieldMismatchWarning`),
+        which compares a pinned frequency to γ_μ·B from a run's ``field``
+        metadata. Bare arrays carry no metadata, so that guard cannot run here;
+        the percent-vs-fraction scale advisory does.
+        """
+        time_arr, asym_arr, err_arr = _validated_fit_arrays(time, asymmetry, error)
+        clipped_time, clipped_asym, clipped_err = _clip_time_window(
+            time_arr, asym_arr, err_arr, t_min, t_max
+        )
+        if clipped_time.size == 0:
+            raise ValueError(
+                f"fit_arrays: no data points remain in the fit window "
+                f"t_min={t_min!r}, t_max={t_max!r} (the input spans "
+                f"{float(time_arr.min()):g}–{float(time_arr.max()):g} µs)."
+            )
+        return self._fit_core(
+            clipped_time,
+            clipped_asym,
+            clipped_err,
+            model_fn,
+            parameters,
+            method=method,
+            minos=minos,
+            cancel_callback=cancel_callback,
+            frequency_offsets=frequency_offsets,
+            cost_factory=cost_factory,
+            migrad_kwargs=migrad_kwargs,
+            error_oversampling=error_oversampling,
+            field_source=None,
+        )
+
+    def _fit_core(
+        self,
+        time: NDArray[np.float64],
+        asymmetry: NDArray[np.float64],
+        error: NDArray[np.float64],
+        model_fn: Callable[..., NDArray],
+        parameters: ParameterSet,
+        *,
+        method: str,
+        minos: bool,
+        cancel_callback: Callable[[], bool] | None,
+        frequency_offsets: dict[str, float] | None,
+        cost_factory: CostFactory | None,
+        migrad_kwargs: dict | None,
+        error_oversampling: float,
+        field_source: MuonDataset | None,
+    ) -> FitResult:
+        """Run a single fit over already-clipped arrays.
+
+        The one implementation behind :meth:`fit` and :meth:`fit_arrays`; the
+        arrays arrive pre-clipped to the fit window. ``field_source`` supplies
+        the run metadata for the advisory fixed-frequency guard only (``None``
+        when the caller passed bare arrays and there is no metadata to check
+        against) — it is never read for data.
+        """
         if frequency_offsets:
             # Apply the rotating-frame offset through the shared shift seam, so
             # this path and the standalone rrf_offset_model wrapper fit raw data
@@ -772,9 +1011,9 @@ class FitEngine:
         # least squares, kept byte-identical; a factory swaps in the selectable
         # objective (e.g. Poisson Cash on raw counts) through the shared seam.
         if cost_factory is None:
-            cost = LeastSquares(ds.time, ds.asymmetry, ds.error, model_wrapper)
+            cost = LeastSquares(time, asymmetry, error, model_wrapper)
         else:
-            cost = cost_factory.build(ds.time, ds.asymmetry, ds.error, model_wrapper)
+            cost = cost_factory.build(time, asymmetry, error, model_wrapper)
 
         # Create Minuit object
         initial_values = [p.value for p in free]
@@ -785,14 +1024,16 @@ class FitEngine:
         with warnings.catch_warnings(record=True) as caught_advisories:
             warnings.simplefilter("always")
             # Advisory guard: flag the percent-vs-fraction trap before fitting.
-            _warn_on_scale_mismatch(ds.time, ds.asymmetry, model_wrapper, initial_values)
+            _warn_on_scale_mismatch(time, asymmetry, model_wrapper, initial_values)
             # Advisory guard: flag a frequency pinned far from γ_μ·B(field) (the
             # TF fixed-frequency trap that inflates sigma). Skip in the rotating
             # frame: there the frequency seeds are *offsets* δν (lab = δν + ν₀),
             # so a small fixed δν is correct and comparing it to lab-frame γ_μ·B
-            # would misfire.
-            if not frequency_offsets:
-                _warn_on_fixed_frequency_far_from_field(dataset, parameters)
+            # would misfire. Also skipped when the caller passed bare arrays
+            # (``field_source is None``): there is no ``field`` metadata to
+            # compare a pinned frequency against.
+            if not frequency_offsets and field_source is not None:
+                _warn_on_fixed_frequency_far_from_field(field_source, parameters)
         # Carry only the two advisory categories to the GUI — the scale guard
         # evaluates the seeded model inside this block, so an incidental numerical
         # warning (e.g. a RuntimeWarning from overflow in exp at a poor seed) must
@@ -928,11 +1169,11 @@ class FitEngine:
                 if minos_errors_raw and p.name in minos_errors_raw:
                     minos_errors[p.name] = minos_errors_raw[p.name]
 
-        ndata = len(ds.time)
+        ndata = len(time)
         nfree = len(free)
         red_chi2 = m.fval / max(ndata - nfree, 1)
-        fitted_values = _call_model(ds.time, {p.name: p.value for p in result_params})
-        residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(fitted_values, dtype=float)
+        fitted_values = _call_model(time, {p.name: p.value for p in result_params})
+        residuals = np.asarray(asymmetry, dtype=float) - np.asarray(fitted_values, dtype=float)
 
         chi_squared = m.fval
         dof = ndata - nfree
@@ -1014,7 +1255,12 @@ class FitEngine:
         Parameters
         ----------
         datasets
-            List of datasets to fit simultaneously.
+            List of datasets to fit simultaneously. Their ``asymmetry``/``error``
+            arrays are **in percent (0–100)** by the
+            :class:`~asymmetry.core.data.dataset.MuonDataset` convention, exactly
+            as in :meth:`fit`, and every dataset must be on that one scale —
+            concatenating a fraction-scale curve with percent-scale ones puts an
+            unresolvable factor of 100 inside a shared amplitude.
         model_fn
             Model function applied to each dataset.
         global_params

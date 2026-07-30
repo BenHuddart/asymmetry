@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fit a bare `(t, A, σ)` triple: `FitEngine.fit_arrays()`.** `FitEngine.fit`
+  only accepted a `MuonDataset`, so fitting a curve that is not a dataset's
+  default reduction — a custom detector pairing, a background-corrected export,
+  a hand-assembled model curve — meant smuggling arrays through
+  `dataclasses.replace(ds, time=…, asymmetry=…, error=…)`, which requires having
+  some dataset to clone and puts every use one slip away from mismatched errors
+  or scales. The new `fit_arrays(time, asymmetry, error, model_fn, parameters,
+  …)` takes exactly the same keyword arguments as `fit`
+  (`t_min`/`t_max`/`method`/`minos`/`cost_factory`/`migrad_kwargs`/
+  `frequency_offsets`/`error_oversampling`/`cancel_callback`) and shares its
+  entire implementation: the array-consuming body of `fit` was extracted into one
+  internal core, and both front doors clip their window through one seam, so the
+  paths cannot drift. Equivalence is exact and pinned by test — same parameter
+  values, uncertainties, covariance, χ², dof and residuals, with no tolerance.
+  `fit` keeps its signature and behaviour unchanged. Unlike `fit`, `fit_arrays`
+  validates what a dataset would otherwise have carried implicitly and raises
+  `ValueError` with a message naming the offending array for a non-1-D shape, a
+  length mismatch, empty input, non-finite values, or a `t_min`/`t_max` window
+  that leaves no points. One documented difference: bare arrays carry no run
+  metadata, so the advisory fixed-frequency guard (which needs `field`) cannot
+  run on that path, while the percent-versus-fraction scale guard does.
+- **Asymmetry units are now explicit across the API.** The library carries two
+  internally-consistent asymmetry scales — the dimensionless fraction
+  `A ∈ [-1, 1]` returned by `compute_asymmetry`, `binned_fb_asymmetry` and
+  `integrate_asymmetry`, and percent (0–100) held by `MuonDataset.asymmetry`,
+  `reduce_grouped_asymmetry` and every built-in model's `A0` — but nothing at a
+  call site said which was which, making a mix-up a silent factor of 100 that
+  reads as a plausible result (a 20 % amplitude reported as 0.2 %). A new
+  `asymmetry.core.transform.units` module names the distinction: an
+  `AsymmetryUnit` enum (`FRACTION`/`PERCENT`) with `ASYMMETRY_FRACTION` /
+  `ASYMMETRY_PERCENT` aliases, `PERCENT_PER_FRACTION`, and the
+  `convert_asymmetry` / `to_percent` / `to_fraction` helpers, all re-exported from
+  `asymmetry.core.transform`. Deliberately two members and no "automatic" one: a
+  scale is a property of the producing function, not something to infer from
+  magnitude. The two result containers on opposite sides of the divide now record
+  their scale — `GroupedAsymmetryReduction.units` (always percent) and
+  `FieldScan.units` (fraction for a scan from `build_field_scan`) — defaulted to
+  the current truth, so no existing return value or caller changes. Every
+  asymmetry-valued public function across `core.transform` and `core.fitting` now
+  states its scale on the first line of its `Returns`, including the ones that are
+  deliberately scale-*preserving* (`rebin`, `integrate_curve`,
+  `differentiate_scan`, the RRF demodulation) rather than fixed to one unit, and a
+  new reference page, "Asymmetry units across the API", is the whole map with a
+  per-function table. Pinned by tests that assert the exact scale of each surface
+  on one synthetic pair whose asymmetry is exactly 0.2.
+
 - **GPS 15-histogram ROOT layout (`GPS-RD15`) and validated preset
   resolution.** 2022-era GPS MusrRoot exports carry *both* views of the same
   events — the six combined counters (`Forw, Back, Up, Down, Right, Left`)
@@ -97,6 +143,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`mu_relaxation_from_amplitude` documented `reference_amplitude` as a
+  "fraction".** The code has always pinned `A_Mu` on the percent scale — it is
+  normally handed `MuRelaxationSeriesResult.shared_amplitude`, which is percent —
+  so the wording invited a factor-100 seeding error. Documentation only; no
+  behaviour change.
+- **A percent-scale ALC scan was built into a fraction-scale container.**
+  `MainWindow._alc_display_scan` multiplies by 100 and so returns a percent-scale
+  `FieldScan`, unlike every `build_field_scan` result. It now declares
+  `units=ASYMMETRY_PERCENT` (as do the derivative slice and
+  `fit_scan_baseline`, which carry their input's units through) rather than
+  inheriting the field's fraction default and misreporting itself. No numbers
+  change.
 - **Pre-t0 background windows were not trimmed to whole accelerator periods for
   core-API callers.** `apply_grouped_background_correction`,
   `corrected_grouped_counts` and `reduce_grouped_asymmetry` took a `facility`

@@ -61,6 +61,9 @@ graphical interface where the feature lives.
    * - Co-add or co-subtract runs (e.g. light-on − light-off)
      - :doc:`run_arithmetic`
      - Data Browser → context menu
+   * - Work out whether an asymmetry is a fraction or a percentage
+     - :doc:`asymmetry_units`
+     - —
    * - Fit a model to a single asymmetry spectrum
      - :doc:`fitting`
      - Fit dock → Single tab
@@ -168,6 +171,7 @@ the program.
    grouping_calibration
    detector_grouping
    data_processing
+   asymmetry_units
    data_reduction/alpha_calibration
    data_reduction/beta_calibration
    data_reduction/backgrounds

@@ -419,7 +419,46 @@ is carried on ``result.warnings`` and **surfaced in the GUI fit panel's result
 box** (see :ref:`fit-advisory-warnings`). Use
 :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry_fraction` /
 :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry_percent` to pick the
-scale explicitly.
+scale explicitly, and
+:func:`~asymmetry.core.transform.units.to_percent` /
+:func:`~asymmetry.core.transform.units.to_fraction` to move a reduction
+primitive's output across the boundary. :doc:`asymmetry_units` is the full map of
+which scale each part of the API returns.
+
+
+.. _cookbook-fit-arrays:
+
+Fit a curve that is not a dataset's reduction
+---------------------------------------------
+
+A custom detector pairing, a background-corrected export, or any other
+:math:`(t, A, \sigma)` triple goes straight into
+:meth:`~asymmetry.core.fitting.FitEngine.fit_arrays`, which shares its whole
+implementation with :meth:`~asymmetry.core.fitting.FitEngine.fit` and takes the
+same keyword arguments:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.engine import FitEngine
+   from asymmetry.core.transform import compute_asymmetry, to_percent
+
+   # A pairing the dataset's default reduction does not produce.
+   asym, err = compute_asymmetry(forward_counts, backward_counts, alpha=1.02)
+
+   result = FitEngine().fit_arrays(
+       time,
+       to_percent(asym),          # the primitive returns a fraction
+       to_percent(err),
+       model.function,
+       params,
+       t_min=0.1,
+       t_max=8.0,
+   )
+
+The ``to_percent`` calls are the point: ``fit_arrays`` rescales nothing, so the
+arrays must arrive on the same scale as the parameter seeds. See
+:ref:`fitting-arrays-without-a-dataset` for the validation rules and the one
+advisory guard bare arrays cannot support.
 
 
 Parameter trends across runs

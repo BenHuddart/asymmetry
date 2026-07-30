@@ -217,6 +217,7 @@ from asymmetry.core.representation.global_fit_study import (
 )
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
+    ASYMMETRY_PERCENT,
     EFFECTIVE_DETECTOR_T0_KEY,
     FieldScan,
     apply_deadtime_correction,
@@ -11430,6 +11431,7 @@ class MainWindow(QMainWindow):
                     order_key=scan.order_key,
                     method=scan.method,
                     x_label=scan.x_label,
+                    units=scan.units,
                 )
                 if excluded_mask.any()
                 else scan
@@ -11570,6 +11572,10 @@ class MainWindow(QMainWindow):
             order_key=x_key,
             method="integral",
             x_label=self._ALC_X_LABELS[x_key],
+            # This scan is displayed in percent (the ×100 above), unlike the
+            # fraction-scale scans build_field_scan returns — state it rather than
+            # letting the field's fraction default misreport it.
+            units=ASYMMETRY_PERCENT,
         )
 
     @staticmethod

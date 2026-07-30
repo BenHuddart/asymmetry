@@ -11,6 +11,11 @@ type 2; β multiplies the *forward* counts in our α-on-backward convention,
 which is algebraically identical to musrfit's α-on-forward form with
 α_musrfit = 1/α — see docs/porting/beta-correction/). β = 1 recovers the
 standard formula A = (F − αB)/(F + αB).
+
+Scale: every asymmetry this module returns is the dimensionless **fraction**
+``A ∈ [-1, 1]``, never percent. See
+:mod:`asymmetry.core.transform.units` and "Asymmetry units across the API" in the
+documentation for the whole picture.
 """
 
 from __future__ import annotations
@@ -57,7 +62,12 @@ def compute_asymmetry(
     Returns
     -------
     asymmetry, error
-        Fractional arrays (``A ∈ [-1, 1]``) of the same length as the inputs.
+        **As a fraction** (``A ∈ [-1, 1]``), with the error on the same scale —
+        *not* percent. Arrays of the same length as the inputs. Scale by 100 (or
+        :func:`asymmetry.core.transform.units.to_percent`) before handing these to
+        anything percent-scale: a
+        :class:`~asymmetry.core.data.dataset.MuonDataset`, a fit model's ``A0``,
+        :meth:`~asymmetry.core.fitting.FitEngine.fit_arrays`.
     """
     f = np.asarray(forward, dtype=np.float64)
     b = np.asarray(backward, dtype=np.float64)
@@ -118,6 +128,20 @@ def compute_asymmetry_with_count_errors(
     The asymmetry convention remains Asymmetry's convention, with ``alpha``
     multiplying the backward group (and ``beta`` the forward group in the
     denominator).
+
+    Parameters
+    ----------
+    forward, backward, forward_error, backward_error
+        Counts and their 1σ count uncertainties (count domain — no asymmetry
+        scale involved on the way in).
+    alpha, beta
+        As in :func:`compute_asymmetry`.
+
+    Returns
+    -------
+    asymmetry, error
+        **As a fraction** (``A ∈ [-1, 1]``), exactly as
+        :func:`compute_asymmetry` — *not* percent.
     """
     f = np.asarray(forward, dtype=np.float64)
     b = np.asarray(backward, dtype=np.float64)

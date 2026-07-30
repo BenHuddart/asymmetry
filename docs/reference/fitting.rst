@@ -63,6 +63,54 @@ short and contains only the standalone variants with explicit baselines;
 composite expressions are the canonical way to assemble realistic muSR
 models.
 
+The ``A0`` seed above is ``25``, not ``0.25``, because a loaded dataset's
+``asymmetry`` and every built-in model are on the **percent** scale, while the
+low-level reduction primitives return the dimensionless fraction. Crossing the two
+parks a fit at the wrong minimum, so :doc:`asymmetry_units` maps which scale each
+part of the API speaks and how the engine's advisory guard catches the crossing.
+
+.. _fitting-arrays-without-a-dataset:
+
+Fitting arrays without a dataset
+--------------------------------
+
+``FitEngine.fit`` takes a :class:`~asymmetry.core.data.dataset.MuonDataset`, which
+is the right front door for a run's own reduced curve. A custom detector pairing, a
+background-corrected export, or any other :math:`(t, A, \sigma)` triple that is not
+a dataset's default reduction goes through ``FitEngine.fit_arrays`` instead:
+
+.. code-block:: python
+
+   from asymmetry.core.transform import compute_asymmetry, to_percent
+
+   asym, err = compute_asymmetry(forward_counts, backward_counts, alpha)
+
+   result = FitEngine().fit_arrays(
+       time, to_percent(asym), to_percent(err), model.function, params,
+       t_min=0.1, t_max=8.0,
+   )
+
+``fit_arrays`` accepts exactly the keyword arguments ``fit`` does — ``t_min`` /
+``t_max``, ``method``, ``minos``, ``cost_factory``, ``migrad_kwargs``,
+``frequency_offsets``, ``error_oversampling``, ``cancel_callback`` — and runs the
+same internal engine, so the two paths cannot drift: fitting a dataset's own arrays
+through ``fit_arrays`` returns a result identical to ``fit(dataset, …)`` down to the
+last digit of every uncertainty.
+
+Two differences are worth knowing. The arrays are **expected in percent**
+(:math:`0`–:math:`100`), matching the models' seeds, and nothing rescales them —
+the reduction primitives return a fraction, hence the
+:func:`~asymmetry.core.transform.units.to_percent` above; see
+:doc:`asymmetry_units`. And because bare arrays carry no run metadata, the advisory
+fixed-frequency guard — which compares a pinned frequency to :math:`\gamma_\mu B`
+from the run's ``field`` — cannot run on this path, although the
+percent-versus-fraction scale guard does.
+
+``fit_arrays`` also validates its input, which ``fit`` does not: it raises
+``ValueError`` for arrays that are not one-dimensional, of unequal length, empty, or
+non-finite, and for a ``t_min`` / ``t_max`` window that leaves no points — the
+checks a dataset would otherwise have carried implicitly.
+
 Parameter control
 -----------------
 

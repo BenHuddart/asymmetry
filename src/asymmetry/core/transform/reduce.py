@@ -52,6 +52,11 @@ from asymmetry.core.transform.grouping import (
     detector_t0_overrides,
 )
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.units import (
+    ASYMMETRY_PERCENT,
+    PERCENT_PER_FRACTION,
+    AsymmetryUnit,
+)
 from asymmetry.core.utils.perf import perf_timer
 
 #: A background ``reference_run`` resolver: given the grouping dict, return the
@@ -65,11 +70,15 @@ ReferenceResolver = Callable[[dict[str, Any]], "tuple[list[Histogram], float] | 
 class GroupedAsymmetryReduction:
     """Result of :func:`reduce_grouped_asymmetry`.
 
-    ``time`` is in µs relative to t0; ``asymmetry`` and ``error`` are already
-    scaled to percent (×100), matching the arrays the plot panel consumes.
-    ``deadtime_applied`` reports whether deadtime correction actually ran, and
-    ``background_state`` mirrors the per-mode dict the MainWindow records back
-    onto ``run.grouping`` (``None`` when no background correction was requested).
+    ``asymmetry`` and ``error`` are **in percent (0–100)** — already scaled ×100
+    from the fraction :func:`~asymmetry.core.transform.binned_fb_asymmetry`
+    returns, matching the arrays the plot panel and
+    :attr:`~asymmetry.core.data.dataset.MuonDataset.asymmetry` consume; the
+    :attr:`units` field states that machine-readably. ``time`` is in µs relative
+    to t0. ``deadtime_applied`` reports whether deadtime correction actually ran,
+    and ``background_state`` mirrors the per-mode dict the MainWindow records
+    back onto ``run.grouping`` (``None`` when no background correction was
+    requested).
     """
 
     time: NDArray[np.float64]
@@ -77,6 +86,12 @@ class GroupedAsymmetryReduction:
     error: NDArray[np.float64]
     deadtime_applied: bool
     background_state: dict[str, object] | None
+    #: Scale of :attr:`asymmetry` and :attr:`error`. Always
+    #: :data:`~asymmetry.core.transform.units.ASYMMETRY_PERCENT` — the reduction
+    #: has no other mode; the field exists so a consumer can assert the scale it
+    #: assumed instead of trusting a comment, and so a future fraction-scale
+    #: reduction could not arrive silently.
+    units: AsymmetryUnit = ASYMMETRY_PERCENT
 
 
 @dataclass(frozen=True)
@@ -388,6 +403,18 @@ def reduce_grouped_asymmetry(
     :func:`corrected_grouped_counts`: leave ``facility`` at ``None`` and pass
     ``metadata=run.metadata`` to have the accelerator-period trimming of a
     pre-t0 background window engage by itself.
+
+    Returns
+    -------
+    GroupedAsymmetryReduction
+        Whose ``asymmetry`` and ``error`` are **in percent (0–100)** — ``units``
+        is :data:`~asymmetry.core.transform.units.ASYMMETRY_PERCENT`. This is the
+        one step on the reduction path that applies the ×100, so its output drops
+        straight into a :class:`~asymmetry.core.data.dataset.MuonDataset` and the
+        percent-scale fit models, unlike the **fraction** returned by
+        :func:`binned_fb_asymmetry` and
+        :func:`~asymmetry.core.transform.compute_asymmetry` underneath it. See
+        "Asymmetry units across the API" in the documentation.
     """
     with perf_timer(
         "core.reduce.grouped_asymmetry",
@@ -442,12 +469,16 @@ def reduce_grouped_asymmetry(
             deadtime_applied=corrected.deadtime_applied,
             background_applied=bool(corrected.background_state),
         )
+        # binned_fb_asymmetry returns the fraction; the public contract of this
+        # reduction (and of MuonDataset) is percent, so scale here — the one
+        # place the ×100 happens on this path.
         return GroupedAsymmetryReduction(
             time=np.asarray(time_axis, dtype=np.float64),
-            asymmetry=np.asarray(asymmetry * 100.0, dtype=np.float64),
-            error=np.asarray(error * 100.0, dtype=np.float64),
+            asymmetry=np.asarray(asymmetry * PERCENT_PER_FRACTION, dtype=np.float64),
+            error=np.asarray(error * PERCENT_PER_FRACTION, dtype=np.float64),
             deadtime_applied=corrected.deadtime_applied,
             background_state=corrected.background_state,
+            units=ASYMMETRY_PERCENT,
         )
 
 

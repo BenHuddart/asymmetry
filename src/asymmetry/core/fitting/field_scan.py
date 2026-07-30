@@ -16,6 +16,16 @@ This module provides the two-step ALC workflow chosen for the GUI port (see
    resonance field) to the corrected scan, reading off the resonance position
    and width. This mirrors Mantid's "Peak fitting" step.
 
+Scale: a :class:`FieldScan`'s ``value``/``error`` are the integral asymmetry **as
+a fraction** (``A ∈ [-1, 1]`` — see its ``units`` field), *not* the percent of a
+:class:`~asymmetry.core.data.dataset.MuonDataset`. So every amplitude fitted here,
+and every amplitude seed in the ALC / LCR parameter models (``GaussianLCR`` seeds
+``f`` near 0.1), is on that fractional scale. These functions pass the scan's
+values through unchanged, so a scan scaled to percent fits equally well and
+simply reports percent-scale amplitudes. This is the one corner of the fitting
+layer whose asymmetry convention is *not* percent — see "Asymmetry units across
+the API" in the documentation.
+
 Layering: this lives in the fitting package because it depends on both
 :mod:`asymmetry.core.transform` (the :class:`FieldScan`) and
 :mod:`asymmetry.core.fitting.parameter_models`. It must stay free of Qt /
@@ -111,6 +121,10 @@ def fit_scan_model(
     method: str = "migrad",
 ) -> ParameterModelFitResult:
     """Fit a parameter model to a field scan's ``(x, value, error)``.
+
+    Amplitude parameters come back on the **scan's own asymmetry scale** — a
+    fraction (``A ∈ [-1, 1]``) for a scan straight out of
+    :func:`~asymmetry.core.transform.build_field_scan`, per the module docstring.
 
     The thin adapter that lets a :class:`FieldScan` flow into the existing
     ``fit_parameter_model``. Used for the peak-fit step on a (typically
@@ -375,4 +389,6 @@ def _subtract_baseline(scan: FieldScan, baseline: NDArray[np.float64]) -> FieldS
         x_label=scan.x_label,
         y_label=y_label,
         excluded=list(scan.excluded),
+        # Subtracting a baseline fitted on the same values is scale-preserving.
+        units=scan.units,
     )
