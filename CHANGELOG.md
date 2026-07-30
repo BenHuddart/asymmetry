@@ -109,6 +109,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to the new `GPS-RD15` layout, and applying a preset from a layout that does
   not describe the run raises `PresetLayoutMismatchError` instead of grouping
   wrongly (see Added).
+- **PSI temperature-log sidecars: three bugs that silently lost or mismatched
+  `.mon` files.** (1) Sidecar names are zero-padded (`run_0534.mon`), but the
+  matcher compared filename text against the unpadded run number with a
+  digit-boundary guard, so the leading `0` blocked every run below the padding
+  width — runs under 1000 never found their logs. Matching is now numeric, so
+  padded and unpadded spellings agree while `run_1554.mon` still stays clear of
+  run 554, and where a name carries an explicit `run` token only the digits
+  attached to it count, so variant suffixes (`run_0534_2nd.mon`,
+  `run_0534_variox0.mon`) can no longer masquerade as runs 2 and 0. (2) The MDU
+  reader never looked for sidecars at all, so `.mdu` runs lost their temperature
+  logs outright; it now runs the same discovery and merge as the BIN reader.
+  (3) PSI run numbers restart each beam period, so a `tlog` directory can retain
+  a same-numbered sidecar — matching even in its own `Start of Run` line — from
+  an earlier experiment. Each candidate's start timestamp is now cross-checked
+  against the run's started/stopped window with a week of slack; a sidecar
+  outside it is rejected and listed with its reason in the new
+  `psi_temperature_log_rejected` metadata, rather than loading another
+  experiment's temperatures under this run's name.
 - **Global fit wizard: phase-1 screening used a fraction of the host.** The
   per-dataset single-fit tables — independent, minutes-long, CPU-bound jobs —
   were capped at four workers regardless of core count, so a 14-dataset series on

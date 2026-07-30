@@ -142,13 +142,19 @@ contains a recognisable field such as ``LF 32G`` or ``Bz=150 G``, the GUI
 offers to apply that comment-derived value as the run field. This prompt is
 available for PSI BIN/MDU and MusrRoot/LEM ROOT files.
 
-PSI-BIN temperature metadata has two sources. The scalar run temperature is
-read from the BIN header using the musrfit-compatible offsets. Optional
-temperature-log sidecars use Mantid's ``LoadPSIMuonBin`` convention: Asymmetry
-searches from the BIN file directory, to three directory levels below it, for
-all ``.mon`` files whose filename contains the run number. The ``.mon`` header
-date/title, equipment name, and backslash-delimited rows are parsed into
-plottable ``nexus_time_series`` entries named like
+PSI temperature metadata has two sources. The scalar run temperature is read
+from the BIN or MDU header using the musrfit-compatible offsets. Optional
+temperature-log sidecars use Mantid's ``LoadPSIMuonBin`` convention, and are
+read for both BIN and MDU runs: Asymmetry searches from the data file's
+directory, to three directory levels below it, for all ``.mon`` files whose
+filename carries the run number. The comparison is numeric, so the zero-padded
+names PSI actually writes (``run_0534.mon`` for run 534) match, while
+``run_1554.mon`` does not; where a name has an explicit ``run`` token, only the
+digits attached to it count, so variant suffixes such as ``run_0534_2nd.mon``
+and ``run_0534_variox0.mon`` are not mistaken for runs 2 and 0.
+
+The ``.mon`` header date/title, equipment name, and backslash-delimited rows
+are parsed into plottable ``nexus_time_series`` entries named like
 ``psi_temperature/Temp_<channel>`` for classic logs or
 ``psi_temperature/<equipment>/<channel>`` for FLAME ``tlog`` files. When FLAME
 logs are present, ``flamesam0/SAM_ts`` is marked as the primary sample
@@ -157,6 +163,17 @@ and ``variox0/Variox`` are retained as secondary sample-temperature traces.
 The Get Info window shows these logs in the summary/advanced tables and records
 the sidecar paths plus ``Mantid LoadPSIMuonBin-compatible`` provenance in
 ``psi_temperature_log`` metadata.
+
+Because PSI run numbers restart every beam period, a ``tlog`` directory can
+retain a sidecar whose run number, and whose own ``Start of Run`` header line,
+match the run being loaded while belonging to an earlier experiment. Each
+candidate sidecar's start timestamp is therefore cross-checked against the
+run's started/stopped window, with a week of slack for clock skew. A sidecar
+outside that window is not loaded; it is listed instead in
+``psi_temperature_log_rejected`` metadata, with the reason, so a run without a
+temperature log says why rather than silently carrying another experiment's
+temperatures. When either timestamp is missing or unparseable there is nothing
+to check against and the sidecar is kept.
 
 MusrRoot / LEM ROOT (.root)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -280,9 +297,12 @@ does not invent format rules:
 * Mantid's PSI-BIN loader can emit a deadtime table, but it fills the PSI-BIN
   table with zeros. Asymmetry therefore treats PSI deadtime as absent and uses
   ``File`` mode only when non-zero file values are actually present.
-* PSI-BIN ``.mon`` temperature sidecar loading follows Mantid
-  ``LoadPSIMuonBin`` rather than musrfit, because musrfit was found to read
-  embedded PSI temperature fields but not these external log files.
+* PSI ``.mon`` temperature sidecar loading follows Mantid ``LoadPSIMuonBin``
+  rather than musrfit, because musrfit was found to read embedded PSI
+  temperature fields but not these external log files. Asymmetry extends the
+  Mantid convention in two ways: MDU runs get the same sidecars as BIN runs,
+  and a sidecar whose start timestamp is inconsistent with the run's own
+  start/stop window is rejected rather than loaded.
 
 Grouping behaviour by format
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
