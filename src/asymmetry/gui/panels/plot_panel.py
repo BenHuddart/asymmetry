@@ -92,6 +92,7 @@ from asymmetry.core.transform.background import (
     apply_grouped_background_correction,
     available_background_modes,
     resolve_background_mode,
+    resolve_facility,
 )
 from asymmetry.core.transform.grouping import good_event_count, group_forward_backward
 from asymmetry.core.transform.integral import integrate_curve
@@ -6332,15 +6333,9 @@ class PlotPanel(QWidget):
             available = available_background_modes(metadata=metadata, source_file=source_file)
             if mode in available:
                 bin_width = float(run.histograms[0].bin_width) if run.histograms else 1.0
-                facility = str(
-                    metadata.get(
-                        "facility",
-                        reference_dataset.metadata.get(
-                            "facility",
-                            reference_dataset.metadata.get("instrument", ""),
-                        ),
-                    )
-                )
+                facility = resolve_facility(
+                    metadata=metadata, grouping=grouping
+                ) or resolve_facility(metadata=reference_dataset.metadata)
                 bkg_result = apply_grouped_background_correction(
                     forward,
                     backward,

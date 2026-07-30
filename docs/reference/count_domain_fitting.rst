@@ -87,6 +87,34 @@ doubt, the Poisson cost is the safe default. The reduced statistic reported for
 a Poisson fit is the Cash value per degree of freedom, which behaves like a
 reduced χ² near the minimum.
 
+Seeding N₀, and the spurious minimum
+------------------------------------
+
+The right N₀ is a per-run count level, not a number a script can guess. Seeded
+generically — 10⁴, say, against a run whose first-bin count is 10⁵ — the
+forward/backward fit does not fail: it converges, cleanly and with credible
+errors, on a *spurious* minimum at a tiny α with a compensating amplitude
+balance. Nothing in the fit result distinguishes that from a real detector
+balance.
+
+So :func:`~asymmetry.core.fitting.count_domain.fit_fb_alpha` seeds N₀ from the
+data by default. Omit the ``N0`` parameter, or supply it with the value
+:data:`~asymmetry.core.fitting.count_domain.SEED_FROM_DATA` when you want to
+state its bounds, and the seed becomes the forward window's first positive bin
+lifted back to :math:`t = 0`. An explicit positive value is used as given, and a
+*fixed* N₀ is never overruled. The GUI has always seeded from the loaded run, so
+this matters most for scripts driving the core API directly — for instance to
+free the muon lifetime, which the β-calibration wrapper does not expose.
+
+A converged fit is also checked against the counts, because that spurious
+minimum is a genuine minimum: the fitted α must sit within a factor of three of
+the window's observed forward/backward count ratio, and the fitted forward scale
+:math:`N_0\sqrt{\alpha}` within two decades of the observed count level at
+:math:`t = 0`. A violation reports ``success=False`` with a message naming the
+discrepancy — and repeats it in each group result's ``warnings`` — rather than
+presenting the walk-off as a clean convergence. Neither check applies to a
+parameter you fixed yourself.
+
 Reading the result
 -------------------
 

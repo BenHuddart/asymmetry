@@ -59,6 +59,14 @@ DEADTIME_PARAMS: tuple[str, ...] = ("DT0", "DT1", "C2", "C3", "C4")
 #: Selectable count-loss models (WiMDA ``CountLossModelling``).
 DEADTIME_MODELS: tuple[str, ...] = ("simple", "linear", "polynomial", "power")
 
+#: Seed sentinel: give this as a parameter's ``value`` and the count-fit driver
+#: computes the seed from the data instead. Supported for ``N0``, whose right
+#: scale is a per-run count level no caller can know in advance — a generic seed
+#: drops the forward/backward fit into a spurious minimum (see
+#: :func:`fit_fb_alpha`). Omitting ``N0`` from the set entirely does the same
+#: thing; the sentinel exists for callers that want to state the bounds.
+SEED_FROM_DATA: float = float("nan")
+
 #: Names the count-fit driver consumes structurally or as optional nuisances. A
 #: physics-model parameter sharing one of these would be silently swallowed by the
 #: name-based dispatch (popped as a nuisance, or shadowed by a fixed structural
@@ -789,13 +797,37 @@ def fit_fb_alpha(
     Recovers the detector balance ``alpha`` from a transverse-field calibration
     run the statistically proper way (WiMDA ``fgFB``), reporting its correlation
     with the physics amplitude — strong in TF runs. ``params`` must contain the
-    shared ``alpha`` and ``N0``, a forward background ``background`` and a
-    backward background ``background_b``, plus the physics model parameters.
+    shared ``alpha``, a forward background ``background`` and a backward
+    background ``background_b``, plus the physics model parameters.
 
     Returns a :class:`GroupedTimeDomainFitResult` whose ``group_results`` are
     keyed by ``forward_group`` / ``backward_group`` and whose
     ``shared_parameters`` hold the fitted ``alpha``/``N0``/physics. The (alpha,
     amplitude) covariance is available on either group result.
+
+    Seeding ``N0``
+    --------------
+    ``N0`` may be **omitted**, or supplied with the value
+    :data:`SEED_FROM_DATA` (or any non-positive / non-finite value), in which
+    case it is seeded from the data: the forward window's first positive bin
+    lifted back to ``t = 0`` by ``exp(t/tau_mu)``. This is the default because the
+    right ``N0`` is a per-run count level no caller can know in advance, and a
+    generically scaled seed does not merely converge slowly — it converges
+    *cleanly* on a spurious minimum, with a tiny ``alpha`` and a compensating
+    amplitude balance. An explicit positive ``N0`` is used as given, and a fixed
+    ``N0`` is never overruled.
+
+    Scale sanity check
+    ------------------
+    Because that spurious minimum is a valid minimum as far as Migrad is
+    concerned, a converged fit is additionally checked against the counts: the
+    fitted ``alpha`` must sit within :data:`_FB_ALPHA_SCALE_FACTOR` of the
+    window's observed forward/backward count ratio, and the fitted forward scale
+    ``N0·√alpha`` within :data:`_FB_N0_SCALE_FACTOR` of the observed count level
+    at ``t = 0``. A violation returns ``success=False`` with a message naming the
+    discrepancy (and the same text appended to each group result's ``warnings``)
+    rather than presenting the walk-off as a clean convergence. Neither check
+    applies to a parameter the caller fixed.
 
     The same optional nuisances as :func:`fit_single_histogram` apply, all
     no-ops unless requested: ``exclude`` drops an interior window; a free ``t0``
@@ -825,7 +857,7 @@ def fit_fb_alpha(
             raise ValueError("β estimation is not supported with the double-pulse model")
     if "tau" in params and "dpsep" in params:
         raise ValueError("Free muon lifetime is not supported with the double-pulse model")
-    for required in ("alpha", "N0", "background", "background_b"):
+    for required in ("alpha", "background", "background_b"):
         if required not in params:
             raise ValueError(f"Forward/backward count fit requires a {required!r} parameter")
     if int(forward_group) == int(backward_group):
@@ -871,6 +903,14 @@ def fit_fb_alpha(
     counts_f = np.asarray(g_fwd.counts, dtype=float)
     time_b = np.asarray(g_bwd.time, dtype=float)
     counts_b = np.asarray(g_bwd.counts, dtype=float)
+
+    # Seed N0 from the data unless the caller supplied a usable value. The count
+    # scale is a per-run fact; a caller who does not know it lands in a spurious
+    # minimum that converges cleanly, so good seeding is the default here rather
+    # than something only the beta-calibration wrapper knew to do.
+    n0_seed = _count_level_at_zero(time_f, counts_f)
+    if _needs_data_seed(params, "N0"):
+        params = _with_seeded_value(params, "N0", n0_seed if n0_seed is not None else 1.0)
 
     tau = float(MUON_LIFETIME_US)
     base_decay_f = np.exp(-time_f / tau)
@@ -1008,13 +1048,28 @@ def fit_fb_alpha(
         int(backward_group): result_b,
     }
     success = bool(m.valid)
+    message = (
+        "Forward/backward count fit successful" if success else "Forward/backward count fit failed"
+    )
+    if success:
+        free_values = dict(zip(free_names, fitted, strict=True))
+        complaint = _fb_scale_complaint(
+            params,
+            {name: float(free_values[name]) for name in ("alpha", "N0") if name in free_values},
+            counts_f=counts_f,
+            counts_b=counts_b,
+            n0_seed=n0_seed,
+        )
+        if complaint:
+            success = False
+            message = f"Forward/backward count fit {complaint}"
+            for result in (result_f, result_b):
+                result.warnings.append(message)
     return GroupedTimeDomainFitResult(
         success=success,
         group_results=group_results,
         shared_parameters=shared_parameters,
-        message="Forward/backward count fit successful"
-        if success
-        else "Forward/backward count fit failed",
+        message=message,
     )
 
 
@@ -1168,6 +1223,131 @@ def _ensure_beta_param(params: ParameterSet) -> ParameterSet:
         else:
             out.add(p)
     return out
+
+
+def _count_level_at_zero(time: NDArray[np.float64], counts: NDArray[np.float64]) -> float | None:
+    """Lifetime-corrected count level extrapolated to ``t = 0``, or ``None``.
+
+    The count models are all ``N0 · scale · exp(-t/tau_mu) · (1 + …) + bg``, so the
+    right scale for ``N0`` is the fit window's first bin lifted back to ``t = 0``.
+    This is the windowed generalisation of the private first-good-bin seed the
+    beta-calibration module used, and matches it exactly when the window starts at
+    ``t0``. The first *positive* bin is used, so an empty leading bin does not
+    collapse the seed.
+    """
+    positive = np.flatnonzero(np.isfinite(counts) & (counts > 0.0))
+    if positive.size == 0:
+        return None
+    index = int(positive[0])
+    level = float(counts[index]) * float(np.exp(float(time[index]) / float(MUON_LIFETIME_US)))
+    return level if np.isfinite(level) and level > 0.0 else None
+
+
+def _needs_data_seed(params: ParameterSet, name: str) -> bool:
+    """Whether *name* should be seeded from the data rather than from *params*."""
+    if name not in params:
+        return True
+    parameter = params[name]
+    if parameter.fixed:
+        # A fixed value is a declaration, not a seed; never overrule it.
+        return False
+    value = float(parameter.value)
+    return not np.isfinite(value) or value <= 0.0
+
+
+def _with_seeded_value(params: ParameterSet, name: str, value: float) -> ParameterSet:
+    """Copy of *params* with *name* present at *value*, keeping bounds and order."""
+    out = ParameterSet()
+    seeded = False
+    for p in params:
+        if p.name == name:
+            out.add(
+                Parameter(
+                    name=p.name,
+                    value=float(value),
+                    min=p.min,
+                    max=p.max,
+                    fixed=p.fixed,
+                    link_group=p.link_group,
+                )
+            )
+            seeded = True
+        else:
+            out.add(p)
+    if not seeded:
+        out.add(Parameter(name=name, value=float(value), min=0.0))
+    return out
+
+
+#: Scale sanity checks applied to a converged forward/backward count fit.
+#:
+#: ``alpha`` is a detector balance, so it must sit within a broad factor of the
+#: window's observed forward/backward count ratio. The model fixes how far apart
+#: they can legitimately be: ``sum(F)/sum(B) = alpha·(1 + a)/(1 − beta·a)`` with
+#: ``a`` the window-mean asymmetry, which for a real µSR run is at most a few
+#: tenths (a surface-muon initial asymmetry is ~0.25, and relaxation or
+#: oscillation averages it down further) — a factor of two at the extreme. Three
+#: leaves margin for a synthetic or pathological amplitude without admitting the
+#: order-of-magnitude walk-offs a bad seed produces. Likewise the fitted forward
+#: scale ``N0·√alpha`` must land within two decades of the observed count level at
+#: ``t = 0``. Both compare the fit against the *data*, so unlike a fixed
+#: plausibility band on alpha they cannot be defeated by a caller who widened the
+#: fit bounds as a matter of course.
+_FB_ALPHA_SCALE_FACTOR = 3.0
+_FB_N0_SCALE_FACTOR = 100.0
+
+
+def _fb_scale_complaint(
+    params: ParameterSet,
+    fitted: dict[str, float],
+    *,
+    counts_f: NDArray[np.float64],
+    counts_b: NDArray[np.float64],
+    n0_seed: float | None,
+) -> str:
+    """Message describing an implausible converged scale, or ``""`` when sane.
+
+    Migrad reports a valid minimum whether or not it is *the* minimum. Driven
+    from a badly scaled ``N0`` seed the forward/backward fit has a spurious one
+    at a tiny alpha with a compensating amplitude balance, and it converges there
+    cleanly. These two checks compare the converged scale against the counts
+    themselves, which is what a caller cannot see from ``success`` alone.
+
+    ``fitted`` holds the *free* parameters' converged values; a parameter the
+    caller fixed is a declaration and is never complained about, though a fixed
+    alpha is still read (from ``params``) to form the forward count scale.
+    """
+    alpha = fitted.get("alpha", float(params["alpha"].value))
+    if "alpha" in fitted:
+        sum_f = float(np.sum(np.clip(counts_f, 0.0, None)))
+        sum_b = float(np.sum(np.clip(counts_b, 0.0, None)))
+        if sum_f > 0.0 and sum_b > 0.0 and alpha > 0.0:
+            observed = sum_f / sum_b
+            if not (
+                observed / _FB_ALPHA_SCALE_FACTOR <= alpha <= observed * _FB_ALPHA_SCALE_FACTOR
+            ):
+                return (
+                    f"converged at alpha={alpha:.4g}, more than "
+                    f"{_FB_ALPHA_SCALE_FACTOR:g}x away from the window's "
+                    f"forward/backward count ratio {observed:.4g} — this is a "
+                    "spurious minimum, not a detector balance; check the N0 seed "
+                    "(omit it, or pass SEED_FROM_DATA, to have it seeded from the "
+                    "data) and the fit window"
+                )
+    n0 = fitted.get("N0")
+    if n0 is not None and n0_seed is not None:
+        scale = n0 * float(np.sqrt(abs(alpha))) if np.isfinite(alpha) else n0
+        if scale > 0.0 and not (
+            n0_seed / _FB_N0_SCALE_FACTOR <= scale <= n0_seed * _FB_N0_SCALE_FACTOR
+        ):
+            return (
+                f"converged at a forward count scale N0*sqrt(alpha)={scale:.4g}, "
+                f"more than {_FB_N0_SCALE_FACTOR:g}x away from the observed level "
+                f"{n0_seed:.4g} at t=0 — this is a spurious minimum; check the N0 "
+                "seed (omit it, or pass SEED_FROM_DATA, to have it seeded from "
+                "the data)"
+            )
+    return ""
 
 
 def _with_fixed(params: ParameterSet, **fixed_values: float) -> ParameterSet:
