@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -9,6 +10,10 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fourier.apodisation import (
+    ApodisationEarlySignalWarning,
+    early_signal_apodisation_loss,
+)
 from asymmetry.core.fourier.window import apply_fft_filter, apply_window
 
 _DISPLAY_ALIASES = {
@@ -309,6 +314,54 @@ def _validated_fft_arrays(
     return coerced["time"], coerced["asymmetry"], coerced.get("error")
 
 
+def _warn_on_early_signal_suppression(
+    time: NDArray[np.float64],
+    signal: NDArray[np.float64],
+    weights: NDArray[np.float64],
+    error: NDArray[np.float64] | None,
+    *,
+    window: str,
+) -> None:
+    """Warn when the apodisation in force has deleted the early-time signal.
+
+    Advisory only — nothing about the returned spectrum changes. The failure
+    mode this exists for is concrete: a symmetric taper (``hann``/``cosine``) is
+    exactly zero at the first sample, so a heavily damped oscillation whose
+    lifetime is a small fraction of the record can vanish into the noise floor
+    under Hann while being many-sigma without it. The metric and its two
+    thresholds live in
+    :func:`~asymmetry.core.fourier.apodisation.early_signal_apodisation_loss`.
+
+    Requirements the calibration satisfies (pinned by the synthetic study in
+    ``tests/core/test_fourier_apodisation_guard.py``):
+
+    * a heavily damped cosine (λ ≫ 1/record length) under ``hann`` or
+      ``cosine`` **must** warn;
+    * the same signal with ``window="none"``, or with the matched exponential
+      filter (``window="lorentzian"``, ``filter_time_constant_us ≈ 1/λ``),
+      **must not**;
+    * a conventional transverse-field record whose oscillation is alive across
+      the whole window **must not**, under any apodisation.
+    """
+    loss = early_signal_apodisation_loss(time, signal, weights, error)
+    if loss is None or not loss.triggered:
+        return
+    warnings.warn(
+        f"Apodisation window {window!r} has deleted the early-time signal: "
+        f"{loss.early_power_fraction:.1%} of this record's error-weighted power "
+        f"lies in its first {loss.early_window_fraction:.0%}, and the window keeps "
+        f"only {loss.early_retained_fraction:.2%} of it. A symmetric taper is zero "
+        "at t = 0, so a heavily damped oscillation can vanish entirely under it "
+        "while being many-sigma without it. For early-time work use "
+        'window="none" with a t_max crop, or the exponential filter '
+        '(window="lorentzian", filter_time_constant_us ~ 1/lambda), which is '
+        "weight-1 at the start and is the matched apodisation for a Lorentzian "
+        "line.",
+        ApodisationEarlySignalWarning,
+        stacklevel=4,
+    )
+
+
 def _prepare_fft_core(
     time: NDArray[np.float64],
     asymmetry: NDArray[np.float64],
@@ -365,6 +418,7 @@ def _prepare_fft_core(
         )
     else:
         weights = apply_window(np.ones_like(signal), window_key)
+    _warn_on_early_signal_suppression(times, signal, weights, err, window=window_key)
     windowed = signal * weights
 
     window_sum = float(np.sum(weights, dtype=np.float64))
@@ -391,10 +445,20 @@ def prepare_fft_time_signal(
 ) -> PreparedFFTSignal:
     """Return the preprocessed real time-domain signal and its calibration.
 
-    Applies (in order) the time crop, optional fractional footing, WiMDA-style
-    average subtraction, and the apodisation filter/window — the exact
-    preprocessing :func:`fft_complex_asymmetry` feeds to the FFT, so an all-poles
-    (Burg) estimate can share the same input.
+    Applies (in order) the time crop, optional fractional footing, the baseline
+    removal (``subtract_average_signal`` or ``detrend``), and the apodisation
+    filter/window — the exact preprocessing :func:`fft_complex_asymmetry` feeds
+    to the FFT, so an all-poles (Burg) estimate can share the same input.
+
+    ``window`` accepts the WiMDA *filters* (``"none"``, ``"gaussian"``,
+    ``"lorentzian"`` — weight-1 at ``t = 0``) and the symmetric *tapers*
+    (``"hann"``, ``"cosine"`` — zero at the record's ends). A taper deletes
+    early-time signal and is for late-time / narrow-line work only; when it
+    detects that a taper has erased a front-loaded signal this function raises
+    :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`,
+    which names the numbers and the two alternatives (no window with a crop, or
+    the exponential filter at ``filter_time_constant_us ≈ 1/λ``). The warning is
+    advisory: nothing about the returned value changes.
 
     To preprocess a bare ``(t, A, σ)`` triple with no dataset in hand, use
     :func:`prepare_fft_arrays`, which shares this function's entire
@@ -587,7 +651,18 @@ def fft_complex_asymmetry(
     dataset
         The time-domain data.
     window
-        Apodization window name (``"none"``, ``"gaussian"``, ``"hann"``, ``"cosine"``).
+        Apodization window name (``"none"``, ``"gaussian"``, ``"hann"``,
+        ``"cosine"``, ``"lorentzian"``). ``"gaussian"``/``"lorentzian"`` are the
+        WiMDA *filters* — weight-1 at ``t = 0``, decaying with
+        ``filter_time_constant_us`` — while ``"hann"``/``"cosine"`` are
+        **symmetric tapers**, zero at the record's ends. A taper is for
+        late-time / narrow-line work and DELETES early-time signal: a heavily
+        damped oscillation (lifetime ≪ record length) can vanish entirely under
+        Hann while being many-sigma with ``"none"`` and a crop, or with the
+        exponential filter at ``filter_time_constant_us ≈ 1/λ`` (the matched
+        apodisation for a Lorentzian line). This path warns when it detects
+        that case — see
+        :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`.
     padding_factor
         Zero-pad the signal to ``padding_factor × N``.
     t_min, t_max
@@ -838,7 +913,18 @@ def fft_asymmetry(
     dataset
         The time-domain data.
     window
-        Apodization window name (``"none"``, ``"gaussian"``, ``"hann"``, ``"cosine"``).
+        Apodization window name (``"none"``, ``"gaussian"``, ``"hann"``,
+        ``"cosine"``, ``"lorentzian"``). ``"gaussian"``/``"lorentzian"`` are the
+        WiMDA *filters* — weight-1 at ``t = 0``, decaying with
+        ``filter_time_constant_us`` — while ``"hann"``/``"cosine"`` are
+        **symmetric tapers**, zero at the record's ends. A taper is for
+        late-time / narrow-line work and DELETES early-time signal: a heavily
+        damped oscillation (lifetime ≪ record length) can vanish entirely under
+        Hann while being many-sigma with ``"none"`` and a crop, or with the
+        exponential filter at ``filter_time_constant_us ≈ 1/λ`` (the matched
+        apodisation for a Lorentzian line). This path warns when it detects
+        that case — see
+        :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`.
     padding_factor
         Zero-pad the signal to ``padding_factor × N``.
     t_min, t_max

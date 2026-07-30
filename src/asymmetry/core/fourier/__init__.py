@@ -1,7 +1,10 @@
 """Frequency-domain analysis: FFT, grouped inputs, and apodization."""
 
 from asymmetry.core.fourier.apodisation import (
+    ApodisationEarlySignalWarning,
     ApodisationSuggestion,
+    EarlySignalApodisationLoss,
+    early_signal_apodisation_loss,
     suggest_matched_apodisation,
 )
 from asymmetry.core.fourier.burg import (
@@ -55,7 +58,10 @@ from asymmetry.core.fourier.units import (
 from asymmetry.core.fourier.window import apply_window
 
 __all__ = [
+    "ApodisationEarlySignalWarning",
     "ApodisationSuggestion",
+    "EarlySignalApodisationLoss",
+    "early_signal_apodisation_loss",
     "suggest_matched_apodisation",
     "FieldUnit",
     "axis_label",

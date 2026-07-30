@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import re
+import warnings
 from collections.abc import Callable, Sequence
 from concurrent.futures import FIRST_COMPLETED, Executor, ThreadPoolExecutor
 from concurrent.futures import wait as futures_wait
@@ -62,7 +63,8 @@ from asymmetry.core.fitting.wizard_scope import (
     resolve_scope_for_dataset,
 )
 from asymmetry.core.fitting.wizard_timing import WizardStageProgress, stage_timer
-from asymmetry.core.fourier.fft import fft_asymmetry
+from asymmetry.core.fourier.apodisation import ApodisationEarlySignalWarning
+from asymmetry.core.fourier.fft import fft_arrays
 
 # ``ComputationalCost`` is a ``str``-Enum, so ``max()``/``<`` compares members
 # alphabetically ("cheap" < "expensive" < "moderate") — wrong. Rank explicitly.
@@ -437,18 +439,17 @@ def fingerprint_spectrum(dataset: MuonDataset) -> SpectrumFingerprint:
     centered_win = centered[:fft_end]
     smoothed_win = smoothed_centered[:fft_end]
     error_win = error_full[:fft_end]
-    fft_dataset = MuonDataset(
-        time=t_win.copy(),
-        asymmetry=centered_win.copy(),
-        error=error_win.copy(),
-        metadata=dict(dataset.metadata),
-        run=dataset.run,
-    )
-    frequencies, _real, magnitude = fft_asymmetry(
-        fft_dataset,
-        window=_DEFAULT_FFT_WINDOW,
-        padding_factor=_DEFAULT_FFT_PADDING,
-    )
+    # Internal seeding FFT: the window is this module's choice, not the
+    # user's, so the early-signal guard's advice is not actionable here.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ApodisationEarlySignalWarning)
+        frequencies, _real, magnitude = fft_arrays(
+            t_win,
+            centered_win,
+            error_win,
+            window=_DEFAULT_FFT_WINDOW,
+            padding_factor=_DEFAULT_FFT_PADDING,
+        )
     dominant_fft_frequency_mhz, dominant_fft_snr = _dominant_peak_metrics(frequencies, magnitude)
     duration = max(float(t_win[-1] - t_win[0]), _EPS) if t_win.size > 1 else 1.0
     dominant_fft_cycles_in_window = float(dominant_fft_frequency_mhz * duration)
@@ -4145,18 +4146,16 @@ def _residual_diagnostics(
     if residual_rms <= 0.1 or float(np.max(np.abs(standardized), initial=0.0)) <= 0.25:
         return residual_rms, runs_z_score, max_abs_autocorrelation, 0.0
 
-    residual_dataset = MuonDataset(
-        time=np.asarray(dataset.time, dtype=float)[: residuals.size].copy(),
-        asymmetry=residuals.copy(),
-        error=safe_errors.copy(),
-        metadata=dict(dataset.metadata),
-        run=dataset.run,
-    )
-    frequencies, _real, magnitude = fft_asymmetry(
-        residual_dataset,
-        window=_DEFAULT_FFT_WINDOW,
-        padding_factor=_DEFAULT_FFT_PADDING,
-    )
+    # Internal residual diagnostic: same reasoning as the seeding FFT above.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ApodisationEarlySignalWarning)
+        frequencies, _real, magnitude = fft_arrays(
+            np.asarray(dataset.time, dtype=float)[: residuals.size],
+            residuals,
+            safe_errors,
+            window=_DEFAULT_FFT_WINDOW,
+            padding_factor=_DEFAULT_FFT_PADDING,
+        )
     _peak_freq, residual_fft_peak_snr = _dominant_peak_metrics(frequencies, magnitude)
     return residual_rms, runs_z_score, max_abs_autocorrelation, residual_fft_peak_snr
 

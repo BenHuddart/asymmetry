@@ -21,6 +21,20 @@ def apply_window(signal: NDArray[np.float64], name: str) -> NDArray[np.float64]:
     """Apply a named window function to *signal*.
 
     Supported names: ``"gaussian"``, ``"hann"``, ``"cosine"``, ``"lorentzian"``.
+
+    .. warning::
+
+       ``"hann"`` and ``"cosine"`` are **symmetric tapers**: they are zero at
+       the first sample and rise as ``(t/T)²``, so they DELETE early-time
+       signal. They are for late-time / narrow-line work, where the record is
+       long compared with the signal's lifetime. A heavily damped oscillation
+       (lifetime ≪ record length) can vanish entirely under a Hann window while
+       being many-sigma without it. For that case use no window with a time
+       crop, or the exponential filter (:func:`apply_fft_filter` with
+       ``mode="lorentzian"`` and ``time_constant_us ≈ 1/λ``), which is weight-1
+       at ``t = 0`` and is the matched apodisation for a Lorentzian line. The
+       FFT prepare path warns about this automatically —
+       :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`.
     """
     fn = _WINDOWS.get(name.lower())
     if fn is None:
@@ -38,6 +52,13 @@ def apply_fft_filter(
     time_constant_us: float = 1.5,
 ) -> NDArray[np.float64]:
     """Apply WiMDA-style FFT apodisation to a time-domain signal.
+
+    Unlike the symmetric tapers of :func:`apply_window`, these filters are
+    weight-1 at ``t = 0`` (with ``start_time_us = 0``) and decay from there, so
+    they preserve early-time signal. ``mode="lorentzian"`` with
+    ``time_constant_us = 1/λ`` is the **matched** apodisation for a
+    Lorentzian-broadened line relaxing at ``λ``: it maximises the line's peak
+    signal-to-noise, at the cost of roughly doubling its apparent width.
 
     Parameters
     ----------
