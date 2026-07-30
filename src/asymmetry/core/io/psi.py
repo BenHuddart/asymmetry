@@ -12,14 +12,19 @@ from __future__ import annotations
 
 import re
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
-from asymmetry.core.instrument import detect_instrument, get_instrument_layout
+from asymmetry.core.instrument import (
+    detect_instrument,
+    get_instrument_layout,
+    preset_grouping_for_run,
+)
 from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
     apply_grouping_aligned,
@@ -32,6 +37,15 @@ _MAX_PSI_HISTOGRAMS = 32
 _BIN_HEADER_SIZE = 1024
 _TEMPERATURE_FILE_EXT = ".mon"
 _TEMPERATURE_FILE_MAX_SEARCH_DEPTH = 3
+#: How far a sidecar's own start timestamp may fall outside the run's
+#: started..stopped window before the sidecar is treated as belonging to a
+#: different run. PSI run numbers restart every beam period, so a leftover
+#: sidecar from an earlier period can carry the same run number as the run
+#: being loaded; in practice a genuine sidecar starts within seconds of its
+#: run, so a slack of days separates the two cases with a wide margin.
+_TEMPERATURE_LOG_EPOCH_SLACK = timedelta(days=7)
+#: Pivot for two-digit years in PSI date strings: ``25`` is 2025, ``95`` is 1995.
+_PSI_TWO_DIGIT_YEAR_PIVOT = 70
 _PTA_TAG_TYPE_POSITRON = b"P"
 _FE_HEADER = struct.Struct("<cc12s9s12s9sii41s63s20siiii200s50s50siiiii")
 _SETTINGS_PREFIX = struct.Struct("<13i")
@@ -104,6 +118,7 @@ class _PsiRawRun:
     beamline: str
     muon_source: str
     temperature_logs: _PsiTemperatureLogs | None = None
+    temperature_log_rejections: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -223,7 +238,14 @@ class PsiLoader(BaseLoader):
         instrument, beamline, muon_source = self._guess_psi_instrument(path)
         temp_text = self._text(header[148:158])
         field_text = self._text(header[158:168])
-        temperature_logs = self._read_temperature_logs(path, int(run_number))
+        started = self._date_time(self._text(header[218:227]), self._text(header[236:244]))
+        stopped = self._date_time(self._text(header[227:236]), self._text(header[244:252]))
+        temperature_logs, temperature_log_rejections = self._read_temperature_logs(
+            path,
+            int(run_number),
+            started=started,
+            stopped=stopped,
+        )
 
         return _PsiRawRun(
             source_file=str(path),
@@ -236,8 +258,8 @@ class PsiLoader(BaseLoader):
             orientation=self._text(header[168:178]),
             setup=self._text(header[178:188]),
             comment=self._text(header[860:922]),
-            started=self._date_time(self._text(header[218:227]), self._text(header[236:244])),
-            stopped=self._date_time(self._text(header[227:236]), self._text(header[244:252])),
+            started=started,
+            stopped=stopped,
             bin_width_us=float(bin_width_us),
             histogram_labels=labels,
             counts=counts,
@@ -248,6 +270,7 @@ class PsiLoader(BaseLoader):
             beamline=beamline,
             muon_source=muon_source,
             temperature_logs=temperature_logs,
+            temperature_log_rejections=temperature_log_rejections,
         )
 
     # ------------------------------------------------------------------
@@ -332,6 +355,16 @@ class PsiLoader(BaseLoader):
         ):
             temp_text = header.run_title[10:20]
         field_text = header.run_title[20:30]
+        started = self._date_time(header.start_date, header.start_time)
+        stopped = self._date_time(header.end_date, header.end_time)
+        # MDU runs carry the same ``.mon`` sidecars as BIN runs (their filenames
+        # are zero-padded the same way), so they get the same discovery/merge.
+        temperature_logs, temperature_log_rejections = self._read_temperature_logs(
+            path,
+            int(header.run_number),
+            started=started,
+            stopped=stopped,
+        )
 
         return _PsiRawRun(
             source_file=str(path),
@@ -344,8 +377,8 @@ class PsiLoader(BaseLoader):
             orientation=header.run_title[30:40].strip(),
             setup="",
             comment=header.run_subtitle,
-            started=self._date_time(header.start_date, header.start_time),
-            stopped=self._date_time(header.end_date, header.end_time),
+            started=started,
+            stopped=stopped,
             bin_width_us=float(bin_width_us),
             histogram_labels=labels,
             counts=counts,
@@ -355,6 +388,8 @@ class PsiLoader(BaseLoader):
             instrument=instrument,
             beamline=beamline,
             muon_source=muon_source,
+            temperature_logs=temperature_logs,
+            temperature_log_rejections=temperature_log_rejections,
         )
 
     def _parse_mdu_header(self, data: bytes) -> _MduHeader:
@@ -475,20 +510,40 @@ class PsiLoader(BaseLoader):
     # PSI-BIN temperature sidecars
     # ------------------------------------------------------------------
 
-    def _read_temperature_logs(self, path: Path, run_number: int) -> _PsiTemperatureLogs | None:
-        """Read optional PSI ``.mon`` sidecars using Mantid-compatible rules."""
+    def _read_temperature_logs(
+        self,
+        path: Path,
+        run_number: int,
+        *,
+        started: str = "",
+        stopped: str = "",
+    ) -> tuple[_PsiTemperatureLogs | None, list[dict[str, str]]]:
+        """Read optional PSI ``.mon`` sidecars using Mantid-compatible rules.
+
+        Returns the merged logs (or ``None``) plus a list of rejected sidecars.
+        A sidecar is rejected when its own start timestamp is inconsistent with
+        the run's *started*/*stopped* window — see
+        :meth:`_temperature_log_epoch_mismatch`. Rejections are reported rather
+        than dropped silently so a run with no temperature log still says why.
+        """
         log_paths = self._find_temperature_log_files(path, run_number)
         if not log_paths:
-            return None
+            return None, []
         parsed_logs: list[_PsiTemperatureLogs] = []
+        rejections: list[dict[str, str]] = []
         for log_path in log_paths:
             try:
-                parsed_logs.append(self._parse_temperature_log_file(log_path))
+                parsed = self._parse_temperature_log_file(log_path)
             except (OSError, ValueError):
                 continue
+            reason = self._temperature_log_epoch_mismatch(parsed, started, stopped)
+            if reason:
+                rejections.append({"source_file": str(log_path), "reason": reason})
+                continue
+            parsed_logs.append(parsed)
         if not parsed_logs:
-            return None
-        return self._merge_temperature_logs(parsed_logs)
+            return None, rejections
+        return self._merge_temperature_logs(parsed_logs), rejections
 
     def _find_temperature_log_files(self, path: Path, run_number: int) -> list[Path]:
         """Find PSI ``.mon`` files whose names contain the BIN run number."""
@@ -557,8 +612,27 @@ class PsiLoader(BaseLoader):
     def _is_temperature_log_file_for_run(self, path: Path, run_number: int) -> bool:
         if path.suffix.lower() != _TEMPERATURE_FILE_EXT:
             return False
-        run_token = str(int(run_number))
-        return bool(re.search(rf"(?<!\d){re.escape(run_token)}(?!\d)", path.name))
+        return int(run_number) in self._temperature_log_name_run_numbers(path.name)
+
+    def _temperature_log_name_run_numbers(self, name: str) -> set[int]:
+        """Run numbers the sidecar filename *name* could refer to.
+
+        PSI writes sidecars with the run number zero-padded (``run_0534.mon``),
+        so comparing filename text against ``str(run_number)`` never matches a
+        run below the padding width — the leading ``0`` is itself a digit, so a
+        digit-boundary match on ``534`` fails. Compare integers instead, which
+        makes padded and unpadded spellings equivalent while keeping
+        ``run_1554`` distinct from run 554.
+
+        When the name carries an explicit ``run`` token, only the digits
+        attached to it count. PSI sidecar variants append their own trailing
+        digits (``run_0534_2nd.mon``, ``run_0534_variox0.mon``), which would
+        otherwise make every such file a candidate for runs 2 and 0.
+        """
+        run_match = re.search(r"(?i)run[_\-.]?(\d+)", name)
+        if run_match is not None:
+            return {int(run_match.group(1))}
+        return {int(token) for token in re.findall(r"\d+", name)}
 
     def _unique_temperature_log_files(self, paths: list[Path]) -> list[Path]:
         unique: dict[str, Path] = {}
@@ -574,6 +648,103 @@ class PsiLoader(BaseLoader):
         """Find the first PSI ``.mon`` file whose name contains the BIN run number."""
         files = self._find_temperature_log_files(path, run_number)
         return files[0] if files else None
+
+    def _temperature_log_epoch_mismatch(
+        self,
+        log: _PsiTemperatureLogs,
+        started: str,
+        stopped: str,
+    ) -> str:
+        """Why *log* cannot belong to this run's beam period, or ``""`` if it can.
+
+        PSI run numbers restart every beam period, so a ``tlog`` directory can
+        retain a sidecar from an earlier period whose run number collides with
+        the run being loaded. Name matching alone cannot tell the two apart —
+        the stale file even reports the same run number in its own header — so
+        the sidecar's start timestamp is cross-checked against the run's
+        started/stopped window. A genuine sidecar starts within seconds of its
+        run; :data:`_TEMPERATURE_LOG_EPOCH_SLACK` leaves a wide margin for
+        clock skew while still separating runs a beam period apart.
+
+        Returns ``""`` (accept) when either timestamp is missing or
+        unparseable, so runs whose header carries no usable date keep their
+        previous behaviour rather than losing their logs.
+        """
+        log_start = self._psi_datetime(log.start_time)
+        run_start = self._psi_datetime(started)
+        if log_start is None or run_start is None:
+            return ""
+        run_stop = self._psi_datetime(stopped)
+        window_end = run_stop if run_stop is not None and run_stop >= run_start else run_start
+        if (
+            run_start - _TEMPERATURE_LOG_EPOCH_SLACK
+            <= log_start
+            <= (window_end + _TEMPERATURE_LOG_EPOCH_SLACK)
+        ):
+            return ""
+        return (
+            f"temperature log starts {log_start.isoformat()}, outside the run window "
+            f"{run_start.isoformat()}..{window_end.isoformat()}"
+        )
+
+    def _psi_datetime(self, text: str) -> datetime | None:
+        """Parse a PSI date/time string, or ``None`` when it is not one.
+
+        Handles both spellings that reach this loader: the run header's
+        ``dd-MMM-yy[yy] HH:MM:SS`` and the ISO form produced by
+        :meth:`_parse_temperature_start_time`. The time is optional so a
+        header carrying only a date still yields a comparable value.
+        """
+        raw = str(text).strip()
+        if not raw:
+            return None
+        psi_match = re.search(
+            r"(\d{1,2})-([A-Za-z]{3})-(\d{2,4})(?:[\sT]+(\d{1,2}):(\d{2}):(\d{2}))?",
+            raw,
+        )
+        if psi_match is not None:
+            day, month, year, hour, minute, second = psi_match.groups()
+            month_number = _PSI_MONTHS.get(month.upper())
+            if month_number is None:
+                return None
+            return self._build_datetime(
+                self._psi_year(year), int(month_number), day, hour, minute, second
+            )
+        iso_match = re.search(
+            r"(\d{4})-(\d{1,2})-(\d{1,2})(?:[\sT]+(\d{1,2}):(\d{2}):(\d{2}))?",
+            raw,
+        )
+        if iso_match is not None:
+            year, month, day, hour, minute, second = iso_match.groups()
+            return self._build_datetime(int(year), int(month), day, hour, minute, second)
+        return None
+
+    def _psi_year(self, text: str) -> int:
+        year = int(text)
+        if len(str(text)) > 2 or year > 99:
+            return year
+        return year + (2000 if year < _PSI_TWO_DIGIT_YEAR_PIVOT else 1900)
+
+    def _build_datetime(
+        self,
+        year: int,
+        month: int,
+        day: str,
+        hour: str | None,
+        minute: str | None,
+        second: str | None,
+    ) -> datetime | None:
+        try:
+            return datetime(
+                year,
+                month,
+                int(day),
+                int(hour or 0),
+                int(minute or 0),
+                int(second or 0),
+            )
+        except ValueError:
+            return None
 
     def _merge_temperature_logs(self, logs: list[_PsiTemperatureLogs]) -> _PsiTemperatureLogs:
         """Merge all parsed temperature sidecars for one run."""
@@ -875,7 +1046,11 @@ class PsiLoader(BaseLoader):
             n_hist,
         )
         canonical_instrument = self._detect_canonical_instrument(raw, n_hist)
-        preset_override = self._instrument_default_preset(canonical_instrument, n_hist)
+        preset_override = self._instrument_default_preset(
+            canonical_instrument,
+            n_hist,
+            labels=list(raw.histogram_labels),
+        )
         preset_name: str | None = None
         preset_projections: list[dict[str, Any]] = []
         if preset_override is not None:
@@ -950,6 +1125,14 @@ class PsiLoader(BaseLoader):
             }
             metadata["psi_temperature_log_file"] = raw.temperature_logs.source_file
             metadata["psi_temperature_log_channels"] = list(raw.temperature_logs.channels)
+        if raw.temperature_log_rejections:
+            # Sidecars that matched by run number but not by date. Recorded so a
+            # run whose only ``.mon`` file is a leftover from an earlier beam
+            # period reports why it has no temperature log, instead of silently
+            # loading another experiment's temperatures.
+            metadata["psi_temperature_log_rejected"] = [
+                dict(entry) for entry in raw.temperature_log_rejections
+            ]
 
         grouping = {
             "groups": groups,
@@ -1027,6 +1210,8 @@ class PsiLoader(BaseLoader):
         self,
         instrument_name: str | None,
         n_hist: int,
+        *,
+        labels: list[str] | None = None,
     ) -> tuple[dict[int, list[int]], dict[int, str], int, int, str, list[dict[str, Any]]] | None:
         """Return the default-preset grouping to apply on load, or ``None``.
 
@@ -1051,11 +1236,25 @@ class PsiLoader(BaseLoader):
         shipping only the forward ring (``MV, F1…F8``) therefore still adopts
         Per-octant, each octant degrading to its present forward wedge.
 
+        The concrete grouping comes from
+        :func:`~asymmetry.core.instrument.preset_grouping_for_run`, which validates
+        the layout against this run's histogram count and labels first: a layout
+        that describes a different detector arrangement would map the preset's
+        positional detector ids onto the wrong histograms, which is silently wrong
+        rather than detectably broken.
+
         Returns ``None`` — leaving the loader's label-based grouping untouched —
         when detection is inconclusive, the instrument does not opt in, or an
         *analysis* slot (the forward or backward group) has no detector present
         in this run, since then no asymmetry can be formed (e.g. a preset whose
         backward group is an entirely absent ring).
+
+        Raises
+        ------
+        ~asymmetry.core.instrument.PresetLayoutMismatchError
+            If the resolved layout does not describe this run.  Deliberately not
+            swallowed: a wrong-layout preset produces a plausible-looking but
+            wrong asymmetry, so it must surface at load time.
         """
         if not instrument_name:
             return None
@@ -1066,15 +1265,17 @@ class PsiLoader(BaseLoader):
         if preset is None:
             return None
 
-        groups: dict[int, list[int]] = {}
-        group_names: dict[int, str] = {}
-        for gid, gdef in preset.groups.items():
-            detector_ids = sorted(int(d) for d in gdef.detector_ids)
-            if not detector_ids:
-                continue
-            groups[int(gid)] = detector_ids
-            if gdef.name:
-                group_names[int(gid)] = str(gdef.name)
+        groups = preset_grouping_for_run(
+            layout,
+            layout.default_preset_name,
+            n_histograms=n_hist,
+            labels=labels,
+        )
+        group_names: dict[int, str] = {
+            int(gid): str(gdef.name)
+            for gid, gdef in preset.groups.items()
+            if int(gid) in groups and gdef.name
+        }
 
         forward_gid = int(preset.forward_group)
         backward_gid = int(preset.backward_group)

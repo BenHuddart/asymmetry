@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GPS 15-histogram ROOT layout (`GPS-RD15`) and validated preset
+  resolution.** 2022-era GPS MusrRoot exports carry *both* views of the same
+  events — the six combined counters (`Forw, Back, Up, Down, Right, Left`)
+  *and* the eight `_B`/`_F` half-counters plus the mobile detector, 15
+  histograms in all, with the combined counters being the t0-aligned sums of
+  their halves (the mobile detector arriving inside whichever transverse
+  counter's cryostat port it occupies). A new `GPS-RD15` layout joins the GPS
+  variant family (shared display name "GPS"): its presets group the combined
+  counters only — the same transverse ids as the 6-detector BIN layout — since
+  adding the halves would double-count, while ids 7–15 stay individually
+  selectable for custom groupings. Detection (`detect_instrument` /
+  `_gps_variant` / `variant_for_histograms`) now distinguishes all three GPS
+  exports, count-first with a most-specific-first label fallback. A new public
+  helper `preset_grouping_for_run(layout, preset_name, n_histograms=…,
+  labels=…)` is the supported way to turn a layout preset into a concrete
+  grouping: it validates the layout against the run's histogram count and
+  labels first and raises the new `PresetLayoutMismatchError` on mismatch,
+  with `layout_detector_labels()` exposing the layout's per-id label
+  expectations. The PSI loader routes its on-load default presets through it.
 - **Arbitrary per-group synthetic signals and a continuous octant-ring
   template.** `asymmetry.core.simulate.simulate_signal_run()` synthesises a
   run from a caller-supplied `a_g(t)` per detector group — a callable or an
@@ -128,6 +147,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   either way. The reported alpha is unchanged for data that passes. Reported from
   a downstream continuous-source analysis where the method returned 2.4× and
   1.14× the true balance, silently.
+- **15-histogram GPS ROOT exports were silently mis-grouped.**
+  `_labels_match_gps_subdetectors` matched on the presence of the half-counter
+  labels alone, so the 15-histogram export (which carries the combined *and*
+  half-counter labels) resolved to the 11-detector `GPS-RD` layout — whose
+  positional detector ids mean different counters. Its
+  `Spin-rotated (B+U/F+D)` preset then summed the **Down** counter into the
+  "up" group (and Right/Left into the backward group) with no error and a
+  plausible-looking asymmetry. The sub-detector matcher now requires the
+  combined transverse labels to be *absent*, the 15-histogram export resolves
+  to the new `GPS-RD15` layout, and applying a preset from a layout that does
+  not describe the run raises `PresetLayoutMismatchError` instead of grouping
+  wrongly (see Added).
+- **PSI temperature-log sidecars: three bugs that silently lost or mismatched
+  `.mon` files.** (1) Sidecar names are zero-padded (`run_0534.mon`), but the
+  matcher compared filename text against the unpadded run number with a
+  digit-boundary guard, so the leading `0` blocked every run below the padding
+  width — runs under 1000 never found their logs. Matching is now numeric, so
+  padded and unpadded spellings agree while `run_1554.mon` still stays clear of
+  run 554, and where a name carries an explicit `run` token only the digits
+  attached to it count, so variant suffixes (`run_0534_2nd.mon`,
+  `run_0534_variox0.mon`) can no longer masquerade as runs 2 and 0. (2) The MDU
+  reader never looked for sidecars at all, so `.mdu` runs lost their temperature
+  logs outright; it now runs the same discovery and merge as the BIN reader.
+  (3) PSI run numbers restart each beam period, so a `tlog` directory can retain
+  a same-numbered sidecar — matching even in its own `Start of Run` line — from
+  an earlier experiment. Each candidate's start timestamp is now cross-checked
+  against the run's started/stopped window with a week of slack; a sidecar
+  outside it is rejected and listed with its reason in the new
+  `psi_temperature_log_rejected` metadata, rather than loading another
+  experiment's temperatures under this run's name.
 - **Global fit wizard: phase-1 screening used a fraction of the host.** The
   per-dataset single-fit tables — independent, minutes-long, CPU-bound jobs —
   were capped at four workers regardless of core count, so a 14-dataset series on

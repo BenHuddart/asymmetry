@@ -26,9 +26,11 @@ def test_single_instrument_shows_bare_name() -> None:
 
 
 def test_variant_key_resolves_to_display_name() -> None:
-    """A variant registry key (GPS-RD) still reads as its display name."""
+    """A variant registry key (GPS-RD, GPS-RD15) still reads as its display name."""
     fp = ProfileFingerprint(instrument="GPS-RD", histogram_count=11)
     assert instrument_display_for_fingerprint(fp, [fp]) == "GPS"
+    fp15 = ProfileFingerprint(instrument="GPS-RD15", histogram_count=15)
+    assert instrument_display_for_fingerprint(fp15, [fp15]) == "GPS"
 
 
 def test_shared_instrument_name_appends_detector_count() -> None:

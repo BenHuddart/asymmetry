@@ -13,17 +13,58 @@ from asymmetry.core.instrument import (
     DetectorSegment,
     InstrumentLayout,
     PresetGrouping,
+    PresetLayoutMismatchError,
     derive_projection_pairs,
     detect_instrument,
     get_instrument_layout,
     instrument_choices_for,
     instrument_display_name,
+    layout_detector_labels,
+    preset_grouping_for_run,
     variant_for_histograms,
 )
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+#: Detector labels of the 6-histogram PSI GPS BIN export, in histogram order.
+GPS_BIN_LABELS = ["Forw", "Back", "Up", "Down", "Righ", "Left"]
+
+#: Detector labels of the 11-histogram GPS ROOT sub-detector export.
+GPS_ROOT11_LABELS = [
+    "Forw",
+    "Back",
+    "Up_B",
+    "Up_F",
+    "Down_B",
+    "Down_F",
+    "Right_B",
+    "Right_F",
+    "Left_B",
+    "Left_F",
+    "Mob-RL",
+]
+
+#: Detector labels of the 15-histogram GPS ROOT export, which carries the six
+#: combined counters *and* the eight half-counters plus the mobile detector.
+GPS_ROOT15_LABELS = [
+    "Forw",
+    "Back",
+    "Up",
+    "Down",
+    "Right",
+    "Left",
+    "Up_B",
+    "Up_F",
+    "Down_B",
+    "Down_F",
+    "Right_B",
+    "Right_F",
+    "Left_B",
+    "Left_F",
+    "Mob-RL",
+]
 
 
 def _all_detector_ids(layout: InstrumentLayout) -> list[int]:
@@ -285,6 +326,49 @@ class TestDetectInstrument:
         md = {"facility": "PSI", "instrument": "GPS"}
         assert detect_instrument(6, metadata=md) == "GPS"
         assert detect_instrument(11, metadata=md) == "GPS-RD"
+
+    def test_psi_gps_root15_combined_plus_subdetectors_detected_as_gps_rd15(self):
+        # The 15-histogram ROOT export ships the six combined counters *and* the
+        # half-counters, so its detector ids differ from the 11-histogram export's
+        # -- it needs its own variant, not GPS-RD.
+        md = {
+            "facility": "PSI",
+            "instrument": "LMU_BULKMUSR_GPS",
+            "histogram_labels": list(GPS_ROOT15_LABELS),
+        }
+        assert detect_instrument(15, metadata=md) == "GPS-RD15"
+
+    def test_psi_gps_root15_detected_from_labels_alone(self):
+        # No instrument token: the combined-plus-half label set identifies the
+        # 15-histogram export on its own.
+        assert (
+            detect_instrument(
+                15,
+                metadata={"facility": "PSI", "histogram_labels": list(GPS_ROOT15_LABELS)},
+            )
+            == "GPS-RD15"
+        )
+
+    def test_psi_gps_root15_labels_not_mistaken_for_subdetector_export(self):
+        # Regression for the silent-misgrouping bug: the 15-histogram label set
+        # contains every 11-histogram sub-detector label, so a matcher keyed on
+        # the half-counter labels alone resolved these runs to GPS-RD, whose ids
+        # 3-6 mean Up_B/Up_F/Down_B/Down_F rather than Up/Down/Right/Left.
+        md = {
+            "facility": "PSI",
+            "instrument": "LMU_BULKMUSR_GPS",
+            "histogram_labels": list(GPS_ROOT15_LABELS),
+        }
+        # Even with the histogram count reported unexpectedly, the label set alone
+        # must resolve to the 15-histogram variant.
+        assert detect_instrument(99, metadata=md) == "GPS-RD15"
+
+    def test_gps_bin_root_and_root15_select_different_variants(self):
+        # Same instrument token, different histogram count -> different variant.
+        md = {"facility": "PSI", "instrument": "GPS"}
+        assert detect_instrument(6, metadata=md) == "GPS"
+        assert detect_instrument(11, metadata=md) == "GPS-RD"
+        assert detect_instrument(15, metadata=md) == "GPS-RD15"
 
     def test_gps_root_variant_falls_back_to_subdetector_labels(self):
         # The sub-detector label set selects GPS-RD even when the histogram count
@@ -634,6 +718,153 @@ class TestGpsSubdetectorLayout:
 
 
 # ---------------------------------------------------------------------------
+# GPS combined + sub-detector ROOT layout (GPS-RD15)
+# ---------------------------------------------------------------------------
+
+
+class TestGpsCombinedSubdetectorLayout:
+    """The 15-histogram GPS ROOT export: combined counters *and* sub-detectors.
+
+    Its detector ids 3-6 are the combined Up/Down/Right/Left, not the
+    Up_B/Up_F/Down_B/Down_F of the 11-histogram sub-detector export, so applying
+    the GPS-RD layout to these runs silently mis-assigned counters.
+    """
+
+    @pytest.fixture(scope="class")
+    def layout(self):
+        return get_instrument_layout("GPS-RD15")
+
+    def test_n_detectors(self, layout):
+        assert layout.n_detectors == 15
+
+    def test_two_plan_panels(self, layout):
+        assert layout.view == "plan"
+        assert [bank.name for bank in layout.banks] == ["Top view", "Side view"]
+
+    def test_displays_as_gps(self, layout):
+        # Distinct registry key, but shown to the user as plain "GPS".
+        assert layout.name == "GPS-RD15"
+        assert layout.display == "GPS"
+
+    def test_active_detectors_match_root15_histogram_order(self, layout):
+        # One clickable segment per detector; IDs map positionally to the export's
+        # histogram order (detector N -> histogram N-1).
+        labels = {seg.detector_id: seg.label for seg in layout.active_segments}
+        assert labels == {
+            1: "Forward",
+            2: "Backward",
+            3: "Up",
+            4: "Down",
+            5: "Right",
+            6: "Left",
+            7: "Up_B",
+            8: "Up_F",
+            9: "Down_B",
+            10: "Down_F",
+            11: "Right_B",
+            12: "Right_F",
+            13: "Left_B",
+            14: "Left_F",
+            15: "Mob-RL",
+        }
+        assert len(layout.active_segments) == layout.n_detectors == 15
+        assert {seg.shape for seg in layout.active_segments} == {"rectangle"}
+
+    def test_layout_labels_agree_with_the_export_label_order(self, layout):
+        # The layout's per-id expectation must line up with the file's own label
+        # order -- this is the invariant whose violation caused the misgrouping.
+        # preset_grouping_for_run enforces it, so every preset must resolve
+        # cleanly against the real label list.
+        assert len(layout_detector_labels(layout)) == 15
+        for preset_name in layout.presets:
+            preset_grouping_for_run(
+                layout, preset_name, n_histograms=15, labels=list(GPS_ROOT15_LABELS)
+            )
+
+    def test_each_detector_active_in_exactly_one_panel(self, layout):
+        ids = [seg.detector_id for seg in layout.active_segments]
+        assert sorted(ids) == list(range(1, 16))
+        assert len(ids) == len(set(ids))
+
+    def test_halves_sit_outboard_of_their_combined_counter(self, layout):
+        # Each combined plate is drawn full width with its _B (-z) / _F (+z)
+        # halves just outboard, which is the redundancy the file carries.
+        top = next(b for b in layout.banks if b.name == "Top view")
+        side = next(b for b in layout.banks if b.name == "Side view")
+        for bank, combined_id, back_id, front_id in [
+            (top, 6, 13, 14),  # Left, Left_B, Left_F
+            (top, 5, 11, 12),  # Right, Right_B, Right_F
+            (side, 3, 7, 8),  # Up, Up_B, Up_F
+            (side, 4, 9, 10),  # Down, Down_B, Down_F
+        ]:
+            segs = {s.detector_id: s for s in bank.segments if not s.read_only}
+            combined, back, front = segs[combined_id], segs[back_id], segs[front_id]
+            assert back.x_center < 0 < front.x_center
+            # Halves are further from the sample than the combined plate.
+            assert abs(back.y_center) > abs(combined.y_center)
+            assert abs(front.y_center) > abs(combined.y_center)
+
+    def test_presets_group_only_the_combined_counters(self, layout):
+        # The combined counters already contain every event exactly once (the
+        # halves, and the mobile detector, are summed into them), so grouping any
+        # of ids 7-15 would double-count.
+        for preset in layout.presets.values():
+            for gdef in preset.groups.values():
+                assert all(1 <= det <= 6 for det in gdef.detector_ids), gdef
+
+    def test_longitudinal_preset(self, layout):
+        # PSI convention: analysis-forward = beam-Backward group (group 2).
+        preset = layout.presets["Longitudinal"]
+        assert (preset.forward_group, preset.backward_group) == (2, 1)
+        assert preset.groups[1].detector_ids == (1,)
+        assert preset.groups[2].detector_ids == (2,)
+
+    def test_transverse_vector_uses_combined_counters(self, layout):
+        preset = layout.presets["Transverse (Vector)"]
+        proj = {p.label: (p.forward_group, p.backward_group) for p in preset.projections}
+        assert proj == {"Up-Down": (1, 2), "Left-Right": (3, 4)}
+        assert preset.groups[1].detector_ids == (3,)  # Up
+        assert preset.groups[2].detector_ids == (4,)  # Down
+        assert preset.groups[3].detector_ids == (5,)  # Right
+        assert preset.groups[4].detector_ids == (6,)  # Left
+
+    def test_spin_rotated_preset_groups_back_up_against_forw_down(self, layout):
+        # The regression this variant fixes: with the GPS-RD layout, ids (2,3,4)
+        # vs (1,5,6) meant Back+Up_B+Up_F vs Forw+Down_B+Down_F on an
+        # 11-histogram file -- but Back+Up+Down vs Forw+Right+Left here.
+        preset = layout.presets["Spin-rotated (B+U/F+D)"]
+        assert (preset.forward_group, preset.backward_group) == (1, 2)
+        assert set(preset.groups[1].detector_ids) == {2, 3}  # B + U
+        assert set(preset.groups[2].detector_ids) == {1, 4}  # F + D
+
+    def test_spin_rotated_preset_resolves_to_the_right_labels(self, layout):
+        # By label, not by id: the forward group must be {Back, Up} and the
+        # backward group {Forw, Down} against the export's own label order.
+        preset = layout.presets["Spin-rotated (B+U/F+D)"]
+        groups = preset_grouping_for_run(
+            layout,
+            "Spin-rotated (B+U/F+D)",
+            n_histograms=15,
+            labels=list(GPS_ROOT15_LABELS),
+        )
+
+        def _labels(gid: int) -> set[str]:
+            return {GPS_ROOT15_LABELS[det - 1] for det in groups[gid]}
+
+        assert _labels(preset.forward_group) == {"Back", "Up"}
+        assert _labels(preset.backward_group) == {"Forw", "Down"}
+
+    def test_wep_preset_uses_combined_counters(self, layout):
+        preset = layout.presets["WEP (spin-rotated)"]
+        pairs = {p.label: (p.forward_group, p.backward_group, p.alpha) for p in preset.projections}
+        assert pairs == {"FB": (2, 1, 0.75), "UD": (3, 4, 1.0)}
+        assert preset.groups[1].detector_ids == (1,)  # F
+        assert preset.groups[2].detector_ids == (2,)  # B
+        assert preset.groups[3].detector_ids == (3,)  # U (combined)
+        assert preset.groups[4].detector_ids == (4,)  # D (combined)
+
+
+# ---------------------------------------------------------------------------
 # GPS PSI analysis convention: oracle + loader/preset consistency
 # ---------------------------------------------------------------------------
 
@@ -720,6 +951,7 @@ class TestInstrumentChoices:
     def test_display_name_collapses_gps_variants(self):
         assert instrument_display_name("GPS") == "GPS"
         assert instrument_display_name("GPS-RD") == "GPS"
+        assert instrument_display_name("GPS-RD15") == "GPS"
         assert instrument_display_name("HiFi") == "HiFi"
 
     def test_choices_show_single_gps_entry(self):
@@ -747,6 +979,17 @@ class TestVariantForHistograms:
         assert variant_for_histograms("GPS", 6) == "GPS"
         assert variant_for_histograms("GPS-RD", 11) == "GPS-RD"
 
+    def test_resolves_the_15_histogram_root_export(self):
+        # Registering the 15-detector layout is what lets any GPS name resolve a
+        # 15-histogram run; before it existed the count found no sibling and the
+        # caller silently kept an 11-detector layout.
+        assert variant_for_histograms("GPS", 15) == "GPS-RD15"
+        assert variant_for_histograms("GPS-RD", 15) == "GPS-RD15"
+        assert variant_for_histograms("GPS-RD15", 15) == "GPS-RD15"
+        # ...and the other two counts are unaffected.
+        assert variant_for_histograms("GPS-RD15", 6) == "GPS"
+        assert variant_for_histograms("GPS-RD15", 11) == "GPS-RD"
+
     def test_single_member_family_unchanged(self):
         assert variant_for_histograms("HiFi", 64) == "HiFi"
         assert variant_for_histograms("FLAME", 8) == "FLAME"
@@ -754,6 +997,100 @@ class TestVariantForHistograms:
     def test_unknown_count_or_no_fit_returns_input(self):
         assert variant_for_histograms("GPS", 0) == "GPS"  # unknown count
         assert variant_for_histograms("GPS", 7) == "GPS"  # no sibling has 7 detectors
+
+
+# ---------------------------------------------------------------------------
+# Preset -> concrete grouping validation
+# ---------------------------------------------------------------------------
+
+
+class TestPresetGroupingForRun:
+    """The guard that makes a wrong-layout preset fail instead of misgrouping."""
+
+    def test_resolves_a_matching_layout(self):
+        layout = get_instrument_layout("GPS")
+        groups = preset_grouping_for_run(
+            layout, "Spin-rotated (B+U/F+D)", n_histograms=6, labels=list(GPS_BIN_LABELS)
+        )
+        assert groups == {1: [2, 3], 2: [1, 4]}
+
+    def test_rejects_subdetector_layout_on_a_15_histogram_run(self):
+        # The exact bug: GPS-RD's ids 3-6 are Up_B/Up_F/Down_B/Down_F, but on a
+        # 15-histogram export they are the combined Up/Down/Right/Left, so its
+        # Spin-rotated preset grouped Back+Up+Down against Forw+Right+Left.
+        layout = get_instrument_layout("GPS-RD")
+        with pytest.raises(PresetLayoutMismatchError) as exc:
+            preset_grouping_for_run(
+                layout,
+                "Spin-rotated (B+U/F+D)",
+                n_histograms=15,
+                labels=list(GPS_ROOT15_LABELS),
+            )
+        # The message names the variant the caller should have resolved.
+        assert "GPS-RD15" in str(exc.value)
+
+    def test_rejects_wrong_variant_on_label_free_metadata(self):
+        # No labels at all: the histogram count alone still rejects the layout,
+        # because a sibling variant fits the run exactly.
+        layout = get_instrument_layout("GPS-RD")
+        with pytest.raises(PresetLayoutMismatchError):
+            preset_grouping_for_run(layout, "Longitudinal", n_histograms=15)
+        with pytest.raises(PresetLayoutMismatchError):
+            preset_grouping_for_run(layout, "Longitudinal", n_histograms=6)
+
+    def test_rejects_a_label_order_conflict_at_matching_count(self):
+        # Same detector count, but the run's labels address different counters.
+        layout = get_instrument_layout("GPS")
+        swapped = ["Forw", "Back", "Down", "Up", "Righ", "Left"]  # Up/Down swapped
+        with pytest.raises(PresetLayoutMismatchError) as exc:
+            preset_grouping_for_run(
+                layout, "Spin-rotated (B+U/F+D)", n_histograms=6, labels=swapped
+            )
+        assert "detector 3" in str(exc.value)
+
+    def test_terse_export_label_spellings_are_not_a_conflict(self):
+        # Layouts use the manual's words ("Forward"), files the export spellings
+        # ("Forw"/"Righ"); those must compare equal.
+        layout = get_instrument_layout("GPS")
+        assert preset_grouping_for_run(
+            layout, "Longitudinal", n_histograms=6, labels=list(GPS_BIN_LABELS)
+        ) == {1: [1], 2: [2]}
+
+    def test_subdetector_layout_still_resolves_its_own_export(self):
+        layout = get_instrument_layout("GPS-RD")
+        groups = preset_grouping_for_run(
+            layout,
+            "Spin-rotated (B+U/F+D)",
+            n_histograms=11,
+            labels=list(GPS_ROOT11_LABELS),
+        )
+        assert groups == {1: [2, 3, 4], 2: [1, 5, 6]}
+
+    def test_partial_run_smaller_than_its_layout_is_not_a_mismatch(self):
+        # A HAL .mdu shipping only the forward ring keeps the full 17-detector
+        # layout; reduction drops the absent backward ring later.
+        layout = get_instrument_layout("HAL")
+        labels = ["MV"] + [f"F{i}" for i in range(1, 9)]
+        groups = preset_grouping_for_run(
+            layout, "Per-octant", n_histograms=len(labels), labels=labels
+        )
+        assert groups[1] == [2, 10]  # ids kept even though B1 is absent
+
+    def test_unknown_count_and_missing_labels_skip_both_checks(self):
+        layout = get_instrument_layout("GPS-RD")
+        assert preset_grouping_for_run(layout, "Longitudinal", n_histograms=0) == {1: [1], 2: [2]}
+
+    def test_unknown_preset_raises_key_error(self):
+        layout = get_instrument_layout("GPS")
+        with pytest.raises(KeyError):
+            preset_grouping_for_run(layout, "Not a preset", n_histograms=6)
+
+    def test_every_registered_layout_resolves_its_own_presets(self):
+        # A layout whose own detector count is used must never trip its own guard.
+        for name in INSTRUMENT_NAMES:
+            layout = get_instrument_layout(name)
+            for preset_name in layout.presets:
+                preset_grouping_for_run(layout, preset_name, n_histograms=layout.n_detectors)
 
 
 # ---------------------------------------------------------------------------

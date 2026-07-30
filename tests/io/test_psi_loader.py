@@ -44,6 +44,7 @@ def _write_psi_bin(
     counts: np.ndarray | None = None,
     field: bytes = b"0.1T      ",
     title: bytes = b"PSI BIN test",
+    run_number: int = 4321,
 ) -> None:
     if labels is None:
         labels = [b"Back", b"Forw"]
@@ -60,7 +61,7 @@ def _write_psi_bin(
     header = bytearray(1024)
     header[0:2] = b"1N"
     struct.pack_into("<h", header, 2, 4)
-    struct.pack_into("<h", header, 6, 4321)
+    struct.pack_into("<h", header, 6, int(run_number))
     struct.pack_into("<h", header, 28, n_bins)
     struct.pack_into("<h", header, 30, n_hist)
     struct.pack_into("<h", header, 128, n_hist)
@@ -92,11 +93,17 @@ def _write_psi_bin(
     path.write_bytes(bytes(header) + counts.astype("<i4", copy=False).tobytes())
 
 
-def _write_psi_mon(path) -> None:
+#: Sidecar start stamp consistent with the ``01-JAN-26 10:00:00`` run start
+#: written by :func:`_write_psi_bin` and :func:`_write_psi_mdu`. The loader
+#: cross-checks the two, so fixtures that should load must agree on the epoch.
+_MON_START = "01-Jan-2026 10:40:23"
+
+
+def _write_psi_mon(path, start: str = _MON_START) -> None:
     lines = ["! ignored"] * 7
     lines.extend(
         [
-            "! 04-Jul-2011 10:40:23",
+            f"! {start}",
             "! Title: Heater Sample Cryostat Shield",
             "00:00:00\\4\\4.9906 5.1805 4.9921 5.1804\\0 0 0 0\\",
             "00:00:10\\4\\5.0000 5.2000 5.1000 5.3000\\0 0 0 0\\",
@@ -109,7 +116,7 @@ def _write_psi_mon_with_backslash_titles(path) -> None:
     lines = ["! ignored"] * 7
     lines.extend(
         [
-            "! 04-Jul-2011 10:40:23",
+            f"! {_MON_START}",
             "! Title: Cryostat\\Sample",
             "00:00:00\\2\\4.9906\\5.1805\\",
             "00:00:10\\2\\5.0000\\5.2000\\",
@@ -118,16 +125,23 @@ def _write_psi_mon_with_backslash_titles(path) -> None:
     path.write_text("\n".join(lines), encoding="latin-1")
 
 
-def _write_flame_mon(path, equipment: str, title: str, rows: list[str]) -> None:
+def _write_flame_mon(
+    path,
+    equipment: str,
+    title: str,
+    rows: list[str],
+    run_number: int = 4321,
+    start: str = "01-JAN-2026 10:53:19",
+) -> None:
     lines = [
-        "! File = run_4321.mon",
+        f"! File = run_{run_number}.mon",
         f"! Midas Event ID is: 221  Equipment name: FRAPPY {equipment}",
         "! Record format is:",
         "!",
         "!   <delta_time>\\<n_vals>\\<val1> <val2> ..\\<int1> <int2> ..\\",
         "!    <delta_time> = [dd ]hh:mm:ss",
         "!",
-        "! 05-NOV-2025 14:53:19: Start of Run 4321",
+        f"! {start}: Start of Run {run_number}",
         f"! Title: {title}",
     ]
     lines.extend(rows)
@@ -152,7 +166,7 @@ def _tag(
     return bytes(data)
 
 
-def _write_psi_mdu(path) -> None:
+def _write_psi_mdu(path, run_number: int = 2468) -> None:
     tags = [_tag(b"F1", b"P"), _tag(b"B1", b"P")]
     tags.extend(_tag(b"", b"N", histomaxb=0) for _ in range(30))
     settings_prefix = struct.pack("<13i", 0, 0, 0, 0, 0, 0, 0, 0, 0, 100, 0, 0, 0)
@@ -165,7 +179,7 @@ def _write_psi_mdu(path) -> None:
         b"10:00:00\x00",
         b"01-JAN-2026\x00",
         b"11:00:00\x00",
-        2468,
+        int(run_number),
         1,
         b"Sample    25.0K     1.0G      TF       \x00",
         b"PSI MDU test\x00",
@@ -290,7 +304,7 @@ def test_load_psi_bin_reads_temperature_mon_file(tmp_path) -> None:
     assert heater["reader_provenance"] == "Mantid LoadPSIMuonBin-compatible"
     assert ds.metadata["psi_temperature_log"]["source_file"] == str(mon_path)
     assert ds.metadata["psi_temperature_log"]["source_format"] == "PSI .mon"
-    assert ds.metadata["psi_temperature_log"]["start_time"] == "2011-07-04T10:40:23"
+    assert ds.metadata["psi_temperature_log"]["start_time"] == "2026-01-01T10:40:23"
     assert ds.metadata["psi_temperature_log"]["channels"] == [
         "Temp_Cryostat",
         "Temp_Heater",
@@ -337,6 +351,168 @@ def test_psi_temperature_log_search_prefers_exact_run_tokens_in_tlog(tmp_path) -
     files = PsiLoader()._find_temperature_log_files(path, 4321)
 
     assert [file.name for file in files] == ["run_4321_flamesam0.mon"]
+
+
+def test_psi_temperature_log_search_matches_zero_padded_run_tokens(tmp_path) -> None:
+    """PSI zero-pads sidecar run numbers, so run 534 must match ``run_0534.mon``."""
+    path = tmp_path / "deltat_tdc_gps_0534.bin"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_bin(path, run_number=534)
+    for name in (
+        "run_0534.mon",
+        "run_0534_2nd.mon",
+        "run_1554.mon",
+        "run_5340.mon",
+        "run_0535.mon",
+    ):
+        (log_dir / name).write_text("not parsed here", encoding="latin-1")
+
+    files = PsiLoader()._find_temperature_log_files(path, 534)
+
+    assert [file.name for file in files] == ["run_0534.mon", "run_0534_2nd.mon"]
+
+
+@pytest.mark.parametrize("run_number", [0, 2, 534, 1554])
+def test_psi_temperature_log_search_ignores_variant_suffix_digits(
+    tmp_path,
+    run_number: int,
+) -> None:
+    """A sidecar's variant suffix digits must not stand in for the run number.
+
+    ``run_0534_2nd.mon`` and ``run_0534_variox0.mon`` belong to run 534 only;
+    their trailing ``2``/``0`` must not make them candidates for runs 2 or 0.
+    """
+    path = tmp_path / "deltat_tdc_gps_0534.bin"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_bin(path, run_number=534)
+    for name in ("run_0534_2nd.mon", "run_0534_variox0.mon"):
+        (log_dir / name).write_text("not parsed here", encoding="latin-1")
+
+    files = PsiLoader()._find_temperature_log_files(path, run_number)
+
+    assert [file.name for file in files] == (
+        ["run_0534_2nd.mon", "run_0534_variox0.mon"] if run_number == 534 else []
+    )
+
+
+def test_load_psi_bin_reads_zero_padded_temperature_mon_file(tmp_path) -> None:
+    path = tmp_path / "deltat_tdc_gps_0534.bin"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_bin(path, run_number=534)
+    _write_psi_mon(log_dir / "run_0534.mon")
+
+    ds = PsiLoader().load(str(path))
+
+    assert ds.metadata["run_number"] == 534
+    assert ds.metadata["psi_temperature_log_channels"] == [
+        "Temp_Cryostat",
+        "Temp_Heater",
+        "Temp_Sample",
+        "Temp_Shield",
+    ]
+    assert ds.metadata["psi_temperature_log_file"] == str(log_dir / "run_0534.mon")
+
+
+def test_load_psi_mdu_reads_temperature_mon_file(tmp_path) -> None:
+    """MDU runs carry the same ``.mon`` sidecars as BIN runs and must load them."""
+    path = tmp_path / "tdc_hifi_2018_00299.mdu"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_mdu(path, run_number=299)
+    _write_psi_mon(log_dir / "run_0299_dr.mon")
+
+    ds = PsiLoader().load(str(path))
+
+    assert ds.metadata["psi_format"] == "psi-mdu"
+    assert ds.metadata["run_number"] == 299
+    assert "psi_temperature/Temp_Sample" in ds.metadata["nexus_time_series"]
+    assert ds.metadata["psi_temperature_log_channels"] == [
+        "Temp_Cryostat",
+        "Temp_Heater",
+        "Temp_Sample",
+        "Temp_Shield",
+    ]
+    assert ds.metadata["psi_temperature_log"]["source_file"] == str(log_dir / "run_0299_dr.mon")
+
+
+def test_load_psi_bin_rejects_temperature_mon_file_from_another_beam_period(tmp_path) -> None:
+    """A same-numbered sidecar from an earlier beam period is not this run's log.
+
+    PSI run numbers restart each beam period, so a ``tlog`` directory can keep a
+    sidecar whose name — and whose own ``Start of Run`` line — matches the run
+    being loaded while belonging to a different experiment a year earlier.
+    """
+    path = tmp_path / "deltat_tdc_gps_1536.bin"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_bin(path, run_number=1536)
+    stale = log_dir / "run_1536.mon"
+    _write_psi_mon(stale, start="01-Jan-2025 10:40:23")
+
+    ds = PsiLoader().load(str(path))
+
+    assert "psi_temperature_log_channels" not in ds.metadata
+    assert "nexus_time_series" not in ds.metadata
+    rejected = ds.metadata["psi_temperature_log_rejected"]
+    assert [entry["source_file"] for entry in rejected] == [str(stale)]
+    assert "2025-01-01T10:40:23" in rejected[0]["reason"]
+    assert "2026-01-01T10:00:00" in rejected[0]["reason"]
+
+
+def test_load_psi_bin_keeps_temperature_mon_file_within_epoch_slack(tmp_path) -> None:
+    """Timestamp slack is generous: a sidecar days from the run still belongs to it."""
+    path = tmp_path / "deltat_tdc_gps_1536.bin"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_bin(path, run_number=1536)
+    _write_psi_mon(log_dir / "run_1536.mon", start="04-Jan-2026 10:40:23")
+
+    ds = PsiLoader().load(str(path))
+
+    assert "psi_temperature/Temp_Sample" in ds.metadata["nexus_time_series"]
+    assert "psi_temperature_log_rejected" not in ds.metadata
+
+
+def test_load_psi_bin_keeps_temperature_mon_file_when_run_has_no_usable_date(tmp_path) -> None:
+    """With no parseable run date there is nothing to cross-check against."""
+    path = tmp_path / "deltat_tdc_gps_1536.bin"
+    log_dir = tmp_path / "tlog"
+    log_dir.mkdir()
+    _write_psi_bin(path, run_number=1536)
+    data = bytearray(path.read_bytes())
+    data[218:227] = b"         "
+    data[236:244] = b"        "
+    path.write_bytes(bytes(data))
+    _write_psi_mon(log_dir / "run_1536.mon", start="01-Jan-2011 10:40:23")
+
+    ds = PsiLoader().load(str(path))
+
+    assert "psi_temperature/Temp_Sample" in ds.metadata["nexus_time_series"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("17-AUG-25 23:10:01", (2025, 8, 17, 23, 10, 1)),
+        ("30-AUG-2018 04:15:56", (2018, 8, 30, 4, 15, 56)),
+        ("28-JUL-95 22:17:38", (1995, 7, 28, 22, 17, 38)),
+        ("2026-01-01T10:40:23", (2026, 1, 1, 10, 40, 23)),
+        ("01-JAN-2026", (2026, 1, 1, 0, 0, 0)),
+    ],
+)
+def test_psi_datetime_parses_run_and_sidecar_stamps(text: str, expected: tuple) -> None:
+    parsed = PsiLoader()._psi_datetime(text)
+
+    assert parsed is not None
+    assert parsed.timetuple()[:6] == expected
+
+
+@pytest.mark.parametrize("text", ["", "   ", "not a date", "32-XXX-2026 10:00:00"])
+def test_psi_datetime_returns_none_for_unparseable_text(text: str) -> None:
+    assert PsiLoader()._psi_datetime(text) is None
 
 
 def test_load_psi_bin_merges_flame_tlog_files_and_marks_sample_temperature(tmp_path) -> None:
