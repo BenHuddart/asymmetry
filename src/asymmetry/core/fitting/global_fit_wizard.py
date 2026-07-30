@@ -2685,6 +2685,9 @@ def _serialize_spectrum_fingerprint(fingerprint: SpectrumFingerprint) -> dict[st
         "oscillatory_hint": fingerprint.oscillatory_hint,
         "kt_like_hint": fingerprint.kt_like_hint,
         "multi_rate_hint": fingerprint.multi_rate_hint,
+        "damped_line_frequency_mhz": fingerprint.damped_line_frequency_mhz,
+        "damped_line_snr": fingerprint.damped_line_snr,
+        "damped_line_crop_us": fingerprint.damped_line_crop_us,
     }
 
 
@@ -2708,6 +2711,9 @@ def _deserialize_spectrum_fingerprint(payload: object) -> SpectrumFingerprint | 
             oscillatory_hint=bool(payload.get("oscillatory_hint", False)),
             kt_like_hint=bool(payload.get("kt_like_hint", False)),
             multi_rate_hint=bool(payload.get("multi_rate_hint", False)),
+            damped_line_frequency_mhz=float(payload.get("damped_line_frequency_mhz", 0.0)),
+            damped_line_snr=float(payload.get("damped_line_snr", 0.0)),
+            damped_line_crop_us=float(payload.get("damped_line_crop_us", 0.0)),
         )
     except (TypeError, ValueError):
         return None
@@ -6249,6 +6255,17 @@ def _aggregate_fingerprints(
     def _count_true(attr: str) -> bool:
         return bool(any(getattr(fingerprint, attr) for fingerprint in fingerprints))
 
+    def _median_over_candidates(attr: str) -> float:
+        # Only runs that actually carry a damped-line candidate contribute: a
+        # zero from a run where the early pass found nothing is an absence, not
+        # a measurement, and would drag the aggregate to a meaningless value.
+        values = [
+            float(getattr(fingerprint, attr))
+            for fingerprint in fingerprints
+            if fingerprint.has_damped_line_candidate
+        ]
+        return float(np.median(values)) if values else 0.0
+
     return SpectrumFingerprint(
         tail_estimate=_median("tail_estimate"),
         initial_amplitude_estimate=_median("initial_amplitude_estimate"),
@@ -6265,6 +6282,9 @@ def _aggregate_fingerprints(
         oscillatory_hint=_count_true("oscillatory_hint"),
         kt_like_hint=_count_true("kt_like_hint"),
         multi_rate_hint=_count_true("multi_rate_hint"),
+        damped_line_frequency_mhz=_median_over_candidates("damped_line_frequency_mhz"),
+        damped_line_snr=_median_over_candidates("damped_line_snr"),
+        damped_line_crop_us=_median_over_candidates("damped_line_crop_us"),
     )
 
 

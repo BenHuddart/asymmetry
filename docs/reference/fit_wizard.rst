@@ -99,7 +99,9 @@ metadata; open it only when you know something the metadata does not:
   supports the same removal from a selected row. User peaks are treated as
   trusted frequencies: they seed oscillatory candidates directly and
   participate in pattern matching, which is the quickest way to steer the
-  wizard when you can see a line it underrates.
+  wizard when you can see a line it underrates. A heavily damped line that the
+  windowed FFT plot cannot show you no longer needs seeding by hand — see
+  :ref:`fit-wizard-early-window-pass`.
 
 Changing the scope or the peak seeds after an analysis has already run marks
 the displayed result stale — a banner says so, and the **Analyze** button
@@ -212,7 +214,47 @@ numerical F-μ-F powder averages are only ever fitted inside an expanded
 family, seeded from the match (a hyperfine constant from a muonium pair, a
 μ-F distance from a triplet). When several strong spectral lines are
 detected, the wizard also constructs multi-cosine candidates with one damped
-oscillator per line.
+oscillator per line, up to three.
+
+.. _fit-wizard-early-window-pass:
+
+Heavily damped lines: the early-window pass
+--------------------------------------------
+
+An oscillation whose envelope dies in the first few tens or hundreds of
+nanoseconds lives entirely in the leading fraction of the record — and every
+symmetric apodisation window (``hann``, ``cosine``, ``gaussian``) is zero at
+the first sample, so a windowed transform deletes it. That is the same trap
+the library's :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`
+exists to flag when you drive the Fourier tools yourself.
+
+The wizard's spectral search therefore runs a second, **unwindowed pass** over
+a short ladder of leading crops of the record, each one first-order detrended
+so the slowly relaxing tail does not swamp it, and each carrying its own
+spectral resolution ``1 / T_crop``. Lines it finds are merged into the peak
+set alongside the windowed pass's, and they seed the damped-oscillation
+candidates exactly as a frequency you type in does — which is the point: a
+heavily damped signal now gets a damped-cosine recommendation **blind**,
+without being told the answer.
+
+Three things to know when reading the result:
+
+- Peaks from this pass are labelled ``early_fft`` in the peaks table, and are
+  drawn on the FFT plot with a dotted marker rather than a solid one. The plot
+  itself is the *windowed* transform, so an early-window line is legitimately
+  not visible underneath its own marker.
+- Its signal-to-noise numbers are measured on a short crop against a different
+  noise floor, so they are **not** comparable with the windowed pass's. Rank
+  peaks within a pass, never across.
+- Where a line is visible to both passes, the windowed pass wins: it looked at
+  the whole informative record, so its frequency estimate is the better one.
+  The early pass only ever *adds* lines the windowed pass missed, and it is
+  gated so that pure noise, a relaxing tail with no oscillation, and a
+  conventional narrow line all contribute nothing.
+
+The pass reaches envelope rates of roughly 100 μs\ :sup:`-1` on a
+finely-binned record. Faster than that and the oscillation is not recoverable
+at any crop; the wizard will simply not offer a damped-cosine candidate.
 
 The additive multi-component candidates are especially useful for spectra
 whose smoothed semilog envelope changes slope while remaining largely
@@ -451,6 +493,11 @@ Limitations
 - The wizard currently supports one time-domain asymmetry spectrum at a time.
 - Frequency-domain fingerprinting uses the standard FFT path only; MaxEnt is
   not part of the wizard workflow.
+- ``max_workers`` bounds how many fits run at once, not how much CPU the run
+  uses: the vortex-lattice line shapes reach a multi-threaded BLAS from inside
+  a single fit, so even ``max_workers=1`` can saturate the machine. Set
+  ``OMP_NUM_THREADS`` / ``OPENBLAS_NUM_THREADS`` in the environment before
+  starting Python if you need to bound it.
 - Recommendations are limited to models that can already be assembled from the
   supported composite-model components.
 - Bayesian model comparison is not part of version 1, although the comparison

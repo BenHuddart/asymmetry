@@ -972,6 +972,18 @@ class FitWizardWindow(WizardWindowBase):
                         alpha=0.35,
                         linewidth=1.2,
                     )
+                elif peak.source == "early_fft":
+                    # This plot is the Hann-windowed transform, which is exactly
+                    # the view an early-window line is absent from. Mark it in a
+                    # distinct style so the seed is visible and obviously not a
+                    # feature of the spectrum drawn underneath it.
+                    ax_fft.axvline(
+                        peak.frequency_mhz,
+                        color=tokens.ACCENT,
+                        alpha=0.55,
+                        linewidth=1.2,
+                        linestyle=":",
+                    )
         self._refresh_peak_overlays()
         canvas.draw_idle()
 
