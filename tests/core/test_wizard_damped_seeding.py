@@ -65,22 +65,27 @@ _SECOND_LINE_AMPLITUDE = 16.0
 _SEED = 20260730
 
 
+#: Record shape: 1200 points over 4 µs (3.3 ns binning, 150 MHz Nyquist), a
+#: 6 % tail relaxing at 0.25 µs⁻¹ on a 0.5 % baseline, per-point σ starting at
+#: 0.9 % and growing as exp(t / 2·τ_µ).  All invented.
+_N_POINTS = 1200
+_T_MAX = 4.0
+_TAIL_AMPLITUDE = 6.0
+_TAIL_RATE = 0.25
+_BASELINE = 0.5
+_SIGMA0 = 0.9
+
+
 def _damped_record(
     *,
     seed: int = _SEED,
-    n_points: int = 1200,
-    t_max: float = 4.0,
     lines: tuple[tuple[float, float, float], ...] = ((_LINE_AMPLITUDE, _LINE_MHZ, _LINE_RATE),),
-    tail_amplitude: float = 6.0,
-    tail_rate: float = 0.25,
-    baseline: float = 0.5,
-    sigma0: float = 0.9,
 ) -> MuonDataset:
     """Damped precession on a slowly relaxing tail. All values invented."""
-    dt = t_max / n_points
-    time = np.arange(dt, t_max + 0.5 * dt, dt)[:n_points]
-    sigma = np.minimum(sigma0 * np.exp(time / (2.0 * _TAU_MU)), 100.0)
-    asymmetry = tail_amplitude * np.exp(-tail_rate * time) + baseline
+    dt = _T_MAX / _N_POINTS
+    time = np.arange(dt, _T_MAX + 0.5 * dt, dt)[:_N_POINTS]
+    sigma = np.minimum(_SIGMA0 * np.exp(time / (2.0 * _TAU_MU)), 100.0)
+    asymmetry = _TAIL_AMPLITUDE * np.exp(-_TAIL_RATE * time) + _BASELINE
     for amplitude, frequency, rate in lines:
         asymmetry = asymmetry + amplitude * np.exp(-rate * time) * np.cos(
             2.0 * np.pi * frequency * time
@@ -94,9 +99,8 @@ def _damped_record(
     )
 
 
-def _two_line_record(seed: int = _SEED) -> MuonDataset:
+def _two_line_record() -> MuonDataset:
     return _damped_record(
-        seed=seed,
         lines=(
             (_LINE_AMPLITUDE, _LINE_MHZ, _LINE_RATE),
             (_SECOND_LINE_AMPLITUDE, _SECOND_LINE_MHZ, _SECOND_LINE_RATE),
@@ -104,11 +108,11 @@ def _two_line_record(seed: int = _SEED) -> MuonDataset:
     )
 
 
-def _narrow_line_record(seed: int = 4242) -> MuonDataset:
+def _narrow_line_record() -> MuonDataset:
     """A conventional narrow line, alive across the whole record. Invented."""
     time = np.linspace(0.05, 10.0, 1500)
     sigma = np.minimum(0.6 * np.exp(time / (2.0 * _TAU_MU)), 100.0)
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(4242)
     asymmetry = 18.0 * np.exp(-0.12 * time) * np.cos(2.0 * np.pi * 1.4 * time) + 3.0
     return MuonDataset(
         time=time,
@@ -119,8 +123,8 @@ def _narrow_line_record(seed: int = 4242) -> MuonDataset:
 
 
 def _pure_noise_record(seed: int) -> MuonDataset:
-    time = np.linspace(4.0e-3, 4.0, 1200)
-    sigma = np.minimum(0.9 * np.exp(time / (2.0 * _TAU_MU)), 100.0)
+    time = np.linspace(_T_MAX / _N_POINTS, _T_MAX, _N_POINTS)
+    sigma = np.minimum(_SIGMA0 * np.exp(time / (2.0 * _TAU_MU)), 100.0)
     rng = np.random.default_rng(seed)
     return MuonDataset(
         time=time,
@@ -146,16 +150,6 @@ def _centered_truncated(dataset: MuonDataset):
 
 def _early_peaks(dataset: MuonDataset) -> PeakAnalysis:
     return analyze_early_window_peaks(*_centered_truncated(dataset))
-
-
-def _nearest(peaks, frequency_mhz: float) -> DetectedPeak | None:
-    within = [
-        peak
-        for peak in peaks
-        if abs(peak.frequency_mhz - frequency_mhz)
-        <= max(3.0 / max(peak.crop_us or 1.0, 1e-12), 0.05 * frequency_mhz)
-    ]
-    return max(within, key=lambda peak: peak.snr) if within else None
 
 
 # --------------------------------------------------------------------------- #
@@ -193,32 +187,26 @@ def test_early_pass_finds_both_lines_of_the_two_line_record() -> None:
     early = _early_peaks(_two_line_record())
 
     assert len(early.peaks) == 2
-    for target in (_LINE_MHZ, _SECOND_LINE_MHZ):
-        peak = _nearest(early.peaks, target)
-        assert peak is not None, f"no early-pass line near {target} MHz"
+    found = sorted(early.peaks, key=lambda peak: peak.frequency_mhz)
+    for peak, target in zip(found, (_SECOND_LINE_MHZ, _LINE_MHZ)):
         assert abs(peak.frequency_mhz - target) <= 1.0 / peak.crop_us
 
 
-@pytest.mark.parametrize("draws", [500])
-def test_pure_noise_adds_no_early_peaks(draws: int) -> None:
-    """False-seed control (study step 3): zero early-pass peaks over 500 draws.
+@pytest.mark.parametrize(
+    ("build", "seed_base", "draws"),
+    [(_pure_noise_record, 90_000, 500), (_tail_only_record, 70_000, 250)],
+    ids=["pure-noise", "relaxing-tail"],
+)
+def test_null_records_add_no_early_peaks(build, seed_base: int, draws: int) -> None:
+    """False-seed control (study step 3): zero early-pass peaks on either null.
 
-    The gate ``_EARLY_MIN_SNR`` is re-derived against exactly this null, not
-    inherited from the Hann pass, so this is the measurement it rests on.
+    ``_EARLY_MIN_SNR`` is re-derived against exactly these draws rather than
+    inherited from the Hann pass, so this is the measurement it rests on.  Pure
+    noise alone would be too easy a null: an unwindowed short crop of a
+    *relaxing* record leaves residual trend curvature, which is what the
+    low-frequency guard and the rectangular leakage profile exist to reject.
     """
-    total = sum(len(_early_peaks(_pure_noise_record(90_000 + i)).peaks) for i in range(draws))
-
-    assert total == 0
-
-
-def test_relaxing_tail_without_oscillation_adds_no_early_peaks() -> None:
-    """A record with structure but no oscillation must stay peak-free.
-
-    Pure noise alone is too easy a null: an unwindowed short crop of a *relaxing*
-    record leaves residual trend curvature, which is what the low-frequency guard
-    and the rectangular leakage profile exist to reject.
-    """
-    total = sum(len(_early_peaks(_tail_only_record(70_000 + i)).peaks) for i in range(250))
+    total = sum(len(_early_peaks(build(seed_base + i)).peaks) for i in range(draws))
 
     assert total == 0
 
@@ -389,17 +377,19 @@ def test_early_peaks_seed_the_multiplet_builder_like_user_frequencies() -> None:
     ]
 
 
-def test_multiplet_seeds_are_pruned_by_rank_within_each_pass() -> None:
-    # Four early-pass lines, ranked by their own SNR; the builder takes three.
+def test_multiplet_seeds_are_taken_in_the_order_the_passes_set() -> None:
+    # The peak tuple's order is per-pass by construction (user first, then each
+    # pass's block in its own SNR order); seeding takes a prefix of it rather
+    # than re-ranking across passes.
     analysis = _analysis(
-        [_early_peak(90.0, snr=12.0), _early_peak(60.0, snr=11.0), _early_peak(30.0, snr=10.0)]
-        + [_early_peak(20.0, snr=9.0)],
+        [_hann_peak(1.4, snr=40.0), _early_peak(90.0, snr=12.0), _early_peak(60.0, snr=11.0)]
+        + [_early_peak(30.0, snr=10.0)],
         resolution=4.0,
     )
 
-    seeds = _multiplet_seed_peaks(analysis, 4)
+    seeds = _multiplet_seed_peaks(analysis, 3)
 
-    assert [peak.frequency_mhz for peak in seeds] == [90.0, 60.0, 30.0]
+    assert [peak.frequency_mhz for peak in seeds] == [1.4, 90.0, 60.0]
 
 
 def test_multiplet_order_is_bounded_regardless_of_the_seed_count() -> None:
@@ -463,16 +453,6 @@ def test_damped_seed_puts_the_true_envelope_inside_the_fit_bounds() -> None:
 # --------------------------------------------------------------------------- #
 # Workstream C — the blind end-to-end acceptance tests
 # --------------------------------------------------------------------------- #
-
-
-def _ranked(recommendation):
-    return [
-        assessment
-        for assessment in recommendation.sorted_assessments()
-        if not assessment.is_null_baseline
-        and assessment.is_successful
-        and not assessment.is_disqualified
-    ]
 
 
 @pytest.mark.integration
