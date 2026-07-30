@@ -289,9 +289,9 @@ def test_general_flatness_gate_measures_the_injected_deviation():
 
 
 def test_general_flatness_gate_detection_rate_pins_the_tolerance():
-    """The tolerance/significance pair (0.2%, 3σ) is a calibration, so pin the
-    calibration: at ~2e7 counts a 0.5% lifetime mismatch is caught most of the
-    time and a 1% mismatch always, while clean data is never flagged."""
+    """The tolerance/significance pair (0.2%, 2.5σ) is a calibration, so pin the
+    calibration: at ~2e7 counts a 1% lifetime mismatch is always caught and a
+    0.5% one most of the time, while clean data is not flagged at all."""
 
     def flagged(tau_fraction: float) -> int:
         count = 0
@@ -304,7 +304,7 @@ def test_general_flatness_gate_detection_rate_pins_the_tolerance():
         return count
 
     assert flagged(-0.01) == 20
-    assert flagged(-0.005) >= 14
+    assert flagged(-0.005) >= 15
     clean = sum(
         int(
             not estimate_alpha_detailed(

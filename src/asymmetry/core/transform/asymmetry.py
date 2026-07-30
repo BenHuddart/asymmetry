@@ -397,25 +397,26 @@ _GENERAL_GATE_MIN_WINDOWS = 5
 #: scatters by more than a per cent; the significance clause alone would reject
 #: high-statistics data over a lifetime error far too small to matter.
 #:
-#: 0.2% / 3σ come from a synthetic Poisson study over 30 seeds per point
-#: (relaxing LF polarization, alpha = 1.37, ~20% asymmetry), pinned by
+#: 0.2% / 2.5σ come from a synthetic Poisson study over 60 seeds per operating
+#: point (relaxing LF polarization, alpha = 1.37, asymmetry 5–50%, relaxation
+#: rate 0.1–3 µs⁻¹, 2·10⁵ to 2·10⁷ counts), the headline cases pinned by
 #: ``tests/core/test_alpha_estimation.py``:
 #:
 #: * a 0.5% lifetime mismatch — which drives the estimate ~10% wrong at 20%
-#:   asymmetry and ~70% wrong at 5% — is flagged in 23/30 datasets at 2·10⁷
-#:   counts and 30/30 at 10⁸;
-#: * a 1% mismatch (~22% wrong) is flagged in 30/30 at 2·10⁷;
-#: * clean data is flagged in 0/30 at 2·10⁷ and above, and 1/30 at 2·10⁶ —
-#:   a few-per-cent conservative false alarm where alpha's own statistical
-#:   error is already per-cent-sized.
+#:   asymmetry and ~70% wrong at 5% — is flagged in 54/60 datasets at 2·10⁷
+#:   counts;
+#: * a 1% mismatch (~22% wrong) is flagged in 60/60 at 2·10⁷;
+#: * clean data is flagged in 0–2/60 across every configuration tested, i.e. a
+#:   few-per-cent conservative false alarm — which reports a *quantified* small
+#:   deviation the reader can weigh, where a miss is silently wrong.
 #:
-#: 0.2% is below the 0.3–1% mismatches seen in practice and above the scatter
-#: of the fitted lifetime on clean data at any statistics that resolve it;
-#: raising the significance to 4σ would halve the detection rate at 2·10⁷
-#: without removing the low-statistics false alarm, and lowering the tolerance
-#: buys nothing because the significance clause binds first.
+#: The significance clause is what binds in practice: at any statistics that can
+#: resolve a defect this size, the fitted deviation exceeds 0.2% well before it
+#: reaches 2.5σ, so tightening the tolerance alone buys nothing. 2.5σ rather than
+#: 3σ is deliberate — 3σ costs a sixth of the detections at 2·10⁷ counts (48/60
+#: instead of 54/60) to halve an already-small false-alarm rate.
 _GENERAL_GATE_TAU_TOLERANCE = 0.002
-_GENERAL_GATE_SIGMA = 3.0
+_GENERAL_GATE_SIGMA = 2.5
 
 
 @dataclass(frozen=True)
@@ -800,7 +801,7 @@ def estimate_alpha_detailed(
     of the diamagnetic objective, and likewise a plain rather than reduced χ².
     The estimate is rejected with ``ok=False`` when the effective lifetime
     differs from τ_μ by more than :data:`_GENERAL_GATE_TAU_TOLERANCE` (0.2%)
-    *and* that deviation is resolved at :data:`_GENERAL_GATE_SIGMA` (3) standard
+    *and* that deviation is resolved at :data:`_GENERAL_GATE_SIGMA` (2.5) standard
     errors; see those constants for the synthetic study behind the numbers. The
     reported ``alpha`` is unchanged either way — only ``ok``, ``message`` and
     ``objective_value`` react.
