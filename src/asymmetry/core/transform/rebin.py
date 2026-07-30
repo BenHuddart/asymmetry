@@ -51,13 +51,18 @@ def rebin(
     Parameters
     ----------
     time, values, errors
-        Equal-length arrays of the original data.
+        Equal-length arrays of the original data. ``values`` may be asymmetry on
+        **either** scale — fraction or percent (see
+        :mod:`asymmetry.core.transform.units`).
     factor
         Number of bins to merge into one.
 
     Returns
     -------
     (time_rebinned, values_rebinned, errors_rebinned)
+        **On the same scale as the input.** The merge is a linear mean of
+        ``values`` with errors added in quadrature, so this transform is
+        unit-preserving: it never converts between fraction and percent.
     """
     if factor < 1:
         raise ValueError("Rebinning factor must be >= 1")
@@ -190,12 +195,20 @@ def binned_fb_asymmetry(
     leaks into every merged bin's quadrature and inflates late-time errors
     on sparse data. Fixed mode merges ``bunching_factor`` raw bins per
     output bin (trailing remainder dropped, like :func:`rebin`); the
-    non-fixed modes use :func:`binning_slice_edges`. Returns ``(time,
-    asymmetry, error)`` in µs relative to t0; the asymmetry is fractional
-    (callers scale to percent). Output times are the mean of the merged raw
-    bins' reduction time stamps ``(k − t0)·w`` — the same convention
-    :func:`rebin` uses, so switching binning modes never shifts the time
-    axis.
+    non-fixed modes use :func:`binning_slice_edges`. Output times are the mean of
+    the merged raw bins' reduction time stamps ``(k − t0)·w`` — the same
+    convention :func:`rebin` uses, so switching binning modes never shifts the
+    time axis.
+
+    Returns
+    -------
+    (time, asymmetry, error)
+        ``time`` in µs relative to t0; ``asymmetry`` and ``error`` **as a
+        fraction** (``A ∈ [-1, 1]``) — *not* percent, since this delegates
+        straight to :func:`~asymmetry.core.transform.compute_asymmetry`. Callers
+        that need the percent scale apply the ×100 themselves;
+        :func:`~asymmetry.core.transform.reduce_grouped_asymmetry` is the
+        reduction that does, and its output is percent.
     """
     mode, bin0_us, bin10_us = resolve_binning_mode(grouping)
     f = np.asarray(forward, dtype=np.float64)

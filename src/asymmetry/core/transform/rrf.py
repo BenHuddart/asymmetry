@@ -69,6 +69,14 @@ class RRFCurve:
     DC-normalised kernel) is the approximate fraction of output points that
     carry independent information.  Real/imaginary covariance from the shared
     input error is not reported.
+
+    Scale: every value here — ``real``, ``imag``, their errors,
+    :attr:`magnitude` and :attr:`magnitude_error` — is **on the same asymmetry
+    scale as the input curve**.  Demodulation is linear (a ×2 carrier product and
+    a DC-normalised filter), so it neither introduces nor removes the ×100:
+    demodulate ``ds.asymmetry`` and the components are percent; demodulate
+    ``ds.asymmetry_fraction`` and they are a fraction.  See
+    :mod:`asymmetry.core.transform.units`.
     """
 
     time: NDArray[np.float64]
@@ -236,7 +244,9 @@ def rrf_demodulate(
     Parameters
     ----------
     time, asymmetry, error : array-like
-        The curve in µs with per-bin standard deviations.  Non-finite bins
+        The curve in µs with per-bin standard deviations.  ``asymmetry``/``error``
+        may be on **either** asymmetry scale — fraction or percent — and the
+        output carries that same scale through unchanged.  Non-finite bins
         are excluded from the filter without poisoning their neighbourhood.
         Bins within one filter support of a non-finite hole keep a bounded
         bias (up to ~missing-bins/taps × twice the local amplitude): the
@@ -261,9 +271,10 @@ def rrf_demodulate(
     Returns
     -------
     RRFCurve
-        Complex curve with exact per-point error propagation and a validity
-        mask covering filter edges and non-finite holes.  See the class note
-        on inter-bin correlation.
+        Complex curve **on the input's asymmetry scale**, with exact per-point
+        error propagation and a validity mask covering filter edges and
+        non-finite holes.  See the class notes on inter-bin correlation and
+        scale.
     """
     t = np.asarray(time, dtype=np.float64)
     a = np.asarray(asymmetry, dtype=np.float64)
@@ -299,6 +310,10 @@ def rrf_demodulate_values(
     The model curve drawn over RRF-displayed data must pass through the same
     pipeline as the data so the two stay in step — the structural fix for
     WiMDA's display-only frame shift (see the study's comparison ledger).
+
+    ``values`` may be on **either** asymmetry scale and the returned
+    :class:`RRFCurve` keeps it — so pass the curve on the *same* scale as the
+    data it overlays (percent for a plotted ``MuonDataset``).
     """
     values_arr = np.asarray(values, dtype=np.float64)
     return rrf_demodulate(
