@@ -335,10 +335,10 @@ you are fighting. For a heavily damped line use one of:
   read a width off it — see the note at the top of this page).
 
 Asymmetry checks for this case actively. After apodisation, the shared FFT
-preprocessing measures how much of the error-weighted power lies in the leading
-15 % of the record and how much of that power the window keeps; when the power
-is concentrated early (≥ 75 %) *and* the window removes most of it (keeps
-≤ 20 %), it raises
+preprocessing measures how much of the error-weighted power **above the noise
+floor** lies in the leading 15 % of the record and how much of that the window
+keeps; when it is concentrated early (≥ 75 %) *and* the window removes most of
+it (keeps ≤ 20 %), it raises
 :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`
 naming both numbers and both alternatives. The warning is advisory — nothing
 about the returned spectrum changes — and it reaches the dataset and array
@@ -370,9 +370,37 @@ then reads 0.998.
    the baseline and so is less visible to that pass; the whole-signal pass
    still sees it, and a missed warning is the safe direction for an advisory
    check. The guard also stands down on a low signal-to-noise record: it
-   measures a *time-domain* power concentration, which a per-bin noise pedestal
-   flattens. In testing it fires down to a per-bin peak signal-to-noise of
-   roughly eight.
+   measures a *time-domain* power concentration, which noise flattens. In
+   testing it fires down to a per-bin peak signal-to-noise of roughly 3.5.
+
+Measuring power *above the noise floor* rather than raw power is what makes the
+check independent of binning. Raw :math:`|s/\sigma|^2` carries a contribution of
+one per bin from noise alone, so the pedestal — and with it the dilution of the
+concentration ratio — grew with however finely the record happened to be binned,
+while a genuine signal's excess is unchanged by rebinning. The same data could
+pass or fail on its binning alone. Subtracting the noise expectation removes
+that dependence, and the verdict is now stable across a sixteenfold binning
+range.
+
+Because individual bins can fall below the noise expectation, the total excess
+can come out consistent with zero. The guard then reports **insufficient
+statistics** rather than a verdict: it declines to judge instead of reading a
+concentration ratio off a sum that is indistinguishable from noise. That state
+is distinct from a confident "this apodisation is fine", and is what keeps pure
+noise from ever producing a warning at any binning.
+
+.. warning::
+
+   **The guard is a safety net, not a detector.** It works on the record's power
+   profile in the *time* domain, which is a far blunter instrument than the FFT
+   you are about to compute: the transform recovers a line by summing it
+   coherently, gaining :math:`\sqrt{N}` on the noise, while a power statistic
+   cannot. A weak, heavily damped line on a finely binned record can therefore be
+   clearly visible in an unwindowed spectrum and still carry too little excess
+   power for the guard to say anything — it will report insufficient statistics
+   and stay silent. **Silence is not an assurance that your apodisation is
+   safe.** For early-time work, choose the apodisation deliberately by the rules
+   above rather than waiting to be warned.
 
 Matched-filter suggestion
 ~~~~~~~~~~~~~~~~~~~~~~~~~
