@@ -17,9 +17,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset, Run
-from asymmetry.core.maxent import MaxEntConfig, MaxEntResult
+from asymmetry.core.maxent import MaxEntConfig, MaxEntResult, maxent_from_counts
 from asymmetry.core.maxent import maxent as grouped_maxent
-from asymmetry.core.maxent import maxent_from_counts
 
 
 def maxent(
