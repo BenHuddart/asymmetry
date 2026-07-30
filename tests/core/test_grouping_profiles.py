@@ -864,6 +864,45 @@ def test_reconcile_gps_variants_are_same_family_no_heal():
     assert reconciled is payload
 
 
+def test_reconcile_gps_15_histogram_export_detects_its_own_variant():
+    """A 15-histogram GPS ROOT run resolves to GPS-RD15, still the same family."""
+    # This export carries the six combined counters *and* the eight half-counters
+    # plus the mobile detector, so its detector ids differ from the 11-histogram
+    # sub-detector export's; detection must not fall back to GPS-RD.
+    run = _run(
+        instrument="GPS",
+        n_hist=15,
+        metadata={
+            "facility": "PSI",
+            "psi_format": "psi-root",
+            "instrument": "LMU_BULKMUSR_GPS",
+            "histogram_labels": [
+                "Forw",
+                "Back",
+                "Up",
+                "Down",
+                "Right",
+                "Left",
+                "Up_B",
+                "Up_F",
+                "Down_B",
+                "Down_F",
+                "Right_B",
+                "Right_F",
+                "Left_B",
+                "Left_F",
+                "Mob-RL",
+            ],
+        },
+    )
+    assert detect_instrument_for_run(run) == "GPS-RD15"
+    # Same physical instrument as a stored "GPS" identity -> no spurious heal.
+    payload = {"instrument": "GPS", "groups": {1: [1]}}
+    reconciled, note = reconcile_instrument_for_payload(run, payload)
+    assert note is None
+    assert reconciled is payload
+
+
 def test_profile_color_round_trips_and_defaults_none():
     profile = _base_profile(color="#5f4a87")
     data = profile.to_dict()
