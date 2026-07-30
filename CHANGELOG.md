@@ -478,6 +478,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   O(n²) Python recursion. On a 20001-point grid this is a >20× speedup at
   machine-precision equivalence, removing the model layer's hottest inner loop
   as a bottleneck during fits where ν or the width are free.
+- **Substantially faster vortex-lattice lineshape fits.** `R(t)` for the
+  superconducting vortex-lattice components (`VortexLattice`,
+  `VortexLatticePowder`) was the characteristic function of the cached `p(B)`
+  histogram evaluated as an `n_bins × N_t` complex-exponential matrix — millions
+  of `exp` calls rebuilt on *every* model evaluation, because the histogram
+  cache keys on λ and a minimiser's line search therefore misses it on
+  essentially every call. The bin centres a `np.histogram` returns are uniform,
+  so the sum factors into a carrier times a polynomial in `exp(iγΔt)`, which is
+  now evaluated as a chirp z-transform on a uniform time axis and as a Horner
+  recurrence on any other. Results are unchanged to machine precision (pinned at
+  1e-10 against the retained pre-optimisation definition over powder and
+  single-crystal cases, scalar/empty/short/long/log-spaced/offset time axes, and
+  the degenerate no-lattice case), fitted λ_ab is identical, and peak memory for
+  the evaluation drops from `O(n_bins·N_t)` to `O(N_t)`.
 - **Parallel block-separable asymmetry series fit.** An F-B asymmetry batch with
   independent (`as_provided`) seeding is embarrassingly parallel — each run is a
   self-contained minimisation — so `fit_asymmetry_series` now fans the per-run
