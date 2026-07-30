@@ -109,6 +109,23 @@ def test_non_uniform_axis_falls_back_to_horner() -> None:
     # Below the measured bin-count crossover the recurrence is cheaper.
     coarse = np.full(_CZT_MIN_BINS - 1, 1.0 / (_CZT_MIN_BINS - 1))
     assert _czt_inner_sum(coarse, np.linspace(0.0, 8.0, 512), delta) is None
+    # A column vector has a uniform step but a flat czt result would broadcast
+    # against the 2-D carrier into a wrong (N, N); it must take Horner.
+    assert _czt_inner_sum(weights, np.linspace(0.0, 8.0, 512).reshape(512, 1), delta) is None
+
+
+def test_a_column_time_axis_keeps_its_shape() -> None:
+    """A non-vector ``t`` (which the old matrix form rejected outright) now goes
+    through the recurrence and comes back with its own shape, values matching the
+    flattened reference."""
+    flat = np.linspace(0.0, 8.0, 200)
+    column = flat.reshape(200, 1)
+    ref = _reference_relaxation(flat, 195.0, 400.0, 25.0)
+    new = vortex_lattice_relaxation(column, 195.0, 400.0, 25.0)
+    assert new.shape == (200, 1)
+    assert np.abs(new - ref.reshape(200, 1)).max() < 1.0e-13
+    with pytest.raises(ValueError):
+        _reference_relaxation(column, 195.0, 400.0, 25.0)
 
 
 def test_a_barely_perturbed_axis_still_takes_the_fast_path() -> None:
