@@ -139,7 +139,7 @@ when the asymmetry is small.
 Asymmetry therefore re-tests the flatness after solving, across eight
 equal-statistics sub-windows and with :math:`\alpha` re-freed, and reads the
 surviving time trend back as an effective lifetime. When that lifetime differs
-from :math:`\tau_\mu` by more than 0.2 % *and* the deviation is resolved at
+from :math:`\tau_\mu` by more than 0.15 % *and* the deviation is resolved at
 2.5 standard errors, the estimate comes back with ``ok`` false and a message
 naming the deviation, so a wrong number is not presented as a good one. The
 value itself is never altered by the gate, and ``objective_value`` carries the

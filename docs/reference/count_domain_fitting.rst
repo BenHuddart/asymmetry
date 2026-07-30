@@ -107,7 +107,7 @@ this matters most for scripts driving the core API directly — for instance to
 free the muon lifetime, which the β-calibration wrapper does not expose.
 
 A converged fit is also checked against the counts, because that spurious
-minimum is a genuine minimum: the fitted α must sit within a factor of five of
+minimum is a genuine minimum: the fitted α must sit within a factor of three of
 the window's observed forward/backward count ratio, and the fitted forward scale
 :math:`N_0\sqrt{\alpha}` within two decades of the observed count level at
 :math:`t = 0`. A violation reports ``success=False`` with a message naming the

@@ -104,7 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   t = 0 — the same rule the wrapper used, which now relies on it too). A fixed
   `N0` is never overruled. Because that spurious minimum is a genuine minimum, a
   converged fit is additionally checked against the data: α within a factor of
-  five of the window's forward/backward count ratio, and `N0·√α` within two
+  three of the window's forward/backward count ratio, and `N0·√α` within two
   decades of the observed count level at t = 0. A violation returns
   `success=False` with a message naming the discrepancy — also appended to each
   group result's `warnings` — instead of a clean-looking convergence, and
@@ -122,7 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   eight equal-statistics sub-windows *with alpha re-freed* (testing the trend at
   the solved alpha does not work — the solver's own two-window condition cancels
   exactly that trend), and what survives is read back as an effective lifetime. A
-  deviation above 0.2 % that is resolved at 2.5σ now returns `ok=False` naming the
+  deviation above 0.15 % that is resolved at 2.5σ now returns `ok=False` naming the
   deviation and pointing at the count ratio on a fully depolarised window.
   `objective_value`, previously `None` for this method, carries the flatness χ²
   either way. The reported alpha is unchanged for data that passes. Reported from

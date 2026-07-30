@@ -397,7 +397,7 @@ _GENERAL_GATE_MIN_WINDOWS = 5
 #: scatters by more than a per cent; the significance clause alone would reject
 #: high-statistics data over a lifetime error far too small to matter.
 #:
-#: 0.2% / 2.5σ come from a synthetic Poisson study over 60 seeds per operating
+#: 0.15% / 2.5σ come from a synthetic Poisson study over 60 seeds per operating
 #: point (relaxing LF polarization, alpha = 1.37, asymmetry 5–50%, relaxation
 #: rate 0.1–3 µs⁻¹, 2·10⁵ to 2·10⁷ counts), the headline cases pinned by
 #: ``tests/core/test_alpha_estimation.py``:
@@ -410,12 +410,15 @@ _GENERAL_GATE_MIN_WINDOWS = 5
 #:   few-per-cent conservative false alarm — which reports a *quantified* small
 #:   deviation the reader can weigh, where a miss is silently wrong.
 #:
-#: The significance clause is what binds in practice: at any statistics that can
-#: resolve a defect this size, the fitted deviation exceeds 0.2% well before it
-#: reaches 2.5σ, so tightening the tolerance alone buys nothing. 2.5σ rather than
-#: 3σ is deliberate — 3σ costs a sixth of the detections at 2·10⁷ counts (48/60
-#: instead of 54/60) to halve an already-small false-alarm rate.
-_GENERAL_GATE_TAU_TOLERANCE = 0.002
+#: The significance clause does most of the work: on the synthetic grid a 0.20%
+#: and a 0.15% tolerance give identical verdicts at every point, because a defect
+#: resolvable at 2.5σ is almost always well past either. 0.15% is nevertheless
+#: the chosen value — on real continuous-source data a genuinely defective run
+#: landed inside that band, which the synthetic grid never sampled, and 0.15%
+#: costs nothing where the two agree. 2.5σ rather than 3σ is likewise deliberate:
+#: 3σ gives up a sixth of the detections at 2·10⁷ counts (48/60 instead of 54/60)
+#: to halve an already-small false-alarm rate.
+_GENERAL_GATE_TAU_TOLERANCE = 0.0015
 _GENERAL_GATE_SIGMA = 2.5
 
 
@@ -800,7 +803,7 @@ def estimate_alpha_detailed(
     those sub-window levels about their weighted mean — the ``general`` analogue
     of the diamagnetic objective, and likewise a plain rather than reduced χ².
     The estimate is rejected with ``ok=False`` when the effective lifetime
-    differs from τ_μ by more than :data:`_GENERAL_GATE_TAU_TOLERANCE` (0.2%)
+    differs from τ_μ by more than :data:`_GENERAL_GATE_TAU_TOLERANCE` (0.15%)
     *and* that deviation is resolved at :data:`_GENERAL_GATE_SIGMA` (2.5) standard
     errors; see those constants for the synthetic study behind the numbers. The
     reported ``alpha`` is unchanged either way — only ``ok``, ``message`` and

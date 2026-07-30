@@ -1285,14 +1285,18 @@ def _with_seeded_value(params: ParameterSet, name: str, value: float) -> Paramet
 #: Scale sanity checks applied to a converged forward/backward count fit.
 #:
 #: ``alpha`` is a detector balance, so it must sit within a broad factor of the
-#: window's observed forward/backward count ratio: the polarization can pull that
-#: ratio around by the asymmetry amplitude and the backgrounds shift it slightly,
-#: but not by a factor of five. Likewise the fitted forward scale ``N0·√alpha``
-#: must land within a couple of decades of the observed count level at ``t = 0``.
-#: Both are checks against the *data*, so unlike a fixed plausibility band for
-#: alpha they cannot be defeated by a caller who widened the fit bounds as a
-#: matter of course.
-_FB_ALPHA_SCALE_FACTOR = 5.0
+#: window's observed forward/backward count ratio. The model fixes how far apart
+#: they can legitimately be: ``sum(F)/sum(B) = alpha·(1 + a)/(1 − beta·a)`` with
+#: ``a`` the window-mean asymmetry, which for a real µSR run is at most a few
+#: tenths (a surface-muon initial asymmetry is ~0.25, and relaxation or
+#: oscillation averages it down further) — a factor of two at the extreme. Three
+#: leaves margin for a synthetic or pathological amplitude without admitting the
+#: order-of-magnitude walk-offs a bad seed produces. Likewise the fitted forward
+#: scale ``N0·√alpha`` must land within two decades of the observed count level at
+#: ``t = 0``. Both compare the fit against the *data*, so unlike a fixed
+#: plausibility band on alpha they cannot be defeated by a caller who widened the
+#: fit bounds as a matter of course.
+_FB_ALPHA_SCALE_FACTOR = 3.0
 _FB_N0_SCALE_FACTOR = 100.0
 
 
