@@ -1,4 +1,15 @@
-"""Data-driven matched-apodisation suggestion.
+"""Data-driven matched-apodisation suggestion, and the early-signal guard.
+
+Two things live here. :func:`suggest_matched_apodisation` computes the matched
+filter for a spectrum's dominant line. :func:`early_signal_apodisation_loss` is
+the opposite check — it measures how much early-time signal power an
+apodisation already in force has *removed*, and backs
+:class:`ApodisationEarlySignalWarning`, which the FFT prepare path raises when a
+symmetric taper (``hann``/``cosine``, zero at the record's ends) has deleted a
+heavily damped oscillation. That failure mode is concrete: a signal whose
+lifetime is a small fraction of the record can read as flat noise under Hann
+while being many-sigma with no window and a crop, or under the exponential
+("lorentzian") filter with ``filter_time_constant_us ≈ 1/λ``.
 
 Advisory only — nothing in the core (or the GUI) ever applies a suggested
 filter automatically. A matched filter maximises a line's peak S/N at the cost
@@ -154,6 +165,138 @@ _MATCHED_SCAN_EXCLUSION_KERNELS = 3.0
 #: it automatically — so a false suggestion costs the user one look, not a
 #: silent change to their analysis.
 _MATCHED_SCAN_SNR_THRESHOLD = 8.0
+
+
+class ApodisationEarlySignalWarning(UserWarning):
+    """The apodisation in force has deleted the early-time signal.
+
+    Raised by the shared FFT prepare core (so both the dataset and the array
+    front doors carry it) when a front-loaded signal meets a symmetric taper
+    window. Advisory only: no returned value changes.
+    """
+
+
+#: Leading share of the record treated as "early" by
+#: :func:`early_signal_apodisation_loss`. A symmetric taper (hann/cosine) is
+#: exactly zero at the first sample and climbs as ``(t/T)²``, so its damage is
+#: concentrated in the first tenth or so of the record; 0.15 is wide enough
+#: that a handful of bins cannot dominate the statistic and narrow enough that
+#: an undamped signal puts only 15 % of its power inside it.
+_EARLY_WINDOW_FRACTION = 0.15
+
+#: Trigger condition 1: this much of the record's error-weighted power must
+#: live in the early window. With flat errors a signal alive across the whole
+#: record puts exactly ``_EARLY_WINDOW_FRACTION`` (0.15) of its power there —
+#: but real μSR errors grow with time as the counts decay, and the 1/σ²
+#: weighting tilts the statistic early on its own: an *undamped* line with
+#: ``σ ∝ e^{t/2τ_μ}`` over an 8 µs record already reads 0.43. The threshold has
+#: to clear that pure-weighting tilt, so it sits at 0.75, which an undamped or
+#: weakly damped line cannot reach and a lifetime well inside the record does
+#: comfortably (λ = 0.4 µs⁻¹ over 8 µs reads 0.78, λ = 60 µs⁻¹ over 0.3 µs
+#: reads 0.996).
+_EARLY_POWER_CONCENTRATION_TRIGGER = 0.75
+
+#: Trigger condition 2: the window must keep no more than this share of that
+#: early power. ``window="none"`` keeps 1.0. The *matched* exponential filter
+#: (``window="lorentzian"``, ``filter_time_constant_us = 1/λ``) keeps exactly
+#: 0.5 in the long-record limit — weight ``e^{-λt}`` against power ``e^{-2λt}``
+#: gives ``∫e^{-4λt}/∫e^{-2λt} → 1/2`` — so the threshold has to sit well below
+#: 0.5, or the very cure the warning recommends would trip it. A Hann window on
+#: the same signal keeps ~1e-3. 0.2 splits those with more than a factor of two
+#: of margin on each side. Both thresholds are pinned by the synthetic study in
+#: ``tests/core/test_fourier_apodisation_guard.py``.
+_EARLY_RETAINED_POWER_TRIGGER = 0.2
+
+#: Below this many samples the early window holds too few bins for the power
+#: statistics to mean anything, and the guard stands down.
+_EARLY_GUARD_MIN_POINTS = 16
+
+#: Fast bail-out: when the window's smallest weight over the early portion is
+#: above this, it cannot have removed most of the early power, so the rest of
+#: the statistic is skipped. Keeps the guard off the hot path for
+#: ``window="none"`` and for gentle filters.
+_EARLY_GUARD_MIN_WEIGHT_TO_CHECK = 0.9
+
+
+@dataclass(frozen=True)
+class EarlySignalApodisationLoss:
+    """How much early-time signal power the applied apodisation removed."""
+
+    #: Leading share of the record measured (``_EARLY_WINDOW_FRACTION``).
+    early_window_fraction: float
+    #: Share of the pre-window signal's error-weighted power living there.
+    early_power_fraction: float
+    #: Share of *that* power the window keeps (1.0 = untouched, 0.0 = deleted).
+    early_retained_fraction: float
+    #: True when both trigger conditions are met.
+    triggered: bool
+
+
+def early_signal_apodisation_loss(
+    time_us: np.ndarray,
+    signal: np.ndarray,
+    weights: np.ndarray,
+    error: np.ndarray | None = None,
+) -> EarlySignalApodisationLoss | None:
+    """Measure the early-time signal power an apodisation removed.
+
+    *signal* is the pre-window signal (after any cropping, fractional footing
+    and baseline removal) and *weights* the apodisation weights about to
+    multiply it — the two the FFT prepare core has in hand. Power is
+    ``|signal/σ|²`` when usable errors are supplied and ``|signal|²`` otherwise,
+    so the well-measured bins dominate exactly as they do in a fit.
+
+    Two numbers are computed over the leading ``_EARLY_WINDOW_FRACTION`` of the
+    record: how much of the signal's total power lives there
+    (``early_power_fraction``) and how much of that the window keeps
+    (``early_retained_fraction``). ``triggered`` is set when the power is
+    concentrated early *and* the window removes it — a heavily damped
+    oscillation under a symmetric taper, which the taper's zero at ``t = 0``
+    can erase entirely.
+
+    Returns ``None`` when the measurement is not meaningful: too few samples,
+    mismatched shapes, no finite power, or an apodisation that plainly cannot
+    have done damage.
+    """
+    times = np.asarray(time_us, dtype=np.float64)
+    values = np.asarray(signal, dtype=np.float64)
+    w = np.asarray(weights, dtype=np.float64)
+    n = values.size
+    if n < _EARLY_GUARD_MIN_POINTS or times.size != n or w.size != n:
+        return None
+
+    n_early = max(1, int(round(_EARLY_WINDOW_FRACTION * n)))
+    early_weights = np.abs(w[:n_early])
+    if not np.all(np.isfinite(early_weights)):
+        return None
+    if float(np.min(early_weights)) > _EARLY_GUARD_MIN_WEIGHT_TO_CHECK:
+        return None
+
+    power = np.square(values)
+    if error is not None:
+        sigma = np.asarray(error, dtype=np.float64)
+        if sigma.shape == values.shape:
+            usable = np.isfinite(sigma) & (sigma > 0.0)
+            if np.any(usable):
+                power = np.where(usable, np.square(values / np.where(usable, sigma, 1.0)), 0.0)
+    power = np.where(np.isfinite(power), power, 0.0)
+
+    total = float(np.sum(power, dtype=np.float64))
+    early = float(np.sum(power[:n_early], dtype=np.float64))
+    if not np.isfinite(total) or total <= 0.0 or early <= 0.0:
+        return None
+
+    retained = float(np.sum(power[:n_early] * np.square(early_weights), dtype=np.float64)) / early
+    early_fraction = early / total
+    return EarlySignalApodisationLoss(
+        early_window_fraction=float(_EARLY_WINDOW_FRACTION),
+        early_power_fraction=early_fraction,
+        early_retained_fraction=retained,
+        triggered=(
+            early_fraction >= _EARLY_POWER_CONCENTRATION_TRIGGER
+            and retained <= _EARLY_RETAINED_POWER_TRIGGER
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -415,6 +558,20 @@ def suggest_matched_apodisation(
     meaning "leave apodisation off" — when neither stage finds a line, when
     the dominant line is resolution-limited, or when its width cannot be
     measured inside the window.
+
+    .. caution::
+
+       This reasons from the **spectrum only** and cannot see a dead
+       time-domain envelope. If the spectrum handed to it was itself computed
+       under a symmetric taper that already deleted the early-time signal, the
+       line it is asked to match may simply not be there, and it will report
+       "no clear line" on data that is many-sigma without the taper. It also
+       never suggests a taper: the two kinds it returns
+       (``"lorentzian"``/``"gaussian"``) are the weight-1-at-``t = 0``
+       :func:`~asymmetry.core.fourier.window.apply_fft_filter` filters, which
+       are safe for early-time work. The active check for the dead-envelope
+       case is :class:`ApodisationEarlySignalWarning`, raised by the FFT
+       prepare path; a signal-aware suggester is deliberately not built.
     """
     window_key = str(window).strip().lower()
     if window_key not in {"lorentzian", "gaussian"}:

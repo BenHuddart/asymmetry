@@ -20,6 +20,7 @@ here is the input that pattern matcher consumes.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -27,8 +28,9 @@ from numpy.typing import NDArray
 from scipy.ndimage import median_filter
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fourier.apodisation import ApodisationEarlySignalWarning
 from asymmetry.core.fourier.burg import burg_spectrum
-from asymmetry.core.fourier.fft import fft_asymmetry
+from asymmetry.core.fourier.fft import fft_arrays
 
 _EPS = 1e-12
 
@@ -557,18 +559,21 @@ def analyze_dataset_peaks(
 
     source = "residual_fft" if detrend_curve is not None else "fft"
 
-    fft_dataset = MuonDataset(
-        time=t.copy(),
-        asymmetry=signal.copy(),
-        error=error.copy(),
-        metadata=dict(dataset.metadata),
-        run=dataset.run,
-    )
-    frequencies, _real, magnitude = fft_asymmetry(
-        fft_dataset,
-        window="hann",
-        padding_factor=4,
-    )
+    # The Hann window here is an internal seeding choice, not the user's
+    # apodisation, so the early-signal guard's advice ("use window='none'")
+    # is not actionable at this call site and is suppressed. The known
+    # consequence — this seeding pass is blind to an oscillation whose
+    # lifetime is a small fraction of the record — is a property of the
+    # detector, not of the user's settings.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ApodisationEarlySignalWarning)
+        frequencies, _real, magnitude = fft_arrays(
+            t,
+            signal,
+            error,
+            window="hann",
+            padding_factor=4,
+        )
 
     analysis = detect_peaks_in_spectrum(
         frequencies,
