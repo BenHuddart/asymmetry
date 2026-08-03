@@ -1346,27 +1346,27 @@ def _build_gps_combined_and_subdetectors() -> InstrumentLayout:
 
     (Detector *N* → histogram ``N − 1``, as everywhere in this module.)
 
-    **The six combined counters are the t0-aligned sums of their halves**, so
-    they already contain every recorded event exactly once::
+    **The combined counters (3–6) are separate electronics roads that track the
+    summed halves (7–14)** — in real files the combined total matches the sum
+    of its two halves to within a handful of counts, except that the combined
+    counter on whichever cryostat port carries the Mobile detector also folds
+    ``Mob-RL``'s counts in.  **The split halves are the analysis groups**,
+    structurally identical to :func:`_build_gps_subdetectors` (GPS-RD): this
+    keeps the transverse groups free of the silently-included Mobile counts,
+    and identical in meaning across the 11- and 15-histogram eras::
 
-        Up    = Up_B    + Up_F
-        Down  = Down_B  + Down_F
-        Left  = Left_B  + Left_F
-        Right = Right_B + Right_F  (+ Mob-RL, when the mobile detector is
-                                    mounted on the Right cryostat port)
+        Up    = (Up_B, Up_F)       = (7, 8)
+        Down  = (Down_B, Down_F)   = (9, 10)
+        Right = (Right_B, Right_F) = (11, 12)
+        Left  = (Left_B, Left_F)   = (13, 14)
 
-    Two consequences drive the design here:
-
-    * **The presets group the combined counters only** (IDs 1–6, the same
-      transverse ids as the 6-detector BIN layout: U=3, D=4, R=5, L=6).  Adding
-      the halves — or the mobile detector — to a group would double-count, since
-      the combined counter already contains them.  IDs 7–15 are still individually
-      selectable so a user can exclude a misbehaving half-counter or build a
-      custom grouping from the finer view, but no preset touches them.
-    * **The mobile detector needs no port guess.**  :func:`_build_gps_subdetectors`
-      leaves ``Mob-RL`` ungrouped because the 11-histogram export does not record
-      which cryostat port it is on; here that information arrives implicitly, in
-      whichever combined transverse counter includes it.
+    This also matches the ROOT loader's default grouping and keeps alphas
+    consistent between eras.  The combined counters (3–6) stay ungrouped by
+    default but remain individually selectable — for diagnostics against the
+    split view, or for a user who deliberately wants the Mobile-inclusive
+    combined road.  ``Mob-RL`` (15) stays ungrouped exactly as in GPS-RD: the
+    metadata does not record which port it is mounted on (though the combined
+    counter that includes it betrays the port by its excess counts).
 
     This is the 15-detector variant of :func:`_build_gps`; all three GPS layouts
     share the display name "GPS" (see :class:`InstrumentLayout.display_name`) and
@@ -1423,10 +1423,11 @@ def _build_gps_combined_and_subdetectors() -> InstrumentLayout:
         ),
     )
 
-    # Group the *combined* counters only — they already contain the halves (and
-    # the mobile detector) exactly once, so U=3, D=4, L=6, R=5 as in the
-    # 6-detector BIN layout. IDs 7-15 are deliberately left out of every preset.
-    presets = _gps_presets((3,), (4,), (6,), (5,))
+    # The split halves are the analysis groups, exactly as in the 11-histogram
+    # GPS-RD layout: U=(7,8), D=(9,10), L=(13,14), R=(11,12). The combined
+    # counters 3-6 track the summed halves (plus Mob-RL on its mounting port)
+    # and, like Mob-RL (15), stay ungrouped but individually selectable.
+    presets = _gps_presets((7, 8), (9, 10), (13, 14), (11, 12))
 
     return InstrumentLayout(
         name="GPS-RD15",

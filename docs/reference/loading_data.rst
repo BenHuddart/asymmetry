@@ -216,6 +216,22 @@ than inventing a new interpretation. In particular:
   verbatim to the loaded run as
   ``metadata["musrroot_run_summary"]``, so it is preserved as provenance
   rather than discarded.
+* PSI GPS MusrRoot exports split each transverse plate into an upstream
+  (``_B``) and downstream (``_F``) half. The default grouping merges each pair
+  into one analysis group per direction (``Up``, ``Down``, ``Right``,
+  ``Left``), matching the beam-named PSI-BIN export. A fifteen-histogram
+  export additionally carries hardware-combined ``Up``/``Down``/``Right``/
+  ``Left`` counters alongside the split halves — separate electronics roads
+  that track the summed halves, plus the Mobile detector's counts on the port
+  it occupies — so grouping both views by default would double up the
+  analysis. Those combined counters
+  are left out of the default groups; they are still loaded and remain
+  individually selectable in the Grouping window's detector-grouping editor,
+  for diagnostics against the split view or for building a custom grouping
+  from the combined counters instead. This trigger is structural (whether a
+  counter's ``_B`` and ``_F`` labels are both present), not based on the
+  instrument name, so it applies uniformly across PSI ROOT exports that carry
+  this layout.
 * MusrRoot slow-control histograms in ``histos/SCAnaModule`` are imported as
   plottable ``nexus_time_series`` logs. In particular, ``hSampleTemperature``
   is summarised as an average temperature in Get Info while the scalar
@@ -316,7 +332,11 @@ In the GUI, supported raw data runs use the full Grouping dialog:
 * MusrRoot/LEM ROOT runs use the full Grouping dialog. Detector names from
    ``DetectorInfo`` or ROOT histogram titles become the initial group names,
    and ROOT per-detector ``t0`` values are handled like PSI BIN/MDU ``t0``
-   metadata.
+   metadata. PSI GPS split-half transverse counters (``_B``/``_F``) merge into
+   one default group per direction; if the export also carries the
+   hardware-combined ``Up``/``Down``/``Right``/``Left`` counters, those are
+   left ungrouped by default (still loaded and selectable) rather than
+   duplicating the split-half groups.
 
 Basic usage
 -----------

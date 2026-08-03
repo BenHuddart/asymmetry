@@ -270,6 +270,126 @@ def test_root_loader_merges_paired_subdetectors_regardless_of_instrument(tmp_pat
     assert ds.run.grouping["group_names"] == {1: "Forw", 2: "Back", 3: "Up", 4: "Down"}
 
 
+#: Detector labels of a pre-2026 PSI GPS MusrRoot file: the beam counters, four
+#: hardware-combined transverse counters (independent electronics roads, not sums
+#: of the halves), the eight split halves, and the Mobile detector.
+_GPS_15_HISTO_LABELS = [
+    "Forw",
+    "Back",
+    "Up",
+    "Down",
+    "Right",
+    "Left",
+    "Up_B",
+    "Up_F",
+    "Down_B",
+    "Down_F",
+    "Right_B",
+    "Right_F",
+    "Left_B",
+    "Left_F",
+    "Mob-RL",
+]
+
+_GPS_15_HISTO_GROUPS = {1: [1], 2: [2], 3: [7, 8], 4: [9, 10], 5: [11, 12], 6: [13, 14], 7: [15]}
+
+_GPS_15_HISTO_NAMES = {
+    1: "Forw",
+    2: "Back",
+    3: "Up",
+    4: "Down",
+    5: "Right",
+    6: "Left",
+    7: "Mob-RL",
+}
+
+
+def test_root_loader_demotes_hardware_combined_counters_on_15_histogram_gps(tmp_path) -> None:
+    # The combined Up/Down/Right/Left counters duplicate the merged _B/_F pairs,
+    # so they get no default group; the remaining seven groups match the
+    # 11-histogram GPS export (Forw, Back, the four merged pairs, Mob-RL).
+    path = tmp_path / "gps_15_histos.root"
+    _write_labeled_root_directory(path, instrument="GPS", labels=_GPS_15_HISTO_LABELS)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    groups = ds.run.grouping["groups"]
+    names = ds.run.grouping["group_names"]
+    assert groups == _GPS_15_HISTO_GROUPS
+    assert names == _GPS_15_HISTO_NAMES
+    assert ds.run.grouping["forward_group"] == 2
+    assert ds.run.grouping["backward_group"] == 1
+
+
+def test_root_loader_demotes_combined_counters_structurally_without_instrument_label(
+    tmp_path,
+) -> None:
+    # Demotion keys off the _B/_F pairing, not the instrument name, so files that
+    # do not report Instrument == "GPS" group identically.
+    path = tmp_path / "gps_15_histos_unlabelled.root"
+    _write_labeled_root_directory(path, instrument="", labels=_GPS_15_HISTO_LABELS)
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    groups = ds.run.grouping["groups"]
+    names = ds.run.grouping["group_names"]
+    assert groups == _GPS_15_HISTO_GROUPS
+    assert names == _GPS_15_HISTO_NAMES
+    assert ds.run.grouping["forward_group"] == 2
+    assert ds.run.grouping["backward_group"] == 1
+
+
+def test_root_loader_never_demotes_combined_counters_without_their_halves(tmp_path) -> None:
+    # A six-histogram GPS ROOT layout (combined counters, no halves) must keep
+    # loading exactly as before: nothing to merge, nothing demoted.
+    path = tmp_path / "gps_6_histos.root"
+    _write_labeled_root_directory(
+        path,
+        instrument="GPS",
+        labels=["Forw", "Back", "Up", "Down", "Right", "Left"],
+    )
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run.grouping["groups"] == {gid: [gid] for gid in range(1, 7)}
+    assert ds.run.grouping["group_names"] == {
+        1: "Forw",
+        2: "Back",
+        3: "Up",
+        4: "Down",
+        5: "Right",
+        6: "Left",
+    }
+    assert ds.run.grouping["forward_group"] == 2
+    assert ds.run.grouping["backward_group"] == 1
+
+
+def test_root_loader_keeps_combined_counter_when_only_one_half_present(tmp_path) -> None:
+    # Without both halves there is nothing for the combined counter to duplicate,
+    # so it keeps its own group (and the name disambiguation that follows).
+    path = tmp_path / "gps_half_pair.root"
+    _write_labeled_root_directory(
+        path,
+        instrument="GPS",
+        labels=["Forw", "Back", "Up", "Up_F", "Mob-RL"],
+    )
+
+    ds = RootLoader().load(str(path))
+
+    assert ds.run is not None
+    assert ds.run.grouping["groups"] == {1: [1], 2: [2], 3: [3], 4: [4], 5: [5]}
+    assert ds.run.grouping["group_names"] == {
+        1: "Forw",
+        2: "Back",
+        3: "Up",
+        4: "Up 2",
+        5: "Mob-RL",
+    }
+
+
 def test_root_loader_does_not_merge_unpaired_subdetectors(tmp_path) -> None:
     # Without a genuine _B/_F pair (here a lone Up_F), nothing is merged — each
     # histogram stays its own group.
