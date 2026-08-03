@@ -52,5 +52,8 @@ push it, and open a PR — don't commit directly to `main`.
 - A per-test timeout (`--timeout=120`) is set, so a genuinely hung test fails fast
   rather than stalling the whole run.
 - GUI tests need `QT_QPA_PLATFORM=offscreen` in headless environments.
-- Docs are built + deployed to GitHub Pages **only on release tags** (`v*`); PRs
-  that touch `docs/**` get a cheap build-only smoke (no screenshots, no deploy).
+- Docs are built + deployed to GitHub Pages on release tags (`v*`) **and** on
+  pushes to `main` that touch `docs/**`, `src/**`, or the docs workflow file
+  (screenshots are captured from the live GUI, so `src/**` changes can alter
+  the published images); PRs that touch `docs/**` get a cheap build-only smoke
+  (no screenshots, no deploy).
