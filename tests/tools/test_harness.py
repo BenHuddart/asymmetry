@@ -821,3 +821,16 @@ def test_docs_page_size_budget_is_600_kb() -> None:
     harness = _load_harness()
 
     assert harness.DOCS_PAGE_SIZE_BUDGET_BYTES == 600_000
+
+
+def test_docs_build_output_dir_comes_from_the_scanned_constant() -> None:
+    harness = _load_harness()
+    commands: list[list[str]] = []
+    harness._run_command = lambda args: commands.append(list(args)) or 0
+    harness._report_oversized_docs_pages = lambda: 0
+
+    assert harness.cmd_docs(SimpleNamespace(screenshots=False)) == 0
+
+    # The sphinx output directory must be the very directory the post-build
+    # size check scans, or the two silently desync.
+    assert commands[-1][-1] == str(harness.DOCS_HTML_DIR)

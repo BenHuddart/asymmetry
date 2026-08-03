@@ -1342,7 +1342,9 @@ def cmd_docs(args: argparse.Namespace) -> int:
             "-b",
             "html",
             "docs",
-            "docs/_build/html",
+            # Derived from the same constant the post-build size check scans,
+            # so the build output and the scanned directory cannot desync.
+            str(DOCS_HTML_DIR),
         ]
     )
     if build_result:
