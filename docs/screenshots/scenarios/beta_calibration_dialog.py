@@ -119,6 +119,10 @@ class BetaCalibrationDialogScenario(Scenario):
         if not pix.save(str(out_path), "PNG"):
             raise RuntimeError(f"Failed to save screenshot to {out_path}")
 
+        # As in alpha_calibration_dialog: estimating β dirties the correction
+        # draft, so ``close()`` would hit the dialog's "Discard changes" guard.
+        # Nothing is ever saved and the grab is already on disk.
+        dialog._clear_dirty()
         dialog.close()
         dialog.deleteLater()
         _pump_events(40)

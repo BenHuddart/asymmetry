@@ -105,6 +105,14 @@ registered in `capture.py::_import_scenarios()`. House rules:
 - **Referenced**: every scenario must be embedded by at least one page and
   every referenced image must have a scenario — `capture.py --check-refs`
   (run by `structural` and the docs CI smoke) fails on either mismatch.
+- **Never modal**: capture runs offscreen, so nothing can click a message box.
+  The driver wraps the whole run in `_base.auto_dismiss_modals()`, which answers
+  every `QMessageBox` with its default (most dismissive) button and logs one
+  `[screenshots] auto-dismissed modal: ...` line. Grep the capture log for that
+  line — a scenario that trips a dirty-state guard on close should usually clear
+  it explicitly instead. Without the guard such a prompt blocks until the
+  watchdog hard-exits and *every alphabetically later scenario is never
+  written*; that is how the site lost most of its GUI images for weeks.
 
 ### Page size budget
 

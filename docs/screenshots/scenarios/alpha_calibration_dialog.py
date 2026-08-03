@@ -75,6 +75,13 @@ class AlphaCalibrationDialogScenario(Scenario):
         if not pix.save(str(out_path), "PNG"):
             raise RuntimeError(f"Failed to save screenshot to {out_path}")
 
+        # Estimating α leaves the correction draft dirty, so ``close()`` would
+        # otherwise hit the dialog's "Discard changes" guard. Nothing here is
+        # ever saved and the grab is already on disk, so discard the draft
+        # explicitly. (The capture harness also auto-dismisses modals — see
+        # ``_base.auto_dismiss_modals`` — but stating the intent here keeps the
+        # scenario readable and lets the dialog actually close.)
+        dialog._clear_dirty()
         dialog.close()
         dialog.deleteLater()
         _pump_events(40)

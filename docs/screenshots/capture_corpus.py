@@ -190,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     _ensure_offscreen_default()
     _boot_qapplication()
 
-    from .scenarios._base import CaptureContext
+    from .scenarios._base import CaptureContext, auto_dismiss_modals
 
     scenarios = _import_corpus_scenarios()
 
@@ -228,20 +228,23 @@ def main(argv: list[str] | None = None) -> int:
 
     captured: list[Path] = []
     failed: list[str] = []
-    for name, scenario in selected.items():
-        print(f"[corpus-screenshots] capturing {name}...", flush=True)
-        t0 = time.monotonic()
-        try:
-            path = scenario.capture(ctx)
-        except Exception:
-            import traceback
+    # Same guard as the main capture driver: offscreen, an unanswerable modal
+    # would wedge the run and blank every scenario after it.
+    with auto_dismiss_modals():
+        for name, scenario in selected.items():
+            print(f"[corpus-screenshots] capturing {name}...", flush=True)
+            t0 = time.monotonic()
+            try:
+                path = scenario.capture(ctx)
+            except Exception:
+                import traceback
 
-            traceback.print_exc()
-            print(f"[corpus-screenshots] FAILED {name}", file=sys.stderr, flush=True)
-            failed.append(name)
-            continue
-        print(f"[corpus-screenshots] wrote {path} ({time.monotonic() - t0:.1f}s)", flush=True)
-        captured.append(path)
+                traceback.print_exc()
+                print(f"[corpus-screenshots] FAILED {name}", file=sys.stderr, flush=True)
+                failed.append(name)
+                continue
+            print(f"[corpus-screenshots] wrote {path} ({time.monotonic() - t0:.1f}s)", flush=True)
+            captured.append(path)
 
     if failed:
         print(
