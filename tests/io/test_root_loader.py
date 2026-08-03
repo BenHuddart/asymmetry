@@ -306,7 +306,8 @@ _GPS_15_HISTO_NAMES = {
 
 def test_root_loader_demotes_hardware_combined_counters_on_15_histogram_gps(tmp_path) -> None:
     # The combined Up/Down/Right/Left counters duplicate the merged _B/_F pairs,
-    # so they get no default group; the six-group GPS default is unchanged.
+    # so they get no default group; the remaining seven groups match the
+    # 11-histogram GPS export (Forw, Back, the four merged pairs, Mob-RL).
     path = tmp_path / "gps_15_histos.root"
     _write_labeled_root_directory(path, instrument="GPS", labels=_GPS_15_HISTO_LABELS)
 
