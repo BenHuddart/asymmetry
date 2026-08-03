@@ -250,3 +250,100 @@ def test_check_screenshot_references_reports_oversized_generated_png(tmp_path: P
 
 def capture_budget_bytes() -> int:
     return _load_capture().SCREENSHOT_SIZE_BUDGET_BYTES
+
+
+def test_missing_screenshots_reports_absent_pngs(tmp_path: Path) -> None:
+    scenarios_dir = tmp_path / "scenarios"
+    _write_scenario(scenarios_dir, "present_scenario", "present_scenario")
+    _write_scenario(scenarios_dir, "absent_scenario", "absent_scenario")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "present_scenario.png").write_bytes(b"0")
+    capture = _load_capture()
+
+    missing = capture.missing_screenshots(out_dir, scenarios_dir)
+
+    assert missing == ["absent_scenario"]
+
+
+def test_missing_screenshots_empty_when_all_present(tmp_path: Path) -> None:
+    scenarios_dir = tmp_path / "scenarios"
+    _write_scenario(scenarios_dir, "only_scenario", "only_scenario")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "only_scenario.png").write_bytes(b"0")
+    capture = _load_capture()
+
+    assert capture.missing_screenshots(out_dir, scenarios_dir) == []
+
+
+def test_missing_screenshots_treats_absent_out_dir_as_all_missing(tmp_path: Path) -> None:
+    scenarios_dir = tmp_path / "scenarios"
+    _write_scenario(scenarios_dir, "only_scenario", "only_scenario")
+    capture = _load_capture()
+
+    missing = capture.missing_screenshots(tmp_path / "does_not_exist", scenarios_dir)
+
+    assert missing == ["only_scenario"]
+
+
+def test_missing_screenshots_ignores_corpus_subdirectory(tmp_path: Path) -> None:
+    # scenarios/corpus/*.py mirrors the real layout: capture.py's scan is a
+    # non-recursive glob, so corpus scenarios (captured/guarded separately by
+    # capture_corpus.py) must never surface as "missing" GUI screenshots.
+    scenarios_dir = tmp_path / "scenarios"
+    _write_scenario(scenarios_dir, "gui_scenario", "gui_scenario")
+    _write_scenario(scenarios_dir / "corpus", "corpus_scenario", "corpus_scenario")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    capture = _load_capture()
+
+    missing = capture.missing_screenshots(out_dir, scenarios_dir)
+
+    assert missing == ["gui_scenario"]
+
+
+def test_check_complete_cli_mode_fails_on_missing_and_prints_names(tmp_path: Path, capsys) -> None:
+    capture = _load_capture()
+    empty_out = tmp_path / "empty_out"
+
+    exit_code = capture.main(["--check-complete", "--out", str(empty_out)])
+
+    assert exit_code == 1
+    err = capsys.readouterr().err
+    assert "screenshot completeness: failed" in err
+    assert "missing screenshot: main_window" in err
+
+
+def test_check_complete_cli_mode_passes_when_every_scenario_has_a_png(
+    tmp_path: Path, capsys
+) -> None:
+    capture = _load_capture()
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    for name in capture.scenario_names_from_source():
+        (out_dir / f"{name}.png").write_bytes(b"0")
+
+    exit_code = capture.main(["--check-complete", "--out", str(out_dir)])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "screenshot completeness: ok" in out
+
+
+def test_check_complete_cli_mode_does_not_require_qt(monkeypatch, tmp_path: Path) -> None:
+    # ``--check-complete`` must short-circuit before the watchdog/QApplication
+    # boot, exactly like ``--check-refs`` — otherwise the PR smoke job (no Qt
+    # runtime libraries installed) would break if this check were ever added
+    # there.
+    capture = _load_capture()
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("Qt/watchdog machinery must not run for --check-complete")
+
+    monkeypatch.setattr(capture, "_start_watchdog", _boom)
+    monkeypatch.setattr(capture, "_boot_qapplication", _boom)
+
+    exit_code = capture.main(["--check-complete", "--out", str(tmp_path / "out")])
+
+    assert exit_code == 1
