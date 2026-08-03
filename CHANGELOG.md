@@ -450,6 +450,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (and the nested re-import that would cascade), degrades to serial execution,
   and warns once with `SpawnUnsafeWarning` naming the fix. `max_workers=1` is
   now guaranteed never to start a worker process.
+- **15-histogram GPS ROOT files loaded with duplicate transverse groups.** The
+  loader's default grouping kept the hardware-combined `Up`/`Down`/`Right`/`Left`
+  counters (detector IDs 3–6) as their own groups *alongside* the merged
+  `_B`/`_F` halves (IDs 7–14), producing near-duplicate "Up"/"Up 2"-style pairs
+  — eleven groups from one run, overflowing the Detector Layout editor's
+  eight-slot grid and breaking the NeXus grouping round-trip, where a detector
+  cannot belong to two groups. The combined counters are separate electronics
+  roads that track the summed halves — and the combined counter on whichever
+  cryostat port carries the Mobile detector silently folds `Mob-RL`'s counts
+  in, so the split halves are the cleaner analysis view as well as the one
+  shared with the 11-histogram era.
+  `RootLoader` now leaves a standalone combined counter ungrouped by default
+  whenever both halves of its pair are present, so a 15-histogram file loads
+  with the same seven groups (`Forw`, `Back`, `Up`, `Down`, `Right`, `Left`,
+  `Mob-RL`) as the 11-histogram 2026-era export, with detectors 3–6 still
+  loaded and individually selectable. `GPS-RD15` (`_build_gps_combined_and_subdetectors`)
+  is realigned to match: its presets now group the halves (`Up = (7, 8)`,
+  `Down = (9, 10)`, `Right = (11, 12)`, `Left = (13, 14)`), and the combined
+  counters and `Mob-RL` stay ungrouped but selectable. Runs loaded before this
+  change will not co-add with runs loaded after it until regrouped, since the
+  co-add compatibility check includes group names; saved `.asymp` projects are
+  unaffected, because a stored grouping override or profile takes precedence
+  over the loader default.
 
 ### Changed
 

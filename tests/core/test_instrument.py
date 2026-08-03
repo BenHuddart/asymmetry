@@ -804,13 +804,24 @@ class TestGpsCombinedSubdetectorLayout:
             assert abs(back.y_center) > abs(combined.y_center)
             assert abs(front.y_center) > abs(combined.y_center)
 
-    def test_presets_group_only_the_combined_counters(self, layout):
-        # The combined counters already contain every event exactly once (the
-        # halves, and the mobile detector, are summed into them), so grouping any
-        # of ids 7-15 would double-count.
+    def test_presets_group_beam_counters_and_halves_only(self, layout):
+        # The split halves are the analysis groups here, exactly as in GPS-RD:
+        # only the beam counters (1, 2) and the halves (7-14) may appear in a
+        # preset group. The combined transverse counters (3-6) are an
+        # independent electronics road, not a sum of the halves, and stay
+        # ungrouped; Mob-RL (15) stays ungrouped too.
+        allowed = {1, 2} | set(range(7, 15))
         for preset in layout.presets.values():
             for gdef in preset.groups.values():
-                assert all(1 <= det <= 6 for det in gdef.detector_ids), gdef
+                assert all(det in allowed for det in gdef.detector_ids), gdef
+        used = {
+            det
+            for preset in layout.presets.values()
+            for gdef in preset.groups.values()
+            for det in gdef.detector_ids
+        }
+        for det in (3, 4, 5, 6, 15):
+            assert det not in used
 
     def test_longitudinal_preset(self, layout):
         # PSI convention: analysis-forward = beam-Backward group (group 2).
@@ -819,27 +830,28 @@ class TestGpsCombinedSubdetectorLayout:
         assert preset.groups[1].detector_ids == (1,)
         assert preset.groups[2].detector_ids == (2,)
 
-    def test_transverse_vector_uses_combined_counters(self, layout):
+    def test_transverse_vector_uses_split_halves(self, layout):
         preset = layout.presets["Transverse (Vector)"]
         proj = {p.label: (p.forward_group, p.backward_group) for p in preset.projections}
         assert proj == {"Up-Down": (1, 2), "Left-Right": (3, 4)}
-        assert preset.groups[1].detector_ids == (3,)  # Up
-        assert preset.groups[2].detector_ids == (4,)  # Down
-        assert preset.groups[3].detector_ids == (5,)  # Right
-        assert preset.groups[4].detector_ids == (6,)  # Left
+        assert preset.groups[1].detector_ids == (7, 8)  # Up = Up_B + Up_F
+        assert preset.groups[2].detector_ids == (9, 10)  # Down = Down_B + Down_F
+        assert preset.groups[3].detector_ids == (11, 12)  # Right = Right_B + Right_F
+        assert preset.groups[4].detector_ids == (13, 14)  # Left = Left_B + Left_F
 
     def test_spin_rotated_preset_groups_back_up_against_forw_down(self, layout):
         # The regression this variant fixes: with the GPS-RD layout, ids (2,3,4)
         # vs (1,5,6) meant Back+Up_B+Up_F vs Forw+Down_B+Down_F on an
-        # 11-histogram file -- but Back+Up+Down vs Forw+Right+Left here.
+        # 11-histogram file -- the same halves, at the 15-histogram ids.
         preset = layout.presets["Spin-rotated (B+U/F+D)"]
         assert (preset.forward_group, preset.backward_group) == (1, 2)
-        assert set(preset.groups[1].detector_ids) == {2, 3}  # B + U
-        assert set(preset.groups[2].detector_ids) == {1, 4}  # F + D
+        assert set(preset.groups[1].detector_ids) == {2, 7, 8}  # B + Up_B + Up_F
+        assert set(preset.groups[2].detector_ids) == {1, 9, 10}  # F + Down_B + Down_F
 
     def test_spin_rotated_preset_resolves_to_the_right_labels(self, layout):
-        # By label, not by id: the forward group must be {Back, Up} and the
-        # backward group {Forw, Down} against the export's own label order.
+        # By label, not by id: the forward group must be {Back, Up_B, Up_F} and
+        # the backward group {Forw, Down_B, Down_F} against the export's own
+        # label order.
         preset = layout.presets["Spin-rotated (B+U/F+D)"]
         groups = preset_grouping_for_run(
             layout,
@@ -851,17 +863,17 @@ class TestGpsCombinedSubdetectorLayout:
         def _labels(gid: int) -> set[str]:
             return {GPS_ROOT15_LABELS[det - 1] for det in groups[gid]}
 
-        assert _labels(preset.forward_group) == {"Back", "Up"}
-        assert _labels(preset.backward_group) == {"Forw", "Down"}
+        assert _labels(preset.forward_group) == {"Back", "Up_B", "Up_F"}
+        assert _labels(preset.backward_group) == {"Forw", "Down_B", "Down_F"}
 
-    def test_wep_preset_uses_combined_counters(self, layout):
+    def test_wep_preset_uses_split_halves(self, layout):
         preset = layout.presets["WEP (spin-rotated)"]
         pairs = {p.label: (p.forward_group, p.backward_group, p.alpha) for p in preset.projections}
         assert pairs == {"FB": (2, 1, 0.75), "UD": (3, 4, 1.0)}
         assert preset.groups[1].detector_ids == (1,)  # F
         assert preset.groups[2].detector_ids == (2,)  # B
-        assert preset.groups[3].detector_ids == (3,)  # U (combined)
-        assert preset.groups[4].detector_ids == (4,)  # D (combined)
+        assert preset.groups[3].detector_ids == (7, 8)  # U = Up_B + Up_F
+        assert preset.groups[4].detector_ids == (9, 10)  # D = Down_B + Down_F
 
 
 # ---------------------------------------------------------------------------
@@ -912,7 +924,7 @@ class TestGpsPsiConvention:
         # analysis slot for a polarization pointing toward Backward.
         assert got[0] > 0.0
 
-    @pytest.mark.parametrize("preset_key", ["GPS", "GPS-RD"])
+    @pytest.mark.parametrize("preset_key", ["GPS", "GPS-RD", "GPS-RD15"])
     def test_loader_default_and_presets_agree_on_analysis_forward_detector(self, preset_key):
         # The PSI loader default analysis pair and each GPS preset must agree on
         # which PHYSICAL detector group is analysis-forward: the beam-Backward one.
