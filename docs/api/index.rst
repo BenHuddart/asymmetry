@@ -26,7 +26,7 @@ for parameter-trend fits, and
    project
    gui
    io
-   fitting
+   fitting/index
    fourier
    transforms
    negmu
