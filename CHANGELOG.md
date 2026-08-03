@@ -247,6 +247,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The published documentation gets its GUI screenshots back.** Every docs
+  deploy since 2026-07-18 shipped only the first two or three screenshots. The
+  capture driver runs scenarios alphabetically under
+  `QT_QPA_PLATFORM=offscreen`, and `alpha_calibration_dialog` ends by closing a
+  `GroupingDialog` whose `closeEvent` runs the unsaved-changes guard — a modal
+  `QMessageBox.question("Discard changes", …)` that the α estimate had made
+  reachable. Offscreen nobody can answer it, so the process blocked there until
+  the 8-minute watchdog hard-exited, and the ~44 scenarios sorting after it were
+  never written. The capture harness now wraps the whole run in
+  `auto_dismiss_modals()`: inside a capture, every `QMessageBox` answers
+  immediately with its default (most dismissive) button and logs one
+  `[screenshots] auto-dismissed modal: …` line, so any future scenario that
+  trips a dirty-state guard degrades to a log line instead of a dead build. The
+  two calibration scenarios additionally discard their draft explicitly before
+  closing — `beta_calibration_dialog` turned out to carry the identical latent
+  hang.
+
 - **An apodisation window that deletes the early-time signal now says so.** The
   `"hann"` and `"cosine"` windows are symmetric tapers: exactly zero at the
   first sample, rising as `(t/T)²`. They are for late-time / narrow-line work,

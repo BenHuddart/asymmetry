@@ -13,14 +13,15 @@ mutate global Qt state themselves.
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, Qt, QTimer
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
 try:
     import oxipng
@@ -106,6 +107,133 @@ def register(scenario: Scenario) -> Scenario:
 
 def registered_scenarios() -> dict[str, Scenario]:
     return dict(_REGISTRY)
+
+
+_SB = QMessageBox.StandardButton
+
+# Preference order used when a message box does not name a default button.
+# Most dismissive first: a capture run must never *confirm* anything, so the
+# guard picks the button a user pressing Esc would get.
+_DISMISSIVE_PRIORITY: tuple[QMessageBox.StandardButton, ...] = (
+    _SB.Cancel,
+    _SB.No,
+    _SB.Close,
+    _SB.Abort,
+    _SB.Ignore,
+    _SB.Ok,
+    _SB.Yes,
+)
+
+
+def _resolve_dismissal(
+    buttons: QMessageBox.StandardButton | int,
+    default_button: QMessageBox.StandardButton | int | None,
+) -> QMessageBox.StandardButton:
+    """Return the button an auto-dismissed message box should answer with.
+
+    The dialog's own default button wins when it names one that is actually on
+    offer (that is what Esc / Return would trigger for a real user); otherwise
+    the most dismissive available button is chosen.
+    """
+    mask = int(buttons or 0)
+    default = int(default_button or 0)
+    if default and default & mask:
+        return _SB(default)
+    for candidate in _DISMISSIVE_PRIORITY:
+        if int(candidate) & mask:
+            return candidate
+    return _SB.NoButton
+
+
+def _log_dismissal(kind: str, title: str, chosen: QMessageBox.StandardButton) -> None:
+    print(
+        f"[screenshots] auto-dismissed modal: {title or '(untitled)'} [{kind}] -> {chosen.name}",
+        flush=True,
+    )
+
+
+def _static_dismisser(
+    kind: str, fallback_buttons: QMessageBox.StandardButton
+) -> Callable[..., object]:
+    """Build a replacement for one ``QMessageBox`` static convenience method."""
+
+    def _dismiss(
+        parent=None,  # noqa: ANN001 - mirrors the Qt signature
+        title: str = "",
+        text: str = "",
+        buttons: QMessageBox.StandardButton | int = fallback_buttons,
+        defaultButton: QMessageBox.StandardButton | int = _SB.NoButton,  # noqa: N803
+    ) -> QMessageBox.StandardButton:
+        chosen = _resolve_dismissal(buttons, defaultButton)
+        _log_dismissal(kind, title, chosen)
+        return chosen
+
+    return _dismiss
+
+
+def _dismiss_exec(box: QMessageBox, *_args, **_kwargs) -> int:
+    """Replacement for ``QMessageBox.exec``: close immediately, never block.
+
+    Only ``QMessageBox`` is patched, never ``QDialog`` — scenarios whose subject
+    *is* a dialog (the calibration, simulate, and wizard captures) must keep
+    working normally.
+    """
+    default = box.defaultButton()
+    chosen = _resolve_dismissal(
+        box.standardButtons(),
+        box.standardButton(default) if default is not None else _SB.NoButton,
+    )
+    _log_dismissal("exec", box.windowTitle(), chosen)
+    box.done(int(chosen))
+    return int(chosen)
+
+
+@contextmanager
+def auto_dismiss_modals() -> Iterator[None]:
+    """Neutralise blocking ``QMessageBox`` modals for the duration of a capture.
+
+    Screenshots are captured under ``QT_QPA_PLATFORM=offscreen``, where nobody
+    can click a modal: any message box that reaches its own event loop blocks
+    the whole process until the capture watchdog hard-exits, and every scenario
+    after it is silently never written. That is exactly how the published docs
+    lost most of their GUI images — ``GroupingDialog.closeEvent`` runs an
+    unsaved-changes guard (``QMessageBox.question("Discard changes", ...)``), so
+    ``alpha_calibration_dialog`` wedged on ``dialog.close()`` and took the ~30
+    alphabetically later scenarios with it.
+
+    Rather than teach each scenario to tiptoe around its own dirty-state guard,
+    the harness makes the failure mode impossible: inside this context every
+    ``QMessageBox`` answers instantly with its default (or most dismissive)
+    button and logs one ``[screenshots] auto-dismissed modal: ...`` line, so a
+    future scenario hitting a new guard degrades to a logged line instead of a
+    hung build. Nothing here is destructive — the guards it answers are
+    "discard the draft?" prompts on windows the capture is about to throw away.
+    """
+    patches: dict[str, object] = {
+        "question": staticmethod(_static_dismisser("question", _SB.Yes | _SB.No)),
+        "information": staticmethod(_static_dismisser("information", _SB.Ok)),
+        "warning": staticmethod(_static_dismisser("warning", _SB.Ok)),
+        "critical": staticmethod(_static_dismisser("critical", _SB.Ok)),
+        "exec": _dismiss_exec,
+        "exec_": _dismiss_exec,
+    }
+    originals = {name: QMessageBox.__dict__.get(name, None) for name in patches}
+    saved = {name: getattr(QMessageBox, name) for name in patches}
+    try:
+        for name, replacement in patches.items():
+            setattr(QMessageBox, name, replacement)
+        yield
+    finally:
+        for name in patches:
+            if originals[name] is None:
+                # ``exec``/``exec_`` are inherited from QDialog; deleting the
+                # attribute we added restores the inherited slot cleanly.
+                try:
+                    delattr(QMessageBox, name)
+                except AttributeError:  # pragma: no cover - defensive
+                    setattr(QMessageBox, name, saved[name])
+            else:
+                setattr(QMessageBox, name, originals[name])
 
 
 def _process_events_for(milliseconds: int) -> None:
