@@ -354,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
     _boot_qapplication()
     _import_scenarios()
 
-    from .scenarios._base import CaptureContext, registered_scenarios
+    from .scenarios._base import CaptureContext, auto_dismiss_modals, registered_scenarios
 
     scenarios = registered_scenarios()
     if args.list:
@@ -384,26 +384,31 @@ def main(argv: list[str] | None = None) -> int:
 
     captured_paths: list[Path] = []
     failed: list[str] = []
-    for name, scenario in selected.items():
-        print(f"[screenshots] capturing {name}...", flush=True)
-        _t0 = time.monotonic()
-        # One broken scenario must not blank out every scenario after it: a
-        # raised exception here used to abort the whole run, and with
-        # `continue-on-error: true` on the CI step the deploy then silently
-        # published a mostly-imageless site. Capture the traceback, carry on,
-        # and fail the run at the end instead.
-        try:
-            path = scenario.capture(ctx)
-        except Exception:
-            import traceback
+    # Offscreen, a modal message box can never be answered, so any dirty-state
+    # guard reached by a scenario blocks until the watchdog kills the run and
+    # every later scenario is silently never written. Auto-dismissing them for
+    # the whole run makes that failure mode structurally impossible.
+    with auto_dismiss_modals():
+        for name, scenario in selected.items():
+            print(f"[screenshots] capturing {name}...", flush=True)
+            _t0 = time.monotonic()
+            # One broken scenario must not blank out every scenario after it: a
+            # raised exception here used to abort the whole run, and with
+            # `continue-on-error: true` on the CI step the deploy then silently
+            # published a mostly-imageless site. Capture the traceback, carry on,
+            # and fail the run at the end instead.
+            try:
+                path = scenario.capture(ctx)
+            except Exception:
+                import traceback
 
-            traceback.print_exc()
-            print(f"[screenshots] FAILED {name}", file=sys.stderr, flush=True)
-            failed.append(name)
-            continue
-        _elapsed = time.monotonic() - _t0
-        print(f"[screenshots] wrote {path} ({_elapsed:.1f}s)", flush=True)
-        captured_paths.append(path)
+                traceback.print_exc()
+                print(f"[screenshots] FAILED {name}", file=sys.stderr, flush=True)
+                failed.append(name)
+                continue
+            _elapsed = time.monotonic() - _t0
+            print(f"[screenshots] wrote {path} ({_elapsed:.1f}s)", flush=True)
+            captured_paths.append(path)
 
     if failed:
         print(
