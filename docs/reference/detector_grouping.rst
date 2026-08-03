@@ -1058,13 +1058,25 @@ In the eleven-histogram export the Mobile sub-detector (``Mob-RL``) is left
 ungrouped by default: it is added to either the Right or Left detector depending
 on the cryostat port in use, which the data file does not record.
 
-In the fifteen-histogram export the presets group the six **combined** counters
-only (IDs 1–6). Those already contain every recorded event exactly once — each is
-the t0-aligned sum of its halves, and whichever transverse counter the Mobile
-detector is wired into includes it — so adding any of IDs 7–15 to a group would
-double-count. The half-counters and the Mobile detector stay individually
-selectable, for excluding a misbehaving half or building a custom grouping from
-the finer view.
+In the fifteen-histogram export, the four hardware-combined transverse counters
+(IDs 3–6, ``Up, Down, Right, Left``) are separate electronics roads that track
+the sums of the split halves (IDs 7–14, ``Up_B, Up_F, Down_B, Down_F, Right_B,
+Right_F, Left_B, Left_F``): in real files each combined total matches its two
+halves to within a handful of counts — except that the combined counter on
+whichever cryostat port carries the Mobile detector also folds ``Mob-RL``'s
+counts in. Rather than pick one view over the other and discard information,
+Asymmetry keeps both, loaded and selectable, but only one can be the *default*
+analysis grouping. Following the same convention used for the eleven-histogram
+export, the presets group the **split halves** (``Up = Up_B + Up_F``,
+``Down = Down_B + Down_F``, ``Right = Right_B + Right_F``,
+``Left = Left_B + Left_F``), which keeps the transverse groups free of the
+silently-included Mobile counts and identical in meaning between the eleven-
+and fifteen-histogram eras. The combined counters (IDs 3–6; Forward and
+Backward have no split-half counterpart and are used directly) and the Mobile
+detector stay individually selectable and ungrouped by default — for
+diagnostics against the split view, or for a user who deliberately wants the
+Mobile-inclusive combined road. This matches the ROOT loader's own default
+grouping for a 15-histogram file (see :doc:`loading_data`).
 
 .. _Beam vs analysis convention (ISIS):
 
