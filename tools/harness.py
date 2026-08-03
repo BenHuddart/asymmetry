@@ -1263,6 +1263,62 @@ def cmd_test(args: argparse.Namespace) -> int:
     return _run_command(command)
 
 
+DOCS_HTML_DIR = ROOT / "docs" / "_build" / "html"
+
+# Per-page size budget for built HTML pages. The docs site's slowness driver is
+# DOM parse/render cost in the browser, which tracks raw (uncompressed) page
+# size far more closely than transfer size, so this budget is measured on the
+# bytes on disk. 600 KB clears the current largest page -- ``api/core.html`` at
+# ~549 KB -- with headroom; anything bigger should be split into subpages or
+# generated differently (the 1.6 MB ``api/fitting.html`` and the multi-MB
+# ``_modules/`` pages that motivated this check were both fixed that way).
+DOCS_PAGE_SIZE_BUDGET_BYTES = 600_000
+
+
+def oversized_docs_pages(
+    html_dir: Path = DOCS_HTML_DIR,
+    budget_bytes: int = DOCS_PAGE_SIZE_BUDGET_BYTES,
+) -> list[str]:
+    """Return one ``"<page> (<size> KB)"`` entry per built page over budget.
+
+    Scans every ``*.html`` under *html_dir*, largest first. The check is
+    deliberately universal: no page kind is exempt, because the whole point is
+    that an oversized page cannot silently reappear via a new generator,
+    extension, or autodoc target. Returns ``[]`` when *html_dir* does not
+    exist, so callers can run it unconditionally after a build.
+    """
+    if not html_dir.is_dir():
+        return []
+
+    oversized = [
+        (path, size)
+        for path in html_dir.rglob("*.html")
+        if (size := path.stat().st_size) > budget_bytes
+    ]
+    oversized.sort(key=lambda item: item[1], reverse=True)
+    return [
+        f"{path.relative_to(html_dir).as_posix()} ({size / 1000:.1f} KB)"
+        for path, size in oversized
+    ]
+
+
+def _report_oversized_docs_pages(
+    html_dir: Path = DOCS_HTML_DIR,
+    budget_bytes: int = DOCS_PAGE_SIZE_BUDGET_BYTES,
+) -> int:
+    """Print any over-budget built pages and return a shell exit code."""
+    oversized = oversized_docs_pages(html_dir, budget_bytes)
+    if not oversized:
+        return 0
+    print(
+        f"[docs] {len(oversized)} page(s) exceed the {budget_bytes // 1000} KB budget:",
+        file=sys.stderr,
+    )
+    for entry in oversized:
+        print(f"  - {entry}", file=sys.stderr)
+    return 1
+
+
 def cmd_docs(args: argparse.Namespace) -> int:
     if getattr(args, "screenshots", False):
         capture_result = _run_command(
@@ -1276,7 +1332,7 @@ def cmd_docs(args: argparse.Namespace) -> int:
         )
         if capture_result:
             return capture_result
-    return _run_command(
+    build_result = _run_command(
         [
             sys.executable,
             "-m",
@@ -1289,6 +1345,9 @@ def cmd_docs(args: argparse.Namespace) -> int:
             "docs/_build/html",
         ]
     )
+    if build_result:
+        return build_result
+    return _report_oversized_docs_pages()
 
 
 def cmd_examples(_args: argparse.Namespace) -> int:

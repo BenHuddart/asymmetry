@@ -796,3 +796,28 @@ def test_process_events_check_reports_calls_outside_allowlist(tmp_path: Path) ->
     assert len(failures) == 1
     assert failures[0].path == stray
     assert "GUI_GUIDELINES" in failures[0].message
+
+
+def test_oversized_docs_pages_skips_silently_when_dir_absent(tmp_path: Path) -> None:
+    harness = _load_harness()
+
+    assert harness.oversized_docs_pages(tmp_path / "does_not_exist") == []
+
+
+def test_oversized_docs_pages_reports_offenders_largest_first(tmp_path: Path) -> None:
+    html_dir = tmp_path / "html"
+    (html_dir / "api").mkdir(parents=True)
+    (html_dir / "index.html").write_text("x" * 100, encoding="utf-8")
+    (html_dir / "api" / "core.html").write_text("x" * 2_000, encoding="utf-8")
+    (html_dir / "api" / "fitting.html").write_text("x" * 5_000, encoding="utf-8")
+    harness = _load_harness()
+
+    problems = harness.oversized_docs_pages(html_dir, budget_bytes=1_000)
+
+    assert problems == ["api/fitting.html (5.0 KB)", "api/core.html (2.0 KB)"]
+
+
+def test_docs_page_size_budget_is_600_kb() -> None:
+    harness = _load_harness()
+
+    assert harness.DOCS_PAGE_SIZE_BUDGET_BYTES == 600_000
