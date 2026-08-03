@@ -6,6 +6,7 @@ Usage::
     python -m docs.screenshots.capture --list
     python -m docs.screenshots.capture --only main_window fourier_tf
     python -m docs.screenshots.capture --check-refs
+    python -m docs.screenshots.capture --check-complete --out docs/_generated/screenshots
 
 The script defaults to ``QT_QPA_PLATFORM=offscreen`` so no display server is
 required. Run it from the project root.
@@ -161,6 +162,51 @@ def run_reference_check() -> int:
             print(f"- {problem}", file=sys.stderr)
         return 1
     print("screenshot references: ok")
+    return 0
+
+
+def missing_screenshots(out_dir: Path, scenarios_dir: Path = SCENARIOS_DIR) -> list[str]:
+    """Return every registered GUI scenario name with no PNG under *out_dir*.
+
+    Pure filesystem/AST check (scenario names come from
+    :func:`scenario_names_from_source`, same as ``--check-refs``) — no Qt
+    import and no scenario execution, so it runs in milliseconds with no
+    display server. This is the guard for the failure mode that shipped ~50
+    broken figures for two weeks undetected: ``capture.py`` catches a
+    per-scenario exception and still exits non-zero (see ``main``), but with
+    ``continue-on-error: true`` on the workflow step that exit code was never
+    checked, so a capture that *hung* partway (rather than raising) silently
+    left every not-yet-captured PNG missing.
+
+    ``scenarios_dir`` defaults to the top-level GUI scenario package
+    (``scenarios/*.py``, non-recursive, so ``scenarios/corpus/`` is excluded
+    automatically). That exclusion is deliberate, not incidental: corpus
+    scenarios are captured and published by the separate
+    ``capture_corpus.py`` pipeline, which already guarantees a PNG per
+    registered corpus scenario via its ``--stubs-missing`` placeholder
+    fallback — a corpus render can never actually be *missing* by the time
+    this check runs, only a labelled stub, which is a different (already
+    warning-surfaced) problem. Scoping this check to GUI scenarios keeps it
+    a hard gate without duplicating that existing corpus guard.
+    """
+    scenario_names = scenario_names_from_source(scenarios_dir)
+    present = {path.stem for path in out_dir.glob("*.png")} if out_dir.is_dir() else set()
+    return sorted(scenario_names - present)
+
+
+def run_completeness_check(out_dir: Path) -> int:
+    """CLI wrapper for ``--check-complete``: print missing scenarios, return an exit code."""
+    scenario_names = scenario_names_from_source()
+    missing = missing_screenshots(out_dir)
+    if missing:
+        print(
+            f"screenshot completeness: failed ({len(missing)}/{len(scenario_names)} missing)",
+            file=sys.stderr,
+        )
+        for name in missing:
+            print(f"- missing screenshot: {name}", file=sys.stderr)
+        return 1
+    print(f"screenshot completeness: ok ({len(scenario_names)}/{len(scenario_names)} present)")
     return 0
 
 
@@ -325,6 +371,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--check-complete",
+        action="store_true",
+        help=(
+            "Check that every registered GUI scenario (scenarios/*.py, not "
+            "scenarios/corpus/) has a PNG under --out, print one line per "
+            "missing scenario, then exit (no Qt needed)."
+        ),
+    )
+    parser.add_argument(
         "--dpr",
         type=float,
         default=2.0,
@@ -345,9 +400,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
 
-    # Pure static check: no watchdog, no QApplication, no scenario imports.
+    # Pure static checks: no watchdog, no QApplication, no scenario imports.
     if args.check_refs:
         return run_reference_check()
+    if args.check_complete:
+        return run_completeness_check(args.out)
 
     _start_watchdog()
     _ensure_offscreen_default()
