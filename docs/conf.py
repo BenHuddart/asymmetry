@@ -39,6 +39,12 @@ html_theme_options = {
     'collapse_navigation': True,
 }
 
+# mathjax: pin an exact version (rather than the floating "@4" major-version
+# tag) so the CDN URL is immutable and can be cached long-term, and use the
+# tex-chtml bundle (rather than tex-mml-chtml) to drop the unused MathML
+# input processor -- this repo only authors math with the tex extension.
+mathjax_path = 'https://cdn.jsdelivr.net/npm/mathjax@4.1.3/tex-chtml.js'
+
 # -- Extension configuration -------------------------------------------------
 
 # autodoc
