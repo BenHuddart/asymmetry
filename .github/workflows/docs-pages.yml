@@ -202,6 +202,34 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Verify GUI screenshot completeness
+        # Deliberately NOT continue-on-error: both capture steps above tolerate
+        # failure (continue-on-error / step timeout) so a single wedged or
+        # crashing scenario never hard-blocks the docs build — which means
+        # their own exit codes are never checked, and the Sphinx build below
+        # only emits a WARNING for a missing image, not an error. That gap is
+        # exactly how a modal-dialog hang in "Generate GUI screenshots" (fixed
+        # in a sibling PR, not here) shipped ~50 broken figure references to
+        # the published site for two weeks, unnoticed. This step is the one
+        # place that turns "capture was incomplete" into a failed job: a
+        # failed deploy leaves the previous, image-complete Pages build live,
+        # which beats publishing a site with 404 images. Corpus screenshots
+        # are intentionally out of scope — "Generate corpus screenshots"
+        # above already runs `capture_corpus.py --stubs-missing`, which
+        # guarantees a PNG for every registered corpus scenario (a stub
+        # placeholder when the real render failed or the corpus wasn't
+        # provisioned), so a corpus render can never be *missing* by this
+        # point, only stubbed — and that step already surfaces stubbing via
+        # its own ::warning:: + step summary.
+        run: |
+          if ! OUTPUT=$(python -m docs.screenshots.capture --check-complete --out docs/_generated/screenshots 2>&1); then
+            echo "$OUTPUT"
+            echo "$OUTPUT" | grep '^- missing screenshot: ' | \
+              sed -E 's/^- missing screenshot: (.+)$/::error::missing GUI screenshot: \1/'
+            exit 1
+          fi
+          echo "$OUTPUT"
+
       - name: Build HTML docs
         run: sphinx-build -d docs/_build/doctrees -b html docs docs/_build/html
 
