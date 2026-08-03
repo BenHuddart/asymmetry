@@ -8,14 +8,15 @@ import sys
 sys.path.insert(0, os.path.abspath('../src'))
 sys.path.insert(0, os.path.abspath('_ext'))
 
+# Imported as a module (not `from asymmetry import __version__`) because
+# `linkcode_resolve` below also needs `asymmetry.__file__` to anchor source paths.
 import asymmetry
-from asymmetry import __version__
 
 # -- Project information -----------------------------------------------------
 project = 'Asymmetry'
 copyright = '2026, Asymmetry Contributors'
 author = 'Asymmetry Contributors'
-release = __version__
+release = asymmetry.__version__
 
 # -- General configuration ---------------------------------------------------
 extensions = [
