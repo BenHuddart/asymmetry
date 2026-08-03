@@ -145,9 +145,9 @@ def _resolve_dismissal(
     return _SB.NoButton
 
 
-def _log_dismissal(kind: str, title: str, chosen: QMessageBox.StandardButton) -> None:
+def _log_dismissal(kind: str, title: str, outcome: str) -> None:
     print(
-        f"[screenshots] auto-dismissed modal: {title or '(untitled)'} [{kind}] -> {chosen.name}",
+        f"[screenshots] auto-dismissed modal: {title or '(untitled)'} [{kind}] -> {outcome}",
         flush=True,
     )
 
@@ -165,8 +165,27 @@ def _static_dismisser(
         defaultButton: QMessageBox.StandardButton | int = _SB.NoButton,  # noqa: N803
     ) -> QMessageBox.StandardButton:
         chosen = _resolve_dismissal(buttons, defaultButton)
-        _log_dismissal(kind, title, chosen)
+        _log_dismissal(kind, title, chosen.name)
         return chosen
+
+    return _dismiss
+
+
+def _static_notice_dismisser(kind: str) -> Callable[..., None]:
+    """Build a replacement for ``QMessageBox.about`` / ``aboutQt``.
+
+    These have no buttons to answer with and return ``None``, but they are just
+    as blocking as the rest — ``MainWindow._on_about`` reaches ``about()``, so a
+    scenario that opens the Help menu would wedge a capture exactly like the
+    discard guard did.
+    """
+
+    def _dismiss(
+        parent=None,  # noqa: ANN001 - mirrors the Qt signature
+        title: str = "",
+        text: str = "",
+    ) -> None:
+        _log_dismissal(kind, title, "closed")
 
     return _dismiss
 
@@ -183,7 +202,7 @@ def _dismiss_exec(box: QMessageBox, *_args, **_kwargs) -> int:
         box.standardButtons(),
         box.standardButton(default) if default is not None else _SB.NoButton,
     )
-    _log_dismissal("exec", box.windowTitle(), chosen)
+    _log_dismissal("exec", box.windowTitle(), chosen.name)
     box.done(int(chosen))
     return int(chosen)
 
@@ -203,10 +222,12 @@ def auto_dismiss_modals() -> Iterator[None]:
 
     Rather than teach each scenario to tiptoe around its own dirty-state guard,
     the harness makes the failure mode impossible: inside this context every
-    ``QMessageBox`` answers instantly with its default (or most dismissive)
-    button and logs one ``[screenshots] auto-dismissed modal: ...`` line, so a
-    future scenario hitting a new guard degrades to a logged line instead of a
-    hung build. Nothing here is destructive — the guards it answers are
+    blocking ``QMessageBox`` entry point — the ``question``/``information``/
+    ``warning``/``critical`` statics, the buttonless ``about``/``aboutQt``
+    statics, and ``QMessageBox``'s own ``exec`` — returns instantly with the
+    box's default (or most dismissive) button and logs one
+    ``[screenshots] auto-dismissed modal: ...`` line, so a future scenario
+    hitting a new guard degrades to a logged line instead of a hung build. Nothing here is destructive — the guards it answers are
     "discard the draft?" prompts on windows the capture is about to throw away.
     """
     patches: dict[str, object] = {
@@ -217,6 +238,12 @@ def auto_dismiss_modals() -> Iterator[None]:
         "exec": _dismiss_exec,
         "exec_": _dismiss_exec,
     }
+    # ``about``/``aboutQt`` are buttonless (they return ``None``) but block just
+    # the same; ``MainWindow._on_about`` reaches ``about()``. Guarded by
+    # ``hasattr`` so a PySide6 build that ever drops one cannot break capture.
+    for notice in ("about", "aboutQt"):
+        if hasattr(QMessageBox, notice):
+            patches[notice] = staticmethod(_static_notice_dismisser(notice))
     originals = {name: QMessageBox.__dict__.get(name, None) for name in patches}
     saved = {name: getattr(QMessageBox, name) for name in patches}
     try:

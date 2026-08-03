@@ -54,6 +54,22 @@ def test_notification_boxes_return_immediately(kind, qapp):
 
 
 @pytest.mark.gui
+def test_about_returns_immediately(qapp, capsys):
+    """``about`` has no buttons to answer with, but it blocks just as hard.
+
+    ``MainWindow._on_about`` reaches ``QMessageBox.about``, so a Help-menu
+    scenario would wedge a capture exactly like the discard guard did.
+    """
+    with auto_dismiss_modals():
+        assert QMessageBox.about(None, "About Asymmetry", "version 1.2.3") is None
+        assert QMessageBox.aboutQt(None, "About Qt") is None
+
+    out = capsys.readouterr().out
+    assert "[screenshots] auto-dismissed modal: About Asymmetry [about] -> closed" in out
+    assert "[screenshots] auto-dismissed modal: About Qt [aboutQt] -> closed" in out
+
+
+@pytest.mark.gui
 def test_question_without_default_picks_the_most_dismissive_button(qapp):
     """No default named: never confirm — answer as an Esc press would."""
     with auto_dismiss_modals():
@@ -78,7 +94,7 @@ def test_patches_are_restored_on_exit(qapp):
     """Only the capture run is patched; GUI tests keep the real modals."""
     before = {
         name: getattr(QMessageBox, name)
-        for name in ("question", "information", "warning", "critical", "exec")
+        for name in ("question", "information", "warning", "critical", "about", "aboutQt", "exec")
     }
     with auto_dismiss_modals():
         assert QMessageBox.question is not before["question"]
