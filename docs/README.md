@@ -221,7 +221,9 @@ The documentation uses:
 
 - `sphinx.ext.autodoc` - Auto-generate API docs from docstrings
 - `sphinx.ext.napoleon` - Support NumPy/Google style docstrings
-- `sphinx.ext.viewcode` - Add source code links
+- `sphinx.ext.linkcode` - Point `[source]` links at the released source on GitHub
+  (replaced `sphinx.ext.viewcode`, whose self-hosted `_modules/` pages added
+  ~15 MB of very slow-rendering HTML)
 - `sphinx.ext.intersphinx` - Link to other project docs
 - `sphinx.ext.mathjax` - Math equation rendering
 - `sphinx_rtd_theme` - Read the Docs theme
