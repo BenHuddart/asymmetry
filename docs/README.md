@@ -106,6 +106,17 @@ registered in `capture.py::_import_scenarios()`. House rules:
   every referenced image must have a scenario — `capture.py --check-refs`
   (run by `structural` and the docs CI smoke) fails on either mismatch.
 
+### Page size budget
+
+Every built HTML page must stay under **600 KB** raw (uncompressed).
+`tools/harness.py docs` checks the whole output tree after a successful build
+and fails listing each offender, largest first. The budget exists because the
+site's perceived slowness is dominated by browser DOM parse and render cost,
+which tracks raw page size rather than transfer size; 600 KB clears the current
+largest page (`api/core.html`, ~549 KB) with headroom. A page that outgrows it
+should be split into subpages or generated differently — that is how the 1.6 MB
+`api/fitting.html` and the multi-MB `_modules/` source pages were fixed.
+
 ### Science content
 
 - Follow `STYLE.md` for voice and citation format. Weave applicability into
@@ -125,7 +136,7 @@ registered in `capture.py::_import_scenarios()`. House rules:
 ```bash
 python -m docs.screenshots.capture --check-refs   # refs + size budget
 python tools/harness.py structural                # includes the check above
-python tools/harness.py docs                      # Sphinx build (no screenshots)
+python tools/harness.py docs                      # Sphinx build + page size budget
 python tools/harness.py docs --screenshots        # full local build
 ```
 
