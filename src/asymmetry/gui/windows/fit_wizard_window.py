@@ -112,6 +112,14 @@ _SEEDED_LINE_TOOLTIP = (
     "Amplitude {amplitude:.3g} %, phase {phase:.3g} rad, Δχ² {delta_chi2:.4g}."
 )
 
+#: Tooltip for a windowed-pass line that inherited the scan's measurement of the
+#: same oscillation (``merge_damped_scan_peaks``): the line IS visible in the
+#: transform, so neither of the two templates above describes it.
+_INHERITED_LINE_TOOLTIP = (
+    "Envelope measured for this line by the matched-apodisation scan.\n"
+    "Amplitude {amplitude:.3g} %, phase {phase:.3g} rad, Δχ² {delta_chi2:.4g}."
+)
+
 #: Result note shown when the plot's fit range would exclude most of a detected
 #: damped line. The wizard analyses the whole record, but Apply hands the model
 #: to a fit panel that is still fitting the user's range.
@@ -1205,7 +1213,7 @@ class FitWizardWindow(WizardWindowBase):
                     "snr": None,
                     "width_mhz": None,
                     # A click-seeded frequency carries the envelope measured
-                    # for it at click time (``_measure_user_peak``); a click on
+                    # for it after the click (``_on_user_peak_measured``); a click on
                     # a line with nothing under it carries nothing.
                     "damping_rate_per_us": user_peak.get("damping_rate_per_us"),
                     "pattern": "",
@@ -1325,52 +1333,71 @@ class FitWizardWindow(WizardWindowBase):
         freq, x_press, _y_press = candidate
         removed = self._remove_user_peak_at_pixel(x_press)
         if not removed:
-            self._user_peaks.append(self._measure_user_peak(float(freq)))
+            # Seed the bare frequency now so the click answers immediately; the
+            # envelope measurement lands on the same record when the worker
+            # returns (``_on_user_peak_measured``).
+            self._user_peaks.append({"freq_mhz": float(freq), "source": "user"})
+            self._start_user_peak_measurement(float(freq))
         self._refresh_peak_overlays()
         self._populate_peaks_table()
         self._mark_analysis_stale("Peak seeds changed")
 
-    def _measure_user_peak(self, frequency_mhz: float) -> dict:
-        """Build a user-peak record for a click, with its envelope measured.
+    def _start_user_peak_measurement(self, frequency_mhz: float) -> None:
+        """Measure a click-seeded frequency's envelope on a worker thread.
 
         A click carries a frequency and nothing else, yet the one thing a
         heavily damped line needs seeding with is how fast it decays. The core
         runs its Δχ² test at the stated frequency over the τ ladder
-        (:func:`~asymmetry.core.fitting.damped_line_scan.measure_line_at_frequency`),
+        (:func:`~asymmetry.core.fitting.damped_line_scan.measure_line_at_frequency`)
         and returns ``None`` when nothing there clears the threshold — a click
-        on empty spectrum stays a bare frequency, as before.
-
-        This runs **inline on the GUI thread**, which the general rule forbids
-        for real work. It is allowed here because the cost was measured rather
-        than assumed: 25-65 ms on a 90 000-point record (one SVD of an n×5
-        design plus a few hundred closed-form projections), against a click the
-        user has just finished making. Anything slower would belong on the
-        worker; if the budget ever changes, this is the call to move.
+        on empty spectrum stays a bare frequency, as before. Tens of
+        milliseconds on a large record is still work, so it runs through the
+        window's :class:`~asymmetry.gui.tasks.TaskRunner`: the closure captures
+        plain arrays only, and the result is applied on the GUI thread.
         """
-        peak: dict = {"freq_mhz": float(frequency_mhz), "source": "user"}
         if self._dataset is None:
-            return peak
-        try:
-            line = measure_line_at_frequency(
-                np.asarray(self._dataset.time, dtype=float),
-                np.asarray(self._dataset.asymmetry, dtype=float),
-                np.asarray(self._dataset.error, dtype=float),
-                float(frequency_mhz),
-            )
-        except np.linalg.LinAlgError:
-            # A degenerate design (all-equal errors on a flat record, say) must
-            # not turn a peak seed into a traceback; the seed still works, it
-            # just carries no envelope.
-            return peak
-        if line is None:
-            return peak
-        peak.update(
-            damping_rate_per_us=float(line.damping_rate_per_us),
-            amplitude_percent=float(line.amplitude_percent),
-            phase_rad=float(line.phase_rad),
-            delta_chi_squared=float(line.delta_chi_squared),
+            return
+        time = np.asarray(self._dataset.time, dtype=float)
+        asymmetry = np.asarray(self._dataset.asymmetry, dtype=float)
+        error = np.asarray(self._dataset.error, dtype=float)
+
+        def _measure(_worker: object) -> tuple[float, dict | None]:
+            return frequency_mhz, _measure_line_fields(time, asymmetry, error, frequency_mhz)
+
+        self._tasks.start(
+            _measure,
+            on_finished=self._on_user_peak_measured,
+            on_error=self._on_user_peak_measurement_failed,
         )
-        return peak
+
+    def _on_user_peak_measured(self, result: object) -> None:
+        """GUI-thread relay: attach a finished measurement to its user seed.
+
+        The seed may have been removed (or replaced) while the worker ran; a
+        result that no longer matches an unmeasured user seed is dropped. A
+        measurement that does land changes what the seed will feed the fit, so
+        a result computed before it arrived is marked stale like any other
+        seed edit.
+        """
+        if not isinstance(result, tuple) or len(result) != 2:
+            return
+        frequency_mhz, fields = result
+        if not fields:
+            return
+        for peak in self._user_peaks:
+            if peak.get("source") != "user" or "damping_rate_per_us" in peak:
+                continue
+            if abs(float(peak["freq_mhz"]) - float(frequency_mhz)) > 1e-9:
+                continue
+            peak.update(fields)
+            self._refresh_peak_overlays()
+            self._populate_peaks_table()
+            self._mark_analysis_stale("Peak seed measured")
+            return
+
+    def _on_user_peak_measurement_failed(self, _message: str) -> None:
+        """A failed measurement leaves the seed a bare frequency — as before."""
+        return
 
     def _remove_user_peak_at_pixel(self, x_pixel: float) -> bool:
         """Remove the user peak whose marker is within ~12 device px of ``x_pixel``."""
@@ -1596,6 +1623,30 @@ def _running_placeholder_steps() -> tuple:
     )
 
 
+def _measure_line_fields(
+    time: np.ndarray, asymmetry: np.ndarray, error: np.ndarray, frequency_mhz: float
+) -> dict | None:
+    """The envelope fields for a user seed at ``frequency_mhz``, or ``None``.
+
+    Worker-thread body of :meth:`FitWizardWindow._start_user_peak_measurement`;
+    touches no widgets. A degenerate design (all-equal errors on a flat record,
+    say) must not turn a peak seed into a traceback: the seed still works, it
+    just carries no envelope.
+    """
+    try:
+        line = measure_line_at_frequency(time, asymmetry, error, float(frequency_mhz))
+    except np.linalg.LinAlgError:
+        return None
+    if line is None:
+        return None
+    return {
+        "damping_rate_per_us": float(line.damping_rate_per_us),
+        "amplitude_percent": float(line.amplitude_percent),
+        "phase_rad": float(line.phase_rad),
+        "delta_chi_squared": float(line.delta_chi_squared),
+    }
+
+
 def _peak_measurement_tooltip(source: str, payload: object) -> str:
     """Tooltip for a peaks-table row whose envelope was actually measured.
 
@@ -1614,7 +1665,12 @@ def _peak_measurement_tooltip(source: str, payload: object) -> str:
     delta_chi2 = _field("delta_chi_squared")
     if amplitude is None or phase is None or delta_chi2 is None:
         return ""
-    template = _DAMPED_SCAN_TOOLTIP if source == "damped_scan" else _SEEDED_LINE_TOOLTIP
+    if source == "damped_scan":
+        template = _DAMPED_SCAN_TOOLTIP
+    elif source == "user":
+        template = _SEEDED_LINE_TOOLTIP
+    else:
+        template = _INHERITED_LINE_TOOLTIP
     return template.format(amplitude=amplitude, phase=phase, delta_chi2=delta_chi2)
 
 

@@ -1635,7 +1635,12 @@ def test_fit_wizard_window_click_seeded_frequency_carries_a_damping_estimate(
     window._on_fft_press(_press(window, xdata=240.0, x=px))
     window._on_fft_release(_release())
 
+    # The click seeds the bare frequency at once; the envelope is measured on a
+    # worker and attached when it returns.
     seed = window._user_peaks[0]
+    assert seed["source"] == "user"
+    assert "damping_rate_per_us" not in seed
+    wait_for(lambda: window._tasks.active_count == 0, qapp)
     assert seed["damping_rate_per_us"] == pytest.approx(44.0, rel=0.35)
     # ...and the peaks table shows the estimate it just gained.
     row = [

@@ -15,6 +15,7 @@ tab for project persistence.
 import copy
 import functools
 import html
+import logging
 from collections.abc import Callable
 
 import numpy as np
@@ -97,6 +98,8 @@ from .tab_base import (
     _wait_for_fit_thread,
     dataset_error_oversampling,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SingleFitTab(FitTabBase):
@@ -648,7 +651,14 @@ class SingleFitTab(FitTabBase):
             return None, None
         try:
             full_dataset, fit_range = provider()
-        except Exception:  # pragma: no cover - a broken host must not block the wizard
+        except Exception:
+            # A broken host must not block the wizard, but a silent fallback to
+            # the cropped record would be hard to diagnose: say what failed.
+            logger.warning(
+                "Fit wizard full-record context provider failed; analysing the "
+                "fit-range crop instead.",
+                exc_info=True,
+            )
             return None, None
         return full_dataset, fit_range
 

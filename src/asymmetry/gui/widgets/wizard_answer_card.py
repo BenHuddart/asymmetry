@@ -40,7 +40,6 @@ from asymmetry.core.fitting.wizard_narrative import (
     confidence_statement,
     template_display_name,
 )
-from asymmetry.core.transform.rebin import rebin
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import (
     RESULT_BOX_NEUTRAL_STYLE,
@@ -534,7 +533,11 @@ class WizardAnswerCard(QWidget):
                 res_time = np.asarray(self._time, dtype=float)
                 factor = self._recommendation.rebin_factor if self._recommendation else 1
                 if factor > 1 and res_time.size >= factor:
-                    res_time = rebin(res_time, res_time, res_time, factor)[0]
+                    # Mean of each merged bin — the same axis ``rebin`` would
+                    # return, computed directly rather than through its
+                    # value/error path.
+                    n_bins = res_time.size // factor
+                    res_time = res_time[: n_bins * factor].reshape(n_bins, factor).mean(axis=1)
                 res_time = res_time[: residuals.size]
                 ax_res.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=1.0)
                 ax_res.plot(res_time, residuals, color=tokens.TRACE_GREEN)
