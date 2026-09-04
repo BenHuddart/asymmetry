@@ -4,6 +4,13 @@ Every record here is synthetic: µSR-like in shape (percent asymmetry, error
 bars growing as ``exp(t/τ_µ)`` until they saturate) but generated from a seeded
 RNG, so the acceptance numbers below are reproducible and no measured data is
 involved.
+
+Two of the records are deliberately *hard*, because the easy version of each
+was what let a regression through.  The two-line record is binned and counted
+like a real one, so its second line is marginal on the scan (best SNR ~7) and
+only the Δχ² test can decide it; the three-line record is a cluster spanning a
+factor 2.5 in frequency, whose members sit inside a few line widths of each
+other and so are each other's noise floor and each other's model.
 """
 
 from __future__ import annotations
@@ -42,6 +49,10 @@ _ERROR_CAP_PERCENT = 25.0
 #: counts — so the records differ in resolution, not in total statistics.
 _SIGMA0_AT_0P1NS = 1.5
 
+#: Per-bin σ of a finely binned real record: 0.1 ns bins hold few counts, and
+#: 3.3 % per bin is what a 90 000-bin record actually carries at ``t = 0``.
+_SIGMA0_FINE = 3.3
+
 
 def _record(
     curve: Callable[[np.ndarray], np.ndarray],
@@ -55,17 +66,33 @@ def _record(
     rng = np.random.default_rng(seed)
     time = np.arange(n_points, dtype=float) * bin_width_us
     if sigma0_percent is None:
-        sigma0_percent = _SIGMA0_AT_0P1NS * np.sqrt(1e-4 / bin_width_us)
+        sigma0_percent = _SIGMA0_AT_0P1NS
+    sigma0_percent *= np.sqrt(1e-4 / bin_width_us)
     error = np.minimum(sigma0_percent * np.exp(time / _ERROR_LIFETIME_US), _ERROR_CAP_PERCENT)
     return time, curve(time) + rng.normal(0.0, error), error
 
 
 def _two_damped_lines(t: np.ndarray) -> np.ndarray:
-    """5 % at 240 MHz (λ = 40 µs⁻¹) + 2 % at 120 MHz (λ = 20 µs⁻¹) on a tail."""
+    """4.7 % at 240 MHz (λ = 44) + 1.9 % at 120 MHz (λ = 22) on a relaxing tail."""
     return (
-        5.0 * np.exp(-40.0 * t) * np.cos(2.0 * np.pi * 240.0 * t + 0.3)
-        + 2.0 * np.exp(-20.0 * t) * np.cos(2.0 * np.pi * 120.0 * t - 0.7)
-        + 5.0 * np.exp(-0.5 * t)
+        4.7 * np.exp(-44.0 * t) * np.cos(2.0 * np.pi * 240.0 * t + 0.3)
+        + 1.9 * np.exp(-22.0 * t) * np.cos(2.0 * np.pi * 120.0 * t - 0.7)
+        + 2.6 * np.exp(-0.19 * t)
+        + 4.6
+    )
+
+
+def _three_damped_lines(t: np.ndarray) -> np.ndarray:
+    """A cluster: 45/75/115 MHz at λ = 40/65/65 µs⁻¹ and 4/6/3.5 %.
+
+    The lines are 30 and 40 MHz apart while their own widths (``λ/π``) are 13
+    and 21 MHz, so each sits within about two widths of its neighbour.
+    """
+    return (
+        4.0 * np.exp(-40.0 * t) * np.cos(2.0 * np.pi * 45.0 * t + 0.3)
+        + 6.0 * np.exp(-65.0 * t) * np.cos(2.0 * np.pi * 75.0 * t - 0.7)
+        + 3.5 * np.exp(-65.0 * t) * np.cos(2.0 * np.pi * 115.0 * t + 1.1)
+        + 5.0 * np.exp(-0.2 * t)
         + 0.4
     )
 
@@ -105,6 +132,28 @@ def _line_at(analysis: DampedLineAnalysis, frequency_mhz: float) -> DampedLine:
     """Return the accepted line nearest ``frequency_mhz`` (asserting there is one)."""
     assert analysis.lines, "no lines detected"
     return min(analysis.lines, key=lambda line: abs(line.frequency_mhz - frequency_mhz))
+
+
+def _best_scan_snr(
+    time: np.ndarray,
+    asymmetry: np.ndarray,
+    error: np.ndarray,
+    frequencies_mhz: tuple[float, ...],
+) -> dict[float, float]:
+    """Best scan SNR each of ``frequencies_mhz`` reaches anywhere on the ladder."""
+    from asymmetry.core.fitting.peak_detection import effective_analysis_window
+
+    end = int(effective_analysis_window(time, error))
+    time, asymmetry, error = time[:end], asymmetry[:end], error[:end]
+    taus = tau_ladder(float(time[1] - time[0]), float(time[-1] - time[0]))
+    best = dict.fromkeys(frequencies_mhz, 0.0)
+    for rung in matched_apodisation_scan(time, asymmetry, error, taus):
+        for peak in rung.peaks:
+            for frequency in frequencies_mhz:
+                near = max(3.0 * rung.fwhm_mhz, 0.03 * frequency)
+                if abs(peak.frequency_mhz - frequency) < near:
+                    best[frequency] = max(best[frequency], peak.snr)
+    return best
 
 
 # --------------------------------------------------------------------------- #
@@ -172,11 +221,14 @@ def test_cluster_scan_peaks_merges_rungs_and_keeps_the_matched_lifetime() -> Non
 
     candidates = cluster_scan_peaks(rungs)
 
-    assert len(candidates) == 2
-    strongest = candidates[0]
-    assert strongest.frequency_mhz == pytest.approx(240.0, rel=0.02)
+    # The gate is low enough to admit noise peaks — that is what the Δχ² stage
+    # is for — but the two real lines are the two strongest candidates, each
+    # seen on several rungs.
+    strongest, second = candidates[0], candidates[1]
+    assert {round(strongest.frequency_mhz, -1), round(second.frequency_mhz, -1)} == {240.0, 120.0}
     assert strongest.n_rungs > 1
-    # The rung of maximum SNR is the matched one: τ* ≈ 1/λ = 25 ns.
+    assert second.n_rungs > 1
+    # The rung of maximum SNR is the matched one: τ* ≈ 1/λ = 23 ns.
     assert 0.005 < strongest.tau_us < 0.15
     assert candidates[0].snr >= candidates[1].snr
 
@@ -187,23 +239,37 @@ def test_cluster_scan_peaks_merges_rungs_and_keeps_the_matched_lifetime() -> Non
 
 
 def test_two_damped_lines_are_both_recovered() -> None:
-    time, asymmetry, error = _record(_two_damped_lines, seed=3)
+    """Both lines, with the second one marginal on the scan.
 
+    At this binning and counting statistics the 120 MHz line peaks at a scan
+    SNR of ~7 — below the gate an earlier revision of this module used, and
+    the reason it was never verified at all.  The range is asserted so the
+    record stays in that regime: the scan's job here is only to shortlist it,
+    and the Δχ² test's job is to decide it.
+    """
+    from asymmetry.core.fitting.damped_line_scan import _SCAN_MIN_SNR
+
+    time, asymmetry, error = _record(_two_damped_lines, seed=39, sigma0_percent=_SIGMA0_FINE)
+
+    scan_snr = _best_scan_snr(time, asymmetry, error, (240.0, 120.0))
     analysis = detect_damped_lines(time, asymmetry, error)
+
+    assert _SCAN_MIN_SNR < scan_snr[120.0] < 8.0
+    assert scan_snr[240.0] > 10.0
 
     assert len(analysis.lines) == 2
     strong, weak = analysis.lines
-    # Δχ² ordering: the 5 % line outranks the 2 % one.
+    # Δχ² ordering: the 4.7 % line outranks the 1.9 % one.
     assert strong.delta_chi_squared > weak.delta_chi_squared
-    assert strong.delta_chi_squared > analysis.threshold_delta_chi_squared
+    assert weak.delta_chi_squared > analysis.threshold_delta_chi_squared
 
     assert strong.frequency_mhz == pytest.approx(240.0, rel=0.02)
-    assert strong.damping_rate_per_us == pytest.approx(40.0, rel=0.3)
-    assert strong.amplitude_percent == pytest.approx(5.0, rel=0.25)
+    assert strong.damping_rate_per_us == pytest.approx(44.0, rel=0.3)
+    assert strong.amplitude_percent == pytest.approx(4.7, rel=0.25)
 
     assert weak.frequency_mhz == pytest.approx(120.0, rel=0.02)
-    assert weak.damping_rate_per_us == pytest.approx(20.0, rel=0.3)
-    assert weak.amplitude_percent == pytest.approx(2.0, rel=0.25)
+    assert weak.damping_rate_per_us == pytest.approx(22.0, rel=0.3)
+    assert weak.amplitude_percent == pytest.approx(1.9, rel=0.25)
 
     # The informative window truncated the noise tail, and the ladder is real.
     assert analysis.window_end_index < time.size
@@ -212,16 +278,60 @@ def test_two_damped_lines_are_both_recovered() -> None:
 
 
 def test_two_damped_lines_are_recovered_on_a_coarser_record() -> None:
-    time, asymmetry, error = _record(_two_damped_lines, seed=3, n_points=25_000, bin_width_us=4e-4)
+    time, asymmetry, error = _record(_two_damped_lines, seed=39, n_points=25_000, bin_width_us=4e-4)
 
     analysis = detect_damped_lines(time, asymmetry, error)
 
     assert len(analysis.lines) == 2
     strong, weak = analysis.lines
     assert strong.frequency_mhz == pytest.approx(240.0, rel=0.02)
-    assert strong.damping_rate_per_us == pytest.approx(40.0, rel=0.3)
+    assert strong.damping_rate_per_us == pytest.approx(44.0, rel=0.3)
     assert weak.frequency_mhz == pytest.approx(120.0, rel=0.02)
-    assert weak.damping_rate_per_us == pytest.approx(20.0, rel=0.3)
+    assert weak.damping_rate_per_us == pytest.approx(22.0, rel=0.3)
+
+
+def test_a_cluster_of_three_lines_is_resolved() -> None:
+    """Three lines inside a factor 2.5 in frequency, each within ~2 widths of
+    its neighbour: the case a per-line running noise floor reports as empty and
+    a single unbounded fit reports as one overdamped blob.
+    """
+    time, asymmetry, error = _record(_three_damped_lines, seed=0, sigma0_percent=1.8)
+
+    analysis = detect_damped_lines(time, asymmetry, error)
+
+    assert len(analysis.lines) == 3
+    for truth, amplitude in ((45.0, 4.0), (75.0, 6.0), (115.0, 3.5)):
+        line = _line_at(analysis, truth)
+        assert line.frequency_mhz == pytest.approx(truth, rel=0.05)
+        assert line.delta_chi_squared > analysis.threshold_delta_chi_squared
+        # A line fitted inside an unresolved cluster is a biased measurement of
+        # its own envelope — the neighbours it is not modelling push λ around —
+        # so these are order-of-magnitude checks, not the 30 % of an isolated
+        # line.  What must not happen is a merged blob: one envelope covering
+        # two lines reports λ two to three times the truth and an amplitude
+        # well over the strongest line's.
+        assert 0.5 * 65.0 < line.damping_rate_per_us < 2.0 * 65.0
+        assert line.amplitude_percent == pytest.approx(amplitude, rel=0.4)
+    frequencies = sorted(line.frequency_mhz for line in analysis.lines)
+    assert np.all(np.diff(frequencies) > 20.0)
+
+
+def test_a_cluster_does_not_become_its_own_noise_floor() -> None:
+    """The scan-side half of the cluster problem.
+
+    A noise floor that follows the spectrum too closely slides from one member
+    of a cluster to the next without ever seeing the white part of the band, and
+    the lines end up a few MADs above a floor they lifted themselves.  Measured
+    on this record, a sixteen-line-width window scores these two lines 4.9 and
+    11.7; the window this module uses scores them well clear of any plausible
+    shortlist gate.
+    """
+    time, asymmetry, error = _record(_three_damped_lines, seed=0, sigma0_percent=_SIGMA0_FINE)
+
+    scan_snr = _best_scan_snr(time, asymmetry, error, (45.0, 75.0))
+
+    assert scan_snr[45.0] > 8.0
+    assert scan_snr[75.0] > 8.0
 
 
 def test_a_very_fast_line_is_found_without_any_time_crop() -> None:
@@ -252,7 +362,7 @@ def test_a_conventional_slow_transverse_field_line_is_found_too() -> None:
 
 
 def test_peeling_reports_lines_in_delta_chi_squared_order() -> None:
-    time, asymmetry, error = _record(_two_damped_lines, seed=5)
+    time, asymmetry, error = _record(_two_damped_lines, seed=5, sigma0_percent=_SIGMA0_FINE)
 
     analysis = detect_damped_lines(time, asymmetry, error)
 
@@ -261,8 +371,39 @@ def test_peeling_reports_lines_in_delta_chi_squared_order() -> None:
     assert all(delta >= analysis.threshold_delta_chi_squared for delta in deltas)
 
 
+def test_reported_delta_chi_squared_is_measured_on_the_full_informative_record() -> None:
+    """Every line's Δχ² is a leave-one-out value on one common record.
+
+    The (f, λ) search runs on a short per-candidate crop, purely for speed.  If
+    the reported Δχ² came from that crop it would depend on how long the crop
+    was, which depends on the line's own λ — so two lines' values would not be
+    comparable, and neither would be comparable with the threshold.
+    """
+    time, asymmetry, error = _record(_two_damped_lines, seed=39, sigma0_percent=_SIGMA0_FINE)
+    analysis = detect_damped_lines(time, asymmetry, error)
+    end = analysis.window_end_index
+
+    for line in analysis.lines:
+        others = tuple(
+            (other.frequency_mhz, other.damping_rate_per_us)
+            for other in analysis.lines
+            if other is not line
+        )
+        delta, amplitude, phase = damped_line_delta_chi2(
+            time[:end],
+            asymmetry[:end],
+            error[:end],
+            line.frequency_mhz,
+            line.damping_rate_per_us,
+            extra_lines=others,
+        )
+        assert delta == pytest.approx(line.delta_chi_squared, rel=1e-6)
+        assert amplitude == pytest.approx(line.amplitude_percent, rel=1e-6)
+        assert phase == pytest.approx(line.phase_rad, rel=1e-6)
+
+
 def test_max_lines_caps_the_number_of_accepted_lines() -> None:
-    time, asymmetry, error = _record(_two_damped_lines, seed=3)
+    time, asymmetry, error = _record(_two_damped_lines, seed=39, sigma0_percent=_SIGMA0_FINE)
 
     analysis = detect_damped_lines(time, asymmetry, error, max_lines=1)
 
@@ -271,7 +412,7 @@ def test_max_lines_caps_the_number_of_accepted_lines() -> None:
 
 
 def test_a_rebinned_copy_of_the_record_yields_the_same_lines() -> None:
-    time, asymmetry, error = _record(_two_damped_lines, seed=3)
+    time, asymmetry, error = _record(_two_damped_lines, seed=39, sigma0_percent=_SIGMA0_FINE)
     coarse = rebin(time, asymmetry, error, 2)
 
     original = detect_damped_lines(time, asymmetry, error)
@@ -319,12 +460,14 @@ def test_non_oscillatory_records_yield_no_lines_over_100_seeds(
     assert accepted == []
 
 
-def test_a_kubo_toyabe_dip_is_rejected_as_fewer_than_one_cycle_per_lifetime() -> None:
+def test_a_kubo_toyabe_dip_is_rejected_as_a_relaxation_shape() -> None:
     """The gate that the Δχ² statistic alone cannot supply.
 
     The dip is a real, highly significant misfit of the monotonic dictionary —
-    ``damped_line_delta_chi2`` says so — but the damped cosine that fits it dies
-    inside its own first cycle, so it is not an oscillation.
+    ``damped_line_delta_chi2`` says so — and a bounded refinement no longer
+    walks it off to an absurd envelope, so what rejects it is that the damped
+    cosine fitting it neither oscillates (fewer than three cycles per lifetime)
+    nor dies faster than the background dictionary can describe.
     """
     time, asymmetry, error = _record(
         _static_gaussian_kubo_toyabe, seed=0, n_points=4_000, bin_width_us=2e-3
@@ -334,7 +477,8 @@ def test_a_kubo_toyabe_dip_is_rejected_as_fewer_than_one_cycle_per_lifetime() ->
     _refined_delta, frequency, damping = refine_line(time, asymmetry, error, 3.0, 4.0)
 
     assert delta > look_elsewhere_threshold(1.0)
-    assert frequency < damping
+    assert frequency < 3.0 * damping
+    assert damping < 20.0
     assert detect_damped_lines(time, asymmetry, error).lines == ()
 
 
@@ -346,10 +490,10 @@ def test_a_kubo_toyabe_dip_is_rejected_as_fewer_than_one_cycle_per_lifetime() ->
 def test_delta_chi_squared_recovers_amplitude_and_phase() -> None:
     time, asymmetry, error = _record(_two_damped_lines, seed=6, n_points=20_000)
 
-    delta, amplitude, phase = damped_line_delta_chi2(time, asymmetry, error, 240.0, 40.0)
+    delta, amplitude, phase = damped_line_delta_chi2(time, asymmetry, error, 240.0, 44.0)
 
     assert delta > 100.0
-    assert amplitude == pytest.approx(5.0, rel=0.2)
+    assert amplitude == pytest.approx(4.7, rel=0.2)
     assert phase == pytest.approx(0.3, abs=0.3)
 
 
@@ -364,9 +508,9 @@ def test_delta_chi_squared_is_near_zero_for_a_line_that_is_not_there() -> None:
 def test_peeling_removes_a_line_from_the_residual() -> None:
     time, asymmetry, error = _record(_two_damped_lines, seed=6, n_points=20_000)
 
-    alone, _amplitude, _phase = damped_line_delta_chi2(time, asymmetry, error, 120.0, 20.0)
+    alone, _amplitude, _phase = damped_line_delta_chi2(time, asymmetry, error, 240.0, 44.0)
     peeled, _amplitude, _phase = damped_line_delta_chi2(
-        time, asymmetry, error, 120.0, 20.0, extra_lines=((120.0, 20.0),)
+        time, asymmetry, error, 240.0, 44.0, extra_lines=((240.0, 44.0),)
     )
 
     assert alone > 50.0
@@ -377,13 +521,43 @@ def test_peeling_removes_a_line_from_the_residual() -> None:
 
 def test_refine_line_improves_on_a_deliberately_offset_seed() -> None:
     time, asymmetry, error = _record(_two_damped_lines, seed=6, n_points=20_000)
-    seeded, _amplitude, _phase = damped_line_delta_chi2(time, asymmetry, error, 235.0, 12.0)
+    seeded, _amplitude, _phase = damped_line_delta_chi2(time, asymmetry, error, 235.0, 18.0)
 
-    delta, frequency, damping = refine_line(time, asymmetry, error, 235.0, 12.0)
+    delta, frequency, damping = refine_line(time, asymmetry, error, 235.0, 18.0)
 
     assert delta > seeded
     assert frequency == pytest.approx(240.0, rel=0.02)
-    assert damping == pytest.approx(40.0, rel=0.3)
+    assert damping == pytest.approx(44.0, rel=0.3)
+
+
+def test_refine_line_never_leaves_the_box_its_seed_defines() -> None:
+    """λ is bounded, and deliberately so.
+
+    Δχ² does not fall away on the short-envelope side the way a well-posed
+    likelihood should — a shorter envelope leaves fewer points at which the
+    nuisance model can be wrong — so an unbounded search drifts to several times
+    the true rate, and on a cluster it merges neighbouring lines into one
+    overdamped blob.  Seeded far below the truth, the refinement must stop at
+    the edge of its box rather than run.
+    """
+    from asymmetry.core.fitting.damped_line_scan import (
+        _REFINE_DAMPING_FACTOR,
+        _REFINE_FREQUENCY_FWHMS,
+    )
+
+    time, asymmetry, error = _record(_two_damped_lines, seed=6, n_points=20_000)
+    seed_lambda = 5.0
+
+    _delta, frequency, damping = refine_line(time, asymmetry, error, 235.0, seed_lambda)
+
+    assert seed_lambda / _REFINE_DAMPING_FACTOR <= damping <= seed_lambda * _REFINE_DAMPING_FACTOR
+    half_width = _REFINE_FREQUENCY_FWHMS * seed_lambda / np.pi
+    assert 235.0 - half_width <= frequency <= 235.0 + half_width
+    # ...and a caller that knows how good its seed is can say so.
+    _delta, frequency, _damping = refine_line(
+        time, asymmetry, error, 235.0, seed_lambda, frequency_span_mhz=1.0
+    )
+    assert 234.0 <= frequency <= 236.0
 
 
 # --------------------------------------------------------------------------- #
@@ -416,12 +590,15 @@ def test_deserialization_tolerates_junk_and_gaps() -> None:
 
 
 def test_detection_stays_fast_on_a_hundred_thousand_point_record() -> None:
-    time, asymmetry, error = _record(_two_damped_lines, seed=3, n_points=100_000)
+    time, asymmetry, error = _record(
+        _two_damped_lines, seed=39, n_points=100_000, sigma0_percent=_SIGMA0_FINE
+    )
 
     started = _time.perf_counter()
     analysis = detect_damped_lines(time, asymmetry, error)
     elapsed = _time.perf_counter() - started
 
     assert len(analysis.lines) == 2
-    # Measured ~0.2 s locally; the bound is generous for a loaded CI runner.
+    # Measured ~0.35 s locally, peeling rescans included; the bound is generous
+    # for a loaded CI runner.
     assert elapsed < 5.0

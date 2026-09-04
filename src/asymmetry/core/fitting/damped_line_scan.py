@@ -26,6 +26,25 @@ maximum is broad (half the peak SNR is still reached at ``τ = 1/(6λ)`` and
 seen on several neighbouring rungs — which is what makes clustering across
 rungs meaningful.
 
+Peeling happens in the scan, not only in the test
+-------------------------------------------------
+A cluster of lines is its own worst enemy: neighbouring lines lift the local
+noise floor of the rung that should show them, and the strongest line's
+skirt hides the rest.  So once a line is accepted its fitted model — amplitude
+and phase from the weighted linear fit on the whole informative record — is
+subtracted from a working copy of the record and **the ladder is scanned
+again** on the residual.  The next candidate comes from that rescan, where the
+line just removed no longer contributes to either the floor or the peak list.
+One rescan per accepted line is cheap (a scan is a few tens of milliseconds on
+10⁵ points), and it is what lets the shortlist gate stay low enough
+(``_SCAN_MIN_SNR``) for a second, marginal line to be examined at all: the
+scan only shortlists, the Δχ² test below decides.
+
+Peeling one line at a time has a bias of its own — the first line is fitted
+while its neighbours are still in the residual — so once no further line can be
+accepted, each line is re-fitted with all the others held in the nuisance basis
+(:func:`_polish_lines`).
+
 Significance
 ------------
 A scan peak is only a candidate.  Acceptance is decided by a **weighted linear**
@@ -35,6 +54,18 @@ A scan peak is only a candidate.  Acceptance is decided by a **weighted linear**
 ``e^{-λt}cos(2πft)``, ``e^{-λt}sin(2πft)``.  Because the pair enters linearly,
 Δχ² is available in closed form and a local (f, λ) grid can be swept cheaply
 (:func:`refine_line`).
+
+Two records are involved, deliberately.  The (f, λ) *search* runs on a short
+verification record (``≈12/λ*`` of signal, rebinned) because a hundred grid
+evaluations on 10⁵ points would not be affordable; that record is built **once
+per candidate from its seed** and held fixed across every refinement round.
+Rebuilding it around the current λ — the obvious implementation — makes the
+objective itself a function of λ, and since a shorter crop carries fewer
+baseline-mismatch points it rewards ever larger λ: the search then walks off to
+an overdamped blob whose Δχ² is bigger only because the record got shorter.
+The *decision* and every reported number are then taken on the full informative
+record with the same nuisance basis, so Δχ² means the same thing for a 40 MHz
+line and a 240 MHz one and the values of two accepted lines can be compared.
 
 For pure Gaussian noise the improvement from two extra linear degrees of
 freedom is ``χ²₂``-distributed, so ``P(Δχ² > x) = exp(-x/2)``.  Searching
@@ -47,18 +78,22 @@ with ``α = 0.01``, the same false-rate philosophy as
 ``peak_detection._FALSE_PEAK_RATE``.  ``N`` is counted as the scan actually
 searches: summed over rungs, the width of that rung's guarded search band
 divided by the Lorentzian FWHM ``1/(πτ)`` of its own matched envelope, times
-``_TRIALS_REFINEMENT_FACTOR`` for the continuous refinement each shortlisted
-candidate then gets.
+``_TRIALS_REFINEMENT_FACTOR`` for the searching the cell count cannot see —
+the continuous refinement of every shortlisted candidate, the length of the
+shortlist, and the rescan after each acceptance.
 
 Δχ² is a *statistical* gate; it does not know that a shape is unphysical.  A
 static Gaussian Kubo-Toyabe minimum, for instance, is a single dip-and-recover
 excursion that no sum of monotonic exponentials can reproduce, so a damped
-cosine completing about half a cycle within its envelope will always show a
-large Δχ².  Such a feature is not an oscillation in any useful sense, so an
-accepted line must also complete at least ``_MIN_CYCLES_PER_LIFETIME`` full
-cycles within its own 1/e lifetime (``f ≥ λ``, one cycle per lifetime — half
-the ``min_cycles = 3`` the scan band already demands at the matched rung, so
-genuinely low-Q lines such as ``f = 200 MHz, λ = 100 µs⁻¹`` are kept).
+cosine laid over it shows a Δχ² in the thousands and is accepted every time.
+An accepted line must therefore also pass :func:`_is_oscillation`, which asks
+either for at least ``_MIN_CYCLES_PER_LIFETIME`` cycles within the fitted
+envelope's own lifetime or for an envelope faster than any decay in the
+nuisance dictionary.  One clause alone will not do, and the reason is worth
+recording: a Kubo-Toyabe dip is fitted at ``f/λ ≈ 1.2``, and so is a real
+45 MHz line damped at 40 µs⁻¹.  The two are the same *shape*; what separates
+them is scale — the dip lives at the relaxation's own time scale, the line
+three hundred times faster than it.
 
 Cost control
 ------------
@@ -83,13 +118,14 @@ matter here are the short ones, and those are never rebinned.
 
 Amplitudes are reported on **the scale of the input** — the library convention
 is percent asymmetry, so ``amplitude_percent`` is percent when the caller
-passes percent — and are corrected for the bin-averaging attenuation
-introduced by the rebinning this module performs.
+passes percent.  They are measured on the full informative record at its own
+binning, alongside Δχ² and the phase, so no rebinning attenuation of this
+module's making enters them.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import NDArray
@@ -145,17 +181,25 @@ _SCAN_PROMINENCE_MADS = 3.0
 #: lines is reporting noise structure.
 _SCAN_MAX_PEAKS_PER_RUNG = 5
 
-#: Minimum scan SNR for a peak to become a Δχ² candidate.  Acceptance is the
-#: look-elsewhere-corrected Δχ², so this is only a shortlist gate — but the
-#: shortlist is finite (``_MAX_CANDIDATES``), and a noise peak that takes a slot
-#: costs a real line its verification.  Calibrated on the null: over 260
-#: synthetic records with no oscillation (pure noise and a relaxing background,
-#: both binnings, µSR-like exploding errors) the largest scan SNR anywhere on
-#: the ladder was 6.9, with a median of 5.1-5.9 — the ``3·MAD`` prominence
-#: requirement already puts every record's best noise peak near 5.  Eight
-#: clears that maximum with margin while sitting far below the real lines the
-#: study records carry (17-36 for a 2-5 % damped line, 357 for a 20 % TF line).
-_SCAN_MIN_SNR = 8.0
+#: Minimum scan SNR for a peak to be shortlisted for the Δχ² test.  This is a
+#: shortlist gate and nothing more: acceptance is the look-elsewhere-corrected
+#: Δχ², which is the statistic that actually knows how improbable a line is.
+#: A *second* line on a real record is routinely marginal on the scan — the
+#: first line's skirt sits under it and the peeling rescan is what uncovers it
+#: — so the gate is set where the null's own best noise peaks live (the ``3·MAD``
+#: prominence requirement puts a null record's strongest scan peak at 4.5-5.5)
+#: rather than above them.  Everything from there upwards is handed to Δχ²,
+#: which rejects the noise peaks: over 400 synthetic null records (noise,
+#: exponential, stretched exponential and Kubo-Toyabe) not one line is accepted
+#: at this gate.
+_SCAN_MIN_SNR = 5.0
+
+#: Noise-floor window, in line widths (see :func:`_band_noise_floor`).
+_FLOOR_WINDOW_FWHMS = 64
+
+#: Places the running median is evaluated per window; between them the floor is
+#: interpolated (see :func:`_running_median`).
+_FLOOR_MEDIAN_STRIDES_PER_WINDOW = 4
 
 #: Lifetimes of record retained per rung before rebinning (see module docstring).
 _RUNG_LIFETIMES = 10.0
@@ -184,35 +228,71 @@ _SLOW_DECAY_RATES_PER_US = (0.0, 0.3, 1.0, 3.0, 10.0)
 #: Expected number of false lines tolerated per record.
 _FALSE_LINE_RATE = 0.01
 
-#: The rung trial count measures the cells the *scan* resolves, but every
-#: shortlisted candidate is afterwards maximised continuously over a ±3 %
-#: frequency neighbourhood and a wide λ span (:func:`refine_line`) — a further
-#: look-elsewhere the cell count does not contain.  Inflating the trials by
-#: three raises the gate by ``2·ln 3 ≈ 2.2`` and keeps the realised false rate
-#: below the nominal one: over 200 pure-noise records (8 000 points, µSR-like
-#: exploding errors) the largest refined Δχ² was 28.2 against a gate that this
-#: factor puts at 30.3.
-_TRIALS_REFINEMENT_FACTOR = 3.0
+#: The rung trial count measures the cells the *scan* resolves, but the search
+#: is larger than that count in three ways it cannot see: every shortlisted
+#: candidate is maximised continuously over a local (f, λ) box
+#: (:func:`refine_line`), ``_MAX_CANDIDATES`` of them are tried per pass, and
+#: the ladder is rescanned after every acceptance.  Inflating the trials by ten
+#: raises the gate by ``2·ln 10 ≈ 4.6`` and brings the realised false rate back
+#: under the nominal one: over 400 synthetic null records (noise, exponential,
+#: stretched exponential and Kubo-Toyabe, 4 000 points, µSR-like exploding
+#: errors) no line is accepted, and with the gate disabled the largest Δχ² any
+#: candidate surviving :func:`_is_oscillation` claims is 28.7, against a gate
+#: this factor puts at 31.2.
+_TRIALS_REFINEMENT_FACTOR = 10.0
 
-#: Clustered candidates carried into the Δχ² stage, strongest scan SNR first.
-_MAX_CANDIDATES = 6
+#: Clustered candidates carried into the Δχ² stage per scan, strongest scan SNR
+#: first.  Verification is cheap (a hundred closed-form evaluations on a short
+#: record, then one on the full one), and with the gate at ``_SCAN_MIN_SNR`` the
+#: shortlist necessarily contains noise peaks, so it must be long enough that a
+#: handful of them cannot displace a real line.
+_MAX_CANDIDATES = 12
+
+#: A shortlisted candidate is refined only if its *seed* already reaches this
+#: fraction of the threshold on the full record.  Refinement searches a box
+#: about one line width wide, which cannot manufacture significance from
+#: nothing: across the synthetic corpus here the refined Δχ² of an accepted
+#: line is at most ~2× its seed value, so a quarter is a wide margin, and it
+#: keeps a shortlist full of null peaks from costing a hundred evaluations each.
+_SEED_DELTA_CHI2_FRACTION = 0.25
 
 #: Lifetimes of record used to verify a candidate: past 12/λ the line has
 #: decayed to ``e^{-12}`` and the remaining points only add nuisance freedom.
 _VERIFY_LIFETIMES = 12.0
 
-#: Minimum samples per cycle kept when rebinning the verification record.  Four
-#: is comfortably above Nyquist; the residual bin-averaging attenuation
-#: (Dirichlet kernel, ~0.90 at this rate) is corrected analytically on the
-#: reported amplitude.
-_VERIFY_OVERSAMPLE = 4.0
+#: Minimum samples per cycle kept when rebinning the record the (f, λ) grid is
+#: swept on.  Eight leaves the bin-averaging attenuation at 0.97 and, more to
+#: the point, nearly flat across the refinement box, so it cannot tilt the
+#: maximum; nothing measured on that record is reported, so the attenuation
+#: itself never reaches the caller.  Rebinning to this rate rather than only as
+#: far as ``sample_budget`` demands is what keeps the refinement affordable: it
+#: is a 5-10× shorter record for a typical candidate.
+_VERIFY_OVERSAMPLE = 8.0
 
 #: Never verify on fewer than this many samples.
 _MIN_VERIFY_POINTS = 512
 
-#: Accepted lines must complete at least this many cycles within their own 1/e
-#: envelope lifetime (see module docstring, "Significance").
-_MIN_CYCLES_PER_LIFETIME = 1.0
+#: Cycles per 1/e envelope lifetime above which a fitted damped cosine counts as
+#: an oscillation whatever its time scale — the same three cycles the scan band
+#: demands within a rung's lifetime, now asked of the line's own envelope.  See
+#: :func:`_is_oscillation`, and note that this clause alone would reject the
+#: low-Q lines this module exists to find; the rate clause below is what keeps
+#: them.
+_MIN_CYCLES_PER_LIFETIME = 3.0
+
+#: ...or the line's envelope is at least this multiple of the fastest decay in
+#: the nuisance dictionary, which makes it faster than any relaxation this
+#: module models and so not one.  Two is a compromise measured on both sides: a
+#: Kubo-Toyabe dip at δ = 0.8 µs⁻¹ is fitted at λ ≈ 0.7, thirty times below the
+#: resulting 20 µs⁻¹, while a cluster line whose true λ is 40 is sometimes
+#: fitted as low as 25 — and at three, those lines start to be thrown away.
+_FAST_LINE_RATE_FACTOR = 2.0
+
+#: Coordinate-ascent sweeps over the accepted lines once the last one is in
+#: (:func:`_polish_lines`).  Two is enough for the sweep to stop changing
+#: anything on every synthetic record here; the loop exits early when a sweep
+#: moves nothing.
+_POLISH_SWEEPS = 2
 
 #: Singular values below this fraction of the largest are dropped when
 #: orthonormalising the nuisance dictionary — the slow decays become nearly
@@ -220,12 +300,44 @@ _MIN_CYCLES_PER_LIFETIME = 1.0
 #: not turn into numerical noise in the Δχ².
 _RANK_TOLERANCE = 1e-10
 
-#: Refinement rounds as ``(fractional frequency half-width, λ range factor)``.
-#: The first round searches λ over a 16× span because the seed ``1/τ*`` is only
-#: as good as the rung spacing, and a strongly damped line is often first found
-#: on a rung longer than its own lifetime (where the guard band is loose enough
-#: to admit it).
-_REFINE_ROUNDS = ((0.03, 4.0), (0.012, 2.0), (0.005, 1.25))
+#: Half-width of :func:`refine_line`'s frequency box when the caller does not
+#: pass one, in line widths (FWHM ``λ/π``) of the seed.  Callers that know how
+#: good their seed is should say so: :func:`detect_damped_lines` passes one
+#: rung FWHM, which is far tighter (see :func:`refine_line`).
+_REFINE_FREQUENCY_FWHMS = 3.0
+
+#: Two lines must be at least this many widths apart to be two lines.  Closer
+#: than that they are one feature fitted twice, and because the pair of columns
+#: is then nearly collinear with the pair already in the basis, the least
+#: squares answer is two enormous amplitudes that cancel.
+_MIN_LINE_SEPARATION_FWHMS = 0.5
+
+#: Half-span of the refinement's λ box, as a factor on the seed ``1/τ*``.  The
+#: ladder's four rungs per decade put the matched rung of an isolated line
+#: within ~1.8× of its true lifetime (measured: 1.71× on the fast synthetic
+#: line, 1.38× on the slow one), so three covers the seeding error with margin.
+#:
+#: It is also a regulariser, and the more important of its two jobs.  Δχ² does
+#: not fall away on the far side of the true λ the way a well-posed likelihood
+#: should: a shorter envelope leaves fewer points at which the nuisance model
+#: can be wrong, and — decisively, on a cluster — a wider envelope covers a
+#: neighbouring line as well as its own, so a single-line fit inside an
+#: unresolved cluster is biased towards merging and an unbounded search finds
+#: the merged blob every time.  Bounding λ is what stops that, at the price of
+#: a bias of its own: a clustered line whose matched rung is biased long (the
+#: neighbours lift the shorter rungs' local noise floor) reports λ pinned near
+#: the box edge, some 10-15 % below the truth.  Measured on the three-line
+#: synthetic, a factor of 3 recovers all three lines on every seed; at 2.5 the
+#: reported λ is ~25 % low, and at 4 the merged blob comes back.
+_REFINE_DAMPING_FACTOR = 3.0
+
+#: Refinement rounds, as the shrink factor applied to the box each round.  With
+#: ``_REFINE_GRID`` points per axis the grid spacing is half the current
+#: half-width, so a unimodal maximum is bracketed within a quarter of it and
+#: shrinking fourfold per round is exactly self-consistent.  Four rounds take
+#: the frequency box to 1/64 of its width — for a 240 MHz line, ~0.6 MHz.
+_REFINE_ROUNDS = 4
+_REFINE_SHRINK = 4.0
 
 #: Grid points per axis and per round.
 _REFINE_GRID = 5
@@ -277,8 +389,8 @@ class ScanRung:
         Guarded search band.  Empty (``band_hi_mhz <= band_lo_mhz``) when the
         rung has no usable band, in which case it contributes no trials.
     noise_floor, noise_scale
-        Median of the running in-band noise floor, and the MAD-derived σ of the
-        magnitudes' excess over it.
+        Median of the running in-band noise floor (:func:`_band_noise_floor`),
+        and the MAD-derived σ of the magnitudes' excess over it.
     peaks
         Up to ``max_peaks_per_rung`` peaks, strongest SNR first.
     """
@@ -336,11 +448,17 @@ class DampedLine:
     phase_rad
         Phase φ in radians, in ``(-π, π]``, referred to the same origin.
     delta_chi_squared
-        Weighted χ² improvement from adding this line to the nuisance basis
-        (and to every line accepted before it), measured on the verification
-        record described in the module docstring.
+        Weighted χ² improvement from adding this line to a nuisance basis that
+        already contains the slow-decay dictionary **and every other accepted
+        line**, measured on the full informative record.  Leave-one-out and on
+        one common record, so two lines' values mean the same thing and both
+        can be compared with
+        :attr:`DampedLineAnalysis.threshold_delta_chi_squared`.
     tau_us
-        Matched apodisation lifetime of the rung that found the line.
+        Matched apodisation lifetime of the rung that found the line.  Note it
+        is an estimate of ``1/λ`` only for an isolated line: inside a cluster
+        the shorter rungs' local noise floor is lifted by the neighbours, which
+        biases the rung of maximum SNR long.
     snr
         That rung's scan SNR (MAD units), for provenance and ranking within the
         scan; the acceptance decision is ``delta_chi_squared``.
@@ -359,9 +477,11 @@ class DampedLine:
 class DampedLineAnalysis:
     """The outcome of a damped-line scan over one record.
 
-    ``lines`` is ordered by ``delta_chi_squared`` descending.  Lines are
-    verified sequentially (peeling), so a later line's Δχ² is measured with the
-    earlier ones already in the basis.
+    ``lines`` is ordered by ``delta_chi_squared`` descending.  Lines are found
+    sequentially (peeling), but the Δχ² each one carries is measured after the
+    last acceptance with all the others in the nuisance basis, so the ordering
+    is a ranking of comparable numbers rather than of the order they were
+    found in.
     """
 
     lines: tuple[DampedLine, ...]
@@ -513,39 +633,73 @@ def _mad_scale(values: NDArray[np.float64]) -> float:
     return float(1.4826 * np.median(np.abs(values - np.median(values))))
 
 
-def _band_noise_floor(magnitude: NDArray[np.float64], bins_per_fwhm: int) -> NDArray[np.float64]:
-    """Running-median noise floor across one rung's band.
+def _running_median(values: NDArray[np.float64], window: int) -> NDArray[np.float64]:
+    """Median of a ``window``-wide window, evaluated on a stride and interpolated.
 
-    A single number would not do here.  The relaxing background the record
-    always carries transforms into a broad low-frequency skirt that stands far
-    above the white part of the band, and its truncation ripples are genuine
-    local maxima: against a flat median floor they score SNR in the tens and
-    crowd real lines out of the shortlist.  A floor that follows the skirt
-    removes them without touching a narrow line.
-
-    The window spans sixteen line widths (``bins_per_fwhm`` accounts for the
-    zero-padding oversampling), so the Lorentzian a rung is matched to sits at
-    well under a percent of its peak over most of its own window and cannot
-    suppress its own SNR — the failure mode that made
-    ``peak_detection._global_noise_floor`` prefer a flat floor on its far
-    narrower early-window crops.  One sigma-clip pass then keeps strong lines
-    out of the refined median.
+    A median filter costs ``O(n·window)``, and the windows this module wants are
+    tens of line widths across a padded spectrum — enough for that product to
+    dominate the whole scan.  The result is a *floor*, though, which by
+    construction cannot vary faster than its own window, so it is enough to
+    place ``_FLOOR_MEDIAN_STRIDES_PER_WINDOW`` full-window medians per window
+    and interpolate between them.  Each estimate still sees every bin of its
+    own window — decimating the window's *contents* instead would be cheaper
+    still, but a median over a subsample is a noisier quantile, and that noise
+    lands straight in the MAD every peak's SNR is divided by.
     """
-    from scipy.ndimage import median_filter
+    from numpy.lib.stride_tricks import sliding_window_view
 
+    n = int(values.size)
+    width = max(1, min(int(window), n))
+    if width >= n:
+        return np.full(n, float(np.median(values)))
+    step = max(1, width // _FLOOR_MEDIAN_STRIDES_PER_WINDOW)
+    windows = sliding_window_view(values, width)[::step]
+    coarse = np.median(windows, axis=1)
+    centres = np.arange(coarse.size, dtype=np.float64) * float(step) + 0.5 * (width - 1)
+    return np.interp(np.arange(n, dtype=np.float64), centres, coarse)
+
+
+def _band_noise_floor(magnitude: NDArray[np.float64], bins_per_fwhm: int) -> NDArray[np.float64]:
+    """Wide running-median noise floor across one rung's band.
+
+    Two failure modes bracket the choice of window.
+
+    Too *narrow* and a group of lines becomes its own floor.  Real records
+    carry clusters — three lines inside a factor 2.5 in frequency is an
+    ordinary µSR spectrum — and a window of a few line widths slides from one
+    line to the next without ever seeing the white part of the band: the
+    cluster's own peaks score a few MAD above a floor they themselves lifted,
+    and the record reads as empty.  Measured on the synthetic three-line
+    cluster in the tests, a sixteen-width window scores those lines 5-6 where a
+    band-wide floor scores them 11-16.
+
+    Too *wide* — a single median over the whole band — and whatever the
+    detrending in :func:`matched_apodisation_scan` could not remove reappears
+    as structure at the bottom of the band: on the longest rungs a residual
+    low-frequency skirt and its truncation ripples then score 12-31 against a
+    flat floor where a following floor scores them 5-6.
+
+    The window used is therefore ``_FLOOR_WINDOW_FWHMS`` line widths
+    (``bins_per_fwhm`` accounts for the zero-padding oversampling).  Measured
+    across the synthetic corpus, sixty-four widths puts every real line above
+    the shortlist gate — including the weakest member of the three-line
+    cluster, which sixteen widths scores at 4.8 and this scores at 5.8 — while
+    holding every null record's strongest peak near 5.  One sigma-clip pass
+    then keeps strong lines out of the refined median.
+    """
     values = np.asarray(magnitude, dtype=np.float64)
     if values.size == 0:
         return values.copy()
-    window = max(9, 16 * max(1, int(bins_per_fwhm)) + 1)
+    window = max(9, _FLOOR_WINDOW_FWHMS * max(1, int(bins_per_fwhm)) + 1)
     window = min(window, values.size if values.size % 2 == 1 else values.size - 1)
     if window <= 1:
         return np.full_like(values, float(np.median(values)))
-    floor = median_filter(values, size=window, mode="nearest")
+    floor = _running_median(values, window)
     residual = values - floor
     scale = _mad_scale(residual)
     if scale > _EPS:
         clipped = np.where(residual > 3.0 * scale, floor, values)
-        floor = median_filter(clipped, size=window, mode="nearest")
+        floor = _running_median(clipped, window)
     return floor
 
 
@@ -570,6 +724,20 @@ def _rung_record(
     return t_r, y_r, e_r, factor
 
 
+def _remove_slow_background(
+    elapsed: NDArray[np.float64],
+    asymmetry: NDArray[np.float64],
+    error: NDArray[np.float64],
+    *,
+    basis_rates: tuple[float, ...] = _SLOW_DECAY_RATES_PER_US,
+) -> NDArray[np.float64]:
+    """Subtract the weighted least-squares fit of the slow-decay dictionary."""
+    weights = _weights(error)
+    columns = np.column_stack([np.exp(-float(rate) * elapsed) for rate in basis_rates])
+    coefficients, *_ = np.linalg.lstsq(columns * weights[:, None], asymmetry * weights, rcond=None)
+    return np.asarray(asymmetry - columns @ coefficients, dtype=np.float64)
+
+
 def matched_apodisation_scan(
     time: NDArray[np.float64],
     asymmetry: NDArray[np.float64],
@@ -582,21 +750,35 @@ def matched_apodisation_scan(
     f_max_fraction: float = _SCAN_F_MAX_FRACTION,
     max_peaks_per_rung: int = _SCAN_MAX_PEAKS_PER_RUNG,
 ) -> tuple[ScanRung, ...]:
-    """Transform ``(y − tail)·exp(-t/τ)`` unwindowed, once per rung.
+    """Transform ``(y − background)·exp(-t/τ)`` unwindowed, once per rung.
 
-    The tail estimate (mean of the rung's last ~20 %) removes the DC pedestal
-    that would otherwise leak across the low end of the band.  No taper is
-    applied beyond the matched exponential: a taper is exactly what deletes the
-    early nanoseconds this scan exists to see.
+    The background removed is the weighted least-squares fit of the same slow
+    monotonic dictionary the Δχ² stage uses as its nuisance model
+    (``_SLOW_DECAY_RATES_PER_US``), which includes the constant, so this
+    subsumes removing a DC pedestal.  It matters more than it sounds: a
+    relaxing background transforms into a low-frequency skirt whose truncation
+    ripples are genuine local maxima, and on the longest rungs — where the
+    guard band starts at a frequency the rung's own resolution barely
+    distinguishes from zero — those ripples score in the tens of MADs and fill
+    the shortlist.  Removing the background rather than trying to model its
+    spectrum drops them to the level of the noise (measured on the synthetic
+    corpus: 27.6 → 6.5 and 36.3 → 5.3 on the two records with the strongest
+    backgrounds).  The dictionary cannot eat a line: the guard band only
+    reports frequencies completing at least ``min_cycles`` cycles within τ, and
+    a signal oscillating three times over the crop is orthogonal to smooth
+    decays.
+
+    No taper is applied beyond the matched exponential: a taper is exactly what
+    deletes the early nanoseconds this scan exists to see.
 
     Each rung reports its guarded band, its running noise floor over that band
     (:func:`_band_noise_floor`), and up to ``max_peaks_per_rung`` peaks in the
     excess over that floor, separated by at least one FWHM and standing
     ``_SCAN_PROMINENCE_MADS`` MADs above their surroundings.
 
-    ``error`` is not used to weight the transform — it enters through the
-    rebinning (which must combine errors in quadrature) and through the Δχ²
-    stage that judges the peaks this returns.
+    ``error`` does not weight the transform itself; it enters through the
+    rebinning (which must combine errors in quadrature), through the background
+    fit, and through the Δχ² stage that judges the peaks this returns.
     """
     from scipy.signal import find_peaks
 
@@ -610,15 +792,14 @@ def matched_apodisation_scan(
         tau_us = float(tau)
         if not np.isfinite(tau_us) or tau_us <= 0.0:
             continue
-        t_r, y_r, _e_r, factor = _rung_record(t, y, e, tau_us, sample_budget)
+        t_r, y_r, e_r, factor = _rung_record(t, y, e, tau_us, sample_budget)
         n_r = t_r.size
         dt_r = _bin_width(t_r)
         if n_r < _MIN_RUNG_POINTS or dt_r <= 0.0:
             continue
 
-        late = min(n_r, max(5, n_r // 5))
-        centred = y_r - float(np.mean(y_r[-late:]))
-        signal = centred * np.exp(-(t_r - t_r[0]) / tau_us)
+        elapsed_r = t_r - t_r[0]
+        signal = _remove_slow_background(elapsed_r, y_r, e_r) * np.exp(-elapsed_r / tau_us)
 
         n_fft = 1 << int(np.ceil(np.log2(max(2, n_r * pad))))
         magnitude = np.abs(np.fft.rfft(signal, n=n_fft))
@@ -861,21 +1042,31 @@ def refine_line(
     extra_lines: tuple[tuple[float, float], ...] = (),
     frequency_span_mhz: float | None = None,
 ) -> tuple[float, float, float]:
-    """Maximise Δχ² over a shrinking local (f, λ) grid.
+    """Maximise Δχ² over a shrinking local (f, λ) grid, inside a fixed box.
 
-    Three rounds of a ``5 × 5`` grid, each centred on the previous round's best
-    point and narrower than it (``_REFINE_ROUNDS``).  The frequency half-width
-    is the larger of a few percent and ``frequency_span_mhz`` (pass the finding
-    rung's FWHM: a peak located on a broad, heavily apodised line is only
-    accurate to a fraction of that width).  λ is searched geometrically over a
-    wide span in the first round because the seed ``1/τ*`` inherits the rung
-    spacing and may be several times off.
+    The box is set by the seed and never moves: ``λ`` within
+    ``_REFINE_DAMPING_FACTOR`` either way of ``damping_rate_per_us``, and ``f``
+    within ``frequency_span_mhz`` of ``frequency_mhz`` — or, when the caller
+    does not say how good its seed is, within ``_REFINE_FREQUENCY_FWHMS`` line
+    widths (``λ/π``) of it.  ``_REFINE_ROUNDS`` rounds of a ``_REFINE_GRID ×
+    _REFINE_GRID`` grid then walk in, each centred on the best point so far and
+    ``_REFINE_SHRINK`` times narrower, clipped back into the box.
 
-    The search is deliberately *unconstrained* in λ — a candidate whose Δχ² is
-    maximised by an envelope shorter than its own period is telling the caller
-    it is a relaxation shape rather than an oscillation, and that verdict is
-    only visible if the refinement is allowed to go there (see the
-    cycles-per-lifetime test in :func:`detect_damped_lines`).
+    The frequency box wants to be *narrow*, and narrower than the line: what it
+    has to cover is the error on the seed's position, not the width of the
+    thing being fitted.  :func:`detect_damped_lines` passes one FWHM of the rung
+    that found the peak, which is many times the position error of a peak that
+    cleared the shortlist gate — and small enough that the fit cannot walk onto
+    a neighbouring line, which in a cluster it otherwise does: a single envelope
+    centred between two lines, wide enough to cover both, beats either line
+    alone on Δχ² while being neither.
+
+    Bounding λ is not a nicety.  Δχ² is not flat in λ once the line is fitted:
+    shortening the envelope keeps discarding points at which the nuisance model
+    can be wrong, so an unbounded search drifts to several times the true rate
+    for a fraction of a unit of Δχ², and on a cluster it merges neighbouring
+    lines into one overdamped blob.  The ladder pins the seed to within ~1.8×,
+    so a fourfold box contains the answer with room to spare.
 
     Returns ``(delta_chi_squared, frequency_mhz, damping_rate_per_us)``.
     """
@@ -888,45 +1079,38 @@ def refine_line(
         basis_rates=tuple(basis_rates),
         extra_lines=tuple(extra_lines),
     )
-    best_f = float(frequency_mhz)
-    best_lambda = float(damping_rate_per_us)
+    seed_f = float(frequency_mhz)
+    seed_lambda = float(damping_rate_per_us)
+    given_span = float(frequency_span_mhz or 0.0)
+    half_width = given_span if given_span > 0.0 else _REFINE_FREQUENCY_FWHMS * seed_lambda / np.pi
+    f_lo = max(seed_f - half_width, _EPS)
+    f_hi = seed_f + half_width
+    lambda_lo = seed_lambda / _REFINE_DAMPING_FACTOR
+    lambda_hi = seed_lambda * _REFINE_DAMPING_FACTOR
+    best_f, best_lambda = seed_f, seed_lambda
     best_delta = basis.evaluate(best_f, best_lambda)[0]
-    for fractional_span, rate_factor in _REFINE_ROUNDS:
-        half_width = max(fractional_span * best_f, 0.5 * float(frequency_span_mhz or 0.0))
-        frequencies = np.linspace(best_f - half_width, best_f + half_width, _REFINE_GRID)
-        rates = np.geomspace(best_lambda / rate_factor, best_lambda * rate_factor, _REFINE_GRID)
+    span = half_width
+    factor = _REFINE_DAMPING_FACTOR
+    for _round in range(int(_REFINE_ROUNDS)):
+        frequencies = np.linspace(max(best_f - span, f_lo), min(best_f + span, f_hi), _REFINE_GRID)
+        rates = np.geomspace(
+            max(best_lambda / factor, lambda_lo), min(best_lambda * factor, lambda_hi), _REFINE_GRID
+        )
         for candidate_f in frequencies:
-            if candidate_f <= 0.0:
-                continue
             for candidate_lambda in rates:
                 delta = basis.evaluate(float(candidate_f), float(candidate_lambda))[0]
                 if delta > best_delta:
                     best_delta = delta
                     best_f = float(candidate_f)
                     best_lambda = float(candidate_lambda)
+        span /= _REFINE_SHRINK
+        factor **= 0.5
     return best_delta, best_f, best_lambda
 
 
 # --------------------------------------------------------------------------- #
 # Verification record
 # --------------------------------------------------------------------------- #
-
-
-def _rebin_attenuation(frequency_mhz: float, bin_width_us: float, factor: int) -> float:
-    """Amplitude attenuation a line suffers from rebinning by ``factor``.
-
-    Averaging ``factor`` consecutive samples of ``cos(2πft)`` scales its
-    amplitude by the Dirichlet kernel ``sin(πf·factor·dt) / (factor·sin(πf·dt))``
-    — the *extra* smoothing this module applies, on top of whatever binning the
-    input already carried.  Reported amplitudes divide it out.
-    """
-    if factor <= 1:
-        return 1.0
-    inner = np.pi * float(frequency_mhz) * float(bin_width_us)
-    if abs(np.sin(inner)) < _EPS:
-        return 1.0
-    value = np.sin(inner * factor) / (factor * np.sin(inner))
-    return float(value) if abs(value) > 1e-3 else 1.0
 
 
 def _verification_record(
@@ -937,23 +1121,31 @@ def _verification_record(
     frequency_mhz: float,
     tau_us: float,
     sample_budget: int,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64], float]:
-    """Crop and rebin the record for one candidate's Δχ² sweep.
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """Crop and rebin the record on which one candidate's (f, λ) grid is swept.
 
     The crop keeps ``_VERIFY_LIFETIMES`` matched lifetimes — past that the line
-    is gone and the extra points only feed the nuisance basis.  The rebinning
-    factor is the smallest that meets ``sample_budget`` but never coarse enough
-    to drop below ``_VERIFY_OVERSAMPLE`` samples per cycle of the candidate; a
-    candidate whose frequency forbids the rebinning the budget wants is instead
-    verified on the leading ``sample_budget`` samples, which for a line fast
-    enough to be in that position is far more record than it needs.
+    is gone and the extra points only feed the nuisance basis.  The record is
+    then rebinned as far as the candidate's own frequency allows —
+    ``_VERIFY_OVERSAMPLE`` samples per cycle — but never below
+    ``_MIN_VERIFY_POINTS`` samples, and always at least as far as
+    ``sample_budget`` demands.  A candidate whose frequency forbids the
+    rebinning the budget wants is instead swept on the leading ``sample_budget``
+    samples, which for a line fast enough to be in that position is far more
+    record than it needs.
 
-    Returns the record plus the amplitude attenuation to divide out.
+    Both the crop and the rebinning are fixed by the *seed*, not by the point
+    the search has reached, and the record is built once per candidate: a record
+    that shrank as λ grew would make Δχ² incomparable between grid points and
+    reward large λ for the wrong reason (see the module docstring).  Nothing
+    read off this record survives the search — amplitude, phase and the reported
+    Δχ² are re-measured on the full informative record — so the bin-averaging
+    attenuation of the rebinning never reaches the caller.
     """
     dt = _bin_width(time)
     n = time.size
     if dt <= 0.0 or n == 0:
-        return time, asymmetry, error, 1.0
+        return time, asymmetry, error
     span = int(np.ceil(_VERIFY_LIFETIMES * tau_us / dt))
     crop = int(min(n, max(span, min(n, _MIN_VERIFY_POINTS))))
     budget = max(1, int(sample_budget))
@@ -962,14 +1154,190 @@ def _verification_record(
         factor_alias = max(1, int(1.0 / (_VERIFY_OVERSAMPLE * frequency_mhz * dt)))
     else:
         factor_alias = factor_budget
-    factor = max(1, min(factor_budget, factor_alias))
+    factor_floor = max(1, crop // _MIN_VERIFY_POINTS)
+    factor = max(factor_budget, min(factor_alias, factor_floor))
     if factor == 1:
         t_v, y_v, e_v = time[:crop], asymmetry[:crop], error[:crop]
     else:
         t_v, y_v, e_v = rebin(time[:crop], asymmetry[:crop], error[:crop], factor)
     if t_v.size > budget:
         t_v, y_v, e_v = t_v[:budget], y_v[:budget], e_v[:budget]
-    return t_v, y_v, e_v, _rebin_attenuation(frequency_mhz, dt, factor)
+    return t_v, y_v, e_v
+
+
+@dataclass(frozen=True)
+class _Accepted:
+    """An accepted line together with the scan seed it came from.
+
+    The seed is kept because every refinement of that line — the first one and
+    every polish sweep — is anchored on it (see :func:`_polish_lines`).  Its
+    damping half is ``1 / line.tau_us``, which the line already carries.
+    """
+
+    line: DampedLine
+    seed_frequency_mhz: float
+
+
+def _is_oscillation(
+    frequency_mhz: float,
+    damping_rate_per_us: float,
+    *,
+    basis_rates: tuple[float, ...] = _SLOW_DECAY_RATES_PER_US,
+) -> bool:
+    """Is this (f, λ) an oscillation, or a relaxation shape Δχ² has mistaken for one?
+
+    Δχ² is a statistical gate and cannot answer this: a static Gaussian
+    Kubo-Toyabe minimum is a single dip-and-recover excursion that no sum of
+    monotonic decays can reproduce, so a damped cosine laid over it scores a
+    Δχ² in the thousands.  Two properties, either of which suffices, separate
+    the cases:
+
+    * **It oscillates.** ``f ≥ _MIN_CYCLES_PER_LIFETIME · λ`` — the fitted
+      envelope contains at least a couple of full cycles, which a single
+      excursion does not.  A Kubo-Toyabe dip is fitted at ``f/λ ≈ 1.2``.
+    * **It is faster than any background.** ``λ ≥ _FAST_LINE_RATE_FACTOR ×``
+      the top of the slow-decay dictionary means the feature dies inside a time
+      over which the relaxation this module models cannot change shape, so it
+      is not that relaxation.  This clause is what keeps genuinely low-Q lines:
+      a cluster of 40-70 µs⁻¹ lines at 45-115 MHz sits at ``f/λ ≈ 1.2`` too,
+      and is exactly what the module exists to find.
+
+    The pair is a compromise with a known edge: a Kubo-Toyabe whose own ``δ`` is
+    faster than the dictionary's top rate has the shape of a low-Q line at a
+    scale the first clause cannot judge, and is reported as one.  Telling those
+    apart needs the relaxation shape in the *model*, which is the fitting
+    stage's job, not the detector's.
+    """
+    if damping_rate_per_us <= _EPS:
+        return True
+    if frequency_mhz >= _MIN_CYCLES_PER_LIFETIME * damping_rate_per_us:
+        return True
+    return damping_rate_per_us >= _FAST_LINE_RATE_FACTOR * max(basis_rates)
+
+
+def _collides(frequency_mhz: float, damping_rate_per_us: float, lines: list[DampedLine]) -> bool:
+    """Is this (f, λ) the same feature as one of ``lines``?
+
+    "Same" means closer than ``_MIN_LINE_SEPARATION_FWHMS`` of the wider of the
+    two lines' widths.  A second line inside the first one's width is not a
+    second line: its column pair is nearly collinear with the pair already in
+    the basis, and the least-squares solution to that is a pair of amplitudes
+    an order of magnitude too large which cancel each other.
+    """
+    for line in lines:
+        width = max(damping_rate_per_us, line.damping_rate_per_us) / np.pi
+        if abs(frequency_mhz - line.frequency_mhz) < _MIN_LINE_SEPARATION_FWHMS * width:
+            return True
+    return False
+
+
+# --------------------------------------------------------------------------- #
+# Joint polish
+# --------------------------------------------------------------------------- #
+
+
+def _polish_lines(
+    time: NDArray[np.float64],
+    asymmetry: NDArray[np.float64],
+    error: NDArray[np.float64],
+    accepted: list[_Accepted],
+    *,
+    sample_budget: int,
+    fwhm_by_tau: dict[float, float],
+) -> list[_Accepted]:
+    """Re-refine each line with all the *other* lines held in the basis.
+
+    Matching pursuit takes the lines one at a time, so the first one is fitted
+    while its neighbours are still in the residual.  On a cluster that biases it
+    — a single envelope widens to cover the neighbours it has not been told
+    about — and the bias is exactly what the bounded refinement box stops from
+    becoming a runaway.  A coordinate-ascent sweep afterwards removes it: with
+    every other accepted line in the nuisance basis, each line is re-refined and
+    the move is kept only if it raises that line's Δχ² and still looks like an
+    oscillation.
+
+    The re-refinement restarts **from the scan's own seed**, in the same box the
+    first pass used, rather than continuing from where the line currently sits.
+    That is not a detail: a box re-anchored on the current point turns repeated
+    sweeps into a random walk with a drift, and the drift has a direction — a
+    wider envelope covers a neighbour as well as its own line — so a line
+    polished a few times marches off to exactly the merged blob the bounded box
+    exists to prevent (measured: three sweeps take a 75 MHz line at λ = 65 to
+    68 MHz at λ = 120, swallowing the 45 MHz line whole).  Anchored to the seed,
+    the search is the same bounded problem every time, only with a better
+    nuisance model; sweeping it again can change the answer but cannot walk it
+    anywhere.
+
+    The Δχ², amplitude and phase each line carries afterwards are therefore
+    *leave-one-out* values on the full informative record: the improvement from
+    that line given all the others.  They are directly comparable between lines,
+    and comparable with the acceptance threshold, which is what the caller
+    ranks and reports.
+    """
+    current = list(accepted)
+    if not current:
+        return current
+    elapsed = time - time[0]
+    weights = _weights(error)
+    for _sweep in range(_POLISH_SWEEPS):
+        moved = False
+        for index, entry in enumerate(current):
+            line = entry.line
+            others = tuple(
+                (other.line.frequency_mhz, other.line.damping_rate_per_us)
+                for position, other in enumerate(current)
+                if position != index
+            )
+            basis = _NuisanceBasis(
+                elapsed,
+                asymmetry,
+                weights,
+                basis_rates=_SLOW_DECAY_RATES_PER_US,
+                extra_lines=others,
+            )
+            frequency, damping = line.frequency_mhz, line.damping_rate_per_us
+            delta, amplitude, phase = basis.evaluate(frequency, damping)
+            t_v, y_v, e_v = _verification_record(
+                time,
+                asymmetry,
+                error,
+                frequency_mhz=entry.seed_frequency_mhz,
+                tau_us=line.tau_us,
+                sample_budget=sample_budget,
+            )
+            if t_v.size >= _MIN_RECORD_POINTS:
+                _local, moved_f, moved_lambda = refine_line(
+                    t_v,
+                    y_v,
+                    e_v,
+                    entry.seed_frequency_mhz,
+                    1.0 / line.tau_us,
+                    extra_lines=others,
+                    frequency_span_mhz=fwhm_by_tau.get(line.tau_us),
+                )
+                candidate = basis.evaluate(moved_f, moved_lambda)
+                if (
+                    candidate[0] > delta
+                    and _is_oscillation(moved_f, moved_lambda)
+                    and (moved_f, moved_lambda) != (frequency, damping)
+                ):
+                    frequency, damping = moved_f, moved_lambda
+                    delta, amplitude, phase = candidate
+                    moved = True
+            current[index] = replace(
+                entry,
+                line=replace(
+                    line,
+                    frequency_mhz=float(frequency),
+                    damping_rate_per_us=float(damping),
+                    amplitude_percent=float(amplitude),
+                    phase_rad=float(phase),
+                    delta_chi_squared=float(delta),
+                ),
+            )
+        if not moved:
+            break
+    return current
 
 
 # --------------------------------------------------------------------------- #
@@ -991,12 +1359,24 @@ def detect_damped_lines(
     """Find heavily damped oscillations in an asymmetry record.
 
     The record is truncated to its statistically informative window
-    (:func:`~asymmetry.core.fitting.peak_detection.effective_analysis_window`),
-    scanned over a matched apodisation ladder, and each clustered candidate is
-    verified by a look-elsewhere-corrected Δχ² test with peeling: an accepted
-    line joins the nuisance basis before the next candidate is judged, so a
-    strong line's leakage cannot manufacture a second one.  No time crop is
-    asked of the caller — the ladder replaces it.
+    (:func:`~asymmetry.core.fitting.peak_detection.effective_analysis_window`)
+    and scanned over a matched apodisation ladder.  Clustered scan peaks are
+    shortlisted, strongest first, and each is verified by a
+    look-elsewhere-corrected Δχ² test; the first candidate to pass is accepted,
+    **subtracted from the record, and the ladder is scanned again** on the
+    residual, so the next line is looked for in a spectrum the accepted one no
+    longer shapes — neither as a peak nor as a lifted local noise floor.  An
+    accepted line also joins the nuisance basis, so a strong line's leakage
+    cannot manufacture a second one.  No time crop is asked of the caller: the
+    ladder replaces it.
+
+    When no further line can be accepted, every line is re-fitted with all the
+    others in the nuisance basis (:func:`_polish_lines`), and the Δχ², amplitude
+    and phase each one reports come from that fit — on the full informative
+    record, leave-one-out — so two lines' numbers are comparable and the
+    threshold means the same thing for each.  The (f, λ) search itself runs on a
+    short per-candidate record purely for speed
+    (:func:`_verification_record`).
 
     ``asymmetry`` and ``error`` may be on either asymmetry scale; every
     amplitude in the result is on the scale supplied (percent, by the library's
@@ -1031,61 +1411,108 @@ def detect_damped_lines(
     rungs = matched_apodisation_scan(t, y, e, taus, sample_budget=sample_budget)
     n_trials = _TRIALS_REFINEMENT_FACTOR * float(sum(rung.n_trials for rung in rungs))
     threshold = look_elsewhere_threshold(n_trials, false_rate)
-    candidates = cluster_scan_peaks(rungs, min_snr=min_snr)[: max(0, int(max_candidates))]
     fwhm_by_tau = {rung.tau_us: rung.fwhm_mhz for rung in rungs}
+    shortlist = max(0, int(max_candidates))
 
-    accepted: list[DampedLine] = []
+    elapsed = t - t[0]
+    weights = _weights(e)
+    accepted: list[_Accepted] = []
     peeled: list[tuple[float, float]] = []
-    for candidate in candidates:
+    while len(accepted) < int(max_lines):
+        full_basis = _NuisanceBasis(
+            elapsed,
+            y,
+            weights,
+            basis_rates=_SLOW_DECAY_RATES_PER_US,
+            extra_lines=tuple(peeled),
+        )
+        found: _Accepted | None = None
+        lines_so_far = [entry.line for entry in accepted]
+        for candidate in cluster_scan_peaks(rungs, min_snr=min_snr)[:shortlist]:
+            seed_lambda = 1.0 / candidate.tau_us
+            if _collides(candidate.frequency_mhz, seed_lambda, lines_so_far):
+                continue
+            if (
+                full_basis.evaluate(candidate.frequency_mhz, seed_lambda)[0]
+                < _SEED_DELTA_CHI2_FRACTION * threshold
+            ):
+                # The seed sits inside the refinement box, which spans about one
+                # line width: a seed this far below the gate cannot be walked up
+                # to it, and skipping it keeps a shortlist of null peaks cheap.
+                continue
+            t_v, y_v, e_v = _verification_record(
+                t,
+                y,
+                e,
+                frequency_mhz=candidate.frequency_mhz,
+                tau_us=candidate.tau_us,
+                sample_budget=sample_budget,
+            )
+            if t_v.size < _MIN_RECORD_POINTS:
+                continue
+            _local_delta, frequency, damping = refine_line(
+                t_v,
+                y_v,
+                e_v,
+                candidate.frequency_mhz,
+                seed_lambda,
+                extra_lines=tuple(peeled),
+                frequency_span_mhz=fwhm_by_tau.get(candidate.tau_us),
+            )
+            delta, amplitude, phase = full_basis.evaluate(frequency, damping)
+            if delta < threshold or _collides(frequency, damping, lines_so_far):
+                continue
+            if not _is_oscillation(frequency, damping):
+                continue
+            found = _Accepted(
+                line=DampedLine(
+                    frequency_mhz=float(frequency),
+                    damping_rate_per_us=float(damping),
+                    amplitude_percent=float(amplitude),
+                    phase_rad=float(phase),
+                    delta_chi_squared=float(delta),
+                    tau_us=float(candidate.tau_us),
+                    snr=float(candidate.snr),
+                ),
+                seed_frequency_mhz=float(candidate.frequency_mhz),
+            )
+            break
+        if found is None:
+            break
+        accepted.append(found)
+        accepted = _polish_lines(
+            t, y, e, accepted, sample_budget=sample_budget, fwhm_by_tau=fwhm_by_tau
+        )
+        peeled = [(entry.line.frequency_mhz, entry.line.damping_rate_per_us) for entry in accepted]
         if len(accepted) >= int(max_lines):
             break
-        t_v, y_v, e_v, attenuation = _verification_record(
-            t,
-            y,
-            e,
-            frequency_mhz=candidate.frequency_mhz,
-            tau_us=candidate.tau_us,
-            sample_budget=sample_budget,
+        working = y - sum(
+            (
+                entry.line.amplitude_percent
+                * np.exp(-entry.line.damping_rate_per_us * elapsed)
+                * np.cos(2.0 * np.pi * entry.line.frequency_mhz * elapsed + entry.line.phase_rad)
+                for entry in accepted
+            ),
+            start=np.zeros_like(y),
         )
-        if t_v.size < _MIN_RECORD_POINTS:
-            continue
-        extra = tuple(peeled)
-        delta, frequency, damping = refine_line(
-            t_v,
-            y_v,
-            e_v,
-            candidate.frequency_mhz,
-            1.0 / candidate.tau_us,
-            extra_lines=extra,
-            frequency_span_mhz=fwhm_by_tau.get(candidate.tau_us),
-        )
-        if delta < threshold:
-            continue
-        if frequency < _MIN_CYCLES_PER_LIFETIME * damping:
-            # Fewer than one cycle per envelope lifetime: a single dip-and-
-            # recover excursion (a Gaussian Kubo-Toyabe minimum is the textbook
-            # case), which the monotonic dictionary cannot fit and Δχ² would
-            # therefore accept as a "line".
-            continue
-        _delta, amplitude, phase = damped_line_delta_chi2(
-            t_v, y_v, e_v, frequency, damping, extra_lines=extra
-        )
-        accepted.append(
-            DampedLine(
-                frequency_mhz=float(frequency),
-                damping_rate_per_us=float(damping),
-                amplitude_percent=float(amplitude / attenuation),
-                phase_rad=float(phase),
-                delta_chi_squared=float(delta),
-                tau_us=float(candidate.tau_us),
-                snr=float(candidate.snr),
-            )
-        )
-        peeled.append((float(frequency), float(damping)))
+        rungs = matched_apodisation_scan(t, working, e, taus, sample_budget=sample_budget)
 
-    accepted.sort(key=lambda line: -line.delta_chi_squared)
+    while accepted:
+        weakest = min(accepted, key=lambda entry: entry.line.delta_chi_squared)
+        if weakest.line.delta_chi_squared >= threshold:
+            break
+        # Significant while it stood alone, insignificant once the lines
+        # accepted after it are in the basis: two envelopes covering one
+        # feature.  Drop the weaker and re-fit what is left, which changes the
+        # survivors' numbers and so has to be re-checked.
+        accepted = [entry for entry in accepted if entry is not weakest]
+        accepted = _polish_lines(
+            t, y, e, accepted, sample_budget=sample_budget, fwhm_by_tau=fwhm_by_tau
+        )
+
+    lines = sorted((entry.line for entry in accepted), key=lambda line: -line.delta_chi_squared)
     return DampedLineAnalysis(
-        lines=tuple(accepted),
+        lines=tuple(lines),
         threshold_delta_chi_squared=threshold,
         n_trials=n_trials,
         taus_us=tuple(float(tau) for tau in taus),
