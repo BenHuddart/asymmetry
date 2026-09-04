@@ -1520,3 +1520,117 @@ def detect_damped_lines(
         sample_budget=int(sample_budget),
         false_rate=float(false_rate),
     )
+
+
+def measure_line_at_frequency(
+    time: NDArray[np.float64],
+    asymmetry: NDArray[np.float64],
+    error: NDArray[np.float64],
+    frequency_mhz: float,
+    *,
+    false_rate: float = _FALSE_LINE_RATE,
+    sample_budget: int = _SAMPLE_BUDGET,
+) -> DampedLine | None:
+    """Measure the envelope of a line the caller has already named.
+
+    :func:`detect_damped_lines` searches for the frequency as well as the
+    envelope; this runs only the second half of that machinery at a frequency
+    supplied from outside — a user's click on the wizard's FFT plot, or any
+    other trusted seed.  It is what lets a hand-seeded frequency carry the one
+    piece of information the click itself cannot: how fast the line decays.
+
+    The λ search is the same one the scan uses.  The Δχ² of the damped pair
+    against the slow-decay dictionary is evaluated at every ladder rung whose
+    guard band admits ``frequency_mhz`` (``f ≥ _SCAN_MIN_CYCLES/τ``), the best
+    rung seeds :func:`refine_line`, and the refinement box is bounded in λ
+    exactly as it is there — an unbounded λ drifts, for the reasons set out in
+    that function.  The frequency box is one seed linewidth, wide enough to
+    absorb the pointing error of a click and no wider.  Because the frequency
+    is *given*, the look-elsewhere correction shrinks to the ladder: the search
+    is over the admissible rungs (inflated by ``_TRIALS_REFINEMENT_FACTOR`` for
+    the continuous refinement inside each), not over a whole frequency band, so
+    the gate here is much lower than the scan's — which is the point of naming
+    a frequency.
+
+    Unlike the scan's per-candidate record, the λ sweep runs on **one** record —
+    the whole informative window, rebinned only as far as ``frequency_mhz``
+    allows (:func:`_verification_record`) — so Δχ² is comparable across the
+    ladder.  The reported Δχ², amplitude and phase are then re-measured on the
+    full informative record, so they mean what a :class:`DampedLine` from
+    :func:`detect_damped_lines` means; ``snr`` is 0, since no scan rung found
+    this line and no scan SNR was measured for it.
+
+    Returns ``None`` when the record is too short, the frequency is outside the
+    scan's usable band, no rung admits it, or the best (f, λ) does not clear
+    the threshold or does not look like an oscillation.
+    """
+    frequency = float(frequency_mhz)
+    t_full = np.asarray(time, dtype=np.float64)
+    y_full = np.asarray(asymmetry, dtype=np.float64)
+    e_full = np.asarray(error, dtype=np.float64)
+    n_full = t_full.size
+    if n_full < _MIN_RECORD_POINTS or y_full.size != n_full or e_full.size != n_full:
+        return None
+    if not np.isfinite(frequency) or frequency <= 0.0:
+        return None
+
+    end = int(effective_analysis_window(t_full, e_full))
+    t = t_full[:end]
+    y = y_full[:end]
+    e = e_full[:end]
+    dt = _bin_width(t)
+    duration = float(t[-1] - t[0]) if t.size else 0.0
+    if dt <= 0.0 or duration <= 0.0 or t.size < _MIN_RECORD_POINTS:
+        return None
+    if frequency >= _SCAN_F_MAX_FRACTION * 0.5 / dt:
+        return None
+
+    taus = [
+        float(tau)
+        for tau in tau_ladder(dt, duration)
+        if frequency * float(tau) >= _SCAN_MIN_CYCLES
+        and _is_oscillation(frequency, 1.0 / float(tau))
+    ]
+    if not taus:
+        return None
+    threshold = look_elsewhere_threshold(_TRIALS_REFINEMENT_FACTOR * len(taus), false_rate)
+
+    t_w, y_w, e_w = _verification_record(
+        t, y, e, frequency_mhz=frequency, tau_us=duration, sample_budget=sample_budget
+    )
+    if t_w.size < _MIN_RECORD_POINTS:
+        return None
+    sweep_basis = _NuisanceBasis(
+        t_w - t_w[0],
+        y_w,
+        _weights(e_w),
+        basis_rates=_SLOW_DECAY_RATES_PER_US,
+        extra_lines=(),
+    )
+    best_tau = max(taus, key=lambda tau: sweep_basis.evaluate(frequency, 1.0 / tau)[0])
+    _local, refined_f, refined_lambda = refine_line(
+        t_w,
+        y_w,
+        e_w,
+        frequency,
+        1.0 / best_tau,
+        frequency_span_mhz=1.0 / (np.pi * best_tau),
+    )
+    if not _is_oscillation(refined_f, refined_lambda):
+        return None
+
+    full_basis = _NuisanceBasis(
+        t - t[0], y, _weights(e), basis_rates=_SLOW_DECAY_RATES_PER_US, extra_lines=()
+    )
+    delta, amplitude, phase = full_basis.evaluate(refined_f, refined_lambda)
+    if delta < threshold:
+        return None
+    return DampedLine(
+        frequency_mhz=float(refined_f),
+        damping_rate_per_us=float(refined_lambda),
+        amplitude_percent=float(amplitude),
+        phase_rad=float(phase),
+        delta_chi_squared=float(delta),
+        tau_us=float(best_tau),
+        snr=0.0,
+    )

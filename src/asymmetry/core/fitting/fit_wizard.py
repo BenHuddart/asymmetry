@@ -2299,9 +2299,18 @@ def build_fit_wizard_recommendation(
     geometry = geometry_from_field_direction(direction_text)
     geometry_token = geometry.value if geometry is not None else None
 
-    # Any user-declared seeds fold into peak pass A here.
+    # Any user-declared seeds fold into peak pass A here. The record goes with
+    # them so a seed the damped-line scan declined still gets its envelope
+    # measured at the stated frequency (see ``merge_user_peaks``).
+    user_record = (
+        np.asarray(dataset.time, dtype=float),
+        np.asarray(dataset.asymmetry, dtype=float),
+        np.asarray(dataset.error, dtype=float),
+    )
     if user_frequencies_mhz:
-        peak_analysis = merge_user_peaks(peak_analysis, tuple(user_frequencies_mhz))
+        peak_analysis = merge_user_peaks(
+            peak_analysis, tuple(user_frequencies_mhz), record=user_record
+        )
 
     # Everything from here on is fitted on ``analysis_dataset``: the record
     # itself when it is small enough, a value-rebinned copy when it is not (see
@@ -2424,7 +2433,7 @@ def build_fit_wizard_recommendation(
                 )
                 if user_frequencies_mhz:
                     detrended_analysis = merge_user_peaks(
-                        detrended_analysis, tuple(user_frequencies_mhz)
+                        detrended_analysis, tuple(user_frequencies_mhz), record=user_record
                     )
                 if detrended_analysis.peaks or not peak_analysis.peaks:
                     peak_analysis = detrended_analysis

@@ -1449,8 +1449,42 @@ def _inherit_damped_scan_measurement(
     )
 
 
+def _measure_fresh_user_peak(
+    peak: DetectedPeak,
+    record: tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]],
+) -> DetectedPeak:
+    """Measure a fresh user frequency's envelope directly, when the scan missed it.
+
+    The scan searches for the frequency as well as the envelope and is gated
+    accordingly; a user who names a frequency has removed that search, so the
+    same Δχ² machinery runs at the stated frequency against a threshold
+    corrected only for the λ ladder
+    (:func:`~asymmetry.core.fitting.damped_line_scan.measure_line_at_frequency`).
+    A line the scan declined can therefore still be measured here — which is the
+    point of seeding one by hand — and a frequency with nothing at it is left
+    exactly as it was.
+    """
+    from asymmetry.core.fitting.damped_line_scan import measure_line_at_frequency
+
+    time, signal, error = record
+    line = measure_line_at_frequency(time, signal, error, peak.frequency_mhz)
+    if line is None:
+        return peak
+    return replace(
+        peak,
+        width_mhz=float(line.damping_rate_per_us / np.pi),
+        damping_rate_per_us=float(line.damping_rate_per_us),
+        amplitude_percent=float(line.amplitude_percent),
+        phase_rad=float(line.phase_rad),
+        delta_chi_squared=float(line.delta_chi_squared),
+    )
+
+
 def merge_user_peaks(
-    analysis: PeakAnalysis, user_frequencies_mhz: NDArray[np.float64]
+    analysis: PeakAnalysis,
+    user_frequencies_mhz: NDArray[np.float64],
+    *,
+    record: tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]] | None = None,
 ) -> PeakAnalysis:
     """Fold user-declared frequencies into an analysis.
 
@@ -1473,6 +1507,14 @@ def merge_user_peaks(
     lands "fresh" while plainly naming the same oscillation — and the envelope
     the scan measured is the one piece of seeding information the click itself
     cannot carry.
+
+    ``record`` is the optional ``(time, asymmetry, error)`` the frequencies were
+    read off.  Given it, a fresh user peak that inherits nothing from a scan
+    line has its own envelope measured at the stated frequency
+    (:func:`_measure_fresh_user_peak`) — so a hand-seeded damped line seeds the
+    fit with a λ even where the blind scan declined it.  This is the seam the
+    measurement enters by: every caller that already holds the record passes it,
+    and one that does not keeps the previous behaviour unchanged.
     """
     user_freqs = [float(f) for f in np.atleast_1d(np.asarray(user_frequencies_mhz, dtype=float))]
     resolution = float(max(analysis.resolution_mhz, _EPS))
@@ -1509,7 +1551,10 @@ def merge_user_peaks(
                 source="user",
                 burg_confirmed=None,
             )
-            merged.append(_inherit_damped_scan_measurement(fresh, remaining))
+            seeded = _inherit_damped_scan_measurement(fresh, remaining)
+            if seeded.damping_rate_per_us is None and record is not None:
+                seeded = _measure_fresh_user_peak(seeded, record)
+            merged.append(seeded)
 
     # Stable: user peaks first, everything else in the order the passes set.
     combined = merged + remaining

@@ -31,6 +31,7 @@ from asymmetry.core.fitting.damped_line_scan import (
     detect_damped_lines,
     look_elsewhere_threshold,
     matched_apodisation_scan,
+    measure_line_at_frequency,
     refine_line,
     serialize_damped_line,
     serialize_damped_line_analysis,
@@ -558,6 +559,60 @@ def test_refine_line_never_leaves_the_box_its_seed_defines() -> None:
         time, asymmetry, error, 235.0, seed_lambda, frequency_span_mhz=1.0
     )
     assert 234.0 <= frequency <= 236.0
+
+
+# --------------------------------------------------------------------------- #
+# measure_line_at_frequency (a caller-supplied frequency)
+# --------------------------------------------------------------------------- #
+
+
+def test_measure_line_at_frequency_recovers_the_envelope_of_a_named_line() -> None:
+    time, asymmetry, error = _record(_two_damped_lines, seed=11, n_points=40_000)
+
+    fast = measure_line_at_frequency(time, asymmetry, error, 240.0)
+    slow = measure_line_at_frequency(time, asymmetry, error, 120.0)
+
+    assert fast is not None and slow is not None
+    assert fast.damping_rate_per_us == pytest.approx(44.0, rel=0.3)
+    assert slow.damping_rate_per_us == pytest.approx(22.0, rel=0.3)
+    assert fast.amplitude_percent == pytest.approx(4.7, rel=0.25)
+    assert slow.amplitude_percent == pytest.approx(1.9, rel=0.25)
+    # No scan rung found these lines, so there is no scan SNR to report.
+    assert fast.snr == 0.0
+    assert fast.delta_chi_squared > slow.delta_chi_squared > 0.0
+
+
+def test_measure_line_at_frequency_matches_the_scan_on_a_line_it_found() -> None:
+    time, asymmetry, error = _record(_very_fast_line, seed=12, n_points=40_000)
+    scanned = _line_at(detect_damped_lines(time, asymmetry, error), 200.0)
+
+    measured = measure_line_at_frequency(time, asymmetry, error, 200.0)
+
+    assert measured is not None
+    assert measured.frequency_mhz == pytest.approx(scanned.frequency_mhz, rel=0.02)
+    assert measured.damping_rate_per_us == pytest.approx(scanned.damping_rate_per_us, rel=0.3)
+
+
+@pytest.mark.parametrize(
+    "curve",
+    [_flat, _exponential, _stretched_exponential, _static_gaussian_kubo_toyabe],
+    ids=["noise", "exponential", "stretched", "kubo_toyabe"],
+)
+def test_measure_line_at_frequency_declines_a_frequency_with_no_line(
+    curve: Callable[[np.ndarray], np.ndarray],
+) -> None:
+    time, asymmetry, error = _record(curve, seed=13, n_points=8_000, bin_width_us=1e-3)
+
+    assert measure_line_at_frequency(time, asymmetry, error, 60.0) is None
+
+
+def test_measure_line_at_frequency_guards_degenerate_input() -> None:
+    time, asymmetry, error = _record(_two_damped_lines, seed=14, n_points=20_000)
+
+    # Too short, non-positive frequency, and above the scan's usable band.
+    assert measure_line_at_frequency(time[:8], asymmetry[:8], error[:8], 240.0) is None
+    assert measure_line_at_frequency(time, asymmetry, error, 0.0) is None
+    assert measure_line_at_frequency(time, asymmetry, error, 1.0e6) is None
 
 
 # --------------------------------------------------------------------------- #

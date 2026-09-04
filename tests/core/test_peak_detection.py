@@ -626,6 +626,45 @@ def test_user_frequency_far_from_every_scan_line_inherits_nothing() -> None:
     assert merged.peaks[0].damping_rate_per_us is None
 
 
+def _damped_line_record(
+    seed: int = 5, n_points: int = 30_000
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A 4.7 % / 240 MHz / λ = 44 line on a relaxing tail, µSR-like errors."""
+    rng = np.random.default_rng(seed)
+    time = np.arange(n_points, dtype=float) * 1e-4
+    error = np.minimum(1.5 * np.exp(time / 4.4), 25.0)
+    curve = (
+        4.7 * np.exp(-44.0 * time) * np.cos(2.0 * np.pi * 240.0 * time + 0.3)
+        + 2.6 * np.exp(-0.19 * time)
+        + 4.6
+    )
+    return time, curve + rng.normal(0.0, error), error
+
+
+def test_fresh_user_frequency_is_measured_on_the_record_when_one_is_given() -> None:
+    """A hand-seeded line the scan never reported still gets an envelope."""
+    time, asymmetry, error = _damped_line_record()
+    analysis = _scan_analysis([])  # nothing detected: the seed is on its own
+
+    merged = merge_user_peaks(analysis, [240.0], record=(time, asymmetry, error))
+
+    user = merged.peaks[0]
+    assert user.source == "user"
+    assert user.frequency_mhz == pytest.approx(240.0)
+    assert user.damping_rate_per_us == pytest.approx(44.0, rel=0.3)
+    assert user.amplitude_percent == pytest.approx(4.7, rel=0.25)
+    assert user.width_mhz == pytest.approx(user.damping_rate_per_us / np.pi)
+
+
+def test_a_seeded_frequency_with_no_line_under_it_stays_unmeasured() -> None:
+    time, asymmetry, error = _damped_line_record()
+    analysis = _scan_analysis([])
+
+    merged = merge_user_peaks(analysis, [60.0], record=(time, asymmetry, error))
+
+    assert merged.peaks[0].damping_rate_per_us is None
+
+
 def test_scan_lines_inside_one_linewidth_collapse_to_one_seed() -> None:
     """Two peaks a fit cannot separate must not spend two components."""
     from asymmetry.core.fitting.peak_detection import merge_damped_scan_peaks
