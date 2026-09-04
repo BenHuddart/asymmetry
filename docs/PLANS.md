@@ -6,6 +6,12 @@ subsystems or days.
 
 ## Active
 
+### Fit Wizard: matched-apodisation scan for heavily damped lines
+
+Status: plan agreed with maintainer (2026-09-04); single PR on
+`feat/wizard-damped-line-scan`, phased subagent work with a lead review gate
+per phase. Full plan: [docs/plans/fit-wizard-damped-line-scan.md](plans/fit-wizard-damped-line-scan.md).
+
 ### Multiple Grouping Profiles per Project (Explicit Run Assignment)
 
 Status: design settled with maintainer (2026-07-19); delivered as a single PR

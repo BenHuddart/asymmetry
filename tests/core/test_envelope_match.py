@@ -261,3 +261,53 @@ def test_envelope_match_serialization_round_trip(kind, family, derived) -> None:
     produced = _best(match_envelope_banks(dataset), "kt_envelope")
     assert produced is not None
     assert deserialize_multiplet_match(serialize_multiplet_match(produced)) == produced
+
+
+# --------------------------------------------------------------------------- #
+# Matching a rebinned copy of a record
+# --------------------------------------------------------------------------- #
+
+
+def test_rebinned_copy_matches_the_same_bank_and_parameter() -> None:
+    """The banks need no bandwidth, so a value-rebinned copy carries the match.
+
+    This is what lets the wizard match on its analysed (rebinned) record instead
+    of the raw one: on a 90 000-point 0.1 ns record the banks cost 19.9 s on the
+    full record and 4.2 s on the ×5 copy.
+    """
+    dataset = _exploding_dataset(
+        lambda t: 20.0 * np.exp(-0.2 * t) * linear_fmuf_polarization(t, 1.17) + 4.0,
+        seed=101,
+    )
+    window = 32.6 - 0.15
+
+    full = _best(match_envelope_banks(dataset), "fmuf_envelope")
+    rebinned = _best(
+        match_envelope_banks(dataset.rebin(4), analysis_window_us=window), "fmuf_envelope"
+    )
+
+    assert full is not None and rebinned is not None
+    assert rebinned.derived("r_muF_angstrom") == pytest.approx(
+        full.derived("r_muF_angstrom"), rel=0.1
+    )
+
+
+def test_an_explicit_window_overrides_the_datasets_own() -> None:
+    """The caller may pin the window the banks are built for.
+
+    A rebinned copy's averaged σ carries less scatter, so its own
+    ``effective_analysis_window`` verdict can run past the record's; the wizard
+    passes the full record's window rather than letting a rebin move it.
+    """
+    dataset = _exploding_dataset(
+        lambda t: 20.0 * np.exp(-0.2 * t) * linear_fmuf_polarization(t, 1.17) + 4.0,
+        seed=101,
+    )
+
+    full = _best(match_envelope_banks(dataset), "fmuf_envelope")
+    cropped = _best(match_envelope_banks(dataset, analysis_window_us=1.0), "fmuf_envelope")
+
+    assert full is not None
+    # One microsecond of a 32 µs record cannot support the same verdict — the
+    # override really does bind.
+    assert cropped is None or cropped.quality != pytest.approx(full.quality)

@@ -363,6 +363,7 @@ def match_envelope_banks(
     *,
     field_gauss: float | None = None,
     include_families: frozenset[str] | None = None,
+    analysis_window_us: float | None = None,
 ) -> tuple[MultipletMatch, ...]:
     """Match the F-mu-F / mu-F / KT envelope banks against ``dataset``.
 
@@ -380,6 +381,14 @@ def match_envelope_banks(
     include_families
         When given, only banks whose ``family_key`` is in this set are evaluated
         (skip out-of-scope work).  ``None`` evaluates every bank.
+    analysis_window_us
+        Length of the informative window to match over, overriding the one
+        :func:`effective_analysis_window` derives from *this* dataset's errors.
+        For the caller that matches on a value-rebinned copy of a record: the
+        banks are built for the window, and rebinning averages the per-bin
+        scatter out of σ, so the copy would otherwise be matched over a slightly
+        longer window than the record it stands for.  ``None`` keeps the
+        dataset's own window.
 
     Returns
     -------
@@ -396,6 +405,9 @@ def match_envelope_banks(
         return ()
 
     end = effective_analysis_window(t_full, err_full)
+    if analysis_window_us is not None and float(analysis_window_us) > 0.0:
+        limit = float(t_full[0]) + float(analysis_window_us)
+        end = min(end, int(np.searchsorted(t_full, limit, side="right")))
     t = t_full[:end]
     y = y_full[:end]
     err = err_full[:end]

@@ -394,3 +394,50 @@ def test_plot_title_shown_when_alternative_selected(qapp: QApplication) -> None:
     card.set_selected_key("gaussian_constant")
     figure = card._plot_widget._figure
     assert figure.axes[0].get_title() == "Gaussian + Constant"
+
+
+def test_residual_axis_follows_the_recommendation_rebin_factor(qapp: QApplication) -> None:
+    """A rebinned fit's residuals must be drawn against the rebinned axis.
+
+    The wizard fits a value-rebinned copy of a large record, so one residual is
+    one MERGED bin. Pairing them with the leading slice of the full time axis
+    would squeeze the whole residual series into the first 1/factor of the
+    record — the plot would read as a fit that stopped early.
+    """
+    from dataclasses import replace
+
+    recommendation = _recommendation()
+    winner = recommendation.recommended_assessment
+    assert winner is not None
+    time = np.linspace(0.0, 8.0, 60)
+    rebinned_residuals = np.zeros(12)
+    recommendation = replace(
+        recommendation,
+        rebin_factor=5,
+        analysed_points=12,
+        assessments=(
+            replace(
+                winner,
+                fit_result=replace(winner.fit_result, residuals=rebinned_residuals),
+            ),
+            recommendation.assessments[1],
+        ),
+    )
+
+    card = WizardAnswerCard()
+    card.set_plot_data(time, 0.2 * np.exp(-0.4 * time), np.full_like(time, 0.01))
+    card.set_recommendation(recommendation)
+    card._residuals_toggle.setChecked(True)
+
+    figure = card._plot_widget._figure
+    lines = [
+        line
+        for axes in figure.axes
+        if axes.get_title() == "Residuals"
+        for line in axes.get_lines()
+        if len(line.get_xdata()) == rebinned_residuals.size
+    ]
+    assert lines, "the residual series must be drawn"
+    x = np.asarray(lines[0].get_xdata(), dtype=float)
+    # The full record's span, not its first fifth.
+    assert x[-1] == pytest.approx(time[-1], abs=0.5)

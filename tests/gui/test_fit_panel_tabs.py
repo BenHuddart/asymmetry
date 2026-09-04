@@ -430,9 +430,12 @@ def test_single_fit_open_fit_wizard_uses_active_dataset_and_model(
             self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
             self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
 
-        def set_analysis_context(self, dataset_arg, current_model=None) -> None:
+        def set_analysis_context(
+            self, dataset_arg, current_model=None, *, full_dataset=None, fit_range=None
+        ) -> None:
             received["dataset"] = dataset_arg
             received["model"] = current_model
+            received["full_dataset"] = full_dataset
 
         def show(self) -> None:
             received["show"] = True

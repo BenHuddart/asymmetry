@@ -457,3 +457,425 @@ def test_fingerprint_dewhitens_exploding_error_precession() -> None:
     # granularity of the truncated window is coarser than the peak detector's
     # zero-padded refinement, hence the looser tolerance than the peak test).
     assert abs(fingerprint.dominant_fft_frequency_mhz - 0.271) <= 0.10 * 0.271
+
+
+# --------------------------------------------------------------------------- #
+# 11. Matched-apodisation damped-line pass
+# --------------------------------------------------------------------------- #
+
+#: A heavily damped two-line record: 4.7 % at 240 MHz (λ = 44 µs⁻¹) and 1.9 %
+#: at 120 MHz (λ = 22 µs⁻¹) on a slowly relaxing background, at 0.1 ns binning
+#: with µSR-like errors growing as exp(t/4.4 µs) and saturating at 25 %. Every
+#: number invented; the same shape the scan module's own tests use, so the two
+#: layers are measured on comparable data.
+_SCAN_LINES = ((4.7, 240.0, 44.0, 0.3), (1.9, 120.0, 22.0, -0.7))
+
+
+def _damped_scan_record(
+    *,
+    seed: int = 39,
+    n_points: int = 60_000,
+    bin_width_us: float = 1e-4,
+    sigma0_percent: float = 3.3,
+    lines: tuple[tuple[float, float, float, float], ...] = _SCAN_LINES,
+    relaxation: bool = True,
+) -> MuonDataset:
+    rng = np.random.default_rng(seed)
+    time = np.arange(n_points, dtype=float) * bin_width_us
+    sigma0 = sigma0_percent * np.sqrt(1e-4 / bin_width_us)
+    error = np.minimum(sigma0 * np.exp(time / 4.4), 25.0)
+    signal = (2.6 * np.exp(-0.19 * time) + 4.6) if relaxation else np.zeros_like(time)
+    for amplitude, frequency, rate, phase in lines:
+        signal = signal + amplitude * np.exp(-rate * time) * np.cos(
+            2.0 * np.pi * frequency * time + phase
+        )
+    return MuonDataset(
+        time=time,
+        asymmetry=signal + rng.normal(0.0, error),
+        error=error,
+        metadata={"run_number": 1},
+    )
+
+
+def test_damped_scan_peaks_reach_the_merged_peak_set() -> None:
+    """Both damped lines arrive as ``damped_scan`` peaks carrying their fit."""
+    analysis = analyze_dataset_peaks(_damped_scan_record())
+
+    scan = [peak for peak in analysis.peaks if peak.source == "damped_scan"]
+    assert len(scan) == 2
+    strong, weak = scan
+    assert strong.frequency_mhz == pytest.approx(240.0, rel=0.02)
+    assert strong.damping_rate_per_us == pytest.approx(44.0, rel=0.4)
+    assert strong.amplitude_percent == pytest.approx(4.7, rel=0.3)
+    assert weak.frequency_mhz == pytest.approx(120.0, rel=0.02)
+    # Δχ²-descending, and each line's width is the Lorentzian FWHM λ/π of its
+    # own envelope — not a spectral resolution, which the scan never uses.
+    assert strong.delta_chi_squared > weak.delta_chi_squared
+    assert strong.width_mhz == pytest.approx(strong.damping_rate_per_us / np.pi)
+    # No crop: the damping is the scan variable, so there is nothing to stamp.
+    assert all(peak.crop_us is None for peak in scan)
+    assert all(peak.burg_confirmed is None for peak in scan)
+    # The threshold and the trial count live on the attached analysis, since
+    # they are properties of the search rather than of any one line.
+    assert analysis.damped_lines is not None
+    assert analysis.damped_lines.threshold_delta_chi_squared > 0.0
+    assert weak.delta_chi_squared >= analysis.damped_lines.threshold_delta_chi_squared
+
+
+def test_damped_pass_can_be_switched_off() -> None:
+    analysis = analyze_dataset_peaks(_damped_scan_record(), damped_pass=False)
+
+    assert not any(peak.source == "damped_scan" for peak in analysis.peaks)
+    assert analysis.damped_lines is None
+
+
+def _scan_analysis(peaks, *, damped_lines=None) -> PeakAnalysis:
+    return PeakAnalysis(
+        peaks=tuple(peaks),
+        noise_floor=0.0,
+        resolution_mhz=0.1,
+        nyquist_mhz=500.0,
+        detrended=False,
+        damped_lines=damped_lines,
+    )
+
+
+def _scan_peak(frequency: float, *, rate: float = 40.0, dchi2: float = 120.0) -> DetectedPeak:
+    return DetectedPeak(
+        frequency_mhz=frequency,
+        amplitude=5.0,
+        snr=12.0,
+        width_mhz=rate / np.pi,
+        prominence=0.0,
+        source="damped_scan",
+        crop_us=None,
+        damping_rate_per_us=rate,
+        amplitude_percent=5.0,
+        phase_rad=0.3,
+        delta_chi_squared=dchi2,
+    )
+
+
+def _hann_peak(frequency: float, *, snr: float = 10.0) -> DetectedPeak:
+    return DetectedPeak(
+        frequency_mhz=frequency,
+        amplitude=100.0,
+        snr=snr,
+        width_mhz=0.05,
+        prominence=10.0,
+        source="fft",
+    )
+
+
+def test_merge_lets_the_hann_pass_keep_the_frequency_but_take_the_measurement() -> None:
+    from asymmetry.core.fitting.peak_detection import merge_damped_scan_peaks
+
+    hann = _scan_analysis([_hann_peak(240.0)])
+    # 12.7 MHz linewidth, so 245 MHz is the same line.
+    scan = _scan_analysis([_scan_peak(245.0, rate=40.0)])
+
+    merged = merge_damped_scan_peaks(hann, scan)
+
+    assert len(merged.peaks) == 1
+    kept = merged.peaks[0]
+    assert kept.source == "fft"
+    assert kept.frequency_mhz == pytest.approx(240.0)
+    assert kept.damping_rate_per_us == pytest.approx(40.0)
+    assert kept.amplitude_percent == pytest.approx(5.0)
+    assert kept.phase_rad == pytest.approx(0.3)
+
+
+def test_merge_adds_a_line_the_hann_pass_missed_and_reserves_a_slot() -> None:
+    from asymmetry.core.fitting.peak_detection import merge_damped_scan_peaks
+
+    hann = _scan_analysis([_hann_peak(float(f), snr=20.0 - f) for f in (1.0, 2.0, 3.0, 4.0)])
+    scan = _scan_analysis([_scan_peak(240.0), _scan_peak(120.0)])
+
+    merged = merge_damped_scan_peaks(hann, scan, max_peaks=4)
+
+    assert [peak.source for peak in merged.peaks] == ["fft", "fft", "damped_scan", "damped_scan"]
+    # The weakest Hann peaks are displaced, never the strongest.
+    assert [peak.frequency_mhz for peak in merged.peaks[:2]] == [1.0, 2.0]
+
+
+def test_fresh_user_frequency_inherits_a_nearby_scan_measurement() -> None:
+    # The match radius above is the Hann resolution (0.1 MHz), so a click 4 MHz
+    # off a 12.7 MHz-wide line lands "fresh" while plainly naming that line.
+    analysis = _scan_analysis([_scan_peak(240.0, rate=40.0)])
+
+    merged = merge_user_peaks(analysis, [244.0])
+
+    user = merged.peaks[0]
+    assert user.source == "user"
+    assert user.snr == USER_PEAK_SNR_SENTINEL
+    assert user.frequency_mhz == pytest.approx(244.0)
+    assert user.damping_rate_per_us == pytest.approx(40.0)
+    assert user.amplitude_percent == pytest.approx(5.0)
+    assert user.phase_rad == pytest.approx(0.3)
+    # ...and it takes the line's width with them: the seeding path cuts the
+    # frequency box from that width, and a click's nominal width is the Hann
+    # resolution, which would bound a heavily damped line far too tightly.
+    assert user.width_mhz == pytest.approx(40.0 / np.pi)
+
+
+def test_user_frequency_far_from_every_scan_line_inherits_nothing() -> None:
+    analysis = _scan_analysis([_scan_peak(240.0, rate=40.0)])
+
+    merged = merge_user_peaks(analysis, [180.0])
+
+    assert merged.peaks[0].damping_rate_per_us is None
+
+
+def _damped_line_record(
+    seed: int = 5, n_points: int = 30_000
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """A 4.7 % / 240 MHz / λ = 44 line on a relaxing tail, µSR-like errors."""
+    rng = np.random.default_rng(seed)
+    time = np.arange(n_points, dtype=float) * 1e-4
+    error = np.minimum(1.5 * np.exp(time / 4.4), 25.0)
+    curve = (
+        4.7 * np.exp(-44.0 * time) * np.cos(2.0 * np.pi * 240.0 * time + 0.3)
+        + 2.6 * np.exp(-0.19 * time)
+        + 4.6
+    )
+    return time, curve + rng.normal(0.0, error), error
+
+
+def test_fresh_user_frequency_is_measured_on_the_record_when_one_is_given() -> None:
+    """A hand-seeded line the scan never reported still gets an envelope."""
+    time, asymmetry, error = _damped_line_record()
+    analysis = _scan_analysis([])  # nothing detected: the seed is on its own
+
+    merged = merge_user_peaks(analysis, [240.0], record=(time, asymmetry, error))
+
+    user = merged.peaks[0]
+    assert user.source == "user"
+    assert user.frequency_mhz == pytest.approx(240.0)
+    assert user.damping_rate_per_us == pytest.approx(44.0, rel=0.3)
+    assert user.amplitude_percent == pytest.approx(4.7, rel=0.25)
+    assert user.width_mhz == pytest.approx(user.damping_rate_per_us / np.pi)
+
+
+def test_a_seeded_frequency_with_no_line_under_it_stays_unmeasured() -> None:
+    time, asymmetry, error = _damped_line_record()
+    analysis = _scan_analysis([])
+
+    merged = merge_user_peaks(analysis, [60.0], record=(time, asymmetry, error))
+
+    assert merged.peaks[0].damping_rate_per_us is None
+
+
+def test_scan_lines_inside_one_linewidth_collapse_to_one_seed() -> None:
+    """Two peaks a fit cannot separate must not spend two components."""
+    from asymmetry.core.fitting.peak_detection import merge_damped_scan_peaks
+
+    hann = _scan_analysis([])
+    # 12.7 MHz linewidth; 4 MHz apart is one line the peeling split in two.
+    scan = _scan_analysis([_scan_peak(240.0, dchi2=500.0), _scan_peak(244.0, dchi2=90.0)])
+    merged = merge_damped_scan_peaks(hann, scan)
+
+    assert [peak.frequency_mhz for peak in merged.peaks] == [240.0, 244.0], (
+        "the merge itself must not dedupe — that is the scan pass's own rule"
+    )
+
+
+def test_analyze_damped_scan_peaks_dedupes_inside_one_linewidth() -> None:
+    """The dedupe lives where the peaks are built, and keeps the stronger line."""
+    from asymmetry.core.fitting.peak_detection import analyze_damped_scan_peaks
+
+    # 30 MHz line at λ = 6 µs⁻¹ on a short, finely binned record: this is the
+    # shape whose peeling produced a 30.02/30.66 pair against a 1.9 MHz width.
+    time = np.arange(1, 1201, dtype=float) * (4.0 / 1200.0)
+    sigma = np.minimum(0.9 * np.exp(time / (2.0 * 2.197)), 100.0)
+    rng = np.random.default_rng(20260730)
+    signal = (
+        6.0 * np.exp(-0.25 * time)
+        + 0.5
+        + 24.0 * np.exp(-10.0 * time) * np.cos(2.0 * np.pi * 60.0 * time)
+        + 16.0 * np.exp(-6.0 * time) * np.cos(2.0 * np.pi * 30.0 * time)
+    )
+    analysis = analyze_damped_scan_peaks(time, signal + rng.normal(0.0, sigma), sigma)
+
+    frequencies = sorted(peak.frequency_mhz for peak in analysis.peaks)
+    assert len(frequencies) == 2
+    assert frequencies[0] == pytest.approx(30.0, rel=0.05)
+    assert frequencies[1] == pytest.approx(60.0, rel=0.05)
+    for peak, other in zip(analysis.peaks, analysis.peaks[1:]):
+        assert abs(peak.frequency_mhz - other.frequency_mhz) >= max(peak.width_mhz, other.width_mhz)
+
+
+def test_detected_peak_round_trip_carries_the_measurement() -> None:
+    peak = _scan_peak(240.0, rate=42.5, dchi2=141.2)
+
+    assert deserialize_detected_peak(serialize_detected_peak(peak)) == peak
+
+
+def test_detected_peak_payloads_predating_the_measurement_still_load() -> None:
+    payload = {
+        "frequency_mhz": 1.4,
+        "amplitude": 100.0,
+        "snr": 12.0,
+        "width_mhz": 0.05,
+        "prominence": 3.0,
+        "source": "fft",
+        "burg_confirmed": True,
+        "crop_us": None,
+    }
+
+    restored = deserialize_detected_peak(payload)
+
+    assert restored is not None
+    assert restored.damping_rate_per_us is None
+    assert restored.amplitude_percent is None
+    assert restored.phase_rad is None
+    assert restored.delta_chi_squared is None
+
+
+def test_peak_analysis_round_trip_carries_the_scan_result() -> None:
+    analysis = analyze_dataset_peaks(_damped_scan_record())
+
+    restored = deserialize_peak_analysis(serialize_peak_analysis(analysis))
+
+    assert restored == analysis
+    assert restored is not None and restored.damped_lines is not None
+    assert restored.damped_lines.lines == analysis.damped_lines.lines
+
+
+def test_peak_analysis_payloads_predating_the_scan_still_load() -> None:
+    payload = serialize_peak_analysis(
+        PeakAnalysis(
+            peaks=(_hann_peak(1.4),),
+            noise_floor=1.0,
+            resolution_mhz=0.1,
+            nyquist_mhz=50.0,
+            detrended=False,
+        )
+    )
+    payload.pop("damped_lines")
+
+    restored = deserialize_peak_analysis(payload)
+
+    assert restored is not None
+    assert restored.damped_lines is None
+
+
+def test_nyquist_guard_rejects_junk_on_a_finely_binned_record() -> None:
+    """0.1 ns binning: the top 2 % of the band must contribute no ``fft`` peak.
+
+    White noise on a slow relaxation at 5000 MHz Nyquist has a resolution
+    element four orders of magnitude narrower than Nyquist, so the historical
+    half-resolution guard leaves the aliasing/roll-off edge effectively
+    unguarded and the pass returns clusters of peaks hard against it.
+    """
+    dataset = _damped_scan_record(lines=(), seed=7, n_points=40_000)
+
+    analysis = analyze_dataset_peaks(dataset, damped_pass=False)
+
+    nyquist = analysis.nyquist_mhz
+    assert nyquist > 4000.0
+    offenders = [
+        peak.frequency_mhz
+        for peak in analysis.peaks
+        if peak.source == "fft" and peak.frequency_mhz > 0.98 * nyquist
+    ]
+    assert offenders == []
+
+
+def test_nyquist_guard_leaves_a_coarse_record_alone() -> None:
+    """The floor is a fraction of Nyquist, so it does not touch conventional data.
+
+    At 6.6 ns binning over 10 µs the guard is 1.5 MHz out of 75 — wide in
+    resolution elements, but nowhere near the 1.4 MHz line the pass is for.
+    """
+    time = np.linspace(0.05, 10.0, 1500)
+    signal = 18.0 * np.exp(-0.12 * time) * np.cos(2.0 * np.pi * 1.4 * time) + 3.0
+    rng = np.random.default_rng(4242)
+    dataset = MuonDataset(
+        time=time,
+        asymmetry=signal + rng.normal(0.0, 0.6, size=time.size),
+        error=np.full_like(time, 0.6),
+        metadata={"run_number": 1},
+    )
+
+    analysis = analyze_dataset_peaks(dataset, damped_pass=False, burg_check="never")
+
+    assert any(abs(peak.frequency_mhz - 1.4) < 0.1 for peak in analysis.peaks)
+
+
+# --------------------------------------------------------------------------- #
+# The DC edge of the local noise floor
+# --------------------------------------------------------------------------- #
+#
+# A conventional transverse-field precession on a finely binned record sits only
+# a handful of *bins* above DC even though it is many resolution elements away
+# from it: 0.1 ns binning puts Nyquist at 5000 MHz, so a 0.69 MHz line lands at
+# bin ~20 of a 146 000-bin padded spectrum.  The running-median floor's window
+# spans 5 % of the spectrum — thousands of bins — so how the median is padded at
+# the DC edge decides whether such a line is visible at all.  Every value below
+# is invented.
+
+
+def _transverse_field_record(
+    *,
+    n_points: int = 90_000,
+    frequency_mhz: float = 0.69,
+    damping_per_us: float = 1.8,
+    amplitude: float = 20.0,
+    seed: int = 20260905,
+) -> MuonDataset:
+    """A textbook 50 G TF record at 0.1 ns binning. All values invented.
+
+    20 % precession damped at 1.8 µs⁻¹ over a 5 % relaxation and a 3 % baseline,
+    with µSR-like σ starting at 3.3 % per bin and growing as ``exp(t / 4.4)``.
+    """
+    time = np.arange(1, n_points + 1, dtype=float) * 1e-4
+    error = np.minimum(3.3 * np.exp(time / 4.4), 100.0)
+    signal = (
+        amplitude * np.exp(-damping_per_us * time) * np.cos(2.0 * np.pi * frequency_mhz * time)
+        + 5.0 * np.exp(-2.0 * time)
+        + 3.0
+    )
+    rng = np.random.default_rng(seed)
+    return MuonDataset(
+        time=time,
+        asymmetry=signal + rng.normal(0.0, error),
+        error=error,
+        metadata={"run_number": 1, "field": 50.0, "field_direction": "TF"},
+    )
+
+
+def test_hann_pass_finds_a_slow_line_a_few_bins_above_dc() -> None:
+    """The line is 10× the global floor; the local floor must not hide it.
+
+    With ``mode="nearest"`` padding the median window at bin 20 is nearly half
+    filled with copies of the DC bin — the largest value in the spectrum — so
+    the floor there read ~2.8× the true one and the line's SNR fell to 1.95
+    against an adaptive gate of 4.67.  Reflected padding fills the window with
+    the spectrum's own low-frequency bins instead, and the SNR returns to the
+    value a single global floor gives it.
+    """
+    dataset = _transverse_field_record()
+
+    analysis = analyze_dataset_peaks(dataset, damped_pass=False)
+
+    found = [peak for peak in analysis.peaks if peak.source == "fft"]
+    assert found, "the precession line must reach the seeding path"
+    assert found[0].frequency_mhz == pytest.approx(0.69, rel=0.05)
+
+
+def test_the_damped_scan_rightly_declines_that_line_so_the_hann_pass_owns_it() -> None:
+    """``f/λ ≈ 0.4`` is not an oscillation the matched-apodisation rung can claim.
+
+    This is why the DC-edge floor matters: for a conventional TF line the Hann
+    pass is the *only* detector, so a floor that buries it buries the line.
+    """
+    dataset = _transverse_field_record()
+
+    analysis = analyze_dataset_peaks(dataset)
+
+    assert not [
+        peak
+        for peak in analysis.peaks
+        if peak.source == "damped_scan" and abs(peak.frequency_mhz - 0.69) < 0.2
+    ]
+    assert any(abs(peak.frequency_mhz - 0.69) < 0.05 for peak in analysis.peaks)

@@ -47,7 +47,18 @@ On that same record pinning took CPU/wall from ~17 to 1.0 **and wall-clock from
 not buying anything. Bounding it in-process would need either a thread-pool control
 dependency the project does not carry or a rewrite of the line-shape kernel to
 stop materialising the (n_field x n_time) matrix; both are out of scope here and
-neither is a property of the pool, so this is documented rather than patched.
+neither is a property of the pool, so the *parent* process is documented rather
+than patched.
+
+The **workers**, however, are ours to configure: :func:`open_spawn_pool` starts
+them with an initializer that pins the BLAS thread-count variables to 1 (see
+:mod:`asymmetry._worker_env`). Inside a pool the oversubscription is worst —
+``max_workers`` processes each fanning a matrix product across every core — and
+no caller can reach the workers' environment from outside. The pin is applied
+only to variables the caller has **not** already set, so setting any of them (in
+the shell, before the interpreter starts) remains both the parent-side knob
+above and the opt-out here: an explicit ``OMP_NUM_THREADS=4`` is honoured in the
+workers too.
 """
 
 from __future__ import annotations
@@ -58,6 +69,8 @@ import sys
 import warnings
 from concurrent.futures import ProcessPoolExecutor
 from functools import lru_cache
+
+from asymmetry._worker_env import blas_thread_pins, pin_worker_blas_threads
 
 
 class SpawnUnsafeWarning(UserWarning):
@@ -138,6 +151,10 @@ def open_spawn_pool(max_workers: int) -> ProcessPoolExecutor | None:
     guaranteed escape hatch), and for the spawn-safety cases
     :func:`spawn_pool_unsafe_reason` detects, which additionally warn once per
     process with :class:`SpawnUnsafeWarning`.
+
+    Workers start with the BLAS thread-count pin described in the module
+    docstring; a caller that has set any of those variables itself gets no
+    initializer and keeps its own configuration.
     """
     if int(max_workers) <= 1:
         return None
@@ -156,8 +173,16 @@ def open_spawn_pool(max_workers: int) -> ProcessPoolExecutor | None:
             )
         return None
 
+    pins = blas_thread_pins()
+    worker_setup: dict[str, object] = (
+        {"initializer": pin_worker_blas_threads, "initargs": (pins,)} if pins else {}
+    )
     try:
-        return ProcessPoolExecutor(max_workers=max_workers, mp_context=mp.get_context("spawn"))
+        return ProcessPoolExecutor(
+            max_workers=max_workers,
+            mp_context=mp.get_context("spawn"),
+            **worker_setup,  # type: ignore[arg-type]
+        )
     except (OSError, PermissionError, ValueError):
         return None
 

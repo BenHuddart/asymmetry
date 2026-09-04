@@ -618,6 +618,17 @@ class FitPanel(QWidget):
         """
         self._single_fit_restore_provider = provider
 
+    def set_full_fit_context_provider(self, provider: Callable[[], tuple] | None) -> None:
+        """Install the uncropped-record accessor used by the fit wizard.
+
+        The main window passes a zero-argument callable returning
+        ``(full_dataset, (t_min, t_max))`` for the active run — the record
+        before the plot's fit-range crop, and the range that was cropped away.
+        Forwarded straight to the single-fit tab, which is where the wizard is
+        opened from.
+        """
+        self._single_tab.set_full_fit_context_provider(provider)
+
     def get_single_form_state(self) -> dict:
         """Return the single-fit *form* payload (no per-run/domain wrapping).
 

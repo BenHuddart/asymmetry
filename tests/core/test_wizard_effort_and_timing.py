@@ -434,5 +434,11 @@ def test_single_fit_wizard_populates_the_standard_timing_block() -> None:
     stage_names = [stage["stage"] for stage in block["stages"]]
     assert "single_fit.stage1" in stage_names
     assert "single_fit.refinement" in stage_names
+    # The segments between the fitting fan-outs are timed too. They used to be
+    # invisible, and on a 10⁵-point record they were half the wall clock: the
+    # envelope banks alone ran 19.9 s inside what the timing block reported as a
+    # gap between Stage 1 and Stage 2.
+    assert "single_fit.detection" in stage_names
+    assert "single_fit.pattern_match" in stage_names
     assert block["cpu_seconds"] > 0.0
     assert all(event.elapsed_seconds >= 0.0 for event in events)
