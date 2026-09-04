@@ -22,6 +22,7 @@ import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import ComputationalCost
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.fitting.damped_line_scan import DampedLineAnalysis
 from asymmetry.core.fitting.engine import FitCancelledError, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     _FIT_WIZARD_TITLES,
@@ -40,10 +41,12 @@ from asymmetry.core.fitting.fit_wizard import (
     _decide_family_promotions,
     _effective_hint_keys,
     _fmuf_r_ladder_variants,
+    _has_significant_damped_line,
     _initial_parameters_for_template,
     _parameter_variants,
     _run_template_assessments,
     _stage2_variant_budget,
+    analysis_rebin_factor,
     build_fit_wizard_recommendation,
     build_null_baseline_templates,
     build_wizard_families,
@@ -2222,3 +2225,253 @@ def test_old_payload_without_policy_fields_deserializes_with_defaults() -> None:
     assert restored_exp is not None
     assert restored_exp.disqualification_reasons == ()
     assert restored_exp.is_null_baseline is False
+
+
+# --------------------------------------------------------------------------- #
+# Damped-line scan: promotion, rebinned fitting, recommendation metadata
+# --------------------------------------------------------------------------- #
+
+
+def _damped_scan_peak(
+    frequency: float, *, rate: float = 44.0, delta_chi_squared: float = 141.0
+) -> DetectedPeak:
+    return DetectedPeak(
+        frequency_mhz=frequency,
+        amplitude=5.0,
+        snr=15.0,
+        width_mhz=rate / math.pi,
+        prominence=0.0,
+        source="damped_scan",
+        crop_us=None,
+        damping_rate_per_us=rate,
+        amplitude_percent=5.0,
+        phase_rad=0.3,
+        delta_chi_squared=delta_chi_squared,
+    )
+
+
+def _scan_peak_analysis(peaks, *, threshold: float | None) -> PeakAnalysis:
+    damped_lines = (
+        None
+        if threshold is None
+        else DampedLineAnalysis(
+            lines=(),
+            threshold_delta_chi_squared=threshold,
+            n_trials=1000.0,
+            taus_us=(),
+            window_end_index=0,
+            sample_budget=16384,
+            false_rate=0.01,
+        )
+    )
+    return PeakAnalysis(
+        peaks=tuple(peaks),
+        noise_floor=0.0,
+        resolution_mhz=0.1,
+        nyquist_mhz=5000.0,
+        detrended=False,
+        damped_lines=damped_lines,
+    )
+
+
+def test_significant_damped_line_needs_the_scan_threshold_to_judge_it() -> None:
+    above = _scan_peak_analysis([_damped_scan_peak(240.0, delta_chi_squared=141.0)], threshold=34.0)
+    below = _scan_peak_analysis([_damped_scan_peak(240.0, delta_chi_squared=10.0)], threshold=34.0)
+    # A peak set with no attached scan carries no threshold to judge it by, so
+    # the answer is False rather than a guess.
+    orphan = _scan_peak_analysis([_damped_scan_peak(240.0)], threshold=None)
+
+    assert _has_significant_damped_line(above) is True
+    assert _has_significant_damped_line(below) is False
+    assert _has_significant_damped_line(orphan) is False
+    assert _has_significant_damped_line(None) is False
+
+
+def test_scan_promotion_is_exempt_from_the_stage2_family_cap() -> None:
+    keys = ["f1", "f2", "f3", "f4", "f5", "f6", "oscillatory"]
+    families = [_unit_family(k) for k in keys]
+    reps = [_scored_assessment(f"{k}_rep", 100.0 + i, gate=True) for i, k in enumerate(keys)]
+    # The oscillatory representative scores worst by far — which is the point:
+    # it is the candidate that structurally *cannot* fit a heavily damped line
+    # (no slow relaxing term), so its score must not gate the family.
+    reps[-1] = _scored_assessment("oscillatory_rep", 5000.0)
+
+    decisions = _decide_family_promotions(
+        families,
+        reps,
+        frozenset(),
+        SelectionMetric.AICC,
+        scan_family_keys=frozenset({"oscillatory"}),
+    )
+
+    promoted = {family.key: reason for family, _a, ok, reason in decisions if ok}
+    assert "oscillatory" in promoted
+    assert "damped-line scan" in promoted["oscillatory"]
+    assert len(set(promoted) - {"oscillatory"}) == 4  # score promotions still capped
+
+
+def _rebin_dataset(n_points: int, dt_us: float = 1e-4) -> MuonDataset:
+    time = np.arange(n_points, dtype=float) * dt_us
+    return MuonDataset(
+        time=time,
+        asymmetry=np.zeros(n_points),
+        error=np.ones(n_points),
+        metadata={"run_number": 1},
+    )
+
+
+def test_rebin_factor_is_one_below_the_budget() -> None:
+    dataset = _rebin_dataset(4000)
+
+    assert analysis_rebin_factor(dataset, _scan_peak_analysis([], threshold=None)) == 1
+
+
+def test_rebin_factor_is_capped_so_the_fastest_seeded_line_stays_sampled() -> None:
+    # 90 000 bins of 0.1 ns. Cost alone would merge 10 bins; a 240 MHz line has
+    # a 4.17 ns period, so 8 samples per cycle allows only 5.
+    dataset = _rebin_dataset(90_000)
+    analysis = _scan_peak_analysis([_damped_scan_peak(240.0)], threshold=34.0)
+
+    factor = analysis_rebin_factor(dataset, analysis)
+
+    assert factor == 5
+    rebinned = dataset.rebin(factor)
+    period_us = 1.0 / 240.0
+    assert period_us / float(np.median(np.diff(rebinned.time))) >= 8.0
+
+
+def test_rebin_factor_falls_back_to_the_larmor_frequency_then_to_cost_alone() -> None:
+    dataset = _rebin_dataset(90_000)
+    empty = _scan_peak_analysis([], threshold=None)
+
+    # A 1000 G field precesses at ~13.6 MHz, whose period is far longer than the
+    # cost-driven factor would ever reach, so cost wins.
+    assert analysis_rebin_factor(dataset, empty, field_gauss=1000.0) == 90_000 // 8192
+    # Nothing to protect at all: the cost constraint alone.
+    assert analysis_rebin_factor(dataset, None) == 90_000 // 8192
+    # A very high field does bind.
+    tight = analysis_rebin_factor(dataset, empty, field_gauss=500_000.0)
+    assert 1 <= tight < 90_000 // 8192
+
+
+def _two_line_rebin_record(n_points: int, *, seed: int = 39) -> MuonDataset:
+    """Two heavily damped lines over a slow tail, 0.1 ns binning. All invented."""
+    rng = np.random.default_rng(seed)
+    time = np.arange(n_points, dtype=float) * 1e-4
+    error = np.minimum(3.3 * np.exp(time / 4.4), 25.0)
+    signal = (
+        4.7 * np.exp(-44.0 * time) * np.cos(2.0 * np.pi * 240.0 * time + 0.3)
+        + 1.9 * np.exp(-22.0 * time) * np.cos(2.0 * np.pi * 120.0 * time - 0.7)
+        + 2.6 * np.exp(-0.19 * time)
+        + 4.6
+    )
+    return MuonDataset(
+        time=time,
+        asymmetry=signal + rng.normal(0.0, error),
+        error=error,
+        metadata={"run_number": 1, "field": 0.0, "field_direction": "ZF"},
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(900)
+def test_rebinned_fitting_reaches_the_same_recommendation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rebinned record must answer the question the same way the raw one does.
+
+    Deliberately measured by moving the *budget* rather than by fitting 10⁵
+    points twice: the invariant under test is "rebinning does not change the
+    recommendation", and forcing the comparison onto a record large enough to
+    need the production factor would spend minutes proving the same thing.
+    Peak detection and the fingerprint run on the full record either way, so
+    the only difference between the two runs is what the fits saw.
+    """
+    _strip_expensive_members(monkeypatch)
+    dataset = _two_line_rebin_record(12_000)
+
+    monkeypatch.setattr(fit_wizard_module, "_FIT_SAMPLE_BUDGET", 10**9)
+    unrebinned = build_fit_wizard_recommendation(dataset, max_workers=1, refine_top_candidates=0)
+
+    monkeypatch.setattr(fit_wizard_module, "_FIT_SAMPLE_BUDGET", 2048)
+    rebinned = build_fit_wizard_recommendation(dataset, max_workers=1, refine_top_candidates=0)
+
+    assert unrebinned.rebin_factor == 1
+    assert unrebinned.analysed_points == dataset.n_points
+    assert rebinned.rebin_factor > 1
+    assert rebinned.analysed_points == dataset.n_points // rebinned.rebin_factor
+    # The peak set is the full record's either way — only the fits moved.
+    assert [peak.frequency_mhz for peak in rebinned.peak_analysis.peaks] == [
+        peak.frequency_mhz for peak in unrebinned.peak_analysis.peaks
+    ]
+    assert rebinned.recommended_key == unrebinned.recommended_key
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(900)
+def test_hundred_thousand_point_record_is_rebinned_and_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The cost case: 10⁵ points must not be fitted 10⁵ points at a time."""
+    _strip_expensive_members(monkeypatch)
+    dataset = _two_line_rebin_record(100_000)
+
+    started = time.perf_counter()
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+    elapsed = time.perf_counter() - started
+
+    assert recommendation.rebin_factor > 1
+    assert recommendation.analysed_points < dataset.n_points
+    # Still comfortably over-determined for the largest model in the portfolio.
+    assert recommendation.analysed_points > 4096
+    # Measured ~60 s locally for the whole (expensive-member-free) portfolio;
+    # the bound is generous for a loaded CI runner but far below the ~2 min the
+    # unrebinned Stage-2 set alone used to cost.
+    assert elapsed < 600.0
+
+
+def test_recommendation_serialization_round_trips_the_rebin_metadata() -> None:
+    recommendation = FitWizardRecommendation(
+        fingerprint=_plain_fingerprint(),
+        templates=(),
+        assessments=(),
+        metric=SelectionMetric.AICC,
+        recommended_key=None,
+        comparable_keys=(),
+        summary="",
+        rebin_factor=5,
+        analysed_points=18_000,
+    )
+
+    payload = serialize_fit_wizard_recommendation(recommendation)
+    restored = deserialize_fit_wizard_recommendation(payload)
+
+    assert payload["rebin_factor"] == 5
+    assert payload["analysed_points"] == 18_000
+    assert restored is not None
+    assert restored.rebin_factor == 5
+    assert restored.analysed_points == 18_000
+
+
+def test_recommendation_payloads_predating_rebinned_fitting_still_load() -> None:
+    payload = serialize_fit_wizard_recommendation(
+        FitWizardRecommendation(
+            fingerprint=_plain_fingerprint(),
+            templates=(),
+            assessments=(),
+            metric=SelectionMetric.AICC,
+            recommended_key=None,
+            comparable_keys=(),
+            summary="",
+        )
+    )
+    payload.pop("rebin_factor")
+    payload.pop("analysed_points")
+
+    restored = deserialize_fit_wizard_recommendation(payload)
+
+    assert restored is not None
+    # Factor 1 IS what "not rebinned" means, so an old payload reads correctly;
+    # the analysed point count is genuinely unknown and says so.
+    assert restored.rebin_factor == 1
+    assert restored.analysed_points == 0

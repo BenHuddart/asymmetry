@@ -4,9 +4,15 @@ The feature under test: a µSR record whose oscillation is heavily damped lives
 only in the leading nanoseconds of the record, which every symmetric apodisation
 deletes.  Both of the fit wizard's seeding FFTs used to be Hann-windowed, so a
 damped-cosine recommendation was only reachable when the user handed the wizard
-the frequencies.  These tests pin the blind path: the unwindowed early-window
-pass finds the line, the fingerprint carries it, the seeding path uses it, and a
-damped-oscillation family ranks top with **no** ``user_frequencies_mhz``.
+the frequencies.  These tests pin the blind path: the matched-apodisation
+damped-line scan finds the line, the fingerprint carries it, the seeding path
+uses its measured frequency/λ/amplitude/phase, and a damped-oscillation family
+ranks top with **no** ``user_frequencies_mhz``.
+
+The historical unwindowed early-window crop ladder
+(``analyze_early_window_peaks``) is no longer wired into
+``analyze_dataset_peaks``; it is still exercised directly here, because its
+constants rest on a study whose conclusions the scan inherits.
 
 Every synthetic parameter here is invented.  The records are ordered-magnet-like
 zero-field signals: one or two damped cosines on a slowly relaxing tail, at fine
@@ -15,6 +21,9 @@ binning, with µSR-like errors that grow as ``exp(t / 2·τ_µ)`` and are capped
 """
 
 from __future__ import annotations
+
+import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -31,6 +40,7 @@ from asymmetry.core.fitting.fit_wizard import (
     build_oscillatory_multiplet_templates,
     fingerprint_spectrum,
 )
+from asymmetry.core.fitting.parameters import split_parameter_name
 from asymmetry.core.fitting.peak_detection import (
     _EARLY_MIN_POINTS,
     DetectedPeak,
@@ -163,7 +173,7 @@ def test_hann_pass_is_structurally_blind_to_the_damped_line() -> None:
     Not "sees it weakly" — the window is zero at the first sample, so the line's
     entire support is deleted and the pass returns no peaks.
     """
-    analysis = analyze_dataset_peaks(_damped_record(), early_pass=False)
+    analysis = analyze_dataset_peaks(_damped_record(), damped_pass=False)
 
     assert analysis.peaks == ()
 
@@ -211,17 +221,28 @@ def test_null_records_add_no_early_peaks(build, seed_base: int, draws: int) -> N
     assert total == 0
 
 
-def test_conventional_narrow_line_is_untouched_by_the_early_pass() -> None:
-    """Study requirement (iii): no spurious additions, Hann peaks unchanged."""
+def test_conventional_narrow_line_gains_a_measurement_but_no_extra_peak() -> None:
+    """No spurious additions on a line the Hann pass can already see.
+
+    The scan finds that line too — it is not restricted to fast ones — so the
+    merge is a collision, not an addition: the Hann pass keeps the frequency it
+    localised over the whole record, and picks up the λ/amplitude/phase the
+    scan measured, which no Hann peak can carry.
+    """
     dataset = _narrow_line_record()
 
-    with_early = analyze_dataset_peaks(dataset, burg_check="never")
-    hann_only = analyze_dataset_peaks(dataset, burg_check="never", early_pass=False)
+    with_scan = analyze_dataset_peaks(dataset, burg_check="never")
+    hann_only = analyze_dataset_peaks(dataset, burg_check="never", damped_pass=False)
 
-    assert [peak.source for peak in with_early.peaks] == [peak.source for peak in hann_only.peaks]
-    assert not any(peak.source == "early_fft" for peak in with_early.peaks)
-    for merged, plain in zip(with_early.peaks, hann_only.peaks):
-        assert merged == plain
+    assert [peak.source for peak in with_scan.peaks] == [peak.source for peak in hann_only.peaks]
+    assert not any(peak.source in ("early_fft", "damped_scan") for peak in with_scan.peaks)
+    for merged, plain in zip(with_scan.peaks, hann_only.peaks):
+        assert merged.frequency_mhz == plain.frequency_mhz
+        assert merged.amplitude == plain.amplitude
+        assert merged.snr == plain.snr
+    strongest = with_scan.peaks[0]
+    assert strongest.damping_rate_per_us == pytest.approx(0.12, rel=0.3)
+    assert strongest.amplitude_percent == pytest.approx(18.0, rel=0.2)
 
 
 def test_early_window_crops_floor_and_collapse() -> None:
@@ -260,6 +281,31 @@ def _hann_peak(frequency: float, snr: float = 10.0) -> DetectedPeak:
         width_mhz=0.05,
         prominence=1.0,
         source="fft",
+    )
+
+
+def _scan_peak(
+    frequency: float,
+    *,
+    rate: float = 40.0,
+    amplitude_percent: float = 5.0,
+    phase_rad: float = 0.3,
+    delta_chi_squared: float = 120.0,
+    snr: float = 12.0,
+) -> DetectedPeak:
+    """A damped-scan peak as ``analyze_damped_scan_peaks`` would build it."""
+    return DetectedPeak(
+        frequency_mhz=frequency,
+        amplitude=abs(amplitude_percent),
+        snr=snr,
+        width_mhz=rate / np.pi,
+        prominence=0.0,
+        source="damped_scan",
+        crop_us=None,
+        damping_rate_per_us=rate,
+        amplitude_percent=amplitude_percent,
+        phase_rad=phase_rad,
+        delta_chi_squared=delta_chi_squared,
     )
 
 
@@ -348,7 +394,10 @@ def test_fingerprint_carries_the_damped_line_and_sets_the_oscillatory_hint() -> 
     assert fingerprint.has_damped_line_candidate
     assert fingerprint.damped_line_frequency_mhz == pytest.approx(_LINE_MHZ, rel=0.05)
     assert fingerprint.damped_line_snr > 8.0
-    assert fingerprint.damped_line_crop_us > 0.0
+    # The scan measures the envelope rather than inferring it from a crop, so
+    # the rate is populated and the crop is not: there is no crop.
+    assert fingerprint.damped_line_rate_per_us == pytest.approx(_LINE_RATE, rel=0.4)
+    assert fingerprint.damped_line_crop_us == 0.0
     assert fingerprint.oscillatory_hint is True
     # The Hann view on its own would have gated precession off. Its "dominant
     # line" is the leftover slow tail, completing well under one cycle in the
@@ -357,12 +406,20 @@ def test_fingerprint_carries_the_damped_line_and_sets_the_oscillatory_hint() -> 
     assert abs(fingerprint.dominant_fft_frequency_mhz - _LINE_MHZ) > 10.0
 
 
-def test_fingerprint_leaves_a_conventional_record_alone() -> None:
+def test_fingerprint_measures_a_conventional_record_rather_than_ignoring_it() -> None:
+    """The scan is not a fast-line detector; it is a damped-line *measurement*.
+
+    A conventional narrow line has a small λ, and the scan reports it as such.
+    The crop ladder it replaced could only report a crop, so the fingerprint's
+    ``damped_line_*`` fields used to stay empty here; now they carry a rate
+    close to the true one and the hint fires from the Hann view *and* the scan.
+    """
     fingerprint = fingerprint_spectrum(_narrow_line_record())
 
-    assert not fingerprint.has_damped_line_candidate
-    assert fingerprint.damped_line_frequency_mhz == 0.0
-    # ...and the hint still fires, from the Hann view, exactly as before.
+    assert fingerprint.has_damped_line_candidate
+    assert fingerprint.damped_line_frequency_mhz == pytest.approx(1.4, rel=0.05)
+    assert fingerprint.damped_line_rate_per_us == pytest.approx(0.12, rel=0.3)
+    assert fingerprint.damped_line_crop_us == 0.0
     assert fingerprint.oscillatory_hint is True
 
 
@@ -371,6 +428,9 @@ def test_early_peaks_seed_the_multiplet_builder_like_user_frequencies() -> None:
 
     templates = build_oscillatory_multiplet_templates(analysis)
 
+    # An early-window peak carries no measured envelope, so it builds only the
+    # historical multiplet shapes — not the relaxing twins, whose extra
+    # exponential needs a pinned envelope to be separable from the cosines'.
     assert [template.key for template in templates] == [
         "oscillatory2_exp_constant",
         "oscillatory2_gaussian_constant",
@@ -412,7 +472,13 @@ def test_a_weak_hann_peak_is_still_rejected_as_a_multiplet_seed() -> None:
     assert [peak.frequency_mhz for peak in _multiplet_seed_peaks(analysis, 3)] == [1.4]
 
 
-def test_damped_envelope_rate_comes_from_the_crop_and_only_from_it() -> None:
+def test_damped_envelope_rate_prefers_the_measured_rate_over_the_crop() -> None:
+    # A measured rate wins outright, even against a crop that would imply
+    # something else: one is a fit, the other a factor-of-two heuristic.
+    measured = replace(_early_peak(60.0, crop_us=0.25), damping_rate_per_us=37.5)
+    assert _damped_envelope_rate(measured) == pytest.approx(37.5)
+    assert _damped_envelope_rate(_scan_peak(60.0, rate=42.0)) == pytest.approx(42.0)
+    # ...and without one the crop heuristic still answers.
     assert _damped_envelope_rate(_early_peak(60.0, crop_us=0.25)) == pytest.approx(12.0)
     assert _damped_envelope_rate(_hann_peak(1.4)) is None
     assert _damped_envelope_rate(None) is None
@@ -463,6 +529,11 @@ def test_blind_wizard_ranks_a_damped_oscillation_top() -> None:
     On ``main`` this record's recommendation was a static Kubo-Toyabe — the
     oscillation was invisible to both seeding FFTs, so no oscillatory candidate
     was ever seeded near it.
+
+    The relaxing twin is offered here too, but this record is only 4 µs long and
+    its background relaxes at ~0.25 µs⁻¹ — a 1/e time longer than the window —
+    so the component-resolution rule disqualifies the extra exponential and the
+    plain damped cosine wins, exactly as before.
     """
     dataset = _damped_record()
 
@@ -474,9 +545,8 @@ def test_blind_wizard_ranks_a_damped_oscillation_top() -> None:
     winner = recommendation.recommended_assessment
     assert winner is not None
     fitted = winner.fit_result.parameters["frequency"].value
-    # Seeded, and then fitted, within the early pass's own resolution.
-    crop_us = recommendation.fingerprint.damped_line_crop_us
-    assert abs(fitted - _LINE_MHZ) <= 1.0 / crop_us
+    # Seeded, and then fitted, well inside the measured line's own width.
+    assert abs(fitted - _LINE_MHZ) <= _LINE_RATE / math.pi
     assert winner.fit_result.parameters["Lambda"].value == pytest.approx(_LINE_RATE, rel=0.3)
 
 
@@ -490,8 +560,8 @@ def test_blind_wizard_ranks_a_two_oscillation_family_top() -> None:
     )
 
     assert recommendation.peak_analysis is not None
-    early = [peak for peak in recommendation.peak_analysis.peaks if peak.source == "early_fft"]
-    assert len(early) == 2, "both damped lines must reach the seeding path"
+    scan = [peak for peak in recommendation.peak_analysis.peaks if peak.source == "damped_scan"]
+    assert len(scan) == 2, "both damped lines must reach the seeding path"
 
     assert recommendation.recommended_key == "oscillatory2_exp_constant"
     winner = recommendation.recommended_assessment
@@ -522,8 +592,252 @@ def test_conventional_record_recommendation_is_unchanged() -> None:
 
     assert recommendation.recommended_key == "oscillatory_exp_constant"
     assert recommendation.peak_analysis is not None
-    assert not any(peak.source == "early_fft" for peak in recommendation.peak_analysis.peaks)
-    assert not recommendation.fingerprint.has_damped_line_candidate
+    assert not any(
+        peak.source in ("early_fft", "damped_scan") for peak in recommendation.peak_analysis.peaks
+    )
+    # The record is short enough to fit whole: no rebinning, so the information
+    # criteria refer to every point of it.
+    assert recommendation.rebin_factor == 1
+    assert recommendation.analysed_points == dataset.n_points
     winner = recommendation.recommended_assessment
     assert winner is not None
     assert winner.fit_result.parameters["frequency"].value == pytest.approx(1.4, rel=0.02)
+
+
+# --------------------------------------------------------------------------- #
+# Workstream D — the matched-apodisation scan end to end
+# --------------------------------------------------------------------------- #
+#
+# The records below are the ones the scan module itself is measured on: 0.1 ns
+# binning, µSR-like errors growing as exp(t/4.4 µs) and saturating at 25 %, and
+# oscillations that are gone inside the first ~50 ns. Every value invented. They
+# are the regime the whole feature exists for — the historical crop ladder found
+# one of the two lines at SNR 6.4 against a gate of 6.0, and no candidate in the
+# portfolio could fit either of them.
+
+#: The two invented scan-regime lines: (amplitude %, MHz, λ µs⁻¹, phase rad).
+_SCAN_LINE_A = (4.7, 240.0, 44.0, 0.3)
+_SCAN_LINE_B = (1.9, 120.0, 22.0, -0.7)
+#: One very fast line: 8 % at 200 MHz, gone within ~30 ns.
+_SCAN_FAST_LINE = (8.0, 200.0, 100.0, 0.0)
+
+#: Per-bin σ (percent) a 0.1 ns-binned record actually carries at t = 0.
+_SCAN_SIGMA0 = 3.3
+#: 60 000 bins of 0.1 ns is a 6 µs record — long enough for the slow background
+#: to be resolvable and short enough to keep the end-to-end fits affordable.
+_SCAN_N_POINTS = 60_000
+
+
+def _scan_record(
+    lines: tuple[tuple[float, float, float, float], ...],
+    *,
+    seed: int = 39,
+    n_points: int = _SCAN_N_POINTS,
+    relaxation: tuple[float, float] = (2.6, 0.19),
+    baseline: float = 4.6,
+) -> MuonDataset:
+    """Heavily damped lines over a slow relaxing background. All values invented."""
+    rng = np.random.default_rng(seed)
+    time = np.arange(n_points, dtype=float) * 1e-4
+    error = np.minimum(_SCAN_SIGMA0 * np.exp(time / 4.4), 25.0)
+    tail_amplitude, tail_rate = relaxation
+    signal = tail_amplitude * np.exp(-tail_rate * time) + baseline
+    for amplitude, frequency, rate, phase in lines:
+        signal = signal + amplitude * np.exp(-rate * time) * np.cos(
+            2.0 * np.pi * frequency * time + phase
+        )
+    return MuonDataset(
+        time=time,
+        asymmetry=signal + rng.normal(0.0, error),
+        error=error,
+        metadata={"run_number": 11, "field": 0.0, "field_direction": "ZF"},
+    )
+
+
+def _fitted_pairs(assessment) -> list[tuple[float, float]]:
+    """(frequency, envelope rate) of each damped cosine, frequency-ascending."""
+    values = {p.name: p.value for p in assessment.fit_result.parameters}
+    pairs: list[tuple[float, float]] = []
+    for name, value in values.items():
+        base, index = split_parameter_name(name)
+        if base != "frequency":
+            continue
+        # The envelope sits on the component right after the oscillator. A lone
+        # oscillator names its own parameters without an index (``frequency``,
+        # not ``frequency_1``), and so may its envelope — but ``Lambda`` on a
+        # Gaussian-envelope model is the RELAXATION term, so the indexed names
+        # and ``sigma`` are tried first.
+        oscillator = 1 if index is None else int(index)
+        for key in (
+            f"sigma_{oscillator + 1}",
+            f"Lambda_{oscillator + 1}",
+            "sigma",
+            "Lambda",
+        ):
+            if key in values:
+                pairs.append((float(value), float(values[key])))
+                break
+    return sorted(pairs)
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(900)
+def test_blind_wizard_ranks_a_relaxing_two_line_model_on_the_scan_record() -> None:
+    """The Phase-2 headline: two heavily damped lines *and* the tail they leave.
+
+    No candidate in the portfolio had this shape before — a single-envelope
+    oscillatory candidate must either fit a 24 ns line and leave the 5 µs
+    relaxation in the residual, or fit the relaxation and lose the line — so the
+    wizard recommended ``Exponential + Constant`` at High confidence.
+    """
+    dataset = _scan_record((_SCAN_LINE_A, _SCAN_LINE_B))
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    assert recommendation.recommended_key in {
+        "oscillatory2_exp_relax_constant",
+        "oscillatory2_gaussian_relax_constant",
+    }
+    winner = recommendation.recommended_assessment
+    assert winner is not None
+    pairs = _fitted_pairs(winner)
+    assert len(pairs) == 2
+    for (frequency, rate), (_amplitude, true_frequency, true_rate, _phase) in zip(
+        pairs, (_SCAN_LINE_B, _SCAN_LINE_A)
+    ):
+        assert frequency == pytest.approx(true_frequency, rel=0.02)
+        assert rate == pytest.approx(true_rate, rel=0.4)
+    # Fitted on a rebinned copy — the record is 60 000 points and no model here
+    # needs more than a few samples per cycle of its fastest line.
+    assert recommendation.rebin_factor > 1
+    assert recommendation.analysed_points == dataset.n_points // recommendation.rebin_factor
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(900)
+def test_blind_wizard_ranks_a_one_line_relax_model_on_a_single_fast_line() -> None:
+    """A lone line is enough: one measured envelope opens the ``n = 1`` shape.
+
+    The historical multiplet builder refused below two peaks, which is right for
+    peaks that carry no envelope — the plain oscillatory candidates are the same
+    model. It is wrong once the line is measured *and* the record has a tail the
+    line does not explain.
+    """
+    dataset = _scan_record((_SCAN_FAST_LINE,), seed=5, relaxation=(6.0, 0.4), baseline=0.2)
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    assert recommendation.recommended_key in {
+        "oscillatory1_exp_relax_constant",
+        "oscillatory1_gaussian_relax_constant",
+    }
+    winner = recommendation.recommended_assessment
+    assert winner is not None
+    ((frequency, rate),) = _fitted_pairs(winner)
+    assert frequency == pytest.approx(_SCAN_FAST_LINE[1], rel=0.02)
+    assert rate == pytest.approx(_SCAN_FAST_LINE[2], rel=0.4)
+
+
+def test_scan_peaks_seed_amplitude_phase_and_envelope_per_component() -> None:
+    """Every measured quantity reaches the seed, per damped cosine."""
+    dataset = _scan_record((_SCAN_LINE_A, _SCAN_LINE_B))
+    fingerprint = fingerprint_spectrum(dataset)
+    analysis = analyze_dataset_peaks(dataset)
+    scan = [peak for peak in analysis.peaks if peak.source == "damped_scan"]
+    assert len(scan) == 2
+    templates = {t.key: t for t in build_oscillatory_multiplet_templates(analysis)}
+    template = templates["oscillatory2_exp_relax_constant"]
+
+    seeded = _initial_parameters_for_template(
+        dataset,
+        fingerprint,
+        template,
+        seed_context=TemplateSeedContext(peak_analysis=analysis, field_gauss=None),
+    )
+
+    for k, peak in enumerate(scan):
+        osc, env = 2 * k + 1, 2 * k + 2
+        assert seeded[f"A_{osc}"].value == pytest.approx(peak.amplitude_percent, rel=1e-6)
+        assert seeded[f"phase_{osc}"].value == pytest.approx(peak.phase_rad, rel=1e-6)
+        assert seeded[f"frequency_{osc}"].value == pytest.approx(peak.frequency_mhz)
+        assert seeded[f"Lambda_{env}"].value == pytest.approx(peak.damping_rate_per_us)
+        # The measured λ is a seed, not a certainty: the bounds must always
+        # contain a factor of four either way (see ``_parameter_bounds``).
+        assert seeded[f"Lambda_{env}"].min <= peak.damping_rate_per_us / 4.0
+        assert seeded[f"Lambda_{env}"].max >= 4.0 * peak.damping_rate_per_us
+        # ...and the frequency box is a few of the line's own widths, not a
+        # quarter of the frequency, which would reach the neighbouring line.
+        half_width = max(3.0 * peak.width_mhz, 0.05 * peak.frequency_mhz)
+        assert seeded[f"frequency_{osc}"].min == pytest.approx(
+            peak.frequency_mhz - half_width, rel=1e-6
+        )
+    # The extra relaxation term is seeded from the fingerprint's tail guesses —
+    # the measurement that is useless for the lines and right for the tail.
+    # (``lambda_guess`` is a slope over the leading 5 % of the record, which on
+    # a record like this one still contains the tail of the damped lines, so it
+    # reads a few times the true 0.19 µs⁻¹ — a seed, and one whose bounds
+    # comfortably contain the truth, which is all it has to be.)
+    assert seeded["A_5"].value > 0.0
+    assert 0.0 < seeded["Lambda_5"].value < 20.0
+    assert seeded["Lambda_5"].min <= 0.19 <= seeded["Lambda_5"].max
+    assert seeded["A_bg"].value == pytest.approx(fingerprint.tail_estimate)
+
+
+def test_relax_templates_need_a_measured_envelope_but_only_one() -> None:
+    scan_only = _analysis([_scan_peak(240.0)], resolution=0.1)
+    keys = {template.key for template in build_oscillatory_multiplet_templates(scan_only)}
+    assert keys == {"oscillatory1_exp_relax_constant", "oscillatory1_gaussian_relax_constant"}
+
+    # A Hann peak with no measured envelope contributes to the plain multiplet
+    # shapes but is not counted by the relaxing ones: their extra exponential is
+    # separable from a cosine's envelope only when that envelope is pinned.
+    mixed = _analysis([_hann_peak(1.4, snr=40.0), _scan_peak(240.0)], resolution=0.1)
+    keys = {template.key for template in build_oscillatory_multiplet_templates(mixed)}
+    assert keys == {
+        "oscillatory2_exp_constant",
+        "oscillatory2_gaussian_constant",
+        "oscillatory1_exp_relax_constant",
+        "oscillatory1_gaussian_relax_constant",
+    }
+
+    # Nothing measured at all: exactly the historical behaviour.
+    plain = _analysis([_hann_peak(1.4, snr=40.0)], resolution=0.1)
+    assert build_oscillatory_multiplet_templates(plain) == ()
+
+
+def test_relax_template_carries_the_relaxation_and_the_lines() -> None:
+    templates = {
+        template.key: template
+        for template in build_oscillatory_multiplet_templates(
+            _analysis([_scan_peak(240.0), _scan_peak(120.0)], resolution=0.1)
+        )
+    }
+    exp_template = templates["oscillatory2_exp_relax_constant"]
+    gaussian_template = templates["oscillatory2_gaussian_relax_constant"]
+
+    # Both shapes are offered at this order: the plain multiplet and the twin
+    # that carries the tail.
+    assert set(templates) == {
+        "oscillatory2_exp_constant",
+        "oscillatory2_gaussian_constant",
+        "oscillatory2_exp_relax_constant",
+        "oscillatory2_gaussian_relax_constant",
+    }
+    assert exp_template.model.component_names == [
+        "Oscillatory",
+        "Exponential",
+        "Oscillatory",
+        "Exponential",
+        "Exponential",
+        "Constant",
+    ]
+    assert gaussian_template.model.component_names == [
+        "Oscillatory",
+        "Gaussian",
+        "Oscillatory",
+        "Gaussian",
+        "Exponential",
+        "Constant",
+    ]
+    assert "240" in exp_template.rationale and "120" in exp_template.rationale
+    assert "damped cosine" in exp_template.title and "relaxation" in exp_template.title

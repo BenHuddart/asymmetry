@@ -972,9 +972,9 @@ class FitWizardWindow(WizardWindowBase):
                         alpha=0.35,
                         linewidth=1.2,
                     )
-                elif peak.source == "early_fft":
+                elif peak.source in ("early_fft", "damped_scan"):
                     # This plot is the Hann-windowed transform, which is exactly
-                    # the view an early-window line is absent from. Mark it in a
+                    # the view a heavily damped line is absent from. Mark it in a
                     # distinct style so the seed is visible and obviously not a
                     # feature of the spectrum drawn underneath it.
                     ax_fft.axvline(

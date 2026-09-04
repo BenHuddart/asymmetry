@@ -20,8 +20,11 @@ here is the input that pattern matcher consumes.
 
 from __future__ import annotations
 
+import math
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
@@ -31,6 +34,11 @@ from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fourier.apodisation import ApodisationEarlySignalWarning
 from asymmetry.core.fourier.burg import burg_spectrum
 from asymmetry.core.fourier.fft import fft_arrays
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # ``damped_line_scan`` imports ``effective_analysis_window`` from this
+    # module, so the runtime import lives inside the functions that need it.
+    from asymmetry.core.fitting.damped_line_scan import DampedLineAnalysis
 
 _EPS = 1e-12
 
@@ -143,6 +151,15 @@ _EARLY_MIN_SNR = 6.0
 #: able to starve the pass that exists precisely to see what Hann cannot.
 _EARLY_RESERVED_PEAKS = 2
 
+#: Fraction of Nyquist guarded at the top of every reported band, on top of the
+#: resolution-element guard.  On finely binned records the two differ by orders
+#: of magnitude — see the note in :func:`detect_peaks_in_spectrum`.
+_NYQUIST_GUARD_FRACTION = 0.02
+
+#: Cap on damped lines the scan pass may contribute, mirroring
+#: ``damped_line_scan.detect_damped_lines``'s own ``max_lines`` default.
+_DAMPED_SCAN_MAX_LINES = 3
+
 
 def _sidelobe_ceiling(
     delta_mhz: float,
@@ -180,18 +197,33 @@ class DetectedPeak:
     prominence
         Peak prominence from ``scipy.signal.find_peaks``.
     source
-        Provenance: ``"fft"``, ``"residual_fft"``, ``"early_fft"`` or
-        ``"user"``.  An ``"early_fft"`` SNR is measured on a short unwindowed
-        crop against a different noise floor and is **not** comparable with an
-        ``"fft"`` SNR from the full record — rank within a pass, never across.
+        Provenance: ``"fft"``, ``"residual_fft"``, ``"early_fft"``,
+        ``"damped_scan"`` or ``"user"``.  An ``"early_fft"`` SNR is measured on
+        a short unwindowed crop against a different noise floor, and a
+        ``"damped_scan"`` SNR is a MAD excess over a matched-apodisation rung's
+        own floor; neither is comparable with an ``"fft"`` SNR from the full
+        record — rank within a pass, never across.
     burg_confirmed
         ``True``/``False`` when a Burg cross-check ran and did / did not find a
         matching all-poles local maximum; ``None`` when no cross-check ran.
-        Always ``None`` for ``"early_fft"`` peaks: Burg is scoped to the Hann
-        pass (it is unreliable on short, heavily damped windows).
+        Always ``None`` for ``"early_fft"`` / ``"damped_scan"`` peaks: Burg is
+        scoped to the Hann pass (it is unreliable on short, heavily damped
+        windows).
     crop_us
         Duration of the early-window crop that found this peak, in µs; its
-        spectral resolution is ``1/crop_us``.  ``None`` for every other source.
+        spectral resolution is ``1/crop_us``.  ``None`` for every other source —
+        the matched-apodisation scan needs no crop, so its peaks carry ``None``
+        here and report their envelope directly in ``damping_rate_per_us``.
+    damping_rate_per_us, amplitude_percent, phase_rad, delta_chi_squared
+        The measured line parameters a
+        :class:`~asymmetry.core.fitting.damped_line_scan.DampedLine` carries:
+        envelope rate λ (µs⁻¹) of ``exp(-λt)``, amplitude ``A`` of
+        ``A·exp(-λt)·cos(2πft + φ)`` on the input's asymmetry scale, phase φ in
+        radians, and the weighted χ² improvement the line bought against the
+        scan's nuisance basis.  All ``None`` for a peak that carries no such
+        measurement (every pass but ``"damped_scan"``, and a ``"user"`` peak
+        that inherited nothing).  Additive — old payloads deserialize to
+        ``None``.
     """
 
     frequency_mhz: float
@@ -202,6 +234,10 @@ class DetectedPeak:
     source: str
     burg_confirmed: bool | None = None
     crop_us: float | None = None
+    damping_rate_per_us: float | None = None
+    amplitude_percent: float | None = None
+    phase_rad: float | None = None
+    delta_chi_squared: float | None = None
 
 
 @dataclass(frozen=True)
@@ -224,6 +260,12 @@ class PeakAnalysis:
     detrend_template_key: str | None = None
     burg_order: int | None = None
     burg_hit_boundary: bool = False
+    #: Full outcome of the matched-apodisation damped-line scan that produced
+    #: this analysis's ``"damped_scan"`` peaks — the Δχ² threshold, the trial
+    #: count and the τ ladder, which the peaks themselves do not carry.
+    #: ``None`` when the scan did not run.  Additive — old payloads
+    #: deserialize to ``None``.
+    damped_lines: DampedLineAnalysis | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -242,7 +284,44 @@ def serialize_detected_peak(peak: DetectedPeak) -> dict[str, object]:
         "source": str(peak.source),
         "burg_confirmed": peak.burg_confirmed,
         "crop_us": (float(peak.crop_us) if peak.crop_us is not None else None),
+        # Additive damped-scan measurements; ``None`` for every other pass.
+        "damping_rate_per_us": _optional_float(peak.damping_rate_per_us),
+        "amplitude_percent": _optional_float(peak.amplitude_percent),
+        "phase_rad": _optional_float(peak.phase_rad),
+        "delta_chi_squared": _optional_float(peak.delta_chi_squared),
     }
+
+
+def _serialize_damped_lines(analysis: DampedLineAnalysis | None) -> dict[str, object] | None:
+    """Serialize the attached scan result, importing the scan module lazily.
+
+    ``damped_line_scan`` imports :func:`effective_analysis_window` from this
+    module, so the dependency can only run one way at import time.
+    """
+    if analysis is None:
+        return None
+    from asymmetry.core.fitting.damped_line_scan import serialize_damped_line_analysis
+
+    return serialize_damped_line_analysis(analysis)
+
+
+def _deserialize_damped_lines(payload: object) -> DampedLineAnalysis | None:
+    """Rebuild an attached scan result; ``None`` for payloads that predate it."""
+    if payload is None:
+        return None
+    from asymmetry.core.fitting.damped_line_scan import deserialize_damped_line_analysis
+
+    return deserialize_damped_line_analysis(payload)
+
+
+def _optional_float(value: object) -> float | None:
+    """``float(value)`` or ``None`` — the additive-field (de)serialisation rule."""
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 def deserialize_detected_peak(payload: object) -> DetectedPeak | None:
@@ -260,6 +339,10 @@ def deserialize_detected_peak(payload: object) -> DetectedPeak | None:
         source=str(payload.get("source", "fft")),
         burg_confirmed=(bool(burg) if burg is not None else None),
         crop_us=(float(crop) if crop is not None else None),
+        damping_rate_per_us=_optional_float(payload.get("damping_rate_per_us")),
+        amplitude_percent=_optional_float(payload.get("amplitude_percent")),
+        phase_rad=_optional_float(payload.get("phase_rad")),
+        delta_chi_squared=_optional_float(payload.get("delta_chi_squared")),
     )
 
 
@@ -274,6 +357,7 @@ def serialize_peak_analysis(analysis: PeakAnalysis) -> dict[str, object]:
         "detrend_template_key": analysis.detrend_template_key,
         "burg_order": analysis.burg_order,
         "burg_hit_boundary": bool(analysis.burg_hit_boundary),
+        "damped_lines": _serialize_damped_lines(analysis.damped_lines),
     }
 
 
@@ -297,6 +381,7 @@ def deserialize_peak_analysis(payload: object) -> PeakAnalysis | None:
         detrend_template_key=(str(template_key) if template_key is not None else None),
         burg_order=(int(burg_order) if burg_order is not None else None),
         burg_hit_boundary=bool(payload.get("burg_hit_boundary", False)),
+        damped_lines=_deserialize_damped_lines(payload.get("damped_lines")),
     )
 
 
@@ -520,7 +605,15 @@ def detect_peaks_in_spectrum(
     # roll-off), which — like DC — carry no genuine oscillation frequency.
     dc_bin_guard = 3.0 * df
     low_guard = max(dc_bin_guard, float(low_guard_resolutions) * resolution_mhz)
-    high_guard = max(dc_bin_guard, float(high_guard_resolutions) * resolution_mhz)
+    requested_high_guard = max(dc_bin_guard, float(high_guard_resolutions) * resolution_mhz)
+    # A finely binned record (0.1 ns bins => ~5000 MHz Nyquist over a few µs)
+    # has a resolution element four orders of magnitude narrower than its
+    # Nyquist, so a guard counted in resolution elements is effectively no
+    # guard at all up there — and that is exactly where the anti-aliasing
+    # roll-off, the real-only last rfft bin and the edge-biased running median
+    # manufacture clusters of junk peaks. Floor the guard at a FRACTION OF
+    # NYQUIST so it scales with the binning rather than with the duration.
+    high_guard = max(requested_high_guard, _NYQUIST_GUARD_FRACTION * nyquist)
     valid = (freqs > low_guard) & (freqs < nyquist - high_guard)
     # Leakage parents may live BELOW the reporting band: once the guards widen
     # (the early pass), the strong low line — or the residual trend hump at DC —
@@ -530,7 +623,12 @@ def detect_peaks_in_spectrum(
     # guard.  ``parent_valid ⊇ valid`` holds by construction at any padding
     # factor, and the two coincide whenever the guards are not widened — which
     # is what keeps the Hann pass unchanged.
-    widened = low_guard > dc_bin_guard or high_guard > dc_bin_guard
+    # Deliberately keyed on the REQUESTED guards, not the Nyquist-fraction
+    # floor: the floor applies on every record, and letting it flip this switch
+    # would silently change the Hann pass's leakage-parent set (and so which
+    # low-frequency peaks survive the leakage guard) on data whose top edge is
+    # not in question.
+    widened = low_guard > dc_bin_guard or requested_high_guard > dc_bin_guard
     parent_valid = (freqs > dc_bin_guard) & (freqs < nyquist - dc_bin_guard) if widened else valid
     empty = PeakAnalysis(
         peaks=(),
@@ -962,6 +1060,157 @@ def merge_early_peaks(
     return replace(analysis, peaks=tuple(merged))
 
 
+def analyze_damped_scan_peaks(
+    time: NDArray[np.float64],
+    signal: NDArray[np.float64],
+    error: NDArray[np.float64],
+    *,
+    max_lines: int = _DAMPED_SCAN_MAX_LINES,
+) -> PeakAnalysis:
+    """Run the matched-apodisation damped-line scan and express it as peaks.
+
+    The scan (:func:`~asymmetry.core.fitting.damped_line_scan.detect_damped_lines`)
+    is the wizard's damped-line pass: it needs no user-chosen crop, it measures
+    the envelope rate rather than inferring it from a crop length, and it
+    accepts a line on a look-elsewhere-corrected Δχ² test rather than on an SNR
+    gate.  Each accepted line becomes one ``source="damped_scan"``
+    :class:`DetectedPeak`, Δχ²-descending, carrying the measured λ, amplitude,
+    phase and Δχ² so the seeding path can use them directly.
+
+    ``width_mhz`` is the Lorentzian FWHM ``λ/π`` of the line's own envelope —
+    the honest width of a peak the scan never resolved with a window — and
+    ``crop_us`` is ``None``: there is no crop.  The full
+    :class:`~asymmetry.core.fitting.damped_line_scan.DampedLineAnalysis` is
+    attached to :attr:`PeakAnalysis.damped_lines`, since the Δχ² threshold and
+    the trial count live there and not on the peaks.
+
+    ``signal`` should be the record the lines are actually in — the raw
+    asymmetry, or the residual when a detrend curve is available.  The scan
+    carries its own slow-decay nuisance dictionary, so a constant offset or a
+    slow relaxation left in ``signal`` is absorbed rather than fitted.
+    """
+    from asymmetry.core.fitting.damped_line_scan import detect_damped_lines
+
+    t = np.asarray(time, dtype=float)
+    y = np.asarray(signal, dtype=float)
+    err = np.asarray(error, dtype=float)
+    analysis = detect_damped_lines(t, y, err, max_lines=int(max_lines))
+
+    scan_peaks = [
+        DetectedPeak(
+            frequency_mhz=float(line.frequency_mhz),
+            # No windowed magnitude exists for a line the scan measured
+            # directly; the fitted amplitude is the honest stand-in and is what
+            # the multiplet amplitude-share seeding consumes.
+            amplitude=abs(float(line.amplitude_percent)),
+            snr=float(line.snr),
+            width_mhz=float(line.damping_rate_per_us / np.pi),
+            prominence=0.0,
+            source="damped_scan",
+            burg_confirmed=None,
+            crop_us=None,
+            damping_rate_per_us=float(line.damping_rate_per_us),
+            amplitude_percent=float(line.amplitude_percent),
+            phase_rad=float(line.phase_rad),
+            delta_chi_squared=float(line.delta_chi_squared),
+        )
+        for line in analysis.lines
+    ]
+
+    # Two accepted lines closer together than the wider one's own FWHM are one
+    # line as far as *seeding* is concerned: the consumer builds one damped
+    # cosine per peak, and two cosines inside a single linewidth are not a
+    # multiplet the fit can separate — they are one broad line the scan's
+    # peeling split in two, and seeding both spends a whole component on the
+    # duplicate. The scan's own separation rule is deliberately looser (it is
+    # deciding significance, where an over-split pair is the safe error); this
+    # is the tighter rule the seeding side needs. Lines arrive Δχ²-descending,
+    # so the survivor is always the better-determined of a pair.
+    peaks: list[DetectedPeak] = []
+    for peak in scan_peaks:
+        if any(
+            abs(peak.frequency_mhz - kept.frequency_mhz) < max(peak.width_mhz, kept.width_mhz)
+            for kept in peaks
+        ):
+            continue
+        peaks.append(peak)
+
+    nyquist = 0.0
+    if t.size > 1:
+        dt = float(np.median(np.diff(t)))
+        if dt > 0.0:
+            nyquist = 0.5 / dt
+    return PeakAnalysis(
+        peaks=tuple(peaks),
+        noise_floor=0.0,
+        # A scan peak is matched at its own linewidth, not at a global
+        # resolution; this is only the fallback for a peak with no width.
+        resolution_mhz=float(max(min((peak.width_mhz for peak in peaks), default=_EPS), _EPS)),
+        nyquist_mhz=nyquist,
+        detrended=False,
+        damped_lines=analysis,
+    )
+
+
+def merge_damped_scan_peaks(
+    analysis: PeakAnalysis,
+    scan: PeakAnalysis,
+    *,
+    max_peaks: int = 6,
+) -> PeakAnalysis:
+    """Fold damped-scan peaks into a Hann-pass analysis.
+
+    The merge policy is :func:`merge_early_peaks`'s, with one addition that only
+    the scan pass makes possible:
+
+    * **The Hann pass still wins a collision on frequency** — for a line it can
+      see at all, a transform of the whole informative record localises it
+      better than a scan rung does.  The collision radius is the scan line's own
+      linewidth ``λ/π`` (or the Hann resolution, whichever is coarser), because
+      that is the width of the thing being matched.
+    * **...but it inherits the measurement.**  The scan's λ, amplitude, phase
+      and Δχ² are copied onto the surviving Hann peak.  Dropping them would
+      throw away the only envelope estimate in the pipeline for a line both
+      passes can see — precisely the seeding information the wizard needs.
+    * Scan peaks that collide with nothing are **additions**, capped by
+      ``max_peaks`` with ``_EARLY_RESERVED_PEAKS`` slots reserved so a full Hann
+      peak set cannot starve the pass that exists to see what Hann cannot.
+    * ``damped_lines`` is always attached, even when the scan found nothing —
+      the threshold and trial count are the evidence that it looked.
+    """
+    kept = list(analysis.peaks)
+    additions: list[DetectedPeak] = []
+    for peak in scan.peaks:
+        radius = max(float(peak.width_mhz), float(analysis.resolution_mhz))
+        match_idx: int | None = None
+        best = math.inf
+        for i, existing in enumerate(kept):
+            if existing.source == "damped_scan":
+                continue
+            distance = abs(existing.frequency_mhz - peak.frequency_mhz)
+            if distance <= radius and distance < best:
+                best = distance
+                match_idx = i
+        if match_idx is None:
+            additions.append(peak)
+            continue
+        kept[match_idx] = replace(
+            kept[match_idx],
+            damping_rate_per_us=peak.damping_rate_per_us,
+            amplitude_percent=peak.amplitude_percent,
+            phase_rad=peak.phase_rad,
+            delta_chi_squared=peak.delta_chi_squared,
+        )
+
+    if additions:
+        cap = max(0, int(max_peaks))
+        reserved = min(len(additions), _EARLY_RESERVED_PEAKS)
+        kept_existing = kept[: max(0, cap - reserved)]
+        kept = kept_existing + additions[: max(0, cap - len(kept_existing))]
+
+    return replace(analysis, peaks=tuple(kept), damped_lines=scan.damped_lines)
+
+
 def analyze_dataset_peaks(
     dataset: MuonDataset,
     *,
@@ -970,7 +1219,7 @@ def analyze_dataset_peaks(
     max_peaks: int = 6,
     min_snr: float = 2.5,
     burg_check: str = "auto",
-    early_pass: bool = True,
+    damped_pass: bool = True,
 ) -> PeakAnalysis:
     """Detect oscillation lines in a time-domain dataset via FFT + Burg check.
 
@@ -979,11 +1228,14 @@ def analyze_dataset_peaks(
     :func:`detect_peaks_in_spectrum`.  A Burg (all-poles) cross-check may confirm
     but never add peaks — see ``burg_check``.
 
-    A second, **unwindowed early-window pass** then runs over a ladder of leading
-    crops (:func:`analyze_early_window_peaks`) and its peaks are merged in
-    (:func:`merge_early_peaks`).  That pass is what lets the wizard see an
+    A second, **matched-apodisation damped-line scan** then runs over the record
+    (:func:`analyze_damped_scan_peaks`) and its peaks are merged in
+    (:func:`merge_damped_scan_peaks`).  That pass is what lets the wizard see an
     oscillation whose lifetime is a small fraction of the record — the case the
-    Hann window structurally deletes.
+    Hann window structurally deletes — and, unlike the crop ladder it replaced
+    (:func:`analyze_early_window_peaks`, kept importable but no longer wired
+    here), it *measures* the envelope rate instead of inferring it from a crop
+    length.
 
     Parameters
     ----------
@@ -997,9 +1249,9 @@ def analyze_dataset_peaks(
         ``2·resolution``), ``"always"`` or ``"never"``.  The cross-check is
         scoped to the Hann pass: Burg is known to return a featureless
         1/f-like spectrum on a short, heavily damped window, so letting it
-        judge early-pass peaks would veto exactly the lines this pass exists
+        judge damped-scan peaks would veto exactly the lines that pass exists
         to find.
-    early_pass
+    damped_pass
         Set ``False`` to run the historical Hann-only detection.
     """
     t_full = np.asarray(dataset.time, dtype=float)
@@ -1061,14 +1313,20 @@ def analyze_dataset_peaks(
     if _should_run_burg(burg_check, n, analysis.peaks, resolution_mhz):
         analysis = _apply_burg_cross_check(analysis, signal, frequencies, dt, resolution_mhz)
 
-    if not early_pass:
+    if not damped_pass:
         return analysis
 
-    # Merged AFTER the Burg cross-check so early-pass peaks never reach it: Burg
-    # is unreliable on short damped windows and would veto them (see the
+    # The scan sees the same residual the Hann pass does — ``asymmetry −
+    # detrend_curve`` when a curve was given, tail-subtracted otherwise — but
+    # over the FULL record: it applies its own informative-window truncation,
+    # and its nuisance basis already carries a constant, so the tail
+    # subtraction is a no-op for it either way.
+    #
+    # Merged AFTER the Burg cross-check so scan peaks never reach it: Burg is
+    # unreliable on short damped windows and would veto them (see the
     # ``burg_check`` note above).
-    early = analyze_early_window_peaks(t, signal, error)
-    return merge_early_peaks(analysis, early, max_peaks=max_peaks)
+    scan = analyze_damped_scan_peaks(t_full, signal_full, err_full)
+    return merge_damped_scan_peaks(analysis, scan, max_peaks=max_peaks)
 
 
 def _should_run_burg(
@@ -1131,6 +1389,38 @@ def _apply_burg_cross_check(
 # --------------------------------------------------------------------------- #
 
 
+def _inherit_damped_scan_measurement(
+    peak: DetectedPeak, candidates: Sequence[DetectedPeak]
+) -> DetectedPeak:
+    """Copy the nearest damped-scan line's measurement onto ``peak``.
+
+    Only a ``"damped_scan"`` line whose own width ``λ/π`` brackets the offset
+    qualifies, and the nearest such line wins.  The width comes along with the
+    rest: it is what the seeding path's frequency bounds are cut from, and a
+    user click's nominal width (the Hann resolution) would bound a heavily
+    damped line far tighter than the line is wide.
+    """
+    best: DetectedPeak | None = None
+    best_distance = math.inf
+    for candidate in candidates:
+        if candidate.source != "damped_scan" or candidate.damping_rate_per_us is None:
+            continue
+        distance = abs(candidate.frequency_mhz - peak.frequency_mhz)
+        if distance <= max(candidate.width_mhz, _EPS) and distance < best_distance:
+            best_distance = distance
+            best = candidate
+    if best is None:
+        return peak
+    return replace(
+        peak,
+        width_mhz=best.width_mhz,
+        damping_rate_per_us=best.damping_rate_per_us,
+        amplitude_percent=best.amplitude_percent,
+        phase_rad=best.phase_rad,
+        delta_chi_squared=best.delta_chi_squared,
+    )
+
+
 def merge_user_peaks(
     analysis: PeakAnalysis, user_frequencies_mhz: NDArray[np.float64]
 ) -> PeakAnalysis:
@@ -1146,6 +1436,15 @@ def merge_user_peaks(
     ``max_peaks`` cap is re-applied here, and the relative order of the detected
     peaks — which is per-pass, since SNRs are not comparable across passes — is
     preserved.
+
+    A *fresh* user frequency (one that matched nothing at that radius) still
+    inherits the λ/amplitude/phase/Δχ² of a ``"damped_scan"`` peak lying within
+    one linewidth of it, and that peak's width with them.  The radius above is
+    the Hann pass's spectral resolution, orders of magnitude finer than a
+    heavily damped line's own ``λ/π`` width, so a user click on such a line
+    lands "fresh" while plainly naming the same oscillation — and the envelope
+    the scan measured is the one piece of seeding information the click itself
+    cannot carry.
     """
     user_freqs = [float(f) for f in np.atleast_1d(np.asarray(user_frequencies_mhz, dtype=float))]
     resolution = float(max(analysis.resolution_mhz, _EPS))
@@ -1173,17 +1472,16 @@ def merge_user_peaks(
                 )
             )
         else:
-            merged.append(
-                DetectedPeak(
-                    frequency_mhz=freq,
-                    amplitude=0.0,
-                    snr=USER_PEAK_SNR_SENTINEL,
-                    width_mhz=resolution,
-                    prominence=0.0,
-                    source="user",
-                    burg_confirmed=None,
-                )
+            fresh = DetectedPeak(
+                frequency_mhz=freq,
+                amplitude=0.0,
+                snr=USER_PEAK_SNR_SENTINEL,
+                width_mhz=resolution,
+                prominence=0.0,
+                source="user",
+                burg_confirmed=None,
             )
+            merged.append(_inherit_damped_scan_measurement(fresh, remaining))
 
     # Stable: user peaks first, everything else in the order the passes set.
     combined = merged + remaining
