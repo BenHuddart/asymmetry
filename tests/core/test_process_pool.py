@@ -11,6 +11,7 @@ a zombie, which still fails the "no leaked processes" bar. This exercises a real
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
 import subprocess
 import sys
 import time
@@ -19,6 +20,7 @@ import warnings
 
 import pytest
 
+from asymmetry._worker_env import BLAS_THREAD_ENV_VARS, blas_thread_pins
 from asymmetry.core.fitting.process_pool import (
     SpawnUnsafeWarning,
     main_module_has_spawn_guard,
@@ -235,3 +237,59 @@ def test_unguarded_script_runs_the_wizard_once_without_crashing(tmp_path) -> Non
     assert "Traceback" not in completed.stderr, completed.stderr
     assert "bootstrapping phase" not in completed.stderr, completed.stderr
     assert '__name__ == "__main__"' in completed.stderr, completed.stderr
+
+
+# --------------------------------------------------------------------------- #
+# BLAS thread pinning in the workers
+# --------------------------------------------------------------------------- #
+
+
+def _worker_blas_env(_ignored: int) -> dict[str, str]:
+    """Module-level (picklable under ``spawn``): report the worker's pins."""
+    return {name: os.environ.get(name, "") for name in BLAS_THREAD_ENV_VARS}
+
+
+def test_blas_thread_pins_skip_variables_the_caller_already_set() -> None:
+    """Setting any of them is the documented opt-out; an explicit value wins."""
+    assert blas_thread_pins({}) == dict.fromkeys(BLAS_THREAD_ENV_VARS, "1")
+
+    partial = blas_thread_pins({"OMP_NUM_THREADS": "4"})
+
+    assert "OMP_NUM_THREADS" not in partial
+    assert partial["MKL_NUM_THREADS"] == "1"
+    assert blas_thread_pins(dict.fromkeys(BLAS_THREAD_ENV_VARS, "8")) == {}
+
+
+def test_pinning_never_touches_the_parent_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wizard does not get to re-thread the caller's own numpy."""
+    for name in BLAS_THREAD_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+    pool = open_spawn_pool(2)
+    try:
+        assert all(name not in os.environ for name in BLAS_THREAD_ENV_VARS)
+    finally:
+        if pool is not None:
+            pool.shutdown()
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(180)
+def test_spawn_workers_start_with_their_blas_threads_pinned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inside a pool the oversubscription is worst and unreachable from outside."""
+    for name in BLAS_THREAD_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+    pool = open_spawn_pool(2)
+    if pool is None:
+        pytest.skip("spawn workers are unavailable in this environment")
+    try:
+        observed = pool.submit(_worker_blas_env, 0).result(timeout=120)
+    finally:
+        pool.shutdown()
+
+    assert observed == dict.fromkeys(BLAS_THREAD_ENV_VARS, "1")
