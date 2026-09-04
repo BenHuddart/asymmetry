@@ -3211,6 +3211,19 @@ class PlotPanel(QWidget):
             return dataset
         return dataset.time_range(t_min, t_max)
 
+    def get_full_fit_context(
+        self, dataset: MuonDataset | None
+    ) -> tuple[MuonDataset | None, tuple[float | None, float | None]]:
+        """Return *dataset* **uncropped**, alongside the active fit range.
+
+        The companion to :meth:`get_fit_dataset` for a consumer that needs the
+        whole record and the range separately rather than the crop: the fit
+        wizard detects lines across the full record (a heavily damped line
+        lives before most fit ranges start, a slow one needs the tail) while
+        still reporting what the user's range would do to them.
+        """
+        return dataset, self.get_fit_range()
+
     def get_fit_range(self) -> tuple[float | None, float | None]:
         """Return the active fit range as (x_min, x_max)."""
         if self._fit_x_min is None or self._fit_x_max is None:

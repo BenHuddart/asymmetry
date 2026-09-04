@@ -753,7 +753,7 @@ def test_fit_wizard_window_cached_restore_with_scope_and_peaks(
     assert window._analysis_stale is False
     assert window._stale_banner.isHidden() is True
     # The restored user peak repopulates the peaks table as a user row.
-    sources = [window._peaks_table.item(r, 4).text() for r in range(window._peaks_table.rowCount())]
+    sources = [window._peaks_table.item(r, 5).text() for r in range(window._peaks_table.rowCount())]
     assert "user" in sources
     freqs = [
         window._peaks_table.item(r, 0).data(_user_role())
@@ -767,6 +767,10 @@ def test_fit_wizard_window_cached_restore_with_scope_and_peaks(
 
 def _user_role():
     return Qt.ItemDataRole.UserRole
+
+
+def _display_role():
+    return Qt.ItemDataRole.DisplayRole
 
 
 def _press(window: FitWizardWindow, *, xdata: float, x: float = 100.0, y: float = 100.0):
@@ -791,7 +795,7 @@ def test_fit_wizard_window_fft_click_adds_and_removes_user_peak(
     window._on_fft_release(_release())
 
     assert any(abs(p["freq_mhz"] - 2.2) < 1e-9 for p in window._user_peaks)
-    sources = [window._peaks_table.item(r, 4).text() for r in range(window._peaks_table.rowCount())]
+    sources = [window._peaks_table.item(r, 5).text() for r in range(window._peaks_table.rowCount())]
     assert "user" in sources
 
     # A second click at the same frequency removes it (within ~12 device px).
@@ -864,8 +868,8 @@ def test_fit_wizard_window_peaks_table_shows_pattern_and_source(
 
     assert window._peaks_table.rowCount() == 2
     # First peak (index 0) carries the F-mu-F pattern label; source is "fft".
-    assert "F-mu-F triplet" in window._peaks_table.item(0, 3).text()
-    assert window._peaks_table.item(0, 4).text() == "fft"
+    assert "F-mu-F triplet" in window._peaks_table.item(0, 4).text()
+    assert window._peaks_table.item(0, 5).text() == "fft"
     # Auto rows are not removable.
     window._peaks_table.selectRow(0)
     qapp.processEvents()
@@ -902,7 +906,7 @@ def test_fit_wizard_window_remove_button_removes_user_peak(
     user_row = next(
         r
         for r in range(window._peaks_table.rowCount())
-        if window._peaks_table.item(r, 4).text() == "user"
+        if window._peaks_table.item(r, 5).text() == "user"
     )
     window._peaks_table.selectRow(user_row)
     qapp.processEvents()
@@ -929,7 +933,7 @@ def test_fit_wizard_window_pre_analysis_click_works(
     window._on_fft_release(_release())
 
     assert any(abs(p["freq_mhz"] - 3.3) < 1e-9 for p in window._user_peaks)
-    sources = [window._peaks_table.item(r, 4).text() for r in range(window._peaks_table.rowCount())]
+    sources = [window._peaks_table.item(r, 5).text() for r in range(window._peaks_table.rowCount())]
     assert sources == ["user"]
     # Pre-analysis: no recommendation, so no stale banner (correct behaviour).
     assert window._stale_banner.isHidden() is True
@@ -1391,4 +1395,247 @@ def test_fit_wizard_window_progress_callback_is_wired_through(
         "candidates",
         "verdict",
         "confidence",
+    )
+
+
+# ── Matched-apodisation scan lines in the fingerprint panel ──────────────────
+
+
+def _damped_scan_peak_analysis() -> PeakAnalysis:
+    """One accepted scan line (240 MHz, λ = 44 µs⁻¹) plus a Hann-pass line."""
+    return PeakAnalysis(
+        peaks=(
+            DetectedPeak(
+                frequency_mhz=240.0,
+                amplitude=4.7,
+                snr=8.5,
+                width_mhz=44.0 / np.pi,
+                prominence=0.0,
+                source="damped_scan",
+                damping_rate_per_us=44.0,
+                amplitude_percent=4.7,
+                phase_rad=0.3,
+                delta_chi_squared=612.0,
+            ),
+            DetectedPeak(
+                frequency_mhz=5.0,
+                amplitude=1.0,
+                snr=12.0,
+                width_mhz=0.3,
+                prominence=0.5,
+                source="fft",
+            ),
+        ),
+        noise_floor=0.0,
+        resolution_mhz=0.5,
+        nyquist_mhz=5000.0,
+        detrended=False,
+    )
+
+
+def _damped_scan_recommendation(
+    dataset: MuonDataset, *, rebin_factor: int = 1, analysed_points: int = 0
+) -> FitWizardRecommendation:
+    base = _fake_recommendation(dataset)
+    return dataclasses.replace(
+        base,
+        peak_analysis=_damped_scan_peak_analysis(),
+        fingerprint=dataclasses.replace(
+            base.fingerprint,
+            damped_line_frequency_mhz=240.0,
+            damped_line_snr=8.5,
+            damped_line_rate_per_us=44.0,
+        ),
+        rebin_factor=rebin_factor,
+        analysed_points=analysed_points,
+    )
+
+
+def _show_damped_result(
+    window: FitWizardWindow,
+    dataset: MuonDataset,
+    *,
+    rebin_factor: int = 1,
+    analysed_points: int = 0,
+    fit_range: tuple[float | None, float | None] | None = None,
+) -> None:
+    """Drive the window to the Result page from a canned scan recommendation."""
+    window.set_analysis_context(dataset, fit_range=fit_range)
+    window.set_cached_recommendation(
+        _damped_scan_recommendation(
+            dataset, rebin_factor=rebin_factor, analysed_points=analysed_points
+        )
+    )
+
+
+def test_fit_wizard_window_peaks_table_shows_the_measured_damping(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    window = FitWizardWindow()
+    _show_damped_result(window, dataset)
+
+    assert window._peaks_table.columnCount() == 6
+    assert window._peaks_table.horizontalHeaderItem(3).text() == "Damping (µs⁻¹)"
+
+    sources = [window._peaks_table.item(r, 5).text() for r in range(window._peaks_table.rowCount())]
+    scan_row = sources.index("damped_scan")
+    hann_row = sources.index("fft")
+    assert window._peaks_table.item(scan_row, 3).data(_display_role()) == pytest.approx(44.0)
+    # A windowed-pass line has no measured envelope, and says so rather than
+    # borrowing a number from somewhere else.
+    assert window._peaks_table.item(hann_row, 3).text() == "—"
+
+    tooltip = window._peaks_table.item(scan_row, 3).toolTip()
+    assert "matched-apodisation scan" in tooltip
+    assert "4.7 %" in tooltip and "0.3 rad" in tooltip and "612" in tooltip
+    assert window._peaks_table.item(hann_row, 3).toolTip() == ""
+
+
+def test_fit_wizard_window_draws_scan_lines_dashed_on_the_windowed_fft(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    window = FitWizardWindow()
+    _show_damped_result(window, dataset)
+
+    def _marker_at(frequency: float):
+        for line in window._fft_ax.lines:
+            xdata = np.asarray(line.get_xdata(), dtype=float)
+            if xdata.size == 2 and abs(xdata[0] - frequency) < 1e-9:
+                return line
+        raise AssertionError(f"no marker drawn at {frequency} MHz")
+
+    # Dashed for the scan line; the Hann-pass line keeps the solid marker.
+    assert _marker_at(240.0).get_linestyle() == "--"
+    assert _marker_at(5.0).get_linestyle() == "-"
+    legend = window._fft_ax.get_legend()
+    assert legend is not None
+    labels = [text.get_text() for text in legend.get_texts()]
+    assert labels == [wizard_window_module._DAMPED_SCAN_LEGEND_LABEL]
+    assert "not expected to be visible in this windowed transform" in labels[0]
+
+
+def test_fit_wizard_window_fingerprint_rows_appear_only_with_a_damped_line(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    window = FitWizardWindow()
+    _show_damped_result(window, dataset)
+
+    def _labels() -> list[str]:
+        table = window._fingerprint_table
+        return [table.item(r, 0).text() for r in range(table.rowCount())]
+
+    def _value(label: str) -> str:
+        table = window._fingerprint_table
+        return table.item(_labels().index(label), 1).text()
+
+    assert "Damped line frequency" in _labels()
+    assert _value("Damped line frequency").endswith("MHz")
+    assert _value("Damped line damping rate").startswith("44.")
+    assert _value("Damped line scan SNR") == "8.500"
+
+    # A fingerprint with no accepted scan line does not carry the rows at all.
+    window.set_cached_recommendation(_fake_recommendation(dataset))
+    assert "Damped line frequency" not in _labels()
+
+
+def test_fit_wizard_window_notes_a_fit_range_that_excludes_the_damped_line(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    window = FitWizardWindow()
+    # 1/λ is 23 ns, so a range opening at 1 µs starts long after the line is gone.
+    _show_damped_result(window, dataset, fit_range=(1.0, 8.0))
+
+    assert window._notes_banner.isHidden() is False
+    note = window._notes_banner.text()
+    assert note.startswith("The plot's fit range starts at 1 µs, after the 240 MHz line")
+    assert "widen the range before applying this fit." in note
+
+
+def test_fit_wizard_window_says_nothing_when_the_fit_range_keeps_the_line(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    window = FitWizardWindow()
+    _show_damped_result(window, dataset, fit_range=(0.0, 8.0))
+
+    assert window._notes_banner.text() == ""
+    assert window._notes_banner.isHidden() is True
+
+
+def test_fit_wizard_window_notes_rebinned_candidate_fitting(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    window = FitWizardWindow()
+    _show_damped_result(window, dataset, rebin_factor=8, analysed_points=11250)
+
+    assert window._notes_banner.text() == (
+        "Candidates were fitted on a ×8 rebinned copy (11250 points); "
+        "information criteria refer to that record."
+    )
+
+
+def test_fit_wizard_window_analyses_the_uncropped_record(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wizard fingerprints the whole record, not the plot's fit-range crop."""
+    cropped = dataset.time_range(2.0, 6.0)
+    seen: list[MuonDataset] = []
+
+    def _capture(dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs):
+        seen.append(dataset)
+        return _fake_recommendation(dataset)
+
+    monkeypatch.setattr(wizard_window_module, "build_fit_wizard_recommendation", _capture)
+    window = FitWizardWindow()
+    window.set_analysis_context(cropped, full_dataset=dataset, fit_range=(2.0, 6.0))
+
+    assert window._dataset is dataset
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    assert len(seen) == 1
+    assert seen[0] is dataset
+    assert seen[0].n_points > cropped.n_points
+
+
+def test_fit_wizard_window_click_seeded_frequency_carries_a_damping_estimate(
+    qapp: QApplication,
+) -> None:
+    """A click on a heavily damped line seeds λ as well as the frequency."""
+    rng = np.random.default_rng(5)
+    time = np.arange(8000, dtype=float) * 1e-4
+    error = np.minimum(1.5 * np.exp(time / 4.4), 25.0)
+    asymmetry = (
+        4.7 * np.exp(-44.0 * time) * np.cos(2.0 * np.pi * 240.0 * time + 0.3)
+        + 2.6 * np.exp(-0.19 * time)
+        + 4.6
+        + rng.normal(0.0, error)
+    )
+    damped = MuonDataset(time=time, asymmetry=asymmetry, error=error, metadata={"run_number": 202})
+
+    window = FitWizardWindow()
+    window.set_analysis_context(damped)
+    window._fingerprint_plot_widget._canvas.draw()
+
+    px = float(window._fft_ax.transData.transform((240.0, 0.0))[0])
+    window._on_fft_press(_press(window, xdata=240.0, x=px))
+    window._on_fft_release(_release())
+
+    seed = window._user_peaks[0]
+    assert seed["damping_rate_per_us"] == pytest.approx(44.0, rel=0.35)
+    # ...and the peaks table shows the estimate it just gained.
+    row = [
+        r
+        for r in range(window._peaks_table.rowCount())
+        if window._peaks_table.item(r, 5).text() == "user"
+    ][0]
+    assert window._peaks_table.item(row, 3).data(_display_role()) == pytest.approx(
+        seed["damping_rate_per_us"]
     )

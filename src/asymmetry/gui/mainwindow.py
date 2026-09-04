@@ -1685,6 +1685,11 @@ class MainWindow(QMainWindow):
 
         # Right dock — fit controls
         self._fit_panel = FitPanel()
+        # The panel is handed the fit-range crop (see _get_fit_dataset); the fit
+        # wizard needs the whole record and the range separately, so give it a
+        # way to ask for both without threading a second dataset through every
+        # set_dataset call site.
+        self._fit_panel.set_full_fit_context_provider(self._get_full_fit_context)
         self._multi_group_fit_window = MultiGroupFitWindow(self)
         self._multi_group_fit_window.grouped_fit_completed.connect(
             lambda grouped_datasets, results_dict: self._on_grouped_fit_completed(
@@ -14235,6 +14240,16 @@ class MainWindow(QMainWindow):
         """Return analysis dataset restricted to the active fit range."""
         analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)
         return self._plot_panel.get_fit_dataset(analysis_dataset)
+
+    def _get_full_fit_context(self):
+        """Return the current analysis dataset **uncropped**, plus the fit range.
+
+        The fit panel is only ever handed the crop (``_get_fit_dataset``); this
+        is the accessor the fit wizard uses to analyse the whole record while
+        still knowing what the user's fit range would exclude.
+        """
+        analysis_dataset = self._plot_panel.get_analysis_dataset(self._current_dataset)
+        return self._plot_panel.get_full_fit_context(analysis_dataset)
 
     def _active_frequency_fit_dataset(self) -> MuonDataset | None:
         """Return the currently displayed Fourier spectrum clipped to its fit range."""

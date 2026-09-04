@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
+from asymmetry.core.fitting.damped_line_scan import measure_line_at_frequency
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
@@ -88,6 +89,46 @@ _MULTIPLET_KIND_LABELS = {
     "fmuf_linear": "F-mu-F triplet",
     "muf": "mu-F triplet",
 }
+
+#: Legend entry for the matched-apodisation scan's lines on the FFT plot. The
+#: plot underneath is the Hann-windowed transform, which is precisely the view
+#: a heavily damped line is missing from, so the marker has to say so itself.
+_DAMPED_SCAN_LEGEND_LABEL = (
+    "Matched-apodisation scan line — not expected to be visible in this windowed transform"
+)
+
+#: Peaks-table tooltip for one scan line: the measurement the scan made, which
+#: no other pass reports.
+_DAMPED_SCAN_TOOLTIP = (
+    "Found by the matched-apodisation scan, not by the windowed transform, so the "
+    "line is not expected to be visible under its marker.\n"
+    "Amplitude {amplitude:.3g} %, phase {phase:.3g} rad, Δχ² {delta_chi2:.4g}."
+)
+
+#: The same measurement, for a frequency the user seeded rather than the scan
+#: found.
+_SEEDED_LINE_TOOLTIP = (
+    "Envelope measured at the seeded frequency by the matched-apodisation Δχ² test.\n"
+    "Amplitude {amplitude:.3g} %, phase {phase:.3g} rad, Δχ² {delta_chi2:.4g}."
+)
+
+#: Result note shown when the plot's fit range would exclude most of a detected
+#: damped line. The wizard analyses the whole record, but Apply hands the model
+#: to a fit panel that is still fitting the user's range.
+_FIT_RANGE_NOTE = (
+    "The plot's fit range starts at {t_min:.3g} µs, after the {frequency:.3g} MHz line "
+    "(1/λ = {lifetime:.3g} µs) has decayed; widen the range before applying this fit."
+)
+
+#: Result note shown when the candidates were fitted on a rebinned copy.
+_REBIN_NOTE = (
+    "Candidates were fitted on a ×{factor} rebinned copy ({points} points); "
+    "information criteria refer to that record."
+)
+
+#: Multiple of a line's 1/e lifetime after which the line is gone: a fit range
+#: starting later than this excludes essentially all of it.
+_FIT_RANGE_LIFETIMES = 3.0
 
 #: Stacked-widget page indices.
 _PAGE_WELCOME = 0
@@ -157,6 +198,11 @@ class FitWizardWindow(WizardWindowBase):
         """
         # --- Result / analysis state ---
         self._dataset: MuonDataset | None = None
+        #: The plot panel's active fit range, when the caller supplied one. The
+        #: wizard analyses the whole record (``_dataset``), so this is carried
+        #: only to warn when applying the result into that range would throw
+        #: away the very line the recommendation rests on.
+        self._fit_range: tuple[float | None, float | None] = (None, None)
         self._current_model: CompositeModel | None = None
         self._recommendation: FitWizardRecommendation | None = None
         self._selected_key: str | None = None
@@ -191,6 +237,14 @@ class FitWizardWindow(WizardWindowBase):
         )
         self._stale_banner.setVisible(False)
         self._central_layout.addWidget(self._stale_banner)
+
+        # --- Analysis notes (fit range, rebinned fitting) ---
+        # Above the stack, so a note raised by a finished analysis stays on
+        # screen when Re-analyze returns to the Welcome page — which is exactly
+        # where the user would act on it.
+        self._notes_banner = make_warning_banner("")
+        self._notes_banner.setVisible(False)
+        self._central_layout.addWidget(self._notes_banner)
 
         # --- The stack ---
         self._stack = QStackedWidget()
@@ -350,9 +404,9 @@ class FitWizardWindow(WizardWindowBase):
         self._fingerprint_table.horizontalHeader().setStretchLastSection(True)
         grid.addWidget(self._fingerprint_table, 0, 1)
 
-        self._peaks_table = QTableWidget(0, 5)
+        self._peaks_table = QTableWidget(0, 6)
         self._peaks_table.setHorizontalHeaderLabels(
-            ["Freq (MHz)", "SNR", "Width (MHz)", "Pattern", "Source"]
+            ["Freq (MHz)", "SNR", "Width (MHz)", "Damping (µs⁻¹)", "Pattern", "Source"]
         )
         self._peaks_table.horizontalHeader().setStretchLastSection(True)
         self._peaks_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -453,10 +507,28 @@ class FitWizardWindow(WizardWindowBase):
         self,
         dataset: MuonDataset,
         current_model: CompositeModel | None = None,
+        *,
+        full_dataset: MuonDataset | None = None,
+        fit_range: tuple[float | None, float | None] | None = None,
     ) -> None:
-        """Prepare the wizard for a new dataset/model context (→ Welcome)."""
-        self._dataset = dataset
+        """Prepare the wizard for a new dataset/model context (→ Welcome).
+
+        ``dataset`` is the record the single-fit tab is fitting — the plot
+        panel's fit-range crop. ``full_dataset``, when the caller can supply it,
+        is the same record *uncropped*, and is what the wizard analyses: a
+        heavily damped line lives in the first tens of nanoseconds and a
+        conventional line needs the late tail, so a detection run on the user's
+        fit range answers a different question from the one the user asked. The
+        fit itself is unaffected — Apply hands parameters to the fit panel,
+        which keeps fitting ``fit_range`` — but a range that would exclude a
+        detected line is worth saying out loud, which is what ``fit_range`` is
+        carried for. Callers that pass neither keep the previous behaviour.
+        """
+        self._dataset = full_dataset if full_dataset is not None else dataset
+        self._fit_range = (fit_range[0], fit_range[1]) if fit_range is not None else (None, None)
         self._current_model = current_model
+        self._notes_banner.setText("")
+        self._notes_banner.setVisible(False)
         self._cached_log_text = ""
         self._cached_signature = None
         self._analysis_request_id += 1
@@ -800,6 +872,7 @@ class FitWizardWindow(WizardWindowBase):
         )
         self._answer_card.set_recommendation(self._recommendation)
         self._answer_card.set_selected_key(self._selected_key)
+        self._update_analysis_notes()
 
         # Deep-panel content.
         self._fingerprint_banner.setText(self._fingerprint_banner_text())
@@ -816,6 +889,51 @@ class FitWizardWindow(WizardWindowBase):
         self._reparent_into_trail_slot("conditions", self._scope_panel)
         self._reparent_into_trail_slot("spectrum", self._fingerprint_panel)
         self._reparent_into_trail_slot("candidates", self._compare_panel)
+
+    def _analysis_notes(self) -> list[str]:
+        """Caveats about the analysed record that the answer card cannot carry.
+
+        Two of them: the wizard analysed the whole record but Apply hands the
+        model to a fit panel still fitting the plot's range, and a range that
+        starts after a detected damped line has decayed would fit a spectrum
+        that no longer contains it; and, on a long record, the candidates were
+        fitted on a rebinned copy, so every information criterion in the
+        comparison table refers to that copy rather than to the raw record.
+        """
+        if self._recommendation is None:
+            return []
+        notes: list[str] = []
+        t_min = self._fit_range[0]
+        analysis = self._recommendation.peak_analysis
+        if t_min is not None and analysis is not None:
+            for peak in analysis.peaks:
+                rate = peak.damping_rate_per_us
+                if peak.source != "damped_scan" or not rate:
+                    continue
+                lifetime = 1.0 / float(rate)
+                if float(t_min) > _FIT_RANGE_LIFETIMES * lifetime:
+                    notes.append(
+                        _FIT_RANGE_NOTE.format(
+                            t_min=float(t_min),
+                            frequency=float(peak.frequency_mhz),
+                            lifetime=lifetime,
+                        )
+                    )
+                    break
+        if self._recommendation.rebin_factor > 1:
+            notes.append(
+                _REBIN_NOTE.format(
+                    factor=int(self._recommendation.rebin_factor),
+                    points=int(self._recommendation.analysed_points),
+                )
+            )
+        return notes
+
+    def _update_analysis_notes(self) -> None:
+        """Show (or hide) the analysis-note strip above the stacked pages."""
+        notes = self._analysis_notes()
+        self._notes_banner.setText(" ".join(notes))
+        self._notes_banner.setVisible(bool(notes))
 
     def _reparent_into_trail_slot(self, key: str, panel: QWidget) -> None:
         """Move a deep panel into the result trail's step ``key`` expansion."""
@@ -904,6 +1022,22 @@ class FitWizardWindow(WizardWindowBase):
             ("Semilog slope ratio", f"{fingerprint.semilog_slope_ratio:.6f}"),
             ("Late-time dip/recovery", f"{fingerprint.late_time_dip_recovery_score:.6f}"),
         ]
+        if fingerprint.has_damped_line_candidate:
+            # Only meaningful when the matched-apodisation scan accepted a line;
+            # on a conventional record these rows would all read zero.
+            rows.extend(
+                [
+                    (
+                        "Damped line frequency",
+                        f"{fingerprint.damped_line_frequency_mhz:.6f} MHz",
+                    ),
+                    (
+                        "Damped line damping rate",
+                        f"{fingerprint.damped_line_rate_per_us:.6f} µs⁻¹",
+                    ),
+                    ("Damped line scan SNR", f"{fingerprint.damped_line_snr:.3f}"),
+                ]
+            )
         self._fingerprint_table.setRowCount(len(rows))
         for row, (label, value) in enumerate(rows):
             self._fingerprint_table.setItem(row, 0, QTableWidgetItem(label))
@@ -964,6 +1098,7 @@ class FitWizardWindow(WizardWindowBase):
         self._user_peak_artists = []
         analysis = self._recommendation.peak_analysis if self._recommendation else None
         if analysis is not None:
+            scan_label: str | None = _DAMPED_SCAN_LEGEND_LABEL
             for peak in analysis.peaks:
                 if peak.source in ("fft", "residual_fft"):
                     ax_fft.axvline(
@@ -976,14 +1111,22 @@ class FitWizardWindow(WizardWindowBase):
                     # This plot is the Hann-windowed transform, which is exactly
                     # the view a heavily damped line is absent from. Mark it in a
                     # distinct style so the seed is visible and obviously not a
-                    # feature of the spectrum drawn underneath it.
+                    # feature of the spectrum drawn underneath it: dotted for the
+                    # early-window crop ladder, dashed for the matched-apodisation
+                    # scan, which also names itself in the legend.
+                    is_scan = peak.source == "damped_scan"
                     ax_fft.axvline(
                         peak.frequency_mhz,
                         color=tokens.ACCENT,
                         alpha=0.55,
                         linewidth=1.2,
-                        linestyle=":",
+                        linestyle="--" if is_scan else ":",
+                        label=scan_label if is_scan else None,
                     )
+                    if is_scan:
+                        scan_label = None  # one legend entry, not one per line
+            if scan_label is None:
+                ax_fft.legend(loc="upper right", fontsize="x-small", framealpha=0.8)
         self._refresh_peak_overlays()
         canvas.draw_idle()
 
@@ -1037,8 +1180,10 @@ class FitWizardWindow(WizardWindowBase):
                         "freq_mhz": peak.frequency_mhz,
                         "snr": None if is_user else peak.snr,
                         "width_mhz": peak.width_mhz,
+                        "damping_rate_per_us": peak.damping_rate_per_us,
                         "pattern": pattern,
                         "source": "user" if is_user else peak.source,
+                        "tooltip": _peak_measurement_tooltip(peak.source, peak),
                     }
                 )
         for u_idx, user_peak in enumerate(self._user_peaks):
@@ -1049,8 +1194,13 @@ class FitWizardWindow(WizardWindowBase):
                     "freq_mhz": float(user_peak["freq_mhz"]),
                     "snr": None,
                     "width_mhz": None,
+                    # A click-seeded frequency carries the envelope measured
+                    # for it at click time (``_measure_user_peak``); a click on
+                    # a line with nothing under it carries nothing.
+                    "damping_rate_per_us": user_peak.get("damping_rate_per_us"),
                     "pattern": "",
                     "source": "user",
+                    "tooltip": _peak_measurement_tooltip("user", user_peak),
                 }
             )
         return rows
@@ -1075,14 +1225,26 @@ class FitWizardWindow(WizardWindowBase):
                 if entry["width_mhz"] is None
                 else _numeric_item(entry["width_mhz"]),
             )
-            self._peaks_table.setItem(row, 3, QTableWidgetItem(entry["pattern"]))
-            self._peaks_table.setItem(row, 4, QTableWidgetItem(entry["source"]))
+            damping = entry.get("damping_rate_per_us")
+            self._peaks_table.setItem(
+                row,
+                3,
+                QTableWidgetItem("—") if damping is None else _numeric_item(damping),
+            )
+            self._peaks_table.setItem(row, 4, QTableWidgetItem(entry["pattern"]))
+            self._peaks_table.setItem(row, 5, QTableWidgetItem(entry["source"]))
+            tooltip = str(entry.get("tooltip") or "")
+            if tooltip:
+                for column in range(self._peaks_table.columnCount()):
+                    item = self._peaks_table.item(row, column)
+                    if item is not None:
+                        item.setToolTip(tooltip)
         self._on_peaks_selection_changed()
 
     def _on_peaks_selection_changed(self) -> None:
         """Enable the remove button only when the selected row is a user peak."""
         row = self._peaks_table.currentRow()
-        source_item = self._peaks_table.item(row, 4) if row >= 0 else None
+        source_item = self._peaks_table.item(row, 5) if row >= 0 else None
         is_user = source_item is not None and source_item.text() == "user"
         self._remove_peak_btn.setEnabled(bool(is_user))
 
@@ -1091,7 +1253,7 @@ class FitWizardWindow(WizardWindowBase):
         row = self._peaks_table.currentRow()
         if row < 0:
             return
-        source_item = self._peaks_table.item(row, 4)
+        source_item = self._peaks_table.item(row, 5)
         if source_item is None or source_item.text() != "user":
             return
         freq_item = self._peaks_table.item(row, 0)
@@ -1153,10 +1315,52 @@ class FitWizardWindow(WizardWindowBase):
         freq, x_press, _y_press = candidate
         removed = self._remove_user_peak_at_pixel(x_press)
         if not removed:
-            self._user_peaks.append({"freq_mhz": float(freq), "source": "user"})
+            self._user_peaks.append(self._measure_user_peak(float(freq)))
         self._refresh_peak_overlays()
         self._populate_peaks_table()
         self._mark_analysis_stale("Peak seeds changed")
+
+    def _measure_user_peak(self, frequency_mhz: float) -> dict:
+        """Build a user-peak record for a click, with its envelope measured.
+
+        A click carries a frequency and nothing else, yet the one thing a
+        heavily damped line needs seeding with is how fast it decays. The core
+        runs its Δχ² test at the stated frequency over the τ ladder
+        (:func:`~asymmetry.core.fitting.damped_line_scan.measure_line_at_frequency`),
+        and returns ``None`` when nothing there clears the threshold — a click
+        on empty spectrum stays a bare frequency, as before.
+
+        This runs **inline on the GUI thread**, which the general rule forbids
+        for real work. It is allowed here because the cost was measured rather
+        than assumed: 25-65 ms on a 90 000-point record (one SVD of an n×5
+        design plus a few hundred closed-form projections), against a click the
+        user has just finished making. Anything slower would belong on the
+        worker; if the budget ever changes, this is the call to move.
+        """
+        peak: dict = {"freq_mhz": float(frequency_mhz), "source": "user"}
+        if self._dataset is None:
+            return peak
+        try:
+            line = measure_line_at_frequency(
+                np.asarray(self._dataset.time, dtype=float),
+                np.asarray(self._dataset.asymmetry, dtype=float),
+                np.asarray(self._dataset.error, dtype=float),
+                float(frequency_mhz),
+            )
+        except np.linalg.LinAlgError:
+            # A degenerate design (all-equal errors on a flat record, say) must
+            # not turn a peak seed into a traceback; the seed still works, it
+            # just carries no envelope.
+            return peak
+        if line is None:
+            return peak
+        peak.update(
+            damping_rate_per_us=float(line.damping_rate_per_us),
+            amplitude_percent=float(line.amplitude_percent),
+            phase_rad=float(line.phase_rad),
+            delta_chi_squared=float(line.delta_chi_squared),
+        )
+        return peak
 
     def _remove_user_peak_at_pixel(self, x_pixel: float) -> bool:
         """Remove the user peak whose marker is within ~12 device px of ``x_pixel``."""
@@ -1380,6 +1584,28 @@ def _running_placeholder_steps() -> tuple:
         TrailStep("verdict", "Weighing the winner against a null baseline…", "verdict", ()),
         TrailStep("confidence", "Grading confidence…", "confidence", ()),
     )
+
+
+def _peak_measurement_tooltip(source: str, payload: object) -> str:
+    """Tooltip for a peaks-table row whose envelope was actually measured.
+
+    ``payload`` is either a ``DetectedPeak`` or one of the window's own
+    user-peak dicts; both carry the same four field names. A row with no
+    measurement (every windowed-pass peak, and a click on empty spectrum) gets
+    no tooltip at all.
+    """
+
+    def _field(name: str) -> float | None:
+        value = payload.get(name) if isinstance(payload, dict) else getattr(payload, name, None)
+        return None if value is None else float(value)
+
+    amplitude = _field("amplitude_percent")
+    phase = _field("phase_rad")
+    delta_chi2 = _field("delta_chi_squared")
+    if amplitude is None or phase is None or delta_chi2 is None:
+        return ""
+    template = _DAMPED_SCAN_TOOLTIP if source == "damped_scan" else _SEEDED_LINE_TOOLTIP
+    return template.format(amplitude=amplitude, phase=phase, delta_chi2=delta_chi2)
 
 
 def _numeric_item(value: float | None) -> QTableWidgetItem:
