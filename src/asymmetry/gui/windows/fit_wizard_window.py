@@ -946,6 +946,16 @@ class FitWizardWindow(WizardWindowBase):
             return ""
         fingerprint = self._recommendation.fingerprint
         notes: list[str] = []
+        if fingerprint.has_damped_line_candidate:
+            # The scan's line is the evidence for the oscillatory verdict on a
+            # heavily damped record; say so before the windowed-FFT features,
+            # which on such a record describe only the slow background.
+            notes.append(
+                "The matched-apodisation scan found a damped line at "
+                f"{fingerprint.damped_line_frequency_mhz:.4g} MHz with envelope rate "
+                f"{fingerprint.damped_line_rate_per_us:.3g} µs⁻¹ "
+                f"(scan SNR {fingerprint.damped_line_snr:.1f})."
+            )
         if fingerprint.oscillatory_hint:
             notes.append(
                 "Resolved structure supports an oscillatory interpretation: "

@@ -1535,10 +1535,17 @@ def test_fit_wizard_window_fingerprint_rows_appear_only_with_a_damped_line(
     assert _value("Damped line frequency").endswith("MHz")
     assert _value("Damped line damping rate").startswith("44.")
     assert _value("Damped line scan SNR") == "8.500"
+    # The interpretation banner names the scan line as the evidence, ahead of
+    # the windowed-FFT features (which describe only the slow background here).
+    banner = window._fingerprint_banner.text()
+    assert banner.startswith("The matched-apodisation scan found a damped line at ")
+    assert "envelope rate 44" in banner
+    assert "scan SNR 8.5" in banner
 
     # A fingerprint with no accepted scan line does not carry the rows at all.
     window.set_cached_recommendation(_fake_recommendation(dataset))
     assert "Damped line frequency" not in _labels()
+    assert "matched-apodisation scan found" not in window._fingerprint_banner.text()
 
 
 def test_fit_wizard_window_notes_a_fit_range_that_excludes_the_damped_line(
