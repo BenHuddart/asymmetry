@@ -27,6 +27,7 @@ from asymmetry.core.fitting.engine import FitCancelledError, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     _FIT_WIZARD_TITLES,
     _FMUF_R_LADDER,
+    _MIN_CYCLES_IN_EFFECTIVE_WINDOW,
     CandidateAssessment,
     CandidateTemplate,
     ConfidenceTier,
@@ -64,6 +65,7 @@ from asymmetry.core.fitting.peak_detection import (
     DetectedPeak,
     MultipletMatch,
     PeakAnalysis,
+    effective_analysis_window,
 )
 from asymmetry.core.fitting.wizard_scope import (
     WizardScope,
@@ -1346,6 +1348,153 @@ def test_resolvable_frequency_without_any_peak_is_disqualified() -> None:
         dataset, (_assessment_with_frequency(1.30),), _peaks_at()
     )
     assert any("no supporting detected" in r for r in updated.disqualification_reasons)
+
+
+def _wide_scan_peaks(frequency_mhz: float, damping_per_us: float) -> PeakAnalysis:
+    """One damped-scan line of Lorentzian FWHM ``λ/π``. All values invented."""
+    return PeakAnalysis(
+        peaks=(
+            DetectedPeak(
+                frequency_mhz=frequency_mhz,
+                amplitude=1.0,
+                snr=8.0,
+                width_mhz=damping_per_us / math.pi,
+                prominence=1.0,
+                source="damped_scan",
+                damping_rate_per_us=damping_per_us,
+                delta_chi_squared=120.0,
+            ),
+        ),
+        noise_floor=1.0,
+        resolution_mhz=0.1,
+        nyquist_mhz=5000.0,
+        detrended=False,
+    )
+
+
+def test_a_wide_scan_line_supports_a_fitted_frequency_inside_its_own_width() -> None:
+    """A 10 % rule ignores the line's width, which for a damped line dominates.
+
+    The scan measures a 107.7 MHz line damped at 89 µs⁻¹ — FWHM ``λ/π`` ≈ 28 MHz.
+    A fit that settles at 97.8 MHz is 9.9 MHz off centre: a third of one width,
+    and unambiguously the same line, but 0.1 MHz outside a flat 10 %.
+    """
+    dataset = _exploding_error_dataset_for_support()
+
+    (updated,) = _apply_frequency_support_disqualifiers(
+        dataset, (_assessment_with_frequency(97.81),), _wide_scan_peaks(107.7, 89.0)
+    )
+
+    assert updated.disqualification_reasons == ()
+
+
+def test_a_narrow_line_at_the_same_centre_does_not_support_it() -> None:
+    """The width is a floor on the tolerance, not a licence to match anything."""
+    dataset = _exploding_error_dataset_for_support()
+    narrow = _wide_scan_peaks(107.7, 89.0)
+    narrow = replace(narrow, peaks=(replace(narrow.peaks[0], width_mhz=0.5),))
+
+    (updated,) = _apply_frequency_support_disqualifiers(
+        dataset, (_assessment_with_frequency(97.81),), narrow
+    )
+
+    assert any("no supporting detected" in reason for reason in updated.disqualification_reasons)
+
+
+def _counting_error_tf_record(n_points: int = 6000, *, seed: int = 7) -> MuonDataset:
+    """A TF record whose per-bin σ carries its own counting scatter. All invented.
+
+    Real µSR errors come from bin counts, so σ is itself noisy — and
+    ``effective_analysis_window`` truncates at the FIRST bin whose σ exceeds 5×
+    the early σ.  An early scatter excursion therefore cuts the raw record
+    sooner than it cuts a rebinned copy, whose averaged σ is smoother: 2.80 µs
+    against 3.37 µs at ×6 here.  That is the whole reason the window arithmetic
+    may not be done on the analysed (possibly rebinned) copy.
+    """
+    rng = np.random.default_rng(seed)
+    time = np.arange(n_points, dtype=float) * 1e-3
+    counts = rng.poisson(np.maximum((100.0 / 10.0) ** 2 * np.exp(-time / 1.2), 0.5))
+    error = np.minimum(100.0 / np.sqrt(np.maximum(counts, 1)), 100.0)
+    signal = (
+        20.0 * np.exp(-1.8 * time) * np.cos(2.0 * np.pi * 0.69 * time)
+        + 5.0 * np.exp(-2.0 * time)
+        + 3.0
+    )
+    return MuonDataset(
+        time=time,
+        asymmetry=signal + rng.normal(0.0, error),
+        error=error,
+        metadata={"run_number": 1, "field": 50.0, "field_direction": "TF"},
+    )
+
+
+def _effective_window_us(dataset: MuonDataset) -> float:
+    time = np.asarray(dataset.time, dtype=float)
+    end = effective_analysis_window(time, np.asarray(dataset.error, dtype=float))
+    return float(time[end - 1] - time[0])
+
+
+def test_rebinning_lengthens_the_informative_window_of_a_counting_error_record() -> None:
+    """The premise of the parity test below, stated on its own."""
+    dataset = _counting_error_tf_record()
+
+    raw = _effective_window_us(dataset)
+    rebinned = _effective_window_us(dataset.rebin(6))
+
+    assert rebinned > 1.15 * raw
+    # ...and the 0.69 MHz line straddles the two-cycle floor because of it.
+    assert 0.69 * raw < _MIN_CYCLES_IN_EFFECTIVE_WINDOW <= 0.69 * rebinned
+
+
+def test_frequency_support_verdict_differs_between_the_record_and_its_rebinned_copy() -> None:
+    """Which record the disqualifier is handed decides the verdict outright."""
+    dataset = _counting_error_tf_record()
+    assessment = _assessment_with_frequency(0.69)
+
+    (raw,) = _apply_frequency_support_disqualifiers(dataset, (assessment,), _peaks_at(0.69))
+    (rebinned,) = _apply_frequency_support_disqualifiers(
+        dataset.rebin(6), (assessment,), _peaks_at(0.69)
+    )
+
+    assert any("informative window" in reason for reason in raw.disqualification_reasons)
+    assert rebinned.disqualification_reasons == ()
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(600)
+def test_build_measures_the_window_on_the_full_record_even_when_it_rebins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wiring: fits move to the rebinned copy, the window arithmetic does not.
+
+    A cost heuristic must not be able to change whether a precession line is a
+    supportable claim.  Both quantities the verdict rests on are checked: the
+    dataset the disqualifier is handed, and the resolution the edge-of-window
+    caveat reads off ``peak_analysis``.
+    """
+    _strip_expensive_members(monkeypatch)
+    dataset = _counting_error_tf_record()
+    seen: list[MuonDataset] = []
+    original = fit_wizard_module._apply_frequency_support_disqualifiers
+
+    def _spy(observed: MuonDataset, assessments: tuple, peaks: PeakAnalysis | None) -> tuple:
+        seen.append(observed)
+        return original(observed, assessments, peaks)
+
+    monkeypatch.setattr(fit_wizard_module, "_apply_frequency_support_disqualifiers", _spy)
+    monkeypatch.setattr(fit_wizard_module, "_FIT_SAMPLE_BUDGET", 1024)
+
+    recommendation = build_fit_wizard_recommendation(
+        dataset, max_workers=1, refine_top_candidates=0
+    )
+
+    assert recommendation.rebin_factor > 1
+    assert len(seen) == 1
+    assert seen[0].n_points == dataset.n_points
+    assert recommendation.peak_analysis is not None
+    assert recommendation.peak_analysis.resolution_mhz == pytest.approx(
+        1.0 / _effective_window_us(dataset), rel=1e-6
+    )
 
 
 def test_flat_error_record_keeps_full_window_for_the_floor() -> None:

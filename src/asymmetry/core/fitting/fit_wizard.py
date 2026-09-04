@@ -1295,6 +1295,26 @@ _MULTIPLET_MAX_COMPONENTS = 3
 #: line; see :func:`_damped_envelope_rate`.
 _EARLY_ENVELOPE_LIFETIMES_PER_CROP = 3.0
 
+#: Lower bound, in units of ``1/T_window``, on the *background* relaxation rate
+#: of a ``Σ(Osc × Env) + Exp + Const`` multiplet.  An exponential whose 1/e time
+#: exceeds the fit window is not distinguishable from the constant it sits on —
+#: that is precisely the ``slow_edge`` the resolution assessment
+#: (:func:`~asymmetry.core.fitting.resolution.assess_component_resolution`) and
+#: the effective-window disqualifier already use — so the pair ``A·e^{-λt} +
+#: A_bg`` becomes a one-parameter family with two free scales.  Left unbounded,
+#: migrad walks it: on a record whose relaxation is barely faster than the
+#: window the fit was seen to run away to ``A = 15.5, λ = 0.019, A_bg = −8.4``
+#: (against a truth near ``A = 2.6, λ = 0.19, A_bg = 4.6``) and stop on a call
+#: limit with an invalid minimum, discarding the model that had the best AICc in
+#: the portfolio.
+_RELAX_RATE_FLOOR_WINDOWS = 1.0
+
+#: Seed for that same rate, in units of ``1/T_window``, when the fingerprint's
+#: early-slope guess is slower still.  One window is the degeneracy edge, so the
+#: seed starts a factor of two clear of it and lets the fit walk down if the
+#: data really do want a slower background.
+_RELAX_RATE_SEED_WINDOWS = 2.0
+
 
 #: The best template must beat the better *strictly-simpler* null baseline by at
 #: least this much AICc to count as describing significant structure. Burnham &
@@ -1381,7 +1401,8 @@ _NULL_EXPONENTIAL_KEY = "null_exp"
 _MIN_CYCLES_IN_EFFECTIVE_WINDOW = 2.0
 
 #: Fractional tolerance for matching a fitted frequency to a detected peak in
-#: the spectral-corroboration check (widened by the effective resolution).
+#: the spectral-corroboration check (widened by the effective resolution and by
+#: the peak's own width — see :func:`_frequency_support_tolerance`).
 _FREQUENCY_SUPPORT_REL_TOL = 0.10
 
 #: Effective-window cycle count above which a recommended oscillation is no
@@ -1586,6 +1607,11 @@ def build_oscillatory_multiplet_templates(
         would otherwise add a whole spurious damped cosine to the model that
         wins.
 
+        One template is built per **prefix** ``k = 1..n`` of the measured lines
+        (the seed order is Δχ²-descending), so the one-line shape is always in
+        the portfolio beside the two-line one and the wizard chooses between
+        them on the metric instead of inheriting the detector's line count.
+
     The order is bounded by ``max_components`` (default
     ``_MULTIPLET_MAX_COMPONENTS``) and each seed set is pruned per detection
     pass — see :func:`_multiplet_seed_peaks`.
@@ -1593,42 +1619,74 @@ def build_oscillatory_multiplet_templates(
     cap = min(int(max_components), _MULTIPLET_MAX_COMPONENTS)
     templates: list[CandidateTemplate] = []
     for scan_only in (False, True):
-        peaks = _multiplet_seed_peaks(analysis, cap, scan_only=scan_only)
-        n = len(peaks)
-        if n < (1 if scan_only else 2):
+        selected = _multiplet_seed_peaks(analysis, cap, scan_only=scan_only)
+        total = len(selected)
+        if total < (1 if scan_only else 2):
             continue
-        freq_text = ", ".join(f"{peak.frequency_mhz:.3g}" for peak in peaks)
-        for envelope in envelopes:
-            env_tag = "exp" if envelope == "Exponential" else "gaussian"
-            if scan_only:
-                rate_text = ", ".join(
-                    f"{rate:.3g}"
-                    for peak in peaks
-                    if (rate := _damped_envelope_rate(peak)) is not None
-                )
-                key = f"oscillatory{n}_{env_tag}_relax_constant"
-                title = f"{n}× damped cosine ({envelope} envelopes) + relaxation + constant"
-                rationale = (
-                    f"{n} damped line(s) measured at {freq_text} MHz, damping "
-                    f"{rate_text} µs⁻¹; one damped cosine per line over a slow "
-                    "relaxing background the lines outlive."
-                )
-            else:
-                key = f"oscillatory{n}_{env_tag}_constant"
-                title = f"{n}× damped cosine ({envelope} envelopes) + constant"
-                rationale = (
-                    f"{n} spectral lines detected at {freq_text} MHz; one damped cosine per line."
-                )
-            templates.append(
-                CandidateTemplate(
-                    key=key,
-                    title=title,
-                    category="Oscillatory",
-                    rationale=rationale,
-                    model=_multiplet_model(n, envelope, relax=scan_only),
+        # The relaxing shapes are built for EVERY prefix k = 1..n of the
+        # measured lines, not only for the full set. The order is
+        # Δχ²-descending, so the prefixes are nested "strongest k lines"
+        # hypotheses — and which k the data support is exactly what the wizard
+        # is being asked, not something the detector settles. The case that
+        # forced it: a record whose second line sits near the oscillation /
+        # overdamping transition, where the two-line shape beat the
+        # recommendation by 110 AICc and the one-line shape it should have been
+        # compared against did not exist. Cheap: each prefix is one more
+        # peak-seeded fit, and the whole ladder is bounded by
+        # ``_MULTIPLET_MAX_COMPONENTS``. The non-relaxing shape keeps its single
+        # full-width form — below two lines it is just the plain oscillatory
+        # candidate, which the portfolio already carries.
+        orders = range(1, total + 1) if scan_only else (total,)
+        for n in orders:
+            peaks = selected[:n]
+            freq_text = ", ".join(f"{peak.frequency_mhz:.3g}" for peak in peaks)
+            templates.extend(
+                _multiplet_templates_for_order(
+                    peaks, n, freq_text, envelopes=envelopes, scan_only=scan_only
                 )
             )
     return tuple(templates)
+
+
+def _multiplet_templates_for_order(
+    peaks: tuple[DetectedPeak, ...],
+    n: int,
+    freq_text: str,
+    *,
+    envelopes: tuple[str, ...],
+    scan_only: bool,
+) -> list[CandidateTemplate]:
+    """The one-per-envelope templates for a single multiplet order ``n``."""
+    templates: list[CandidateTemplate] = []
+    for envelope in envelopes:
+        env_tag = "exp" if envelope == "Exponential" else "gaussian"
+        if scan_only:
+            rate_text = ", ".join(
+                f"{rate:.3g}" for peak in peaks if (rate := _damped_envelope_rate(peak)) is not None
+            )
+            key = f"oscillatory{n}_{env_tag}_relax_constant"
+            title = f"{n}× damped cosine ({envelope} envelopes) + relaxation + constant"
+            rationale = (
+                f"{n} damped line(s) measured at {freq_text} MHz, damping "
+                f"{rate_text} µs⁻¹; one damped cosine per line over a slow "
+                "relaxing background the lines outlive."
+            )
+        else:
+            key = f"oscillatory{n}_{env_tag}_constant"
+            title = f"{n}× damped cosine ({envelope} envelopes) + constant"
+            rationale = (
+                f"{n} spectral lines detected at {freq_text} MHz; one damped cosine per line."
+            )
+        templates.append(
+            CandidateTemplate(
+                key=key,
+                title=title,
+                category="Oscillatory",
+                rationale=rationale,
+                model=_multiplet_model(n, envelope, relax=scan_only),
+            )
+        )
+    return templates
 
 
 def build_null_baseline_templates() -> tuple[CandidateTemplate, ...]:
@@ -2175,7 +2233,14 @@ def build_fit_wizard_recommendation(
     ``instrumentation`` receives the standard timing block and ``stage_callback``
     the structured per-stage progress events described in
     :mod:`asymmetry.core.fitting.wizard_timing`, so a headless caller can tell a
-    slow run from a stalled one without inspecting the process tree.
+    slow run from a stalled one without inspecting the process tree. Every
+    non-trivial segment of the build is timed, not only the fitting fan-outs:
+    ``single_fit.detection`` (Hann pass + damped-line scan + fingerprint),
+    ``single_fit.stage1``, ``single_fit.residual_detection`` (peak pass B),
+    ``single_fit.pattern_match`` (multiplet lines + envelope banks),
+    ``single_fit.stage2`` and ``single_fit.refinement``. The middle three were
+    once invisible and together accounted for half the wall time of a
+    10⁵-point run.
 
     On a record above ``_FIT_SAMPLE_BUDGET`` points every candidate is fitted on
     a value-rebinned copy (:func:`analysis_rebin_factor`); peak detection and
@@ -2187,8 +2252,14 @@ def build_fit_wizard_recommendation(
     # Peak pass A first, so the fingerprint's damped-line candidate and the
     # peaks that seed the candidates are one computation rather than two that
     # can disagree.  Nothing in the peak pass depends on the fingerprint.
-    peak_analysis = analyze_dataset_peaks(dataset)
-    fingerprint = fingerprint_spectrum(dataset, peak_analysis=peak_analysis)
+    with stage_timer(
+        instrumentation,
+        "single_fit.detection",
+        stage_callback=stage_callback,
+        message="Spectral detection: Hann pass, damped-line scan and fingerprint",
+    ):
+        peak_analysis = analyze_dataset_peaks(dataset)
+        fingerprint = fingerprint_spectrum(dataset, peak_analysis=peak_analysis)
     resolution: ScopeResolution | None = None
     if scope is not None:
         resolution = resolve_scope_for_dataset(dataset, scope)
@@ -2330,49 +2401,74 @@ def build_fit_wizard_recommendation(
             if family.key in ("relaxation", "multi_rate", "kt") and assessment.is_successful
         ]
         if detrend_pool:
-            best_smooth = min(detrend_pool, key=lambda a: a.metric_value(metric))
-            curve_values = _curve_parameter_values(
-                best_smooth.template.model, best_smooth.fit_result.parameters
-            )
-            detrend_curve = np.asarray(
-                best_smooth.template.model.function(
-                    np.asarray(dataset.time, dtype=float), **curve_values
-                ),
-                dtype=float,
-            )
-            detrended_analysis = analyze_dataset_peaks(
-                dataset,
-                detrend_curve=detrend_curve,
-                detrend_template_key=best_smooth.template.key,
-            )
-            if user_frequencies_mhz:
-                detrended_analysis = merge_user_peaks(
-                    detrended_analysis, tuple(user_frequencies_mhz)
+            with stage_timer(
+                instrumentation,
+                "single_fit.residual_detection",
+                stage_callback=stage_callback,
+                message="Spectral detection: residual pass on the best smooth fit",
+            ):
+                best_smooth = min(detrend_pool, key=lambda a: a.metric_value(metric))
+                curve_values = _curve_parameter_values(
+                    best_smooth.template.model, best_smooth.fit_result.parameters
                 )
-            if detrended_analysis.peaks or not peak_analysis.peaks:
-                peak_analysis = detrended_analysis
-
-        multiplet_matches = match_multiplets(
-            peak_analysis, field_gauss=field_gauss, geometry=geometry_token
-        )
-        # Time-domain matched filter for damped-envelope families (F-mu-F / mu-F /
-        # KT): their signatures are envelopes, not sharp lines, so the line-based
-        # ``match_multiplets`` above rarely fires on them (the circular-dependency
-        # failure). Run the banks on the tail-centred raw signal — NOT the Peak-pass-B
-        # residual (the KT family is itself that residual's detrend model, so it would
-        # subtract the shape it looks for). Gate to the in-scope envelope families so
-        # out-of-scope runs skip the work.
-        in_scope_family_keys = frozenset(family.key for family in families)
-        envelope_scope = frozenset({"fmuf", "kt"}) & in_scope_family_keys
-        if envelope_scope:
-            multiplet_matches = (
-                *multiplet_matches,
-                *match_envelope_banks(
+                detrend_curve = np.asarray(
+                    best_smooth.template.model.function(
+                        np.asarray(dataset.time, dtype=float), **curve_values
+                    ),
+                    dtype=float,
+                )
+                detrended_analysis = analyze_dataset_peaks(
                     dataset,
-                    field_gauss=field_gauss,
-                    include_families=envelope_scope,
-                ),
+                    detrend_curve=detrend_curve,
+                    detrend_template_key=best_smooth.template.key,
+                )
+                if user_frequencies_mhz:
+                    detrended_analysis = merge_user_peaks(
+                        detrended_analysis, tuple(user_frequencies_mhz)
+                    )
+                if detrended_analysis.peaks or not peak_analysis.peaks:
+                    peak_analysis = detrended_analysis
+
+        in_scope_family_keys = frozenset(family.key for family in families)
+        with stage_timer(
+            instrumentation,
+            "single_fit.pattern_match",
+            stage_callback=stage_callback,
+            message="Pattern search: multiplet lines and envelope banks",
+        ):
+            multiplet_matches = match_multiplets(
+                peak_analysis, field_gauss=field_gauss, geometry=geometry_token
             )
+            # Time-domain matched filter for damped-envelope families (F-mu-F /
+            # mu-F / KT): their signatures are envelopes, not sharp lines, so the
+            # line-based ``match_multiplets`` above rarely fires on them (the
+            # circular-dependency failure). Run the banks on the tail-centred raw
+            # signal — NOT the Peak-pass-B residual (the KT family is itself that
+            # residual's detrend model, so it would subtract the shape it looks
+            # for). Gate to the in-scope envelope families so out-of-scope runs
+            # skip the work.
+            envelope_scope = frozenset({"fmuf", "kt"}) & in_scope_family_keys
+            if envelope_scope:
+                # On ``analysis_dataset``, not the full record. The banks are
+                # matched-filter templates for an *envelope*: they carry no
+                # bandwidth requirement at all (the shapes they look for are the
+                # slowest things in the record), so the rebinned copy holds every
+                # bit of the information they use — and the cost difference is
+                # not marginal. Measured on a 90 000-point 0.1 ns record: 19.9 s
+                # on the full record against 4.2 s on the ×5 rebinned copy,
+                # which was most of a 23 s gap between the end of Stage 1 and
+                # the start of Stage 2. The window the banks are built for is
+                # passed explicitly so the rebin cannot move it (see
+                # ``analysis_window_us``).
+                multiplet_matches = (
+                    *multiplet_matches,
+                    *match_envelope_banks(
+                        analysis_dataset,
+                        field_gauss=field_gauss,
+                        include_families=envelope_scope,
+                        analysis_window_us=_effective_window_duration(dataset),
+                    ),
+                )
         pattern_family_keys = frozenset(
             match.family_key
             for match in multiplet_matches
@@ -2576,9 +2672,22 @@ def build_fit_wizard_recommendation(
 
     all_templates = tuple(flat_stage1_templates) + tuple(stage2_templates) + tuple(null_templates)
     all_assessments = _apply_frequency_support_disqualifiers(
-        # The analysed record, so the 1/T_eff resolution floor and the cycle
-        # count are the ones the fits actually saw.
-        analysis_dataset,
+        # The FULL-RESOLUTION record, deliberately — not ``analysis_dataset``.
+        # Every effective-window quantity in the wizard's verdict (this
+        # disqualifier's cycle floor and 1/T_eff tolerance, the edge-window
+        # caveat's cycle count via ``peak_analysis.resolution_mhz``, the
+        # fingerprint's window) has to be measured on the record peak detection
+        # ran on, or the verdict changes when the *cost* heuristic decides to
+        # rebin. ``effective_analysis_window`` truncates at the first bin whose
+        # σ exceeds 5× the early σ, and rebinning averages away the per-bin
+        # scatter in σ, so a rebinned copy of a real record keeps a visibly
+        # longer informative window (4.93 µs against 3.85 µs on one measured
+        # 50 G transverse-field record). That moved a 0.69 MHz line from 2.7
+        # cycles — exempt from the hard floor, caveated — to 3.4 cycles, and
+        # disqualified the whole precession family on a textbook TF record.
+        # The fits themselves stay on ``analysis_dataset``; only the window
+        # arithmetic is anchored here.
+        dataset,
         tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments),
         peak_analysis,
     )
@@ -2735,6 +2844,58 @@ def _same_family(
     return family_a == family_b
 
 
+def _frequency_support_tolerance(
+    frequency: float,
+    peak: DetectedPeak,
+    resolution_mhz: float,
+) -> float:
+    """How far a fitted frequency may sit from ``peak`` and still count as supported.
+
+    ``max(2·resolution, _FREQUENCY_SUPPORT_REL_TOL·f, peak.width_mhz)``.
+
+    The first two terms answer "how well is the *position* of a line known" —
+    a resolution element, or a fixed fraction for a high-frequency line. Neither
+    knows anything about how wide the line is, and for a heavily damped one that
+    is the dominant scale: a 108 MHz line damped at 89 µs⁻¹ is a Lorentzian of
+    FWHM ``λ/π ≈ 28`` MHz, so a fit that settles 10 MHz off the scan's measured
+    centre is still sitting inside the same line — well within a third of its
+    width — while a 10 % rule calls it unsupported by 0.1 MHz and throws away
+    the best-scoring candidate in the portfolio. Taking the peak's own measured
+    width as a floor makes the tolerance a statement about the line rather than
+    about the arithmetic.
+    """
+    return max(
+        2.0 * abs(float(resolution_mhz)),
+        _FREQUENCY_SUPPORT_REL_TOL * abs(float(frequency)),
+        abs(float(peak.width_mhz)),
+    )
+
+
+def _supporting_peak(
+    frequency: float,
+    peaks: Sequence[DetectedPeak],
+    resolution_mhz: float,
+) -> DetectedPeak | None:
+    """The nearest detected peak corroborating ``frequency``, or ``None``.
+
+    One rule, shared by the spectral-corroboration disqualifier and the
+    edge-of-window caveat, so the two can never disagree about whether a fitted
+    line has support.
+    """
+    target = abs(float(frequency))
+    supported = [
+        peak
+        for peak in peaks
+        if abs(float(peak.frequency_mhz) - target)
+        <= _frequency_support_tolerance(target, peak, resolution_mhz)
+    ]
+    return min(
+        supported,
+        key=lambda peak: abs(float(peak.frequency_mhz) - target),
+        default=None,
+    )
+
+
 def _edge_of_window_caveat(
     assessment: CandidateAssessment,
     peak_analysis: PeakAnalysis | None,
@@ -2767,16 +2928,7 @@ def _edge_of_window_caveat(
         cycles = frequency / resolution_mhz
         if not (_MIN_CYCLES_IN_EFFECTIVE_WINDOW <= cycles < _EDGE_WINDOW_MAX_CYCLES):
             continue
-        tolerance = max(2.0 * resolution_mhz, _FREQUENCY_SUPPORT_REL_TOL * frequency)
-        supporting_peak = min(
-            (
-                peak
-                for peak in peak_analysis.peaks
-                if abs(peak.frequency_mhz - frequency) <= tolerance
-            ),
-            key=lambda peak: abs(peak.frequency_mhz - frequency),
-            default=None,
-        )
+        supporting_peak = _supporting_peak(frequency, peak_analysis.peaks, resolution_mhz)
         snr = supporting_peak.snr if supporting_peak is not None else 0.0
         if snr >= _EDGE_WINDOW_WEAK_SNR:
             continue
@@ -3430,6 +3582,96 @@ def _deserialize_candidate_assessment(
         return None
 
 
+#: How many times a fit that stopped on migrad's own call limit is restarted
+#: from the parameters it returned.
+#:
+#: A call-limited stop is not a failed fit, it is an *unfinished* one: migrad
+#: ran out of budget while still descending, and the parameters it hands back
+#: are a strictly better starting point than the seed was.  Restarting from
+#: them is the cheapest possible continuation — it costs one more migrad run and
+#: keeps every bound, tie and fixed flag of the original seed.
+#:
+#: Two continuations, and only for the uncapped (Stage-2 / refinement /
+#: null-baseline) fits.  The *screening* cap stays exactly as it is: the NOTE at
+#: ``_STAGE2_UNSUPPORTED_VARIANT_BUDGET`` records why raising it is the wrong
+#: move — migrad already auto-iterates up to five times on a call-limited run,
+#: so a raised ceiling multiplies the work on precisely the slow non-converging
+#: fits it was meant to bound.  This restarts a *converging* fit that ran out of
+#: budget rather than lengthening a diverging one, and it stops after two: a fit
+#: still call-limited after three migrad drives is not converging, and keeps
+#: ``is_successful=False``.
+_CALL_LIMIT_CONTINUATIONS = 2
+
+
+def _is_call_limited(result: FitResult) -> bool:
+    """True when a fit stopped on migrad's call limit with usable state.
+
+    "Usable" means finite parameters and a finite χ² — a run that diverged to
+    NaN has nothing to continue from, and its message would be about invalid
+    parameters rather than about the budget.
+    """
+    if result.success:
+        return False
+    if "call limit reached" not in str(result.message):
+        return False
+    if not math.isfinite(float(result.chi_squared)):
+        return False
+    values = [float(parameter.value) for parameter in result.parameters]
+    return bool(values) and all(math.isfinite(value) for value in values)
+
+
+def _continuation_parameters(seed: ParameterSet, result: FitResult) -> ParameterSet:
+    """``seed``'s structure carrying ``result``'s fitted values.
+
+    Not ``result.parameters`` directly: the engine drops the ``fixed`` flag when
+    it packs a fitted parameter set (a fixed parameter comes back as a plain
+    value with no bounds), so restarting from it would free the multiplet
+    envelope amplitudes that are pinned at 1 to keep each ``Osc × Env`` product
+    non-degenerate. Bounds, links and ties come from the seed for the same
+    reason; only the values move.
+    """
+    continued = _clone_parameter_set(seed)
+    for parameter in continued:
+        if parameter.name not in result.parameters:
+            continue
+        value = float(result.parameters[parameter.name].value)
+        if not math.isfinite(value):
+            continue
+        parameter.value = float(np.clip(value, parameter.min, parameter.max))
+    return continued
+
+
+def _fit_with_call_limit_continuations(
+    fit_engine: FitEngine,
+    dataset: MuonDataset,
+    template: CandidateTemplate,
+    seed: ParameterSet,
+    result: FitResult,
+    *,
+    cancel_callback: Callable[[], bool] | None,
+) -> FitResult:
+    """Restart a call-limited ``result`` from its own parameters, up to twice."""
+    for _ in range(_CALL_LIMIT_CONTINUATIONS):
+        if not _is_call_limited(result):
+            break
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Fit wizard analysis cancelled.")
+        continued = fit_engine.fit(
+            dataset,
+            template.model.function,
+            _continuation_parameters(seed, result),
+            cancel_callback=cancel_callback,
+        )
+        # A continuation that came back worse than what it started from is not
+        # an improvement to keep: prefer the better χ², and prefer a converged
+        # minimum over an unconverged one at any χ².
+        if continued.success or float(continued.chi_squared) < float(result.chi_squared):
+            result = continued
+        else:
+            break
+    return result
+
+
 def _assess_candidate_template(
     dataset: MuonDataset,
     fingerprint: SpectrumFingerprint,
@@ -3477,6 +3719,17 @@ def _assess_candidate_template(
         )
         if _needs_fit_backend_fallback(result):
             result = _scipy_fit_fallback(dataset, template.model.function, parameters)
+        elif migrad_kwargs is None:
+            # Only the uncapped fits continue: a screening fit that hit the cap
+            # hit it *by design* (see ``_CALL_LIMIT_CONTINUATIONS``).
+            result = _fit_with_call_limit_continuations(
+                fit_engine,
+                dataset,
+                template,
+                parameters,
+                result,
+                cancel_callback=cancel_callback,
+            )
         if best_result is None:
             best_result = result
             best_parameters = _clone_parameter_set(parameters)
@@ -4009,12 +4262,34 @@ def _initial_parameters_for_template(
             else:
                 overrides[_pname("frequency", osc)] = min(frequency_guess, 0.98 * nyquist)
         if has_relax:
-            # The slow background the damped lines outlive: the fingerprint's
-            # own early-slope guesses, which measure exactly that tail (they
-            # are useless for the lines and are why the lines need the scan).
+            # The slow background the damped lines outlive.  Its amplitude is
+            # the early-minus-tail step the fingerprint measures — NOT the
+            # ``amplitude`` above, which is floored at a quarter of the data
+            # span and on a noisy finely-binned record is therefore the noise
+            # excursion, several times the tail it is supposed to seed.  Its
+            # constant partner is ``A_bg`` = the tail (set above).
+            #
+            # The rate is the fingerprint's early-slope guess, which measures
+            # exactly this tail (it is useless for the lines, and is why the
+            # lines need the scan) — but floored away from the ``A·e^{-λt} +
+            # A_bg`` degeneracy at ``λ·T_window ≲ 1``; see
+            # ``_RELAX_RATE_FLOOR_WINDOWS``.
             relax = 2 * n_components + 1
-            overrides[_pname("A", relax)] = amplitude
-            overrides[_pname("Lambda", relax)] = lambda_guess
+            overrides[_pname("A", relax)] = max(abs(fingerprint.initial_amplitude_estimate), _EPS)
+            rate_floor = _RELAX_RATE_FLOOR_WINDOWS / duration
+            rate_seed = max(lambda_guess, _RELAX_RATE_SEED_WINDOWS / duration)
+            rate_name = _pname("Lambda", relax)
+            overrides[rate_name] = rate_seed
+            _upper = _parameter_bounds(
+                "Lambda",
+                rate_seed,
+                data_min=data_min,
+                data_max=data_max,
+                data_span=data_span,
+                duration=duration,
+                nyquist=nyquist,
+            )[1]
+            bounds_overrides[rate_name] = (rate_floor, max(_upper, 2.0 * rate_floor))
     elif template.key in _MUONIUM_TF_TEMPLATE_KEYS:
         amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
         match = (
@@ -4761,6 +5036,25 @@ def _fit_window_duration(dataset: MuonDataset) -> float:
     return float(time.max() - time.min())
 
 
+def _effective_window_duration(dataset: MuonDataset) -> float:
+    """Length T_eff of the SNR-truncated informative window (µs), or 0.
+
+    Always measured on the record handed in, which for wizard callers is the
+    FULL-RESOLUTION one: rebinning averages the per-bin scatter out of σ and so
+    pushes :func:`effective_analysis_window`'s truncation later, and no verdict
+    about what the data can support may depend on the cost heuristic that chose
+    the rebin factor.
+    """
+    time = np.asarray(dataset.time, dtype=float)
+    error = np.asarray(dataset.error, dtype=float)
+    if time.size < 2:
+        return 0.0
+    end = effective_analysis_window(time, error)
+    if end < 2:
+        return 0.0
+    return float(time[end - 1] - time[0])
+
+
 def _paired_amplitude(parameters: ParameterSet, freq_index: str | None) -> Parameter | None:
     """Return the oscillation amplitude sharing a frequency parameter's suffix.
 
@@ -4797,10 +5091,19 @@ def _apply_frequency_support_disqualifiers(
       rests on the noise-dominated tail or on smooth systematics.
     * **Spectral corroboration** — the frequency is resolvable in the effective
       window but no detected or user-declared peak lies within
-      ``max(2·1/T_eff, _FREQUENCY_SUPPORT_REL_TOL·f)``. The validation
+      :func:`_frequency_support_tolerance` of it (``max(2·1/T_eff,
+      _FREQUENCY_SUPPORT_REL_TOL·f, the peak's own width)``). The validation
       programme's surviving false positives (flat-Ag-ZF 0.28 MHz cosine,
       Cu-ZF floor bessel, KT-plus-drift cosine) were all AICc-winning
       oscillations with no spectral support.
+
+    ``dataset`` must be the **full-resolution** record — the one peak detection
+    and the fingerprint ran on — even when the candidates were fitted on a
+    value-rebinned copy (:func:`analysis_rebin_factor`). Rebinning averages the
+    per-bin scatter out of σ and so lengthens
+    :func:`effective_analysis_window`'s verdict; anchoring the cycle floor and
+    the tolerance to the analysed copy would let a cost heuristic decide whether
+    a precession line is supportable.
 
     Reasons are appended to the assessments' ``disqualification_reasons`` so
     the policy in :func:`rerank_fit_wizard_recommendation` (and any later
@@ -4818,11 +5121,7 @@ def _apply_frequency_support_disqualifiers(
     if t_eff <= _EPS:
         return assessments
     resolution_eff = 1.0 / t_eff
-    peak_freqs = (
-        tuple(peak.frequency_mhz for peak in peak_analysis.peaks)
-        if peak_analysis is not None
-        else ()
-    )
+    peaks = peak_analysis.peaks if peak_analysis is not None else ()
 
     updated: list[CandidateAssessment] = []
     for assessment in assessments:
@@ -4841,8 +5140,7 @@ def _apply_frequency_support_disqualifiers(
                     f"statistically informative window ({t_eff:.1f} µs)"
                 )
                 continue
-            tolerance = max(2.0 * resolution_eff, _FREQUENCY_SUPPORT_REL_TOL * frequency)
-            if not any(abs(peak - frequency) <= tolerance for peak in peak_freqs):
+            if _supporting_peak(frequency, peaks, resolution_eff) is None:
                 reasons.append(
                     f"{parameter.name} = {frequency:.4g} MHz has no supporting "
                     "detected spectral peak"
@@ -4900,6 +5198,17 @@ def _refine_top_candidates(
     candidates the recommendation rests on, keeps the better fit, and records
     the χ² gained so a caller can see when a ranking was search-limited rather
     than having to re-derive it with an independent multistart.
+
+    The ranking is by **metric alone** among candidates with a finite metric
+    value — a candidate whose fit did not converge is included. That is
+    deliberate and is the whole point of the pass here: the case this exists for
+    is a candidate that leads the portfolio on AICc and whose Stage-2 fit
+    nevertheless stopped unconverged (a call limit, an invalid minimum). Ranking
+    on ``is_successful`` first would skip exactly that candidate, leaving the
+    recommendation to a model it beat by a hundred AICc units and never giving
+    the leader the deeper ladder that would settle whether its score is real.
+    A refined fit that *does* converge replaces the failed assessment below; one
+    that does not leaves it untouched, still unsuccessful.
     """
     if refine_top_candidates <= 0 or not assessments:
         return assessments
@@ -4908,9 +5217,7 @@ def _refine_top_candidates(
         (
             assessment
             for assessment in assessments
-            if assessment.is_successful
-            and not assessment.is_null_baseline
-            and math.isfinite(assessment.metric_value(metric))
+            if not assessment.is_null_baseline and math.isfinite(assessment.metric_value(metric))
         ),
         key=lambda assessment: assessment.metric_value(metric),
     )[: int(refine_top_candidates)]
