@@ -1688,8 +1688,11 @@ class MainWindow(QMainWindow):
         # The panel is handed the fit-range crop (see _get_fit_dataset); the fit
         # wizard needs the whole record and the range separately, so give it a
         # way to ask for both without threading a second dataset through every
-        # set_dataset call site.
-        self._fit_panel.set_full_fit_context_provider(self._get_full_fit_context)
+        # set_dataset call site. Tolerate a panel without the hook (test
+        # doubles stub the panel); the wizard then falls back to the crop.
+        install_provider = getattr(self._fit_panel, "set_full_fit_context_provider", None)
+        if callable(install_provider):
+            install_provider(self._get_full_fit_context)
         self._multi_group_fit_window = MultiGroupFitWindow(self)
         self._multi_group_fit_window.grouped_fit_completed.connect(
             lambda grouped_datasets, results_dict: self._on_grouped_fit_completed(
