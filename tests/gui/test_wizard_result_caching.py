@@ -79,9 +79,12 @@ class _FakeSingleWizard:
         self.apply_assessment_requested = SimpleNamespace(connect=lambda _cb: None)
         self.analysis_cached = SimpleNamespace(connect=lambda _cb: None)
         self.set_cached_recommendation_calls: list[tuple] = []
+        self.analysis_context_calls: list[tuple] = []
 
-    def set_analysis_context(self, dataset_arg, current_model=None) -> None:
-        pass
+    def set_analysis_context(
+        self, dataset_arg, current_model=None, *, full_dataset=None, fit_range=None
+    ) -> None:
+        self.analysis_context_calls.append((dataset_arg, full_dataset, fit_range))
 
     def set_cached_recommendation(self, recommendation, *, signature=None, log_text="") -> None:
         self.set_cached_recommendation_calls.append((recommendation, signature, log_text))
@@ -171,6 +174,40 @@ def _single_wizard_payload(
         summary="Recommended: Exponential + Constant by AICc.",
     )
     return assessment, recommendation
+
+
+def test_single_fit_wizard_hands_the_wizard_the_uncropped_record(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tab holds the fit-range crop; the wizard is given the whole record."""
+    monkeypatch.setattr(single_tab_module, "FitWizardWindow", _FakeSingleWizard)
+    tab = SingleFitTab()
+    cropped = dataset.time_range(2.0, 6.0)
+    tab.set_dataset(cropped)
+    tab.set_full_fit_context_provider(lambda: (dataset, (2.0, 6.0)))
+
+    tab._open_fit_wizard()
+
+    context_dataset, full_dataset, fit_range = tab._fit_wizard_window.analysis_context_calls[0]
+    assert context_dataset is cropped
+    assert full_dataset is dataset
+    assert fit_range == (2.0, 6.0)
+
+
+def test_single_fit_wizard_without_a_context_provider_keeps_the_cropped_record(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(single_tab_module, "FitWizardWindow", _FakeSingleWizard)
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+
+    tab._open_fit_wizard()
+
+    assert tab._fit_wizard_window.analysis_context_calls[0] == (dataset, None, None)
 
 
 def test_single_fit_wizard_reopen_with_matching_signature_serves_cache(

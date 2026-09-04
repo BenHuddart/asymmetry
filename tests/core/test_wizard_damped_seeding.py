@@ -4,9 +4,15 @@ The feature under test: a µSR record whose oscillation is heavily damped lives
 only in the leading nanoseconds of the record, which every symmetric apodisation
 deletes.  Both of the fit wizard's seeding FFTs used to be Hann-windowed, so a
 damped-cosine recommendation was only reachable when the user handed the wizard
-the frequencies.  These tests pin the blind path: the unwindowed early-window
-pass finds the line, the fingerprint carries it, the seeding path uses it, and a
-damped-oscillation family ranks top with **no** ``user_frequencies_mhz``.
+the frequencies.  These tests pin the blind path: the matched-apodisation
+damped-line scan finds the line, the fingerprint carries it, the seeding path
+uses its measured frequency/λ/amplitude/phase, and a damped-oscillation family
+ranks top with **no** ``user_frequencies_mhz``.
+
+The historical unwindowed early-window crop ladder
+(``analyze_early_window_peaks``) is no longer wired into
+``analyze_dataset_peaks``; it is still exercised directly here, because its
+constants rest on a study whose conclusions the scan inherits.
 
 Every synthetic parameter here is invented.  The records are ordered-magnet-like
 zero-field signals: one or two damped cosines on a slowly relaxing tail, at fine
@@ -16,21 +22,34 @@ binning, with µSR-like errors that grow as ``exp(t / 2·τ_µ)`` and are capped
 
 from __future__ import annotations
 
+import math
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
+import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
+    _CALL_LIMIT_CONTINUATIONS,
+    CandidateAssessment,
     CandidateTemplate,
+    SelectionMetric,
+    SpectrumFingerprint,
     TemplateSeedContext,
+    _assess_candidate_template,
     _damped_envelope_rate,
+    _fit_with_call_limit_continuations,
     _initial_parameters_for_template,
     _multiplet_seed_peaks,
     build_fit_wizard_recommendation,
+    build_null_baseline_templates,
     build_oscillatory_multiplet_templates,
     fingerprint_spectrum,
 )
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
 from asymmetry.core.fitting.peak_detection import (
     _EARLY_MIN_POINTS,
     DetectedPeak,
@@ -163,7 +182,7 @@ def test_hann_pass_is_structurally_blind_to_the_damped_line() -> None:
     Not "sees it weakly" — the window is zero at the first sample, so the line's
     entire support is deleted and the pass returns no peaks.
     """
-    analysis = analyze_dataset_peaks(_damped_record(), early_pass=False)
+    analysis = analyze_dataset_peaks(_damped_record(), damped_pass=False)
 
     assert analysis.peaks == ()
 
@@ -211,17 +230,28 @@ def test_null_records_add_no_early_peaks(build, seed_base: int, draws: int) -> N
     assert total == 0
 
 
-def test_conventional_narrow_line_is_untouched_by_the_early_pass() -> None:
-    """Study requirement (iii): no spurious additions, Hann peaks unchanged."""
+def test_conventional_narrow_line_gains_a_measurement_but_no_extra_peak() -> None:
+    """No spurious additions on a line the Hann pass can already see.
+
+    The scan finds that line too — it is not restricted to fast ones — so the
+    merge is a collision, not an addition: the Hann pass keeps the frequency it
+    localised over the whole record, and picks up the λ/amplitude/phase the
+    scan measured, which no Hann peak can carry.
+    """
     dataset = _narrow_line_record()
 
-    with_early = analyze_dataset_peaks(dataset, burg_check="never")
-    hann_only = analyze_dataset_peaks(dataset, burg_check="never", early_pass=False)
+    with_scan = analyze_dataset_peaks(dataset, burg_check="never")
+    hann_only = analyze_dataset_peaks(dataset, burg_check="never", damped_pass=False)
 
-    assert [peak.source for peak in with_early.peaks] == [peak.source for peak in hann_only.peaks]
-    assert not any(peak.source == "early_fft" for peak in with_early.peaks)
-    for merged, plain in zip(with_early.peaks, hann_only.peaks):
-        assert merged == plain
+    assert [peak.source for peak in with_scan.peaks] == [peak.source for peak in hann_only.peaks]
+    assert not any(peak.source in ("early_fft", "damped_scan") for peak in with_scan.peaks)
+    for merged, plain in zip(with_scan.peaks, hann_only.peaks):
+        assert merged.frequency_mhz == plain.frequency_mhz
+        assert merged.amplitude == plain.amplitude
+        assert merged.snr == plain.snr
+    strongest = with_scan.peaks[0]
+    assert strongest.damping_rate_per_us == pytest.approx(0.12, rel=0.3)
+    assert strongest.amplitude_percent == pytest.approx(18.0, rel=0.2)
 
 
 def test_early_window_crops_floor_and_collapse() -> None:
@@ -260,6 +290,31 @@ def _hann_peak(frequency: float, snr: float = 10.0) -> DetectedPeak:
         width_mhz=0.05,
         prominence=1.0,
         source="fft",
+    )
+
+
+def _scan_peak(
+    frequency: float,
+    *,
+    rate: float = 40.0,
+    amplitude_percent: float = 5.0,
+    phase_rad: float = 0.3,
+    delta_chi_squared: float = 120.0,
+    snr: float = 12.0,
+) -> DetectedPeak:
+    """A damped-scan peak as ``analyze_damped_scan_peaks`` would build it."""
+    return DetectedPeak(
+        frequency_mhz=frequency,
+        amplitude=abs(amplitude_percent),
+        snr=snr,
+        width_mhz=rate / np.pi,
+        prominence=0.0,
+        source="damped_scan",
+        crop_us=None,
+        damping_rate_per_us=rate,
+        amplitude_percent=amplitude_percent,
+        phase_rad=phase_rad,
+        delta_chi_squared=delta_chi_squared,
     )
 
 
@@ -348,7 +403,10 @@ def test_fingerprint_carries_the_damped_line_and_sets_the_oscillatory_hint() -> 
     assert fingerprint.has_damped_line_candidate
     assert fingerprint.damped_line_frequency_mhz == pytest.approx(_LINE_MHZ, rel=0.05)
     assert fingerprint.damped_line_snr > 8.0
-    assert fingerprint.damped_line_crop_us > 0.0
+    # The scan measures the envelope rather than inferring it from a crop, so
+    # the rate is populated and the crop is not: there is no crop.
+    assert fingerprint.damped_line_rate_per_us == pytest.approx(_LINE_RATE, rel=0.4)
+    assert fingerprint.damped_line_crop_us == 0.0
     assert fingerprint.oscillatory_hint is True
     # The Hann view on its own would have gated precession off. Its "dominant
     # line" is the leftover slow tail, completing well under one cycle in the
@@ -357,12 +415,20 @@ def test_fingerprint_carries_the_damped_line_and_sets_the_oscillatory_hint() -> 
     assert abs(fingerprint.dominant_fft_frequency_mhz - _LINE_MHZ) > 10.0
 
 
-def test_fingerprint_leaves_a_conventional_record_alone() -> None:
+def test_fingerprint_measures_a_conventional_record_rather_than_ignoring_it() -> None:
+    """The scan is not a fast-line detector; it is a damped-line *measurement*.
+
+    A conventional narrow line has a small λ, and the scan reports it as such.
+    The crop ladder it replaced could only report a crop, so the fingerprint's
+    ``damped_line_*`` fields used to stay empty here; now they carry a rate
+    close to the true one and the hint fires from the Hann view *and* the scan.
+    """
     fingerprint = fingerprint_spectrum(_narrow_line_record())
 
-    assert not fingerprint.has_damped_line_candidate
-    assert fingerprint.damped_line_frequency_mhz == 0.0
-    # ...and the hint still fires, from the Hann view, exactly as before.
+    assert fingerprint.has_damped_line_candidate
+    assert fingerprint.damped_line_frequency_mhz == pytest.approx(1.4, rel=0.05)
+    assert fingerprint.damped_line_rate_per_us == pytest.approx(0.12, rel=0.3)
+    assert fingerprint.damped_line_crop_us == 0.0
     assert fingerprint.oscillatory_hint is True
 
 
@@ -371,6 +437,9 @@ def test_early_peaks_seed_the_multiplet_builder_like_user_frequencies() -> None:
 
     templates = build_oscillatory_multiplet_templates(analysis)
 
+    # An early-window peak carries no measured envelope, so it builds only the
+    # historical multiplet shapes — not the relaxing twins, whose extra
+    # exponential needs a pinned envelope to be separable from the cosines'.
     assert [template.key for template in templates] == [
         "oscillatory2_exp_constant",
         "oscillatory2_gaussian_constant",
@@ -412,7 +481,13 @@ def test_a_weak_hann_peak_is_still_rejected_as_a_multiplet_seed() -> None:
     assert [peak.frequency_mhz for peak in _multiplet_seed_peaks(analysis, 3)] == [1.4]
 
 
-def test_damped_envelope_rate_comes_from_the_crop_and_only_from_it() -> None:
+def test_damped_envelope_rate_prefers_the_measured_rate_over_the_crop() -> None:
+    # A measured rate wins outright, even against a crop that would imply
+    # something else: one is a fit, the other a factor-of-two heuristic.
+    measured = replace(_early_peak(60.0, crop_us=0.25), damping_rate_per_us=37.5)
+    assert _damped_envelope_rate(measured) == pytest.approx(37.5)
+    assert _damped_envelope_rate(_scan_peak(60.0, rate=42.0)) == pytest.approx(42.0)
+    # ...and without one the crop heuristic still answers.
     assert _damped_envelope_rate(_early_peak(60.0, crop_us=0.25)) == pytest.approx(12.0)
     assert _damped_envelope_rate(_hann_peak(1.4)) is None
     assert _damped_envelope_rate(None) is None
@@ -463,6 +538,15 @@ def test_blind_wizard_ranks_a_damped_oscillation_top() -> None:
     On ``main`` this record's recommendation was a static Kubo-Toyabe — the
     oscillation was invisible to both seeding FFTs, so no oscillatory candidate
     was ever seeded near it.
+
+    The winner is the relaxing twin, which is this record's *true* shape: a
+    damped cosine, a slow relaxation and a baseline.  It used to lose, not
+    because the tail is not there but because the extra exponential was seeded
+    at a quarter of the data span with no floor on its rate, ran away into the
+    ``A·e^{-λt} + A_bg`` degeneracy and was disqualified as unresolved.  Seeded
+    from the early-minus-tail step and bounded away from that degeneracy at
+    ``1/T`` it recovers every generated value (below) and beats the plain damped
+    cosine by ~725 AICc.
     """
     dataset = _damped_record()
 
@@ -470,19 +554,30 @@ def test_blind_wizard_ranks_a_damped_oscillation_top() -> None:
         dataset, max_workers=1, refine_top_candidates=0
     )
 
-    assert recommendation.recommended_key == "oscillatory_exp_constant"
+    assert recommendation.recommended_key == "oscillatory1_exp_relax_constant"
     winner = recommendation.recommended_assessment
     assert winner is not None
-    fitted = winner.fit_result.parameters["frequency"].value
-    # Seeded, and then fitted, within the early pass's own resolution.
-    crop_us = recommendation.fingerprint.damped_line_crop_us
-    assert abs(fitted - _LINE_MHZ) <= 1.0 / crop_us
-    assert winner.fit_result.parameters["Lambda"].value == pytest.approx(_LINE_RATE, rel=0.3)
+    values = {parameter.name: parameter.value for parameter in winner.fit_result.parameters}
+    # Seeded, and then fitted, well inside the measured line's own width.
+    assert abs(values["frequency"] - _LINE_MHZ) <= _LINE_RATE / math.pi
+    assert values["Lambda_2"] == pytest.approx(_LINE_RATE, rel=0.3)
+    # ...and the background the line outlives, which is what the relaxing twin
+    # exists to carry.
+    assert values["A_3"] == pytest.approx(_TAIL_AMPLITUDE, rel=0.15)
+    assert values["Lambda_3"] == pytest.approx(_TAIL_RATE, rel=0.15)
+    assert values["A_bg"] == pytest.approx(_BASELINE, abs=0.5)
 
 
 @pytest.mark.integration
 @pytest.mark.timeout(600)
 def test_blind_wizard_ranks_a_two_oscillation_family_top() -> None:
+    """Two damped lines and the tail they outlive — the record's true shape.
+
+    The one-line prefix of the same relaxing shape is in the portfolio too
+    (every prefix is built), and is beaten here by ~3700 AICc: the second line
+    is real, and the wizard is asked to choose the order rather than to inherit
+    it from the detector.
+    """
     dataset = _two_line_record()
 
     recommendation = build_fit_wizard_recommendation(
@@ -490,10 +585,10 @@ def test_blind_wizard_ranks_a_two_oscillation_family_top() -> None:
     )
 
     assert recommendation.peak_analysis is not None
-    early = [peak for peak in recommendation.peak_analysis.peaks if peak.source == "early_fft"]
-    assert len(early) == 2, "both damped lines must reach the seeding path"
+    scan = [peak for peak in recommendation.peak_analysis.peaks if peak.source == "damped_scan"]
+    assert len(scan) == 2, "both damped lines must reach the seeding path"
 
-    assert recommendation.recommended_key == "oscillatory2_exp_constant"
+    assert recommendation.recommended_key == "oscillatory2_exp_relax_constant"
     winner = recommendation.recommended_assessment
     assert winner is not None
     fitted = sorted(
@@ -503,6 +598,13 @@ def test_blind_wizard_ranks_a_two_oscillation_family_top() -> None:
     )
     assert fitted[0] == pytest.approx(_SECOND_LINE_MHZ, rel=0.05)
     assert fitted[1] == pytest.approx(_LINE_MHZ, rel=0.05)
+    values = {parameter.name: parameter.value for parameter in winner.fit_result.parameters}
+    assert values["A_5"] == pytest.approx(_TAIL_AMPLITUDE, rel=0.15)
+    assert values["Lambda_5"] == pytest.approx(_TAIL_RATE, rel=0.15)
+    by_key = {assessment.template.key: assessment for assessment in recommendation.assessments}
+    one_line = by_key["oscillatory1_exp_relax_constant"]
+    assert one_line.aicc is not None and winner.aicc is not None
+    assert one_line.aicc > winner.aicc + 100.0
 
 
 @pytest.mark.integration
@@ -522,8 +624,669 @@ def test_conventional_record_recommendation_is_unchanged() -> None:
 
     assert recommendation.recommended_key == "oscillatory_exp_constant"
     assert recommendation.peak_analysis is not None
-    assert not any(peak.source == "early_fft" for peak in recommendation.peak_analysis.peaks)
-    assert not recommendation.fingerprint.has_damped_line_candidate
+    assert not any(
+        peak.source in ("early_fft", "damped_scan") for peak in recommendation.peak_analysis.peaks
+    )
+    # The record is short enough to fit whole: no rebinning, so the information
+    # criteria refer to every point of it.
+    assert recommendation.rebin_factor == 1
+    assert recommendation.analysed_points == dataset.n_points
     winner = recommendation.recommended_assessment
     assert winner is not None
     assert winner.fit_result.parameters["frequency"].value == pytest.approx(1.4, rel=0.02)
+
+
+# --------------------------------------------------------------------------- #
+# Workstream D — the matched-apodisation scan end to end
+# --------------------------------------------------------------------------- #
+#
+# The records below are the ones the scan module itself is measured on: 0.1 ns
+# binning, µSR-like errors growing as exp(t/4.4 µs) and saturating at 25 %, and
+# oscillations that are gone inside the first ~50 ns. Every value invented. They
+# are the regime the whole feature exists for — the historical crop ladder found
+# one of the two lines at SNR 6.4 against a gate of 6.0, and no candidate in the
+# portfolio could fit either of them.
+
+#: The two invented scan-regime lines: (amplitude %, MHz, λ µs⁻¹, phase rad).
+_SCAN_LINE_A = (4.7, 240.0, 44.0, 0.3)
+_SCAN_LINE_B = (1.9, 120.0, 22.0, -0.7)
+#: One very fast line: 8 % at 200 MHz, gone within ~30 ns.
+_SCAN_FAST_LINE = (8.0, 200.0, 100.0, 0.0)
+
+#: Per-bin σ (percent) a 0.1 ns-binned record actually carries at t = 0.
+_SCAN_SIGMA0 = 3.3
+#: 60 000 bins of 0.1 ns is a 6 µs record — long enough for the slow background
+#: to be resolvable and short enough to keep the end-to-end fits affordable.
+_SCAN_N_POINTS = 60_000
+
+
+def _scan_record(
+    lines: tuple[tuple[float, float, float, float], ...],
+    *,
+    seed: int = 39,
+    n_points: int = _SCAN_N_POINTS,
+    relaxation: tuple[float, float] = (2.6, 0.19),
+    baseline: float = 4.6,
+) -> MuonDataset:
+    """Heavily damped lines over a slow relaxing background. All values invented."""
+    rng = np.random.default_rng(seed)
+    time = np.arange(n_points, dtype=float) * 1e-4
+    error = np.minimum(_SCAN_SIGMA0 * np.exp(time / 4.4), 25.0)
+    tail_amplitude, tail_rate = relaxation
+    signal = tail_amplitude * np.exp(-tail_rate * time) + baseline
+    for amplitude, frequency, rate, phase in lines:
+        signal = signal + amplitude * np.exp(-rate * time) * np.cos(
+            2.0 * np.pi * frequency * time + phase
+        )
+    return MuonDataset(
+        time=time,
+        asymmetry=signal + rng.normal(0.0, error),
+        error=error,
+        metadata={"run_number": 11, "field": 0.0, "field_direction": "ZF"},
+    )
+
+
+def _fitted_pairs(assessment) -> list[tuple[float, float]]:
+    """(frequency, envelope rate) of each damped cosine, frequency-ascending."""
+    values = {p.name: p.value for p in assessment.fit_result.parameters}
+    pairs: list[tuple[float, float]] = []
+    for name, value in values.items():
+        base, index = split_parameter_name(name)
+        if base != "frequency":
+            continue
+        # The envelope sits on the component right after the oscillator. A lone
+        # oscillator names its own parameters without an index (``frequency``,
+        # not ``frequency_1``), and so may its envelope — but ``Lambda`` on a
+        # Gaussian-envelope model is the RELAXATION term, so the indexed names
+        # and ``sigma`` are tried first.
+        oscillator = 1 if index is None else int(index)
+        for key in (
+            f"sigma_{oscillator + 1}",
+            f"Lambda_{oscillator + 1}",
+            "sigma",
+            "Lambda",
+        ):
+            if key in values:
+                pairs.append((float(value), float(values[key])))
+                break
+    return sorted(pairs)
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(900)
+def test_blind_wizard_ranks_a_relaxing_two_line_model_on_the_scan_record() -> None:
+    """The Phase-2 headline: two heavily damped lines *and* the tail they leave.
+
+    No candidate in the portfolio had this shape before — a single-envelope
+    oscillatory candidate must either fit a 24 ns line and leave the 5 µs
+    relaxation in the residual, or fit the relaxation and lose the line — so the
+    wizard recommended ``Exponential + Constant`` at High confidence.
+    """
+    dataset = _scan_record((_SCAN_LINE_A, _SCAN_LINE_B))
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    assert recommendation.recommended_key in {
+        "oscillatory2_exp_relax_constant",
+        "oscillatory2_gaussian_relax_constant",
+    }
+    winner = recommendation.recommended_assessment
+    assert winner is not None
+    pairs = _fitted_pairs(winner)
+    assert len(pairs) == 2
+    for (frequency, rate), (_amplitude, true_frequency, true_rate, _phase) in zip(
+        pairs, (_SCAN_LINE_B, _SCAN_LINE_A)
+    ):
+        assert frequency == pytest.approx(true_frequency, rel=0.02)
+        assert rate == pytest.approx(true_rate, rel=0.4)
+    # Fitted on a rebinned copy — the record is 60 000 points and no model here
+    # needs more than a few samples per cycle of its fastest line.
+    assert recommendation.rebin_factor > 1
+    assert recommendation.analysed_points == dataset.n_points // recommendation.rebin_factor
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(900)
+def test_blind_wizard_ranks_a_one_line_relax_model_on_a_single_fast_line() -> None:
+    """A lone line is enough: one measured envelope opens the ``n = 1`` shape.
+
+    The historical multiplet builder refused below two peaks, which is right for
+    peaks that carry no envelope — the plain oscillatory candidates are the same
+    model. It is wrong once the line is measured *and* the record has a tail the
+    line does not explain.
+    """
+    dataset = _scan_record((_SCAN_FAST_LINE,), seed=5, relaxation=(6.0, 0.4), baseline=0.2)
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    assert recommendation.recommended_key in {
+        "oscillatory1_exp_relax_constant",
+        "oscillatory1_gaussian_relax_constant",
+    }
+    winner = recommendation.recommended_assessment
+    assert winner is not None
+    ((frequency, rate),) = _fitted_pairs(winner)
+    assert frequency == pytest.approx(_SCAN_FAST_LINE[1], rel=0.02)
+    assert rate == pytest.approx(_SCAN_FAST_LINE[2], rel=0.4)
+
+
+def test_scan_peaks_seed_amplitude_phase_and_envelope_per_component() -> None:
+    """Every measured quantity reaches the seed, per damped cosine."""
+    dataset = _scan_record((_SCAN_LINE_A, _SCAN_LINE_B))
+    fingerprint = fingerprint_spectrum(dataset)
+    analysis = analyze_dataset_peaks(dataset)
+    scan = [peak for peak in analysis.peaks if peak.source == "damped_scan"]
+    assert len(scan) == 2
+    templates = {t.key: t for t in build_oscillatory_multiplet_templates(analysis)}
+    template = templates["oscillatory2_exp_relax_constant"]
+
+    seeded = _initial_parameters_for_template(
+        dataset,
+        fingerprint,
+        template,
+        seed_context=TemplateSeedContext(peak_analysis=analysis, field_gauss=None),
+    )
+
+    for k, peak in enumerate(scan):
+        osc, env = 2 * k + 1, 2 * k + 2
+        assert seeded[f"A_{osc}"].value == pytest.approx(peak.amplitude_percent, rel=1e-6)
+        assert seeded[f"phase_{osc}"].value == pytest.approx(peak.phase_rad, rel=1e-6)
+        assert seeded[f"frequency_{osc}"].value == pytest.approx(peak.frequency_mhz)
+        assert seeded[f"Lambda_{env}"].value == pytest.approx(peak.damping_rate_per_us)
+        # The measured λ is a seed, not a certainty: the bounds must always
+        # contain a factor of four either way (see ``_parameter_bounds``).
+        assert seeded[f"Lambda_{env}"].min <= peak.damping_rate_per_us / 4.0
+        assert seeded[f"Lambda_{env}"].max >= 4.0 * peak.damping_rate_per_us
+        # ...and the frequency box is a few of the line's own widths, not a
+        # quarter of the frequency, which would reach the neighbouring line.
+        half_width = max(3.0 * peak.width_mhz, 0.05 * peak.frequency_mhz)
+        assert seeded[f"frequency_{osc}"].min == pytest.approx(
+            peak.frequency_mhz - half_width, rel=1e-6
+        )
+    # The extra relaxation term is seeded from the fingerprint's tail guesses —
+    # the measurement that is useless for the lines and right for the tail.
+    # (``lambda_guess`` is a slope over the leading 5 % of the record, which on
+    # a record like this one still contains the tail of the damped lines, so it
+    # reads a few times the true 0.19 µs⁻¹ — a seed, and one whose bounds
+    # comfortably contain the truth, which is all it has to be.)
+    assert seeded["A_5"].value > 0.0
+    assert 0.0 < seeded["Lambda_5"].value < 20.0
+    assert seeded["Lambda_5"].min <= 0.19 <= seeded["Lambda_5"].max
+    assert seeded["A_bg"].value == pytest.approx(fingerprint.tail_estimate)
+
+
+def test_relax_templates_need_a_measured_envelope_but_only_one() -> None:
+    scan_only = _analysis([_scan_peak(240.0)], resolution=0.1)
+    keys = {template.key for template in build_oscillatory_multiplet_templates(scan_only)}
+    assert keys == {"oscillatory1_exp_relax_constant", "oscillatory1_gaussian_relax_constant"}
+
+    # A Hann peak with no measured envelope contributes to the plain multiplet
+    # shapes but is not counted by the relaxing ones: their extra exponential is
+    # separable from a cosine's envelope only when that envelope is pinned.
+    mixed = _analysis([_hann_peak(1.4, snr=40.0), _scan_peak(240.0)], resolution=0.1)
+    keys = {template.key for template in build_oscillatory_multiplet_templates(mixed)}
+    assert keys == {
+        "oscillatory2_exp_constant",
+        "oscillatory2_gaussian_constant",
+        "oscillatory1_exp_relax_constant",
+        "oscillatory1_gaussian_relax_constant",
+    }
+
+    # Nothing measured at all: exactly the historical behaviour.
+    plain = _analysis([_hann_peak(1.4, snr=40.0)], resolution=0.1)
+    assert build_oscillatory_multiplet_templates(plain) == ()
+
+
+def test_relax_template_carries_the_relaxation_and_the_lines() -> None:
+    templates = {
+        template.key: template
+        for template in build_oscillatory_multiplet_templates(
+            _analysis([_scan_peak(240.0), _scan_peak(120.0)], resolution=0.1)
+        )
+    }
+    exp_template = templates["oscillatory2_exp_relax_constant"]
+    gaussian_template = templates["oscillatory2_gaussian_relax_constant"]
+
+    # Both shapes are offered at the full order — the plain multiplet and the
+    # twin that carries the tail — and the relaxing twin additionally at every
+    # shorter prefix, so "one line plus a tail" is a candidate the wizard can
+    # choose over "two lines plus a tail" on the metric.
+    assert set(templates) == {
+        "oscillatory2_exp_constant",
+        "oscillatory2_gaussian_constant",
+        "oscillatory1_exp_relax_constant",
+        "oscillatory1_gaussian_relax_constant",
+        "oscillatory2_exp_relax_constant",
+        "oscillatory2_gaussian_relax_constant",
+    }
+    assert exp_template.model.component_names == [
+        "Oscillatory",
+        "Exponential",
+        "Oscillatory",
+        "Exponential",
+        "Exponential",
+        "Constant",
+    ]
+    assert gaussian_template.model.component_names == [
+        "Oscillatory",
+        "Gaussian",
+        "Oscillatory",
+        "Gaussian",
+        "Exponential",
+        "Constant",
+    ]
+    assert "240" in exp_template.rationale and "120" in exp_template.rationale
+    assert "damped cosine" in exp_template.title and "relaxation" in exp_template.title
+
+
+# --------------------------------------------------------------------------- #
+# Workstream E — the relaxing background of a multiplet
+# --------------------------------------------------------------------------- #
+#
+# ``Σ(Osc × Env) + Exp + Const`` carries one term that none of the detection
+# passes measures: the slow background the damped lines outlive.  Seeded and
+# bounded badly it is not merely imprecise — ``A·e^{-λt} + A_bg`` with
+# ``λ·T ≲ 1`` is a one-parameter family with two free scales, and migrad walks
+# it until it runs out of calls.  Every value below is invented.
+
+
+def _flat_background_scan_record() -> MuonDataset:
+    """One damped line on a *constant* background, so ``lambda_guess`` is tiny."""
+    return _scan_record((_SCAN_FAST_LINE,), seed=17, relaxation=(0.0, 0.0), baseline=4.6)
+
+
+def _relax_seed(dataset: MuonDataset) -> tuple[ParameterSet, SpectrumFingerprint, str]:
+    """Seed the relaxing multiplet template this record supports."""
+    analysis = analyze_dataset_peaks(dataset)
+    fingerprint = fingerprint_spectrum(dataset, peak_analysis=analysis)
+    templates = {t.key: t for t in build_oscillatory_multiplet_templates(analysis)}
+    key = max(k for k in templates if k.endswith("_exp_relax_constant"))
+    seeded = _initial_parameters_for_template(
+        dataset,
+        fingerprint,
+        templates[key],
+        seed_context=TemplateSeedContext(peak_analysis=analysis, field_gauss=None),
+    )
+    return seeded, fingerprint, key
+
+
+def test_relax_background_rate_is_bounded_away_from_the_constant() -> None:
+    """A 1/e time longer than the window is not a rate, it is the baseline.
+
+    ``1/T`` is exactly the ``slow_edge`` the component-resolution assessment
+    uses, so the bound says the same thing the diagnostic does — a parameter
+    that means nothing below it may not be searched below it.
+    """
+    dataset = _scan_record((_SCAN_LINE_A, _SCAN_LINE_B))
+    duration = float(dataset.time[-1] - dataset.time[0])
+    seeded, _fingerprint, key = _relax_seed(dataset)
+    rate = seeded[f"Lambda_{2 * int(key[len('oscillatory')]) + 1}"]
+
+    assert rate.min == pytest.approx(1.0 / duration)
+    assert rate.value >= 2.0 / duration
+    # ...and the interval is still wide enough to be a search space, not a pin.
+    assert rate.max >= 4.0 * rate.value
+
+
+def test_relax_background_rate_seed_clears_the_degeneracy_even_on_a_flat_tail() -> None:
+    """With no relaxation to measure, the seed is two windows, not the 0.05 floor."""
+    dataset = _flat_background_scan_record()
+    duration = float(dataset.time[-1] - dataset.time[0])
+    seeded, _fingerprint, _key = _relax_seed(dataset)
+
+    assert seeded["Lambda_3"].value == pytest.approx(2.0 / duration)
+    assert seeded["Lambda_3"].min == pytest.approx(1.0 / duration)
+
+
+def test_relax_background_amplitude_is_the_early_minus_tail_step() -> None:
+    """Not a quarter of the data span, which on a noisy record is the noise.
+
+    The span of a 0.1 ns-binned record is set by its largest noise excursion —
+    here ~8×  the relaxation it was standing in for — so the old floor seeded
+    the background an order of magnitude high and handed migrad a start deep
+    inside the degeneracy.
+    """
+    dataset = _scan_record((_SCAN_LINE_A, _SCAN_LINE_B))
+    seeded, fingerprint, _key = _relax_seed(dataset)
+    span = float(np.max(dataset.asymmetry) - np.min(dataset.asymmetry))
+
+    assert seeded["A_5"].value == pytest.approx(abs(fingerprint.initial_amplitude_estimate))
+    assert seeded["A_bg"].value == pytest.approx(fingerprint.tail_estimate)
+    assert seeded["A_5"].value < 0.25 * span
+
+
+class _ScriptedEngine:
+    """A ``FitEngine`` stand-in that returns queued results and records its inputs."""
+
+    def __init__(self, results: list[FitResult]) -> None:
+        self._results = list(results)
+        self.seen: list[ParameterSet] = []
+
+    def fit(self, _dataset, _model_fn, parameters, **_kwargs) -> FitResult:
+        self.seen.append(parameters)
+        return self._results.pop(0)
+
+
+def _call_limited(chi_squared: float, **values: float) -> FitResult:
+    return FitResult(
+        success=False,
+        chi_squared=chi_squared,
+        parameters=ParameterSet([Parameter(name=n, value=v) for n, v in values.items()]),
+        message="Fit failed: call limit reached, invalid parameters, minimum invalid",
+    )
+
+
+def _relax_template() -> CandidateTemplate:
+    templates = {
+        t.key: t for t in build_oscillatory_multiplet_templates(_analysis([_scan_peak(240.0)]))
+    }
+    return templates["oscillatory1_exp_relax_constant"]
+
+
+def _relax_seed_parameters(template: CandidateTemplate) -> ParameterSet:
+    return ParameterSet(
+        [
+            Parameter(name="A_1", value=5.0, min=0.0, max=100.0),
+            Parameter(name="frequency", value=240.0, min=200.0, max=280.0),
+            Parameter(name="phase", value=0.0, min=-math.pi, max=math.pi),
+            Parameter(name="A_2", value=1.0, fixed=True),
+            Parameter(name="Lambda_2", value=40.0, min=0.0, max=320.0),
+            Parameter(name="A_3", value=2.0, min=0.0, max=100.0),
+            Parameter(name="Lambda_3", value=0.33, min=0.166, max=5.0),
+            Parameter(name="A_bg", value=4.6, min=-50.0, max=50.0),
+        ]
+    )
+
+
+def test_a_call_limited_fit_is_restarted_from_the_parameters_it_returned() -> None:
+    """A call limit is an unfinished fit, not a failed one."""
+    template = _relax_template()
+    seed = _relax_seed_parameters(template)
+    stopped = _call_limited(2000.0, A_3=15.5, Lambda_3=0.019, A_bg=-8.4)
+    converged = FitResult(success=True, chi_squared=900.0, parameters=ParameterSet())
+    engine = _ScriptedEngine([converged])
+
+    final = _fit_with_call_limit_continuations(
+        engine,
+        _scan_record((_SCAN_LINE_A,)),
+        template,
+        seed,
+        stopped,
+        cancel_callback=None,
+    )
+
+    assert final is converged
+    assert len(engine.seen) == 1
+    restarted = engine.seen[0]
+    # Values from where migrad stopped...
+    assert restarted["A_3"].value == pytest.approx(15.5)
+    # ...clipped back inside the seed's bounds, which the restart keeps...
+    assert restarted["Lambda_3"].value == pytest.approx(0.166)
+    assert restarted["Lambda_3"].min == pytest.approx(0.166)
+    assert restarted["A_bg"].value == pytest.approx(-8.4)
+    # ...as it keeps the fixed flags the engine drops when it packs a result.
+    assert restarted["A_2"].fixed
+
+
+def test_a_fit_that_stays_call_limited_gives_up_and_stays_unsuccessful() -> None:
+    """Two continuations, then the verdict stands."""
+    template = _relax_template()
+    seed = _relax_seed_parameters(template)
+    stops = [_call_limited(2000.0 - 10.0 * k, A_3=15.5, Lambda_3=0.019) for k in range(4)]
+    engine = _ScriptedEngine(stops[1:])
+
+    final = _fit_with_call_limit_continuations(
+        engine,
+        _scan_record((_SCAN_LINE_A,)),
+        template,
+        seed,
+        stops[0],
+        cancel_callback=None,
+    )
+
+    assert not final.success
+    assert len(engine.seen) == _CALL_LIMIT_CONTINUATIONS
+
+
+def test_a_diverged_fit_is_not_continued() -> None:
+    """Non-finite parameters are nothing to restart from."""
+    engine = _ScriptedEngine([])
+    diverged = _call_limited(float("inf"), A_3=float("nan"))
+
+    final = _fit_with_call_limit_continuations(
+        engine,
+        _scan_record((_SCAN_LINE_A,)),
+        _relax_template(),
+        _relax_seed_parameters(_relax_template()),
+        diverged,
+        cancel_callback=None,
+    )
+
+    assert final is diverged
+    assert engine.seen == []
+
+
+def test_screening_fits_are_never_continued(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Stage-1 cap is deliberate; continuing past it would undo it."""
+    calls: list[int] = []
+    monkeypatch.setattr(
+        fit_wizard_module,
+        "_fit_with_call_limit_continuations",
+        lambda *args, **kwargs: (calls.append(1), args[4])[1],
+    )
+    dataset = _scan_record((_SCAN_LINE_A,))
+    fingerprint = fingerprint_spectrum(dataset)
+    template = build_null_baseline_templates()[1]
+
+    _assess_candidate_template(
+        dataset.rebin(20),
+        fingerprint,
+        template,
+        fit_engine=FitEngine(),
+        metric=SelectionMetric.AICC,
+        variant_budget=1,
+        migrad_ncall=3000,
+    )
+    assert calls == []
+
+    _assess_candidate_template(
+        dataset.rebin(20),
+        fingerprint,
+        template,
+        fit_engine=FitEngine(),
+        metric=SelectionMetric.AICC,
+        variant_budget=1,
+        migrad_ncall=None,
+    )
+    assert calls == [1]
+
+
+def _ranked_assessment(key: str, aicc: float, *, success: bool) -> CandidateAssessment:
+    """A candidate carrying a finite metric whose fit did or did not converge."""
+    empty = np.array([], dtype=float)
+    return CandidateAssessment(
+        template=CandidateTemplate(
+            key=key,
+            title=key,
+            category="Oscillatory",
+            rationale="",
+            model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+        ),
+        fit_result=FitResult(
+            success=success,
+            chi_squared=aicc,
+            parameters=ParameterSet([Parameter(name="Lambda", value=1.0)]),
+            message="" if success else "Fit failed: call limit reached",
+        ),
+        aic=aicc,
+        aicc=aicc,
+        bic=aicc,
+        selected_score=aicc,
+        residual_rms=1.0,
+        runs_z_score=0.0,
+        max_abs_autocorrelation=0.0,
+        residual_fft_peak_snr=0.0,
+        residual_gate_passed=success,
+        residual_gate_reasons=() if success else ("Fit failed: call limit reached",),
+        bound_hits=(),
+        fitted_time=empty,
+        fitted_curve=empty,
+        component_curves=(),
+    )
+
+
+def test_refinement_targets_the_metric_leader_even_when_its_fit_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The candidate a failed fit hides is exactly the one worth searching harder.
+
+    Ranking the refinement pass on ``is_successful`` first skipped the leader
+    and left the recommendation to a model it beat by 133 AICc.
+    """
+    leader = _ranked_assessment("oscillatory2_exp_relax_constant", 100.0, success=False)
+    runner_up = _ranked_assessment("exp_constant", 233.0, success=True)
+    refined = replace(
+        leader,
+        fit_result=FitResult(
+            success=True,
+            chi_squared=90.0,
+            parameters=leader.fit_result.parameters,
+            message="Fit successful",
+        ),
+    )
+
+    requested: list[str] = []
+
+    def _fake_run(tasks, **_kwargs):
+        requested.extend(task.template.key for task in tasks)
+        return (refined,)
+
+    monkeypatch.setattr(fit_wizard_module, "_run_template_assessments", _fake_run)
+
+    updated = fit_wizard_module._refine_top_candidates(
+        dataset=_scan_record((_SCAN_LINE_A,)),
+        fingerprint=fingerprint_spectrum(_scan_record((_SCAN_LINE_A,))),
+        assessments=(leader, runner_up),
+        metric=SelectionMetric.AICC,
+        seed_context=TemplateSeedContext(),
+        max_workers=1,
+        cancel_callback=None,
+        refine_top_candidates=1,
+        progress=lambda _message: None,
+    )
+
+    assert requested == ["oscillatory2_exp_relax_constant"]
+    # The refined fit converged, so it replaces the failed assessment.
+    winner = next(a for a in updated if a.template.key == "oscillatory2_exp_relax_constant")
+    assert winner.is_successful
+    assert winner.refinement_delta_chi_squared == pytest.approx(10.0)
+
+
+def test_a_refined_fit_that_still_fails_leaves_the_original_assessment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    leader = _ranked_assessment("oscillatory2_exp_relax_constant", 100.0, success=False)
+    monkeypatch.setattr(
+        fit_wizard_module,
+        "_run_template_assessments",
+        lambda tasks, **_kwargs: (replace(leader, aicc=95.0),),
+    )
+
+    (updated,) = fit_wizard_module._refine_top_candidates(
+        dataset=_scan_record((_SCAN_LINE_A,)),
+        fingerprint=fingerprint_spectrum(_scan_record((_SCAN_LINE_A,))),
+        assessments=(leader,),
+        metric=SelectionMetric.AICC,
+        seed_context=TemplateSeedContext(),
+        max_workers=1,
+        cancel_callback=None,
+        refine_top_candidates=1,
+        progress=lambda _message: None,
+    )
+
+    assert updated is leader
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(900)
+def test_blind_wizard_recovers_a_barely_resolvable_background_under_two_lines() -> None:
+    """The 9 µs case: the tail relaxes only ~1.7 times inside its own window.
+
+    ``λ·T ≈ 1.7`` is resolvable but close enough to the ``A·e^{-λt} + A_bg``
+    degeneracy that an unfloored search runs away into it, taking the
+    best-scoring model in the portfolio down with it.  Blind, on 90 000 points,
+    the wizard must still recommend the relaxing two-line shape with a fit that
+    converged.
+    """
+    dataset = _scan_record((_SCAN_LINE_A, _SCAN_LINE_B), n_points=90_000)
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    assert recommendation.recommended_key in {
+        "oscillatory2_exp_relax_constant",
+        "oscillatory2_gaussian_relax_constant",
+    }
+    winner = recommendation.recommended_assessment
+    assert winner is not None
+    assert winner.is_successful
+    pairs = _fitted_pairs(winner)
+    assert len(pairs) == 2
+    for (frequency, rate), (_amplitude, true_frequency, true_rate, _phase) in zip(
+        pairs, (_SCAN_LINE_B, _SCAN_LINE_A)
+    ):
+        assert frequency == pytest.approx(true_frequency, rel=0.02)
+        assert rate == pytest.approx(true_rate, rel=0.4)
+    # The background is recovered too, and it is not sitting on its own floor.
+    values = {parameter.name: parameter.value for parameter in winner.fit_result.parameters}
+    background_rate = values.get("Lambda_5", values.get("Lambda"))
+    assert background_rate == pytest.approx(0.19, rel=0.4)
+    assert background_rate > 1.5 / float(dataset.time[-1] - dataset.time[0])
+
+
+def test_relax_templates_are_built_for_every_prefix_of_the_measured_lines() -> None:
+    """Which k the data support is the wizard's question, not the detector's.
+
+    The seed order is Δχ²-descending, so the prefixes are nested "strongest k
+    lines" hypotheses and the metric chooses between them.  The non-relaxing
+    shape keeps its single full-width form: below two lines it is the plain
+    oscillatory candidate the portfolio already carries.
+    """
+    analysis = _analysis(
+        [
+            _scan_peak(240.0, delta_chi_squared=300.0),
+            _scan_peak(120.0, delta_chi_squared=200.0),
+            _scan_peak(60.0, delta_chi_squared=100.0),
+        ],
+        resolution=0.1,
+    )
+
+    templates = {t.key: t for t in build_oscillatory_multiplet_templates(analysis)}
+
+    for order in (1, 2, 3):
+        assert f"oscillatory{order}_exp_relax_constant" in templates
+        assert f"oscillatory{order}_gaussian_relax_constant" in templates
+    assert "oscillatory4_exp_relax_constant" not in templates
+    assert {"oscillatory1_exp_constant", "oscillatory2_exp_constant"}.isdisjoint(templates)
+    assert "oscillatory3_exp_constant" in templates
+    # The k = 2 shape carries the two strongest lines, not an arbitrary pair.
+    rationale = templates["oscillatory2_exp_relax_constant"].rationale
+    assert "240" in rationale and "120" in rationale
+
+
+def test_a_prefix_template_is_seeded_from_the_same_prefix() -> None:
+    """The builder's ``n`` and the seeder's ``n`` must select the same lines."""
+    analysis = _analysis(
+        [_scan_peak(240.0, delta_chi_squared=300.0), _scan_peak(120.0, delta_chi_squared=200.0)],
+        resolution=0.1,
+    )
+    templates = {t.key: t for t in build_oscillatory_multiplet_templates(analysis)}
+    dataset = _scan_record((_SCAN_LINE_A, _SCAN_LINE_B))
+
+    seeded = _initial_parameters_for_template(
+        dataset,
+        fingerprint_spectrum(dataset),
+        templates["oscillatory1_exp_relax_constant"],
+        seed_context=TemplateSeedContext(peak_analysis=analysis, field_gauss=None),
+    )
+
+    assert seeded["frequency"].value == pytest.approx(240.0)

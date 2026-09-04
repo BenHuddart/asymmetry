@@ -23,9 +23,20 @@ result; for the same guided approach applied across a whole run series, see the
 
 The wizard opens in a non-modal window from the single-fit tab and does not
 start the expensive analysis until you press **Analyze**. It uses the same
-dataset, bunching, and fit range that the single-fit tab is using at the time
-you open it, so candidates are compared on exactly the same points a manual
-fit would use. Completed wizard analyses are cached per dataset in the
+dataset and bunching that the single-fit tab is using at the time you open it,
+but it analyses the **whole record** rather than the plot's fit range: a
+heavily damped line lives in the first few tens of nanoseconds, before most
+fit ranges open, and a slow one needs the late tail, so cropping before
+looking would answer a different question from the one you asked. Applying a
+candidate is unaffected — the model and its fitted parameters go to the
+single-fit tab, which goes on fitting your range. Where that range would
+exclude a line the recommendation rests on, the wizard says so above the
+result:
+
+   The plot's fit range starts at 1.2 µs, after the 240 MHz line
+   (1/λ = 0.023 µs) has decayed; widen the range before applying this fit.
+
+Completed wizard analyses are cached per dataset in the
 fit-panel state, reused when the wizard is reopened on the same run,
 persisted in project files, and consumed by the Global Fit Wizard as the
 screening table for ordered-series analysis. Reopening the wizard on a run it
@@ -99,9 +110,16 @@ metadata; open it only when you know something the metadata does not:
   supports the same removal from a selected row. User peaks are treated as
   trusted frequencies: they seed oscillatory candidates directly and
   participate in pattern matching, which is the quickest way to steer the
-  wizard when you can see a line it underrates. A heavily damped line that the
-  windowed FFT plot cannot show you no longer needs seeding by hand — see
-  :ref:`fit-wizard-early-window-pass`.
+  wizard when you can see a line it underrates. Naming a frequency also buys
+  you its envelope: the same Δχ² test the damped-line scan uses is run at the
+  frequency you clicked, and the rate it measures appears in the peaks table's
+  **"Damping (µs⁻¹)"** column and seeds the oscillator's envelope. Because you
+  supplied the frequency, the test no longer has to correct for having
+  searched a whole band, so a line the blind scan declined can still be
+  measured this way; a click on empty spectrum measures nothing and the seed
+  stays a bare frequency. A heavily damped line that the windowed FFT plot
+  cannot show you no longer needs seeding by hand at all — see
+  :ref:`fit-wizard-damped-line-scan`.
 
 Changing the scope or the peak seeds after an analysis has already run marks
 the displayed result stale — a banner says so, and the **Analyze** button
@@ -209,17 +227,19 @@ representative per in-scope family (both exponential and Gaussian shapes for
 the relaxation family). A family is expanded to its full portfolio when its
 representative passes the residual checks, scores within a small margin of
 the best family, matches a recognised multiplet pattern in the detected
-peaks, or is pointed at by a fingerprint hint; expensive members such as the
+peaks, or is pointed at by a fingerprint hint — and an accepted
+matched-apodisation scan line promotes the oscillatory family the same way a
+pattern match does. Expensive members such as the
 numerical F-μ-F powder averages are only ever fitted inside an expanded
 family, seeded from the match (a hyperfine constant from a muonium pair, a
 μ-F distance from a triplet). When several strong spectral lines are
 detected, the wizard also constructs multi-cosine candidates with one damped
 oscillator per line, up to three.
 
-.. _fit-wizard-early-window-pass:
+.. _fit-wizard-damped-line-scan:
 
-Heavily damped lines: the early-window pass
---------------------------------------------
+Heavily damped lines: the matched-apodisation scan
+----------------------------------------------------
 
 An oscillation whose envelope dies in the first few tens or hundreds of
 nanoseconds lives entirely in the leading fraction of the record — and every
@@ -228,33 +248,90 @@ the first sample, so a windowed transform deletes it. That is the same trap
 the library's :class:`~asymmetry.core.fourier.apodisation.ApodisationEarlySignalWarning`
 exists to flag when you drive the Fourier tools yourself.
 
-The wizard's spectral search therefore runs a second, **unwindowed pass** over
-a short ladder of leading crops of the record, each one first-order detrended
-so the slowly relaxing tail does not swamp it, and each carrying its own
-spectral resolution ``1 / T_crop``. Lines it finds are merged into the peak
-set alongside the windowed pass's, and they seed the damped-oscillation
-candidates exactly as a frequency you type in does — which is the point: a
-heavily damped signal now gets a damped-cosine recommendation **blind**,
-without being told the answer.
+The wizard's spectral search therefore runs a second, unwindowed pass: a
+**matched-apodisation scan**. The record is multiplied by a decaying
+exponential :math:`e^{-t/\tau}` and transformed, once for every :math:`\tau` on
+a geometric ladder running from about twenty time bins up to half the
+informative record, at roughly four rungs per decade. A line whose own
+envelope is :math:`e^{-\lambda t}` reaches its greatest signal-to-noise on the
+rung where :math:`\tau = 1/\lambda`, because the apodisation is then a filter
+matched to the signal — the classical result that, for a known pulse shape in
+additive noise, the filter matched to that shape maximises the output
+signal-to-noise ratio. The rung a line peaks on therefore **measures** its
+damping instead of inferring it from a crop length somebody chose, and no crop
+is asked of you: the ladder replaces it. Detection runs on the whole record,
+truncated only at the point where the growing per-point error has made the
+remaining data uninformative.
+
+A peak on the ladder is a candidate, not a line. Each candidate is tested by
+weighted linear least squares: the record is fitted with a dictionary of slow
+decays (:math:`e^{-\lambda_k t}` for :math:`\lambda_k` = 0, 0.3, 1, 3, and 10
+μs\ :sup:`-1`), then again with an :math:`e^{-\lambda t}\cos` /
+:math:`e^{-\lambda t}\sin` pair added at the candidate's :math:`(f, \lambda)`,
+and the χ² improvement Δχ² between the two is maximised over a bounded box
+around the seed. Both fits are linear, so Δχ² is exact rather than the outcome
+of an iterative search. Acceptance is a **look-elsewhere-corrected** threshold,
+
+.. math::
+
+   \Delta\chi^2 \ge 2\ln(N_\mathrm{trials} / r),
+
+where :math:`r` = 0.01 is the number of false lines tolerated per record and
+:math:`N_\mathrm{trials}` counts the independent cells the ladder searched —
+the same philosophy as the windowed pass's SNR gate, applied to a statistic
+rather than to an amplitude ratio. An accepted line joins the nuisance basis
+*and* is subtracted from the record before the ladder is scanned again, so a
+strong line's skirt cannot manufacture a second one; up to three lines are
+found this way, each finally re-fitted with the others held in the basis so
+their reported numbers are comparable.
+
+One accepted line is enough to build candidates the earlier portfolio could
+not offer: a sum of damped oscillators, one per scan line and up to three,
+**plus** a slowly relaxing term and a constant, with either an exponential or
+a Gaussian envelope on the oscillators. A heavily damped line almost always
+sits on a relaxing background it decays into, and without a term for that
+background the fit spends an oscillator on it. Every oscillator is seeded from
+the measurement — frequency, envelope rate, amplitude, and phase — with rate
+bounds always containing :math:`\lambda/4` to :math:`4\lambda` and frequency
+bounds a few line widths wide. An accepted line also promotes the oscillatory
+family for detailed fitting, so these candidates are fitted whenever the scan
+finds anything at all; on a record where it finds nothing they never appear.
 
 Three things to know when reading the result:
 
-- Peaks from this pass are labelled ``early_fft`` in the peaks table, and are
-  drawn on the FFT plot with a dotted marker rather than a solid one. The plot
-  itself is the *windowed* transform, so an early-window line is legitimately
-  not visible underneath its own marker.
-- Its signal-to-noise numbers are measured on a short crop against a different
-  noise floor, so they are **not** comparable with the windowed pass's. Rank
+- Scan lines are labelled ``damped_scan`` in the peaks table, and the envelope
+  each one measured appears in its own **"Damping (µs⁻¹)"** column, with the
+  amplitude, phase, and Δχ² in the row's tooltip. On the FFT plot they carry a
+  dashed marker and name themselves in the legend, "Matched-apodisation scan
+  line — not expected to be visible in this windowed transform": the plot is
+  the *windowed* transform, so a scan line is legitimately absent underneath
+  its own marker. (The older unwindowed crop ladder, whose ``early_fft`` peaks
+  used a dotted marker, remains in the library but no longer runs as part of
+  the search.)
+- Its numbers are not comparable with the windowed pass's. A scan
+  signal-to-noise is an excess over one rung's own median-absolute-deviation
+  noise floor, not a magnitude ratio, and Δχ² is a third scale again. Rank
   peaks within a pass, never across.
-- Where a line is visible to both passes, the windowed pass wins: it looked at
-  the whole informative record, so its frequency estimate is the better one.
-  The early pass only ever *adds* lines the windowed pass missed, and it is
-  gated so that pure noise, a relaxing tail with no oscillation, and a
-  conventional narrow line all contribute nothing.
+- Slow lines belong to the windowed pass. Where a line is visible to both, the
+  windowed pass wins: it looked at the whole informative record, so its
+  frequency estimate is the better one, and the scan only ever *adds* lines
+  the windowed pass missed. The scan is also deliberately blind to slow, low-Q
+  features: a candidate completing fewer than about three cycles inside its own
+  fitted lifetime is read as a relaxation shape rather than an oscillation and
+  rejected, unless its envelope is faster than any relaxation the slow-decay
+  dictionary models. That rule is what keeps a static Kubo-Toyabe minimum out —
+  a single dip and recovery that no sum of monotonic decays reproduces, and
+  which Δχ² alone would happily call a line.
 
-The pass reaches envelope rates of roughly 100 μs\ :sup:`-1` on a
-finely-binned record. Faster than that and the oscillation is not recoverable
-at any crop; the wizard will simply not offer a damped-cosine candidate.
+The scan reaches envelope rates of a few hundred μs\ :sup:`-1` on a finely
+binned record. The limit is the short end of the ladder, so what it can reach
+depends on the binning: 0.1 ns bins reach far further than 16 ns ones. Faster
+than that the oscillation is not recoverable at any apodisation, and the
+wizard simply offers no damped candidate. At the other end, a component so
+overdamped that it barely completes a cycle is fitted as one broad line if it
+is accepted at all; treat the frequency it reports as a description of that
+line shape rather than as a precession frequency, and check the fit overlay
+before reading physics into it.
 
 The additive multi-component candidates are especially useful for spectra
 whose smoothed semilog envelope changes slope while remaining largely
@@ -454,6 +531,24 @@ candidate's original ranking was search-limited, and therefore that the whole
 table around it should be read with that in mind. Pass
 ``refine_top_candidates=0`` to skip the pass.
 
+A third thing matters on a long record: **the candidates are fitted on a
+rebinned copy of it**. A dozen multi-component fits on 10\ :sup:`5` points is
+minutes of arithmetic for information a value-rebinned record already carries,
+so above roughly 8 000 points the wizard rebins — never so far that the
+highest seeded frequency drops below eight samples per cycle — and says which
+record it used:
+
+   Candidates were fitted on a ×8 rebinned copy (11250 points); information
+   criteria refer to that record.
+
+Line detection is *not* rebinned: it runs on the full record, where the
+bandwidth a heavily damped line needs still exists. Only the fitting stage
+sees the copy. Every number in the comparison table — ``AIC``, ``AICc``,
+``BIC``, χ²ᵣ, and the residual diagnostics — is computed on that copy, which
+is worth remembering when comparing a wizard score against one from a
+hand-built fit on the raw record. The recommendation records both the factor
+and the point count, as ``rebin_factor`` and ``analysed_points``.
+
 .. _fit-wizard-scripting-and-parallelism:
 
 Calling the wizard from a script
@@ -487,12 +582,42 @@ worker process at all, and it also makes runs bit-for-bit reproducible when you
 need to compare two invocations exactly. The same rules apply to
 :doc:`global_fit_wizard`, which uses the same machinery.
 
+The returned ``FitWizardRecommendation`` carries the record the candidates were
+actually fitted on as ``rebin_factor`` and ``analysed_points`` (both described
+under :ref:`fit-wizard-convergence-quality`), and its ``peak_analysis`` carries
+the matched-apodisation scan's own result — the accepted lines with their
+rates, amplitudes, phases, and Δχ², together with the threshold and trial count
+they were judged against — as ``peak_analysis.damped_lines``. The scan is also
+usable on its own:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting.damped_line_scan import detect_damped_lines
+
+   analysis = detect_damped_lines(dataset.time, dataset.asymmetry, dataset.error)
+   for line in analysis.lines:
+       print(line.frequency_mhz, line.damping_rate_per_us, line.delta_chi_squared)
+
+``measure_line_at_frequency`` in the same module answers the narrower question
+the GUI's click-to-seed asks: given a frequency you already trust, what is its
+envelope?
+
 Limitations
 -----------
 
 - The wizard currently supports one time-domain asymmetry spectrum at a time.
 - Frequency-domain fingerprinting uses the standard FFT path only; MaxEnt is
   not part of the wizard workflow.
+- Analysis and fitting run on the record's **statistically informative
+  window**, not necessarily on all of it: where the per-point error has grown
+  to several times its early-time value, the remaining data are noise that
+  would only whiten the transform, so the window is cut there. A run whose
+  errors do not grow that way is analysed whole.
+- The fit range set in the plot panel governs the fit you *apply*, not the
+  analysis. A range that would exclude a detected damped line is flagged above
+  the result, not corrected for you.
+- Information criteria refer to the analysed record, which on a long run is a
+  rebinned copy (see :ref:`fit-wizard-convergence-quality`).
 - ``max_workers`` bounds how many fits run at once, not how much CPU the run
   uses: the vortex-lattice line shapes reach a multi-threaded BLAS from inside
   a single fit, so even ``max_workers=1`` can saturate the machine. Set

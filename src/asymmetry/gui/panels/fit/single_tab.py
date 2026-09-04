@@ -15,6 +15,7 @@ tab for project persistence.
 import copy
 import functools
 import html
+import logging
 from collections.abc import Callable
 
 import numpy as np
@@ -98,6 +99,8 @@ from .tab_base import (
     dataset_error_oversampling,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class SingleFitTab(FitTabBase):
     """Single dataset fitting interface.
@@ -137,6 +140,10 @@ class SingleFitTab(FitTabBase):
         self._domain = "time"
         self._composite_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
         self._fit_wizard_window: FitWizardWindow | None = None
+        # Zero-argument accessor for ``(full_dataset, (t_min, t_max))``, installed
+        # by the main window. ``_current_dataset`` is the plot's fit-range crop;
+        # the wizard analyses the whole record, so it asks for it here.
+        self._full_fit_context_provider: Callable[[], tuple] | None = None
         self._cached_wizard_recommendation: FitWizardRecommendation | None = None
         self._cached_wizard_signature: dict[str, object] | None = None
         self._cached_wizard_log_text = ""
@@ -626,6 +633,35 @@ class SingleFitTab(FitTabBase):
             if new_model is not None:
                 self._set_composite_model(new_model)
 
+    def set_full_fit_context_provider(self, provider: Callable[[], tuple] | None) -> None:
+        """Install the accessor returning ``(full_dataset, (t_min, t_max))``."""
+        self._full_fit_context_provider = provider
+
+    def _full_fit_context(
+        self,
+    ) -> tuple[MuonDataset | None, tuple[float | None, float | None] | None]:
+        """Resolve the uncropped record and fit range, tolerating no provider.
+
+        Without a provider — a bare ``SingleFitTab`` in a test, or a host that
+        has not installed one — the wizard falls back to analysing the cropped
+        dataset it was already given, which is the previous behaviour.
+        """
+        provider = self._full_fit_context_provider
+        if provider is None:
+            return None, None
+        try:
+            full_dataset, fit_range = provider()
+        except Exception:
+            # A broken host must not block the wizard, but a silent fallback to
+            # the cropped record would be hard to diagnose: say what failed.
+            logger.warning(
+                "Fit wizard full-record context provider failed; analysing the "
+                "fit-range crop instead.",
+                exc_info=True,
+            )
+            return None, None
+        return full_dataset, fit_range
+
     def _open_fit_wizard(self) -> None:
         """Launch or refresh the non-modal fit wizard window."""
         if self._current_dataset is None:
@@ -656,9 +692,16 @@ class SingleFitTab(FitTabBase):
 
         signature = self._wizard_context_signature()
 
+        # Analyse the whole record, not the plot's fit-range crop: a heavily
+        # damped line lives before most fit ranges start and a slow one needs
+        # the tail, so cropping first answers a different question. The applied
+        # fit still uses the user's range — the wizard only reports it.
+        full_dataset, fit_range = self._full_fit_context()
         self._fit_wizard_window.set_analysis_context(
             self._current_dataset,
             current_model=self._composite_model,
+            full_dataset=full_dataset,
+            fit_range=fit_range,
         )
         if self._cached_wizard_recommendation is not None and self._wizard_base_signature_matches(
             self._cached_wizard_signature, signature
