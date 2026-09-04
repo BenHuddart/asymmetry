@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The fit wizard now measures a heavily damped line's envelope instead of
+  guessing at it.** The early-window crop ladder added in 0.17.0 could see such
+  a line but could not describe one: it inferred an envelope from whichever
+  crop happened to find the peak, its lines could not form a multiplet on their
+  own, and no candidate model in the portfolio combined a damped oscillator
+  with the slow relaxation such a line always decays into — so a spectrum with
+  two strongly damped lines still ended up recommended as `Exponential +
+  Constant` with High confidence. The wizard's damped-line pass is now a
+  **matched-apodisation scan** (`asymmetry.core.fitting.damped_line_scan`): the
+  record is apodised with `exp(-t/τ)` over a geometric ladder of lifetimes and
+  transformed unwindowed, so a line whose own envelope is `exp(-λt)` peaks on
+  the rung where `τ = 1/λ` — a filter matched to the signal — and the rung that
+  finds it measures its damping rather than inheriting a crop length. No crop
+  is asked of the caller. Each candidate is then verified by an exact weighted
+  linear Δχ² against a slow-decay dictionary and accepted on a
+  look-elsewhere-corrected threshold `2·ln(N_trials / 0.01)`; an accepted line
+  is subtracted from the record and joins the nuisance basis before the ladder
+  is rescanned, so a strong line's skirt cannot manufacture a second one. Lines
+  reach the wizard as `DetectedPeak(source="damped_scan")` carrying the
+  measured rate, amplitude, phase, and Δχ², and the full `DampedLineAnalysis`
+  is attached to `PeakAnalysis.damped_lines`. Over 400 synthetic non-oscillatory
+  records — noise, exponential, stretched-exponential, and Kubo-Toyabe — the
+  scan accepts nothing.
+- **Relaxing multi-line candidates.** A single accepted scan line is enough to
+  build `Σ(Osc×Env) + Exp + Const` candidates — one damped oscillator per line,
+  up to three, with exponential or Gaussian envelopes — seeded throughout from
+  the measurement (frequency, rate, amplitude, and phase), with rate bounds
+  that always contain `λ/4` to `4λ`. Without the slow relaxing term the fit
+  spends an oscillator describing the background instead; with it, a heavily
+  damped spectrum gets a damped-multiplet recommendation blind. An accepted
+  line also promotes the oscillatory family for detailed fitting, the way a
+  recognised multiplet pattern does.
+- **Large records are fitted on a rebinned copy.** Above roughly 8 000 points
+  the candidate fits run on a value-rebinned copy of the record, with the
+  factor capped so the highest seeded frequency keeps at least eight samples
+  per cycle. Line detection still runs on the full record, where the bandwidth
+  is. The recommendation records what it used as `rebin_factor` and
+  `analysed_points`, the wizard says so above the result, and the docs state
+  that every information criterion refers to that record.
+- **The wizard analyses the whole record, not the plot's fit range.** A heavily
+  damped line lives before most fit ranges open and a slow one needs the late
+  tail, so cropping before looking answered a different question from the one
+  the user asked. The single-fit tab now hands the wizard the uncropped dataset
+  alongside the range; applying a candidate is unchanged, and where the range
+  would start after a detected line has decayed the wizard says so rather than
+  silently recommending a fit the range cannot support.
+- **Damping in the fingerprint panel.** The peaks table gains a
+  "Damping (µs⁻¹)" column and a per-row tooltip carrying the amplitude, phase,
+  and Δχ² of a measured line; scan lines are drawn dashed on the FFT plot and
+  named in its legend, since the plot is the windowed transform they are
+  legitimately absent from; and the fingerprint table lists the damped line's
+  frequency, rate, and scan signal-to-noise when one was accepted. A
+  click-seeded frequency now carries an envelope too: the same Δχ² test runs at
+  the frequency clicked, with the look-elsewhere correction reduced to the
+  ladder because the frequency was supplied rather than searched for, so a line
+  the blind scan declined can still be measured by naming it.
+
+### Fixed
+
+- **Junk peaks against the Nyquist edge on finely binned records.** The
+  windowed pass reported clusters of spurious lines just below Nyquist on
+  records binned at a fraction of a nanosecond. Its Nyquist guard is now
+  `max(0.5 × resolution, 2 % of Nyquist)`, which removes them without touching
+  conventionally binned data.
+- **A conventional slow line lost against the DC hump.** On a finely binned
+  record a 0.69 MHz transverse-field precession sits only ~20 bins above DC
+  even though it is many resolution elements away from it, and the local noise
+  floor's running median — spanning 5 % of the spectrum — filled nearly half
+  its window with copies of the DC bin, the largest value in the spectrum. The
+  floor beside DC therefore read a high percentile of its neighbourhood rather
+  than its median, and the line's signal-to-noise collapsed below the gate:
+  measured on a synthetic 0.69 MHz line, floor 2953 against a global 1098, and
+  no peak reported at all. The running median now pads by reflection, filling
+  the window with the spectrum's own low-frequency bins; the same line is found
+  at 0.6864 MHz. Pre-existing, and not specific to the new scan — the scan
+  rightly declines a line at `f/λ ≈ 0.4`, so the windowed pass is its only
+  detector.
+- **A fit that stopped on the optimiser's own call limit is now continued.**
+  Migrad reports a call-limited fit as a failure even when it was still
+  descending on usable parameters; such a fit is restarted from where it
+  stopped (up to twice) rather than discarded, so a rich candidate is not
+  ranked on a truncated search.
+
 ## [0.17.1] - 2026-08-03
 
 ### Fixed
