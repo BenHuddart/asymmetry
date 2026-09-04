@@ -761,3 +761,82 @@ def test_nyquist_guard_leaves_a_coarse_record_alone() -> None:
     analysis = analyze_dataset_peaks(dataset, damped_pass=False, burg_check="never")
 
     assert any(abs(peak.frequency_mhz - 1.4) < 0.1 for peak in analysis.peaks)
+
+
+# --------------------------------------------------------------------------- #
+# The DC edge of the local noise floor
+# --------------------------------------------------------------------------- #
+#
+# A conventional transverse-field precession on a finely binned record sits only
+# a handful of *bins* above DC even though it is many resolution elements away
+# from it: 0.1 ns binning puts Nyquist at 5000 MHz, so a 0.69 MHz line lands at
+# bin ~20 of a 146 000-bin padded spectrum.  The running-median floor's window
+# spans 5 % of the spectrum — thousands of bins — so how the median is padded at
+# the DC edge decides whether such a line is visible at all.  Every value below
+# is invented.
+
+
+def _transverse_field_record(
+    *,
+    n_points: int = 90_000,
+    frequency_mhz: float = 0.69,
+    damping_per_us: float = 1.8,
+    amplitude: float = 20.0,
+    seed: int = 20260905,
+) -> MuonDataset:
+    """A textbook 50 G TF record at 0.1 ns binning. All values invented.
+
+    20 % precession damped at 1.8 µs⁻¹ over a 5 % relaxation and a 3 % baseline,
+    with µSR-like σ starting at 3.3 % per bin and growing as ``exp(t / 4.4)``.
+    """
+    time = np.arange(1, n_points + 1, dtype=float) * 1e-4
+    error = np.minimum(3.3 * np.exp(time / 4.4), 100.0)
+    signal = (
+        amplitude * np.exp(-damping_per_us * time) * np.cos(2.0 * np.pi * frequency_mhz * time)
+        + 5.0 * np.exp(-2.0 * time)
+        + 3.0
+    )
+    rng = np.random.default_rng(seed)
+    return MuonDataset(
+        time=time,
+        asymmetry=signal + rng.normal(0.0, error),
+        error=error,
+        metadata={"run_number": 1, "field": 50.0, "field_direction": "TF"},
+    )
+
+
+def test_hann_pass_finds_a_slow_line_a_few_bins_above_dc() -> None:
+    """The line is 10× the global floor; the local floor must not hide it.
+
+    With ``mode="nearest"`` padding the median window at bin 20 is nearly half
+    filled with copies of the DC bin — the largest value in the spectrum — so
+    the floor there read ~2.8× the true one and the line's SNR fell to 1.95
+    against an adaptive gate of 4.67.  Reflected padding fills the window with
+    the spectrum's own low-frequency bins instead, and the SNR returns to the
+    value a single global floor gives it.
+    """
+    dataset = _transverse_field_record()
+
+    analysis = analyze_dataset_peaks(dataset, damped_pass=False)
+
+    found = [peak for peak in analysis.peaks if peak.source == "fft"]
+    assert found, "the precession line must reach the seeding path"
+    assert found[0].frequency_mhz == pytest.approx(0.69, rel=0.05)
+
+
+def test_the_damped_scan_rightly_declines_that_line_so_the_hann_pass_owns_it() -> None:
+    """``f/λ ≈ 0.4`` is not an oscillation the matched-apodisation rung can claim.
+
+    This is why the DC-edge floor matters: for a conventional TF line the Hann
+    pass is the *only* detector, so a floor that buries it buries the line.
+    """
+    dataset = _transverse_field_record()
+
+    analysis = analyze_dataset_peaks(dataset)
+
+    assert not [
+        peak
+        for peak in analysis.peaks
+        if peak.source == "damped_scan" and abs(peak.frequency_mhz - 0.69) < 0.2
+    ]
+    assert any(abs(peak.frequency_mhz - 0.69) < 0.05 for peak in analysis.peaks)

@@ -391,9 +391,23 @@ def deserialize_peak_analysis(payload: object) -> PeakAnalysis | None:
 
 
 def _running_median(values: NDArray[np.float64], window: int) -> NDArray[np.float64]:
-    """Return a same-length running median with edge padding.
+    """Return a same-length running median with *reflected* edge padding.
 
     ``window`` is coerced odd and clamped to the array size.
+
+    The padding mode is load-bearing at the DC edge of a finely binned
+    spectrum.  ``mode="nearest"`` (the historical choice) extends the array by
+    replicating ``mag[0]`` — which on a relaxing μSR record is the top of the
+    DC hump, the single largest value in the spectrum.  A window spanning 5 %
+    of a 146 k-bin padded spectrum is ~7300 bins wide, so at bin 20 nearly half
+    the window is copies of that maximum and the median is pushed up to the
+    ~99th percentile of the real values nearby: the floor next to DC reads
+    several times too high and buries any genuine low-frequency line.
+    Reflecting instead pads with the spectrum's own low-frequency bins, which
+    is what the estimator is supposed to be a median *of*.  Measured on a
+    synthetic 0.69 MHz / λ = 1.8 μs⁻¹ line at 0.1 ns binning: the local floor at
+    the line fell from 2953 to 1067 (the global sigma-clipped floor is 1098) and
+    its SNR rose from 1.95 to 5.41, clearing the 4.67 adaptive gate.
     """
     arr = np.asarray(values, dtype=float)
     n = arr.size
@@ -408,8 +422,8 @@ def _running_median(values: NDArray[np.float64], window: int) -> NDArray[np.floa
     # scipy's rank filter, not a sliding_window_view + np.median(axis=1): the
     # windowed matrix materialises n×window floats (27 GB for a 256k-bin
     # padded spectrum — froze an 8 GB machine) and is ~1000× slower for the
-    # same result. mode="nearest" matches the previous edge padding exactly.
-    return median_filter(arr, size=window, mode="nearest")
+    # same result.
+    return median_filter(arr, size=window, mode="reflect")
 
 
 def _mad_sigma(residual: NDArray[np.float64]) -> float:
@@ -430,6 +444,10 @@ def _local_noise_floor(
     elements (``bins_per_resolution`` accounts for zero-padding oversampling) so
     that a broad line — e.g. an unresolved doublet in a short record — cannot
     dominate its own median window and suppress its SNR.
+
+    The running median is evaluated with reflected padding (see
+    :func:`_running_median`), without which the estimate immediately above DC
+    is biased high by the replicated DC bin and swallows slow lines.
     """
     mags = np.asarray(magnitude, dtype=float)
     n = mags.size
@@ -1236,6 +1254,16 @@ def analyze_dataset_peaks(
     (:func:`analyze_early_window_peaks`, kept importable but no longer wired
     here), it *measures* the envelope rate instead of inferring it from a crop
     length.
+
+    The two passes are complementary, and neither is a superset of the other.
+    The damped scan deliberately declines a line whose envelope is not fast
+    compared with its own period — a conventional transverse-field precession
+    at, say, 0.69 MHz with λ ≈ 1.8 µs⁻¹ has ``f/λ ≈ 0.4`` and is rejected by
+    :func:`~asymmetry.core.fitting.damped_line_scan._is_oscillation`, which is
+    correct: at that ratio the matched-apodisation rung cannot tell a cosine
+    from the relaxation it rides on.  Such a line is the **Hann pass's** to
+    find, and it is why the local noise floor next to DC has to be estimated
+    honestly (see :func:`_running_median`).
 
     Parameters
     ----------
