@@ -297,38 +297,48 @@ Plot panel controls
 
 The plot panel displays the selected dataset(s) with error bars.
 
+.. _gui-usage-axis-limits:
+
 Axis limits
 ~~~~~~~~~~~
 
-Control the plot range using the spinboxes at the top:
+Each axis — X and Y — is independently either **Auto** (it follows the data
+on every redraw: a run switch, a recomputed spectrum, a view-mode change) or
+**Held** (it keeps its value across all of that). Browsing holds the window
+by default, so paging through a run series to compare the same window needs
+no extra step; **Auto X** / **Auto Y** are the way to tell an axis to follow
+the data instead.
 
 * **X min/max**: Time axis range (μs)
 * **Y min/max**: Asymmetry axis range
-* Press **Enter** after editing any limit value to apply immediately
-* Click **Auto X** to auto-scale the X axis only
-* Click **Auto Y** to auto-scale the Y axis only
+* Press **Enter** after editing any limit value to apply immediately —
+  typing a value holds that axis and turns off its **Auto X** / **Auto Y**
+  button
+* Click **Auto X** to make the X axis follow the data; click **Auto Y** to do
+  the same for Y
 
 Auto-Y uses points inside the currently selected X range and prefers reliable
 foreground points (excluding undefined/low-confidence bins when available). On
 the Frequency-domain plot, **Auto X** frames the spectrum sensibly — the
 dominant line, or the field-derived Larmor window — rather than the full
-Nyquist span.
+Nyquist span. The very first plot in a new session has nothing held yet, so
+it frames from the data even with both Auto buttons off — that is the
+first-paint behaviour, not a state you need to toggle on.
 
-**Auto X** and **Auto Y** stay active until you take manual control of the
-view: typing a limit value turns off that axis's auto-scaling, and a **Zoom**
-or **Pan** gesture turns off both so the framing you dragged to is kept
-instead of snapping back to the data extent. Re-enable either at any time by
-clicking its button again.
+A **Zoom** or **Pan** gesture holds only the axis (or axes) it actually
+moved: a horizontal-only zoom leaves **Auto Y** exactly as it was, and a
+vertical-only pan leaves **Auto X** alone. Re-enable either button at any
+time to release that axis back to following the data.
 
 Default limits automatically adjust to fit the data including error bars,
 with 5% padding.
 
-Once you choose a window — by typing a limit, or by panning or zooming — that
-window is held: recomputing a spectrum, browsing onto a run with no spectrum,
-and switching runs all keep it, so you can compare the same window across a run
-series. Toggling **Auto X** or **Auto Y** on is the explicit "follow the data"
-escape hatch: it releases the held window for that axis and re-scales on every
-redraw until you toggle it off.
+A blank canvas — browsing onto a run with no spectrum computed yet, for
+example — never touches a held value, so the window you left an axis in is
+exactly what you see once data reappears. Closing a project or starting a new
+one is the only thing that forgets held limits; project files otherwise
+remember each axis's Auto/Held state (and its held value), so reopening a
+saved project restores the same view.
 
 Dense-data display (decimation)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

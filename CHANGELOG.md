@@ -68,6 +68,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Axis limits are now a per-axis Auto/Held policy, shared by every plot
+  representation** (time, overlay, stacked/grouped subplots, frequency, and
+  the ALC scan). Each axis — X, and Y per subplot in a stacked view — is
+  either Auto (it follows the data on every redraw: a run switch, a
+  recomputed spectrum, a view-mode change) or Held (it keeps its value across
+  all of that). Browsing therefore holds the window by default; **Auto X** /
+  **Auto Y** are the explicit way to make an axis follow the data again. A
+  zoom or pan now holds only the axis it actually moved — a horizontal zoom
+  used to silently turn off **Auto Y** too. Project files remember each
+  axis's Auto/Held state and held value (`axis_limits`, schema v18); QSettings
+  no longer persists axis limits across sessions, so a project's own saved
+  state is the only thing restored.
+
 - **Switching runs in the data browser is roughly twice as fast on
   fine-resolution data, and no longer stalls.** On a 90 000-bin ROOT run a
   selection change cost 150–300 ms on the GUI thread — every switch built
@@ -138,6 +151,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scalar Volterra recursion are retained as test references.
 
 ### Fixed
+
+- **Auto Y after a zoom, then a run switch, reframed x instead and left the
+  data clipped.** A single shared hold flag covered both axes, so releasing
+  it by clicking **Auto Y** also re-armed a stale first-paint latch for x: the
+  next redraw widened the x axis label to the full data span while the
+  decimated points stayed clipped to the old, zoomed window. Per-axis Held
+  state (above) removes the shared flag and the latch entirely, so **Auto Y**
+  now only ever changes y.
 
 - **The Fit Wizard and Global Fit Wizard windows come back to the front when
   their analysis finishes**, instead of staying behind the main window if it
