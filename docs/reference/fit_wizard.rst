@@ -70,7 +70,10 @@ check the wizard's working, not because you have to read it first.
    stage headlines lights up one at a time as the wizard works through
    reading the run conditions, choosing physics families, searching the
    spectrum, fitting candidates, and weighing the winner. **Cancel** stays
-   visible the whole time.
+   visible the whole time. The status line says you "can keep using the main
+   window while recommendations are prepared", and you can: if the main window
+   ends up in front, the wizard returns to the front by itself as soon as the
+   analysis finishes.
 4. **Read the answer card.** When the run finishes, the wizard shows an
    answer card: a plain-language verdict headline, a confidence sentence, a
    plot of the data with the recommended fit overlaid, and a prominent

@@ -139,6 +139,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Fit Wizard and Global Fit Wizard windows come back to the front when
+  their analysis finishes**, instead of staying behind the main window if it
+  was clicked meanwhile. Both windows invite you to keep working in the main
+  window while the analysis runs, but any click there stacked the main window
+  above the wizard, and nothing brought it back — so the finished answer card
+  sat hidden until you found the window again. A completed or failed analysis
+  now raises and focuses its wizard window; a cancelled run, a superseded
+  request, and a hidden or minimised window leave the window order alone.
 - **Switching runs after applying a Fit Wizard recommendation hung for
   several seconds, and project files grew by hundreds of megabytes per fitted
   run.** The single-fit form's session snapshot embedded a *serialised* copy

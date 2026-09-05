@@ -135,7 +135,9 @@ candidates across the series. A coupled optimisation shows a different set of
 steps (preparing the selected candidates, running the coupled optimisation,
 scoring the Global/Local roles, and reranking). The collapsible **Live log**
 below the trail captures every progress message in full, and **Cancel** stays
-visible throughout so a long run can be stopped cleanly.
+visible throughout so a long run can be stopped cleanly. You can work in the
+main window while the analysis runs; if it ends up in front of the wizard, the
+wizard returns to the front by itself as soon as the analysis finishes.
 
 Result: the answer card and the screening shortlist
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
