@@ -875,7 +875,14 @@ Fitting workflow:
 1. **Select a dataset** in the data browser (it will be plotted)
 2. **Adjust parameters** in the table:
    
-   * **Value**: Initial guess for the parameter
+   * **Value**: Initial guess for the parameter. Every value starts as a
+     *seed* read off the data you are fitting — an amplitude and background
+     from the record's own scale, ``field`` and ``B_L`` from the run's applied
+     field, and a frequency-domain peak's position, height and width from the
+     displayed spectrum. A seed follows the data: select another run, or
+     change a batch's members, and it is derived again for what you are now
+     fitting. As soon as you type a value, or a fit writes one back, it is
+     yours and stays put until you **Reset**.
    * **Fix**: Check to hold the parameter constant during fit
    * **Min/Max**: Set bounds (leave empty for no bounds)
 
@@ -912,10 +919,15 @@ never silently overwritten. Every other run is *refreshable*: selecting it
 loads the composite model and parameter setup of the most recently fitted
 function in the session (superseding anything it was showing before,
 including a hand-edited form you never fitted — the protection trigger is
-"did you commit by fitting", not "did you touch the form"), with
-field-dependent parameters (a frequency seeded from the fitted peak, ``B_L``
-from the run's applied field, and similar) reseeded for the newly-selected
-run. A results box below the parameter table reads "Model carried from run
+"did you commit by fitting", not "did you touch the form").
+
+The values that *described the run the form came from* are re-derived for the
+run it lands on: ``field`` and ``B_L`` from the newly-selected run's applied
+field, and a frequency-domain peak's position, height and width from that
+run's spectrum. Everything else is a starting guess about the physics rather
+than about a particular run, so a rate, an amplitude or a phase you typed —
+or that a fit wrote back — is carried across unchanged and kept until you
+click **Reset**. A results box below the parameter table reads "Model carried from run
 *N* — not fitted for this run" while a refreshed or carried form is showing,
 so it is never mistaken for an actual fit of the displayed run. Only when
 nothing has been fitted anywhere in the session yet does the form fall back

@@ -27,6 +27,7 @@ from asymmetry.core.fitting.parameter_models import (
     is_order_parameter_observable,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.seeding import seed_trend_parameters
 from asymmetry.gui.panels.model_fit_dialog import (
     ModelFitDialog,
     ParameterModelBuilderDialog,
@@ -263,15 +264,15 @@ def test_run_fit_sets_in_progress_state_immediately(qapp: QApplication, monkeypa
     assert dlg._fit_in_progress is False
 
 
-def test_edit_model_replacing_linear_with_redfield_seeds_m_from_default(
+def test_edit_model_replacing_linear_with_redfield_reseeds_m(
     qapp: QApplication, monkeypatch
 ) -> None:
     """Linear and Redfield both have a parameter called "m", but they are
     different components: replacing one with the other is a brand-new
-    component instance (no predecessor), so "m" gets Redfield's own default
-    (2.0) rather than Linear's carried-over slope. This is the identity-keyed
-    replacement for the deleted name-based Redfield special case
-    (_should_reset_param_on_model_change)."""
+    component instance (no predecessor), so "m" is seeded exactly as it would
+    be in a fresh Redfield range rather than carrying Linear's slope. This is
+    the identity-keyed replacement for the deleted name-based Redfield special
+    case (_should_reset_param_on_model_change)."""
     x = np.linspace(1.0, 10.0, 20)
     y = 0.01 * x + 0.2
     yerr = np.full_like(x, 0.01)
@@ -318,7 +319,10 @@ def test_edit_model_replacing_linear_with_redfield_seeds_m_from_default(
     dlg._edit_model(0)
 
     params = dlg.get_model_fit().ranges[0].parameters
-    assert params["m"].value == pytest.approx(2.0)
+    fresh = seed_trend_parameters(ParameterCompositeModel(["Redfield"], []), x, y)
+    assert params["m"].value == pytest.approx(fresh["m"].value)
+    # Not Linear's slope: nothing was carried across the replacement.
+    assert params["m"].value != pytest.approx(0.01)
 
 
 def test_edit_model_appending_second_linear_keeps_first_and_seeds_second(

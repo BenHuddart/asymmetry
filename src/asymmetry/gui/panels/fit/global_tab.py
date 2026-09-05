@@ -96,7 +96,6 @@ from asymmetry.core.fitting.global_fit_wizard import (
 )
 from asymmetry.core.fitting.global_search.heuristics import (
     is_amplitude_parameter,
-    is_background_parameter,
 )
 from asymmetry.core.fitting.grouped_time_domain import (
     GROUP_NUISANCE_PARAMS,
@@ -120,6 +119,7 @@ from asymmetry.core.fitting.parameters import (
     get_param_info,
     split_parameter_name,
 )
+from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.series import fit_asymmetry_series
 from asymmetry.core.fitting.series_seeding import (
     SeriesPoint,
@@ -129,7 +129,6 @@ from asymmetry.core.fitting.series_seeding import (
 from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
-    seed_peak_parameters_from_dataset,
 )
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
@@ -155,12 +154,13 @@ from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
 from .seeding import (
-    _field_value_overrides,
     _seed_group_absolute_phases,
     _seed_group_background_and_n0,
 )
 from .tab_base import (
     _GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT,
+    SEEDED,
+    USER,
     FitParameterTable,
     FitTabBase,
     _apply_domain_mismatch_warning,
@@ -170,18 +170,22 @@ from .tab_base import (
     _fit_curve_sample_count,
     _fit_domain_mismatch_message,
     _fit_summary,
+    _format_bound,
     _format_bounds_pair,
+    _format_seed_value,
     _get_file_value_for_parameter,
     _grouped_formula_string,
     _iter_named_parameter_rows,
     _make_param_name_item,
     _normalized_model_param_values,
     _param_table_rows_by_name,
-    _refresh_field_defaults_in_table,
+    _reseed_seeded_values,
     _set_formula_label_text,
+    _set_value_provenance,
     _size_param_table_to_content,
     _start_fit_call,
     _synchronize_fraction_group_values_in_table,
+    _value_provenance,
     _wait_for_fit_thread,
     dataset_error_oversampling,
     param_name_col_width,
@@ -232,6 +236,7 @@ def _fit_table_restore_entries(
             "fixed": str(entry.get("type", "")) == "Fixed",
             "min": minimum.strip() or "-inf",
             "max": maximum.strip() or "inf",
+            "seeded": entry.get("seeded") == SEEDED,
         }
         # The value is the cell's text as the user left it — blank or half-typed
         # mid-edit is a real "no value" case, and a row without a value keeps
@@ -364,7 +369,6 @@ class GlobalFitTab(FitTabBase):
         self._fit_blocked = False
         self._fit_block_reason = ""
         self._composite_model = self._default_composite_model()
-        self._applied_field_default_gauss = 0.0
         # Successful single-fit seeds keyed by run number.
         self._single_fit_seed_by_run: dict[int, dict[str, object]] = {}
         # Inherited seed cache for current dataset selection.
@@ -841,6 +845,7 @@ class GlobalFitTab(FitTabBase):
             self._excluded_runs = set()
             self._populate_members_list()
         self._invalidate_wizard_cache_if_stale()
+        self._reseed_batch_parameter_table()
         self._update_mode_ui(preserve_result=False)
         self._refresh_inherited_single_fit_defaults()
 
@@ -919,6 +924,7 @@ class GlobalFitTab(FitTabBase):
         # A membership filter changes the batch's run set; keep any displayed
         # result (the fit hasn't re-run) while refreshing the mode/seed UI.
         self._invalidate_wizard_cache_if_stale()
+        self._reseed_batch_parameter_table()
         self._update_mode_ui(preserve_result=True)
         self._refresh_inherited_single_fit_defaults()
 
@@ -931,6 +937,7 @@ class GlobalFitTab(FitTabBase):
         self._member_datasets = [ds for ds in (datasets or []) if ds is not None]
         self._grouped_context_cache = None
         self._grouped_seed_cache = None
+        self._reseed_parameter_tables()
         self._refresh_inherited_single_fit_defaults()
         self._update_mode_ui(preserve_result=False)
 
@@ -981,7 +988,9 @@ class GlobalFitTab(FitTabBase):
             # and dropping the memo would recompute the same grouped count
             # domains a second time on every run switch.
             self._grouped_seed_cache = None
-        self._refresh_field_parameter_defaults_for_current_dataset()
+        # Only the grouped surface's seeds describe the active run; the batch
+        # table's describe its members and follow ``set_datasets`` instead.
+        self._reseed_grouped_model_table()
         if not same_dataset:
             # The shared model phase is held at zero in grouped fits; the
             # per-group phase lives in the per-group phase nuisance, reseeded
@@ -989,23 +998,89 @@ class GlobalFitTab(FitTabBase):
             self._update_group_parameter_defaults()
         self._update_mode_ui(preserve_result=False)
 
-    def _refresh_field_parameter_defaults_for_current_dataset(self) -> None:
-        """Refresh auto-seeded field values when the active dataset changes."""
-        field_gauss = _get_file_value_for_parameter(self._current_dataset, "field")
-        target_field = float(field_gauss) if field_gauss is not None else 0.0
-        _refresh_field_defaults_in_table(
+    def _seed_member_datasets(self) -> list[MuonDataset]:
+        """Return the records this surface's seeds describe.
+
+        The runs surface fits its included members; a grouped surface fits one
+        run's detector groups, so its "members" are the grouped fit's member
+        runs (the active dataset when there is only one).
+        """
+        if self._member_kind == "groups":
+            return self._grouped_member_datasets()
+        return list(self._datasets)
+
+    def _seed_field_gauss(self) -> float | None:
+        """Return the applied field this surface attributes to its fit.
+
+        A batch shares one starting field across its members, so it is their
+        mean — one member's zero-field entry cannot drag it down, and a single
+        member reduces to that run's own field. The individual-groups surface
+        fits one run, so it is that run's field.
+        """
+        if self._grouped_single:
+            return _get_file_value_for_parameter(self._current_dataset, "field")
+        fields = [
+            float(value)
+            for value in (
+                _get_file_value_for_parameter(dataset, "field")
+                for dataset in self._seed_member_datasets()
+            )
+            if value is not None and value != 0.0
+        ]
+        return float(np.mean(fields)) if fields else None
+
+    def _seed_context(self, *, individual_groups: bool, from_record: bool = True) -> SeedContext:
+        """Describe the data one of this tab's parameter tables is seeded for.
+
+        The batch table is seeded by the *members* it fits, not by whichever run
+        the browser happens to have active: its start values are shared across
+        the series (the mean applied field, the mean spectrum peak). The grouped
+        physics table is seeded by the one run whose detector groups it fits,
+        and always as a time-domain count fit — grouped fitting has no frequency
+        surface — with ``individual_groups`` set, which is what holds the shared
+        background and phase at zero against the per-group nuisances.
+
+        ``from_record`` is cleared on the restore path, where the saved values
+        are about to be replayed over the seeds (see ``_set_composite_model``).
+        """
+        if individual_groups:
+            return SeedContext(
+                dataset=self._current_dataset if from_record else None,
+                field_gauss=self._seed_field_gauss(),
+                domain="time",
+                individual_groups=True,
+            )
+        return SeedContext(
+            datasets=tuple(self._seed_member_datasets()) if from_record else (),
+            field_gauss=self._seed_field_gauss(),
+            domain=self._domain,
+        )
+
+    def _reseed_batch_parameter_table(self) -> None:
+        """Re-seed the run-batch table for the member set it now fits.
+
+        The re-seed rule: every value that is still a seed follows the new
+        members (their mean applied field above all), and every value the user
+        typed, fitted or restored stays exactly as it is.
+        """
+        _reseed_seeded_values(
             self._param_table,
-            self._composite_model,
-            previous_field_gauss=self._applied_field_default_gauss,
-            current_field_gauss=target_field,
+            seed_parameters(self._composite_model, self._seed_context(individual_groups=False)),
         )
-        _refresh_field_defaults_in_table(
+        self._synchronize_fraction_value_rows()
+
+    def _reseed_grouped_model_table(self) -> None:
+        """Re-seed the grouped physics table for the run it now fits."""
+        _reseed_seeded_values(
             self._group_model_table,
-            self._grouped_fit_model(),
-            previous_field_gauss=self._applied_field_default_gauss,
-            current_field_gauss=target_field,
+            seed_parameters(self._grouped_fit_model(), self._seed_context(individual_groups=True)),
         )
-        self._applied_field_default_gauss = target_field
+        self._synchronize_grouped_model_fraction_rows()
+
+    def _reseed_parameter_tables(self) -> None:
+        """Re-seed both physics tables (the member set behind both changed)."""
+        self._reseed_batch_parameter_table()
+        self._reseed_grouped_model_table()
 
     def _invalidate_wizard_cache_if_stale(self) -> None:
         self._sync_active_wizard_cache_from_selection()
@@ -1318,6 +1393,8 @@ class GlobalFitTab(FitTabBase):
                     value_item = self._param_table.item(row, 1)
                     if value_item is not None:
                         value_item.setText(f"{averages[pname]:.6g}")
+                        # Inherited from real single fits: a value, not a seed.
+                        _set_value_provenance(value_item, USER)
                 self._updating_fraction_values = False
                 self._synchronize_fraction_value_rows()
 
@@ -1354,6 +1431,9 @@ class GlobalFitTab(FitTabBase):
                 "value": value_item.text() if value_item is not None else "",
                 "bounds": bounds_item.text() if bounds_item is not None else "-inf, inf",
                 "type": type_combo.currentText() if isinstance(type_combo, QComboBox) else "",
+                # Carried with the value: a row that still holds a seed keeps
+                # following the data after the model edit that moved it.
+                "seeded": _value_provenance(value_item) if value_item is not None else USER,
             }
         return state
 
@@ -1422,7 +1502,7 @@ class GlobalFitTab(FitTabBase):
         seed_values: dict[str, str] | None = None,
         seed_bounds: dict[str, str] | None = None,
         *,
-        seed_frequency: bool = True,
+        seed_from_record: bool = True,
         origins: Sequence[int | None] | None = None,
     ) -> None:
         """Set the active composite model and rebuild classification rows.
@@ -1445,10 +1525,9 @@ class GlobalFitTab(FitTabBase):
         single-fit seeds, a project restore — pass no origins, and the rows are
         rebuilt from seeds alone.
 
-        Restore paths pass ``seed_frequency=False`` because restored parameter
-        values are replayed by ``restore_parameters`` and must not be
-        re-derived (and the restore-time dataset may still be the previous
-        domain's).
+        Restore paths pass ``seed_from_record=False`` because restored
+        parameter values are replayed over the seeds and must not be re-derived
+        from the bound records (see :meth:`_seed_context`).
         """
         seed_values = seed_values or {}
         seed_bounds = seed_bounds or {}
@@ -1461,31 +1540,12 @@ class GlobalFitTab(FitTabBase):
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
-        # Seed any 'field' parameters from the applied field. The single grouped
-        # (individual-groups) surface fits one dataset at a time, so use that
-        # dataset's field — including for models with more than one oscillatory
-        # component (every 'field' param, not just the first). The multi-run
-        # batch surface uses the mean field across its loaded members.
-        if self._grouped_single:
-            single_field = _get_file_value_for_parameter(self._current_dataset, "field")
-            seed_field_gauss = float(single_field) if single_field is not None else 0.0
-        else:
-            dataset_fields = [
-                ds.run.field for ds in self._datasets if ds.run is not None and ds.run.field != 0.0
-            ]
-            seed_field_gauss = float(np.mean(dataset_fields)) if dataset_fields else 0.0
-        field_overrides = _field_value_overrides(model, seed_field_gauss)
-        frequency_seed_values: dict[str, list[float]] = {}
-        if seed_frequency and self._domain == "frequency":
-            for dataset in self._datasets:
-                for key, value in seed_peak_parameters_from_dataset(dataset, model).items():
-                    frequency_seed_values.setdefault(key, []).append(float(value))
-        frequency_overrides = {
-            key: float(np.mean(values)) for key, values in frequency_seed_values.items() if values
-        }
-        self._applied_field_default_gauss = seed_field_gauss
-
-        fixed_default_params = model.fixed_by_default_params()
+        # One seeding call answers "what should this batch's parameters start
+        # at for these runs?" — applied field, frequency peak and record scale
+        # in the layer order the core module documents.
+        seeds = seed_parameters(
+            model, self._seed_context(individual_groups=False, from_record=seed_from_record)
+        )
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
             previous = carried_state.get(pname, {})
@@ -1493,17 +1553,22 @@ class GlobalFitTab(FitTabBase):
             name_item = _make_param_name_item(format_param_label(pname), pname)
             self._param_table.setItem(i, 0, name_item)
 
-            # Initial value — use dataset field for 'field' parameters if available
-            default_val = frequency_overrides.get(
-                pname, field_overrides.get(pname, model.param_defaults.get(pname, 0.0))
-            )
+            # Initial value: a value sent from another surface wins, then one
+            # carried from the component this row's parameter came from, then
+            # the seed. Only the seed is re-seedable later.
+            seed = seeds[pname]
             seed_text = seed_values.get(pname)
+            carried_text = previous.get("value")
             if seed_text is not None:
-                value_text = seed_text
+                value_text, provenance = seed_text, USER
+            elif carried_text:
+                value_text = carried_text
+                provenance = str(previous.get("seeded") or USER)
             else:
-                value_text = previous.get("value") or str(default_val)
+                value_text, provenance = _format_seed_value(seed.value), SEEDED
             value_item = QTableWidgetItem(value_text)
             self._param_table.setItem(i, 1, value_item)
+            _set_value_provenance(value_item, provenance)
 
             # Type selection (Global/Local/Fixed/File dropdown)
             type_combo = QComboBox()
@@ -1515,7 +1580,7 @@ class GlobalFitTab(FitTabBase):
             # Set default: all free parameters default to Local (Global is an
             # explicit opt-in, see D5); component-declared fixed-by-default
             # parameters default to Fixed.
-            if pname in fixed_default_params:
+            if seed.fixed:
                 type_combo.setCurrentText("Fixed")
             else:
                 type_combo.setCurrentText("Local")
@@ -1533,9 +1598,9 @@ class GlobalFitTab(FitTabBase):
             if seed_bound is not None:
                 bounds_text = seed_bound
             else:
-                default_min = get_param_info(pname).default_min
-                min_text = str(default_min) if default_min is not None else "-inf"
-                bounds_text = previous.get("bounds") or f"{min_text}, inf"
+                bounds_text = previous.get("bounds") or (
+                    f"{_format_bound(seed.min, '-inf')}, {_format_bound(seed.max, 'inf')}"
+                )
             bounds_item = QTableWidgetItem(bounds_text)
             self._param_table.setItem(i, 3, bounds_item)
 
@@ -1546,7 +1611,7 @@ class GlobalFitTab(FitTabBase):
             type_column=2,
         )
         _size_param_table_to_content(self._param_table)
-        self._rebuild_grouped_model_table(carried_grouped_state)
+        self._rebuild_grouped_model_table(carried_grouped_state, from_record=seed_from_record)
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
         if self.is_grouped_time_domain_mode():
@@ -1624,6 +1689,8 @@ class GlobalFitTab(FitTabBase):
     def _on_param_table_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating_fraction_values or item.column() != 1:
             return
+        # The user typed this number: it outranks any later seed.
+        _set_value_provenance(item, USER)
         name_item = self._param_table.item(item.row(), 0)
         param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
         if isinstance(param_name, str):
@@ -1646,6 +1713,8 @@ class GlobalFitTab(FitTabBase):
     def _on_group_model_table_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating_group_model_fraction_values or item.column() != 1:
             return
+        # The user typed this number: it outranks any later seed.
+        _set_value_provenance(item, USER)
         name_item = self._group_model_table.item(item.row(), 0)
         param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
         if isinstance(param_name, str):
@@ -1805,6 +1874,8 @@ class GlobalFitTab(FitTabBase):
             clipped = float(np.clip(value, min_val, max_val))
             if clipped != value:
                 value_item.setText(f"{clipped:.6g}")
+                # The user's own bound moved this number; it is theirs now.
+                _set_value_provenance(value_item, USER)
 
     def _parse_parameter_configuration(self) -> dict[str, object]:
         """Return validated parameter values, roles, and bounds from the table."""
@@ -3549,6 +3620,8 @@ class GlobalFitTab(FitTabBase):
             fitted = fitted_by_name.get(pname)
             if value_item is not None and fitted is not None:
                 value_item.setText(f"{display_values.get(pname, fitted.value):.6g}")
+                # A fitted value is the user's result, never a re-seedable seed.
+                _set_value_provenance(value_item, USER)
 
             bounds_item = self._param_table.item(row, 3)
             if bounds_item is not None and fitted is not None:
@@ -3911,6 +3984,8 @@ class GlobalFitTab(FitTabBase):
                 fitted = shared_by_name.get(pname)
                 if value_item is not None and pname in display_shared_values:
                     value_item.setText(f"{float(display_shared_values[pname]):.6g}")
+                    # A fitted value is the user's result, not a seed.
+                    _set_value_provenance(value_item, USER)
                 bounds_item = self._group_model_table.item(row, 3)
                 if bounds_item is not None and fitted is not None:
                     min_text = "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
@@ -4104,6 +4179,7 @@ class GlobalFitTab(FitTabBase):
                     "value": value,
                     "type": type_text,
                     "bounds": bounds_text,
+                    "seeded": value_item is not None and _value_provenance(value_item) == SEEDED,
                 }
             )
 
@@ -4167,10 +4243,10 @@ class GlobalFitTab(FitTabBase):
             except ValueError:
                 self._set_composite_model(
                     CompositeModel(["Exponential", "Constant"], operators=["+"]),
-                    seed_frequency=False,
+                    seed_from_record=False,
                 )
             else:
-                self._set_composite_model(restored, seed_frequency=False)
+                self._set_composite_model(restored, seed_from_record=False)
                 if restored.missing_component_names:
                     names = ", ".join(restored.missing_component_names)
                     self._result_text.setText(
@@ -4204,6 +4280,9 @@ class GlobalFitTab(FitTabBase):
                 value_item.setText(
                     str(normalized_state_values.get(param_name, p_data.get("value", 0.0)))
                 )
+                # The saved entry says whether its value was still a seed; one
+                # written before provenance existed is treated as the user's.
+                _set_value_provenance(value_item, SEEDED if p_data.get("seeded") is True else USER)
 
             type_combo = self._param_table.cellWidget(i, 2)
             if isinstance(type_combo, QComboBox):
@@ -4799,10 +4878,17 @@ class GlobalFitTab(FitTabBase):
                     value_item = table.item(row, 1)
                     if value_item is not None:
                         value_item.setText(str(seed_values[name]))
+                        # Sent from the Single grouped surface: the user's value.
+                        _set_value_provenance(value_item, USER)
         finally:
             table.blockSignals(blocked)
 
-    def _rebuild_grouped_model_table(self, carried_state: dict[str, dict[str, str]]) -> None:
+    def _rebuild_grouped_model_table(
+        self,
+        carried_state: dict[str, dict[str, str]],
+        *,
+        from_record: bool = True,
+    ) -> None:
         """Rebuild the grouped physics table, applying ``carried_state`` over the seeds.
 
         ``carried_state`` is keyed by the *new* model's parameter names (see
@@ -4814,47 +4900,48 @@ class GlobalFitTab(FitTabBase):
         visible_param_names = [
             pname for pname in grouped_model.param_names if not is_amplitude_parameter(pname)
         ]
+        # The individual-groups context is what holds the shared background and
+        # phase at zero: this fit carries both in its per-group nuisances.
+        seeds = seed_parameters(
+            grouped_model,
+            self._seed_context(individual_groups=True, from_record=from_record),
+        )
         if self._grouped_single:
             self._rebuild_grouped_single_model_table(
-                grouped_model, visible_param_names, carried_state
+                grouped_model, visible_param_names, carried_state, seeds
             )
             return
         self._updating_group_model_fraction_values = True
         self._group_model_table.setRowCount(len(visible_param_names))
         for row, pname in enumerate(visible_param_names):
             previous = carried_state.get(pname, {})
-            base_name, _index = split_parameter_name(pname)
+            seed = seeds[pname]
             name_item = _make_param_name_item(format_param_label(pname), pname)
             self._group_model_table.setItem(row, 0, name_item)
 
-            default_val = grouped_model.param_defaults.get(pname, 0.0)
-            default_type = "Local"
-            if is_background_parameter(pname):
-                default_val = 0.0
-                default_type = "Fixed"
-            elif base_name == "phase":
-                # The per-group phase nuisance carries the absolute phase, so the
-                # shared model phase is fixed at zero by default (user-adjustable).
-                default_val = 0.0
-                default_type = "Fixed"
-            self._group_model_table.setItem(
-                row,
-                1,
-                QTableWidgetItem(str(previous.get("value") or default_val)),
+            carried_text = previous.get("value")
+            value_item = QTableWidgetItem(
+                carried_text if carried_text else _format_seed_value(seed.value)
+            )
+            self._group_model_table.setItem(row, 1, value_item)
+            _set_value_provenance(
+                value_item,
+                str(previous.get("seeded") or USER) if carried_text else SEEDED,
             )
             type_combo = QComboBox()
             # Physics roles unified with the run-batch side: Global = shared across
             # runs (members), Local = per run (still shared across that run's groups),
             # Fixed = held. Legacy "Shared"/"Free" map to Global.
             type_combo.addItems(["Global", "Local", "Fixed"])
-            previous_type = str(previous.get("type") or default_type)
+            previous_type = str(previous.get("type") or ("Fixed" if seed.fixed else "Local"))
             if previous_type in ("Shared", "Free"):
                 previous_type = "Global"
             type_combo.setCurrentText(previous_type)
             self._group_model_table.setCellWidget(row, 2, type_combo)
-            default_min = get_param_info(pname).default_min
-            min_text = str(default_min) if default_min is not None else "-inf"
-            bounds_text = str(previous.get("bounds") or f"{min_text}, inf")
+            bounds_text = str(
+                previous.get("bounds")
+                or f"{_format_bound(seed.min, '-inf')}, {_format_bound(seed.max, 'inf')}"
+            )
             self._group_model_table.setItem(row, 3, QTableWidgetItem(bounds_text))
         _configure_fraction_rows_in_table(
             self._group_model_table,
@@ -4871,19 +4958,16 @@ class GlobalFitTab(FitTabBase):
         grouped_model: CompositeModel,
         visible_param_names: list[str],
         carried_state: dict[str, dict[str, str]],
+        seeds: Mapping[str, Seed],
     ) -> None:
         """Populate the single grouped fit's physics table (shared Fix tickbox).
 
-        Reuses :class:`FitParameterTable`. Every row is seeded first:
-
-        - ``field``/``B_L`` params seed from the run's applied field (every such
-          param, so models with more than one oscillatory component all start at
-          the applied field rather than the 100 G component default);
-        - background params default fixed at 0;
-        - ``phase`` params default fixed at 0 — the individual-groups fit holds
-          the shared oscillation phase at zero and carries the full per-group
-          phase in the ``relative_phase`` nuisances, removing the degeneracy
-          between a shared phase and the per-group phase offsets.
+        Reuses :class:`FitParameterTable`, seeded by the one seeding function
+        for this surface's individual-groups context: the applied field on
+        every ``field``/``B_L`` param, and the shared background and ``phase``
+        held at zero — that fit carries the full per-group phase in its
+        ``relative_phase`` nuisances, so a free shared phase would be
+        degenerate with them.
 
         ``carried_state`` (the shared {value, type, bounds} shape, keyed by the
         new model's names) then lands on top through the table's own restore —
@@ -4891,25 +4975,7 @@ class GlobalFitTab(FitTabBase):
         component survived the model change.
         """
         table = self._group_model_table
-        field_overrides = _field_value_overrides(
-            grouped_model, float(self._applied_field_default_gauss)
-        )
-        value_overrides: dict[str, float] = {}
-        fixed_names: set[str] = set()
-        for pname in visible_param_names:
-            base_name, _index = split_parameter_name(pname)
-            if is_background_parameter(pname) or base_name == "phase":
-                value_overrides[pname] = 0.0
-                fixed_names.add(pname)
-            elif pname in field_overrides:
-                value_overrides[pname] = field_overrides[pname]
-
-        table.populate(
-            grouped_model,
-            param_names=visible_param_names,
-            value_overrides=value_overrides,
-            fixed_names=fixed_names,
-        )
+        table.populate(grouped_model, param_names=visible_param_names, seeds=seeds)
         # The amplitudes this table hides have no row to land on; passing them
         # to restore_parameters would resurrect them as auxiliary parameters.
         visible = set(visible_param_names)
@@ -5118,6 +5184,7 @@ class GlobalFitTab(FitTabBase):
                     "value": str(entry.get("value", 0.0)),
                     "type": "Fixed" if entry.get("fixed") else "Shared",
                     "bounds": f"{entry.get('min', '-inf')}, {entry.get('max', 'inf')}",
+                    "seeded": SEEDED if entry.get("seeded") else USER,
                 }
             return state
         for row, param_name in _iter_named_parameter_rows(table, skip_unnamed=True):
@@ -5128,6 +5195,9 @@ class GlobalFitTab(FitTabBase):
                 "value": value_item.text() if value_item is not None else "",
                 "bounds": bounds_item.text() if bounds_item is not None else "-inf, inf",
                 "type": type_combo.currentText() if isinstance(type_combo, QComboBox) else "",
+                # Carried with the value, so a rebuilt row keeps knowing whether
+                # its number is still a seed the next context change may replace.
+                "seeded": _value_provenance(value_item) if value_item is not None else USER,
             }
         return state
 
@@ -5144,6 +5214,7 @@ class GlobalFitTab(FitTabBase):
                     "value": value,
                     "type": entry.get("type", ""),
                     "bounds": entry.get("bounds", "-inf, inf"),
+                    "seeded": entry.get("seeded") == SEEDED,
                 }
             )
         return state
@@ -5166,6 +5237,7 @@ class GlobalFitTab(FitTabBase):
             value_item = table.item(row, 1)
             if value_item is not None:
                 value_item.setText(str(entry.get("value", 0.0)))
+                _set_value_provenance(value_item, SEEDED if entry.get("seeded") is True else USER)
             type_combo = table.cellWidget(row, 2)
             if isinstance(type_combo, QComboBox):
                 idx = type_combo.findText(str(entry.get("type", "")))
