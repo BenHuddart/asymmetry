@@ -7,7 +7,7 @@ from functools import lru_cache
 import numpy as np
 from numpy.typing import NDArray
 
-from asymmetry.core.fitting.models import _bounded_cache_get, _strong_collision_solve
+from asymmetry.core.fitting.models import _exponential_sum, _strong_collision_modes
 from asymmetry.core.fitting.muon_fluorine.dipolar import (
     _PAIR_F1_F2,
     _PAIR_ISO,
@@ -55,25 +55,31 @@ def linear_fmuf_polarization(t: NDArray[np.float64], r_muF: float) -> NDArray[np
     ) / 6.0
 
 
-# Cache of dynamic-FmuF solutions keyed by quantised (r_muF, nu, tmax).
-_DYN_FMUF_CACHE: dict[tuple, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
-_DYN_FMUF_CACHE_MAX = 128
+def _linear_fmuf_realisation(
+    r_muF: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+    """State-space ``(A, b, c)`` of the static collinear F-mu-F polarization.
 
-# Branch selection between the trapezoidal strong-collision solver and the
-# Abragam-form interpolation exp[-(M2/nu^2)(e^{-nu t}-1+nu t)] (second moment
-# M2 = 2*omega_d^2).  The two have complementary accuracy: the capped-grid
-# solver degrades at large nu when the relaxation is *slow* (errors accumulate
-# over many steps while G stays near 1), which is precisely the regime
-# nu >> omega_d where the Abragam interpolation is excellent; conversely for
-# nu <~ 10*omega_d the interpolation errs at the percent level while the
-# solver is accurate.  Crossing over at nu = 12*omega_d (with a floor at the
-# legacy 12 us^-1 and a hard solver stability ceiling from the grid cap) keeps
-# the branch seam below ~1 % everywhere — measured in the test suite, versus
-# the 2.5-30 % step of a fixed-rate switch.
-_DYN_FMUF_SWITCH_RATIO = 12.0
-_DYN_FMUF_SWITCH_MIN = 12.0
-_DYN_FMUF_NU_H_STABILITY = 0.2
-_DYN_FMUF_GRID_CAP = 20001
+    :func:`linear_fmuf_polarization` is a constant plus three cosines, so it is
+    ``c^T exp(A t) b`` for a seven-state system: one constant mode and a 2x2
+    rotation block per frequency (``x_k = cos``, ``x_{k+1} = sin``).
+    """
+    omega_d = omega_d_mu_f_rad_per_us(r_muF)
+    sqrt3 = np.sqrt(3.0)
+    frequencies = (sqrt3 * omega_d, 0.5 * (3.0 - sqrt3) * omega_d, 0.5 * (3.0 + sqrt3) * omega_d)
+    amplitudes = (1.0, 1.0 - 1.0 / sqrt3, 1.0 + 1.0 / sqrt3)
+    a_mat = np.zeros((7, 7))
+    b = np.zeros(7)
+    c = np.zeros(7)
+    b[0] = 0.5
+    c[0] = 1.0
+    for i, (omega, amplitude) in enumerate(zip(frequencies, amplitudes, strict=True)):
+        k = 1 + 2 * i
+        a_mat[k, k + 1] = -omega
+        a_mat[k + 1, k] = omega
+        b[k] = amplitude / 6.0
+        c[k] = 1.0
+    return a_mat, b, c
 
 
 def dynamic_fmuf_polarization(
@@ -88,14 +94,18 @@ def dynamic_fmuf_polarization(
         G_d(t) = e^{-nu t} G_s(t) + nu * integral_0^t G_d(t - t') e^{-nu t'} G_s(t') dt'
 
     modelling muon hopping away from the F-mu-F site (or fluctuation of the
-    coupling) at rate ``nu`` (µs⁻¹).  ``nu = 0`` reduces exactly to the static
-    :func:`linear_fmuf_polarization`; large ``nu`` gives motional narrowing
-    toward ``exp(-2 omega_d^2 t / nu)``.  Unlike WiMDA, the integration horizon
-    is derived from the requested time range rather than a user-visible
-    ``tmax`` parameter, the solution is cached per ``(r_muF, nu, tmax)``, and
-    the solver is used over its full accuracy range with an Abragam-form
-    interpolation beyond it (WiMDA jumps to the bare narrowing exponential at
-    a fixed rate, leaving a discontinuity in the model).
+    coupling) at rate ``nu`` (µs⁻¹).  Because ``G_s`` is a constant plus three
+    cosines, the equation has an **exact closed-form solution**: a sum of seven
+    exponentials whose rates and weights come from a 7x7 eigenproblem
+    (:func:`asymmetry.core.fitting.models._strong_collision_modes`).  It is
+    evaluated directly at the requested times -- no integration grid, cache,
+    call-count-dependent accuracy or fast-fluctuation crossover -- and is valid
+    at every rate: ``nu = 0`` reduces exactly to the static
+    :func:`linear_fmuf_polarization`, and for ``nu >> omega_d`` it tends to the
+    motional-narrowing exponential ``exp(-2 omega_d^2 t / nu)`` (with the
+    Abragam-form quadratic onset at short times).  WiMDA instead integrates on
+    a user-visible ``tmax`` grid and jumps to the bare narrowing exponential at
+    a fixed rate, leaving a discontinuity in the model.
     """
     t_arr = np.asarray(t, dtype=float)
     scalar = t_arr.ndim == 0
@@ -104,36 +114,8 @@ def dynamic_fmuf_polarization(
     if nu <= 1e-9:
         gd = np.asarray(linear_fmuf_polarization(tt, r_muF), dtype=float)
         return float(gd[0]) if scalar else gd
-
-    omega_d = omega_d_mu_f_rad_per_us(r_muF)
-    tmax = float(max(tt.max(), 1e-6))
-    nu_switch = max(_DYN_FMUF_SWITCH_MIN, _DYN_FMUF_SWITCH_RATIO * omega_d)
-    nu_stability = _DYN_FMUF_NU_H_STABILITY * (_DYN_FMUF_GRID_CAP - 1) / tmax
-    if nu > min(nu_switch, nu_stability):
-        # Abragam-form strong-collision interpolation with the static F-mu-F
-        # second moment M2 = 2*omega_d^2; equals the motional-narrowing
-        # exponential for nu*t >> 1 with correct quadratic short-time form.
-        x = nu * tt
-        exponent = -(2.0 * omega_d * omega_d / (nu * nu)) * (
-            np.exp(np.clip(-x, -700.0, 0.0)) - 1.0 + x
-        )
-        gd = np.exp(np.clip(exponent, -700.0, 0.0))
-        return float(gd[0]) if scalar else gd
-
-    key = (round(float(r_muF), 9), round(nu, 6), round(tmax, 5))
-
-    def _compute() -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        # Step resolves both the collision rate and the fastest static
-        # oscillation, (3+sqrt(3))/2 * omega_d.
-        h_des = min(0.02, 0.02 / max(nu, 1e-3), 0.1 / max(omega_d, 1e-3))
-        n = int(min(max(round(tmax / h_des) + 1, 64), _DYN_FMUF_GRID_CAP))
-        grid = np.linspace(0.0, tmax, n)
-        h = grid[1] - grid[0] if n > 1 else tmax
-        gs = np.asarray(linear_fmuf_polarization(grid, r_muF), dtype=float)
-        return grid, _strong_collision_solve(gs, nu, h)
-
-    grid, gd_grid = _bounded_cache_get(_DYN_FMUF_CACHE, _DYN_FMUF_CACHE_MAX, key, _compute)
-    gd = np.interp(tt, grid, gd_grid)
+    lam, weights = _strong_collision_modes(*_linear_fmuf_realisation(r_muF), nu)
+    gd = np.asarray(_exponential_sum(tt, lam, weights), dtype=float)
     return float(gd[0]) if scalar else gd
 
 

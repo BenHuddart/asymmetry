@@ -66,6 +66,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ladder because the frequency was supplied rather than searched for, so a line
   the blind scan declined can still be measured by naming it.
 
+### Changed
+
+- **Dynamic Lorentzian Kubo–Toyabe and dynamic F–μ–F are now exact closed
+  forms, and the longitudinal-field Lorentzian line shape is evaluated from a
+  closed-form spectral density.** These two components set the fit wizard's
+  Stage-2 wall-time floor (~20 s per candidate on a real record, noted as a
+  follow-up of the matched-apodisation scan work above). The strong-collision integral
+  equation for any static function that is a finite sum of exponentials,
+  damped cosines, or `t·e^{-at}` terms is equivalent to a small linear system
+  with a rank-one feedback of the observed polarisation, so its solution is a
+  sum of exponentials from an eigenproblem: three for the zero-field
+  Lorentzian KT (`DynamicLorentzianKT`), seven for `DynamicFmuF`. Both are
+  evaluated directly at the requested times, at every fluctuation rate, with
+  no integration grid, cache, `tmax`-dependent step, or fast-fluctuation
+  branch; the former `ν = 12 MHz` saturation stand-in for the zero-field
+  Lorentzian and the Abragam-form crossover for F–μ–F (with its ~1 % seam) are
+  gone, and the grid solver's error of up to 5 % at rates above its stability
+  ceiling with it. The strong-collision solver remains for the Gaussian
+  family and for the Lorentzian in a field, and now sizes its step to resolve
+  the Larmor oscillation of the static line shape as well as the collision
+  rate. That field line shape, previously a 2400-node quadrature with a
+  logarithmic singularity (~1e-3 accuracy, 20–30 ms per evaluation, and a
+  fixed 220-node time grid that aliased the oscillation at high field on long
+  windows), is now a closed-form spectral density whose zero-field tail and
+  `1/W⁴` term are transformed analytically and whose smooth remainder goes
+  through one FFT aligned to the integration grid: ~1e-6 accuracy at any
+  field, resolved however long the window, in ~0.3–1 ms. A wizard
+  `Dynamic Lorentzian KT + Constant` candidate on a 2000-point zero-field
+  record fits in 0.3 s instead of 26 s; the original quadrature and the
+  scalar Volterra recursion are retained as test references.
+
 ### Fixed
 
 - **Junk peaks against the Nyquist edge on finely binned records.** The

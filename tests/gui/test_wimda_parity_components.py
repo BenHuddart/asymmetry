@@ -456,43 +456,44 @@ def test_dynamic_fmuf_fast_fluctuation_motional_narrowing() -> None:
     from asymmetry.core.fitting.muon_fluorine.dipolar import omega_d_mu_f_rad_per_us
 
     omega_d = omega_d_mu_f_rad_per_us(1.17)
-    nu = 500.0  # far above the solver range: Abragam-form branch
+    nu = 500.0  # far above the static frequencies: motional narrowing
     narrowed = np.exp(-2.0 * omega_d**2 * T / nu)
-    # The Abragam-form branch approaches the bare narrowing exponential for
-    # nu*t >> 1 (and is more accurate at early times).
+    # The closed form approaches the bare narrowing exponential for nu*t >> 1
+    # (its quadratic short-time onset is what the exponential lacks).
     result = dynamic_fmuf_polarization(T, 1.17, nu)
     assert np.allclose(result[T > 0.1], narrowed[T > 0.1], atol=2e-3)
     assert result[0] == pytest.approx(1.0)
 
 
-def test_dynamic_fmuf_branch_seam_is_small() -> None:
-    """The solver/interpolation crossover must not put a step in the model.
+def test_dynamic_fmuf_closed_form_matches_reference_solver() -> None:
+    """The closed-form eigenmode solution reproduces a finely resolved
+    strong-collision Volterra solve across mu-F distances and rates (the
+    difference is the grid solver's own O(h^2) error), so there is no branch
+    seam to keep small: one expression serves every ``nu``."""
+    from asymmetry.core.fitting.models import _strong_collision_solve
 
-    The previous fixed switch at nu = 12 caused 2.5-30 % discontinuities; the
-    crossover now follows nu = 12*omega_d (where the solver and the
-    Abragam-form interpolation are both accurate), keeping the seam ~1 % or
-    below across mu-F distances.
-    """
-    from asymmetry.core.fitting.muon_fluorine.dipolar import omega_d_mu_f_rad_per_us
-    from asymmetry.core.fitting.muon_fluorine.polarization import (
-        _DYN_FMUF_GRID_CAP,
-        _DYN_FMUF_NU_H_STABILITY,
-        _DYN_FMUF_SWITCH_MIN,
-        _DYN_FMUF_SWITCH_RATIO,
-    )
+    n = 20001
+    grid = np.linspace(0.0, 8.0, n)
+    h = grid[1] - grid[0]
+    for r in (0.6, 0.8, 1.17, 2.5):
+        for nu in (0.05, 0.5, 3.0, 11.9):
+            ref = _strong_collision_solve(linear_fmuf_polarization(grid, r), nu, h)
+            tol = 2e-5 + 8.0 * (nu * h) ** 2  # the grid solver's own O((nu h)^2) error
+            assert np.max(np.abs(dynamic_fmuf_polarization(grid, r, nu) - ref)) < tol, (r, nu)
 
-    tmax = float(T.max())
-    # Sub-percent at physical mu-F distances; a looser guard at r = 0.6 A
-    # (minimizer-exploration territory) where both branches sit at their
-    # accuracy edge.
-    for r, seam_tol in ((1.17, 5e-3), (0.8, 8e-3), (0.6, 3e-2)):
-        nu_seam = min(
-            max(_DYN_FMUF_SWITCH_MIN, _DYN_FMUF_SWITCH_RATIO * omega_d_mu_f_rad_per_us(r)),
-            _DYN_FMUF_NU_H_STABILITY * (_DYN_FMUF_GRID_CAP - 1) / tmax,
-        )
-        below = dynamic_fmuf_polarization(T, r, nu_seam * 0.999)
-        above = dynamic_fmuf_polarization(T, r, nu_seam * 1.001)
-        assert np.max(np.abs(below - above)) < seam_tol, f"r={r}"
+
+def test_dynamic_fmuf_is_smooth_in_nu_beyond_the_old_solver_range() -> None:
+    """Above the rate where the grid solver used to hand over to an Abragam-form
+    interpolation (nu ~ 12 omega_d) the model varies smoothly with nu, and
+    keeps G(0) = 1 with a quadratic (not linear) onset."""
+    for r in (0.6, 1.17):
+        for nu in (12.0, 40.0, 200.0):
+            below = dynamic_fmuf_polarization(T, r, nu * 0.999)
+            above = dynamic_fmuf_polarization(T, r, nu * 1.001)
+            assert np.max(np.abs(below - above)) < 1e-3, (r, nu)
+            assert above[0] == pytest.approx(1.0, abs=1e-12)
+    early = dynamic_fmuf_polarization(np.array([0.0, 1e-3, 2e-3]), 1.17, 40.0)
+    assert (1.0 - early[2]) == pytest.approx(4.0 * (1.0 - early[1]), rel=0.05)
 
 
 def test_triangle_distant_third_fluorine_matches_general_collinear() -> None:

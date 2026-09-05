@@ -188,15 +188,36 @@ The zero-field static limit is the analytic Lorentzian Kubo–Toyabe,
 
    G^{\mathrm{s}}(t) = \tfrac{1}{3} + \tfrac{2}{3}(1 - a_L t)\,e^{-a_L t},
 
-and dynamics are added with the same strong-collision solver. The
-longitudinal-field static line shape has no closed form; it is computed from
-the stochastic field average over an isotropic Lorentzian distribution, with
-the angular and precession integrals done analytically so only a single
-smooth 1-D quadrature remains. The result is accurate to ≈ 0.2 % for
-:math:`B_L \gtrsim 20` G (≈ 0.3–0.5 % near 5 G) — well below the statistical
-scatter of typical data; the line shape is cached, but it remains the most
-expensive member of the family, so fix :math:`B_L` from the known applied
-field where possible.
+and in zero field the strong-collision dynamics have an **exact closed
+form**: the static function is a three-state linear system, so the
+strong-collision integral equation reduces to a 3 × 3 eigenproblem and
+:math:`G^{\mathrm{d}}(t)` is a sum of three exponentials, valid at every
+rate with no integration grid, cache, or fast-fluctuation crossover. Unlike
+the Gaussian case there is no motional narrowing — a Lorentzian distribution
+has no second moment — and the closed form shows the relaxation rate
+saturating at :math:`4a_L/3` for :math:`\nu \gg a_L`.
+
+In a longitudinal field the static line shape is evaluated from a closed-form
+**spectral density**: writing the stochastic field average over the isotropic
+Lorentzian distribution as a cosine transform in the total-field magnitude
+:math:`W` and doing the magnitude integral analytically gives
+
+.. math::
+
+   S(W) = \frac{a_L}{2\pi\,\omega_0^{3}\,W}\left[
+   \left(a_L^{2} + W^{2} + \omega_0^{2}\right)
+   \ln\frac{a_L^{2} + (W + \omega_0)^{2}}{a_L^{2} + (W - \omega_0)^{2}}
+   - 4\,\omega_0 W\right],
+
+with :math:`\omega_0 = \gamma_\mu B_L`, whose :math:`1/W^{2}` tail is exactly
+the zero-field density (carrying the :math:`e^{-a_L t}` cusp analytically) and
+whose remainder is transformed by one FFT with the frequency step chosen so
+its conjugate time step is the integration grid's. The line shape is accurate
+to ~10⁻⁶ at any field and resolves the Larmor oscillation however long the
+window; the dynamic solution in a field is then the strong-collision solver of
+``DynamicGaussianKT`` on that grid. The field path costs a few times the
+zero-field closed form, so fix :math:`B_L` from the known applied field where
+it is not the quantity of interest.
 
 =========  ===============  =====  ===========================================
 Name       Symbol           Unit   Description
