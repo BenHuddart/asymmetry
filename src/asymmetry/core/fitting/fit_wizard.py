@@ -4659,6 +4659,19 @@ def _initial_parameters_for_template(
             # ``fixed_names`` is matched on the base name in the loop below.
             overrides.setdefault("B_L", pinned_b_l)
             fixed_names.add("B_L")
+        elif field_gauss is not None and geometry is not FieldGeometry.TF:
+            # A real setpoint was recorded but the geometry tag that would let
+            # ``_pinned_longitudinal_field`` pin it is missing (unconfirmed —
+            # neither ZF, LF, nor TF) — the exact shape of this Ag LF-KT
+            # decoupling series, whose runs carry a numeric field but no
+            # ``field_direction``/``field_state`` metadata. It is still our
+            # best evidence for ``B_L``: a confirmed TF run is excluded above
+            # because its longitudinal component is "small" by construction,
+            # but an unconfirmed one is not known to be transverse, so seeding
+            # at the recorded magnitude (free to move) beats guessing from the
+            # local-field width alone. One value for every carrier, as with
+            # the pinned branch above.
+            overrides.setdefault("B_L", abs(float(field_gauss)))
         else:
             # Free, but per *name*: carriers disagree on the default (0 for the
             # Kubo-Toyabe shapes, 10 G for MuoniumLFRelax), and a base-name

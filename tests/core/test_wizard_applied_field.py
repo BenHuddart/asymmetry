@@ -155,6 +155,38 @@ def test_transverse_run_leaves_b_l_free() -> None:
     assert seeded["B_L"].min < seeded["B_L"].value
 
 
+def test_unconfirmed_geometry_with_a_recorded_field_seeds_at_the_setpoint() -> None:
+    """A real setpoint with no ``field_direction``/``field_state`` tag.
+
+    Neither ZF, LF, nor TF is confirmed, so ``_pinned_longitudinal_field``
+    leaves ``B_L`` free (correctly -- it cannot promise the setpoint *is* the
+    longitudinal component). But it is still the best evidence available: a
+    confirmed TF run is excluded (its longitudinal component is "small" by
+    construction), while an *unconfirmed* one is not known to be transverse,
+    so the free seed should start at the recorded magnitude rather than the
+    generic local-field-width guess ``test_unrecorded_field_leaves_b_l_free_
+    and_strictly_inside_bounds`` exercises for a genuinely unrecorded field.
+    Regression: seeding this case from the width alone (ignoring a known
+    field) was the root cause of the ``global_fit_wizard_result`` docs
+    scenario recommending nothing on an Ag LF-KT decoupling series whose
+    synthetic runs carry a numeric field but no geometry tag.
+    """
+    seeded = _seeded(_lkt_template(), field_gauss=100.0, geometry=None)
+    b_l = seeded["B_L"]
+    assert b_l.fixed is False
+    assert b_l.value == pytest.approx(100.0)
+    assert b_l.min <= 100.0 <= b_l.max
+
+
+def test_unconfirmed_geometry_with_a_recorded_field_beats_the_width_seed() -> None:
+    """The setpoint seed applies even where the generic width guess would put
+    B_L inside the flat zero-field decoupling window -- a small recorded
+    field is still better evidence than a width-derived guess."""
+    seeded = _seeded(_lkt_template(), field_gauss=0.5, geometry=None)
+    assert seeded["B_L"].fixed is False
+    assert seeded["B_L"].value == pytest.approx(0.5)
+
+
 def test_muonium_lf_relax_keeps_its_own_default_when_b_l_is_free() -> None:
     # A real longitudinal-field model seeds B_L at 10 G; the free-seed floor
     # must not drag that down to a near-zero weak-field guess.

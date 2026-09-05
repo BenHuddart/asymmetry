@@ -1422,7 +1422,20 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             )
 
         first_params = initial_params[datasets[0].run_number]
-        free_global_params = [pname for pname in global_params if not first_params[pname].fixed]
+        # A "global" name is free the moment *any* dataset carries it unfixed --
+        # not only when the first dataset does. A metadata-pinned parameter (a
+        # longitudinal field pinned at 0 on a zero-field run but left free on
+        # the others in the same series) is fixed on some datasets and free on
+        # others for what the wizard still calls one Global parameter; checking
+        # only ``datasets[0]`` silently drops that name from the free-parameter
+        # list (and, in ``model_wrapper`` below, freezes every dataset at
+        # ``datasets[0]``'s pinned value) whenever the first dataset happens to
+        # be the pinned one.
+        free_global_params = [
+            pname
+            for pname in global_params
+            if any(not initial_params[ds.run_number][pname].fixed for ds in datasets)
+        ]
 
         # A grouped local parameter (shared across a subset of datasets) ties those
         # datasets together, so the objective is no longer block-separable even with
@@ -1532,9 +1545,17 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         param_bounds = []
         initial_values = []
 
-        # Add global parameters
+        # Add global parameters. The starting value/bounds come from the first
+        # dataset that actually leaves this name free -- not from
+        # ``first_params``, which may be the one dataset that pins it (see the
+        # ``free_global_params`` computation above), and whose fixed value is a
+        # poor seed for the shared value the *other* datasets are about to fit.
         for pname in free_global_params:
-            p = first_params[pname]
+            p = next(
+                initial_params[ds.run_number][pname]
+                for ds in datasets
+                if not initial_params[ds.run_number][pname].fixed
+            )
             param_names.append(pname)
             param_bounds.append((p.min, p.max))
             initial_values.append(p.value)
@@ -1590,23 +1611,29 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             result = np.zeros_like(t_all)
             offset = 0
 
-            # Extract global parameter values
-            global_values = {}
-            global_idx = 0
-            for pname in global_params:
-                p = first_params[pname]
-                if p.fixed:
-                    global_values[pname] = p.value
-                    continue
-                global_values[pname] = args[global_idx]
-                global_idx += 1
+            # Map each free global name to its Minuit arg index, in the same
+            # order the "Add global parameters" loop above appended them.
+            global_arg_index = {pname: idx for idx, pname in enumerate(free_global_params)}
 
             for ds in fitted_datasets:
                 n_points = len(ds.time)
                 params = initial_params[ds.run_number]
 
-                # Build parameter dict
-                param_dict = global_values.copy()
+                # Build parameter dict. Each dataset resolves every global name
+                # from its *own* ParameterSet copy: a name in
+                # ``free_global_params`` (free on at least one dataset) can
+                # still be fixed on this particular dataset -- e.g. a
+                # longitudinal field pinned at 0 on a zero-field run within an
+                # otherwise-free series -- and that dataset's own pinned value
+                # must win over the shared fitted arg, not the other way
+                # round.
+                param_dict = {}
+                for pname in global_params:
+                    p = params[pname]
+                    if p.fixed:
+                        param_dict[pname] = p.value
+                    else:
+                        param_dict[pname] = args[global_arg_index[pname]]
                 param_dict.update(fixed_params[ds.run_number])
 
                 for pname in local_params:
@@ -1722,17 +1749,25 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                 covariance_matrix = None
         global_idx = 0
         for pname in global_params:
-            p = first_params[pname]
-            if p.fixed:
-                fitted_global.add(
-                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+            if pname in free_global_params:
+                # Bounds are representative from whichever dataset leaves the
+                # name free; ``first_params`` may be the one dataset that pins
+                # it (see the ``free_global_params`` computation above).
+                p = next(
+                    initial_params[ds.run_number][pname]
+                    for ds in datasets
+                    if not initial_params[ds.run_number][pname].fixed
                 )
-            else:
                 value = m.values[global_idx]
                 fitted_global.add(Parameter(name=pname, value=value, min=p.min, max=p.max))
                 if m.errors[global_idx] is not None:
                     global_uncertainties[pname] = m.errors[global_idx]
                 global_idx += 1
+            else:
+                p = first_params[pname]
+                fitted_global.add(
+                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+                )
 
         # Build per-dataset results
         results = {}
@@ -1748,8 +1783,19 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             # plain per-dataset parameter name.
             minos_errors: dict[str, tuple[float, float]] = {}
 
-            # Add global parameters
+            # Add global parameters. This dataset's own copy wins when it pins
+            # the name itself (e.g. a longitudinal field pinned at 0 on a
+            # zero-field run within an otherwise-free series) -- reporting the
+            # series-shared fitted value there would misstate a measured
+            # quantity as a fit result. Every other dataset reports the one
+            # shared value Minuit actually fit.
             for pname in global_params:
+                own = params[pname]
+                if own.fixed:
+                    result_params.add(
+                        Parameter(name=pname, value=own.value, min=own.min, max=own.max, fixed=True)
+                    )
+                    continue
                 p = fitted_global[pname]
                 result_params.add(
                     Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=p.fixed)
