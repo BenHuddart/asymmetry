@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 
 from asymmetry.core.fitting.composite import (
     COMPONENTS,
     CompositeModel,
+    ExpressionNode,
+    ExprProduct,
+    build_component_expression,
     has_legacy_fraction_values,
+    iter_nodes,
+    leaf_indices,
     migrate_legacy_fraction_parameter_entries,
     migrate_legacy_fraction_state,
     migrate_legacy_fraction_values,
+    parse_composite_expression,
 )
 from asymmetry.core.utils.constants import GAUSS_TO_TESLA, MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
 
@@ -43,11 +51,17 @@ def test_addition_and_multiplication_work() -> None:
 
 def test_operator_precedence_is_respected() -> None:
     t = np.linspace(0.0, 1.0, 10)
-    model = CompositeModel(["Constant", "Constant", "Constant"], operators=["+", "*"])
-    out = model.function(t, A_bg_1=1.0, A_bg_2=2.0, A_bg_3=3.0)
+    model = CompositeModel(["Exponential", "Constant", "Gaussian"], operators=["+", "*"])
 
-    # 1 + (2 * 3)
-    assert np.allclose(out, np.full_like(t, 7.0))
+    # The product carries one scale, in its first factor (the Constant), so the
+    # Gaussian factor is unit-amplitude.
+    assert model.param_names == ["A_1", "Lambda", "A_bg", "sigma"]
+
+    out = model.function(t, A_1=1.0, Lambda=0.5, A_bg=2.0, sigma=0.25)
+
+    # exp + (A_bg * gauss), not (exp + A_bg) * gauss.
+    expected = np.exp(-0.5 * t) + 2.0 * np.exp(-((0.25 * t) ** 2))
+    assert np.allclose(out, expected)
 
 
 def test_duplicate_components_have_unique_parameter_names() -> None:
@@ -669,9 +683,8 @@ def test_lhs_additive_group_suppresses_rhs_constant_amplitude() -> None:
         close_parentheses=[0, 1, 0],
     )
 
-    assert "A" in model.param_names
-    assert "A_bg_2" in model.param_names
-    assert "A_bg_3" not in model.param_names
+    # The surviving A_bg is the only one left, so it needs no ``_2`` suffix.
+    assert model.param_names == ["A_1", "sigma", "A_bg"]
 
     formula = model.formula_string()
     assert "* 1" not in formula
@@ -685,9 +698,200 @@ def test_rhs_additive_group_suppresses_lhs_constant_amplitude() -> None:
         close_parentheses=[0, 0, 1],
     )
 
-    assert "A_bg_1" not in model.param_names
-    assert "A" in model.param_names
-    assert "A_bg_3" in model.param_names
+    assert model.param_names == ["A_2", "sigma", "A_bg"]
 
     formula = model.formula_string()
     assert "1 *" not in formula
+
+
+# --- one scale per product ---------------------------------------------------
+#
+# Amplitude naming is a function of the expression *tree*, so parentheses that
+# do not change the tree change neither the parameter names nor the value.
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        (
+            "Oscillatory * Exponential + Constant",
+            ["A_1", "frequency", "phase", "Lambda", "A_bg"],
+        ),
+        (
+            "(Oscillatory * Exponential) + Constant",
+            ["A_1", "frequency", "phase", "Lambda", "A_bg"],
+        ),
+        (
+            "Oscillatory * Exponential + Oscillatory * Gaussian + Constant",
+            [
+                "A_1",
+                "frequency_1",
+                "phase_1",
+                "Lambda",
+                "A_3",
+                "frequency_3",
+                "phase_3",
+                "sigma",
+                "A_bg",
+            ],
+        ),
+        (
+            "(Oscillatory * Exponential) + (Oscillatory * Exponential) + Constant",
+            [
+                "A_1",
+                "frequency_1",
+                "phase_1",
+                "Lambda_2",
+                "A_3",
+                "frequency_3",
+                "phase_3",
+                "Lambda_4",
+                "A_bg",
+            ],
+        ),
+        (
+            "Exponential * (Gaussian * Oscillatory) + Constant",
+            ["A_1", "Lambda", "sigma", "frequency", "phase", "A_bg"],
+        ),
+        (
+            "(Exponential + Gaussian) * Oscillatory * Exponential",
+            ["A_1", "Lambda_1", "A_2", "sigma", "frequency", "phase", "Lambda_4"],
+        ),
+        ("Constant * Exponential", ["A_bg", "Lambda"]),
+        ("Exponential * Constant", ["A_1", "Lambda"]),
+        ("(Gaussian + Constant) * Constant", ["A_1", "sigma", "A_bg"]),
+        ("Exponential / Gaussian", ["A_1", "Lambda", "sigma"]),
+        (
+            "Oscillatory * (Exponential + Gaussian)",
+            ["frequency", "phase", "A_2", "Lambda", "A_3", "sigma"],
+        ),
+        (
+            "Oscillatory * (Exponential + Gaussian){frac}",
+            ["frequency", "phase", "A_2", "Lambda", "f_Exponential", "sigma"],
+        ),
+    ],
+)
+def test_product_amplitude_naming(expression: str, expected: list[str]) -> None:
+    assert CompositeModel.from_expression(expression).param_names == expected
+
+
+def test_lone_amplitude_is_always_indexed() -> None:
+    # Both spellings of the same model name the surviving amplitude ``A_1``;
+    # a bare ``A`` never appears.
+    assert CompositeModel.from_expression("Exponential").param_names == ["A_1", "Lambda"]
+    assert CompositeModel.from_expression("(Exponential)").param_names == ["A_1", "Lambda"]
+
+
+def test_constant_times_exponential_scales_with_the_background_amplitude() -> None:
+    t = np.linspace(0.0, 2.0, 25)
+    model = CompositeModel.from_expression("Constant * Exponential")
+
+    out = model.function(t, A_bg=0.4, Lambda=0.7)
+
+    assert np.allclose(out, 0.4 * np.exp(-0.7 * t))
+
+
+def test_multiplied_leaf_amplitude_is_absent_from_the_formula() -> None:
+    formula = CompositeModel.from_expression("Constant * Exponential").formula_string()
+
+    assert formula == "A_bg * exp(-Lambda*t)"
+
+
+def _span(node: ExpressionNode) -> tuple[int, int]:
+    indices = leaf_indices(node)
+    return indices[0], indices[-1]
+
+
+def _redundant_paren_spans(model: CompositeModel) -> list[tuple[int, int]]:
+    """Return component spans whose parenthesisation leaves the tree unchanged.
+
+    Every product, every adjacent factor pair of a product, and the whole
+    expression. A pair whose left neighbour is joined by ``/`` is excluded:
+    ``a / b * c`` means ``(a / b) * c``, so wrapping ``b * c`` there writes a
+    different expression rather than a redundant parenthesis.
+    """
+    spans: list[tuple[int, int]] = [(0, len(model.component_names) - 1)]
+    for node in iter_nodes(model.expression_tree()):
+        if not isinstance(node, ExprProduct):
+            continue
+        spans.append(_span(node))
+        for position in range(len(node.factors) - 1):
+            if position and node.ops[position - 1] == "/":
+                continue
+            spans.append((_span(node.factors[position])[0], _span(node.factors[position + 1])[1]))
+    # A parenthesis sharing an endpoint with a fraction group is excluded: the
+    # group's term ranges are read off the per-component parenthesis counts, so
+    # such a model does not construct at all (a limitation that predates the
+    # one-scale-per-product policy and is unrelated to it).
+    groups = set(model.fraction_groups)
+
+    def shares_an_endpoint_with_a_group(span: tuple[int, int]) -> bool:
+        return any(span[0] == start or span[1] == end for start, end in groups)
+
+    return sorted({span for span in spans if not shares_an_endpoint_with_a_group(span)})
+
+
+def _wrapped(expression: str, span: tuple[int, int]) -> str:
+    names, operators, opens, closes, groups = parse_composite_expression(expression)
+    opens[span[0]] += 1
+    closes[span[1]] += 1
+    return build_component_expression(names, operators, opens, closes, groups)
+
+
+_PARENTHESIS_INVARIANT_EXPRESSIONS = [
+    "Exponential * Gaussian",
+    "Exponential * Gaussian * Oscillatory",
+    "Constant * Exponential",
+    "Exponential / Gaussian",
+    "Exponential * Gaussian / Oscillatory",
+    "Oscillatory * Exponential + Constant",
+    "Oscillatory * Exponential + Oscillatory * Gaussian + Constant",
+    "Exponential * (Gaussian + Constant)",
+    "(Exponential + Gaussian) * Oscillatory * Exponential",
+    "Oscillatory * (Exponential + Gaussian){frac} + Constant",
+]
+
+
+@pytest.mark.parametrize("expression", _PARENTHESIS_INVARIANT_EXPRESSIONS)
+def test_redundant_parentheses_change_neither_names_nor_values(expression: str) -> None:
+    t = np.linspace(0.0, 3.0, 40)
+    model = CompositeModel.from_expression(expression)
+    # Values in [0, 1] so fraction parameters stay inside their range.
+    values = {name: 0.2 + 0.05 * order for order, name in enumerate(model.param_names)}
+    expected = model.function(t, **values)
+
+    for span in _redundant_paren_spans(model):
+        wrapped = CompositeModel.from_expression(_wrapped(expression, span))
+        assert wrapped.param_names == model.param_names, span
+        assert np.allclose(wrapped.function(t, **values), expected), span
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "Exponential * Gaussian",
+        "Exponential / Gaussian",
+        "Exponential * Gaussian * Oscillatory",
+        "Constant * Exponential",
+        "Exponential * Gaussian * Oscillatory * Constant",
+    ],
+)
+def test_multiplicative_chain_exposes_exactly_one_amplitude(expression: str) -> None:
+    model = CompositeModel.from_expression(expression)
+    amplitudes = [name for name in model.param_names if re.fullmatch(r"A(_bg)?(_\d+)?", name)]
+
+    assert len(amplitudes) == 1
+
+
+def test_dividing_into_a_product_divides_by_every_factor() -> None:
+    # ``x / (a * b)`` is ``x / a / b``: flattening the sub-product into its
+    # parent inverts the operators it brings with it.
+    t = np.linspace(0.1, 2.0, 20)
+    model = CompositeModel.from_expression("Exponential / (Gaussian * Oscillatory)")
+
+    assert model.param_names == ["A_1", "Lambda", "sigma", "frequency", "phase"]
+
+    out = model.function(t, A_1=2.0, Lambda=0.3, sigma=0.4, frequency=0.2, phase=0.1)
+    gaussian = np.exp(-((0.4 * t) ** 2))
+    oscillation = np.cos(2.0 * np.pi * 0.2 * t + 0.1)
+    assert np.allclose(out, 2.0 * np.exp(-0.3 * t) / (gaussian * oscillation))

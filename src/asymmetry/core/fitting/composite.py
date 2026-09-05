@@ -10,8 +10,9 @@ from __future__ import annotations
 import difflib
 import re
 from collections import Counter
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -1446,6 +1447,205 @@ def build_component_expression(
     return " ".join(parts)
 
 
+# --- expression tree ---------------------------------------------------------
+#
+# The serialised form of a composite model is flat: component names, the
+# operators between them, and per-component parenthesis counts. Amplitude
+# policy *and* evaluation are both defined on the tree that form denotes, so
+# parentheses that do not change the tree change neither the parameter names
+# nor the value.
+
+
+@dataclass(frozen=True)
+class ExprLeaf:
+    """One component, addressed by its index in ``component_names``."""
+
+    index: int
+
+
+@dataclass(frozen=True)
+class ExprProduct:
+    """A ``*``/``/`` chain; ``ops[k]`` joins ``factors[k]`` to ``factors[k + 1]``.
+
+    Normalised so that no factor is itself an :class:`ExprProduct`: every
+    factor is an :class:`ExprLeaf` or an :class:`ExprSum`.
+    """
+
+    factors: tuple[ExpressionNode, ...]
+    ops: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ExprSum:
+    """A ``+``/``-`` chain; ``signs[k]`` is ``+1``/``-1`` for ``terms[k]``.
+
+    ``fraction_group`` carries the ``(start, end)`` component range when the sum
+    is a fraction group: its group amplitude scales the weighted sum of its
+    terms, and its terms stay aligned one-for-one with the group's additive term
+    ranges (so a fraction sum is never flattened into a parent sum).
+    """
+
+    terms: tuple[ExpressionNode, ...]
+    signs: tuple[int, ...]
+    fraction_group: tuple[int, int] | None = None
+
+
+ExpressionNode = ExprLeaf | ExprProduct | ExprSum
+
+_INVERTED_OPERATOR = {"*": "/", "/": "*"}
+
+
+def _node_children(node: ExpressionNode) -> tuple[ExpressionNode, ...]:
+    if isinstance(node, ExprLeaf):
+        return ()
+    return node.factors if isinstance(node, ExprProduct) else node.terms
+
+
+def leaf_indices(node: ExpressionNode) -> tuple[int, ...]:
+    """Return the component indices under ``node``, left to right."""
+    if isinstance(node, ExprLeaf):
+        return (node.index,)
+    return tuple(index for child in _node_children(node) for index in leaf_indices(child))
+
+
+def iter_nodes(node: ExpressionNode) -> Iterator[ExpressionNode]:
+    """Yield ``node`` and every node beneath it, parents before children."""
+    yield node
+    for child in _node_children(node):
+        yield from iter_nodes(child)
+
+
+def _flattened_sum(terms: list[ExpressionNode], signs: list[int]) -> ExprSum:
+    """Return a plain sum with plain-sum terms lifted into it.
+
+    ``a - (b + c)`` is ``a - b - c``, so a lifted term's sign multiplies the
+    signs it brings with it. Fraction sums own a scale and are never lifted.
+    """
+    flat_terms: list[ExpressionNode] = []
+    flat_signs: list[int] = []
+    for sign, term in zip(signs, terms, strict=True):
+        if isinstance(term, ExprSum) and term.fraction_group is None:
+            for inner_sign, inner_term in zip(term.signs, term.terms, strict=True):
+                flat_terms.append(inner_term)
+                flat_signs.append(sign * inner_sign)
+        else:
+            flat_terms.append(term)
+            flat_signs.append(sign)
+    return ExprSum(tuple(flat_terms), tuple(flat_signs), None)
+
+
+def _flattened_product(factors: list[ExpressionNode], ops: list[str]) -> ExprProduct:
+    """Return a product with sub-products lifted into it.
+
+    ``x / (a * b)`` is ``x / a / b``: dividing *into* a sub-product inverts the
+    operators the sub-product brings with it.
+    """
+    flat_factors: list[ExpressionNode] = []
+    flat_ops: list[str] = []
+    for order, factor in enumerate(factors):
+        join = ops[order - 1] if order else ""
+        if isinstance(factor, ExprProduct):
+            inverted = join == "/"
+            for inner_order, inner_factor in enumerate(factor.factors):
+                if inner_order:
+                    inner_op = factor.ops[inner_order - 1]
+                    flat_ops.append(_INVERTED_OPERATOR[inner_op] if inverted else inner_op)
+                elif join:
+                    flat_ops.append(join)
+                flat_factors.append(inner_factor)
+        else:
+            if join:
+                flat_ops.append(join)
+            flat_factors.append(factor)
+    return ExprProduct(tuple(flat_factors), tuple(flat_ops))
+
+
+def build_expression_tree(
+    component_count: int,
+    operators: Sequence[str],
+    open_parentheses: Sequence[int],
+    close_parentheses: Sequence[int],
+    fraction_groups: Sequence[tuple[int, int]] = (),
+) -> ExpressionNode:
+    """Return the expression tree denoted by a composite model's flat form.
+
+    ``*``/``/`` bind tighter than ``+``/``-``; parentheses group. The result is
+    normalised so that only the *structure* survives: a group holding a single
+    node **is** that node (redundant parentheses vanish), a product factor that
+    is itself a product is flattened into its parent, and a plain sum term that
+    is itself a plain sum is flattened. A fraction-group sum keeps its own terms.
+
+    The caller has already validated the parenthesis balance and the fraction
+    groups (:meth:`CompositeModel._validate_fraction_groups`), so the token
+    stream walked here is well-formed.
+    """
+    # ``(`` and ``)`` tokens both carry the component range they delimit, so an
+    # opening parenthesis knows whether it starts a fraction group.
+    tokens: list[tuple[str, int | str | tuple[int, int] | None]] = []
+    open_positions: list[tuple[int, int]] = []
+    for index in range(component_count):
+        for _ in range(open_parentheses[index]):
+            open_positions.append((index, len(tokens)))
+            tokens.append(("(", None))
+        tokens.append(("leaf", index))
+        for _ in range(close_parentheses[index]):
+            start, open_position = open_positions.pop()
+            group = (start, index)
+            tokens[open_position] = ("(", group)
+            tokens.append((")", group))
+        if index < component_count - 1:
+            tokens.append(("op", operators[index]))
+
+    groups = set(fraction_groups)
+    position = 0
+
+    def at_operator(symbols: set[str]) -> bool:
+        return (
+            position < len(tokens)
+            and tokens[position][0] == "op"
+            and tokens[position][1] in symbols
+        )
+
+    def parse_group(fraction_group: tuple[int, int] | None) -> ExpressionNode:
+        nonlocal position
+        terms = [parse_product()]
+        signs = [1]
+        while at_operator({"+", "-"}):
+            signs.append(1 if tokens[position][1] == "+" else -1)
+            position += 1
+            terms.append(parse_product())
+        if fraction_group is not None:
+            # Validation guarantees a fraction group spans two or more terms.
+            return ExprSum(tuple(terms), tuple(signs), fraction_group)
+        if len(terms) == 1:
+            return terms[0]
+        return _flattened_sum(terms, signs)
+
+    def parse_product() -> ExpressionNode:
+        nonlocal position
+        factors = [parse_atom()]
+        ops: list[str] = []
+        while at_operator({"*", "/"}):
+            ops.append(cast(str, tokens[position][1]))
+            position += 1
+            factors.append(parse_atom())
+        if len(factors) == 1:
+            return factors[0]
+        return _flattened_product(factors, ops)
+
+    def parse_atom() -> ExpressionNode:
+        nonlocal position
+        kind, payload = tokens[position]
+        position += 1
+        if kind == "leaf":
+            return ExprLeaf(index=cast(int, payload))
+        node = parse_group(cast(tuple[int, int], payload) if payload in groups else None)
+        position += 1  # the matching ``)``
+        return node
+
+    return parse_group(None)
+
+
 def _missing_component_function(t: NDArray, **_params: float) -> NDArray[np.float64]:
     """Zero-valued stand-in evaluation for a missing user component."""
     return np.zeros_like(np.asarray(t, dtype=float))
@@ -1544,10 +1744,14 @@ class CompositeModel:
             COMPONENTS[name] if name in COMPONENTS else placeholder_component_definition(name)
             for name in component_names
         ]
-        self._uses_parentheses = any(self.open_parentheses) or any(self.close_parentheses)
-        # Keep legacy amplitude-sharing behavior for flat expressions.
-        self._share_chain_amplitude = not self._uses_parentheses
-        self._suppress_component_amplitude = self._identify_suppressed_amplitudes()
+        self._tree = build_expression_tree(
+            len(self.component_names),
+            self.operators,
+            self.open_parentheses,
+            self.close_parentheses,
+            self.fraction_groups,
+        )
+        self._suppress_component_amplitude = self._suppressed_scaling_parameters()
         self._param_mappings = self._build_param_mapping()
         # Component-based fraction names depend on the (already-built) non-fraction
         # parameter mapping so a candidate f_<Component> can dodge collisions.
@@ -1604,6 +1808,14 @@ class CompositeModel:
             close_parentheses=close_parentheses,
             fraction_groups=fraction_groups,
         )
+
+    def expression_tree(self) -> ExpressionNode:
+        """Return the model's expression tree (see :func:`build_expression_tree`).
+
+        The nodes are frozen dataclasses addressing components by index, so a
+        caller can walk the products and sums the expression denotes.
+        """
+        return self._tree
 
     def parameter_mapping(self) -> list[dict[str, str]]:
         """Return per-component maps of local parameter name → unique fit name.
@@ -1983,39 +2195,31 @@ class CompositeModel:
         return fixed
 
     def _build_param_mapping(self) -> list[dict[str, str]]:
+        """Return per-component maps of local parameter name → unique fit name.
+
+        A suppressed scaling parameter maps to the unit-amplitude sentinel and
+        is not exposed at all, so it is also left out of the collision counts
+        that drive the ``_2``/``_3`` suffixes: adding a factor whose scale the
+        policy suppresses never renames a parameter the user already has.
+        ``A`` is always indexed by its own component (``A_1``, ``A_3``, …).
+        """
         name_counts = Counter(
-            pname for component in self.components for pname in component.param_names
+            pname
+            for idx, component in enumerate(self.components)
+            for pname in component.param_names
+            if not self._is_suppressed_scaling_parameter(idx, pname)
         )
         mappings: list[dict[str, str]] = []
         used_names: set[str] = set()
-        amplitude_group_starts: list[int] = []
-        current_start = 1
-        for idx in range(1, len(self.components) + 1):
-            if idx == 1:
-                current_start = 1
-            else:
-                # Start a new amplitude group after additive operators.
-                if self.operators[idx - 2] in {"+", "-"}:
-                    current_start = idx
-            amplitude_group_starts.append(current_start)
 
         for idx, component in enumerate(self.components, start=1):
             mapping: dict[str, str] = {}
             for pname in component.param_names:
-                if self._fraction_group_by_component.get(
-                    idx - 1
-                ) is not None and self._is_scaling_parameter(pname):
+                if self._is_suppressed_scaling_parameter(idx - 1, pname):
                     mapping[pname] = _UNIT_AMPLITUDE_SENTINEL
                     continue
-                if (
-                    self._is_scaling_parameter(pname)
-                    and self._suppress_component_amplitude[idx - 1]
-                ):
-                    mapping[pname] = _UNIT_AMPLITUDE_SENTINEL
-                    continue
-                if pname == "A" and self._share_chain_amplitude:
-                    # Share one amplitude within each multiplicative/divisive chain.
-                    mapping[pname] = f"{pname}_{amplitude_group_starts[idx - 1]}"
+                if pname == "A":
+                    mapping[pname] = f"A_{idx}"
                 elif name_counts[pname] > 1:
                     term_number = self._fraction_term_number_by_component.get(idx - 1)
                     if term_number is not None:
@@ -2027,63 +2231,42 @@ class CompositeModel:
                         mapping[pname] = f"{pname}_{idx}"
                 else:
                     mapping[pname] = pname
-                if mapping[pname] != _UNIT_AMPLITUDE_SENTINEL:
-                    used_names.add(mapping[pname])
+                used_names.add(mapping[pname])
             mappings.append(mapping)
         return mappings
 
-    def _identify_suppressed_amplitudes(self) -> list[bool]:
-        """Return flags for components whose amplitude should be fixed to unity.
+    def _is_suppressed_scaling_parameter(self, component_index: int, pname: str) -> bool:
+        return (
+            self._is_scaling_parameter(pname)
+            and self._suppress_component_amplitude[component_index]
+        )
 
-        For parenthesized expressions, suppress amplitude on components that are
-        multiplied/divided by an additive grouped expression, e.g. ``a*(b+c)``.
+    def _suppressed_scaling_parameters(self) -> list[bool]:
+        """Return, per component, whether its scaling parameter is unit-valued.
+
+        Every product carries exactly one scale. A product with a sum factor
+        (plain or fraction group) takes its scale from that sum's terms, so all
+        of its leaf factors are suppressed; otherwise the first leaf factor that
+        declares a scale keeps it and every later one is suppressed. Inside a
+        fraction group the group amplitude carries the scale, so every component
+        of the group is suppressed.
         """
         suppress = [False] * len(self.components)
-        if not self._uses_parentheses:
-            return suppress
-
-        for op_index, op in enumerate(self.operators):
-            if op not in {"*", "/"}:
+        for index in self._fraction_group_by_component:
+            suppress[index] = True
+        for node in iter_nodes(self._tree):
+            if not isinstance(node, ExprProduct):
                 continue
-
-            lhs_index = op_index
-            rhs_index = op_index + 1
-            if rhs_index >= len(self.components):
-                continue
-
-            rhs_is_additive_group = self.open_parentheses[
-                rhs_index
-            ] > 0 and self._rhs_group_contains_additive_operator(rhs_index)
-            lhs_is_additive_group = self.close_parentheses[
-                lhs_index
-            ] > 0 and self._lhs_group_contains_additive_operator(lhs_index)
-
-            if rhs_is_additive_group and not lhs_is_additive_group:
-                if self._component_has_scaling_parameter(lhs_index):
-                    suppress[lhs_index] = True
-            if lhs_is_additive_group and not rhs_is_additive_group:
-                if self._component_has_scaling_parameter(rhs_index):
-                    suppress[rhs_index] = True
-
+            scale_leaves = [
+                factor.index
+                for factor in node.factors
+                if isinstance(factor, ExprLeaf)
+                and self._component_has_scaling_parameter(factor.index)
+            ]
+            survivors = 0 if any(isinstance(f, ExprSum) for f in node.factors) else 1
+            for index in scale_leaves[survivors:]:
+                suppress[index] = True
         return suppress
-
-    def _rhs_group_contains_additive_operator(self, rhs_index: int) -> bool:
-        """Return True if a grouped RHS expression includes top-level + or -."""
-        # Track the first newly-opened parenthesis at rhs_index.
-        balance = 1
-        for k in range(rhs_index, len(self.components)):
-            if k == rhs_index:
-                balance += max(self.open_parentheses[k] - 1, 0)
-            else:
-                balance += self.open_parentheses[k]
-
-            if k > rhs_index and balance > 0 and self.operators[k - 1] in {"+", "-"}:
-                return True
-
-            balance -= self.close_parentheses[k]
-            if balance <= 0:
-                break
-        return False
 
     def _is_scaling_parameter(self, pname: str) -> bool:
         """Return True for parameters that act as component scale factors."""
@@ -2092,171 +2275,53 @@ class CompositeModel:
     def _component_has_scaling_parameter(self, idx: int) -> bool:
         return any(self._is_scaling_parameter(pname) for pname in self.components[idx].param_names)
 
-    def _lhs_group_contains_additive_operator(self, lhs_index: int) -> bool:
-        """Return True if a grouped LHS expression includes top-level + or -."""
-        # Track the first newly-closed parenthesis at lhs_index.
-        balance = 1
-        for k in range(lhs_index, -1, -1):
-            if k == lhs_index:
-                balance += max(self.close_parentheses[k] - 1, 0)
-            else:
-                balance += self.close_parentheses[k]
-
-            if k < lhs_index and balance > 0 and self.operators[k] in {"+", "-"}:
-                return True
-
-            balance -= self.open_parentheses[k]
-            if balance <= 0:
-                break
-        return False
-
     def function(self, t: NDArray, **kwargs: float) -> NDArray[np.float64]:
         """Evaluate the composite function with standard arithmetic precedence."""
-        t_arr = np.asarray(t, dtype=float)
+        return self._evaluate_node(self._tree, np.asarray(t, dtype=float), kwargs)
 
-        if self._uses_parentheses:
-            return self._evaluate_parenthesized(t_arr, kwargs)
-
-        values: list[NDArray[np.float64]] = []
-        amplitudes: list[str | None] = []
-        for component, mapping in zip(self.components, self._param_mappings, strict=True):
-            component_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
-            amp_name = None
-            if "A" in component.param_names:
-                amp_name = mapping["A"]
-                # Apply composite amplitude once per multiplicative group.
-                component_kwargs["A"] = 1.0
-            values.append(np.asarray(component.function(t_arr, **component_kwargs), dtype=float))
-            amplitudes.append(amp_name)
-
-        if not values:
-            return np.zeros_like(t_arr)
-
-        reduced_values: list[NDArray[np.float64]] = [values[0]]
-        reduced_amplitudes: list[str | None] = [amplitudes[0]]
-        reduced_ops: list[str] = []
-        for op, rhs, rhs_amp in zip(self.operators, values[1:], amplitudes[1:], strict=True):
-            if op in {"*", "/"}:
-                lhs = reduced_values[-1]
-                if op == "*":
-                    reduced_values[-1] = lhs * rhs
-                else:
-                    with np.errstate(divide="ignore", invalid="ignore"):
-                        out = np.full_like(lhs, 1e30, dtype=float)
-                        np.divide(lhs, rhs, out=out, where=np.abs(rhs) > 1e-30)
-                    reduced_values[-1] = out
-
-                lhs_amp = reduced_amplitudes[-1]
-                if lhs_amp is None:
-                    reduced_amplitudes[-1] = rhs_amp
-                elif rhs_amp is not None and rhs_amp != lhs_amp:
-                    raise ValueError("Inconsistent amplitude mapping in multiplicative chain")
-            else:
-                reduced_ops.append(op)
-                reduced_values.append(rhs)
-                reduced_amplitudes.append(rhs_amp)
-
-        weighted_values: list[NDArray[np.float64]] = []
-        for amp_name, value in zip(reduced_amplitudes, reduced_values, strict=True):
-            if amp_name is None:
-                weighted_values.append(value)
-            else:
-                weighted_values.append(float(kwargs[amp_name]) * value)
-
-        result = weighted_values[0]
-        for op, rhs in zip(reduced_ops, weighted_values[1:], strict=True):
-            if op == "+":
-                result = result + rhs
-            else:
-                result = result - rhs
-        return result
-
-    def _evaluate_parenthesized(
+    def _evaluate_node(
         self,
+        node: ExpressionNode,
         t_arr: NDArray[np.float64],
         kwargs: dict[str, float],
     ) -> NDArray[np.float64]:
-        fraction_group_set = set(self.fraction_groups)
-        fraction_weights: dict[int, float] = {}
-        for group in self.fraction_groups:
-            fraction_weights.update(self._fraction_group_weights(group, kwargs))
+        """Evaluate one expression-tree node (see :func:`build_expression_tree`)."""
+        if isinstance(node, ExprLeaf):
+            component = self.components[node.index]
+            component_kwargs = self._extract_component_kwargs(
+                component, self._param_mappings[node.index], kwargs
+            )
+            return np.asarray(component.function(t_arr, **component_kwargs), dtype=float)
 
-        values: list[NDArray[np.float64]] = []
-        for idx, (component, mapping) in enumerate(
-            zip(self.components, self._param_mappings, strict=True)
-        ):
-            component_kwargs = self._extract_component_kwargs(component, mapping, kwargs)
-            value = np.asarray(component.function(t_arr, **component_kwargs), dtype=float)
-            if idx in fraction_weights:
-                value = fraction_weights[idx] * value
-            values.append(value)
+        if isinstance(node, ExprProduct):
+            result = self._evaluate_node(node.factors[0], t_arr, kwargs)
+            for op, factor in zip(node.ops, node.factors[1:], strict=True):
+                rhs = self._evaluate_node(factor, t_arr, kwargs)
+                if op == "*":
+                    result = result * rhs
+                else:
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        divided = np.full_like(result, 1e30, dtype=float)
+                        np.divide(result, rhs, out=divided, where=np.abs(rhs) > 1e-30)
+                    result = divided
+            return result
 
-        if not values:
-            return np.zeros_like(t_arr)
+        if node.fraction_group is None:
+            result = self._evaluate_node(node.terms[0], t_arr, kwargs)
+            for sign, term in zip(node.signs[1:], node.terms[1:], strict=True):
+                value = self._evaluate_node(term, t_arr, kwargs)
+                result = result + value if sign > 0 else result - value
+            return result
 
-        value_stack: list[NDArray[np.float64]] = []
-        op_stack: list[str] = []
-        paren_start_stack: list[int] = []
-
-        def precedence(op: str) -> int:
-            return 2 if op in {"*", "/"} else 1
-
-        def apply_top_operator() -> None:
-            if len(value_stack) < 2 or not op_stack:
-                raise ValueError("Invalid expression")
-            op = op_stack.pop()
-            rhs = value_stack.pop()
-            lhs = value_stack.pop()
-            if op == "+":
-                value_stack.append(lhs + rhs)
-            elif op == "-":
-                value_stack.append(lhs - rhs)
-            elif op == "*":
-                value_stack.append(lhs * rhs)
-            else:
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    out = np.full_like(lhs, 1e30, dtype=float)
-                    np.divide(lhs, rhs, out=out, where=np.abs(rhs) > 1e-30)
-                value_stack.append(out)
-
-        for idx, value in enumerate(values):
-            for _ in range(self.open_parentheses[idx]):
-                op_stack.append("(")
-                paren_start_stack.append(idx)
-
-            value_stack.append(value)
-
-            for _ in range(self.close_parentheses[idx]):
-                while op_stack and op_stack[-1] != "(":
-                    apply_top_operator()
-                if not op_stack or op_stack[-1] != "(":
-                    raise ValueError("Invalid parentheses in expression")
-                op_stack.pop()
-                if not paren_start_stack:
-                    raise ValueError("Invalid parentheses in expression")
-                group = (paren_start_stack.pop(), idx)
-                if group in fraction_group_set:
-                    amplitude_name = self._fraction_group_amplitude_name(group)
-                    if amplitude_name not in kwargs:
-                        raise KeyError(f"Missing composite parameter '{amplitude_name}'")
-                    value_stack[-1] = float(kwargs[amplitude_name]) * value_stack[-1]
-
-            if idx < len(self.operators):
-                op = self.operators[idx]
-                while (
-                    op_stack and op_stack[-1] != "(" and precedence(op_stack[-1]) >= precedence(op)
-                ):
-                    apply_top_operator()
-                op_stack.append(op)
-
-        while op_stack:
-            if op_stack[-1] == "(":
-                raise ValueError("Invalid parentheses in expression")
-            apply_top_operator()
-
-        if len(value_stack) != 1:
-            raise ValueError("Invalid expression")
-        return value_stack[0]
+        amplitude_name = self._fraction_group_amplitude_name(node.fraction_group)
+        if amplitude_name not in kwargs:
+            raise KeyError(f"Missing composite parameter '{amplitude_name}'")
+        weights = self._fraction_group_weights(node.fraction_group, kwargs)
+        weighted = np.zeros_like(t_arr)
+        for term in node.terms:
+            weight = weights[leaf_indices(term)[0]]
+            weighted = weighted + weight * self._evaluate_node(term, t_arr, kwargs)
+        return float(kwargs[amplitude_name]) * weighted
 
     def _extract_component_kwargs(
         self,
@@ -2345,7 +2410,7 @@ class CompositeModel:
         for idx, (component, mapping) in enumerate(
             zip(self.components, self._param_mappings, strict=True), start=1
         ):
-            term = self._component_formula_term(idx - 1, component, mapping)
+            term = self._component_formula_term(component, mapping)
 
             if self.open_parentheses[idx - 1] > 0:
                 term = "(" * self.open_parentheses[idx - 1] + term
@@ -2369,7 +2434,6 @@ class CompositeModel:
 
     def _component_formula_term(
         self,
-        component_index: int,
         component: ComponentDefinition,
         mapping: dict[str, str],
     ) -> str:
@@ -2377,13 +2441,6 @@ class CompositeModel:
             pname: ("1" if mapping[pname] == _UNIT_AMPLITUDE_SENTINEL else mapping[pname])
             for pname in component.param_names
         }
-        if (
-            self._share_chain_amplitude
-            and "A" in fmt_values
-            and component_index > 0
-            and self.operators[component_index - 1] in {"*", "/"}
-        ):
-            fmt_values["A"] = "1"
         term = component.formula_template.format(**fmt_values)
         if fmt_values.get("A") == "1" and term.startswith("1*"):
             term = term[2:]
@@ -2407,7 +2464,7 @@ class CompositeModel:
         for idx, (component, mapping) in enumerate(
             zip(self.components, self._param_mappings, strict=True)
         ):
-            term = self._component_formula_term(idx, component, mapping)
+            term = self._component_formula_term(component, mapping)
             if idx in weight_prefix_by_start:
                 prefix = weight_prefix_by_start[idx]
                 term = prefix if term == "1" else f"{prefix}*{term}"
@@ -2505,21 +2562,20 @@ class CompositeModel:
 
     def _latex_component_body(
         self,
-        component_index: int,
         component: ComponentDefinition,
         mapping: dict[str, str],
     ) -> str:
         """Return the mathtext body for one component, matching formula_string.
 
         Mirrors :meth:`_component_formula_term`: the same amplitude symbol is
-        emitted, suppressed (``__UNIT_AMPLITUDE__``) or chain-shared amplitudes
-        collapse to ``1`` and drop a leading ``1\\,`` factor, and the same
-        parameter symbols appear — only rendered as mathtext. When the template
-        cannot be transformed confidently, a ``\\mathrm{Name}(t; ...)`` fallback
-        is returned instead (the designed output for gnarly components).
+        emitted, a suppressed (``__UNIT_AMPLITUDE__``) amplitude collapses to
+        ``1`` and drops a leading ``1\\,`` factor, and the same parameter
+        symbols appear — only rendered as mathtext. When the template cannot be
+        transformed confidently, a ``\\mathrm{Name}(t; ...)`` fallback is
+        returned instead (the designed output for gnarly components).
         """
         # Resolve, per local param, whether it renders as the literal ``1`` (a
-        # suppressed/shared amplitude) or as a mathtext symbol.
+        # suppressed amplitude) or as a mathtext symbol.
         symbol_for_param: dict[str, str] = {}
         is_unit: dict[str, bool] = {}
         for pname in component.param_names:
@@ -2530,14 +2586,6 @@ class CompositeModel:
                 continue
             is_unit[pname] = False
             symbol_for_param[pname] = param_symbol_latex(get_param_info(unique).latex, unique)
-        if (
-            self._share_chain_amplitude
-            and "A" in symbol_for_param
-            and component_index > 0
-            and self.operators[component_index - 1] in {"*", "/"}
-        ):
-            is_unit["A"] = True
-            symbol_for_param["A"] = "1"
 
         # Parameter symbols that actually surface (unit amplitudes excluded),
         # in template order — used for the function-name fallback.
@@ -2616,7 +2664,7 @@ class CompositeModel:
         for idx in range(start, end + 1):
             component = self.components[idx]
             mapping = self._param_mappings[idx]
-            body = self._latex_component_body(idx, component, mapping)
+            body = self._latex_component_body(component, mapping)
             if idx in weight_prefix_by_start:
                 prefix = weight_prefix_by_start[idx]
                 body = prefix if body == "1" else f"{prefix}\\,{body}"
