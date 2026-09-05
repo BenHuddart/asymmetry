@@ -214,6 +214,156 @@ def test_with_default_fraction_groups_wraps_top_level_additive_expression() -> N
     assert grouped_model.derived_fraction_names() == ["f_Constant"]
 
 
+def test_with_default_fraction_groups_leaves_a_product_root_alone() -> None:
+    # The root is a product, not a sum of additive terms: nothing to weight.
+    model = CompositeModel.from_expression("Exponential * Gaussian")
+
+    assert model.with_default_fraction_groups() is model
+
+
+def test_with_default_fraction_groups_leaves_a_subtracted_term_alone() -> None:
+    # A '-' term cannot carry a fraction weight, so the model is returned as is.
+    model = CompositeModel.from_expression("Exponential - Constant")
+
+    assert model.with_default_fraction_groups() is model
+
+
+def test_with_default_fraction_groups_reuses_an_existing_whole_expression_paren() -> None:
+    model = CompositeModel.from_expression("(Exponential + Constant)")
+
+    grouped_model = model.with_default_fraction_groups()
+
+    assert grouped_model.fraction_groups == [(0, 1)]
+    assert grouped_model.open_parentheses == [1, 0]
+    assert grouped_model.close_parentheses == [0, 1]
+    assert grouped_model.component_expression_string() == "(Exponential + Constant){frac}"
+
+
+# ----------------------------------------------------- parentheses and groups
+#
+# A fraction group's additive terms are read off the expression tree, so any
+# other parenthesis around, inside, or sharing an endpoint with the group is
+# accepted and changes nothing.
+
+_GROUP_WITH_EXTRA_PARENTHESES = [
+    (
+        "(Oscillatory * (Exponential + Gaussian){frac})",
+        (1, 2),
+        ["frequency", "phase", "A_2", "Lambda", "f_Exponential", "sigma"],
+    ),
+    (
+        "((Exponential + Gaussian){frac} + Constant)",
+        (0, 1),
+        ["A_1", "Lambda", "f_Exponential", "sigma", "A_bg"],
+    ),
+    (
+        "(Exponential + (Gaussian + Constant){frac})",
+        (1, 2),
+        ["A_1", "Lambda", "A_2", "sigma", "f_Gaussian"],
+    ),
+    (
+        "((Exponential + Gaussian){frac})",
+        (0, 1),
+        ["A_1", "Lambda", "f_Exponential", "sigma"],
+    ),
+    (
+        "Oscillatory * (Exponential + Gaussian){frac}",
+        (1, 2),
+        ["frequency", "phase", "A_2", "Lambda", "f_Exponential", "sigma"],
+    ),
+]
+
+
+@pytest.mark.parametrize(("expression", "group", "param_names"), _GROUP_WITH_EXTRA_PARENTHESES)
+def test_fraction_group_survives_surrounding_parentheses(
+    expression: str,
+    group: tuple[int, int],
+    param_names: list[str],
+) -> None:
+    model = CompositeModel.from_expression(expression)
+
+    assert model.fraction_groups == [group]
+    assert model.param_names == param_names
+    # Two additive terms -> one free fraction plus a derived remainder, named
+    # after the components those terms start with.
+    first, second = model.component_names[group[0]], model.component_names[group[1]]
+    assert model.fraction_parameter_groups() == [[f"f_{first}"]]
+    assert model.derived_fraction_names() == [f"f_{second}"]
+    # The group's amplitude scales its weighted terms, inside the group.
+    amplitude = f"A_{group[0] + 1}"
+    formula = model.formula_string()
+    assert f"{amplitude}*((f_{first}" in formula
+    assert f"(1-f_{first})" in formula
+    assert model.component_expression_string() == expression
+
+
+def test_parentheses_around_a_fraction_group_change_no_values() -> None:
+    t = np.linspace(0.0, 3.0, 40)
+    plain = CompositeModel.from_expression("Oscillatory * (Exponential + Gaussian){frac}")
+    wrapped = CompositeModel.from_expression("(Oscillatory * (Exponential + Gaussian){frac})")
+
+    values = {name: 0.2 + 0.05 * order for order, name in enumerate(plain.param_names)}
+
+    assert wrapped.param_names == plain.param_names
+    assert np.allclose(wrapped.function(t, **values), plain.function(t, **values))
+
+
+def test_fraction_group_rejects_a_span_that_is_not_parenthesized() -> None:
+    with pytest.raises(ValueError, match="must map to one parenthesized expression"):
+        CompositeModel(["Exponential", "Gaussian"], operators=["+"], fraction_groups=[(0, 1)])
+
+
+def test_fraction_group_rejects_a_product_span() -> None:
+    with pytest.raises(ValueError, match="at least two additive terms"):
+        CompositeModel.from_expression("(Exponential * Gaussian){frac}")
+
+
+def test_fraction_group_rejects_a_subtracted_term() -> None:
+    with pytest.raises(ValueError, match="only support additive '\\+' terms"):
+        CompositeModel.from_expression("(Exponential - Gaussian){frac}")
+
+
+def test_fraction_group_rejects_a_nested_group() -> None:
+    with pytest.raises(ValueError, match="cannot overlap"):
+        CompositeModel.from_expression("(Exponential + (Gaussian + Constant){frac}){frac}")
+
+
+def test_fraction_group_rejects_a_duplicate_span() -> None:
+    with pytest.raises(ValueError, match="Duplicate fraction group"):
+        CompositeModel.from_expression("((Exponential + Gaussian){frac}){frac}")
+
+
+def test_fraction_group_rejects_a_non_pair_span() -> None:
+    with pytest.raises(ValueError, match="must contain \\(start, end\\) pairs"):
+        CompositeModel(
+            ["Exponential", "Gaussian"],
+            operators=["+"],
+            fraction_groups=[(0, 1, 2)],  # type: ignore[list-item]
+        )
+
+
+def test_fraction_group_rejects_an_out_of_range_span() -> None:
+    with pytest.raises(ValueError, match="Invalid fraction group range"):
+        CompositeModel(
+            ["Exponential", "Gaussian"],
+            operators=["+"],
+            open_parentheses=[1, 0],
+            close_parentheses=[0, 1],
+            fraction_groups=[(0, 2)],
+        )
+
+
+def test_fraction_group_rejects_non_integer_indices() -> None:
+    with pytest.raises(ValueError, match="indices must be integers"):
+        CompositeModel(
+            ["Exponential", "Gaussian"],
+            operators=["+"],
+            open_parentheses=[1, 0],
+            close_parentheses=[0, 1],
+            fraction_groups=[("0", 1)],  # type: ignore[list-item]
+        )
+
+
 def test_to_model_definition_callable() -> None:
     t = np.linspace(0.0, 1.0, 8)
     model = CompositeModel(["Constant"])
@@ -819,16 +969,7 @@ def _redundant_paren_spans(model: CompositeModel) -> list[tuple[int, int]]:
             if position and node.ops[position - 1] == "/":
                 continue
             spans.append((_span(node.factors[position])[0], _span(node.factors[position + 1])[1]))
-    # A parenthesis sharing an endpoint with a fraction group is excluded: the
-    # group's term ranges are read off the per-component parenthesis counts, so
-    # such a model does not construct at all (a limitation that predates the
-    # one-scale-per-product policy and is unrelated to it).
-    groups = set(model.fraction_groups)
-
-    def shares_an_endpoint_with_a_group(span: tuple[int, int]) -> bool:
-        return any(span[0] == start or span[1] == end for start, end in groups)
-
-    return sorted({span for span in spans if not shares_an_endpoint_with_a_group(span)})
+    return sorted(set(spans))
 
 
 def _wrapped(expression: str, span: tuple[int, int]) -> str:
