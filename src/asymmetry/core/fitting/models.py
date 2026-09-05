@@ -500,6 +500,11 @@ def _lorentzian_lf_uniform(a_L: float, omega0: float, h: float, n: int) -> NDArr
     a = float(a_L)
     w0 = float(omega0)
     n = int(n)
+    if 2 * n > _LOR_LF_FFT_CAP:
+        raise ValueError(
+            f"Lorentzian-LF grid of {n} points needs a {2 * n}-point spectral FFT, "
+            f"above the {_LOR_LF_FFT_CAP} cap; callers coarsen the grid instead."
+        )
     t = float(h) * np.arange(n)
     g_zf = static_lorentzian_kt_zf(t, 1.0, a, 0.0)
     if n < 2:
@@ -629,8 +634,13 @@ def _static_lorentzian_lf_grid(a_L: float, omega0: float, tmax: float) -> tuple[
     key = (round(a_L, 6), round(omega0, 6), round(tmax, 5))
 
     def _compute() -> tuple[NDArray, NDArray]:
-        h = min(0.02, _LOR_LF_STATIC_STEP_RAD / max(float(omega0), 1e-12))
+        h = min(0.02, _LOR_LF_STATIC_STEP_RAD / max(abs(float(omega0)), 1e-12))
         n = int(np.ceil(float(tmax) / h)) + 1
+        if 2 * n > _LOR_LF_FFT_CAP:
+            # The FFT needs 2n samples; beyond the cap coarsen the grid instead
+            # of growing the transform (only reachable for extreme B_L * tmax).
+            n = _LOR_LF_FFT_CAP // 2
+            h = float(tmax) / (n - 1)
         grid = h * np.arange(n)
         return grid, _lorentzian_lf_uniform(a_L, omega0, h, n)
 
@@ -918,6 +928,16 @@ def _strong_collision_modes(
     Returns ``(lambda, w)`` restricted to the modes with non-negative imaginary
     part, the weights of the complex pairs doubled, so that
     ``G_d(t) = Re sum_k w_k exp(lambda_k t)``; see :func:`_exponential_sum`.
+
+    The eigendecomposition requires ``M`` to be diagonalisable.  A realisation
+    carrying a Jordan block (the ``t e^{-at}`` term of the Lorentzian KT) is
+    defective at exactly ``nu = 0``, where ``M = A``; any ``nu > 0`` splits the
+    block (the split scales like ``sqrt(nu)``, and the modes are still
+    well conditioned at ``nu = 1e-9``, see the tests).  Callers therefore
+    evaluate the static ``nu = 0`` limit themselves rather than through this
+    helper, as :func:`dynamic_lorentzian_kt` and
+    :func:`~asymmetry.core.fitting.muon_fluorine.polarization.dynamic_fmuf_polarization`
+    do.
     """
     a_mat = np.asarray(A, dtype=float)
     b = np.asarray(b, dtype=float)

@@ -214,6 +214,20 @@ def test_lorentzian_lf_high_field_long_window_is_resolved() -> None:
     assert np.max(np.abs(g - ref)) < 1e-3
 
 
+def test_lorentzian_lf_static_grid_respects_fft_cap() -> None:
+    # An extreme B_L * tmax would ask for a Larmor-resolved grid whose spectral
+    # FFT exceeds the cap; the cached grid coarsens instead of allocating it,
+    # and the sign of omega0 is immaterial.
+    from asymmetry.core.fitting.models import _LOR_LF_FFT_CAP, _static_lorentzian_lf_grid
+
+    grid, g = _static_lorentzian_lf_grid(0.5, _omega0(20000.0), 200.0)
+    assert 2 * grid.shape[0] <= _LOR_LF_FFT_CAP
+    assert grid[-1] >= 200.0 - 1e-9 and np.all(np.isfinite(g))
+    assert np.allclose(g, _static_lorentzian_lf_grid(0.5, -_omega0(20000.0), 200.0)[1])
+    with pytest.raises(ValueError):
+        _lorentzian_lf_uniform(0.5, _omega0(20.0), 1e-4, _LOR_LF_FFT_CAP)
+
+
 def test_lorentzian_lf_continuous_at_zero_field_shortcut() -> None:
     # Just above the omega0 < 0.05 a_L shortcut the field correction is
     # second order, so the numerical line shape sits within ~1e-3 of the
