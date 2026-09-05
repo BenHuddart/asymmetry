@@ -1155,7 +1155,22 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                 if minos_errors_raw and main_name in minos_errors_raw:
                     minos_errors[p.name] = minos_errors_raw[main_name]
             elif p.fixed:
-                result_params.add(Parameter(name=p.name, value=p.value, link_group=p.link_group))
+                # Carry the flag and the bounds through. A result whose fixed
+                # parameters came back looking free over-counts
+                # ``free_parameters`` (so every k-penalised information
+                # criterion is wrong by 2 per pinned parameter), unticks the
+                # GUI's fix box when the fit is applied, and un-pins the
+                # parameter for anything that re-fits from the result.
+                result_params.add(
+                    Parameter(
+                        name=p.name,
+                        value=p.value,
+                        min=p.min,
+                        max=p.max,
+                        fixed=True,
+                        link_group=p.link_group,
+                    )
+                )
             else:
                 idx = param_names.index(p.name)
                 value = m.values[idx]
@@ -1678,7 +1693,9 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         for pname in global_params:
             p = first_params[pname]
             if p.fixed:
-                fitted_global.add(Parameter(name=pname, value=p.value, fixed=True))
+                fitted_global.add(
+                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+                )
             else:
                 value = m.values[global_idx]
                 fitted_global.add(Parameter(name=pname, value=value, min=p.min, max=p.max))
@@ -1703,7 +1720,9 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             # Add global parameters
             for pname in global_params:
                 p = fitted_global[pname]
-                result_params.add(Parameter(name=pname, value=p.value, fixed=p.fixed))
+                result_params.add(
+                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=p.fixed)
+                )
                 if pname in global_uncertainties:
                     uncertainties[pname] = global_uncertainties[pname]
                 if minos_errors_raw and pname in minos_errors_raw:
@@ -1713,7 +1732,9 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             for pname in local_params:
                 p = params[pname]
                 if p.fixed:
-                    result_params.add(Parameter(name=pname, value=p.value, fixed=True))
+                    result_params.add(
+                        Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+                    )
                 else:
                     idx = dataset_param_indices[ds.run_number][pname]
                     value = m.values[idx]
@@ -2038,7 +2059,9 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         for pname in global_params:
             p = first_params[pname]
             if p.fixed:
-                fitted_global.add(Parameter(name=pname, value=p.value, fixed=True))
+                fitted_global.add(
+                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+                )
                 global_values_full[pname] = p.value
             else:
                 value = fitted_values[pname]
@@ -2064,13 +2087,17 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             uncertainties: dict[str, float] = {}
             for pname in global_params:
                 gp = fitted_global[pname]
-                result_params.add(Parameter(name=pname, value=gp.value, fixed=gp.fixed))
+                result_params.add(
+                    Parameter(name=pname, value=gp.value, min=gp.min, max=gp.max, fixed=gp.fixed)
+                )
                 if pname in global_errors:
                     uncertainties[pname] = global_errors[pname]
             for pname in local_params:
                 p = params[pname]
                 if p.fixed:
-                    result_params.add(Parameter(name=pname, value=p.value, fixed=True))
+                    result_params.add(
+                        Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+                    )
                 else:
                     ip = inner.parameters[pname]
                     result_params.add(Parameter(name=pname, value=ip.value, min=p.min, max=p.max))
@@ -2078,7 +2105,9 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                         uncertainties[pname] = inner.uncertainties[pname]
             for p in params:
                 if p.fixed and p.name not in result_params:
-                    result_params.add(Parameter(name=p.name, value=p.value, fixed=True))
+                    result_params.add(
+                        Parameter(name=p.name, value=p.value, min=p.min, max=p.max, fixed=True)
+                    )
 
             # Explicit None checks: t_min=0.0 is a legitimate lower bound, so a
             # truthiness test would silently skip the clip and miscount ndata/dof.

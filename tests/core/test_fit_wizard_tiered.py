@@ -2026,6 +2026,44 @@ def test_tie_break_same_family_still_prefers_simpler() -> None:
     assert set(out.comparable_keys) == {"biexp_constant", "risch_kehr_constant"}
 
 
+def test_tie_break_prefers_the_model_that_carries_no_pinned_extra() -> None:
+    # A zero-field record pins B_L at 0, at which point LongitudinalFieldKT +
+    # Constant fits identically to StaticGKT_ZF + Constant on the same three
+    # FREE parameters — the same function through machinery it does not use.
+    # An exact metric tie must not hand the recommendation to the model with
+    # the extra pinned parameter (which it did, on template title alone).
+    rec = _policy_recommendation(
+        _policy_assessment(
+            "lf_kt_constant",
+            100.0,
+            gate=True,
+            param_count=3,
+            model=CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"]),
+        ),
+        _policy_assessment(
+            "static_gkt_constant",
+            100.0,
+            gate=True,
+            param_count=3,
+            model=CompositeModel(["StaticGKT_ZF", "Constant"], operators=["+"]),
+        ),
+        _policy_assessment("null_constant", 400.0, param_count=1, null=True),
+    )
+    rec = replace(
+        rec,
+        family_reports=(
+            _family_report(
+                "kubo_toyabe",
+                "static_gkt_constant",
+                stage2_keys=("lf_kt_constant",),
+            ),
+        ),
+    )
+    out = rerank_fit_wizard_recommendation(rec, SelectionMetric.AICC)
+    assert out.recommended_key == "static_gkt_constant"
+    assert set(out.comparable_keys) == {"static_gkt_constant", "lf_kt_constant"}
+
+
 def test_tie_break_cross_family_keeps_metric_winner_primary() -> None:
     # (b) The S7 flip regression: stretched_constant (relaxation) is the
     # metric winner within 2 AICc of risch_kehr_constant (multi_rate) — a

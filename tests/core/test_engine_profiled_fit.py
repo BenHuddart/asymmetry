@@ -316,3 +316,28 @@ def test_model_definition_resolved_linear_params():
     """ModelDefinition derives linear params from roles unless overridden."""
     defn = MODELS["ExponentialRelaxation"]
     assert set(defn.resolved_linear_params()) == {"A0", "baseline"}
+
+
+def test_profiled_result_keeps_fixed_flag_and_bounds():
+    """The profiled path returns pinned parameters pinned, with their bounds.
+
+    ``baseline`` is fixed in every seed here, so it must not appear in the
+    result's ``free_parameters`` — an over-counted k is 2 AIC units of penalty
+    per pinned parameter, applied to whichever candidate happens to pin one.
+    """
+    model = MODELS["ExponentialRelaxation"].function
+    datasets, inits = _make_series(n_datasets=3, a0_true=20.0, lambdas=[0.3, 0.6, 0.9], seed=7)
+    for params in inits.values():
+        params["baseline"].min = -5.0
+        params["baseline"].max = 5.0
+
+    results, fitted_global = FitEngine().global_fit(
+        datasets, model, ["A0"], ["Lambda", "baseline"], inits, strategy="profiled"
+    )
+
+    assert fitted_global["A0"].fixed is False
+    for i in range(len(datasets)):
+        pinned = results[i].parameters["baseline"]
+        assert pinned.fixed is True
+        assert (pinned.min, pinned.max) == (-5.0, 5.0)
+        assert {p.name for p in results[i].parameters.free_parameters} == {"A0", "Lambda"}

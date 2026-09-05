@@ -236,6 +236,58 @@ family, seeded from the match (a hyperfine constant from a muonium pair, a
 detected, the wizard also constructs multi-cosine candidates with one damped
 oscillator per line, up to three.
 
+.. _fit-wizard-applied-field:
+
+The applied field is not a fitted parameter
+--------------------------------------------
+
+Two parameters in the component library describe the field you applied rather
+than anything the sample did: ``field``, the transverse field the muonium and
+vortex-lattice line shapes precess in, and ``B_L``, the longitudinal component
+carried by the Kubo-Toyabe family (``LongitudinalFieldKT``,
+``DynamicGaussianKT``, ``DynamicLorentzianKT``, ``GaussianBroadenedKT``,
+``Keren``) and by ``MuoniumLFRelax``. Both are recorded in the run metadata, so
+the wizard seeds them from it and holds them fixed. Fitting a quantity you
+measured on the magnet costs a degree of freedom in every information criterion
+and buys nothing.
+
+For ``B_L`` the rule follows the recorded geometry, because a magnitude alone
+does not say how much of the field lies along the muon spin:
+
+- a **zero-field** run pins ``B_L`` at 0, whatever magnitude the file carries.
+  A ``ZF`` label means the magnet was nulled; a non-zero setpoint recorded
+  beside it is a nominal or stale reading, not a longitudinal field;
+- a **longitudinal-field** run with a recorded setpoint pins ``B_L`` at that
+  setpoint;
+- a field magnitude of zero (within 0.1 G) pins ``B_L`` at 0 in *any* geometry,
+  recorded or not — a zero applied field has a zero longitudinal component
+  however it is oriented;
+- a transverse setpoint, or a run whose field was never recorded, leaves
+  ``B_L`` free. It is then seeded at a small positive field rather than at its
+  zero lower bound: Minuit cannot start a parameter sitting on a limit, and a
+  seed inside the decoupling window (:math:`\omega_0 < 0.05\,\Delta`, where the
+  Kubo-Toyabe functions use their exact zero-field form) would leave the fit
+  with no gradient in ``B_L`` at all.
+
+The zero-field case is the one that used to bite. ``B_L`` was seeded but left
+free, so on a genuine zero-field record it started exactly on its own lower
+bound, the fit came back "parameters at limit, EDM above threshold", and the
+wizard discarded the record's own model in favour of whatever shape merely
+fitted — a stretched exponential, typically, and with High confidence.
+
+One consequence is worth knowing when you read the comparison table. With
+``B_L`` pinned at 0, ``LongitudinalFieldKT + Constant`` is the same function as
+``StaticGKT_ZF + Constant`` fitted on the same three free parameters, so the two
+score identically. The wizard recommends the one that never carried the pinned
+extra and shows the other as a similarly scoring alternative.
+
+Pinning an LF setpoint is deliberately a hard pin and not a window around the
+recorded value. A magnet calibrated wrongly enough to matter is a hardware
+problem the fit should not quietly absorb into ``B_L``: the fix is to correct
+the metadata, or to untick **Fix** for ``B_L`` in the single-fit tab after
+applying the candidate, which the wizard leaves ticked exactly so you can see
+what it decided.
+
 .. _fit-wizard-damped-line-scan:
 
 Heavily damped lines: the matched-apodisation scan

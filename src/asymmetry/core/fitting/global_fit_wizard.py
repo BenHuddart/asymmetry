@@ -21,7 +21,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.component_tags import geometry_from_field_direction
 from asymmetry.core.fitting.composite import (
     CompositeModel,
     _legacy_fraction_rename_map,
@@ -37,6 +36,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _bound_hit_names,
     _clone_parameter_set,
     _dense_fit_curves,
+    _field_seed_context,
     _initial_parameters_for_template,
     _is_additive_relaxation_mixture_template,
     _migrate_fit_result_fractions,
@@ -51,6 +51,7 @@ from asymmetry.core.fitting.fit_wizard import (
     build_wizard_families,
     candidate_template_keys,
     compute_information_criteria,
+    dataset_field_geometry,
     fingerprint_spectrum,
     recommendation_template_keys,
     rerank_fit_wizard_recommendation,
@@ -938,10 +939,7 @@ def _series_multiplet_pattern_family_keys(
         analysis = analyze_dataset_peaks(dataset)
         if user_frequencies_mhz:
             analysis = merge_user_peaks(analysis, tuple(user_frequencies_mhz))
-        direction_text = str(
-            dataset.metadata.get("field_direction") or dataset.metadata.get("field_state") or ""
-        )
-        geometry = geometry_from_field_direction(direction_text)
+        geometry = dataset_field_geometry(dataset)
         matches = match_multiplets(
             analysis,
             field_gauss=dataset.field,
@@ -5003,7 +5001,14 @@ def _configured_single_fit_parameter_set(
     seeded_values: dict[str, float] | None = None,
     seeded_values_override_current: bool = False,
 ) -> ParameterSet:
-    parameters = _initial_parameters_for_template(dataset, fingerprint, template)
+    # The applied field is run metadata, so the series candidates get the same
+    # field/B_L policy the per-run screening does — otherwise a zero-field
+    # series would carry a free B_L per run that its own screening had pinned.
+    # Everything below still overrides it: an explicit current value, a caller
+    # bound, or a caller-declared pin.
+    parameters = _initial_parameters_for_template(
+        dataset, fingerprint, template, seed_context=_field_seed_context(dataset)
+    )
     seeded_values = dict(seeded_values or {})
     for parameter in parameters:
         if not seeded_values_override_current and parameter.name in seeded_values:
