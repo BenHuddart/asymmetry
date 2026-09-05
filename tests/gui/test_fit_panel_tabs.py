@@ -4500,6 +4500,29 @@ def test_restore_entry_without_a_value_keeps_the_seeded_value(qapp: QApplication
     assert _grouped_single_state(tab, "Lambda_2")[0] == 1.5
 
 
+def test_global_tab_state_round_trip_keeps_value_provenance(qapp: QApplication) -> None:
+    """A seed saved as a seed is restored as one; a typed value stays the user's."""
+    from asymmetry.gui.panels.fit.tab_base import SEEDED, USER, _value_provenance
+
+    tab = _grouped_tab(grouped_single=False)
+    run_table = tab._param_table
+    run_table.item(_two_tier_row(run_table, "Lambda_1"), 1).setText("1.7")
+    state = tab.get_state()
+    by_name = {entry["name"]: entry for entry in state["parameters"]}
+    assert by_name["Lambda_1"]["seeded"] is False
+    assert by_name["Lambda_2"]["seeded"] is True
+    grouped_by_name = {entry["name"]: entry for entry in state["group_model_parameters"]}
+    assert all(entry["seeded"] is True for entry in grouped_by_name.values())
+
+    restored = _grouped_tab(grouped_single=False)
+    restored.restore_state(state)
+    run_table = restored._param_table
+    assert _value_provenance(run_table.item(_two_tier_row(run_table, "Lambda_1"), 1)) == USER
+    assert _value_provenance(run_table.item(_two_tier_row(run_table, "Lambda_2"), 1)) == SEEDED
+    grouped = restored._group_model_table
+    assert _value_provenance(grouped.item(_two_tier_row(grouped, "Lambda_1"), 1)) == SEEDED
+
+
 def test_grouped_single_physics_table_accept_with_no_change_is_a_no_op(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:

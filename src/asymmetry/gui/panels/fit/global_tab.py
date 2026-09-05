@@ -4179,6 +4179,7 @@ class GlobalFitTab(FitTabBase):
                     "value": value,
                     "type": type_text,
                     "bounds": bounds_text,
+                    "seeded": value_item is not None and _value_provenance(value_item) == SEEDED,
                 }
             )
 
@@ -5213,6 +5214,7 @@ class GlobalFitTab(FitTabBase):
                     "value": value,
                     "type": entry.get("type", ""),
                     "bounds": entry.get("bounds", "-inf, inf"),
+                    "seeded": entry.get("seeded") == SEEDED,
                 }
             )
         return state

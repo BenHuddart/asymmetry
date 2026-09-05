@@ -256,8 +256,10 @@ class SiLambdaFitScenario(CorpusScenario):
     requires_fit = True
 
     def build(self) -> QWidget:
+        from dataclasses import replace
+
         from asymmetry.core.fitting.composite import CompositeModel
-        from asymmetry.core.fitting.seeding import Seed
+        from asymmetry.core.fitting.seeding import SeedContext, seed_parameters
         from asymmetry.core.io import load
         from asymmetry.core.io.periods import select_period
         from asymmetry.gui.mainwindow import MainWindow
@@ -289,9 +291,13 @@ class SiLambdaFitScenario(CorpusScenario):
         _process_events_for(milliseconds=60)
         # Re-populate with A₀ fixed at the light-OFF amplitude and λ seeded near
         # the expected value; the guide holds A₀ constant for the light-ON fit.
+        seeds = seed_parameters(model, SeedContext())
         single_tab._param_table.populate(
             model,
-            seeds={"A_1": Seed(value=a0, fixed=True), "Lambda": Seed(value=0.9)},
+            seeds={
+                "A_1": replace(seeds["A_1"], value=a0, fixed=True),
+                "Lambda": replace(seeds["Lambda"], value=0.9),
+            },
         )
         _process_events_for(milliseconds=40)
 
