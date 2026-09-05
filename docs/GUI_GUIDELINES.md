@@ -215,6 +215,22 @@ a cancellable window-modal progress dialog, cancel stopping at an item
 boundary. `QApplication.processEvents()` inside a loop is banned (the harness
 enforces it): it invites re-entrancy while still freezing between calls.
 
+**Session state snapshots hold analysis results by reference.** A panel's
+`get_state()`/`restore_state()` pair is usually *both* the project-persistence
+format and the per-switch session snapshot — the fit panel calls it on every
+run switch and deep-copies the result several times. So a state dict must
+carry a large analysis result as an immutable handle whose `__deepcopy__`
+returns `self` (`gui/panels/fit/wizard_cache.py::WizardCacheEntry`), and
+serialise only at the persistence boundaries — the fit slot's `ui_state` and
+`collect_project_state` — in a *bounded* form (curves strided to
+`PERSISTED_CURVE_MAX_POINTS`, arrays whose summary statistics are already
+stored dropped). Serialising a cached Fit Wizard recommendation inside
+`get_state()` cost 3.0–5.4 s per run switch on a 90k-bin run (two
+serialisations, a deserialisation, two deep copies of a 225 MB payload, plus
+the GC pauses its garbage triggered) and wrote that payload into the project
+file for every fitted run; by reference plus a compact boundary the same
+switch is back at its ~0.1 s baseline and the stored payload is 0.9 MB.
+
 **Synchronous semantics without the freeze.** When a call site needs
 completed-when-returned behaviour, run the compute on a `TaskRunner` worker
 while the GUI thread waits in a nested `QEventLoop`

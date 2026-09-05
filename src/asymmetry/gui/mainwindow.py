@@ -254,6 +254,10 @@ from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView, IntegralScanPanel
 from asymmetry.gui.panels.cross_group_config import run_cross_group_fit_from_config
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
+from asymmetry.gui.panels.fit.wizard_cache import (
+    persisted_global_fit_form_state,
+    persisted_single_fit_form_state,
+)
 from asymmetry.gui.panels.fit_panel import (
     BATCH_SEEDING_LABELS,
     BATCH_SEEDING_MODES,
@@ -11255,8 +11259,13 @@ class MainWindow(QMainWindow):
         if not hasattr(self._fit_panel, "get_single_form_state"):
             return
         # One serialise of the single-fit form feeds both the structured slot
-        # fields and its ``ui_state`` restore payload.
-        form_state = self._fit_panel.get_single_form_state()
+        # fields and its ``ui_state`` restore payload. ``ui_state`` is written
+        # to the project file, so the payload must be JSON-safe: the panel's
+        # ``get_single_form_state`` is the boundary that converts a cached
+        # wizard analysis from its session handle to the compact stored form
+        # (``persisted_single_fit_form_state`` re-applies it defensively for a
+        # stubbed/legacy panel that hands back a session-shaped dict).
+        form_state = persisted_single_fit_form_state(self._fit_panel.get_single_form_state())
         if not isinstance(form_state, dict):
             return
         projection = self._current_single_fit_projection()
@@ -12041,7 +12050,12 @@ class MainWindow(QMainWindow):
             if self._multi_group_fit_window is not None and hasattr(
                 self._multi_group_fit_window, "single_grouped_form_state"
             ):
-                ui_state = self._multi_group_fit_window.single_grouped_form_state()
+                # Persistence boundary (this slot is written to the project
+                # file): any cached global-wizard analysis riding along as a
+                # session handle becomes its compact JSON form here.
+                ui_state = persisted_global_fit_form_state(
+                    self._multi_group_fit_window.single_grouped_form_state()
+                )
             # Stamp the stored per-group summaries with provenance "single" so they
             # agree with the slot (they were built with the series provenance,
             # "global"/"batch", which is meaningless without a series).
@@ -15019,6 +15033,23 @@ class MainWindow(QMainWindow):
             pruned.pop("wizard_state_by_run_set", None)
             return pruned
 
+        def _persisted_grouped_fit_state(state: dict | None) -> dict | None:
+            """Make the grouped window's ``{single, batch}`` surfaces persistable.
+
+            Their wizard caches sit one level down, so ``_prune_global_fit_state``
+            (which only looks at the top level) never saw them: they were written
+            to the file at full analysis resolution. Convert each surface to its
+            compact stored form instead — the cache still reopens without a
+            re-run, at a bounded size, and no live handle can reach the file.
+            """
+            if not isinstance(state, dict):
+                return state
+            converted = dict(state)
+            for key in ("single", "batch"):
+                if isinstance(converted.get(key), dict):
+                    converted[key] = persisted_global_fit_form_state(converted[key])
+            return converted
+
         def _domain_block(domain: str, source: dict) -> dict:
             """Prune the regenerable payloads out of one domain's fit state."""
             return {
@@ -15059,10 +15090,12 @@ class MainWindow(QMainWindow):
             "plot_state": plot_state,
             "view_modes_state": self._collect_view_modes_state(),
             "multi_group_fit_state": _prune_global_fit_state(
-                self._multi_group_fit_window.get_state()
-                if self._multi_group_fit_window is not None
-                and hasattr(self._multi_group_fit_window, "get_state")
-                else None
+                _persisted_grouped_fit_state(
+                    self._multi_group_fit_window.get_state()
+                    if self._multi_group_fit_window is not None
+                    and hasattr(self._multi_group_fit_window, "get_state")
+                    else None
+                )
             ),
             # v11: both fitting domains persist symmetrically under
             # ``fit_states`` (F21c). The legacy un-keyed top-level
