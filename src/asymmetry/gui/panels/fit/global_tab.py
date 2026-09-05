@@ -923,20 +923,31 @@ class GlobalFitTab(FitTabBase):
         """Set the active dataset used by grouped time-domain mode."""
         previous = self._current_dataset
         self._current_dataset = dataset
-        # A captured count-fit calibration belongs to the run it was fitted on.
-        # When the active run changes, drop the captures so a promote button
-        # cannot write one run's fitted α/t0/background/DT0 into another run's
-        # grouping (with that run's number recorded as the reference).
-        if previous is not dataset:
+        # One run switch re-binds the same crop object several times (the
+        # selection update, the dataset-selected handler, both grouped
+        # surfaces). The grouped context and the nuisance seeds depend only on
+        # that object, so a same-object re-bind keeps the memo and the table
+        # and refreshes only the cheap, metadata-driven field defaults.
+        same_dataset = dataset is not None and previous is dataset
+        if not same_dataset:
+            # A captured count-fit calibration belongs to the run it was fitted
+            # on. When the active run changes, drop the captures so a promote
+            # button cannot write one run's fitted α/t0/background/DT0 into
+            # another run's grouping (with that run's number recorded as the
+            # reference).
             self._clear_count_calibrations()
-        # Invalidate the grouped-context memo whenever the active dataset
-        # changes (its grouped groups depend only on this dataset).
-        self._grouped_context_cache = None
-        self._grouped_seed_cache = None
+            # The grouped-context memo keys on the member datasets (and their
+            # arrays), so it needs no explicit invalidation here: the batch
+            # surface's members are set independently of the active dataset,
+            # and dropping the memo would recompute the same grouped count
+            # domains a second time on every run switch.
+            self._grouped_seed_cache = None
         self._refresh_field_parameter_defaults_for_current_dataset()
-        # The shared model phase is held at zero in grouped fits; the per-group
-        # phase lives in the per-group phase nuisance, reseeded by the call below.
-        self._update_group_parameter_defaults()
+        if not same_dataset:
+            # The shared model phase is held at zero in grouped fits; the
+            # per-group phase lives in the per-group phase nuisance, reseeded
+            # by the call below.
+            self._update_group_parameter_defaults()
         self._update_mode_ui(preserve_result=False)
 
     def _refresh_field_parameter_defaults_for_current_dataset(self) -> None:
@@ -4235,7 +4246,14 @@ class GlobalFitTab(FitTabBase):
         dataset changes (see :meth:`set_current_dataset`).
         """
         cache = getattr(self, "_grouped_context_cache", None)
-        member_ids = tuple(id(ds) for ds in self._grouped_member_datasets())
+        # Identity of each member *and* of its data arrays and run: a
+        # re-reduction (grouping edit, projection change) reassigns those
+        # attributes on the same dataset object, and the grouped count domains
+        # must follow it.
+        member_ids = tuple(
+            (id(ds), id(ds.time), id(ds.asymmetry), id(ds.error), id(ds.run))
+            for ds in self._grouped_member_datasets()
+        )
         key = (member_ids, bool(self._fit_blocked), self._coadd_mode, int(self._coadd_window))
         if cache is not None and cache[0] == key:
             return cache[1]

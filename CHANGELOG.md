@@ -68,6 +68,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Switching runs in the data browser is roughly twice as fast on
+  fine-resolution data, and no longer stalls.** On a 90 000-bin ROOT run a
+  selection change cost 150–300 ms on the GUI thread — every switch built
+  the error bars through matplotlib's per-point `errorbar` path, rebuilt the
+  same run's grouped count domains four times, rebuilt the hidden
+  multi-group fit window's FFT-seeded tables, re-bound the leaving run's fit
+  form before binding the new one, and every couple of switches paid a
+  35–110 ms full garbage collection. Error bars now render through a
+  single-path collection (same picture, same legend glyph), the fit-range
+  crop is handed out once per run and re-used by every surface, hidden fit
+  surfaces only re-bind when they come into view, and the collector is
+  settled once after each load instead of running mid-switch
+  (`ASYMMETRY_GC_FREEZE=0` restores the old behaviour). The remaining cost
+  is the canvas rasterisation itself.
+
 - **The fit wizard now pins the applied longitudinal field `B_L` from the run
   metadata**, the way it already pinned the transverse `field`. `B_L` was
   seeded but deliberately left free "so a miscalibrated magnet cannot wedge the
@@ -140,6 +155,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result without re-running it, and existing projects load unchanged; the
   only visible difference is that the residual panel of a *cached* result
   restored from a project file now says the residuals were not stored.
+
+- **A Compute FFT issued while the same run's spectrum was still computing
+  from the view could report itself finished early, and could cache a
+  spectrum computed with superseded settings.** The explicit compute (and the
+  overlay's auto-compute) now waits for the in-flight recompute to land and
+  re-checks the run afterwards, and a recompute whose settings changed while
+  it ran is discarded rather than cached under the new settings.
 
 - **Fitted parameter sets lost the `fixed` flag and the bounds of pinned
   parameters.** `FitEngine` packed a fixed parameter into its result as a bare
