@@ -229,7 +229,7 @@ stored dropped). Serialising a cached Fit Wizard recommendation inside
 serialisations, a deserialisation, two deep copies of a 225 MB payload, plus
 the GC pauses its garbage triggered) and wrote that payload into the project
 file for every fitted run; by reference plus a compact boundary the same
-switch is ~190 ms and the stored payload is 0.9 MB.
+switch is back at its ~0.1 s baseline and the stored payload is 0.9 MB.
 
 **Synchronous semantics without the freeze.** When a call site needs
 completed-when-returned behaviour, run the compute on a `TaskRunner` worker

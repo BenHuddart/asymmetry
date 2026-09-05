@@ -149,9 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   all 33 assessed candidates. The snapshot now carries the analysis by
   reference and serialises only when a fit slot or project file is written, in
   a compact form (curves sampled to at most 512 points, residual series
-  dropped — its summary statistics are stored). The same switch is now ~190 ms,
-  applying a recommendation ~0.6 s, and the stored cache 0.9 MB instead of
-  225 MB. Reopening the wizard on an unchanged run still shows the cached
+  dropped — its summary statistics are stored). The same switch is now back at
+  the ~0.1 s baseline, applying a recommendation takes ~0.35 s, and the stored
+  cache is 0.9 MB instead of 225 MB. Reopening the wizard on an unchanged run still shows the cached
   result without re-running it, and existing projects load unchanged; the
   only visible difference is that the residual panel of a *cached* result
   restored from a project file now says the residuals were not stored.
