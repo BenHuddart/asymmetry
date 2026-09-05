@@ -43,10 +43,11 @@ MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset(
         GUI_ROOT / "widgets" / "detector_schematic.py",
     }
 )
-# Every axis-limit-policy plot surface resolves its window through exactly one
-# `AxisLimitPolicy.resolve` call inside one owning function, so the fields, the
-# axes and the policy can never disagree (docs/plans/axis-limit-policy.md). A
-# `set_xlim(`/`set_ylim(` call elsewhere in these files bypasses the policy.
+# Every limit an axis-limit-policy plot surface applies is a value returned by
+# `AxisLimitPolicy.resolve`, written to the axes inside one owning function, so
+# the fields, the axes and the policy can never disagree
+# (docs/plans/axis-limit-policy.md). A `set_xlim(`/`set_ylim(` call elsewhere
+# in these files bypasses the policy.
 AXIS_LIMIT_POLICY_FUNCTIONS: dict[Path, frozenset[str]] = {
     GUI_ROOT / "panels" / "plot_panel.py": frozenset(
         {"_apply_limits", "_plot_export_payloads_on_axis"}

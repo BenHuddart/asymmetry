@@ -50,7 +50,8 @@ follow the data". Nothing reframes behind the user's back.
    per subplot: `"y:P_x"`, `"y:group:2"`, …). Per axis: `auto: bool`,
    `held: (lo, hi) | None`, `quantity: str | None`.
    - `resolve(bounds, quantities) -> dict[axis, (lo, hi)]` is the single
-     decision point, called once per render. Per axis: Auto → use the
+     decision point: every limit a render applies comes from it (a render
+     resolves x first, then each y inside that window). Per axis: Auto → use the
      supplied bounds; Held → use `held`; **an axis with no `held` value
      has nothing to hold and takes the bounds** (this *is* the first frame —
      no latch); a changed `quantity` on a Held axis refits it once from the

@@ -27,10 +27,11 @@ above the top of the axis.
 
 The module also owns :class:`AxisLimitPolicy`, the Qt-free per-axis Auto/Hold
 resolver that decides *when* a plot reframes. It lives beside the widgets
-because the fields and the Auto buttons are a view of it: the panels resolve
-their axis limits through one :meth:`AxisLimitPolicy.resolve` call per render
-and display what comes back, so the fields, the axes and the policy cannot
-disagree. See ``docs/plans/axis-limit-policy.md`` for the design.
+because the fields and the Auto buttons are a view of it: every limit a
+panel applies to its axes is a value returned by :meth:`AxisLimitPolicy.resolve`
+(a render resolves x, then each y axis inside that window), and the fields
+display what came back, so the fields, the axes and the policy cannot disagree.
+See ``docs/plans/axis-limit-policy.md`` for the design.
 """
 
 from __future__ import annotations
