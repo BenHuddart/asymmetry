@@ -114,18 +114,19 @@ class FitSlot:
             else []
         )
         model = data.get("model")
-        # Migrate legacy ``fraction_<k>`` parameter entries to the n-1 free-fraction
-        # scheme so pre-rework projects load, display, and refit. Guarded: a
-        # missing/malformed model payload simply skips migration. Only pay for the
-        # model rebuild when a legacy ``fraction_<k>`` name is actually present —
-        # every migratable key has this prefix, so its absence guarantees a no-op.
-        has_legacy_fraction_name = any(
-            isinstance(p.get("name"), str) and p["name"].startswith("fraction_") for p in parameters
-        )
-        if isinstance(model, dict) and parameters and has_legacy_fraction_name:
+        # Migrate pre-rework parameter entries — legacy ``fraction_<k>`` names to
+        # the n-1 free-fraction scheme, legacy per-factor amplitudes onto the
+        # one-scale-per-product policy — so old projects load, display, and refit.
+        # Guarded: a missing/malformed model payload simply skips migration. Both
+        # migrations carry their own cheap precondition and are no-ops for data
+        # saved under the current schemes.
+        if isinstance(model, dict) and parameters:
             from asymmetry.core.fitting.composite import (
                 CompositeModel,
                 migrate_legacy_fraction_parameter_entries,
+            )
+            from asymmetry.core.fitting.legacy_product_amplitudes import (
+                fold_legacy_product_amplitude_entries,
             )
 
             try:
@@ -134,6 +135,7 @@ class FitSlot:
                 composite = None
             if composite is not None:
                 parameters = migrate_legacy_fraction_parameter_entries(composite, parameters)
+                parameters = fold_legacy_product_amplitude_entries(composite, parameters)
         result = data.get("result")
         raw_ui_state = data.get("ui_state")
         return cls(

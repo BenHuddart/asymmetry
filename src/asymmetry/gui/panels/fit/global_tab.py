@@ -108,6 +108,9 @@ from asymmetry.core.fitting.grouped_time_domain import (
     fit_grouped_time_domain,
     validate_grouped_model_contract,
 )
+from asymmetry.core.fitting.legacy_product_amplitudes import (
+    fold_legacy_product_amplitude_state,
+)
 from asymmetry.core.fitting.member_quality import member_quality_flags
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -4037,9 +4040,11 @@ class GlobalFitTab(FitTabBase):
         self._wizard_cache_by_run_set = {}
         self._set_active_wizard_cache(None, signature=None, log_text="")
 
-        # Migrate legacy ``fraction_<k>`` parameter entries (pre-rework projects)
-        # to the n-1 free-fraction scheme before restoring the table rows.
+        # Migrate pre-rework parameter entries before restoring the table rows:
+        # legacy ``fraction_<k>`` names to the n-1 free-fraction scheme, and
+        # legacy per-factor amplitudes onto the one-scale-per-product policy.
         state = migrate_legacy_fraction_state(state)
+        state = fold_legacy_product_amplitude_state(state)
 
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):

@@ -813,6 +813,12 @@ def test_scan_peaks_seed_amplitude_phase_and_envelope_per_component() -> None:
     assert 0.0 < seeded["Lambda_5"].value < 20.0
     assert seeded["Lambda_5"].min <= 0.19 <= seeded["Lambda_5"].max
     assert seeded["A_bg"].value == pytest.approx(fingerprint.tail_estimate)
+    # Each (Osc x Env) pair carries exactly one amplitude by construction: the
+    # envelope factors (index 2, 4) never get their own A, so there is nothing
+    # left to pin at 1 and fix.
+    assert "A_2" not in template.model.param_names
+    assert "A_4" not in template.model.param_names
+    assert not any(parameter.fixed for parameter in seeded if parameter.name.startswith("A"))
 
 
 def test_relax_templates_need_a_measured_envelope_but_only_one() -> None:
@@ -989,8 +995,7 @@ def _relax_seed_parameters(template: CandidateTemplate) -> ParameterSet:
             Parameter(name="A_1", value=5.0, min=0.0, max=100.0),
             Parameter(name="frequency", value=240.0, min=200.0, max=280.0),
             Parameter(name="phase", value=0.0, min=-math.pi, max=math.pi),
-            Parameter(name="A_2", value=1.0, fixed=True),
-            Parameter(name="Lambda_2", value=40.0, min=0.0, max=320.0),
+            Parameter(name="Lambda_2", value=40.0, min=0.0, max=320.0, fixed=True),
             Parameter(name="A_3", value=2.0, min=0.0, max=100.0),
             Parameter(name="Lambda_3", value=0.33, min=0.166, max=5.0),
             Parameter(name="A_bg", value=4.6, min=-50.0, max=50.0),
@@ -1025,7 +1030,7 @@ def test_a_call_limited_fit_is_restarted_from_the_parameters_it_returned() -> No
     assert restarted["Lambda_3"].min == pytest.approx(0.166)
     assert restarted["A_bg"].value == pytest.approx(-8.4)
     # ...as it keeps the fixed flags the engine drops when it packs a result.
-    assert restarted["A_2"].fixed
+    assert restarted["Lambda_2"].fixed
 
 
 def test_a_fit_that_stays_call_limited_gives_up_and_stays_unsuccessful() -> None:

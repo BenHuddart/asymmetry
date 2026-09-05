@@ -69,6 +69,52 @@ unprompted.
   red or pending `CI success` means wait or fix `main` first; a push race
   (someone merged mid-run) is fixed by simply re-running the workflow.
 
+## Delete at v1.0
+
+While the project is in alpha, a saved project / wizard cache written under an
+older parameter-naming scheme is migrated on load. Those migrations are
+**alpha-only**: at v1.0 the file format stops moving and each one is deleted
+whole — module, call sites and tests — rather than carried forward. Nothing
+outside these lists depends on them.
+
+**Product amplitudes** (one scale per product, from the expression tree):
+
+- Module: `src/asymmetry/core/fitting/legacy_product_amplitudes.py`.
+- Test file: `tests/core/test_legacy_product_amplitudes.py`.
+- Call sites:
+  - `src/asymmetry/core/representation/base.py` — `FitSlot.from_dict`
+    (`fold_legacy_product_amplitude_entries`).
+  - `src/asymmetry/core/fitting/fit_wizard.py` —
+    `_migrate_fit_result_fractions` (`fold_legacy_product_amplitude_set`).
+  - `src/asymmetry/core/fitting/global_fit_wizard.py` —
+    `_deserialize_global_candidate_assessment`
+    (`fold_legacy_product_amplitude_set`) and
+    `_migrate_global_param_name_tuple` (`fold_legacy_product_amplitude_names`).
+  - `src/asymmetry/gui/panels/fit/single_tab.py` — `restore_state`
+    (`fold_legacy_product_amplitude_state`).
+  - `src/asymmetry/gui/panels/fit/global_tab.py` — `restore_state`
+    (`fold_legacy_product_amplitude_state`).
+
+**Fraction groups** (positional `fraction_<k>` → the n-1 `f_<Component>`
+scheme):
+
+- Functions in `src/asymmetry/core/fitting/composite.py`:
+  `_legacy_fraction_numbering`, `_legacy_fraction_rename_map`, `_coerce_float`,
+  `has_legacy_fraction_values`, `migrate_legacy_fraction_values`,
+  `migrate_legacy_fraction_parameter_entries`,
+  `migrate_legacy_fraction_parameter_set`, `migrate_legacy_fraction_state`.
+- Tests: the `test_migrate_legacy_fraction_*` tests in
+  `tests/core/test_composite_model.py`, and
+  `test_fit_slot_migrates_legacy_fraction_parameters` /
+  `test_fit_slot_from_dict_survives_malformed_legacy_fraction_value` in
+  `tests/core/test_representation_model.py`.
+- Call sites: the same five as above —
+  `representation/base.py::FitSlot.from_dict`,
+  `fit_wizard.py::_migrate_fit_result_fractions`,
+  `global_fit_wizard.py::_deserialize_global_candidate_assessment` and
+  `_migrate_global_param_name_tuple`, and `restore_state` in both
+  `gui/panels/fit/single_tab.py` and `gui/panels/fit/global_tab.py`.
+
 ## Operational notes
 
 - **`RELEASE_TOKEN`** is a fine-grained PAT owned by the repo admin, scoped

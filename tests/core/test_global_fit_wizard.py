@@ -36,6 +36,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     _localisation_penalty,
     _metric_penalty,
     _single_run_prefit_parameter_sets,
+    _staged_assignment_seed,
     _staged_globalization_assignment,
     _staged_multi_local_assignment,
     _supported_oscillatory_run_numbers,
@@ -1581,6 +1582,75 @@ def test_globalization_candidate_order_prefers_stable_amplitudes_over_rates() ->
 
     assert ordered.index("A_1") < ordered.index("Lambda")
     assert ordered.index("A_bg") < ordered.index("Lambda")
+
+
+def test_staged_assignment_seed_completes_when_local_only_pinned_on_one_run() -> None:
+    """A stage must not hand Minuit a run with zero free parameters.
+
+    Regression for the docs-build crash traced to 45e5110 (PR #301, "pin B_L
+    from run metadata"): on a longitudinal-field Kubo-Toyabe series, B_L
+    legitimately gets a Local role (it varies run to run) even though it is
+    *not* uniformly free -- a ZF run pins B_L at 0 (measured, not fitted)
+    while an LF run fits it. The local-only refinement half of the staged
+    seed holds every Global parameter fixed for *every* run while unlocking
+    only the Local names; for the ZF run that left B_L (already pinned) as
+    the sole "active" name fixed too, so every parameter of that run's
+    ``ParameterSet`` came out fixed and Minuit raised "starting value(s) are
+    required". The fix (``FitEngine._fit_core``) treats a fully-fixed
+    parameter set as a valid degenerate fit rather than an error.
+    """
+    model = CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"])
+    template = CandidateTemplate(
+        key="lf_kt_constant",
+        title="Longitudinal-field KT + Constant",
+        category="KT-like",
+        rationale="test",
+        model=model,
+    )
+    zf_dataset = _dataset_for(
+        run_number=901,
+        field=0.0,
+        temperature=20.0,
+        model=model,
+        params={"A_1": 24.0, "Delta": 0.4, "B_L": 0.0, "A_bg": 2.0},
+    )
+    lf_dataset = _dataset_for(
+        run_number=902,
+        field=50.0,
+        temperature=20.0,
+        model=model,
+        params={"A_1": 24.0, "Delta": 0.4, "B_L": 50.0, "A_bg": 2.0},
+    )
+
+    def _params(b_l_value: float, *, b_l_fixed: bool) -> ParameterSet:
+        return ParameterSet(
+            [
+                Parameter("A_1", value=24.0, min=0.0, max=100.0),
+                Parameter("Delta", value=0.4, min=0.0, max=4.0),
+                Parameter("B_L", value=b_l_value, min=0.0, max=200.0, fixed=b_l_fixed),
+                Parameter("A_bg", value=2.0, min=-10.0, max=10.0),
+            ]
+        )
+
+    initial_params = {
+        # ZF run: B_L pinned from run metadata, per _pinned_longitudinal_field.
+        901: _params(0.0, b_l_fixed=True),
+        # LF run: B_L unrecorded/free, seeded away from the true value.
+        902: _params(40.0, b_l_fixed=False),
+    }
+
+    result = _staged_assignment_seed(
+        [zf_dataset, lf_dataset],
+        template,
+        fit_engine=FitEngine(),
+        global_param_names=("A_1", "Delta", "A_bg"),
+        local_param_names=("B_L",),
+        initial_params=initial_params,
+    )
+
+    assert result[901]["B_L"].fixed
+    assert result[901]["B_L"].value == 0.0
+    assert not result[902]["B_L"].fixed
 
 
 def test_staged_globalization_assignment_keeps_varying_lambda_local(

@@ -297,6 +297,83 @@ def test_global_fit_result_keeps_fixed_flag_and_bounds(monkeypatch: pytest.Monke
         assert "baseline" not in {p.name for p in results[run].parameters.free_parameters}
 
 
+def test_global_fit_free_global_pinned_only_on_first_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A "global" name pinned on the first dataset only must still be fit.
+
+    Regression: ``global_fit`` decided whether a global parameter was free,
+    and what value a fixed one held, by reading only
+    ``initial_params[datasets[0].run_number]``. That was safe as long as
+    every dataset agreed on a global parameter's fixed status -- true before
+    the fit wizard started pinning per-run metadata (e.g. a longitudinal
+    field pinned at 0 on a zero-field run but left free on the other runs in
+    the same global-fit series). When the pinned dataset happened to be
+    first, the parameter was silently dropped from Minuit's free-parameter
+    list and force-applied, at the *first* dataset's pinned value, to every
+    dataset -- corrupting the objective for every dataset that actually left
+    it free.
+    """
+    _install_fake_iminuit(monkeypatch)
+
+    t = np.linspace(0.0, 3.0, 30)
+    ds1 = MuonDataset(t, _exp_model(t, 0.2, 0.3), np.full_like(t, 0.01), {"run_number": 1})
+    ds2 = MuonDataset(t, _exp_model(t, 0.2, 0.5), np.full_like(t, 0.01), {"run_number": 2})
+    ds3 = MuonDataset(t, _exp_model(t, 0.2, 0.7), np.full_like(t, 0.01), {"run_number": 3})
+
+    init = {
+        1: ParameterSet(
+            [
+                Parameter("A0", 0.2, min=0.0, max=1.0),
+                Parameter("Lambda", 0.3, min=0.0, max=2.0),
+                Parameter("baseline", 0.0, min=-1.0, max=1.0, fixed=True),
+            ]
+        ),
+        2: ParameterSet(
+            [
+                Parameter("A0", 0.2, min=0.0, max=1.0),
+                Parameter("Lambda", 0.5, min=0.0, max=2.0),
+                Parameter("baseline", 0.4, min=-1.0, max=1.0),
+            ]
+        ),
+        3: ParameterSet(
+            [
+                Parameter("A0", 0.2, min=0.0, max=1.0),
+                Parameter("Lambda", 0.7, min=0.0, max=2.0),
+                Parameter("baseline", 0.4, min=-1.0, max=1.0),
+            ]
+        ),
+    }
+
+    results, fitted_global = FitEngine().global_fit(
+        [ds1, ds2, ds3],
+        _exp_model,
+        # "baseline" is Global (one shared, fitted value) even though this
+        # particular series pins it on run 1 only -- exactly the shape the
+        # global fit wizard hands the engine for a metadata-pinned field.
+        global_params=["A0", "baseline"],
+        local_params=["Lambda"],
+        initial_params=init,
+        method="simplex",
+    )
+
+    # "baseline" is free on datasets 2 and 3, so it must still be a real,
+    # fitted Minuit parameter -- not silently fixed because dataset 1 pins it.
+    assert fitted_global["baseline"].fixed is False
+    assert fitted_global["baseline"].value == pytest.approx(0.4)
+
+    # Dataset 1's own pin wins for its own result...
+    pinned = results[1].parameters["baseline"]
+    assert pinned.fixed is True
+    assert pinned.value == pytest.approx(0.0)
+
+    # ...but datasets 2 and 3 report the shared fitted value, not dataset 1's.
+    for run in (2, 3):
+        free = results[run].parameters["baseline"]
+        assert free.fixed is False
+        assert free.value == pytest.approx(0.4)
+
+
 def test_global_fit_rejects_non_finite_initial_values(monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_iminuit(monkeypatch)
 
