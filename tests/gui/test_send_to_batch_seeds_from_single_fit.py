@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QComboBox
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.gui.panels.fit_panel import FitPanel
@@ -81,3 +81,41 @@ def test_send_to_batch_carries_single_fit_bounds(qapp: QApplication) -> None:
         "Send-to-Batch dropped the parameter bounds"
     )
     assert float(hi) == pytest.approx(50.0)
+
+
+def test_send_to_batch_preserves_batch_role_across_resend(qapp: QApplication) -> None:
+    """A batch Type override must survive a re-send of the same-named model.
+
+    ``send_single_model_to_batch`` rebuilds the batch table by calling
+    ``_set_composite_model`` again; before it passed ``aligned_origins`` this
+    reset every row's Type combo to the model's default assignment (Fixed for
+    ``VortexLattice``'s ``field``), clobbering a role the user had deliberately
+    chosen (``Local``) on the batch surface itself. Aligning by name means the
+    role is keyed to the surviving component, not recomputed from scratch.
+    """
+    panel = FitPanel()
+    panel._single_tab._set_composite_model(
+        CompositeModel(["VortexLattice", "Constant"], operators=["+"])
+    )
+    assert panel.send_single_model_to_batch() is True
+
+    batch_tbl = panel._global_tab._param_table
+    field_combo = batch_tbl.cellWidget(_row_for(batch_tbl, "field"), 2)
+    assert isinstance(field_combo, QComboBox)
+    assert field_combo.currentText() == "Fixed"  # VortexLattice's declared default
+    field_combo.setCurrentText("Local")
+
+    # User then sets a new field value in Single and sends the same model again.
+    single_tbl = panel._single_tab._param_table
+    single_tbl.item(_row_for(single_tbl, "field"), 1).setText("777.0")
+    assert panel.send_single_model_to_batch() is True
+
+    field_row = _row_for(batch_tbl, "field")
+    field_combo = batch_tbl.cellWidget(field_row, 2)
+    assert field_combo.currentText() == "Local", (
+        "resending the model reset the batch Type combo to its default role "
+        "instead of carrying the user's override"
+    )
+    assert float(batch_tbl.item(field_row, 1).text()) == pytest.approx(777.0), (
+        "resending the model did not carry the single tab's new value"
+    )

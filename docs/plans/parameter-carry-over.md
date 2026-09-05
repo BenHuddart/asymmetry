@@ -1,9 +1,9 @@
 # Parameter carry-over: values follow the component, not the name
 
-Status: planned 2026-09-05. Two PRs: PR 1 = Phases 1–5 (carry-over across
-every builder host); PR 2 = Phase 6 (one seeding function with value
-provenance), designed here so PR 1 leaves the right seams, started only
-after PR 1 merges. Each phase is one subagent task on the feature branch
+Status: implemented 2026-09-05 (PR 1, Phases 1–5). Two PRs: PR 1 = Phases 1–5
+(carry-over across every builder host); PR 2 = Phase 6 (one seeding function
+with value provenance), designed here so PR 1 leaves the right seams, started
+only after PR 1 merges. Each phase is one subagent task on the feature branch
 with a lead review gate.
 
 ## Problem
@@ -283,3 +283,27 @@ both fall out of the one function. Gate: `--tier fast`, affected GUI files,
   makes it unnecessary.
 - Seeding unification and provenance are PR 2, designed now so PR 1's
   hosts keep a single seeding call site each.
+- A tie or `expr` reference to a name outside the model entirely (a free
+  auxiliary parameter the model itself never owned) passes through a carry
+  unchanged — only a reference the old model itself owned is translated or
+  dropped; the old model not recognising a name is not evidence it vanished.
+- A duplicated component's tie points at the *original* component's
+  parameter, not at its own duplicate — origin carries forward through
+  `duplicate_row`, so both the original and the duplicate resolve the tie
+  through the same predecessor.
+- Name alignment (`align_component_names`) is the sanctioned fallback for
+  every builder host that receives a model *without* an edit's exact origins
+  behind it: the single tab's model inherited from a prior fit, and both
+  send-to-batch paths (single → batch's run table, and the multi-group
+  window's grouped single → grouped batch send). Each is `aligned_origins`
+  against the model already in the receiving table, so a same-named
+  component's role, value, and bounds survive and the map is the identity
+  when the model is genuinely unchanged.
+- The cross-group dialog's config-restore path stays a same-model, name-keyed
+  restore (`_apply_existing_config`'s `parameter_rows` step): at that point
+  there is no predecessor model to carry *from* — the model is being set for
+  the first time from a saved file — so seeding defaults and then restoring
+  the exact saved snapshot by name is correct, not a name-keying regression.
+- Per-(run, group) nuisance values are never wiped by a model edit: their
+  names are per-detector-group quantities, not fit-function parameters, so a
+  composite-model change cannot invalidate them.
