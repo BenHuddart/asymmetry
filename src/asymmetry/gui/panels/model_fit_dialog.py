@@ -41,6 +41,7 @@ from asymmetry.core.fitting.experiment_design import (
     suggest_next_point,
 )
 from asymmetry.core.fitting.fit_quality import assess_fit_quality
+from asymmetry.core.fitting.parameter_carry import carry_parameter_set
 from asymmetry.core.fitting.parameter_models import (
     PARAMETER_MODEL_COMPONENTS,
     ErrorMode,
@@ -259,20 +260,6 @@ def _format_model_param_label(
     if _base_param_name(name) == "m" and component_for_param.get(name) == "Redfield":
         return name
     return _format_param_label(name, x_key, parameter_name)
-
-
-def _component_name_for_param(model: ParameterCompositeModel, name: str) -> str | None:
-    """Return component name that owns a unique model parameter name."""
-    for mapping, component in zip(model._param_mappings, model.components, strict=True):
-        for unique_name in mapping.values():
-            if unique_name == name:
-                return component.name
-    return None
-
-
-def _should_reset_param_on_model_change(model: ParameterCompositeModel, name: str) -> bool:
-    """Return True when model changes should prefer defaults over name-based carryover."""
-    return _base_param_name(name) == "m" and _component_name_for_param(model, name) == "Redfield"
 
 
 def _component_pool_for_context(x_key: str, parameter_name: str) -> list[str]:
@@ -1979,6 +1966,8 @@ class ModelFitDialog(QDialog):
         if model is None:
             return
 
+        origins = dlg.component_origins()
+        old_model = fit_range.model
         fit_range.model = model
         # Remember this model for the (base_param, x_key) so the next fresh
         # dialog seeds it as the default (item 4.2). Best-effort / silent.
@@ -1996,17 +1985,11 @@ class ModelFitDialog(QDialog):
         # carried over from the previous model keep the user's value.
         trend_seeds = suggest_trend_seeds(model, self._x, self._y)
 
+        carried = carry_parameter_set(old_model, model, origins, fit_range.parameters)
         new_params = ParameterSet()
         for pname in model.param_names:
-            if pname in fit_range.parameters and not _should_reset_param_on_model_change(
-                model, pname
-            ):
-                old = fit_range.parameters[pname]
-                new_params.add(
-                    Parameter(
-                        name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed
-                    )
-                )
+            if pname in carried:
+                new_params.add(carried[pname])
             else:
                 new_params.add(
                     Parameter(

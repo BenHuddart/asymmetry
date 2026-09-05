@@ -140,8 +140,14 @@ def test_cross_group_dialog_redfield_m_is_unitless() -> None:
         parent=None,
     )
 
+    # Redfield is a brand-new component here (not a continuation of whatever
+    # the dialog's bootstrap range held), so its "m" has no predecessor to
+    # carry from and takes the component's own default (2.0) -- exercising
+    # the identity-keyed replacement for the deleted name-based Redfield
+    # special case.
+    old_model = dlg._model
     dlg._model = ParameterCompositeModel(["Redfield"], [])
-    dlg._rebuild_param_table()
+    dlg._rebuild_param_table(old_model, (None,))
 
     labels = [dlg._param_table.item(row, 0).text() for row in range(dlg._param_table.rowCount())]
     assert "m" in labels
@@ -209,8 +215,9 @@ def test_cross_group_dialog_sc_shape_factor_a_defaults_to_fixed() -> None:
         parent=None,
     )
 
+    old_model = dlg._model
     dlg._model = ParameterCompositeModel(["SC_PWaveAxial"], [])
-    dlg._rebuild_param_table()
+    dlg._rebuild_param_table(old_model, (None,))
 
     row_by_name = {
         dlg._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
@@ -930,6 +937,49 @@ class _FakeModelBuilder:
     def get_model(self):
         return type(self)._next_model
 
+    def component_origins(self):
+        # The replacement model in these tests is unrelated to the default
+        # Linear range it replaces (Arrhenius: a, Ea vs. Linear: m, b) --
+        # nothing carries.
+        return (None,)
+
+
+def test_edit_model_appending_constant_carries_linear_and_seeds_constant(
+    monkeypatch,
+) -> None:
+    """Editing the shared range's model through the base dialog's _edit_model
+    (inherited, unmodified, by CrossGroupFitDialog) carries the surviving
+    Linear component's m/b by identity and seeds the newly-added Constant's
+    c from its own default -- the same carry-then-seed contract as the base
+    ModelFitDialog, exercised through the cross-group host."""
+    app = QApplication.instance() or QApplication([])
+    dlg = CrossGroupFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        groups=_groups(),
+        parent=None,
+    )
+
+    fit_range = dlg._fit.ranges[0]
+    assert isinstance(fit_range.model, ParameterCompositeModel)
+    fit_range.parameters = ParameterSet([Parameter("m", 0.05), Parameter("b", 1.5)])
+
+    _FakeModelBuilder._next_model = ParameterCompositeModel(["Linear", "Constant"], ["+"])
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog",
+        _FakeModelBuilder,
+    )
+    # Component 0 (Linear) continues the old range's sole Linear component;
+    # component 1 (Constant) is new.
+    monkeypatch.setattr(_FakeModelBuilder, "component_origins", lambda self: (0, None))
+    dlg._edit_model(0)
+
+    params = dlg._fit.ranges[0].parameters
+    assert params["m"].value == pytest.approx(0.05)
+    assert params["b"].value == pytest.approx(1.5)
+    assert params["c"].value == pytest.approx(dlg._fit.ranges[0].model.param_defaults["c"])
+    assert app is not None
+
 
 def test_edit_model_clears_stale_result_and_blocks_use_fit(monkeypatch) -> None:
     """Editing the range model after a successful run must drop the cached
@@ -1169,8 +1219,11 @@ def test_formula_uses_break_points() -> None:
 
     # A multi-term model whose formula carries top-level operators (m*x + b + c),
     # i.e. exactly where insert_formula_break_points inserts break opportunities.
+    old_model = dlg._fit.ranges[0].model
     dlg._fit.ranges[0].model = ParameterCompositeModel(["Linear", "Constant"], ["+"])
-    dlg._rebuild_param_table()  # rebuilds params + re-selects range -> _set_formula_display
+    # rebuilds params + re-selects range -> _set_formula_display; no component
+    # of the new model continues one of the old model's, so nothing carries.
+    dlg._rebuild_param_table(old_model, (None, None))
     dlg._select_range(0)
 
     # The formula box is the shared FormulaBox.
