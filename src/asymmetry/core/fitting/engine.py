@@ -393,6 +393,25 @@ def _minuit_status_message(minuit, *, success_message: str, failure_prefix: str)
     return f"{failure_prefix}: {', '.join(details)}"
 
 
+class _NoFreeParametersFit:
+    """Stand-in for a Minuit result when every parameter is fixed, tied, or linked.
+
+    With no free axis, the objective is deterministic at the given values: there
+    is nothing for Minuit to search, so evaluating the cost once *is* the fit —
+    a complete, successful result by construction rather than a Minuit run that
+    happened to have zero parameters. Exposes just the ``Minuit`` attributes
+    ``_fit_core``'s result-packing reads when ``free`` is empty (``valid``,
+    ``fval``, ``covariance``); ``values``/``errors`` are never consulted in that
+    case, since every parameter takes the fixed/tied/follower branch.
+    """
+
+    valid = True
+    covariance = None
+
+    def __init__(self, fval: float) -> None:
+        self.fval = fval
+
+
 def _clamp_minuit_step_size(step: float, lower: float, upper: float) -> float:
     clipped = abs(float(step))
     if not np.isfinite(clipped) or clipped <= 0.0:
@@ -1047,18 +1066,30 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         ]
         for w in caught_advisories:
             warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
-        m = Minuit(cost, *initial_values, name=param_names)
 
-        # Set limits for parameters
-        for i, p in enumerate(free):
-            if p.min != -float("inf"):
-                m.limits[i] = (p.min, m.limits[i][1])
-            if p.max != float("inf"):
-                m.limits[i] = (m.limits[i][0], p.max)
+        if free:
+            m = Minuit(cost, *initial_values, name=param_names)
 
-        # Run minimization (migrad/simplex + explicit HESSE + opt-in MINOS) through
-        # the shared drive seam.
-        minos_errors_raw = drive_minuit(m, method=method, minos=minos, migrad_kwargs=migrad_kwargs)
+            # Set limits for parameters
+            for i, p in enumerate(free):
+                if p.min != -float("inf"):
+                    m.limits[i] = (p.min, m.limits[i][1])
+                if p.max != float("inf"):
+                    m.limits[i] = (m.limits[i][0], p.max)
+
+            # Run minimization (migrad/simplex + explicit HESSE + opt-in MINOS)
+            # through the shared drive seam.
+            minos_errors_raw = drive_minuit(
+                m, method=method, minos=minos, migrad_kwargs=migrad_kwargs
+            )
+        else:
+            # Every parameter is fixed, tied, or linked to a fixed/tied main —
+            # a legitimate input (e.g. a run whose only local parameter is
+            # pinned from metadata), not an error. There is no free axis for
+            # Minuit to search, so the cost evaluated once at the given values
+            # *is* the fit.
+            m = _NoFreeParametersFit(fval=float(cost()))
+            minos_errors_raw = None
 
         # Pack results
         result_params = ParameterSet()
