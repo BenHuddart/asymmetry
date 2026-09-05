@@ -150,6 +150,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   record fits in 0.3 s instead of 26 s; the original quadrature and the
   scalar Volterra recursion are retained as test references.
 
+- **Every composite model exposes exactly one amplitude per product, however
+  the expression was built.** A `CompositeModel` used to name and evaluate
+  amplitudes under two regimes chosen by *spelling*, not structure: a flat
+  expression shared one `A` per `*`/`/` chain, while a single parenthesis
+  anywhere in the expression switched the whole model to a second regime
+  that kept every component's own `A`. Typing `(Oscillatory * Exponential) +
+  Constant` into the function builder therefore got a redundant `A_2` that
+  the flat `Oscillatory * Exponential + Constant` did not, and the fit
+  wizard's multiplet templates — which wrap each `Osc × Env` pair in
+  parentheses purely for readability — compensated by seeding every
+  envelope's amplitude to `1.0` and fixing it, a parameter that reached the
+  table, the formula, the LaTeX preview, and every saved project. Amplitude
+  naming and evaluation are now both defined on the expression tree the
+  serialised form denotes, so parentheses that do not change the tree change
+  neither the names nor the values: every product carries exactly one scale,
+  in the first factor that can carry one, and a product with a sum factor
+  (`(A + B) * C`) takes its scales from the sum's terms instead. A surviving
+  `A` is always indexed by its own component (`A_1`, `A_3`), matching the
+  flat convention every saved project and wizard template already used. The
+  multiplet templates no longer seed or fix an envelope amplitude — the
+  parameter does not exist any more — and the function builder now names a
+  parenthesised and a flat spelling of the same model identically. A saved
+  project, fit-wizard cache, or global-wizard payload written under the old
+  two-regime naming folds its per-factor amplitudes onto the surviving
+  parameter on load (values multiply, relative uncertainties add in
+  quadrature, `fixed` only if every folded entry was); this migration is
+  alpha-only and is deleted whole at v1.0 (see `RELEASING.md`).
+
 ### Fixed
 
 - **Auto Y after a zoom, then a run switch, reframed x instead and left the
@@ -228,6 +256,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   descending on usable parameters; such a fit is restarted from where it
   stopped (up to twice) rather than discarded, so a rich candidate is not
   ranked on a truncated search.
+
+- **The published documentation site stopped rebuilding on every push to
+  `main`.** `FitEngine` raised iminuit's "starting value(s) are required"
+  whenever it was handed a parameter set with every parameter fixed, tied, or
+  a link follower — the `global_fit_wizard_result` screenshot scenario hit
+  this on the Ag LF-KT decoupling series, where the wizard's local-only
+  refinement stage holds every Global parameter fixed while unlocking only
+  the Local ones; on the zero-field run `B_L` was already pinned from run
+  metadata, so that run's parameter set came out entirely fixed and
+  `global_fit`'s block-separable path handed Minuit nothing to search. A
+  fully-fixed parameter set is a legitimate, well-defined fit by
+  construction: the objective is deterministic at the given values, so
+  evaluating it once *is* the fit. `FitEngine` now packs a valid, successful
+  result directly in that case instead of calling Minuit, on the per-dataset
+  path that both `fit` and the block-separable `global_fit` use. `Docs Build and Deploy` had
+  been red on every push to `main` since the `B_L` pinning change above; it
+  is green again.
 
 ## [0.17.1] - 2026-08-03
 

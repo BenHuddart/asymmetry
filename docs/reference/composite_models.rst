@@ -93,24 +93,60 @@ updates automatically as you edit the others.
 Parameter naming rules
 ----------------------
 
-Composite models generate unique parameter names automatically:
+Composite models generate unique parameter names automatically, from the
+expression's **structure** rather than how it happens to be spelled:
 
 * Additive terms get their own amplitude parameters: ``A_1``, ``A_2``, ...
-* Components joined by ``*`` or ``/`` share a single amplitude for that
-    multiplicative chain. For example, ``Exponential * Gaussian`` uses only
-    ``A_1``.
+* Every product — a chain of components joined by ``*`` or ``/`` — carries
+  exactly one amplitude, on the **first** factor that has one; every other
+  factor in that product is unit-amplitude. Parentheses never change which
+  factor keeps it, or how many amplitudes survive: ``Exponential * Gaussian``
+  and ``(Exponential) * (Gaussian)`` both name only ``A_1``, and
+  ``Exponential * (Gaussian * Oscillatory)`` still carries one amplitude, on
+  ``Exponential``.
+* A product with a sum factor, such as ``(A + B) * C``, takes the **sum's**
+  amplitudes instead — every leaf factor of that product is suppressed, not
+  just the first. ``(Gaussian + Constant) * Constant`` therefore names
+  ``A_1`` (the ``Gaussian`` term) and ``A_bg`` (the ``Constant`` term), never
+  a third amplitude for the multiplying ``Constant``.
 * Fraction groups share one amplitude across the whole grouped sum (``A_1``)
   and add one free fraction per term named after its component —
   ``f_Exponential``, ``f_Gaussian``, ... (duplicates suffixed ``_2``, ``_3``,
   ...) — for all but the last term. The last term carries no parameter; its
   weight is the derived remainder :math:`1 - \sum_i f_i`.
+* ``A`` is always indexed by its carrying component's 1-based position in the
+  expression (``A_1``, ``A_3``, ...), whether or not the expression uses
+  parentheses.
 * Repeated symbols are indexed: ``Lambda_1``, ``Lambda_2``
 * Unique symbols remain unindexed: ``frequency``
 * Constant background uses ``A_bg``
 
 This keeps the parameterisation closer to the usual physics notation for
 products such as an exponentially damped oscillation, where the envelope and
-oscillation share one overall asymmetry.
+oscillation share one overall asymmetry — and because naming follows the
+expression tree rather than its punctuation, it holds regardless of how the
+expression is grouped: a damped two-line multiplet spelled with parentheses,
+
+.. code-block:: python
+
+   model = CompositeModel.from_expression(
+       "(Oscillatory * Exponential) + (Oscillatory * Exponential) + Constant"
+   )
+   print(model.param_names)
+   # ['A_1', 'frequency_1', 'phase_1', 'Lambda_2',
+   #  'A_3', 'frequency_3', 'phase_3', 'Lambda_4', 'A_bg']
+
+names identically to the flat ``Oscillatory * Exponential + Oscillatory *
+Exponential + Constant``: one amplitude per damped oscillator, not one per
+component. And when the first factor of a product has no amplitude of its
+own, the next one that does still picks it up — ``Constant * Exponential``
+names only ``A_bg`` and ``Lambda``, not ``A_bg`` and ``A_1``:
+
+.. code-block:: python
+
+   model = CompositeModel.from_expression("Constant * Exponential")
+   print(model.param_names)
+   # ['A_bg', 'Lambda']
 
 For fraction groups the free fractions *are* the weights (each clamped to
 :math:`[0, 1]`); the final term takes whatever remains, :math:`1 - \sum_i f_i`

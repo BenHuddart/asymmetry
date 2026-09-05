@@ -1,6 +1,6 @@
 # Product amplitudes: one scale per product, derived from the expression tree
 
-Status: in progress 2026-09-05 on `feat/product-amplitude-policy` (one PR),
+Status: implemented 2026-09-05 on `feat/product-amplitude-policy` (one PR),
 built phase by phase by subagents with a lead-agent review gate after every
 phase. The PR also carries the docs-pages fix (Phase 0), unrelated to the
 policy but broken on `main` since PR #301.
@@ -287,3 +287,32 @@ validate` once. Gate: green validate; lead final review; PR.
 - Migration uses a frozen copy of the old algorithm so the new code has no
   legacy branch; the whole thing is one module plus call sites, deleted at
   v1.0.
+- A suppressed scaling parameter (`A` or `A_bg`) is excluded from the
+  collision counts that drive `_2`/`_3` suffixes, so adding a suppressed
+  factor to a product never renames a parameter the user already has.
+- Dividing into a sub-product inverts that sub-product's inner operators
+  (each of its `*` becomes `/` and vice versa), so the tree keeps standard
+  precedence without a second evaluator branch for a nested divisor.
+- A legacy leaf amplitude on a product-with-a-sum (`(A + B) * C` saved under
+  the old naming) distributes over the sum's scales rather than dropping —
+  the leaf's factor is folded into every term of the surviving sum, not
+  discarded, since dropping it would silently change the fitted curve.
+- `FitEngine` treats a parameter set with no free parameters (every entry
+  fixed, tied, or a link follower) as a valid degenerate fit: the objective
+  is deterministic at those values, so evaluating it once *is* the fit. This
+  was Phase 0's fix for the docs-deploy failure; its root cause was that the
+  wizard's local-only refinement stage holds every Global parameter fixed
+  while unlocking only the Local ones, and on the Ag LF-KT series' zero-field
+  run `B_L` (a Local parameter there) was already pinned from run metadata —
+  so that run's stage left nothing free for Minuit to search.
+
+## Follow-ups
+
+- `CompositeModel._term_ranges` rejects a parenthesis that shares a component
+  with a fraction group, e.g. `(Oscillatory * (Exponential + Gaussian){frac})`
+  — pre-existing, true on `main` too, and out of scope for this policy. Not
+  documented anywhere user-facing; fix it as its own change.
+- Deriving `_is_scaling_parameter` from the component definition (rather than
+  the hard-coded `A`/`A_bg` check) so a user-defined component with a
+  differently named scale can participate in the one-amplitude-per-product
+  rule. Deliberately deferred in Design §"Deliberately not in scope".

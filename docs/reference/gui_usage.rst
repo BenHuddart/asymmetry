@@ -828,8 +828,15 @@ Available components in the builder:
 Parameter naming rules in the table:
 
 * Additive terms get their own amplitudes: ``A_1``, ``A_2``, ...
-* Multiplicative or divisive component chains share one amplitude parameter,
-   so ``Exponential * Gaussian`` uses ``A_1`` rather than ``A_1`` and ``A_2``
+* Every product — components chained with ``*`` or ``/`` — carries exactly
+  one amplitude, on the first factor that has one, so ``Exponential *
+  Gaussian`` uses ``A_1`` rather than ``A_1`` and ``A_2``. Parentheses never
+  change this: ``(Exponential) * (Gaussian)`` still names only ``A_1``, and
+  wrapping a multiplet's ``Oscillatory * Exponential`` pairs in parentheses
+  for readability does not add a second amplitude per pair.
+* A product multiplied into a sum, such as ``(Gaussian + Constant) *
+  Constant``, takes the sum's amplitudes instead of its own — every leaf
+  factor of that product is suppressed.
 * ``A_bg`` is present by default from the constant component
 * Other symbols (for example ``Lambda``, ``sigma``, ``frequency``) are only
   indexed when duplicates exist in the same expression
