@@ -740,9 +740,9 @@ def fold_legacy_product_amplitude_state(state: Mapping[str, object]) -> dict[str
 
     ``state`` carries a ``composite_model`` dict and a ``parameters`` list of
     parameter-state dicts.  When the model reconstructs, its parameters are
-    folded via :func:`fold_legacy_product_amplitude_entries`; otherwise (missing
-    or malformed model payload) the state is returned with a shallow-copied
-    ``parameters`` list and is otherwise unchanged.
+    folded via :func:`fold_legacy_product_amplitude_entries`, which builds a new
+    list.  Otherwise (missing or malformed model payload) the returned shallow
+    copy of ``state`` still references the caller's ``parameters`` list.
     """
     folded = dict(state)
     parameters = state.get("parameters")
