@@ -67,6 +67,12 @@ from asymmetry.core.fitting.nuclear_dipole import (
     electron_dipole,
     proton_dipole,
 )
+from asymmetry.core.fitting.parameter_carry import (
+    ComponentParameter,
+    FractionWeight,
+    GroupAmplitude,
+    ParameterIdentity,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, ParamInfo, get_param_info
 from asymmetry.core.fitting.sc.lineshape import (
     vortex_lattice_component,
@@ -1825,6 +1831,37 @@ class CompositeModel:
         mutate the model's internal mapping.
         """
         return [dict(mapping) for mapping in self._param_mappings]
+
+    def parameter_identities(self) -> dict[str, ParameterIdentity]:
+        """Map every unique parameter name to what that parameter *is*.
+
+        The identity names the component instance (or fraction group) a
+        parameter belongs to, independent of the collision-driven spelling the
+        model gave it, so parameter state can follow the component across a
+        model edit (see :mod:`asymmetry.core.fitting.parameter_carry`).
+        Suppressed unit amplitudes are not parameters and are excluded; the
+        keys are :attr:`param_names`, in the same order.
+        """
+        identities: dict[str, ParameterIdentity] = {}
+        for idx, (mapping, component) in enumerate(
+            zip(self._param_mappings, self.components, strict=True)
+        ):
+            group = self._fraction_group_by_component.get(idx)
+            if group is not None and group[0] == idx:
+                identities[self._fraction_group_amplitude_name(group)] = GroupAmplitude(
+                    frozenset(range(group[0], group[1] + 1))
+                )
+
+            for pname in component.param_names:
+                unique_name = mapping[pname]
+                if unique_name == _UNIT_AMPLITUDE_SENTINEL:
+                    continue
+                identities[unique_name] = ComponentParameter(idx, pname)
+
+            fraction_name = self._fraction_param_name(idx)
+            if fraction_name is not None:
+                identities[fraction_name] = FractionWeight(idx)
+        return identities
 
     def knight_observable_params(self) -> dict[str, str]:
         """Map fitted parameter name → kind for Knight-convertible components.
