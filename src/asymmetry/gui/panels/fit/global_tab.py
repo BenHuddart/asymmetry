@@ -1689,13 +1689,8 @@ class GlobalFitTab(FitTabBase):
     def _on_param_table_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating_fraction_values or item.column() != 1:
             return
-        # The user typed this number: it outranks any later seed. Stamped with
-        # the guard raised because writing item data re-enters this handler.
-        self._updating_fraction_values = True
-        try:
-            _set_value_provenance(item, USER)
-        finally:
-            self._updating_fraction_values = False
+        # The user typed this number: it outranks any later seed.
+        _set_value_provenance(item, USER)
         name_item = self._param_table.item(item.row(), 0)
         param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
         if isinstance(param_name, str):
@@ -1718,12 +1713,8 @@ class GlobalFitTab(FitTabBase):
     def _on_group_model_table_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating_group_model_fraction_values or item.column() != 1:
             return
-        # The user typed this number (see _on_param_table_item_changed).
-        self._updating_group_model_fraction_values = True
-        try:
-            _set_value_provenance(item, USER)
-        finally:
-            self._updating_group_model_fraction_values = False
+        # The user typed this number: it outranks any later seed.
+        _set_value_provenance(item, USER)
         name_item = self._group_model_table.item(item.row(), 0)
         param_name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
         if isinstance(param_name, str):

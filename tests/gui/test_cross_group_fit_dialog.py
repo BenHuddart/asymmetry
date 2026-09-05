@@ -977,7 +977,12 @@ def test_edit_model_appending_constant_carries_linear_and_seeds_constant(
     params = dlg._fit.ranges[0].parameters
     assert params["m"].value == pytest.approx(0.05)
     assert params["b"].value == pytest.approx(1.5)
-    assert params["c"].value == pytest.approx(dlg._fit.ranges[0].model.param_defaults["c"])
+    # The new Constant is seeded like any fresh trend component: from the
+    # dialog's data through seed_trend_parameters, not from Linear's values.
+    from asymmetry.core.fitting.seeding import seed_trend_parameters
+
+    expected_c = seed_trend_parameters(dlg._fit.ranges[0].model, dlg._x, dlg._y)["c"].value
+    assert params["c"].value == pytest.approx(expected_c)
     assert app is not None
 
 

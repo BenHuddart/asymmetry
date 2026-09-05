@@ -148,8 +148,18 @@ def _format_bound(value: float, open_text: str) -> str:
 
 
 def _set_value_provenance(item: QTableWidgetItem, provenance: str) -> None:
-    """Record where *item*'s value came from (:data:`SEEDED` or :data:`USER`)."""
-    item.setData(_PROVENANCE_ROLE, provenance)
+    """Record where *item*'s value came from (:data:`SEEDED` or :data:`USER`).
+
+    Writing item data is a change like any other to the owning table's
+    ``itemChanged`` handlers, which would read it as the user typing, so the
+    stamp is written with the table's signals blocked.
+    """
+    table = item.tableWidget()
+    previous_signal_state = table.blockSignals(True)
+    try:
+        item.setData(_PROVENANCE_ROLE, provenance)
+    finally:
+        table.blockSignals(previous_signal_state)
 
 
 def _value_provenance(item: QTableWidgetItem) -> str:
@@ -1530,10 +1540,8 @@ class FitParameterTable(QTableWidget):
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating or item.column() != self.COL_VALUE:
             return
-        # The user typed this number: it outranks any later seed. Stamped under
-        # ``suspend`` because writing item data re-enters this handler.
-        with self.suspend():
-            _set_value_provenance(item, USER)
+        # The user typed this number: it outranks any later seed.
+        _set_value_provenance(item, USER)
         name_item = self.item(item.row(), self.COL_NAME)
         name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
         if isinstance(name, str):
