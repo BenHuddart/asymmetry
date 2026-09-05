@@ -29,6 +29,7 @@ from asymmetry.core.fitting.composite import (
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.envelope_match import match_envelope_banks
+from asymmetry.core.fitting.legacy_product_amplitudes import fold_legacy_product_amplitude_set
 from asymmetry.core.fitting.models import field_decoupling_threshold_gauss
 from asymmetry.core.fitting.muonium import VACUUM_MUONIUM_A_HF_MHZ
 from asymmetry.core.fitting.parameters import (
@@ -3599,7 +3600,14 @@ def _migrate_fit_result_fractions(result: FitResult, model: CompositeModel) -> F
     weights, last-term entry dropped) and the uncertainty keys are re-mapped so
     the cached fit still applies after the model rows switch to ``f_<Component>``.
     A no-op when there are no legacy keys.
+
+    Legacy per-factor product amplitudes (``A_2`` beside ``A_1`` in a cached
+    multiplet) are folded onto the one-scale-per-product names first, on the
+    same in-place result.
     """
+    result.parameters, result.uncertainties = fold_legacy_product_amplitude_set(
+        model, result.parameters, result.uncertainties
+    )
     migrated = migrate_legacy_fraction_parameter_set(model, result.parameters)
     if migrated is result.parameters:
         # No legacy fraction keys for this model — nothing to rename or re-key.
