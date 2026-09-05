@@ -68,6 +68,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The fit wizard now pins the applied longitudinal field `B_L` from the run
+  metadata**, the way it already pinned the transverse `field`. `B_L` was
+  seeded but deliberately left free "so a miscalibrated magnet cannot wedge the
+  fit"; on a zero-field run that reasoning inverted, because the seed only
+  applied when the setpoint was truthy and 0 G is not — so `B_L` started
+  exactly on its own zero lower bound, where Minuit cannot start it. The rule
+  now follows the recorded geometry: a `ZF` label pins `B_L` at 0 whatever
+  magnitude the file carries, a longitudinal setpoint pins it at that setpoint,
+  a zero magnitude (within 0.1 G) pins 0 in any geometry, and only a transverse
+  setpoint or an unrecorded field leaves `B_L` free — seeded then at a small
+  positive value clear of the `omega_0 < 0.05 Delta` decoupling window, where
+  the Kubo-Toyabe functions use their zero-field form and the objective has no
+  gradient in `B_L` at all. On a synthetic zero-field dynamic-Lorentzian-KT
+  record the wizard now recommends `Dynamic Lorentzian KT + Constant` where it
+  used to fail that candidate with "parameters at limit" and recommend a
+  stretched exponential with High confidence; on a 90 000-point two-line
+  zero-field record the serial analysis drops from 35 s to 17 s. Pinning also
+  makes two candidates reachable at exactly the same free-parameter count —
+  with `B_L` pinned at 0, `LongitudinalFieldKT + Constant` *is*
+  `StaticGKT_ZF + Constant` — so an exact metric tie is now broken towards the
+  model that carries no pinned extra, rather than on template title. The
+  Global Fit Wizard's series candidates follow the same policy, so a
+  zero-field series no longer carries a free `B_L` per run that each run's
+  own screening had already pinned.
+
 - **Dynamic Lorentzian Kubo–Toyabe and dynamic F–μ–F are now exact closed
   forms, and the longitudinal-field Lorentzian line shape is evaluated from a
   closed-form spectral density.** These two components set the fit wizard's
@@ -98,6 +123,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scalar Volterra recursion are retained as test references.
 
 ### Fixed
+
+- **Fitted parameter sets lost the `fixed` flag and the bounds of pinned
+  parameters.** `FitEngine` packed a fixed parameter into its result as a bare
+  name/value pair, so `FitResult.parameters.free_parameters` counted it as
+  free. Every k-penalised information criterion the fit wizard computes was
+  therefore too large by 2 per pinned parameter (the wizard carried an explicit
+  workaround for the one case that would otherwise have un-pinned a fit
+  restart), the single-fit result box reported the wrong `npar`, and applying a
+  wizard result in the GUI silently unticked **Fix** and blanked the bounds for
+  a parameter the wizard had pinned. Fixed parameters now come back fixed, with
+  their bounds, from the single, joint-global, and profiled-global paths. A
+  parameter pinned *at* one of its bounds is no longer reported as "at
+  bound" — it never moved, so that was never evidence of a railed fit.
 
 - **Junk peaks against the Nyquist edge on finely binned records.** The
   windowed pass reported clusters of spurious lines just below Nyquist on

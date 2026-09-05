@@ -18,6 +18,7 @@ from numpy.typing import NDArray
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import (
     ComputationalCost,
+    FieldGeometry,
     geometry_from_field_direction,
 )
 from asymmetry.core.fitting.composite import (
@@ -28,6 +29,7 @@ from asymmetry.core.fitting.composite import (
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.envelope_match import match_envelope_banks
+from asymmetry.core.fitting.models import field_decoupling_threshold_gauss
 from asymmetry.core.fitting.muonium import VACUUM_MUONIUM_A_HF_MHZ
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -318,6 +320,20 @@ class CandidateAssessment:
     @property
     def additive_terms(self) -> int:
         return self.template.additive_terms
+
+    @property
+    def model_parameter_count(self) -> int:
+        """Every parameter the model carries, pinned ones included.
+
+        A tie-break *below* :attr:`parameter_count`, not a replacement for it:
+        the information criteria rightly count only free parameters, but two
+        candidates can now reach exactly the same k by different routes. A
+        zero-field record pins ``B_L`` at 0, at which point ``LongitudinalFieldKT
+        + Constant`` fits identically to ``StaticGKT_ZF + Constant`` on the same
+        three free parameters — the same function reached through a longitudinal
+        machinery it does not use. Prefer the model that never carried it.
+        """
+        return len(self.template.model.param_names)
 
     def metric_value(self, metric: SelectionMetric) -> float:
         if metric == SelectionMetric.AIC:
@@ -1433,6 +1449,12 @@ class TemplateSeedContext:
     peak_analysis: PeakAnalysis | None = None
     multiplet_matches: tuple[MultipletMatch, ...] = ()
     field_gauss: float | None = None
+    #: Recorded field geometry, or ``None`` when the run does not say. Carried
+    #: alongside ``field_gauss`` because the applied-field *magnitude* alone
+    #: does not fix the longitudinal component ``B_L``: a ZF label means the
+    #: field is nulled whatever the magnitude reads, and only a ZF/LF label
+    #: makes the setpoint the longitudinal component.
+    geometry: FieldGeometry | None = None
 
     def best_match(self, kinds: tuple[str, ...]) -> MultipletMatch | None:
         """Return the highest-quality match of one of ``kinds``, if any."""
@@ -1440,6 +1462,24 @@ class TemplateSeedContext:
         if not candidates:
             return None
         return max(candidates, key=lambda m: m.quality)
+
+
+def dataset_field_geometry(dataset: MuonDataset) -> FieldGeometry | None:
+    """The run's recorded field geometry, or ``None`` when it does not say."""
+    return geometry_from_field_direction(
+        str(dataset.metadata.get("field_direction") or dataset.metadata.get("field_state") or "")
+    )
+
+
+def _field_seed_context(dataset: MuonDataset) -> TemplateSeedContext:
+    """A seed context carrying only the run's applied-field metadata.
+
+    For the entry points that do no peak detection of their own: the applied
+    field is metadata, not a measurement the wizard has to make, so those paths
+    still get the ``field``/``B_L`` policy in
+    :func:`_initial_parameters_for_template`.
+    """
+    return TemplateSeedContext(field_gauss=dataset.field, geometry=dataset_field_geometry(dataset))
 
 
 def _multiplet_seed_peaks(
@@ -2293,10 +2333,7 @@ def build_fit_wizard_recommendation(
         )
 
     field_gauss = dataset.field
-    direction_text = str(
-        dataset.metadata.get("field_direction") or dataset.metadata.get("field_state") or ""
-    )
-    geometry = geometry_from_field_direction(direction_text)
+    geometry = dataset_field_geometry(dataset)
     geometry_token = geometry.value if geometry is not None else None
 
     # Any user-declared seeds fold into peak pass A here. The record goes with
@@ -2328,7 +2365,9 @@ def build_fit_wizard_recommendation(
             f"({analysis_dataset.n_points} of {dataset.n_points} points)"
         )
 
-    stage1_context = TemplateSeedContext(peak_analysis=peak_analysis, field_gauss=field_gauss)
+    stage1_context = TemplateSeedContext(
+        peak_analysis=peak_analysis, field_gauss=field_gauss, geometry=geometry
+    )
 
     _progress(f"Stage 1: screening {len(families)} candidate families")
 
@@ -2539,6 +2578,7 @@ def build_fit_wizard_recommendation(
             peak_analysis=peak_analysis,
             multiplet_matches=multiplet_matches,
             field_gauss=field_gauss,
+            geometry=geometry,
         )
 
         # A family reached Stage 2 with *independent support* when it is named by
@@ -2750,6 +2790,9 @@ def build_fit_wizard_recommendation_for_templates(
     """Evaluate one dataset against an explicit candidate-template list."""
     active_fingerprint = fingerprint or fingerprint_spectrum(dataset)
     active_templates = tuple(templates)
+    # No peak detection on this path, but the applied field is metadata rather
+    # than a measurement — so the field/B_L policy still applies.
+    seed_context = _field_seed_context(dataset)
     # max_workers=1 preserves this function's historical serial semantics (one
     # fit engine's worth of work at a time, in list order); the previous single
     # shared FitEngine() is replaced by one-per-task, which is equivalent since
@@ -2762,7 +2805,7 @@ def build_fit_wizard_recommendation_for_templates(
                     fingerprint=active_fingerprint,
                     template=template,
                     metric=metric,
-                    seed_context=None,
+                    seed_context=seed_context,
                     variant_budget=5,
                     stage=2,
                     screening_cap=False,
@@ -3051,6 +3094,7 @@ def rerank_fit_wizard_recommendation(
                     key=lambda assessment: (
                         assessment.parameter_count,
                         assessment.additive_terms,
+                        assessment.model_parameter_count,
                         assessment.template.title,
                     ),
                 )
@@ -3632,12 +3676,13 @@ def _is_call_limited(result: FitResult) -> bool:
 def _continuation_parameters(seed: ParameterSet, result: FitResult) -> ParameterSet:
     """``seed``'s structure carrying ``result``'s fitted values.
 
-    Not ``result.parameters`` directly: the engine drops the ``fixed`` flag when
-    it packs a fitted parameter set (a fixed parameter comes back as a plain
-    value with no bounds), so restarting from it would free the multiplet
-    envelope amplitudes that are pinned at 1 to keep each ``Osc × Env`` product
-    non-degenerate. Bounds, links and ties come from the seed for the same
-    reason; only the values move.
+    Not ``result.parameters`` directly. The engine now carries the ``fixed``
+    flag and the bounds through (it used to drop both, which silently freed the
+    multiplet envelope amplitudes pinned at 1 to keep each ``Osc × Env`` product
+    non-degenerate), but ``expr`` constraints are still not round-tripped and a
+    restart must not depend on the engine's packing at all: the seed is the
+    authoritative structure. Only the values move, clipped back inside the
+    seed's bounds.
     """
     continued = _clone_parameter_set(seed)
     for parameter in continued:
@@ -3815,11 +3860,12 @@ def _metric_value(metric: SelectionMetric, aic: float, aicc: float | None, bic: 
 def _assessment_sort_key(
     assessment: CandidateAssessment,
     metric: SelectionMetric,
-) -> tuple[float, int, int, str]:
+) -> tuple[float, int, int, int, str]:
     return (
         float(assessment.metric_value(metric)),
         int(assessment.parameter_count),
         int(assessment.additive_terms),
+        int(assessment.model_parameter_count),
         assessment.template.title,
     )
 
@@ -4011,6 +4057,84 @@ def _semilog_slope_ratio(
     if early_mag < _EPS or late_mag < _EPS:
         return 1.0
     return float(np.clip(max(early_mag, late_mag) / min(early_mag, late_mag), 1.0, 25.0))
+
+
+#: Largest recorded |field| still pinned as a *nulled* longitudinal component.
+#:
+#: Deliberately much tighter than :data:`wizard_scope.ZERO_FIELD_MAX_GAUSS`
+#: (2 G), which is a *scope*-widening tolerance — "close enough to zero that ZF
+#: families are worth offering". As an actual ``B_L`` value 2 G is not zero: it
+#: clears the ``omega0 < 0.05·width`` decoupling window for every local-field
+#: width below 3.4 µs⁻¹, i.e. for most of the Kubo-Toyabe records the wizard
+#: sees, so pinning a 2 G setpoint to 0 would misstate a physically active
+#: field. At 0.1 G the two models are indistinguishable for any width above
+#: 0.17 µs⁻¹, which covers every record with measurable KT relaxation.
+_ZERO_LONGITUDINAL_FIELD_MAX_GAUSS: float = 0.1
+
+#: Free-``B_L`` seed, as a multiple of the decoupling threshold field for the
+#: seeded local-field width. 2× puts the seed clear of the flat zero-field
+#: branch (where the objective has no ``B_L`` gradient at all) while staying
+#: small enough to be a weak-field starting point rather than a claim.
+_FREE_B_L_SEED_DECOUPLING_FACTOR: float = 2.0
+
+#: The local-field width parameters of the ``B_L`` carriers — ``a_L`` for the
+#: Lorentzian Kubo-Toyabe shapes, ``Delta`` for the Gaussian ones. Their seeded
+#: value sets the decoupling scale the free-``B_L`` seed has to clear.
+_LONGITUDINAL_WIDTH_BASES: frozenset[str] = frozenset({"a_L", "Delta"})
+
+
+def _pinned_longitudinal_field(
+    field_gauss: float | None, geometry: FieldGeometry | None
+) -> float | None:
+    """The value ``B_L`` should be pinned at, or ``None`` to leave it free.
+
+    ``B_L`` is the applied field *along the initial muon polarisation*, and on a
+    real spectrometer that is recorded metadata, not a fitted quantity. The
+    policy:
+
+    - **ZF geometry** → ``0``, whatever magnitude the record carries. A "zero
+      field" label means the magnet is nulled; a non-zero setpoint alongside it
+      is a stale or nominal reading, not a longitudinal field.
+    - **magnitude ≈ 0** (``<= _ZERO_LONGITUDINAL_FIELD_MAX_GAUSS``) in *any* or
+      unknown geometry → ``0``. A zero applied field has a zero longitudinal
+      component whatever its orientation.
+    - **LF geometry with a known setpoint** → the setpoint magnitude.
+    - anything else (TF with a real field; an unrecorded field in unknown or LF
+      geometry) → ``None``, i.e. left free. A TF setpoint says nothing about the
+      longitudinal component beyond "small", and there is nothing to pin to when
+      the field was never recorded.
+
+    The LF pin is deliberately *hard* rather than a window around the setpoint:
+    see ``docs/reference/fit_wizard.rst``.
+    """
+    if geometry is FieldGeometry.ZF:
+        return 0.0
+    if field_gauss is None:
+        return None
+    magnitude = abs(float(field_gauss))
+    if magnitude <= _ZERO_LONGITUDINAL_FIELD_MAX_GAUSS:
+        return 0.0
+    if geometry is FieldGeometry.LF:
+        return magnitude
+    return None
+
+
+def _free_longitudinal_field_seed(default: float, width_per_us: float) -> float:
+    """A free-``B_L`` seed that is strictly inside its bounds and not flat.
+
+    ``B_L``'s lower bound is 0 and most carriers default it to 0 — Migrad cannot
+    start on a bound, which is exactly how a zero-field record used to lose its
+    own model to a "parameters at limit" failure. Nor is any seed inside the
+    ``omega0 < 0.05·width`` decoupling window usable: there the line shape *is*
+    its zero-field form and the objective has no gradient in ``B_L`` at all.
+    So seed clear of both, keeping a carrier's own larger default
+    (``MuoniumLFRelax`` seeds 10 G, a real longitudinal-field model) when it
+    already is.
+    """
+    return max(
+        float(default),
+        _FREE_B_L_SEED_DECOUPLING_FACTOR * field_decoupling_threshold_gauss(width_per_us),
+    )
 
 
 def _initial_parameters_for_template(
@@ -4375,27 +4499,10 @@ def _initial_parameters_for_template(
         }:
             overrides["Lambda"] = rate
 
-    # Applied-field parameters: seed from run metadata and pin them — the
-    # field is measured, not fitted (muonium/vortex 'field'; LF 'B_L' is
-    # seeded but left free so a miscalibrated magnet cannot wedge the fit).
-    model_bases = {split_parameter_name(name)[0] for name in template.model.param_names}
-    if seed_context is not None and seed_context.field_gauss:
-        if "field" in model_bases:
-            overrides.setdefault("field", seed_context.field_gauss)
-            fixed_names.add("field")
-        if "B_L" in model_bases:
-            overrides.setdefault("B_L", seed_context.field_gauss)
-
-    # Honour component-definition fixed parameters (e.g. VortexLattice 'field',
-    # MuoniumLFRelax 'A_hf').
-    definition_fixed = {
-        fixed for component in template.model.components for fixed in component.fixed_params
-    }
-
-    parameters = ParameterSet()
-    for name in template.model.param_names:
+    def _seeded_value(name: str) -> float:
+        """``name``'s seed: a per-name override, a base-name one, else the default."""
         base_name, _index = split_parameter_name(name)
-        value = float(
+        return float(
             overrides.get(
                 name,
                 overrides.get(
@@ -4406,6 +4513,64 @@ def _initial_parameters_for_template(
                 ),
             )
         )
+
+    # Applied-field parameters: seed from run metadata and pin them — the field
+    # is measured, not fitted. That is the muonium/vortex 'field' and, as of the
+    # zero-field regression described below, the longitudinal 'B_L' too.
+    #
+    # 'B_L' used to be seeded-but-free "so a miscalibrated magnet cannot wedge
+    # the fit". On a zero-field run that reasoning inverted: the seed fell
+    # through (0 G is falsy), leaving B_L on its own 0 lower bound, where Migrad
+    # cannot start — so the true model failed with "parameters at limit" and the
+    # wizard recommended a shape that merely fitted. See
+    # ``_pinned_longitudinal_field`` for the policy and
+    # ``_free_longitudinal_field_seed`` for the case that stays free.
+    model_bases = {split_parameter_name(name)[0] for name in template.model.param_names}
+    field_gauss = seed_context.field_gauss if seed_context is not None else None
+    geometry = seed_context.geometry if seed_context is not None else None
+    if field_gauss is not None and "field" in model_bases:
+        # Recorded is recorded: a 0 G setpoint pins ``field`` at 0 too. Every
+        # ``field`` carrier the wizard screens is a transverse applied-field
+        # model (muonium TF, vortex lattice), so at 0 G it honestly has nothing
+        # to precess in, rather than being free to invent a field.
+        overrides.setdefault("field", field_gauss)
+        fixed_names.add("field")
+    if "B_L" in model_bases:
+        pinned_b_l = _pinned_longitudinal_field(field_gauss, geometry)
+        if pinned_b_l is not None:
+            # One applied field, so one value for every carrier: a base-name
+            # override reaches 'B_L', 'B_L_1', 'B_L_2', ... alike, and
+            # ``fixed_names`` is matched on the base name in the loop below.
+            overrides.setdefault("B_L", pinned_b_l)
+            fixed_names.add("B_L")
+        else:
+            # Free, but per *name*: carriers disagree on the default (0 for the
+            # Kubo-Toyabe shapes, 10 G for MuoniumLFRelax), and a base-name
+            # override would flatten that in a composite carrying both.
+            width = max(
+                (
+                    _seeded_value(name)
+                    for name in template.model.param_names
+                    if split_parameter_name(name)[0] in _LONGITUDINAL_WIDTH_BASES
+                ),
+                default=0.0,
+            )
+            for name in template.model.param_names:
+                base_name, _index = split_parameter_name(name)
+                if base_name != "B_L" or name in overrides or base_name in overrides:
+                    continue
+                overrides[name] = _free_longitudinal_field_seed(_seeded_value(name), width)
+
+    # Honour component-definition fixed parameters (e.g. VortexLattice 'field',
+    # MuoniumLFRelax 'A_hf').
+    definition_fixed = {
+        fixed for component in template.model.components for fixed in component.fixed_params
+    }
+
+    parameters = ParameterSet()
+    for name in template.model.param_names:
+        base_name, _index = split_parameter_name(name)
+        value = _seeded_value(name)
         bounds = bounds_overrides.get(name, bounds_overrides.get(base_name))
         if bounds is not None:
             p_min, p_max = bounds
@@ -5401,6 +5566,12 @@ def _disqualification_reasons(
 def _bound_hit_names(parameters: ParameterSet) -> list[str]:
     hits: list[str] = []
     for parameter in parameters:
+        # A pinned parameter is not "railed": it never moved. Its bounds are
+        # incidental (a B_L pinned at 0 sits exactly on the 0 lower bound of
+        # every seed), and flagging it would gate a candidate on the seeding
+        # policy rather than on the fit. Only free parameters can hit a bound.
+        if parameter.is_constrained:
+            continue
         # The tolerance scale must ignore infinite bounds: an infinite |max|
         # would make ``tol`` infinite and flag every value as "at lower bound"
         # (any finite offset is <= inf). Components with one-sided bounds — e.g.
