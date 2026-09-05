@@ -20,6 +20,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox
 
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.seeding import Seed
 from asymmetry.gui.panels.fit_panel import FitParameterTable
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
 
@@ -37,18 +38,95 @@ def _fix_checkbox(table: FitParameterTable, row: int) -> QCheckBox:
     return table.cellWidget(row, table.COL_FIX).findChild(QCheckBox)
 
 
-def test_populate_creates_one_row_per_param_with_fixed_defaults(qapp):
+def test_populate_creates_one_row_per_param_from_its_seeds(qapp):
     model = _model()
     table = FitParameterTable()
-    table.populate(model, fixed_names={"A_bg"})
+    table.populate(model, seeds={"A_bg": Seed(value=0.05, fixed=True, min=0.0)})
 
     assert table.rowCount() == len(model.param_names)
     names = [table.item(r, table.COL_NAME).data(Qt.ItemDataRole.UserRole) for r in range(3)]
     assert names == list(model.param_names)
-    # The named default is checked; others are not.
+    # The seed carries value, Fix state and bounds onto its row; a parameter the
+    # caller says nothing about keeps the model's own static seed.
     fixed = {n: _fix_checkbox(table, r).isChecked() for r, n in enumerate(names)}
     assert fixed["A_bg"] is True
     assert fixed["Lambda"] is False
+    bg_row = names.index("A_bg")
+    assert float(table.item(bg_row, table.COL_VALUE).text()) == pytest.approx(0.05)
+    assert table.item(bg_row, table.COL_MIN).text() == "0.0"
+    assert float(table.item(names.index("Lambda"), table.COL_VALUE).text()) == pytest.approx(
+        model.param_defaults["Lambda"]
+    )
+
+
+def test_populate_stamps_every_value_as_seeded_and_an_edit_makes_it_the_users(qapp):
+    """Provenance is what makes a re-seed safe: it replaces seeds, not values."""
+    model = _model()
+    table = FitParameterTable()
+    table.populate(model)
+
+    assert all(entry["seeded"] is True for entry in table.parameters_state())
+
+    table.item(0, table.COL_VALUE).setText("0.42")
+    state = {entry["name"]: entry for entry in table.parameters_state()}
+    assert state["A_1"]["seeded"] is False
+    assert state["Lambda"]["seeded"] is True
+
+
+def test_reseed_replaces_seeded_values_and_leaves_typed_ones(qapp):
+    model = _model()
+    table = FitParameterTable()
+    table.populate(model)
+    table.item(0, table.COL_VALUE).setText("0.42")  # the user's own guess
+
+    table.reseed({"A_1": Seed(value=9.0), "Lambda": Seed(value=7.0)})
+
+    assert float(table.item(0, table.COL_VALUE).text()) == pytest.approx(0.42)
+    assert float(table.item(1, table.COL_VALUE).text()) == pytest.approx(7.0)
+
+
+def test_run_bound_cells_are_handed_back_to_the_seeder(qapp):
+    """A value that described the previous run is not a user value for this one."""
+    model = _model()
+    table = FitParameterTable()
+    table.populate(model)
+    table.item(0, table.COL_VALUE).setText("0.42")
+    table.item(1, table.COL_VALUE).setText("3.3")
+
+    table.mark_run_bound_as_seeded(["Lambda"])
+    table.reseed({"A_1": Seed(value=9.0), "Lambda": Seed(value=7.0)})
+
+    assert float(table.item(0, table.COL_VALUE).text()) == pytest.approx(0.42)
+    assert float(table.item(1, table.COL_VALUE).text()) == pytest.approx(7.0)
+
+
+def test_provenance_survives_a_state_round_trip(qapp):
+    """The identity carry-over runs through parameters_state/restore_parameters."""
+    model = _model()
+    table = FitParameterTable()
+    table.populate(model)
+    table.item(0, table.COL_VALUE).setText("0.42")
+
+    carried = FitParameterTable()
+    carried.populate(model)
+    carried.restore_parameters({s["name"]: s for s in table.parameters_state()})
+
+    carried.reseed({name: Seed(value=9.0) for name in model.param_names})
+
+    assert float(carried.item(0, carried.COL_VALUE).text()) == pytest.approx(0.42)
+    assert float(carried.item(1, carried.COL_VALUE).text()) == pytest.approx(9.0)
+
+
+def test_restored_state_without_provenance_is_the_users(qapp):
+    """A project file written before provenance existed holds user values."""
+    model = _model()
+    table = FitParameterTable()
+    table.populate(model)
+
+    table.restore_parameters({"A_1": {"name": "A_1", "value": 0.42}})
+    table.reseed({"A_1": Seed(value=9.0)})
+
+    assert float(table.item(0, table.COL_VALUE).text()) == pytest.approx(0.42)
 
 
 def test_name_cells_carry_full_label_tooltip(qapp):

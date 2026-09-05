@@ -377,9 +377,11 @@ def test_domain_switch_restore_does_not_reseed(qapp, monkeypatch) -> None:
     fwhm/bg from the current spectrum before ``restore_parameters`` overwrote
     those values anyway — an expensive scipy peak-detection call whose result
     was always discarded on the restore path (and which could run against a
-    stale, previous-domain dataset).
+    stale, previous-domain dataset). The restore path now seeds without the
+    bound record at all (``seed_from_record=False``), and the restored values
+    are the user's, so no later re-seed claims them either.
     """
-    import asymmetry.gui.panels.fit.single_tab as single_tab_module
+    import asymmetry.core.fitting.seeding as seeding_module
     from asymmetry.gui.panels.fit_panel import FitPanel
 
     saved_state = {
@@ -397,14 +399,14 @@ def test_domain_switch_restore_does_not_reseed(qapp, monkeypatch) -> None:
     panel.set_domain("frequency")
 
     call_count = 0
-    original = single_tab_module.seed_peak_parameters_from_dataset
+    original = seeding_module.seed_peak_parameters_from_dataset
 
     def _counting(*args, **kwargs):
         nonlocal call_count
         call_count += 1
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(single_tab_module, "seed_peak_parameters_from_dataset", _counting)
+    monkeypatch.setattr(seeding_module, "seed_peak_parameters_from_dataset", _counting)
 
     panel.set_dataset(_frequency_dataset(7, center=3.4))
 

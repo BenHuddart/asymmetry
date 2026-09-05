@@ -8,8 +8,9 @@ Navigation map
 ~1.7k lines, structured as free functions first, then classes, in this order:
 
 1. **Table/model helpers** — ``_grouped_formula_string``,
-   ``_refresh_field_defaults_in_table``, ``_param_table_rows_by_name``,
-   ``_parse_param_table_float``/``_set_param_table_value``,
+   ``_param_table_rows_by_name``, the value-cell provenance helpers
+   (``_set_value_provenance``/``_value_provenance``/``_reseed_seeded_values``/
+   ``_mark_values_seeded``), ``_parse_param_table_float``/``_set_param_table_value``,
    ``_synchronize_fraction_group_values_in_table``/
    ``_configure_fraction_rows_in_table`` (fraction-parameter linking math
    shared by both tabs).
@@ -50,8 +51,9 @@ Navigation map
 
 import copy
 import html
+import math
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 
 import numpy as np
@@ -88,10 +90,10 @@ from asymmetry.core.fitting.parameters import (
     AffineTie,
     Parameter,
     ParameterSet,
-    get_param_info,
     split_parameter_name,
 )
 from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -113,8 +115,6 @@ from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 
-from .seeding import _field_value_overrides
-
 
 def _grouped_formula_string(model: CompositeModel) -> str:
     """Return grouped-fit formula text with fit-function amplitudes suppressed."""
@@ -124,41 +124,119 @@ def _grouped_formula_string(model: CompositeModel) -> str:
     return formula
 
 
-def _refresh_field_defaults_in_table(
+#: Item-data role on a *value* cell recording where its number came from:
+#: :data:`SEEDED` (written by :func:`~asymmetry.core.fitting.seeding.seed_parameters`
+#: through ``populate``/``reseed``) or :data:`USER` (typed, fitted, restored,
+#: carried, or sent from another surface). It is what makes re-seeding safe: a
+#: context change (a new run, a new batch member set) replaces every seeded
+#: value and leaves every user value exactly as it is.
+_PROVENANCE_ROLE = int(Qt.ItemDataRole.UserRole) + 3
+
+#: The two provenances a value cell can carry.
+SEEDED = "seeded"
+USER = "user"
+
+
+def _format_seed_value(value: float) -> str:
+    """Format one seeded value for a table cell (six significant figures)."""
+    return f"{float(value):.6g}"
+
+
+def _format_bound(value: float, open_text: str) -> str:
+    """Format one seeded bound, writing *open_text* for an infinite one."""
+    return open_text if math.isinf(value) else str(float(value))
+
+
+def _set_value_provenance(item: QTableWidgetItem, provenance: str) -> None:
+    """Record where *item*'s value came from (:data:`SEEDED` or :data:`USER`).
+
+    Writing item data is a change like any other to the owning table's
+    ``itemChanged`` handlers, which would read it as the user typing, so the
+    stamp is written with the table's signals blocked.
+    """
+    table = item.tableWidget()
+    previous_signal_state = table.blockSignals(True)
+    try:
+        item.setData(_PROVENANCE_ROLE, provenance)
+    finally:
+        table.blockSignals(previous_signal_state)
+
+
+def _value_provenance(item: QTableWidgetItem) -> str:
+    """Return *item*'s value provenance.
+
+    A cell nobody has stamped — one written before this role existed, or by a
+    path outside the parameter tables — counts as :data:`USER`: the safe answer
+    is to leave a number alone rather than overwrite it with a seed.
+    """
+    return SEEDED if item.data(_PROVENANCE_ROLE) == SEEDED else USER
+
+
+def _write_seed_value(item: QTableWidgetItem, seed: Seed) -> None:
+    """Write one seed onto a value cell, stamping it :data:`SEEDED`.
+
+    Any uncertainty painted on the cell described a *fit*, which this value is
+    no longer, so it is dropped with the old number.
+    """
+    item.setText(_format_seed_value(seed.value))
+    item.setData(_ValueUncertaintyDelegate._UNC_ROLE, None)
+    item.setData(_ValueUncertaintyDelegate._MINOS_ROLE, None)
+    _set_value_provenance(item, SEEDED)
+
+
+def _reseed_seeded_values(
     table: QTableWidget,
-    model: CompositeModel,
+    seeds: Mapping[str, Seed],
     *,
-    previous_field_gauss: float,
-    current_field_gauss: float,
+    value_column: int = 1,
 ) -> None:
-    """Update field-like parameter rows when they still hold the prior auto-default."""
-    if np.isclose(previous_field_gauss, current_field_gauss):
-        return
+    """Replace the value of every *seeded* cell of *table* from *seeds*.
 
-    previous_overrides = _field_value_overrides(model, previous_field_gauss)
-    current_overrides = _field_value_overrides(model, current_field_gauss)
-    if not previous_overrides and not current_overrides:
-        return
-
+    The re-seed rule in one place: a cell the user typed, fitted, restored or
+    carried keeps its number; a cell that still holds a seed follows the new
+    context. Fix state, bounds, roles and links are the user's and are never
+    touched here. Signals are blocked so a bulk re-seed does not read as a
+    user edit; callers re-synchronise fraction rows afterwards.
+    """
     row_by_name = _param_table_rows_by_name(table)
     previous_signal_state = table.blockSignals(True)
     try:
-        for pname in set(previous_overrides) | set(current_overrides):
-            row = row_by_name.get(pname)
+        for param_name, seed in seeds.items():
+            row = row_by_name.get(param_name)
             if row is None:
                 continue
-            value_item = table.item(row, 1)
-            if value_item is None:
+            value_item = table.item(row, value_column)
+            if value_item is None or _value_provenance(value_item) != SEEDED:
                 continue
-            previous_value = previous_overrides.get(pname, model.param_defaults.get(pname, 0.0))
-            current_value = current_overrides.get(pname, model.param_defaults.get(pname, 0.0))
-            try:
-                existing_value = float(value_item.text())
-            except (TypeError, ValueError):
-                existing_value = previous_value
-            if value_item.text().strip() and not np.isclose(existing_value, previous_value):
+            _write_seed_value(value_item, seed)
+    finally:
+        table.blockSignals(previous_signal_state)
+
+
+def _mark_values_seeded(
+    table: QTableWidget,
+    param_names: Iterable[str],
+    *,
+    value_column: int = 1,
+) -> None:
+    """Stamp the named value cells :data:`SEEDED` so the next re-seed claims them.
+
+    Used when a form moves to a different run: a value that *described the run
+    it was seeded from* (the applied field, the frequency peak) is not the
+    user's opinion about the new run, whoever put it there.
+    """
+    row_by_name = _param_table_rows_by_name(table)
+    # Blocked: writing item data is a change like any other, and the tables'
+    # item-changed handlers read one as the user typing.
+    previous_signal_state = table.blockSignals(True)
+    try:
+        for param_name in param_names:
+            row = row_by_name.get(param_name)
+            if row is None:
                 continue
-            value_item.setText(f"{float(current_value):.6g}")
+            value_item = table.item(row, value_column)
+            if value_item is not None:
+                _set_value_provenance(value_item, SEEDED)
     finally:
         table.blockSignals(previous_signal_state)
 
@@ -1372,24 +1450,32 @@ class FitParameterTable(QTableWidget):
         self,
         model: CompositeModel,
         *,
-        value_overrides: dict[str, float] | None = None,
-        fixed_names: frozenset[str] | set[str] = frozenset(),
+        seeds: Mapping[str, Seed] | None = None,
         param_names: list[str] | None = None,
     ) -> None:
-        """Build one row per parameter, seeding values and the Fix state.
+        """Build one row per parameter from *seeds*: value, Fix state and bounds.
+
+        ``seeds`` is what :func:`~asymmetry.core.fitting.seeding.seed_parameters`
+        answered for this surface's data; a name it does not mention falls back
+        to the model's own static seed, so a caller with nothing to say about
+        the data (a test, a script) can call ``populate(model)``. Every value
+        cell is stamped :data:`SEEDED`, which is what lets a later context
+        change re-seed it without touching anything the user has said.
 
         ``param_names`` restricts the rows to a subset of the model's parameters
         (e.g. the grouped physics table, which omits per-group nuisance
         amplitudes); fraction-row helpers locate rows by name, so a subset is
         safe. Defaults to every model parameter.
         """
+        resolved_seeds = seed_parameters(model, SeedContext())
+        if seeds:
+            resolved_seeds.update(seeds)
         self._composite_model = model
         # A fresh model build owns the parameter namespace: drop auxiliaries from a
         # previous (different-model) restore so they can't resurrect as ghost
         # parameters in read_parameter_set()/parameters_state(). restore_parameters
         # re-establishes them for the matching model.
         self._auxiliary_param_state = []
-        overrides = value_overrides or {}
         names = list(model.param_names) if param_names is None else list(param_names)
         with self.suspend():
             self.setRowCount(len(names))
@@ -1398,28 +1484,27 @@ class FitParameterTable(QTableWidget):
                     i, self.COL_NAME, _make_param_name_item(format_param_label(pname), pname)
                 )
 
-                default_val = overrides.get(pname, model.param_defaults.get(pname, 0.0))
-                value_item = QTableWidgetItem(str(default_val))
+                seed = resolved_seeds[pname]
+                value_item = QTableWidgetItem()
                 value_item.setFont(mono_font(11.0))
                 self.setItem(i, self.COL_VALUE, value_item)
+                _write_seed_value(value_item, seed)
 
                 fix_widget = QWidget()
                 fix_layout = QHBoxLayout(fix_widget)
                 fix_layout.setContentsMargins(0, 0, 0, 0)
                 fix_checkbox = QCheckBox()
-                if pname in fixed_names:
+                if seed.fixed:
                     fix_checkbox.setChecked(True)
                 fix_layout.addWidget(fix_checkbox)
                 fix_layout.setAlignment(fix_checkbox, Qt.AlignmentFlag.AlignCenter)
                 self.setCellWidget(i, self.COL_FIX, fix_widget)
 
-                default_min = get_param_info(pname).default_min
-                min_text = str(default_min) if default_min is not None else "-inf"
-                min_item = QTableWidgetItem(min_text)
+                min_item = QTableWidgetItem(_format_bound(seed.min, "-inf"))
                 min_item.setFont(mono_font(11.0))
                 self.setItem(i, self.COL_MIN, min_item)
 
-                max_item = QTableWidgetItem("inf")
+                max_item = QTableWidgetItem(_format_bound(seed.max, "inf"))
                 max_item.setFont(mono_font(11.0))
                 self.setItem(i, self.COL_MAX, max_item)
 
@@ -1455,6 +1540,8 @@ class FitParameterTable(QTableWidget):
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
         if self._updating or item.column() != self.COL_VALUE:
             return
+        # The user typed this number: it outranks any later seed.
+        _set_value_provenance(item, USER)
         name_item = self.item(item.row(), self.COL_NAME)
         name = name_item.data(Qt.ItemDataRole.UserRole) if name_item is not None else None
         if isinstance(name, str):
@@ -1589,25 +1676,28 @@ class FitParameterTable(QTableWidget):
             parameters.add(_parameter_from_state_dict(entry))
         return parameters
 
-    def apply_value_seeds(self, seeds: dict[str, float]) -> None:
-        """Overwrite the value cell of named rows, leaving Fix/bounds/links intact.
+    def reseed(self, seeds: Mapping[str, Seed]) -> None:
+        """Re-seed the still-seeded value cells; leave the user's values alone.
 
-        Used to re-derive data-driven seeds (e.g. the frequency-domain peak
-        position/height/width, which track the run's field) onto a form whose
-        model structure and user-set constraints must be preserved. Wrapped in
-        :meth:`suspend` so it does not trip the user-edit handler, then
-        fraction rows are re-synced.
+        The re-seed rule of the seeding design: when the data behind a form
+        changes (another run, another batch member set), every value that is
+        still a seed follows the new data, and every value the user typed,
+        fitted, restored or carried stays. Fix state and bounds are the user's
+        either way and are never touched here — a run-bound *value* is stale
+        for a new run; a bound the user set is not.
         """
-        if not seeds:
-            return
-        with self.suspend():
-            for row, name in self._iter_parameter_rows():
-                if name not in seeds:
-                    continue
-                value_item = self.item(row, self.COL_VALUE)
-                if value_item is not None:
-                    value_item.setText(str(float(seeds[name])))
+        _reseed_seeded_values(self, seeds, value_column=self.COL_VALUE)
         self.synchronize_fractions()
+
+    def mark_run_bound_as_seeded(self, param_names: Iterable[str]) -> None:
+        """Stamp the named value cells as seeds again, before a :meth:`reseed`.
+
+        A form carried from one run to another holds values that *describe the
+        source run* (its applied field, its frequency peak). They are not the
+        user's opinion about the target run whoever wrote them, so they are
+        handed back to the seeder rather than protected as user values.
+        """
+        _mark_values_seeded(self, param_names, value_column=self.COL_VALUE)
 
     def current_seed_values(self) -> dict[str, str]:
         """Return the live seed text per parameter name (skips non-finite cells)."""
@@ -1676,6 +1766,9 @@ class FitParameterTable(QTableWidget):
                     "role": role if isinstance(role, str) else None,
                     "link_group": _link_group_combo_value(self.cellWidget(i, self.COL_LINK)),
                     "tie": tie.to_dict() if tie is not None else None,
+                    # Where the value came from, so a carried or restored form
+                    # keeps knowing which of its numbers are still seeds.
+                    "seeded": value_item is not None and _value_provenance(value_item) == SEEDED,
                 }
             )
         params.extend(copy.deepcopy(entry) for entry in self._auxiliary_param_state)
@@ -1731,6 +1824,12 @@ class FitParameterTable(QTableWidget):
                     value_item.setData(
                         _ValueUncertaintyDelegate._MINOS_ROLE,
                         p_data.get("uncertainty_asymmetric"),
+                    )
+                    # The entry says whether its value was still a seed where it
+                    # came from; a state that predates provenance (a project
+                    # file, another surface's hand-off) is the user's.
+                    _set_value_provenance(
+                        value_item, SEEDED if p_data.get("seeded") is True else USER
                     )
 
                 fix_widget = self.cellWidget(i, self.COL_FIX)

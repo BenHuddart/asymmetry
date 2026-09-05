@@ -35,7 +35,6 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.parameters import (
     ParameterSet,
     get_param_info,
-    split_parameter_name,
 )
 from asymmetry.core.fitting.spectral import (
     default_frequency_model,
@@ -45,7 +44,6 @@ from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 
 from .global_tab import GlobalFitTab
 from .single_tab import SingleFitTab
-from .tab_base import _get_file_value_for_parameter
 from .wizard_cache import (
     WizardCacheEntry,
     persisted_single_fit_form_state,
@@ -426,10 +424,10 @@ class FitPanel(QWidget):
 
         if run_number is None:
             self._set_single_fit_provenance(None)
-            # Even without a run number the bound spectrum drives the fit, so a
-            # frequency form still needs its field-dependent peak seed refreshed
-            # (see below); a restored real fit is impossible on this path.
-            self._reseed_frequency_peaks_if_default(is_real_fit=False)
+            # Without a run number there is no form to restore or carry: the
+            # displayed one stays, so its still-seeded cells (the frequency
+            # peak, the applied field) follow the newly bound record.
+            self._single_tab.reseed()
             return
 
         # The main window's restore mediator is authoritative when it has an
@@ -506,11 +504,6 @@ class FitPanel(QWidget):
             self._set_single_fit_provenance("carried_from_run", previous_run_number)
         self._single_state_by_run[run_number] = self._single_tab.get_state()
 
-    def _reseed_frequency_peaks_if_default(self, *, is_real_fit: bool) -> None:
-        """Refresh frequency peak seeds unless a real recorded fit is shown."""
-        if not is_real_fit and self._single_tab.domain() == "frequency":
-            self._single_tab.reseed_frequency_peaks()
-
     def _set_single_fit_provenance(self, kind: str | None, source_run: int | None = None) -> None:
         """Record why the single-fit form holds its current contents and update the badge.
 
@@ -560,48 +553,16 @@ class FitPanel(QWidget):
         for entry in state.get("parameters", []):
             entry["uncertainty"] = None
             entry["uncertainty_asymmetric"] = None
-        # Per-target field reseeding (D5): a parameter like B_L tracks the
-        # dataset it was seeded from, so a carried/refreshed form must not
-        # keep the source run's field-derived value — reseed it from the
-        # *target* dataset now bound to the tab (ported from the retired
-        # "Share with Group" action's per-peer reseeding).
-        self._reseed_file_value_parameters(state, self._single_tab._current_dataset)
         self._single_tab.restore_state(state)
         if not self._single_tab._composite_model.missing_component_names:
             self._single_tab._result_label.setText("No fit performed yet")
-        # A frequency peak (nu0/height/fwhm/bg) tracks the run's field, so it
-        # must never be carried verbatim from the previous run: re-derive it
-        # from the now-current spectrum. (Same-run session restore and project
-        # restore go through the seen-dataset / provider paths, not here, so
-        # those keep their saved values.)
-        self._reseed_frequency_peaks_if_default(is_real_fit=False)
-
-    def _reseed_file_value_parameters(self, state: dict, dataset: MuonDataset | None) -> None:
-        """Re-seed field-dependent parameters (e.g. ``B_L``) from *dataset*'s own value.
-
-        Ported from the retired ``share_single_function_state`` (D5): each
-        parameter's value is overwritten with the dataset's own file-derived
-        value (resolved via :func:`_get_file_value_for_parameter`) when one is
-        available, so a carried/refreshed form reflects the *target* run's
-        field rather than whatever run the source state was fitted/carried
-        from. Mutates ``state`` in place; a no-op without a dataset or a
-        ``parameters`` list.
-        """
-        if dataset is None:
-            return
-        parameters = state.get("parameters")
-        if not isinstance(parameters, list):
-            return
-        for param_dict in parameters:
-            if not isinstance(param_dict, dict):
-                continue
-            pname = param_dict.get("name")
-            if not isinstance(pname, str):
-                continue
-            base_name, _index = split_parameter_name(pname)
-            file_value = _get_file_value_for_parameter(dataset, base_name)
-            if file_value is not None:
-                param_dict["value"] = file_value
+        # A run-bound value (the applied field and B_L, a frequency peak)
+        # describes the run the form came from, so it is re-seeded from the run
+        # the form has landed on; a value the user typed or fitted is kept as
+        # their starting guess. (Same-run session restore and project restore go
+        # through the seen-dataset / provider paths, not here, so those keep
+        # every saved value.)
+        self._single_tab.reseed_carried_form()
 
     def _reset_single_fit_form(self) -> None:
         """Blank the single-fit form to its domain default ("No fit yet")."""

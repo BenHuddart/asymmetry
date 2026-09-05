@@ -57,11 +57,11 @@ from asymmetry.core.fitting.parameter_models import (
     sample_parameter_model,
     set_included_intervals,
     suggest_model_seeds,
-    suggest_trend_seeds,
     validate_fit_windows,
     windows_mask,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.seeding import seed_trend_parameters
 from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
@@ -282,7 +282,7 @@ def _default_component_for_context(x_key: str, parameter_name: str, available: l
     Linear is the safe default in every ordinary context. When the trend is a
     magnetic order-parameter observable (precession frequency / internal field)
     versus temperature, default to ``OrderParameter`` instead — its data-aware
-    ``T_c``/amplitude seeds (see :func:`suggest_trend_seeds`) then make the fit
+    ``T_c``/amplitude seeds (see :func:`seed_trend_parameters`) then make the fit
     converge out of the box, so the user need not type the component by name.
     The "is this an order-parameter observable" judgement lives in core
     (:func:`is_order_parameter_observable`), beside the seed logic.
@@ -1390,37 +1390,16 @@ class ModelFitDialog(QDialog):
             )
             model = ParameterCompositeModel([default_component], [])
 
+        # One seeding call for a trend model: component defaults, the series'
+        # own scale (baseline at the mean of y, slope/amplitude at its span, a
+        # characteristic x at half the range), then the data-aware
+        # critical-temperature seeds that make an order-parameter default
+        # converge without a manual reseed (F4). Bounds stay open here — a
+        # fresh range is not the place to constrain a trend.
+        seeds = seed_trend_parameters(model, self._x, self._y)
         params = ParameterSet()
-        y_mean = float(np.nanmean(self._y)) if np.any(np.isfinite(self._y)) else 0.0
-        y_span = (
-            float(np.nanmax(self._y) - np.nanmin(self._y)) if np.any(np.isfinite(self._y)) else 1.0
-        )
-        # Data-aware seeds for critical-temperature trend components
-        # (OrderParameter / CriticalDivergence): derive T_c and amplitude from the
-        # actual x/y so an order-parameter default converges without a manual
-        # reseed (F4). Empty for Linear and the other plain components, which keep
-        # the inline heuristic below unchanged.
-        trend_seeds = suggest_trend_seeds(model, self._x, self._y)
-
         for pname in model.param_names:
-            default_val = model.param_defaults[pname]
-            if pname in {"c", "b"}:
-                default_val = y_mean
-            elif pname in {"m", "a"}:
-                default_val = y_span if y_span > 0 else default_val
-            elif pname.startswith("B0") or pname.startswith("tau") or pname.startswith("nu"):
-                default_val = max(1e-6, (x_max - x_min) / 2.0)
-            elif pname.startswith("D_2D"):
-                default_val = max(1e-6, default_val)
-            elif pname.startswith("D"):
-                default_val = max(1e-6, default_val)
-            params.add(
-                Parameter(
-                    name=pname,
-                    value=float(trend_seeds.get(pname, default_val)),
-                    fixed=(pname == "shape_factor_a"),
-                )
-            )
+            params.add(Parameter(name=pname, value=seeds[pname].value, fixed=seeds[pname].fixed))
 
         return ModelFitRange(x_min=x_min, x_max=x_max, model=model, parameters=params)
 
@@ -1978,12 +1957,12 @@ class ModelFitDialog(QDialog):
             self._model_memory,
         )
 
-        # Critical-temperature trend components (CriticalDivergence,
-        # OrderParameter) default to an unphysical Tc=10; seed Tc (and a cheap
-        # amplitude/baseline) from the actual x/y data so the fit converges
-        # without a manual reseed. Only newly reset params adopt these — params
+        # A component the edit did not keep is seeded exactly as a fresh range's
+        # is (_create_default_range): the series' scale plus the data-aware
+        # critical-temperature seeds, so an added order-parameter term converges
+        # without a manual reseed. Only newly added params adopt these — params
         # carried over from the previous model keep the user's value.
-        trend_seeds = suggest_trend_seeds(model, self._x, self._y)
+        seeds = seed_trend_parameters(model, self._x, self._y)
 
         carried = carry_parameter_set(old_model, model, origins, fit_range.parameters)
         new_params = ParameterSet()
@@ -1992,11 +1971,7 @@ class ModelFitDialog(QDialog):
                 new_params.add(carried[pname])
             else:
                 new_params.add(
-                    Parameter(
-                        name=pname,
-                        value=float(trend_seeds.get(pname, model.param_defaults[pname])),
-                        fixed=(pname == "shape_factor_a"),
-                    )
+                    Parameter(name=pname, value=seeds[pname].value, fixed=seeds[pname].fixed)
                 )
         fit_range.parameters = new_params
         fit_range.result = None
@@ -3070,33 +3045,12 @@ class ModelFitDialog(QDialog):
         leader_token = self._result_for_range(idx)
 
         # Seed the alternative the SAME way a fresh model of that type is
-        # seeded (_create_default_range's heuristic): data-aware trend seeds
-        # merged over per-component defaults, mirroring _edit_model's reseed
-        # path for a newly-adopted model.
+        # seeded (_create_default_range), so the comparison is against a
+        # candidate that started where the leader would have.
+        seeds = seed_trend_parameters(alt_model, self._x, self._y)
         params = ParameterSet()
-        y_mean = float(np.nanmean(self._y)) if np.any(np.isfinite(self._y)) else 0.0
-        y_span = (
-            float(np.nanmax(self._y) - np.nanmin(self._y)) if np.any(np.isfinite(self._y)) else 1.0
-        )
-        x_min_data, x_max_data = self._x_min_data, self._x_max_data
-        trend_seeds = suggest_trend_seeds(alt_model, self._x, self._y)
         for pname in alt_model.param_names:
-            default_val = alt_model.param_defaults[pname]
-            if pname in {"c", "b"}:
-                default_val = y_mean
-            elif pname in {"m", "a"}:
-                default_val = y_span if y_span > 0 else default_val
-            elif pname.startswith("B0") or pname.startswith("tau") or pname.startswith("nu"):
-                default_val = max(1e-6, (x_max_data - x_min_data) / 2.0)
-            elif pname.startswith("D"):
-                default_val = max(1e-6, default_val)
-            params.add(
-                Parameter(
-                    name=pname,
-                    value=float(trend_seeds.get(pname, default_val)),
-                    fixed=(pname == "shape_factor_a"),
-                )
-            )
+            params.add(Parameter(name=pname, value=seeds[pname].value, fixed=seeds[pname].fixed))
 
         # Snapshot exactly like _run_fit: same x/y/err, same range bounds/
         # windows/error mode as the active (leader) fit, so the comparison is

@@ -1,10 +1,12 @@
-"""Fit-panel seeding helpers (phase/background/N0 seed math).
+"""Fit-panel seeding helpers (per-group phase/background/N0 seed math).
 
 Split out of ``fit_panel.py`` (Phase 2 mechanical split). Pure helpers; no
 intra-package dependencies.
 
-What lives here: field-value default overrides (``_field_value_overrides``),
-heuristic grouped-count background/N0/amplitude seeding
+What lives here is the *per-detector-group nuisance* seeding of a grouped fit —
+quantities of a detector group, not parameters of the fit function, which is why
+they are not part of :mod:`asymmetry.core.fitting.seeding`'s one seeding
+function: heuristic grouped-count background/N0/amplitude seeding
 (``_seed_group_background_and_n0``), and FFT-based per-group phase seeding
 (``_group_phase_window_mhz`` → ``_seed_group_phase_degrees`` →
 ``_seed_group_absolute_phases``, with ``_bounded_phase_seed_padding`` capping
@@ -16,32 +18,12 @@ Entry points used by ``global_tab.py``: ``_seed_group_background_and_n0`` and
 import numpy as np
 
 from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.parameters import (
-    split_parameter_name,
-)
 from asymmetry.core.fourier.fft import estimate_fft_phase, fft_complex_asymmetry
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
     MUON_LIFETIME_US,
 )
-
-
-def _field_value_overrides(model: CompositeModel, field_gauss: float) -> dict[str, float]:
-    """Return a dict overriding field-like defaults with *field_gauss*.
-
-    Only overrides parameters whose base name is ``"field"`` or ``"B_L"``
-    and only when *field_gauss* is non-zero.
-    """
-    if field_gauss == 0.0:
-        return {}
-    overrides: dict[str, float] = {}
-    for pname in model.param_names:
-        base_name, _index = split_parameter_name(pname)
-        if base_name in {"field", "B_L"}:
-            overrides[pname] = field_gauss
-    return overrides
 
 
 def _seed_group_background_and_n0(

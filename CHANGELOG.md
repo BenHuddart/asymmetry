@@ -68,6 +68,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every fit parameter's starting value now comes from one place, and the
+  table remembers which values are still starting guesses.** Start values used
+  to be assembled differently by each surface — the Single tab, the Batch tab's
+  run table, both grouped physics tables and the trend dialog each layered
+  their own field, spectrum-peak and grouped overrides over the component
+  defaults — and three separate mechanisms then guessed, from the number in the
+  cell, whether the user had touched it before re-deriving it for another run.
+  `asymmetry.core.fitting.seeding.seed_parameters(model, context)` now answers
+  that question once, for every surface: component defaults, then the record's
+  own amplitude and background scale, then the run's applied field, then the
+  displayed spectrum's peak, then the individual-groups holds. A fresh model on
+  the Single tab therefore starts at the record's own scale rather than a
+  component's nominal 25 % and a zero background. Each value cell records
+  whether it still holds a seed or a value you supplied: selecting another run,
+  or changing a batch's members, re-derives every seed and leaves every value
+  you typed or fitted exactly as it was — and carrying a form onto another run
+  re-derives the values that described the run it came from (`field`, `B_L`,
+  the frequency peak) while keeping the rest as your starting guess. Project
+  files record this per value (`seeded`); a form saved before this release
+  loads as entirely yours, which is the safe reading.
+
 - **Axis limits are now a per-axis Auto/Held policy, shared by every plot
   representation** (time, overlay, stacked/grouped subplots, frequency, and
   the ALC scan). Each axis — X, and Y per subplot in a stacked view — is

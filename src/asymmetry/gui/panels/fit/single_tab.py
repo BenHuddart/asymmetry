@@ -58,10 +58,8 @@ from asymmetry.core.fitting.rrf_offset import (
     UnsupportedRRFComponentError,
     rrf_frequency_offsets,
 )
-from asymmetry.core.fitting.spectral import (
-    default_frequency_model,
-    seed_peak_parameters_from_dataset,
-)
+from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
+from asymmetry.core.fitting.spectral import default_frequency_model
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.metrics import char_width
@@ -79,8 +77,8 @@ from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
-from .seeding import _field_value_overrides
 from .tab_base import (
+    USER,
     FitParameterTable,
     FitTabBase,
     _apply_domain_mismatch_warning,
@@ -90,10 +88,12 @@ from .tab_base import (
     _fit_success_html,
     _fit_summary,
     _fit_warnings_html,
+    _get_file_value_for_parameter,
     _model_without_trailing_background,
     _normalized_model_param_values,
     _set_formula_label_text,
     _set_param_batch_role_cell,
+    _set_value_provenance,
     _shift_rrf_parameters,
     _start_fit_call,
     _ValueUncertaintyDelegate,
@@ -381,7 +381,16 @@ class SingleFitTab(FitTabBase):
         self._carry_forward_badge.hide()
 
     def set_dataset(self, dataset: MuonDataset | None) -> None:
-        """Set the current dataset to fit."""
+        """Set the current dataset to fit.
+
+        Binding a record does not by itself re-seed the form: the host decides
+        what the form becomes for the new run — its own recorded fit restored
+        verbatim, a form carried from another run (:meth:`reseed_carried_form`),
+        or the domain default rebuilt from seeds — and re-seeding here would
+        run a spectrum peak search whose result the very next line discards. A
+        host that *keeps* the displayed form across a record change calls
+        :meth:`reseed`.
+        """
         self._current_dataset = dataset
         # A fit result belongs to the dataset it was fit on; drop it on change.
         self._last_fit_result = None
@@ -555,11 +564,53 @@ class SingleFitTab(FitTabBase):
             return
         self._set_composite_model(reduced)
 
+    def _seed_context(self, *, from_record: bool = True) -> SeedContext:
+        """Describe the data this tab's parameters are being seeded for.
+
+        ``from_record`` is cleared on the restore paths: the saved values are
+        about to be replayed over the seeds, so reading the bound record (a
+        spectrum peak search, the record's scale) would be work thrown away —
+        and the record bound at restore time may still be the previous
+        domain's. The applied field is metadata, cheap and domain-independent,
+        so it still seeds the rows a saved state does not mention.
+        """
+        return SeedContext(
+            dataset=self._current_dataset if from_record else None,
+            field_gauss=_get_file_value_for_parameter(self._current_dataset, "field"),
+            domain=self._domain,
+        )
+
+    def _seeds_for_current_data(self) -> dict[str, Seed]:
+        """Return :func:`seed_parameters` for the active model and bound record."""
+        return seed_parameters(self._composite_model, self._seed_context())
+
+    def reseed(self) -> None:
+        """Re-seed the parameter table for the record now bound to this tab.
+
+        Every value that is still a seed follows the new record; every value
+        the user typed, fitted or restored stays put.
+        """
+        self._param_table.reseed(self._seeds_for_current_data())
+
+    def reseed_carried_form(self) -> None:
+        """Re-seed a form that has just been carried onto a different run.
+
+        A carried form's *run-bound* values (the applied field, the frequency
+        peak) describe the run it came from, so they are handed back to the
+        seeder first; everything else the user typed or fitted is kept as their
+        starting guess for this run.
+        """
+        seeds = self._seeds_for_current_data()
+        self._param_table.mark_run_bound_as_seeded(
+            name for name, seed in seeds.items() if seed.run_bound
+        )
+        self._param_table.reseed(seeds)
+
     def _set_composite_model(
         self,
         model: CompositeModel,
         *,
-        seed_frequency: bool = True,
+        seed_from_record: bool = True,
         origins: Sequence[int | None] | None = None,
     ) -> None:
         """Set the active composite model and rebuild the parameter table.
@@ -575,10 +626,9 @@ class SingleFitTab(FitTabBase):
         project restore — pass no origins, and the table is rebuilt from seeds
         alone.
 
-        Restore paths pass ``seed_frequency=False`` because restored parameter
-        values are replayed by ``restore_parameters`` and must not be
-        re-derived (and the restore-time dataset may still be the previous
-        domain's).
+        Restore paths pass ``seed_from_record=False`` because restored
+        parameter values are replayed by ``restore_parameters`` and must not be
+        re-derived from the bound record (see :meth:`_seed_context`).
         """
         carried = (
             carry_parameter_entries(
@@ -595,44 +645,14 @@ class SingleFitTab(FitTabBase):
         _set_formula_label_text(self._formula_label, model.formula_string())
         _apply_domain_mismatch_warning(self._formula_label, model, self._domain)
 
-        dataset_field = (
-            self._current_dataset.run.field
-            if self._current_dataset is not None and self._current_dataset.run is not None
-            else 0.0
+        self._param_table.populate(
+            model, seeds=seed_parameters(model, self._seed_context(from_record=seed_from_record))
         )
-        value_overrides = dict(_field_value_overrides(model, dataset_field))
-        if seed_frequency and self._domain == "frequency" and self._current_dataset is not None:
-            # Frequency-domain peak seeds take precedence over the field seed.
-            value_overrides.update(seed_peak_parameters_from_dataset(self._current_dataset, model))
-
-        # shape_factor_a (instrument normalisation) is held by default alongside
-        # the model's declared fixed-by-default parameters.
-        fixed_names = set(model.fixed_by_default_params()) | {"shape_factor_a"}
-        self._param_table.populate(model, value_overrides=value_overrides, fixed_names=fixed_names)
         # The carried entries are seeds for surviving components, so they land
         # on top of the freshly seeded rows; components with no predecessor keep
         # the seeds populate() just wrote.
         self._param_table.restore_parameters({entry["name"]: entry for entry in carried})
         self._update_drop_background_enabled()
-
-    def reseed_frequency_peaks(self) -> None:
-        """Re-derive frequency peak seeds from the current spectrum, in place.
-
-        The peak position/height/width/background are field-dependent, so the
-        default GaussianPeak seed computed while switching to the frequency
-        domain (against whatever dataset was then current) is stale once the
-        real spectrum is bound — and carry-forward/session-restore replay that
-        stale seed verbatim, leaving ``nu0`` far off the displayed axis so a
-        preview shows only the background. Recompute against ``_current_dataset``
-        and write just the seed values, preserving the model, fixed flags and
-        bounds. A no-op outside the frequency domain or with no dataset/model.
-        """
-        if self._domain != "frequency" or self._current_dataset is None:
-            return
-        if self._composite_model is None:
-            return
-        seeds = seed_peak_parameters_from_dataset(self._current_dataset, self._composite_model)
-        self._param_table.apply_value_seeds(seeds)
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._param_table.synchronize_fractions(edited_param_name)
@@ -792,6 +812,9 @@ class SingleFitTab(FitTabBase):
                     _ValueUncertaintyDelegate._MINOS_ROLE,
                     (result.minos_errors or {}).get(param_name),
                 )
+                # A fitted value is the user's, not a seed: it survives a run
+                # switch until they Reset.
+                _set_value_provenance(value_item, USER)
 
             min_item = self._param_table.item(row, 3)
             if min_item is not None:
@@ -1249,6 +1272,8 @@ class SingleFitTab(FitTabBase):
                 val_item.setData(
                     _ValueUncertaintyDelegate._MINOS_ROLE, minos_errors.get(param_name)
                 )
+                # A fitted value is the user's, not a seed (see above).
+                _set_value_provenance(val_item, USER)
                 # A fresh single fit supersedes any piped-back batch role.
                 _set_param_batch_role_cell(self._param_table, i, None)
         self._updating_fraction_values = False
@@ -1337,9 +1362,9 @@ class SingleFitTab(FitTabBase):
                     if self._domain == "frequency"
                     else CompositeModel(["Exponential", "Constant"], operators=["+"])
                 )
-                self._set_composite_model(fallback, seed_frequency=False)
+                self._set_composite_model(fallback, seed_from_record=False)
             else:
-                self._set_composite_model(restored, seed_frequency=False)
+                self._set_composite_model(restored, seed_from_record=False)
                 if restored.missing_component_names:
                     names = ", ".join(restored.missing_component_names)
                     self._result_label.setText(
