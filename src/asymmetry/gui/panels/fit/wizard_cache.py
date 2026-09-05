@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
+from typing import TypeVar
 
 from asymmetry.core.fitting.fit_wizard import (
     FitWizardRecommendation,
@@ -51,6 +52,10 @@ from asymmetry.core.fitting.global_fit_wizard import (
     deserialize_global_fit_wizard_recommendation,
     serialize_global_fit_wizard_recommendation,
 )
+
+#: A form state passes through unchanged when it is not a dict (``None`` for an
+#: unset slot), so the helpers are typed as identity on the input type.
+_StateT = TypeVar("_StateT")
 
 __all__ = [
     "GlobalWizardCacheEntry",
@@ -232,7 +237,7 @@ def persisted_global_wizard_state(value: object) -> dict[str, object] | None:
     return None
 
 
-def persisted_single_fit_form_state(state: object) -> dict:
+def persisted_single_fit_form_state(state: _StateT) -> _StateT:
     """Return an independent, JSON-safe copy of a single-fit form state.
 
     The copy is cheap even when the form carries a wizard cache: deep-copying
@@ -252,7 +257,7 @@ def persisted_single_fit_form_state(state: object) -> dict:
     return persisted
 
 
-def persisted_global_fit_form_state(state: object) -> dict:
+def persisted_global_fit_form_state(state: _StateT) -> _StateT:
     """Return an independent, JSON-safe copy of a global/grouped form state.
 
     The global tab keeps both a single active ``wizard_state`` block and a

@@ -3489,10 +3489,17 @@ PERSISTED_CURVE_SIGNIFICANT_DIGITS = 7
 
 
 def _persisted_curve_stride(n_points: int, max_points: int = PERSISTED_CURVE_MAX_POINTS) -> int:
-    """Stride that brings ``n_points`` samples down to ``max_points`` or fewer."""
-    if n_points <= max_points or max_points <= 0:
+    """Stride that brings ``n_points`` samples down to ``max_points`` or fewer.
+
+    Sized so that :func:`_persisted_curve_list` can always keep the *last*
+    sample as well as the first — a strided fit line must still span the
+    analysed record — without exceeding the budget: with ``s = ceil((n - 1)
+    / (max - 1))`` the strided samples plus the appended endpoint number at
+    most ``max_points``.
+    """
+    if n_points <= max_points or max_points <= 1:
         return 1
-    return (n_points + max_points - 1) // max_points
+    return (n_points - 1 + max_points - 2) // (max_points - 1)
 
 
 def _round_significant(
@@ -3510,8 +3517,17 @@ def _round_significant(
 
 
 def _persisted_curve_list(values: object, *, stride: int = 1, compact: bool = False) -> list[float]:
-    """Return one curve as a JSON list, strided and rounded when ``compact``."""
-    array = np.asarray(values, dtype=float)[::stride]
+    """Return one curve as a JSON list, strided and rounded when ``compact``.
+
+    Striding keeps every ``stride``-th sample from the first and always the
+    last one too, so the persisted curve spans the record it was fitted on;
+    every curve of an assessment is strided with the same value, so the time
+    axis, fit line and component curves stay aligned.
+    """
+    full = np.asarray(values, dtype=float)
+    array = full[::stride]
+    if stride > 1 and full.size > 1 and (full.size - 1) % stride:
+        array = np.append(array, full[-1])
     return (_round_significant(array) if compact else array).tolist()
 
 

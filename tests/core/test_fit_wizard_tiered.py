@@ -445,7 +445,9 @@ def test_compact_serialization_bounds_curves_and_drops_residuals() -> None:
 
     assessment = compact["assessments"][0]
     stride = _persisted_curve_stride(n_points)
-    expected = len(range(0, n_points, stride))
+    # Every stride-th sample from the first, plus the last one when the stride
+    # would skip it: the strided curve still spans the analysed record.
+    expected = len(range(0, n_points, stride)) + (1 if (n_points - 1) % stride else 0)
     assert expected <= _PERSISTED_CURVE_MAX_POINTS
     assert len(assessment["fitted_time"]) == expected
     assert len(assessment["fitted_curve"]) == expected
@@ -456,16 +458,18 @@ def test_compact_serialization_bounds_curves_and_drops_residuals() -> None:
     assert compact["compact"] is True
     # Endpoints are preserved: a strided fit line still spans the record.
     assert assessment["fitted_time"][0] == pytest.approx(0.0)
+    assert assessment["fitted_time"][-1] == pytest.approx(full_assessment["fitted_time"][-1])
+    assert assessment["fitted_curve"][-1] == pytest.approx(
+        full_assessment["fitted_curve"][-1], rel=1e-6
+    )
     # Samples are rounded to a bounded number of significant digits (scale-free,
     # so a percent-scale curve and a tiny component curve keep the same relative
     # fidelity) — that halves the stored text again.
+    full_curve = full["assessments"][0]["fitted_curve"]
+    strided_curve = full_curve[::stride] + ([full_curve[-1]] if (n_points - 1) % stride else [])
     assert all(
         value == pytest.approx(rounded, rel=1e-6)
-        for value, rounded in zip(
-            full["assessments"][0]["fitted_curve"][::stride],
-            assessment["fitted_curve"],
-            strict=True,
-        )
+        for value, rounded in zip(strided_curve, assessment["fitted_curve"], strict=True)
     )
     assert len(json.dumps(compact)) < len(json.dumps(full)) / 100
 
