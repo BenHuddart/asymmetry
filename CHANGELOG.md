@@ -180,6 +180,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A parenthesis next to a fraction group made the model refuse to build.**
+  `(Oscillatory * (Exponential + Gaussian){frac})`,
+  `((Exponential + Gaussian){frac} + Constant)` and
+  `(Exponential + (Gaussian + Constant){frac})` all raised
+  `ValueError: Invalid parentheses while parsing term ranges`, and
+  `((Exponential + Gaussian){frac})` was rejected as having fewer than two
+  additive terms — even though every one of them is the same model as the
+  spelling without the extra bracket. A composite model found a group's
+  additive terms by walking the per-component parenthesis *counts*, which
+  assumed the group's own bracket was the only one opening on its first
+  component and closing on its last; any other bracket sharing an endpoint
+  threw the depth accounting off. Group terms, the model's top-level terms,
+  and the brackets the formula and typeset previews print are now all read
+  from the expression tree — one parser instead of two — so grouping is
+  structural and redundant parentheses change neither parameter names nor
+  fitted values. Nested fraction groups and `-` terms inside a group are
+  still rejected, with the same messages.
+
+- **The typeset preview showed `a - (b + c)` as `a - b + c`.** Splitting the
+  model into typeset terms walked the parenthesis counts and dropped the
+  bracket without carrying the leading `-` into it, so the preview disagreed
+  with the curve being fitted. The split now comes from the expression tree,
+  which pushes the sign down into the bracket, and every term the bracket
+  holds is shown subtracted.
+
 - **Auto Y after a zoom, then a run switch, reframed x instead and left the
   data clipped.** A single shared hold flag covered both axes, so releasing
   it by clicking **Auto Y** also re-armed a stale first-paint latch for x: the

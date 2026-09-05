@@ -1,7 +1,7 @@
 # Fraction groups: term ranges from the expression tree, not parenthesis counts
 
-Status: planned 2026-09-05 for `feat/fraction-group-tree-terms` (one PR),
-implemented by one Opus subagent with a lead review gate. Follow-up to
+Status: implemented 2026-09-05 on `feat/fraction-group-tree-terms` (one PR),
+by one Opus subagent with a lead review gate. Follow-up to
 `docs/plans/product-amplitude-policy.md` § "Follow-ups" (PR #305).
 
 ## Problem

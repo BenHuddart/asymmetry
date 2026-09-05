@@ -1410,6 +1410,48 @@ def parse_composite_expression(
     return component_names, operators, open_parentheses, close_parentheses, fraction_groups
 
 
+@dataclass(frozen=True)
+class _ClosingParenthesis:
+    """One closing parenthesis: the component span it delimits, and its decorator."""
+
+    span: tuple[int, int]
+    is_fraction_group: bool
+
+
+def _closing_parentheses(
+    open_parentheses: Sequence[int],
+    close_parentheses: Sequence[int],
+    fraction_groups: Sequence[tuple[int, int]] = (),
+) -> list[list[_ClosingParenthesis]]:
+    """Return, per component index, the parentheses closing there, innermost first.
+
+    Two parentheses can delimit the same component span (``((a + b))``), while a
+    ``{frac}`` decorator belongs to exactly one pair: it lands on the innermost
+    pair with that span — the pair :func:`parse_composite_expression` read it
+    from. Everything that has to know *which* parenthesis carries a group (the
+    tree builder, the expression writer, the formula and mathtext renderers)
+    reads it from here, so they all agree.
+    """
+    pending = Counter(fraction_groups)
+    stack: list[int] = []
+    closures: list[list[_ClosingParenthesis]] = []
+    for index in range(len(open_parentheses)):
+        stack.extend([index] * open_parentheses[index])
+        closing_here: list[_ClosingParenthesis] = []
+        for _ in range(close_parentheses[index]):
+            if not stack:
+                raise ValueError("Invalid parentheses: closing before opening")
+            span = (stack.pop(), index)
+            is_fraction_group = pending[span] > 0
+            if is_fraction_group:
+                pending[span] -= 1
+            closing_here.append(_ClosingParenthesis(span, is_fraction_group))
+        closures.append(closing_here)
+    if stack:
+        raise ValueError("Invalid parentheses: unbalanced expression")
+    return closures
+
+
 def build_component_expression(
     component_names: list[str],
     operators: list[str],
@@ -1423,22 +1465,13 @@ def build_component_expression(
 
     opens = list(open_parentheses or [0] * len(component_names))
     closes = list(close_parentheses or [0] * len(component_names))
-    fraction_group_set = set(fraction_groups or [])
+    closures = _closing_parentheses(opens, closes, fraction_groups or [])
     parts: list[str] = []
-    paren_component_stack: list[int] = []
     for idx, name in enumerate(component_names):
         prefix = "(" * opens[idx]
-        for _ in range(opens[idx]):
-            paren_component_stack.append(idx)
-
-        suffix_parts: list[str] = []
-        for _ in range(closes[idx]):
-            if not paren_component_stack:
-                raise ValueError("Invalid parentheses while building expression")
-            start_index = paren_component_stack.pop()
-            suffix_parts.append(
-                ")" + ("{frac}" if (start_index, idx) in fraction_group_set else "")
-            )
+        suffix_parts = [
+            ")" + ("{frac}" if closure.is_fraction_group else "") for closure in closures[idx]
+        ]
         token = prefix + name + "".join(suffix_parts)
         if idx == 0:
             parts.append(token)
@@ -1575,28 +1608,28 @@ def build_expression_tree(
     is itself a product is flattened into its parent, and a plain sum term that
     is itself a plain sum is flattened. A fraction-group sum keeps its own terms.
 
-    The caller has already validated the parenthesis balance and the fraction
-    groups (:meth:`CompositeModel._validate_fraction_groups`), so the token
-    stream walked here is well-formed.
+    The caller has already validated the parenthesis balance, and the fraction
+    groups are the ones *requested*: a group is tagged onto the sum of the
+    parenthesis whose span it names, and
+    :meth:`CompositeModel._validate_fraction_groups` then reads the tagged sums
+    back to accept or reject the request.
     """
-    # ``(`` and ``)`` tokens both carry the component range they delimit, so an
+    # ``(`` and ``)`` tokens both carry the parenthesis they delimit, so an
     # opening parenthesis knows whether it starts a fraction group.
-    tokens: list[tuple[str, int | str | tuple[int, int] | None]] = []
-    open_positions: list[tuple[int, int]] = []
+    closures = _closing_parentheses(open_parentheses, close_parentheses, fraction_groups)
+    tokens: list[tuple[str, int | str | _ClosingParenthesis | None]] = []
+    open_positions: list[int] = []
     for index in range(component_count):
         for _ in range(open_parentheses[index]):
-            open_positions.append((index, len(tokens)))
+            open_positions.append(len(tokens))
             tokens.append(("(", None))
         tokens.append(("leaf", index))
-        for _ in range(close_parentheses[index]):
-            start, open_position = open_positions.pop()
-            group = (start, index)
-            tokens[open_position] = ("(", group)
-            tokens.append((")", group))
+        for closure in closures[index]:
+            tokens[open_positions.pop()] = ("(", closure)
+            tokens.append((")", closure))
         if index < component_count - 1:
             tokens.append(("op", operators[index]))
 
-    groups = set(fraction_groups)
     position = 0
 
     def at_operator(symbols: set[str]) -> bool:
@@ -1615,7 +1648,8 @@ def build_expression_tree(
             position += 1
             terms.append(parse_product())
         if fraction_group is not None:
-            # Validation guarantees a fraction group spans two or more terms.
+            # A tagged sum keeps its own terms, however many: validation counts
+            # them here and rejects a group that does not span two or more.
             return ExprSum(tuple(terms), tuple(signs), fraction_group)
         if len(terms) == 1:
             return terms[0]
@@ -1639,11 +1673,21 @@ def build_expression_tree(
         position += 1
         if kind == "leaf":
             return ExprLeaf(index=cast(int, payload))
-        node = parse_group(cast(tuple[int, int], payload) if payload in groups else None)
+        closure = cast(_ClosingParenthesis, payload)
+        node = parse_group(closure.span if closure.is_fraction_group else None)
         position += 1  # the matching ``)``
         return node
 
     return parse_group(None)
+
+
+def _fraction_group_nodes(tree: ExpressionNode) -> dict[tuple[int, int], ExprSum]:
+    """Return the sum node tagged with each fraction group, keyed by group."""
+    return {
+        node.fraction_group: node
+        for node in iter_nodes(tree)
+        if isinstance(node, ExprSum) and node.fraction_group is not None
+    }
 
 
 def _missing_component_function(t: NDArray, **_params: float) -> NDArray[np.float64]:
@@ -1736,7 +1780,19 @@ class CompositeModel:
         self.operators = list(operators)
         self.open_parentheses = list(open_parentheses)
         self.close_parentheses = list(close_parentheses)
-        self.fraction_groups = self._validate_fraction_groups(fraction_groups or [])
+        # The expression tree is the only source of structure, so it is built
+        # first — from the groups as *requested* — and the fraction groups are
+        # then validated against the sum nodes they tag.
+        requested_fraction_groups = self._checked_fraction_group_spans(fraction_groups or [])
+        self._tree = build_expression_tree(
+            len(self.component_names),
+            self.operators,
+            self.open_parentheses,
+            self.close_parentheses,
+            requested_fraction_groups,
+        )
+        self._fraction_group_nodes = _fraction_group_nodes(self._tree)
+        self.fraction_groups = self._validate_fraction_groups(requested_fraction_groups)
         self._fraction_term_number_by_component = self._build_fraction_term_number_map()
         self._fraction_group_by_component = self._build_fraction_group_component_map()
         self.missing_component_names: tuple[str, ...] = tuple(missing)
@@ -1744,13 +1800,6 @@ class CompositeModel:
             COMPONENTS[name] if name in COMPONENTS else placeholder_component_definition(name)
             for name in component_names
         ]
-        self._tree = build_expression_tree(
-            len(self.component_names),
-            self.operators,
-            self.open_parentheses,
-            self.close_parentheses,
-            self.fraction_groups,
-        )
         self._suppress_component_amplitude = self._suppressed_scaling_parameters()
         self._param_mappings = self._build_param_mapping()
         # Component-based fraction names depend on the (already-built) non-fraction
@@ -1853,14 +1902,18 @@ class CompositeModel:
             self.fraction_groups,
         )
 
-    def _validate_fraction_groups(
+    def _checked_fraction_group_spans(
         self,
         fraction_groups: list[tuple[int, int]],
     ) -> list[tuple[int, int]]:
-        actual_groups = set(self._parenthesized_group_ranges())
-        validated: list[tuple[int, int]] = []
+        """Return the requested group spans, in order, after shape checks.
+
+        Only the checks the expression tree cannot make: a span must be a pair
+        of in-range integers and must be asked for once. Whether it *is* a
+        group is decided on the tree (:meth:`_validate_fraction_groups`).
+        """
+        spans: list[tuple[int, int]] = []
         seen: set[tuple[int, int]] = set()
-        occupied_components: set[int] = set()
         for group in fraction_groups:
             if not isinstance(group, tuple) or len(group) != 2:
                 raise ValueError("fraction_groups must contain (start, end) pairs")
@@ -1872,12 +1925,30 @@ class CompositeModel:
             if group in seen:
                 raise ValueError("Duplicate fraction group")
             seen.add(group)
-            if group not in actual_groups:
+            spans.append(group)
+        return spans
+
+    def _validate_fraction_groups(
+        self,
+        fraction_groups: list[tuple[int, int]],
+    ) -> list[tuple[int, int]]:
+        """Return the accepted groups (sorted), validated against the tree.
+
+        Each requested span must have tagged a parenthesised sum; that sum must
+        hold two or more terms, all joined by ``+``; and no two groups may claim
+        the same component (which is also what rejects nested groups).
+        """
+        validated: list[tuple[int, int]] = []
+        occupied_components: set[int] = set()
+        for group in fraction_groups:
+            node = self._fraction_group_nodes.get(group)
+            if node is None:
                 raise ValueError("Fraction groups must map to one parenthesized expression")
-            term_ranges = self._fraction_group_term_ranges(group)
-            if len(term_ranges) < 2:
+            if len(node.terms) < 2:
                 raise ValueError("Fraction groups require at least two additive terms")
-            for idx in range(start, end + 1):
+            if any(sign != 1 for sign in node.signs):
+                raise ValueError("Fraction groups only support additive '+' terms")
+            for idx in range(group[0], group[1] + 1):
                 if idx in occupied_components:
                     raise ValueError("Fraction groups cannot overlap")
                 occupied_components.add(idx)
@@ -1885,19 +1956,11 @@ class CompositeModel:
         validated.sort()
         return validated
 
-    def _parenthesized_group_ranges(self) -> list[tuple[int, int]]:
-        ranges: list[tuple[int, int]] = []
-        stack: list[int] = []
-        for idx in range(len(self.component_names)):
-            for _ in range(self.open_parentheses[idx]):
-                stack.append(idx)
-            for _ in range(self.close_parentheses[idx]):
-                if not stack:
-                    raise ValueError("Invalid parentheses: closing before opening")
-                ranges.append((stack.pop(), idx))
-        if stack:
-            raise ValueError("Invalid parentheses: unbalanced expression")
-        return ranges
+    def _parenthesis_closures(self) -> list[list[_ClosingParenthesis]]:
+        """Return this model's closing parentheses (see :func:`_closing_parentheses`)."""
+        return _closing_parentheses(
+            self.open_parentheses, self.close_parentheses, self.fraction_groups
+        )
 
     def _build_fraction_group_component_map(self) -> dict[int, tuple[int, int]]:
         mapping: dict[int, tuple[int, int]] = {}
@@ -1982,38 +2045,18 @@ class CompositeModel:
                 next_number += 1
         return mapping
 
-    def _term_ranges(self, start: int, end: int, *, inside_group: bool) -> list[tuple[int, int]]:
-        """Return top-level additive term ranges within one expression span."""
-        if start < 0 or end >= len(self.component_names) or start > end:
-            raise ValueError("Invalid term range")
-
-        depth = int(self.open_parentheses[start]) - (1 if inside_group else 0)
-        if depth < 0:
-            raise ValueError("Invalid parentheses while parsing term ranges")
-
-        term_ranges: list[tuple[int, int]] = []
-        term_start = start
-        for idx in range(start, end):
-            depth_after = depth - int(self.close_parentheses[idx])
-            if depth_after < 0:
-                raise ValueError("Invalid parentheses while parsing term ranges")
-            operator = self.operators[idx]
-            if depth_after == 0 and operator in {"+", "-"}:
-                if operator != "+":
-                    raise ValueError("Fraction groups only support additive '+' terms")
-                term_ranges.append((term_start, idx))
-                term_start = idx + 1
-            depth = depth_after + int(self.open_parentheses[idx + 1])
-
-        depth -= int(self.close_parentheses[end]) - (1 if inside_group else 0)
-        if depth != 0:
-            raise ValueError("Invalid parentheses while parsing term ranges")
-        term_ranges.append((term_start, end))
-        return term_ranges
-
     def _fraction_group_term_ranges(self, group: tuple[int, int]) -> list[tuple[int, int]]:
-        """Return the additive term ranges represented by one fraction group."""
-        return self._term_ranges(group[0], group[1], inside_group=True)
+        """Return the additive term ranges represented by one fraction group.
+
+        Read straight off the sum node the group tags: its terms *are* the
+        group's additive terms, whatever else is parenthesised around or inside
+        them.
+        """
+        ranges: list[tuple[int, int]] = []
+        for term in self._fraction_group_nodes[group].terms:
+            indices = leaf_indices(term)
+            ranges.append((min(indices), max(indices)))
+        return ranges
 
     def _fraction_group_term_starts(self, group: tuple[int, int]) -> list[int]:
         """Return component indices where each weighted fraction term starts."""
@@ -2140,16 +2183,19 @@ class CompositeModel:
         if self.fraction_groups or len(self.component_names) < 2:
             return self
 
-        try:
-            term_ranges = self._term_ranges(0, len(self.component_names) - 1, inside_group=False)
-        except ValueError:
+        # Only a model that already *is* a sum of two or more ``+`` terms can
+        # become one fraction group; anything else (a product, a single leaf, a
+        # sum with a ``-``) is returned untouched.
+        root = self._tree
+        if not isinstance(root, ExprSum) or len(root.terms) < 2:
             return self
-        if len(term_ranges) < 2:
+        if any(sign != 1 for sign in root.signs):
             return self
 
+        whole_span = (0, len(self.component_names) - 1)
         open_parentheses = list(self.open_parentheses)
         close_parentheses = list(self.close_parentheses)
-        if (0, len(self.component_names) - 1) not in self._parenthesized_group_ranges():
+        if not any(closure.span == whole_span for closure in self._parenthesis_closures()[-1]):
             open_parentheses[0] += 1
             close_parentheses[-1] += 1
 
@@ -2158,7 +2204,7 @@ class CompositeModel:
             operators=list(self.operators),
             open_parentheses=open_parentheses,
             close_parentheses=close_parentheses,
-            fraction_groups=[*self.fraction_groups, (0, len(self.component_names) - 1)],
+            fraction_groups=[whole_span],
             # Rebuilding from an existing instance: its names were already
             # vetted (possibly as placeholders), so never re-raise here.
             allow_missing=True,
@@ -2472,15 +2518,12 @@ class CompositeModel:
 
         value_stack: list[str] = []
         op_stack: list[str] = []
-        paren_start_stack: list[int] = []
-        fraction_group_set = set(self.fraction_groups)
+        closures = self._parenthesis_closures()
 
         def precedence(op: str) -> int:
             return 2 if op in {"*", "/"} else 1
 
         def apply_top_operator() -> None:
-            if len(value_stack) < 2 or not op_stack:
-                raise ValueError("Invalid expression")
             op = op_stack.pop()
             rhs = value_stack.pop()
             lhs = value_stack.pop()
@@ -2489,21 +2532,15 @@ class CompositeModel:
         for idx, term in enumerate(terms):
             for _ in range(self.open_parentheses[idx]):
                 op_stack.append("(")
-                paren_start_stack.append(idx)
 
             value_stack.append(term)
 
-            for _ in range(self.close_parentheses[idx]):
-                while op_stack and op_stack[-1] != "(":
+            for closure in closures[idx]:
+                while op_stack[-1] != "(":
                     apply_top_operator()
-                if not op_stack or op_stack[-1] != "(":
-                    raise ValueError("Invalid parentheses in expression")
                 op_stack.pop()
-                if not paren_start_stack:
-                    raise ValueError("Invalid parentheses in expression")
-                group = (paren_start_stack.pop(), idx)
-                if group in fraction_group_set:
-                    amplitude_name = self._fraction_group_amplitude_name(group)
+                if closure.is_fraction_group:
+                    amplitude_name = self._fraction_group_amplitude_name(closure.span)
                     grouped_term = value_stack.pop()
                     value_stack.append(f"{amplitude_name}*({grouped_term})")
 
@@ -2516,12 +2553,7 @@ class CompositeModel:
                 op_stack.append(op)
 
         while op_stack:
-            if op_stack[-1] == "(":
-                raise ValueError("Invalid parentheses in expression")
             apply_top_operator()
-
-        if len(value_stack) != 1:
-            raise ValueError("Invalid expression")
 
         expression = value_stack[0]
         if expression.startswith("(") and expression.endswith(")"):
@@ -2533,32 +2565,21 @@ class CompositeModel:
     def _top_level_terms(self) -> list[tuple[int, int, str]]:
         """Return ``(start, end, separator)`` for each top-level additive term.
 
-        Mirrors :meth:`_term_ranges` at the top level (``inside_group=False``)
-        but records the operator that *joins* each term to the running
-        expression: ``""`` for the first term, ``" + "``/``" - "`` for the rest.
-        Never raises for a valid model; on any structural surprise it falls back
-        to a single term spanning the whole model so callers always get output.
+        Read off the root of the expression tree. A plain sum contributes one
+        entry per term, carrying the operator that *joins* it to the running
+        expression (``""`` for the first, ``" + "``/``" - "`` for the rest); any
+        other root — a product, a single component, or a fraction group whose
+        weights render inside it — is one term spanning the whole model.
         """
-        n = len(self.component_names)
-        if n == 0:
-            return []
-        try:
-            depth = int(self.open_parentheses[0])
+        root = self._tree
+        if isinstance(root, ExprSum) and root.fraction_group is None:
             terms: list[tuple[int, int, str]] = []
-            term_start = 0
-            separator = ""
-            for idx in range(n - 1):
-                depth_after = depth - int(self.close_parentheses[idx])
-                operator = self.operators[idx]
-                if depth_after == 0 and operator in {"+", "-"}:
-                    terms.append((term_start, idx, separator))
-                    separator = f" {operator} "
-                    term_start = idx + 1
-                depth = depth_after + int(self.open_parentheses[idx + 1])
-            terms.append((term_start, n - 1, separator))
+            for order, (term, sign) in enumerate(zip(root.terms, root.signs, strict=True)):
+                indices = leaf_indices(term)
+                separator = "" if order == 0 else (" + " if sign == 1 else " - ")
+                terms.append((min(indices), max(indices), separator))
             return terms
-        except (IndexError, ValueError):
-            return [(0, n - 1, "")]
+        return [(0, len(self.component_names) - 1, "")]
 
     def _latex_component_body(
         self,
@@ -2637,15 +2658,21 @@ class CompositeModel:
         Reuses the same shunting-yard as
         :meth:`_formula_string_with_fraction_groups` — including the fraction
         weight prefixes and per-group amplitude factor — but emits mathtext.
-        The span is a single top-level additive term, so parentheses within it
-        are balanced and it walks cleanly.
+        The span is a single top-level additive term, so a parenthesis it opens
+        may still close outside it (``(a + b)`` splits into two terms). Only the
+        pairs that open *and* close within the span are walked; a fraction group
+        is always one of them, since a group sum lies inside a single top-level
+        term.
         """
         weight_prefix_by_start = self._latex_weight_prefixes()
-        fraction_group_set = set(self.fraction_groups)
+        closures = [
+            [closure for closure in row if closure.span[0] >= start]
+            for row in self._parenthesis_closures()[start : end + 1]
+        ]
+        opens_within_span = Counter(closure.span[0] for row in closures for closure in row)
 
         value_stack: list[str] = []
         op_stack: list[str] = []
-        paren_start_stack: list[int] = []
 
         def precedence(op: str) -> int:
             return 2 if op in {"*", "/"} else 1
@@ -2669,26 +2696,20 @@ class CompositeModel:
                 prefix = weight_prefix_by_start[idx]
                 body = prefix if body == "1" else f"{prefix}\\,{body}"
 
-            for _ in range(self.open_parentheses[idx]):
+            for _ in range(opens_within_span[idx]):
                 op_stack.append("(")
-                paren_start_stack.append(idx)
 
             value_stack.append(body)
 
-            for _ in range(self.close_parentheses[idx]):
-                while op_stack and op_stack[-1] != "(":
+            for closure in closures[idx - start]:
+                while op_stack[-1] != "(":
                     apply_top_operator()
-                if op_stack and op_stack[-1] == "(":
-                    op_stack.pop()
-                if paren_start_stack:
-                    group = (paren_start_stack.pop(), idx)
-                    if group in fraction_group_set:
-                        amplitude_name = self._fraction_group_amplitude_name(group)
-                        amp = param_symbol_latex(
-                            get_param_info(amplitude_name).latex, amplitude_name
-                        )
-                        grouped = value_stack.pop()
-                        value_stack.append(f"{amp}\\,({grouped})")
+                op_stack.pop()
+                if closure.is_fraction_group:
+                    amplitude_name = self._fraction_group_amplitude_name(closure.span)
+                    amp = param_symbol_latex(get_param_info(amplitude_name).latex, amplitude_name)
+                    grouped = value_stack.pop()
+                    value_stack.append(f"{amp}\\,({grouped})")
 
             if idx < end:
                 op = self.operators[idx]
@@ -2699,12 +2720,9 @@ class CompositeModel:
                 op_stack.append(op)
 
         while op_stack:
-            if op_stack[-1] == "(":
-                op_stack.pop()
-                continue
             apply_top_operator()
 
-        fragment = value_stack[-1] if value_stack else ""
+        fragment = value_stack[-1]
         if fragment.startswith("(") and fragment.endswith(")"):
             fragment = fragment[1:-1]
         return fragment
