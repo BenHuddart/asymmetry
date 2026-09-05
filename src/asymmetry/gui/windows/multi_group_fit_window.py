@@ -420,7 +420,9 @@ class MultiGroupFitWindow(QWidget):
         if model is None:
             return
         seeds = self._single_fit_tab.current_grouped_seed_values()
-        self._batch_fit_tab._set_composite_model(model)
+        self._batch_fit_tab._set_composite_model(
+            model, origins=self._batch_fit_tab.aligned_origins(model)
+        )
         self._batch_fit_tab.apply_grouped_physics_seeds(seeds)
         self._tabs.setCurrentWidget(self._batch_fit_tab)
 

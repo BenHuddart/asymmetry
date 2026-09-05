@@ -1291,12 +1291,7 @@ class GlobalFitTab(FitTabBase):
         # uses), and where the model is simply the one already in the table
         # that map is the identity, so every row's role, value and bounds
         # survive the rebuild.
-        self._set_composite_model(
-            inherited_model,
-            origins=align_component_names(
-                self._composite_model.component_names, inherited_model.component_names
-            ),
-        )
+        self._set_composite_model(inherited_model, origins=self.aligned_origins(inherited_model))
 
         if not grouped:
             averages = self._inherited_param_averages(
@@ -1401,6 +1396,17 @@ class GlobalFitTab(FitTabBase):
                 for run_number, values in self._user_initial_values_by_run.items()
             },
         )
+
+    def aligned_origins(self, model: CompositeModel) -> tuple[int | None, ...]:
+        """Origins for ``model`` by name alignment against the current model.
+
+        The sanctioned fallback for a model that arrives without a builder edit
+        behind it (a model inherited from the single tab's fits, a model sent to
+        the batch surface): same-named components matched in order carry their
+        rows' roles, values and bounds; the map is the identity when the model
+        is unchanged. A builder edit supplies exact origins instead.
+        """
+        return align_component_names(self._composite_model.component_names, model.component_names)
 
     def _set_composite_model(
         self,
