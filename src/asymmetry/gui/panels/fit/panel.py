@@ -31,8 +31,6 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.domain_library import coerce_domain
 from asymmetry.core.fitting.fit_wizard import (
     FitWizardRecommendation,
-    deserialize_fit_wizard_recommendation,
-    serialize_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.parameters import (
     ParameterSet,
@@ -48,6 +46,11 @@ from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from .global_tab import GlobalFitTab
 from .single_tab import SingleFitTab
 from .tab_base import _get_file_value_for_parameter
+from .wizard_cache import (
+    WizardCacheEntry,
+    persisted_single_fit_form_state,
+    wizard_cache_entry,
+)
 
 
 def _parse_bounds_text(bounds_text: object) -> tuple[str, str]:
@@ -252,7 +255,11 @@ class FitPanel(QWidget):
             self._single_form_snapshot = {
                 "run": self._active_single_run_number,
                 "domain": self._domain,
-                "state": self.get_single_form_state(),
+                # A session snapshot, not a persisted payload: keep the wizard
+                # cache as its in-memory handle (deep-copying it is free) —
+                # ``get_single_form_state`` would serialise it compactly for a
+                # project file, which this round trip has no use for.
+                "state": copy.deepcopy(self._single_tab.get_state()),
             }
         self.tab_changed.emit(index)
 
@@ -634,8 +641,14 @@ class FitPanel(QWidget):
 
         This is exactly what :meth:`restore_single_fit_ui` consumes, so it is the
         payload the main window stores as a slot's ``ui_state``.
+
+        A slot's ``ui_state`` is written to the project file, so this is a
+        persistence boundary: the cached wizard analysis is converted from its
+        session handle to the compact JSON payload here (see
+        ``wizard_cache``). Session-only snapshots take
+        ``SingleFitTab.get_state()`` directly instead, and pay nothing.
         """
-        return copy.deepcopy(self._single_tab.get_state())
+        return persisted_single_fit_form_state(self._single_tab.get_state())
 
     def restore_single_fit_ui(self, payload: dict | None) -> None:
         """Restore (or blank) the single-fit form from a slot ``ui_state`` payload.
@@ -779,17 +792,12 @@ class FitPanel(QWidget):
         state = self.get_single_state_for_run(run_number)
         if not isinstance(state, dict):
             return None, None, ""
-        wizard_state = state.get("wizard_state")
-        if not isinstance(wizard_state, dict):
+        # Session handle in the common case (nothing to decode); a persisted
+        # dict only when the run's state came straight from a project file.
+        entry = wizard_cache_entry(state.get("wizard_state"))
+        if entry is None:
             return None, None, ""
-        recommendation = deserialize_fit_wizard_recommendation(wizard_state.get("recommendation"))
-        signature = wizard_state.get("signature")
-        log_text = str(wizard_state.get("log_text", ""))
-        return (
-            recommendation,
-            signature if isinstance(signature, dict) else None,
-            log_text,
-        )
+        return entry.recommendation, entry.signature_copy(), entry.log_text
 
     def persist_single_fit_wizard_cache_for_run(
         self,
@@ -812,11 +820,13 @@ class FitPanel(QWidget):
                 "model": None,
             }
         )
-        wizard_state = {
-            "signature": active_signature,
-            "recommendation": serialize_fit_wizard_recommendation(recommendation),
-            "log_text": str(log_text),
-        }
+        # Held by reference: this cache lives in session state and is only
+        # serialised (compactly) when a fit slot or project file is written.
+        wizard_state = WizardCacheEntry(
+            recommendation=recommendation,
+            signature=active_signature,
+            log_text=str(log_text),
+        )
 
         if (
             self._active_single_run_number is not None
@@ -1096,7 +1106,17 @@ class FitPanel(QWidget):
     # ── project state helpers ──────────────────────────────────────────
 
     def get_single_state(self) -> dict:
-        """Return serialisable state of the single-fit tab."""
+        """Return the single-fit tab's state, per-run blob included.
+
+        Session-shaped: each block's ``wizard_state`` is the in-memory handle
+        (see ``wizard_cache``), because this is also the *domain-switch*
+        snapshot — a time→frequency→time round trip must keep the wizard cache
+        without paying for a serialise/deserialise of every run's
+        recommendation. The project boundary is
+        ``MainWindow.collect_project_state``, which drops the wizard blocks
+        from panel state entirely (they are persisted per fit slot instead,
+        compactly, via :meth:`get_single_form_state`).
+        """
         if self._active_single_run_number is not None:
             self._single_state_by_run[self._active_single_run_number] = self._single_tab.get_state()
 

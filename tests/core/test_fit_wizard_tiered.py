@@ -10,6 +10,7 @@ flow tests land later in the same file.
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import math
 import pickle
 import time
@@ -45,6 +46,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _has_significant_damped_line,
     _initial_parameters_for_template,
     _parameter_variants,
+    _persisted_curve_stride,
     _run_template_assessments,
     _stage2_variant_budget,
     analysis_rebin_factor,
@@ -57,6 +59,9 @@ from asymmetry.core.fitting.fit_wizard import (
     rerank_fit_wizard_recommendation,
     serialize_family_screening_report,
     serialize_fit_wizard_recommendation,
+)
+from asymmetry.core.fitting.fit_wizard import (
+    PERSISTED_CURVE_MAX_POINTS as _PERSISTED_CURVE_MAX_POINTS,
 )
 from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
 from asymmetry.core.fitting.muon_fluorine.polarization import linear_fmuf_polarization
@@ -395,6 +400,87 @@ def test_recommendation_legacy_payload_defaults_new_fields() -> None:
     assert restored.multiplet_matches == ()
     assert restored.family_reports == ()
     assert restored.scope_note == ""
+
+
+def _dense_assessment(key: str, n_points: int) -> CandidateAssessment:
+    """A candidate assessment carrying full-resolution curves and residuals."""
+    time = np.linspace(0.0, 8.0, n_points)
+    curve = np.exp(-0.4 * time)
+    base = _dummy_assessment(key)
+    return replace(
+        base,
+        fit_result=FitResult(
+            success=True,
+            chi_squared=1.0,
+            reduced_chi_squared=1.0,
+            residuals=np.zeros_like(time),
+        ),
+        fitted_time=time,
+        fitted_curve=curve,
+        component_curves=(("Exponential", curve), ("Constant", np.zeros_like(time))),
+    )
+
+
+def test_compact_serialization_bounds_curves_and_drops_residuals() -> None:
+    """The persistence form is what keeps a cached wizard result out of the MBs.
+
+    A recommendation's curves exist to be drawn, so persisting them strided to
+    a bounded point count (and dropping the residual series, whose summary
+    statistics are stored on the assessment) is lossless for every consumer
+    that reads a *cached* recommendation back.
+    """
+    n_points = 90_000
+    recommendation = replace(
+        _recommendation_with_extras(),
+        assessments=(_dense_assessment("exp_constant", n_points),),
+    )
+
+    full = serialize_fit_wizard_recommendation(recommendation)
+    compact = serialize_fit_wizard_recommendation(recommendation, compact=True)
+
+    full_assessment = full["assessments"][0]
+    assert len(full_assessment["fitted_time"]) == n_points
+    assert full_assessment["fit_result"]["residuals"] is not None
+    assert full["compact"] is False
+
+    assessment = compact["assessments"][0]
+    stride = _persisted_curve_stride(n_points)
+    # Every stride-th sample from the first, plus the last one when the stride
+    # would skip it: the strided curve still spans the analysed record.
+    expected = len(range(0, n_points, stride)) + (1 if (n_points - 1) % stride else 0)
+    assert expected <= _PERSISTED_CURVE_MAX_POINTS
+    assert len(assessment["fitted_time"]) == expected
+    assert len(assessment["fitted_curve"]) == expected
+    # Every curve is sampled on the same stride, so they stay aligned.
+    for component in assessment["component_curves"]:
+        assert len(component["values"]) == expected
+    assert assessment["fit_result"]["residuals"] is None
+    assert compact["compact"] is True
+    # Endpoints are preserved: a strided fit line still spans the record.
+    assert assessment["fitted_time"][0] == pytest.approx(0.0)
+    assert assessment["fitted_time"][-1] == pytest.approx(full_assessment["fitted_time"][-1])
+    assert assessment["fitted_curve"][-1] == pytest.approx(
+        full_assessment["fitted_curve"][-1], rel=1e-6
+    )
+    # Samples are rounded to a bounded number of significant digits (scale-free,
+    # so a percent-scale curve and a tiny component curve keep the same relative
+    # fidelity) — that halves the stored text again.
+    full_curve = full["assessments"][0]["fitted_curve"]
+    strided_curve = full_curve[::stride] + ([full_curve[-1]] if (n_points - 1) % stride else [])
+    assert all(
+        value == pytest.approx(rounded, rel=1e-6)
+        for value, rounded in zip(strided_curve, assessment["fitted_curve"], strict=True)
+    )
+    assert len(json.dumps(compact)) < len(json.dumps(full)) / 100
+
+    # Both forms deserialise, and the compact one keeps everything but the
+    # arrays' resolution.
+    restored = deserialize_fit_wizard_recommendation(compact)
+    assert restored is not None
+    assert restored.recommended_key == recommendation.recommended_key
+    assert restored.assessments[0].fitted_time.size == expected
+    assert restored.assessments[0].fit_result.residuals is None
+    assert restored.assessments[0].residual_rms == pytest.approx(1.0)
 
 
 def test_candidate_assessment_stage_default_on_legacy_payload() -> None:

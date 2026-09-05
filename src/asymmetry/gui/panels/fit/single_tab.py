@@ -45,8 +45,6 @@ from asymmetry.core.fitting.engine import FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     FitWizardRecommendation,
-    deserialize_fit_wizard_recommendation,
-    serialize_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.parameters import (
     Parameter,
@@ -98,6 +96,7 @@ from .tab_base import (
     _wait_for_fit_thread,
     dataset_error_oversampling,
 )
+from .wizard_cache import WizardCacheEntry, wizard_cache_entry
 
 logger = logging.getLogger(__name__)
 
@@ -1238,7 +1237,17 @@ class SingleFitTab(FitTabBase):
     # ── project state helpers ──────────────────────────────────────────
 
     def get_state(self) -> dict:
-        """Return a serialisable snapshot of the single-fit tab state."""
+        """Return a snapshot of the single-fit tab state.
+
+        The cached wizard analysis rides along as a
+        :class:`~asymmetry.gui.panels.fit.wizard_cache.WizardCacheEntry` — the
+        immutable recommendation *by reference*, never serialised. This method
+        is on the run-switch path (the fit panel saves the leaving run's form
+        and deep-copies the result), so serialising here cost seconds per
+        switch on a fine-resolution run; the entry deep-copies to itself.
+        Serialisation happens at persistence boundaries instead (see the
+        module docstring of ``wizard_cache``).
+        """
         if self._fit_wizard_window is not None:
             recommendation = self._fit_wizard_window.current_recommendation()
             if recommendation is not None:
@@ -1263,13 +1272,11 @@ class SingleFitTab(FitTabBase):
             self._cached_wizard_recommendation is not None
             and self._cached_wizard_signature is not None
         ):
-            state["wizard_state"] = {
-                "signature": copy.deepcopy(self._cached_wizard_signature),
-                "recommendation": serialize_fit_wizard_recommendation(
-                    self._cached_wizard_recommendation
-                ),
-                "log_text": self._cached_wizard_log_text,
-            }
+            state["wizard_state"] = WizardCacheEntry(
+                recommendation=self._cached_wizard_recommendation,
+                signature=self._cached_wizard_signature,
+                log_text=self._cached_wizard_log_text,
+            )
         return state
 
     def restore_state(self, state: dict) -> None:
@@ -1318,13 +1325,11 @@ class SingleFitTab(FitTabBase):
         if isinstance(result_html, str) and result_html:
             self._result_label.setText(result_html)
 
-        wizard_state = state.get("wizard_state")
-        if isinstance(wizard_state, dict):
-            recommendation = deserialize_fit_wizard_recommendation(
-                wizard_state.get("recommendation")
-            )
-            signature = wizard_state.get("signature")
-            if recommendation is not None and isinstance(signature, dict):
-                self._cached_wizard_recommendation = recommendation
-                self._cached_wizard_signature = copy.deepcopy(signature)
-                self._cached_wizard_log_text = str(wizard_state.get("log_text", ""))
+        # Accepts both shapes: the session handle (no work — the recommendation
+        # is shared by reference) and a persisted dict from a project file or a
+        # fit slot's ``ui_state`` (deserialised once, here).
+        entry = wizard_cache_entry(state.get("wizard_state"))
+        if entry is not None:
+            self._cached_wizard_recommendation = entry.recommendation
+            self._cached_wizard_signature = entry.signature_copy()
+            self._cached_wizard_log_text = entry.log_text

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -23,6 +24,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError, FitResult
 from asymmetry.core.fitting.fit_wizard import (
+    PERSISTED_CURVE_MAX_POINTS,
     CandidateAssessment,
     CandidateTemplate,
     FitWizardRecommendation,
@@ -44,6 +46,10 @@ from asymmetry.core.utils.constants import (
 from asymmetry.gui.panels import fit_panel as fit_panel_module
 from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit import single_tab as single_tab_module
+from asymmetry.gui.panels.fit.wizard_cache import (
+    GlobalWizardCacheEntry,
+    WizardCacheEntry,
+)
 from asymmetry.gui.panels.fit_panel import (
     FitPanel,
     GlobalFitTab,
@@ -2760,11 +2766,16 @@ def test_single_tab_state_roundtrip_preserves_cached_wizard_results(
     tab._cache_wizard_analysis(recommendation, signature=signature, log_text="cached log")
     saved = tab.get_state()
 
+    # Session state holds the analysis by reference (see wizard_cache.py); the
+    # compact serialised form is produced only at a persistence boundary.
+    assert isinstance(saved["wizard_state"], WizardCacheEntry)
+    assert saved["wizard_state"].recommendation is recommendation
+
     restored = SingleFitTab()
     restored.set_dataset(dataset)
     restored.restore_state(saved)
 
-    assert restored._cached_wizard_recommendation is not None
+    assert restored._cached_wizard_recommendation is recommendation
     assert restored._cached_wizard_recommendation.summary == recommendation.summary
     assert restored._cached_wizard_signature == signature
     assert restored._cached_wizard_log_text == "cached log"
@@ -3592,6 +3603,38 @@ def test_global_tab_state_roundtrip_preserves_multiple_run_set_wizard_caches(
     assert restored._cached_wizard_recommendation.summary == "cached 101/103"
 
 
+def test_global_wizard_cache_store_persists_a_bounded_json_payload(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    """The per-run-set store holds handles; its persisted form is JSON + bounded."""
+    tab = GlobalFitTab()
+    dataset_102 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    tab.set_datasets([dataset, dataset_102])
+    signature = tab._wizard_context_signature(tab._parse_parameter_configuration())
+    recommendation = _global_wizard_recommendation_for_dataset(dataset)
+    tab._cache_wizard_analysis(recommendation, signature=signature, log_text="group log")
+
+    entry = tab.get_state()["wizard_state_by_run_set"][0]
+    assert isinstance(entry, GlobalWizardCacheEntry)
+    assert entry.recommendation is recommendation
+
+    payload = entry.to_persisted()
+    json.dumps(payload)  # no live objects reach a project file
+    for assessment in payload["recommendation"]["assessments"]:
+        for curve in assessment["fitted_curves_by_run"].values():
+            assert len(curve["time"]) <= PERSISTED_CURVE_MAX_POINTS
+            assert len(curve["values"]) == len(curve["time"])
+
+    restored = GlobalFitTab()
+    restored.set_datasets([dataset, dataset_102])
+    restored._restore_wizard_cache_store([payload])
+
+    assert restored._cached_wizard_recommendation is not None
+    assert restored._cached_wizard_recommendation.summary == recommendation.summary
+    assert restored._cached_wizard_log_text == "group log"
+
+
 def test_global_tab_open_fit_wizard_passes_cached_single_fit_recommendations(
     qapp: QApplication,
     dataset: MuonDataset,
@@ -3697,8 +3740,13 @@ def test_global_tab_get_state_persists_active_window_recommendation_without_cach
     saved = tab.get_state()
 
     assert "wizard_state" in saved
-    assert saved["wizard_state"]["log_text"] == "window log"
-    assert saved["wizard_state"]["signature"]["run_numbers"] == [int(dataset.run_number), 102]
+    # Session state holds the recommendation by reference (a cache handle),
+    # never a serialised payload — see gui/panels/fit/wizard_cache.py.
+    entry = saved["wizard_state"]
+    assert isinstance(entry, GlobalWizardCacheEntry)
+    assert entry.recommendation is recommendation
+    assert entry.log_text == "window log"
+    assert entry.signature["run_numbers"] == [int(dataset.run_number), 102]
     assert tab._cached_wizard_recommendation is not None
     assert tab._cached_wizard_signature is not None
 

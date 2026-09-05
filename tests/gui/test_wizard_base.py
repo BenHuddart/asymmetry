@@ -299,6 +299,106 @@ def test_default_path_still_requires_build_tabs():
         _NoBuildTabs()
 
 
+def _record_front_calls(window) -> dict[str, int]:
+    """Count raise_/activateWindow calls on *window*.
+
+    Offscreen Qt cannot report real stacking order, so the completion
+    bring-to-front behaviour is pinned by counting the calls instead.
+    """
+    calls = {"raise": 0, "activate": 0}
+
+    def fake_raise() -> None:
+        calls["raise"] += 1
+
+    def fake_activate() -> None:
+        calls["activate"] += 1
+
+    window.raise_ = fake_raise
+    window.activateWindow = fake_activate
+    return calls
+
+
+def test_finished_brings_window_to_front():
+    """A completed analysis raises and focuses the wizard (drop-behind fix)."""
+    window = _FakeWizard()
+    try:
+        window.show()
+        calls = _record_front_calls(window)
+
+        window._analysis_request_id = 1
+        window._handle_finished(1, {"value": 7})
+
+        assert window.populated_results == [{"value": 7}]
+        assert calls == {"raise": 1, "activate": 1}
+    finally:
+        window.close()
+
+
+def test_error_brings_window_to_front():
+    """A failed analysis also comes forward so the error is seen."""
+    window = _FakeWizard()
+    try:
+        window.show()
+        calls = _record_front_calls(window)
+
+        window._analysis_request_id = 1
+        window._handle_error(1, "boom")
+
+        assert window._status_label.text() == "boom"
+        assert calls == {"raise": 1, "activate": 1}
+    finally:
+        window.close()
+
+
+def test_stale_request_does_not_bring_window_to_front():
+    """A superseded request must not steal the front from the main window."""
+    window = _FakeWizard()
+    try:
+        window.show()
+        calls = _record_front_calls(window)
+
+        window._analysis_request_id = 2
+        window._handle_finished(1, {"value": "stale"})
+        window._handle_error(1, "stale boom")
+
+        assert window.populated_results == []
+        assert calls == {"raise": 0, "activate": 0}
+    finally:
+        window.close()
+
+
+def test_cancellation_does_not_bring_window_to_front():
+    """Cancelling is a dismissal, not an answer — leave the stacking alone."""
+    window = _FakeWizard()
+    try:
+        window.show()
+        calls = _record_front_calls(window)
+
+        window._analysis_request_id = 1
+        window._handle_cancelled(1)
+
+        assert window._status_label.text() == "Analysis cancelled."
+        assert calls == {"raise": 0, "activate": 0}
+    finally:
+        window.close()
+
+
+def test_hidden_window_is_not_brought_to_front():
+    """A window that is not on screen must not be forced back onto it."""
+    window = _FakeWizard()
+    try:
+        calls = _record_front_calls(window)
+        assert window.isVisible() is False
+
+        window._analysis_request_id = 1
+        window._handle_finished(1, {"value": 7})
+
+        assert window.populated_results == [{"value": 7}]
+        assert calls == {"raise": 0, "activate": 0}
+    finally:
+        window.close()
+
+
 def test_set_context_chips_populates_and_clears():
     """set_context_chips replaces the header band's chips; [] clears them."""
     window = _FakeWizard()

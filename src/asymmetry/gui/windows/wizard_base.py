@@ -268,6 +268,7 @@ class WizardWindowBase(QMainWindow):
         if result is not None:
             self._populate_results(result)
         self._current_worker = None
+        self._bring_to_front_on_completion()
 
     def _handle_error(self, request_id: int, message: str) -> None:
         # Clear busy BEFORE the staleness guard, mirroring _handle_finished: a
@@ -279,6 +280,7 @@ class WizardWindowBase(QMainWindow):
             return
         self._on_analysis_failed(message)
         self._current_worker = None
+        self._bring_to_front_on_completion()
 
     def _handle_progress(self, request_id: int, current: int, total: int, message: str) -> None:
         if request_id != self._analysis_request_id:
@@ -296,6 +298,30 @@ class WizardWindowBase(QMainWindow):
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
+
+    def _bring_to_front_on_completion(self) -> None:
+        """Raise and focus the wizard when its analysis reaches a result.
+
+        A wizard window is an ordinary top-level window whose parent is a
+        widget inside the main window, and its running status invites the user
+        to "keep using the main window while recommendations are prepared".
+        Any click on the main window during the 20-40 s analysis therefore
+        stacks the main window above the wizard, and nothing in the terminal
+        slots brought it back — so the finished answer card sat hidden behind
+        the main window. Raising restores the on-screen order;
+        ``activateWindow()`` additionally gives it keyboard focus so the
+        result's actions are immediately usable.
+
+        Only called for a current (non-stale) request that has produced a
+        result or an error — never on cancellation, which is a user-initiated
+        dismissal rather than an answer to be read. A hidden or minimised
+        window is left alone: forcing it back on screen would be more
+        disruptive than the stacking problem it fixes.
+        """
+        if not self.isVisible() or self.isMinimized():
+            return
+        self.raise_()
+        self.activateWindow()
 
     def _set_busy(self, busy: bool) -> None:
         self._analysis_in_progress = busy

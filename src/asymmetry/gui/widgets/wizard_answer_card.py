@@ -541,6 +541,22 @@ class WizardAnswerCard(QWidget):
                 res_time = res_time[: residuals.size]
                 ax_res.axhline(0.0, color=tokens.PLOT_ZERO_LINE, linewidth=1.0)
                 ax_res.plot(res_time, residuals, color=tokens.TRACE_GREEN)
+            else:
+                # A recommendation restored from a project file carries the
+                # residual *statistics* but not the series itself (it is the
+                # bulkiest array in the payload and cannot be decimated without
+                # misaligning it from its time axis — see
+                # docs/reference/project_files.rst).
+                ax_res.text(
+                    0.5,
+                    0.5,
+                    "Residuals are not stored with a cached result —\n"
+                    "re-run the wizard to see them.",
+                    transform=ax_res.transAxes,
+                    ha="center",
+                    va="center",
+                    color=tokens.TEXT_MUTED,
+                )
             ax_res.set_xlabel("Time (µs)")
             ax_res.set_ylabel("Residual")
             ax_res.set_title("Residuals")

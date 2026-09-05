@@ -42,6 +42,8 @@ from asymmetry.core.fitting.fit_wizard import (
     _migrate_fit_result_fractions,
     _needs_fit_backend_fallback,
     _parameter_variants,
+    _persisted_curve_list,
+    _persisted_curve_stride,
     _residual_diagnostics,
     _residual_gate_reasons,
     _scipy_fit_fallback,
@@ -2547,8 +2549,18 @@ def _parameter_recommendation_candidate_keys(
 
 def serialize_global_fit_wizard_recommendation(
     recommendation: GlobalFitWizardRecommendation,
+    *,
+    compact: bool = False,
 ) -> dict[str, object]:
-    """Return a JSON-serialisable snapshot of a global-fit wizard recommendation."""
+    """Return a JSON-serialisable snapshot of a global-fit wizard recommendation.
+
+    ``compact=True`` is the persistence form: every stored curve is strided
+    down to :data:`~asymmetry.core.fitting.fit_wizard.PERSISTED_CURVE_MAX_POINTS`
+    points, exactly as for the single-fit recommendation (this payload holds a
+    fitted curve *per run per candidate*, so it grows fastest of the two).
+    Both forms deserialise through
+    :func:`deserialize_global_fit_wizard_recommendation`.
+    """
     return {
         "series_axis_key": recommendation.series_axis_key,
         "series_axis_label": recommendation.series_axis_label,
@@ -2562,13 +2574,16 @@ def serialize_global_fit_wizard_recommendation(
             _serialize_candidate_template(template) for template in recommendation.templates
         ],
         "assessments": [
-            _serialize_global_candidate_assessment(assessment)
+            _serialize_global_candidate_assessment(assessment, compact=compact)
             for assessment in recommendation.assessments
         ],
         "metric": recommendation.metric.value,
         "recommended_key": recommendation.recommended_key,
         "comparable_keys": list(recommendation.comparable_keys),
         "summary": recommendation.summary,
+        # Marks the payload as curve-decimated (read by nothing —
+        # deserialisation tolerates both shapes).
+        "compact": bool(compact),
     }
 
 
@@ -2860,11 +2875,14 @@ def _deserialize_global_parameter_recommendation(
 
 def _serialize_curve_pair(
     curve: tuple[NDArray[np.float64], NDArray[np.float64]],
+    *,
+    stride: int = 1,
+    compact: bool = False,
 ) -> dict[str, object]:
     time_axis, values = curve
     return {
-        "time": np.asarray(time_axis, dtype=float).tolist(),
-        "values": np.asarray(values, dtype=float).tolist(),
+        "time": _persisted_curve_list(time_axis, stride=stride, compact=compact),
+        "values": _persisted_curve_list(values, stride=stride, compact=compact),
     }
 
 
@@ -2884,11 +2902,14 @@ def _deserialize_curve_pair(
 
 def _serialize_component_curves(
     curves: tuple[tuple[str, NDArray[np.float64]], ...],
+    *,
+    stride: int = 1,
+    compact: bool = False,
 ) -> list[dict[str, object]]:
     return [
         {
             "name": name,
-            "values": np.asarray(values, dtype=float).tolist(),
+            "values": _persisted_curve_list(values, stride=stride, compact=compact),
         }
         for name, values in curves
     ]
@@ -2915,7 +2936,15 @@ def _deserialize_component_curves(
 
 def _serialize_global_candidate_assessment(
     assessment: GlobalCandidateAssessment,
+    *,
+    compact: bool = False,
 ) -> dict[str, object]:
+    # One stride per run: that run's fitted curve, its time axis and its
+    # component curves share a grid, so they are sampled together.
+    strides = {
+        run_number: (_persisted_curve_stride(int(np.asarray(curve[0]).size)) if compact else 1)
+        for run_number, curve in assessment.fitted_curves_by_run.items()
+    }
     return {
         "template": _serialize_candidate_template(assessment.template),
         "fit_results_by_run": {
@@ -2940,11 +2969,15 @@ def _serialize_global_candidate_assessment(
         "bic": assessment.bic,
         "selected_score": assessment.selected_score,
         "fitted_curves_by_run": {
-            str(run_number): _serialize_curve_pair(curve)
+            str(run_number): _serialize_curve_pair(
+                curve, stride=strides.get(run_number, 1), compact=compact
+            )
             for run_number, curve in assessment.fitted_curves_by_run.items()
         },
         "component_curves_by_run": {
-            str(run_number): _serialize_component_curves(curves)
+            str(run_number): _serialize_component_curves(
+                curves, stride=strides.get(run_number, 1), compact=compact
+            )
             for run_number, curves in assessment.component_curves_by_run.items()
         },
         "prescreen_only": bool(assessment.prescreen_only),
