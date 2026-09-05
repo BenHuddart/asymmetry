@@ -82,6 +82,12 @@ parameter: its weight is the remainder, :math:`1 - \sum_i f_i`, clamped to
 weights directly, so together with the derived remainder they partition the
 group's amplitude.
 
+Grouping is structural, not textual: the group's terms are read from the
+expression the parentheses denote, so extra parentheses around a group or
+around terms inside it — ``(Oscillatory * (Exponential + Gaussian){frac})``,
+``(Exponential + (Gaussian + Constant){frac})`` — are accepted and change
+neither the parameter names nor the fitted values.
+
 In the GUI fit-function builder, you do not need to type ``{frac}``. Instead,
 select two or more additive rows and press **Group as fractions**; the grouped
 terms then sit inside a single accented container, and the typeset preview

@@ -59,6 +59,28 @@ def test_roundtrip_structure_to_expression(qapp: QApplication, expression: str) 
     assert CompositeModel.from_expression(widget.expression()) is not None
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "(Oscillatory * ( Exponential + Gaussian ){frac})",
+        "(( Exponential + Gaussian ){frac} + Constant)",
+        "( Exponential + ( Gaussian + Constant ){frac} )",
+        "(( Exponential + Gaussian ){frac})",
+        "Oscillatory * ( Exponential + Gaussian ){frac}",
+    ],
+)
+def test_roundtrip_keeps_parentheses_around_a_fraction_group(
+    qapp: QApplication, expression: str
+) -> None:
+    # Extra parentheses around or inside a fraction group are structural noise
+    # the core accepts; the builder renders them and writes them back unchanged.
+    widget = _rows()
+    _seed(widget, expression)
+
+    assert parse_composite_expression(widget.expression()) == parse_composite_expression(expression)
+    assert CompositeModel.from_expression(widget.expression()) is not None
+
+
 def test_structure_returns_five_lists(qapp: QApplication) -> None:
     widget = _rows()
     _seed(widget, "Exponential + Constant")

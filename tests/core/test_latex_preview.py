@@ -59,6 +59,17 @@ def test_first_term_has_empty_separator_rest_signed() -> None:
     assert all(t.separator in (" + ", " - ") for t in terms[1:])
 
 
+def test_subtracted_parenthesised_sum_subtracts_every_term_it_holds() -> None:
+    # ``a - (b + c)`` is ``a - b - c``; the terms come from the expression tree,
+    # which carries that sign down into the bracket, so the preview agrees with
+    # what the model evaluates.
+    model = CompositeModel.from_expression("Exponential - (Gaussian + Constant)")
+    terms = model.latex_terms()
+
+    assert [t.separator for t in terms] == ["", " - ", " - "]
+    _assert_mathtext_safe(model.latex_string())
+
+
 def test_single_multiplicative_chain_is_one_term() -> None:
     model = CompositeModel.from_expression("Exponential * Gaussian * Oscillatory")
     assert len(model.latex_terms()) == 1
