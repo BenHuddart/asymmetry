@@ -34,11 +34,21 @@ none); the survivor is fixed only if every folded entry was fixed; the survivor
 keeps its own bounds.  Renamed survivors are renamed, folded-away entries are
 removed, and every other entry passes through untouched, in order.
 
-**Known limit.**  A product whose factors include a sum has *no* surviving leaf
-scale (the sum's terms carry the scale), so a legacy leaf amplitude there — only
-reachable by the degenerate spelling ``(A + B) * C * D``, where the old rule
-suppressed just the factor adjacent to the group — is dropped rather than
-distributed over the sum's terms.
+A product whose factors include a sum has *no* surviving leaf scale (the sum's
+terms carry the scale instead) — only reachable by the degenerate spelling
+``(A + B) * C * D``, where the old rule suppressed just the factor adjacent to
+the group.  There, the product of the present legacy leaf amplitudes on the
+product's *other* factors (``k``) is distributed onto the sum's terms rather
+than dropped: each term's own surviving scale — a leaf's own amplitude, a
+nested product's survivor, or (recursively) a nested fraction group's
+amplitude — is multiplied by ``k``, and ``k``'s relative uncertainty adds in
+quadrature to that scale's own.  Fixedness of the scaled entries is unchanged:
+they were the user's own parameters, and ``k`` is simply absorbed into their
+value.  A fraction group's terms are represented by its single group
+amplitude, which alone absorbs ``k``.  When two sum factors of the same
+product both carry scales (the degenerate ``(A + B) * (C + D)``), only the
+first sum receives the distribution — the shape is already degenerate, and one
+target is enough to stay deterministic.
 """
 
 from __future__ import annotations
@@ -52,7 +62,9 @@ from asymmetry.core.fitting.composite import (
     CompositeModel,
     ExprLeaf,
     ExprProduct,
+    ExprSum,
     iter_nodes,
+    leaf_indices,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
@@ -269,10 +281,25 @@ class _Fold:
 
 
 @dataclass(frozen=True)
+class _Distribution:
+    """A product's leaf amplitudes with no surviving scale, spread over a sum.
+
+    ``k_names`` are the legacy names of the product's leaf factors that lost
+    their scale to a sum factor and have no current counterpart; their product
+    (``k``) multiplies each of ``target_names`` — the current name of every
+    scale the sum's terms carry.
+    """
+
+    k_names: tuple[str, ...]
+    target_names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _FoldPlan:
-    """Every rename/fold/drop the saved amplitudes of one model need."""
+    """Every rename/fold/distribute/drop the saved amplitudes of one model need."""
 
     folds: tuple[_Fold, ...]
+    distributions: tuple[_Distribution, ...]
     dropped: frozenset[str]
 
     def fold_by_legacy_name(self) -> dict[str, _Fold]:
@@ -300,6 +327,28 @@ def _scale_names(model: CompositeModel) -> tuple[dict[int, str], dict[int, str]]
     return legacy, current
 
 
+def _sum_target_names(
+    node: ExprSum, current: Mapping[int, str], model: CompositeModel
+) -> tuple[str, ...]:
+    """Return the current scale name(s) that carry ``node``'s terms.
+
+    A fraction-group sum is scaled by its single group amplitude. A plain
+    sum's terms each keep their own current scale — a leaf's own amplitude, a
+    nested product's survivor (``current`` already reflects that survivor, so
+    filtering the term's leaves against it is enough), or, recursively, a
+    nested fraction group's amplitude.
+    """
+    if node.fraction_group is not None:
+        return (model._fraction_group_amplitude_name(node.fraction_group),)
+    names: list[str] = []
+    for term in node.terms:
+        if isinstance(term, ExprSum):
+            names.extend(_sum_target_names(term, current, model))
+        else:
+            names.extend(current[index] for index in leaf_indices(term) if index in current)
+    return tuple(names)
+
+
 def _fold_plan(model: CompositeModel) -> _FoldPlan:
     """Pair legacy amplitude names with the names the model exposes now."""
     legacy, current = _scale_names(model)
@@ -307,6 +356,8 @@ def _fold_plan(model: CompositeModel) -> _FoldPlan:
     # Every surviving scale starts paired with its own component; a product then
     # hands its survivor the scales of the factors the policy suppressed.
     contributors: dict[int, list[int]] = {index: [index] for index in current}
+    distributions: list[_Distribution] = []
+    distributed_sources: set[int] = set()
     for node in iter_nodes(model.expression_tree()):
         if not isinstance(node, ExprProduct):
             continue
@@ -315,6 +366,17 @@ def _fold_plan(model: CompositeModel) -> _FoldPlan:
         suppressed = [index for index in leaves if index not in current and index in legacy]
         if survivors:
             contributors[survivors[0]] = [survivors[0], *suppressed]
+            continue
+        if not suppressed:
+            continue
+        sums = [factor for factor in node.factors if isinstance(factor, ExprSum)]
+        if not sums:
+            continue
+        targets = _sum_target_names(sums[0], current, model)
+        if not targets:
+            continue
+        distributions.append(_Distribution(tuple(legacy[index] for index in suppressed), targets))
+        distributed_sources.update(suppressed)
 
     folds: list[_Fold] = []
     for index, sources in contributors.items():
@@ -323,10 +385,11 @@ def _fold_plan(model: CompositeModel) -> _FoldPlan:
             folds.append(_Fold(current[index], legacy_names))
 
     contributing = {source for sources in contributors.values() for source in sources}
+    contributing |= distributed_sources
     dropped = frozenset(
         name for index, name in legacy.items() if index not in contributing and name not in current
     )
-    return _FoldPlan(tuple(folds), dropped)
+    return _FoldPlan(tuple(folds), tuple(distributions), dropped)
 
 
 def _carries_legacy_names(model: CompositeModel, names: Iterable[str]) -> bool:
@@ -382,8 +445,10 @@ def fold_legacy_product_amplitude_values(
 
     Each surviving amplitude takes the product of the legacy amplitude values
     present for its product's factors; folded-away and dropped keys are removed.
-    Every other key passes through untouched.  A no-op (a shallow copy) when the
-    keys already match the model's parameters.
+    A product with no surviving leaf scale instead distributes the product of
+    its present legacy leaf values onto the sum's own surviving scales (see the
+    module docstring). Every other key passes through untouched.  A no-op (a
+    shallow copy) when the keys already match the model's parameters.
     """
     if not _carries_legacy_names(model, values):
         return dict(values)
@@ -397,6 +462,16 @@ def fold_legacy_product_amplitude_values(
         for name in present:
             folded.pop(name, None)
         folded[fold.new_name] = _folded_value([_coerce_float(values[name]) for name in present])
+    for distribution in plan.distributions:
+        present = [name for name in distribution.k_names if name in values]
+        if not present:
+            continue
+        for name in present:
+            folded.pop(name, None)
+        k = _folded_value([_coerce_float(values[name]) for name in present])
+        for target in distribution.target_names:
+            if target in folded:
+                folded[target] = folded[target] * k
     return folded
 
 
@@ -433,6 +508,41 @@ def _folded_entry(fold: _Fold, present: Sequence[dict]) -> dict:
     return folded
 
 
+def _distributed_entry(
+    entry: dict, distribution: _Distribution, entry_by_name: Mapping[str, dict]
+) -> dict:
+    """Scale ``entry`` — a distribution target — by the product of its ``k`` factors.
+
+    The target's own fixedness is left untouched: it was the user's own
+    parameter, and ``k`` is absorbed into its value. Relative uncertainties
+    (the target's own and each present ``k`` factor's) add in quadrature.
+    """
+    k_entries = [entry_by_name[name] for name in distribution.k_names if name in entry_by_name]
+    if not k_entries:
+        return entry
+
+    own_value = _coerce_float(entry.get("value", 0.0))
+    k_values = [_coerce_float(k_entry.get("value", 0.0)) for k_entry in k_entries]
+    value = own_value * _folded_value(k_values)
+
+    distributed = dict(entry)
+    distributed["value"] = value
+    own_uncertainty = (
+        None if entry.get("uncertainty") is None else _coerce_float(entry["uncertainty"])
+    )
+    k_uncertainties = [
+        None if k_entry.get("uncertainty") is None else _coerce_float(k_entry["uncertainty"])
+        for k_entry in k_entries
+    ]
+    pairs = [(own_value, own_uncertainty), *zip(k_values, k_uncertainties, strict=True)]
+    uncertainty = _folded_uncertainty(value, pairs)
+    if uncertainty is not None or "uncertainty" in distributed:
+        distributed["uncertainty"] = uncertainty
+    if "uncertainty_asymmetric" in distributed:
+        distributed["uncertainty_asymmetric"] = None
+    return distributed
+
+
 def fold_legacy_product_amplitude_entries(
     model: CompositeModel, parameters: list[dict]
 ) -> list[dict]:
@@ -441,9 +551,11 @@ def fold_legacy_product_amplitude_entries(
     Each entry carries at least ``name`` and ``value`` plus metadata
     (``fixed``/``min``/``max``/``uncertainty``/``type``/``bounds``).  The
     survivor's entry keeps its own bounds and takes the folded value, fixedness
-    and uncertainty; folded-away entries are removed; every other entry passes
-    through untouched, preserving order.  A no-op (a shallow copy) when the names
-    already match the model's parameters.
+    and uncertainty; folded-away entries are removed; a distribution target
+    keeps its own bounds and fixedness but has its value (and uncertainty)
+    scaled by its product's leftover legacy amplitudes; every other entry
+    passes through untouched, preserving order.  A no-op (a shallow copy) when
+    the names already match the model's parameters.
     """
     entry_by_name: dict[str, dict] = {}
     for entry in parameters:
@@ -454,6 +566,12 @@ def fold_legacy_product_amplitude_entries(
 
     plan = _fold_plan(model)
     fold_by_name = plan.fold_by_legacy_name()
+    k_names = {name for distribution in plan.distributions for name in distribution.k_names}
+    distribution_by_target = {
+        target: distribution
+        for distribution in plan.distributions
+        for target in distribution.target_names
+    }
 
     folded: list[dict] = []
     emitted: set[str] = set()
@@ -462,18 +580,24 @@ def fold_legacy_product_amplitude_entries(
             folded.append(entry)
             continue
         name = str(entry.get("name", ""))
-        if name in plan.dropped:
+        if name in plan.dropped or name in k_names:
             continue
         fold = fold_by_name.get(name)
         if fold is None:
-            folded.append(dict(entry))
-            continue
-        if fold.new_name in emitted:
-            # A later factor of a product already folded into its survivor.
-            continue
-        emitted.add(fold.new_name)
-        present = [entry_by_name[legacy] for legacy in fold.legacy_names if legacy in entry_by_name]
-        folded.append(_folded_entry(fold, present))
+            base = dict(entry)
+        else:
+            if fold.new_name in emitted:
+                # A later factor of a product already folded into its survivor.
+                continue
+            emitted.add(fold.new_name)
+            present = [
+                entry_by_name[legacy] for legacy in fold.legacy_names if legacy in entry_by_name
+            ]
+            base = _folded_entry(fold, present)
+        distribution = distribution_by_target.get(base["name"])
+        folded.append(
+            _distributed_entry(base, distribution, entry_by_name) if distribution else base
+        )
     return folded
 
 
@@ -488,25 +612,34 @@ def fold_legacy_product_amplitude_set(
     :func:`fold_legacy_product_amplitude_entries`, for the fit results cached by
     the wizards (whose uncertainties live beside the parameters rather than on
     them).  The survivor keeps its own bounds, ``expr``, link group and tie, and
-    is fixed only if every parameter folded into it was.  Returns the inputs
-    unchanged when the names already match the model's parameters.
+    is fixed only if every parameter folded into it was.  A distribution target
+    keeps its own bounds, fixedness, ``expr``, link group and tie, with its
+    value (and uncertainty) scaled by its product's leftover legacy amplitudes.
+    Returns the inputs unchanged when the names already match the model's
+    parameters.
     """
     if not _carries_legacy_names(model, parameter_set.names):
         return parameter_set, dict(uncertainties)
 
     plan = _fold_plan(model)
     fold_by_name = plan.fold_by_legacy_name()
+    k_names = {name for distribution in plan.distributions for name in distribution.k_names}
+    distribution_by_target = {
+        target: distribution
+        for distribution in plan.distributions
+        for target in distribution.target_names
+    }
     parameter_by_name = {parameter.name: parameter for parameter in parameter_set}
 
     folded = ParameterSet()
     folded_uncertainties = {
         name: value
         for name, value in uncertainties.items()
-        if name not in plan.dropped and name not in fold_by_name
+        if name not in plan.dropped and name not in fold_by_name and name not in k_names
     }
     emitted: set[str] = set()
     for parameter in parameter_set:
-        if parameter.name in plan.dropped:
+        if parameter.name in plan.dropped or parameter.name in k_names:
             continue
         fold = fold_by_name.get(parameter.name)
         if fold is None:
@@ -542,6 +675,35 @@ def fold_legacy_product_amplitude_set(
         )
         if uncertainty is not None:
             folded_uncertainties[fold.new_name] = uncertainty
+
+    for target, distribution in distribution_by_target.items():
+        k_members = [
+            parameter_by_name[name] for name in distribution.k_names if name in parameter_by_name
+        ]
+        if target not in folded or not k_members:
+            continue
+        member = folded[target]
+        k_pairs = [
+            (float(k_member.value), uncertainties.get(k_member.name)) for k_member in k_members
+        ]
+        value = member.value * _folded_value([k_value for k_value, _ in k_pairs])
+        folded.add(
+            Parameter(
+                name=target,
+                value=value,
+                min=member.min,
+                max=member.max,
+                fixed=member.fixed,
+                expr=member.expr,
+                link_group=member.link_group,
+                tie=member.tie,
+            )
+        )
+        uncertainty = _folded_uncertainty(
+            value, [(member.value, folded_uncertainties.get(target)), *k_pairs]
+        )
+        if uncertainty is not None:
+            folded_uncertainties[target] = uncertainty
     return folded, folded_uncertainties
 
 
@@ -551,9 +713,10 @@ def fold_legacy_product_amplitude_names(
     """Rename/drop legacy amplitudes in a saved parameter-role name tuple.
 
     The global wizard caches ``global``/``local``/``fixed`` parameter-role
-    tuples beside its recommendation; a folded-away amplitude has no role under
-    the current policy, and a renamed survivor keeps the role it had.  Order is
-    preserved and duplicates collapse.
+    tuples beside its recommendation; a folded-away amplitude, and a
+    distribution's leftover legacy amplitude, has no role under the current
+    policy, and a renamed survivor keeps the role it had.  Order is preserved
+    and duplicates collapse.
     """
     if not _carries_legacy_names(model, names):
         return tuple(names)
@@ -561,6 +724,7 @@ def fold_legacy_product_amplitude_names(
     plan = _fold_plan(model)
     rename = {legacy: fold.new_name for fold in plan.folds for legacy in fold.legacy_names[:1]}
     folded_away = {legacy for fold in plan.folds for legacy in fold.legacy_names[1:]}
+    folded_away |= {name for distribution in plan.distributions for name in distribution.k_names}
     migrated: list[str] = []
     for name in names:
         if name in plan.dropped or name in folded_away:

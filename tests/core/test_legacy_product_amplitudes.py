@@ -166,23 +166,28 @@ def test_flat_constant_times_exponential_folds_the_chain_amplitude_into_the_back
     assert folded[0]["value"] == pytest.approx(0.3)
 
 
-def test_leaf_amplitude_beside_an_additive_group_is_dropped() -> None:
-    """Known limit: a product with a sum factor has no surviving leaf scale.
+def test_leaf_amplitude_beside_an_additive_group_is_distributed_over_the_sum_terms() -> None:
+    """A product with a sum factor has no surviving leaf scale of its own.
 
     ``(Exponential + Gaussian) * Oscillatory * Exponential`` kept ``A_4`` on the
     trailing factor under the old rule (only the factor adjacent to the group
-    lost its amplitude). The sum's terms now carry every scale, so the saved
-    ``A_4`` has nowhere to fold and is removed.
+    lost its amplitude). The sum's own terms now carry every scale, so ``A_4``
+    (``k``) is distributed onto each term's surviving amplitude instead of
+    dropped: ``A_1`` (the ``Exponential`` term) and ``A_2`` (the ``Gaussian``
+    term) are each multiplied by ``k``, with ``k``'s relative uncertainty
+    added in quadrature to each term's own. Fixedness of ``A_1``/``A_2`` is
+    unchanged — they were the user's own parameters, and ``A_4`` (fixed or
+    not) is simply absorbed into their values.
     """
     model = CompositeModel.from_expression("(Exponential + Gaussian) * Oscillatory * Exponential")
     entries = [
-        {"name": "A_1", "value": 0.2, "fixed": False},
+        {"name": "A_1", "value": 0.2, "fixed": False, "uncertainty": 0.02},
         {"name": "Lambda_1", "value": 0.5, "fixed": False},
-        {"name": "A_2", "value": 0.1, "fixed": False},
+        {"name": "A_2", "value": 0.1, "fixed": False, "uncertainty": 0.01},
         {"name": "sigma", "value": 0.3, "fixed": False},
         {"name": "frequency", "value": 3.0, "fixed": False},
         {"name": "phase", "value": 0.0, "fixed": False},
-        {"name": "A_4", "value": 1.0, "fixed": True},
+        {"name": "A_4", "value": 2.0, "fixed": False, "uncertainty": 0.2},
         {"name": "Lambda_4", "value": 0.2, "fixed": False},
     ]
 
@@ -196,6 +201,54 @@ def test_leaf_amplitude_beside_an_additive_group_is_dropped() -> None:
         "phase",
         "Lambda_4",
     ]
+    by_name = {entry["name"]: entry for entry in folded}
+    assert by_name["A_1"]["value"] == pytest.approx(0.4)  # 0.2 * 2.0
+    assert by_name["A_2"]["value"] == pytest.approx(0.2)  # 0.1 * 2.0
+    assert by_name["A_1"]["uncertainty"] == pytest.approx(0.4 * math.sqrt(0.1**2 + 0.1**2))
+    assert by_name["A_2"]["uncertainty"] == pytest.approx(0.2 * math.sqrt(0.1**2 + 0.1**2))
+    assert by_name["A_1"]["fixed"] is False
+    assert by_name["A_2"]["fixed"] is False
+    assert set(entry["name"] for entry in folded) <= set(model.param_names)
+
+
+def test_leaf_amplitude_beside_a_fraction_group_is_distributed_onto_the_group_amplitude() -> None:
+    """A fraction-group sum represents its terms with one group amplitude.
+
+    ``(Exponential + Gaussian){frac} * Oscillatory * Exponential`` has a
+    fraction-group sum as its first factor; the trailing ``Exponential``'s
+    legacy ``A_4`` is distributed onto the group amplitude alone (``A_1``,
+    named for the group's start component), not onto the group's individual
+    (already-suppressed) leaf scales.
+    """
+    model = CompositeModel.from_expression(
+        "(Exponential + Gaussian){frac} * Oscillatory * Exponential"
+    )
+    entries = [
+        {"name": "A_1", "value": 0.3, "fixed": False, "uncertainty": 0.03},
+        {"name": "Lambda_1", "value": 0.5, "fixed": False},
+        {"name": "f_Exponential", "value": 0.4, "fixed": False},
+        {"name": "sigma", "value": 0.3, "fixed": False},
+        {"name": "frequency", "value": 3.0, "fixed": False},
+        {"name": "phase", "value": 0.0, "fixed": False},
+        {"name": "A_4", "value": 2.0, "fixed": False, "uncertainty": 0.2},
+        {"name": "Lambda_4", "value": 0.2, "fixed": False},
+    ]
+
+    folded = fold_legacy_product_amplitude_entries(model, entries)
+    assert [entry["name"] for entry in folded] == [
+        "A_1",
+        "Lambda_1",
+        "f_Exponential",
+        "sigma",
+        "frequency",
+        "phase",
+        "Lambda_4",
+    ]
+    by_name = {entry["name"]: entry for entry in folded}
+    assert by_name["A_1"]["value"] == pytest.approx(0.6)  # 0.3 * 2.0
+    assert by_name["A_1"]["uncertainty"] == pytest.approx(0.6 * math.sqrt(0.1**2 + 0.1**2))
+    assert by_name["A_1"]["fixed"] is False
+    assert set(entry["name"] for entry in folded) <= set(model.param_names)
 
 
 def test_already_migrated_entries_pass_through_without_touching_the_model(
