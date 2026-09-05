@@ -2074,16 +2074,17 @@ class PlotPanel(QWidget):
         Used by the paths that change what an axis *means* (a frequency unit or
         reference switch) while nothing is plotted, and after a project restore:
         ``None`` bounds leave a held axis exactly where it is, so this only ever
-        re-applies and re-displays what the policy already holds.
+        re-applies and re-displays what the policy already holds. No quantity is
+        passed: with nothing plotted there is nothing to measure, and stamping a
+        quantity derived from no data would mask the refit the first real render
+        owes a held axis.
         """
         y_ids = [self._y_axis_id(key) for key in self._displayed_y_axes()]
         self._sync_auto_from_buttons(y_ids)
         bounds: dict[str, tuple[float, float] | None] = {"x": None}
-        quantities = {"x": self._x_quantity()}
         for axis_id in y_ids:
             bounds[axis_id] = None
-            quantities[axis_id] = self._y_quantity()
-        self._apply_limits(self._limits.resolve(bounds, quantities))
+        self._apply_limits(self._limits.resolve(bounds))
 
     def _refresh_view_for_limits(self) -> None:
         """Re-render after a policy change, or just re-apply when nothing is drawn."""

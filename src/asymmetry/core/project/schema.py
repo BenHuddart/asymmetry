@@ -1075,6 +1075,9 @@ def _migrate_v17_to_v18(data: dict) -> dict:
 
     ``quantity`` starts ``null`` everywhere: an unstamped axis adopts whatever
     the first render measures, so a restored project never spuriously refits.
+    Both ``plot_state`` and its nested ``frequency_plot_state`` always carry the
+    block afterwards — the latter is created when a pre-v18 file never had a
+    frequency panel — because the reader is strict about ``axis_limits``.
     The frequency panel's ``frequency_x_limits_by_unit`` per-mode stash is
     dropped — it existed only because the 3-decimal limit fields made unit
     round-trips lossy, and the policy now converts full-precision held values in
@@ -1140,9 +1143,13 @@ def _migrate_v17_to_v18(data: dict) -> dict:
     plot_state = migrated.get("plot_state")
     if isinstance(plot_state, dict):
         plot_state = _upgrade_panel_state(plot_state)
+        # Both panels always carry a block after the migration, including a
+        # file that never had a frequency panel: the reader is strict about
+        # ``axis_limits`` by design, so the migration is what makes it present.
         freq_state = plot_state.get("frequency_plot_state")
-        if isinstance(freq_state, dict):
-            plot_state["frequency_plot_state"] = _upgrade_panel_state(freq_state)
+        plot_state["frequency_plot_state"] = _upgrade_panel_state(
+            freq_state if isinstance(freq_state, dict) else {}
+        )
         migrated["plot_state"] = plot_state
 
     return migrated

@@ -2162,17 +2162,10 @@ class TestPlotPanel:
         """Auto X must re-render the full data in the stacked projection view.
 
         Regression (EMU Vector Polarization stacked view): display decimation
-        samples only the *visible* window, so after zooming into a narrow x-range
+        samples only the resolved window, so after zooming into a narrow x-range
         the rendered points cover just that window. Clicking Auto X widens the
-        axis back to the full range. In the stacked view ``_apply_limits`` sets
-        each subplot's xlim under the ``_syncing_limits_from_axes`` guard, which
-        suppresses the axis-limit callback that would otherwise schedule a
-        redraw — so without this fix decimation was never recomputed and the data
-        outside the old narrow window stayed missing until a manual re-render.
-        Auto X now schedules a viewport refresh itself.
-
-        (The single-axis path is not affected: there ``_apply_limits`` sets xlim
-        without the guard, so the callback already schedules the refresh.)
+        axis back to the full range, and the render resolves x before it draws,
+        so the points must come back with it.
         """
         panel = PlotPanel()
         try:
@@ -2206,19 +2199,19 @@ class TestPlotPanel:
             assert full_lo == pytest.approx(0.0, abs=0.05)
             assert full_hi == pytest.approx(32.0, abs=0.05)
 
-            # Zoom a subplot into a narrow window the way the toolbar would, then
-            # let the coalesced viewport refresh re-decimate for that window.
-            ax0 = next(iter(panel._subplot_axes_by_polarization.values()))
-            ax0.set_xlim(5.0, 8.0)
-            panel._on_axis_limits_changed(ax0)
+            # Zoom a subplot into a narrow window the way the toolbar would;
+            # the gesture's own redraw re-decimates for that window.
+            _gesture(
+                panel,
+                lambda: next(iter(panel._subplot_axes_by_polarization.values())).set_xlim(5.0, 8.0),
+            )
             qapp.processEvents()
             narrow_lo, narrow_hi = _first_subplot_extent()
             assert narrow_lo >= 4.9
             assert narrow_hi <= 8.1
 
             # Auto X: the rendered points must once again span the full window.
-            panel._auto_x_btn.setChecked(True)
-            panel._on_auto_x_button_clicked(True)
+            panel._auto_x_btn.click()
             qapp.processEvents()
             recovered_lo, recovered_hi = _first_subplot_extent()
             assert recovered_lo == pytest.approx(0.0, abs=0.05)
@@ -2524,9 +2517,10 @@ class TestPlotPanel:
         # Neutral asymmetry range, not the matplotlib (0, 1) default.
         assert lo < 0.0 < hi
         assert (lo, hi) != (0.0, 1.0)
-        # Not cached, so it does not pin a later render with real data.
-        assert "P_y" not in panel._y_limits_by_polarization
 
+        # With Auto Y on, a later render with real data frames that data rather
+        # than staying on the neutral placeholder.
+        panel._auto_y_btn.click()
         panel.plot_vector_subplots(
             {
                 "P_x": [_ds("P_x", empty=False)],
@@ -2547,25 +2541,28 @@ class TestPlotPanel:
         panel._current_polarization_axis = "P_x"
         assert panel._active_y_axis() == "P_x"
 
-    def test_switching_fit_target_swaps_cached_y_limits(self, panel: PlotPanel) -> None:
+    def test_switching_fit_target_swaps_the_y_axis_the_fields_drive(self, panel: PlotPanel) -> None:
+        """Per-subplot y memory is just a different axis id in the policy."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
         panel._subplot_axes_by_polarization = {"P_x": _FakeAxis(), "P_z": _FakeAxis()}
         panel._current_polarization_axis = "ALL"
-        # Set a Y range while P_x is the target → it caches under P_x.
+        # Type a Y range while P_x is the target → it holds under "y:P_x".
         panel.set_fit_target_projection("P_x", emit=False)
         panel._y_min.setValue(-0.2)
         panel._y_max.setValue(0.4)
-        panel._cache_current_y_limits_for_axis()
+        panel._on_y_limit_field_edited()
         # Switch target to P_z, give it its own range.
         panel.set_fit_target_projection("P_z", emit=False)
         panel._y_min.setValue(-1.0)
         panel._y_max.setValue(1.0)
-        panel._cache_current_y_limits_for_axis()
-        # Back to P_x restores its cached range, not P_z's.
+        panel._on_y_limit_field_edited()
+        assert panel._limits.held("y:P_z") == pytest.approx((-1.0, 1.0))
+        # Back to P_x surfaces its own held range, not P_z's.
         panel.set_fit_target_projection("P_x", emit=False)
         assert panel._y_min.value() == pytest.approx(-0.2)
         assert panel._y_max.value() == pytest.approx(0.4)
+        assert panel._limits.held("y:P_x") == pytest.approx((-0.2, 0.4))
 
     def test_time_view_selector_supports_group_mode(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -2837,12 +2834,12 @@ class TestPlotPanel:
         _set_pol(panel, ["P_x", "P_y", "P_z"], "P_x")
         panel._y_min.setValue(-0.1)
         panel._y_max.setValue(0.3)
-        panel._apply_limits()
+        panel._on_y_limit_field_edited()
 
         _set_pol(panel, ["P_x", "P_y", "P_z"], "P_y")
         panel._y_min.setValue(-1.0)
         panel._y_max.setValue(1.0)
-        panel._apply_limits()
+        panel._on_y_limit_field_edited()
 
         _set_pol(panel, ["P_x", "P_y", "P_z"], "P_x")
         assert panel._y_min.value() == pytest.approx(-0.1)
@@ -2981,8 +2978,8 @@ class TestPlotPanel:
 
         ax_px = _FakeAxis()
         ax_py = _FakeAxis()
-        panel._plot_datasets_on_axis(ax_px, [ds_px], "P_x")
-        panel._plot_datasets_on_axis(ax_py, [ds_py], "P_y")
+        panel._plot_datasets_on_axis(ax_px, panel._display_entries([ds_px]), "P_x", None)
+        panel._plot_datasets_on_axis(ax_py, panel._display_entries([ds_py]), "P_y", None)
 
         assert ax_px.plot_calls
         assert ax_py.plot_calls
@@ -4573,11 +4570,12 @@ class TestPlotPanel:
                 )
             ],
         }
-        panel._y_limits_by_polarization = {
-            "P_x": (-0.2, 0.4),
-            "P_y": (-0.1, 0.3),
-            "P_z": (-0.05, 0.2),
-        }
+        for axis_key, (lo, hi) in (
+            ("P_x", (-0.2, 0.4)),
+            ("P_y", (-0.1, 0.3)),
+            ("P_z", (-0.05, 0.2)),
+        ):
+            panel._limits.set_manual(panel._y_axis_id(axis_key), lo, hi)
 
         target_gle = tmp_path / "vector_all_export.gle"
 
@@ -4774,7 +4772,8 @@ class TestPlotPanel:
                     assert proj.lower().replace("_", "") in name
         assert projections_seen == {"P_x", "P_y", "P_z"}
 
-    def test_apply_limits_in_all_mode_preserves_per_axis_limits(self, panel: PlotPanel) -> None:
+    def test_apply_limits_in_all_mode_applies_one_y_per_subplot(self, panel: PlotPanel) -> None:
+        """Each subplot gets its own resolved y; the shared x goes to all of them."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -4783,25 +4782,21 @@ class TestPlotPanel:
         ax_pz = _FakeAxis()
         panel._subplot_axes_by_polarization = {"P_x": ax_px, "P_y": ax_py, "P_z": ax_pz}
         panel._current_polarization_axis = "ALL"
-        panel._y_limits_by_polarization = {
-            "P_x": (-0.2, 0.4),
-            "P_y": (-1.0, 1.0),
-            "P_z": (-0.05, 0.2),
-        }
 
-        panel._x_min.setValue(0.5)
-        panel._x_max.setValue(8.5)
-        panel._y_min.setValue(-3.0)
-        panel._y_max.setValue(4.0)
+        panel._apply_limits(
+            {
+                "x": (0.5, 8.5),
+                "y:P_x": (-0.2, 0.4),
+                "y:P_y": (-1.0, 1.0),
+                "y:P_z": (-0.05, 0.2),
+            }
+        )
 
-        panel._apply_limits()
-
-        assert panel._y_limits_by_polarization["P_x"] == pytest.approx((-0.2, 0.4))
-        assert panel._y_limits_by_polarization["P_y"] == pytest.approx((-1.0, 1.0))
-        assert panel._y_limits_by_polarization["P_z"] == pytest.approx((-0.05, 0.2))
         assert ax_px.ylim_calls[-1] == pytest.approx((-0.2, 0.4))
         assert ax_py.ylim_calls[-1] == pytest.approx((-1.0, 1.0))
         assert ax_pz.ylim_calls[-1] == pytest.approx((-0.05, 0.2))
+        for ax in (ax_px, ax_py, ax_pz):
+            assert ax.xlim_calls[-1] == pytest.approx((0.5, 8.5))
 
     def test_all_mode_y_controls_drive_selected_subplot(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -4868,12 +4863,13 @@ class TestPlotPanel:
         _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
         panel._x_min.setValue(0.0)
         panel._x_max.setValue(4.0)
+        panel._on_x_limit_field_edited()
 
-        panel._auto_y_limits()
+        panel._auto_y_btn.click()
 
-        px_limits = panel._y_limits_by_polarization["P_x"]
-        py_limits = panel._y_limits_by_polarization["P_y"]
-        pz_limits = panel._y_limits_by_polarization["P_z"]
+        px_limits = panel._limits.held("y:P_x")
+        py_limits = panel._limits.held("y:P_y")
+        pz_limits = panel._limits.held("y:P_z")
 
         assert px_limits[1] > pz_limits[1]
         assert py_limits[0] < px_limits[0]
@@ -4992,11 +4988,11 @@ class TestPlotPanel:
         _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "ALL")
 
         # A deliberate zoom (manual edit) must survive switching the ALL-mode
-        # view down to a single projection; drive the real edit path so the
-        # user-lock holds the window across the content change.
+        # view down to a single projection; drive the real edit path so x is
+        # held across the content change.
         panel._x_min.setValue(1.5)
         panel._x_max.setValue(5.5)
-        panel._on_limit_fields_edited()
+        panel._on_x_limit_field_edited()
 
         _set_pol(panel, ["ALL", "P_x", "P_y", "P_z"], "P_x")
         panel.plot_dataset(datasets_by_axis["P_x"][0])
@@ -5005,9 +5001,8 @@ class TestPlotPanel:
         assert panel._x_max.value() == pytest.approx(5.5)
         assert panel._ax.get_xlim() == pytest.approx((1.5, 5.5))
 
-    def test_stale_axis_limit_callback_does_not_reset_all_mode_x_limits(
-        self, panel: PlotPanel
-    ) -> None:
+    def test_rebuilding_all_mode_subplots_keeps_the_held_x_window(self, panel: PlotPanel) -> None:
+        """A stacked rebuild resolves x through the policy, so a held window survives."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -5043,17 +5038,17 @@ class TestPlotPanel:
 
         panel._x_min.setValue(1.2)
         panel._x_max.setValue(6.4)
-        panel._apply_limits()
+        panel._on_x_limit_field_edited()
 
-        # Rebuild ALL-mode subplots as happens when moving between datasets.
+        # Rebuild ALL-mode subplots as happens when moving between datasets:
+        # the axes objects are new, but the held window is not theirs to lose.
         panel.plot_vector_subplots(datasets_by_axis)
         assert all(stale_axis is not ax for ax in panel._subplot_axes_by_polarization.values())
 
-        # Simulate a late callback from an axis that is no longer active.
-        panel._on_axis_limits_changed(stale_axis)
-
         assert panel._x_min.value() == pytest.approx(1.2)
         assert panel._x_max.value() == pytest.approx(6.4)
+        for ax in panel._subplot_axes_by_polarization.values():
+            assert ax.get_xlim() == pytest.approx((1.2, 6.4))
 
     def test_export_vector_all_uses_subplots_sharex_when_available(
         self,

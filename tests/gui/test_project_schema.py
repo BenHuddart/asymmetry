@@ -41,12 +41,23 @@ def _minimal_state() -> dict:
         "plot_state": {
             "current_run_number": None,
             "bunch_factor": 1,
-            "x_min": 0.0,
-            "x_max": 10.0,
-            "y_min": -30.0,
-            "y_max": 30.0,
+            "axis_limits": {
+                "axes": {
+                    "x": {"auto": False, "held": [0.0, 10.0], "quantity": None},
+                    "y": {"auto": False, "held": [-30.0, 30.0], "quantity": None},
+                }
+            },
             "fit_curve": None,
             "fit_curves": {},
+            "frequency_plot_state": {
+                "plot_panel_domain": "frequency",
+                "axis_limits": {
+                    "axes": {
+                        "x": {"auto": False, "held": [0.0, 100.0], "quantity": None},
+                        "y": {"auto": False, "held": [-1.0, 10.0], "quantity": None},
+                    }
+                },
+            },
         },
         "single_fit_state": {
             "model_name": "ExponentialRelaxation",
@@ -256,6 +267,66 @@ class TestSchemaMigration:
         # full-precision held values in place instead).
         assert "frequency_x_limits_by_unit" not in freq
         assert set(freq["axis_limits"]["axes"]) == {"x", "y"}
+
+    def test_v17_migrates_to_v18_axis_limits_block(self):
+        # v18 collapses the plot panels' limit pairs, Auto flags and
+        # per-projection y cache into one per-axis Auto/Hold block.
+        state = {
+            "schema_version": 17,
+            "datasets": [],
+            "plot_state": {
+                "x_min": 1.0,
+                "x_max": 4.0,
+                "y_min": -30.0,
+                "y_max": 30.0,
+                "auto_x_enabled": True,
+                "auto_y_enabled": False,
+                "y_limits_by_polarization": {"P_x": [-0.2, 0.4], "P_y": [1.0, -1.0]},
+                "frequency_plot_state": {
+                    "plot_panel_domain": "frequency",
+                    "x_min": 0.0,
+                    "x_max": 100.0,
+                    "y_min": -1.0,
+                    "y_max": 10.0,
+                    "frequency_x_limits_by_unit": {"field_gauss:absolute": [0.0, 100.0]},
+                },
+            },
+        }
+        result = migrate_to_current(state)
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
+
+        plot_state = result["plot_state"]
+        axes = plot_state["axis_limits"]["axes"]
+        assert axes["x"] == {"auto": True, "held": [1.0, 4.0], "quantity": None}
+        assert axes["y"] == {"auto": False, "held": [-30.0, 30.0], "quantity": None}
+        # Each cached projection becomes its own y axis, inheriting Auto Y
+        # (the toggle governed every subplot then and governs them now), and an
+        # inverted pair is stored low-to-high.
+        assert axes["y:P_x"] == {"auto": False, "held": [-0.2, 0.4], "quantity": None}
+        assert axes["y:P_y"] == {"auto": False, "held": [-1.0, 1.0], "quantity": None}
+        for legacy in (
+            "x_min",
+            "x_max",
+            "y_min",
+            "y_max",
+            "auto_x_enabled",
+            "auto_y_enabled",
+            "y_limits_by_polarization",
+        ):
+            assert legacy not in plot_state
+
+        freq = plot_state["frequency_plot_state"]
+        assert freq["axis_limits"]["axes"]["x"]["held"] == [0.0, 100.0]
+        assert "frequency_x_limits_by_unit" not in freq
+
+    def test_v17_migrates_to_v18_creates_a_frequency_block_when_absent(self):
+        # The reader is strict about ``axis_limits``, so a file that never had a
+        # frequency panel still gains a complete block.
+        state = {"schema_version": 17, "datasets": [], "plot_state": {}}
+        result = migrate_to_current(state)
+        freq = result["plot_state"]["frequency_plot_state"]
+        assert set(freq["axis_limits"]["axes"]) == {"x", "y"}
+        assert freq["axis_limits"]["axes"]["x"]["auto"] is False
 
     def test_v15_migrates_to_v16_absolute_default_when_flag_off(self):
         state = {
