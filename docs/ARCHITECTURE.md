@@ -110,7 +110,7 @@ asymmetry/
 │   │   ├── initial_values_dialog.py # Per-member initial-values editor for batch fits
 │   │   └── log_panel.py      # Message / command log
 │   ├── widgets/               # Shared foundational widgets (reused across panels/windows)
-│   │   ├── axis_limits.py     # FloatLimitField, AxisLimitControls — shared numeric limit fields
+│   │   ├── axis_limits.py     # FloatLimitField, AxisLimitControls, AxisLimitPolicy — shared numeric limit fields + per-axis Auto/Hold resolver
 │   │   ├── mpl_canvas.py      # create_canvas() — shared Figure/FigureCanvasQTAgg construction
 │   │   ├── fit_run_controls.py # FitRunControls — shared Stop/Cancel button + progress bar
 │   │   └── ...                # collapsible_section.py, dock_header.py, projection_chip_bar.py, etc.
@@ -779,12 +779,12 @@ display density.
   panel applies a bounded per-trace sample cap before drawing visible points so
   large time-domain, grouped-time, and frequency-domain views do not emit every
   original sample into the canvas.
-- Decimation is viewport-aware once limits have been established. The panel
-  prefers points inside the current x-range and re-renders when the user pans,
+- Decimation is viewport-aware: the x window is resolved through
+  `asymmetry.gui.widgets.axis_limits.AxisLimitPolicy` before anything is
+  drawn, so decimation and the y bounds are both computed for the window the
+  canvas is about to show in one pass — there is no deferred viewport redraw
+  and no "one view behind" refresh. The panel re-renders when the user pans,
   zooms, presses Auto X/Auto Y, or edits axis limits directly.
-- Viewport-triggered redraws are deferred onto the Qt event loop and coalesced
-  so paired `xlim_changed`/`ylim_changed` callbacks do not recursively trigger
-  repeated redraws.
 - Figure export intentionally bypasses this display-density policy. Export data
   is rebuilt from the full analysis arrays and fit payloads so saved `.dat`,
   `.fit`, and GLE/PDF/EPS outputs preserve the underlying resolution.

@@ -244,11 +244,11 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 17 for explicit grouping-profile assignment —
-    # every dataset records the profile it follows, and a released dataset
-    # additionally keeps its base profile beside its ``grouping_overrides``
-    # (v16->v17). A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 17
+    # Baseline guard: bumped to 18 for the per-axis Auto/Hold ``axis_limits``
+    # block, which replaces the plot panels' x/y limit pairs, Auto flags and
+    # per-projection y cache (v17->v18). A future accidental bump must
+    # consciously update this literal.
+    assert CURRENT_SCHEMA_VERSION == 18
 
 
 def test_restore_state_tolerates_absent_moments():

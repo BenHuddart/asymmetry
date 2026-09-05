@@ -6,6 +6,11 @@ subsystems or days.
 
 ## Active
 
+### Axis limits: one per-axis Auto/Hold policy for every plot representation
+
+Status: implemented 2026-09-05; single PR on `feat/axis-limit-policy`
+awaiting review. Full plan: [docs/plans/axis-limit-policy.md](plans/axis-limit-policy.md).
+
 ### Fit Wizard: matched-apodisation scan for heavily damped lines
 
 Status: plan agreed with maintainer (2026-09-04); single PR on

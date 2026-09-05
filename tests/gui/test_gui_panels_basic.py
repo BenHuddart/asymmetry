@@ -829,8 +829,8 @@ def test_frequency_shift_missing_field_falls_back_untransformed(qapp: QApplicati
     assert any("untransformed" in rec.message for rec in caplog.records)
 
 
-def test_frequency_axis_mode_limit_stash_round_trips(qapp: QApplication) -> None:
-    """Each unit:mode keeps its own x-window; switching back restores it."""
+def test_frequency_axis_mode_switch_converts_the_held_window(qapp: QApplication) -> None:
+    """A held x window is converted between axis modes, never refitted or stashed."""
     panel = PlotPanel(domain="frequency")
     if not getattr(panel, "_has_mpl", False):
         pytest.skip("matplotlib backend not available in this environment")
@@ -841,16 +841,16 @@ def test_frequency_axis_mode_limit_stash_round_trips(qapp: QApplication) -> None
     panel.set_frequency_axis_mode("absolute")
     panel.set_view_limits(5.0, 25.0, 0.0, 1.5)
     panel.set_frequency_axis_mode("shift")
-    panel.set_view_limits(-1.0, 1.0, 0.0, 1.5)
+    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
+    reference = _gamma_mhz(100.0)
+    # The fields show 3 decimals; the policy holds the exact converted pair.
+    assert (x_min, x_max) == pytest.approx((5.0 - reference, 25.0 - reference), abs=5e-4)
+    assert not panel._auto_x_btn.isChecked()
 
-    # Back to absolute restores its stashed window, not the shift one.
+    # Back to absolute converts the same window back, at full precision.
     panel.set_frequency_axis_mode("absolute")
     x_min, x_max, _y_min, _y_max = panel.get_view_limits()
     assert (x_min, x_max) == pytest.approx((5.0, 25.0))
-
-    panel.set_frequency_axis_mode("shift")
-    x_min, x_max, _y_min, _y_max = panel.get_view_limits()
-    assert (x_min, x_max) == pytest.approx((-1.0, 1.0))
 
 
 def test_frequency_larmor_marker_sits_at_zero_in_shift_mode(qapp: QApplication) -> None:

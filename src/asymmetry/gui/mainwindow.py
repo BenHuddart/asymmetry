@@ -79,7 +79,6 @@ from __future__ import annotations
 import copy
 import functools
 import hashlib
-import math
 import os
 import time
 import weakref
@@ -755,11 +754,9 @@ class MainWindow(QMainWindow):
         self._fourier_apodisation_suggest_active = False  # True while apodisation suggestion runs
         # In-flight (run, rep) lazy-FFT recompute keys: coalesce duplicate
         # requests and, via the _frequency_recompute_active property, drive the
-        # overlay/idle state. _frequency_recompute_limits keeps the latest
-        # requested view limits per key (so a re-request refreshes them), and
-        # _frequency_display_key (the displayed (run, rep)) guards stale redraws.
+        # overlay/idle state. _frequency_display_key (the displayed (run, rep))
+        # guards stale redraws.
         self._frequency_recompute_inflight: set[tuple[int, RepresentationType]] = set()
-        self._frequency_recompute_limits: dict[tuple[int, RepresentationType], tuple] = {}
         # Callbacks parked until a set of in-flight (run, rep) recomputes land
         # (see _await_frequency_recomputes).
         self._frequency_recompute_waiters: list[tuple[set, Callable[[], None]]] = []
@@ -767,14 +764,6 @@ class MainWindow(QMainWindow):
         # True while the frequency view shows a multi-run overlay (a comparison
         # display with no single fit/moments target). Gates single-fit blocking.
         self._frequency_overlay_active: bool = False
-        # View captured just before leaving an active overlay (Overlay
-        # unchecked, or the selection dropped below two runs): (sorted run
-        # numbers, x-limits, y-limits). _render_frequency_overlay restores it
-        # when the same run combination is re-overlaid, instead of letting the
-        # panel's first-paint auto-framing discard the prior window.
-        self._frequency_overlay_view_cache: (
-            tuple[tuple[int, ...], tuple[float, float], tuple[float, float]] | None
-        ) = None
         # Set when a project open is cancelled mid-prefetch: the loaded set is
         # known-incomplete, so saving would silently drop the unloaded runs.
         self._project_load_incomplete = False
@@ -920,7 +909,6 @@ class MainWindow(QMainWindow):
         self._ui_manager.ui_scale_changed.connect(self._on_ui_scale_changed)
         self._connect_actions()
         self._ui_manager.restore_settings()
-        self._restore_plot_ranges_from_settings()
         # Surface the inspector deck for the initial representation (the app
         # lands in the default F-B view without firing a view-change signal).
         self._apply_inspector_for_domain(self._plot_workspace.active_view())
@@ -1581,13 +1569,12 @@ class MainWindow(QMainWindow):
         try:
             self._set_view_bunch_spin_value(int(mode["bunch_factor"]))
             self._apply_bunch_factor_to_context(int(mode["bunch_factor"]))
-            if hasattr(self._plot_panel, "set_view_limits"):
-                self._plot_panel.set_view_limits(
-                    float(mode["x_min"]),
-                    float(mode["x_max"]),
-                    float(mode["y_min"]),
-                    float(mode["y_max"]),
-                )
+            self._plot_panel.set_view_limits(
+                float(mode["x_min"]),
+                float(mode["x_max"]),
+                float(mode["y_min"]),
+                float(mode["y_max"]),
+            )
         finally:
             self._applying_view_mode = False
 
@@ -7249,46 +7236,18 @@ class MainWindow(QMainWindow):
             if restored:
                 self._frequency_cache(RepresentationType.FREQ_FFT)[run_number] = restored
 
-    def _sync_frequency_plot_for_run(
-        self,
-        run_number: int | None,
-        *,
-        preserve_x_limits: bool = False,
-    ) -> None:
+    def _sync_frequency_plot_for_run(self, run_number: int | None) -> None:
         """Render the cached frequency spectra for *run_number*, or clear the tab."""
         # This is the single-run render path; any prior multi-run overlay is gone.
         self._frequency_overlay_active = False
-        preserved_x_limits: tuple[float, float] | None = None
-        preserved_y_limits: tuple[float, float] | None = None
-        if hasattr(self._frequency_plot_panel, "get_view_limits"):
-            current_dataset = getattr(self._frequency_plot_panel, "_current_dataset", None)
-            current_run_number: int | None = None
-            if current_dataset is not None:
-                try:
-                    current_run_number = int(current_dataset.run_number)
-                except (TypeError, ValueError):
-                    current_run_number = None
-            same_run = run_number is not None and current_run_number == int(run_number)
-            if preserve_x_limits or same_run:
-                x_min, x_max, y_min, y_max = self._frequency_plot_panel.get_view_limits()
-                preserved_x_limits = (float(x_min), float(x_max))
-                preserved_y_limits = (float(y_min), float(y_max))
-
         if run_number is None:
             # Record that nothing is displayed so an async recompute completing
             # for a switched-away run does not redraw over the current view.
             self._frequency_display_key = None
-            # Transient blank: browsing onto a run with no spectrum must not
-            # forfeit the user's chosen window — keep the frame latches so the
-            # next compute (below / on the recompute completion) holds them.
-            self._frequency_plot_panel.clear(preserve_view_state=True)
-            if preserved_x_limits is not None and preserved_y_limits is not None:
-                self._frequency_plot_panel.set_view_limits(
-                    preserved_x_limits[0],
-                    preserved_x_limits[1],
-                    preserved_y_limits[0],
-                    preserved_y_limits[1],
-                )
+            # A blank canvas never touches the panel's held axis limits, so
+            # browsing onto a run with no spectrum keeps the user's window for
+            # the next compute.
+            self._frequency_plot_panel.clear()
             self._refresh_spectral_moments()
             return
 
@@ -7317,39 +7276,24 @@ class MainWindow(QMainWindow):
                 # must not start FFTs.
                 target = self._seed_fft_recipe_for_view(int(run_number))
             if target is None:
-                self._render_frequency_spectra(
-                    int(run_number), rep_type, spectra, preserved_x_limits, preserved_y_limits
-                )
+                self._render_frequency_spectra(int(run_number), rep_type, spectra)
                 return
         # A recipe recompute (an FFT) is due: run it off the GUI thread behind
         # the panel overlay so the window stays responsive on project open.
-        self._start_async_frequency_recompute(
-            int(run_number), rep_type, target, preserved_x_limits, preserved_y_limits
-        )
+        self._start_async_frequency_recompute(int(run_number), rep_type, target)
 
     def _render_frequency_spectra(
         self,
         run_number: int,
         rep_type: RepresentationType,
         spectra: list,
-        preserved_x_limits: tuple[float, float] | None,
-        preserved_y_limits: tuple[float, float] | None,
     ) -> None:
         """Draw *spectra* (or clear + status when empty) on the frequency tab."""
         if not spectra:
             # Transient empty-spectrum render (e.g. a run whose recipe produced
-            # nothing): keep the frame latches so a later compute of a real
-            # spectrum inherits the user's window rather than reframing.
-            self._frequency_plot_panel.clear(
-                message=self._frequency_empty_prompt(rep_type), preserve_view_state=True
-            )
-            if preserved_x_limits is not None and preserved_y_limits is not None:
-                self._frequency_plot_panel.set_view_limits(
-                    preserved_x_limits[0],
-                    preserved_x_limits[1],
-                    preserved_y_limits[0],
-                    preserved_y_limits[1],
-                )
+            # nothing): the prompt is a blank canvas, which leaves the panel's
+            # held limits alone, so a later compute inherits the user's window.
+            self._frequency_plot_panel.clear(message=self._frequency_empty_prompt(rep_type))
             self._set_fourier_status(
                 f"No {self._frequency_status_name(rep_type)} computed for run {run_number}."
             )
@@ -7363,12 +7307,10 @@ class MainWindow(QMainWindow):
             # spectrum is cached. Entering the frequency domain always re-syncs
             # from the cache (`_on_plot_workspace_view_changed` routes
             # "frequency"/"maxent" through `_sync_frequency_plot_for_current_
-            # dataset`), so the panel repaints correctly on entry; because the
-            # panel keeps showing the previous run's pixels until then, the
-            # same-run/preserve-limits logic on the next sync still compares
-            # against what is genuinely on screen. The moments readout stays in
-            # step with those pixels (it describes the displayed spectrum), so
-            # it is refreshed here exactly as the painting path below does.
+            # dataset`), so the panel repaints correctly on entry. The moments
+            # readout stays in step with the displayed pixels (it describes the
+            # displayed spectrum), so it is refreshed here exactly as the
+            # painting path below does.
             self._refresh_spectral_moments()
             return
 
@@ -7377,23 +7319,6 @@ class MainWindow(QMainWindow):
         else:
             self._frequency_plot_panel.plot_datasets(spectra)
 
-        # Restore the caller's preserved window only when the draw did NOT
-        # first-paint frame. A same-run recompute keeps the user's window (X and
-        # Y both — recomputing a spectrum must never reframe); a genuine first
-        # paint keeps its freshly computed smart framing instead of being
-        # overwritten by stale pre-compute defaults. view_reframed_on_last_draw()
-        # reports what the draw actually did, which — unlike predicting from the
-        # pre-draw latch — stays correct after a transient preserve_view_state
-        # clear() carries a stale identity across a run switch.
-        reframed = getattr(self._frequency_plot_panel, "view_reframed_on_last_draw", None)
-        did_reframe = bool(reframed()) if callable(reframed) else False
-        if not did_reframe and preserved_x_limits is not None and preserved_y_limits is not None:
-            self._frequency_plot_panel.set_view_limits(
-                preserved_x_limits[0],
-                preserved_x_limits[1],
-                preserved_y_limits[0],
-                preserved_y_limits[1],
-            )
         if (
             hasattr(self, "_plot_workspace")
             and self._plot_workspace.active_domain() == "frequency"
@@ -7422,24 +7347,18 @@ class MainWindow(QMainWindow):
         run_number: int,
         rep_type: RepresentationType,
         target: tuple[object, object],
-        preserved_x_limits: tuple[float, float] | None,
-        preserved_y_limits: tuple[float, float] | None,
     ) -> None:
         """Recompute one run's spectrum off-thread, overlaying the panel."""
         representation, run = target
         key = (run_number, rep_type)
         name = self._frequency_status_name(rep_type)
-        # Always record the latest requested view limits for this key, so a
-        # duplicate request (run switched away and back) refreshes them even when
-        # an earlier recompute is still in flight; the completion reads them here.
-        self._frequency_recompute_limits[key] = (preserved_x_limits, preserved_y_limits)
         # Overlay + status reflect the just-requested run even if an earlier
         # run's recompute is still finishing.
         self._frequency_overlay.show_message(f"Computing {name} for run {run_number}…")
         self._set_status_state(f"Computing {name}…")
         if key in self._frequency_recompute_inflight:
-            # This exact run/rep is already recomputing; the overlay + refreshed
-            # limits above are enough.
+            # This exact run/rep is already recomputing; the overlay + status
+            # above are enough.
             return
         self._frequency_recompute_inflight.add(key)
         started_at = time.perf_counter()
@@ -7484,9 +7403,6 @@ class MainWindow(QMainWindow):
     ) -> None:
         key = (run_number, rep_type)
         self._frequency_recompute_inflight.discard(key)
-        preserved_x_limits, preserved_y_limits = self._frequency_recompute_limits.pop(
-            key, (None, None)
-        )
         if getattr(representation, "recipe", None) != recipe_at_start:
             # Superseded: the recipe changed while the worker ran (an explicit
             # Compute FFT re-recipes and invalidates the representation), so
@@ -7533,9 +7449,7 @@ class MainWindow(QMainWindow):
         # Only redraw if this exact (run, rep) is still displayed — a rapid run
         # switch or representation toggle may have moved on while in flight.
         if self._frequency_display_key == key:
-            self._render_frequency_spectra(
-                run_number, rep_type, resolved, preserved_x_limits, preserved_y_limits
-            )
+            self._render_frequency_spectra(run_number, rep_type, resolved)
             if resolved:
                 # An auto/lazy compute otherwise leaves whatever footer status
                 # preceded it (often the hidden-sync "No FFT computed for run
@@ -7589,15 +7503,10 @@ class MainWindow(QMainWindow):
     ) -> None:
         key = (run_number, rep_type)
         self._frequency_recompute_inflight.discard(key)
-        preserved_x_limits, preserved_y_limits = self._frequency_recompute_limits.pop(
-            key, (None, None)
-        )
         spectra = self._frequency_recompute_failed(run_number, rep_type, representation, message)
         self._finish_frequency_recompute_ui()
         if self._frequency_display_key == key:
-            self._render_frequency_spectra(
-                run_number, rep_type, spectra, preserved_x_limits, preserved_y_limits
-            )
+            self._render_frequency_spectra(run_number, rep_type, spectra)
         self._notify_frequency_recompute_done(key)
 
     def _ensure_frequency_spectra_for_runs_async(
@@ -8041,11 +7950,6 @@ class MainWindow(QMainWindow):
                 self._render_frequency_overlay(run_numbers)
                 self._update_grouping_hint()
                 return
-        if self._frequency_overlay_active:
-            # Leaving an active overlay: remember its view so re-overlaying
-            # the same run combination restores the window rather than
-            # re-framing.
-            self._cache_frequency_overlay_view()
         run_number = (
             None if self._current_dataset is None else int(self._current_dataset.run_number)
         )
@@ -8090,33 +7994,6 @@ class MainWindow(QMainWindow):
         if representation is not None and representation.primary is not None:
             return [representation.primary]
         return []
-
-    def _cache_frequency_overlay_view(self) -> None:
-        """Remember the current view limits for the active overlay's run set.
-
-        Read by :meth:`_render_frequency_overlay`, which restores this window
-        when the same combination of runs is re-overlaid — otherwise every
-        overlay <-> single-run transition reads as new plotted content to the
-        panel's first-paint auto-framing, discarding the prior window even
-        though nothing about the overlaid runs actually changed.
-        """
-        panel = self._frequency_plot_panel
-        if not hasattr(panel, "get_view_limits"):
-            return
-        run_numbers: list[int] = []
-        for dataset in getattr(panel, "_current_datasets", None) or ():
-            try:
-                run_numbers.append(int(dataset.run_number))
-            except (TypeError, ValueError, AttributeError):
-                return
-        if len(run_numbers) <= 1:
-            return
-        x_min, x_max, y_min, y_max = panel.get_view_limits()
-        self._frequency_overlay_view_cache = (
-            tuple(sorted(run_numbers)),
-            (float(x_min), float(x_max)),
-            (float(y_min), float(y_max)),
-        )
 
     def _render_frequency_overlay(self, run_numbers: list[int]) -> None:
         """Overlay the spectra of every selected run on one axis, computing as needed.
@@ -8196,19 +8073,7 @@ class MainWindow(QMainWindow):
         # over the overlay.
         self._frequency_display_key = None
         self._frequency_overlay_active = True
-        self._render_frequency_spectra(rendered_runs[0], rep_type, spectra, None, None)
-        cached_view = self._frequency_overlay_view_cache
-        if (
-            cached_view is not None
-            and cached_view[0] == tuple(sorted(rendered_runs))
-            and hasattr(self._frequency_plot_panel, "set_view_limits")
-        ):
-            # Re-overlaying the same combination: restore the window the
-            # panel's fresh first-paint just auto-framed over.
-            x_limits, y_limits = cached_view[1], cached_view[2]
-            self._frequency_plot_panel.set_view_limits(
-                x_limits[0], x_limits[1], y_limits[0], y_limits[1]
-            )
+        self._render_frequency_spectra(rendered_runs[0], rep_type, spectra)
         if missing:
             name = self._frequency_status_name(rep_type)
             if rep_type == RepresentationType.FREQ_FFT:
@@ -9155,7 +9020,7 @@ class MainWindow(QMainWindow):
             ):
                 self._sync_frequency_plot_for_current_dataset()
             else:
-                self._sync_frequency_plot_for_run(active_run, preserve_x_limits=True)
+                self._sync_frequency_plot_for_run(active_run)
             self._plot_workspace.set_active_view("frequency")
             self._show_panel("fourier")
         elif self._frequency_domain_is_active():
@@ -9694,7 +9559,7 @@ class MainWindow(QMainWindow):
             already_active = self._plot_workspace.active_view() == target_view
             self._plot_workspace.set_active_view(target_view)
             if already_active and target_view == "maxent":
-                self._sync_frequency_plot_for_run(int(run_number), preserve_x_limits=True)
+                self._sync_frequency_plot_for_run(int(run_number))
             elif already_active and target_view == "reconstruction":
                 self._render_maxent_reconstruction_plot()
             self._show_panel("fourier")
@@ -15675,21 +15540,6 @@ class MainWindow(QMainWindow):
                     emit_signal=False,
                     redraw=True,
                 )
-                if hasattr(self._plot_panel, "get_view_limits") and hasattr(
-                    self._plot_panel, "set_view_limits"
-                ):
-                    x_min, x_max, y_min, y_max = self._plot_panel.get_view_limits()
-                    fit_min = float(min(fit_range[0], fit_range[1]))
-                    fit_max = float(max(fit_range[0], fit_range[1]))
-                    widened_x_min = min(float(x_min), fit_min)
-                    widened_x_max = max(float(x_max), fit_max)
-                    if widened_x_min != x_min or widened_x_max != x_max:
-                        self._plot_panel.set_view_limits(
-                            widened_x_min,
-                            widened_x_max,
-                            float(y_min),
-                            float(y_max),
-                        )
         # A restored frequency view with no computed spectrum keeps its compute
         # prompt (drawn by _render_frequency_spectra) rather than silently
         # bouncing to the time view — the user chose the frequency domain.
@@ -15908,7 +15758,6 @@ class MainWindow(QMainWindow):
         # Drop any stale in-flight recompute bookkeeping; a cleared session has
         # nothing displayed and the overlay must not survive into it.
         self._frequency_recompute_inflight = set()
-        self._frequency_recompute_limits = {}
         self._frequency_recompute_waiters = []
         self._frequency_display_key = None
         if hasattr(self, "_frequency_overlay"):
@@ -15950,6 +15799,11 @@ class MainWindow(QMainWindow):
         # routes to IntegralScanPanel.clear()); reset() additionally restores
         # the scan view's default baseline model.
         self._alc_scan_view.reset()
+        # Project teardown is the one moment held axis limits are forgotten:
+        # a blank canvas or a run switch keeps them, so without this the next
+        # project would open inside the previous one's window.
+        self._plot_panel.reset_view_limits()
+        self._frequency_plot_panel.reset_view_limits()
         if self._global_parameter_fit_window is not None:
             self._global_parameter_fit_window.close()
             self._global_parameter_fit_window = None
@@ -16107,65 +15961,8 @@ class MainWindow(QMainWindow):
             panel = getattr(self, attr, None)
             if panel is not None and hasattr(panel, "shutdown_workers"):
                 panel.shutdown_workers()
-        # Persist only a fully finite limit set: one NaN/Inf written here is
-        # replayed into Axes.set_xlim/set_ylim on every subsequent startup,
-        # which raises and kills the app before the window appears. Skipping
-        # the write keeps the previous session's good ranges instead.
-        if hasattr(self, "_plot_panel") and hasattr(self._plot_panel, "get_view_limits"):
-            limits = self._plot_panel.get_view_limits()
-            if all(math.isfinite(float(v)) for v in limits):
-                x_min, x_max, y_min, y_max = limits
-                self._settings.setValue("plot/time_x_min", float(x_min))
-                self._settings.setValue("plot/time_x_max", float(x_max))
-                self._settings.setValue("plot/time_y_min", float(y_min))
-                self._settings.setValue("plot/time_y_max", float(y_max))
-        if hasattr(self, "_frequency_plot_panel") and hasattr(
-            self._frequency_plot_panel, "get_view_limits"
-        ):
-            limits = self._frequency_plot_panel.get_view_limits()
-            if all(math.isfinite(float(v)) for v in limits):
-                x_min, x_max, y_min, y_max = limits
-                self._settings.setValue("plot/freq_x_min", float(x_min))
-                self._settings.setValue("plot/freq_x_max", float(x_max))
-                self._settings.setValue("plot/freq_y_min", float(y_min))
-                self._settings.setValue("plot/freq_y_max", float(y_max))
         self._settings.sync()
         super().closeEvent(event)
-
-    def _restore_plot_ranges_from_settings(self) -> None:
-        """Restore saved x/y axis ranges from QSettings if available.
-
-        Every value is validated for finiteness before it reaches
-        ``set_view_limits``: a NaN persisted by an earlier (pre-guard) session
-        would otherwise crash startup in ``Axes.set_ylim`` on every launch,
-        with no way to recover short of hand-editing the settings store.
-        A non-finite entry falls back to that key's default.
-        """
-
-        def _finite(key: str, default: float) -> float:
-            value = float(self._settings.value(key, default, float))
-            return value if math.isfinite(value) else float(default)
-
-        if self._settings.contains("plot/time_x_min") and hasattr(
-            self._plot_panel, "set_view_limits"
-        ):
-            x_min = _finite("plot/time_x_min", 0.0)
-            x_max = _finite("plot/time_x_max", 10.0)
-            y_min = _finite("plot/time_y_min", -30.0)
-            y_max = _finite("plot/time_y_max", 30.0)
-            self._plot_panel.set_view_limits(x_min, x_max, y_min, y_max)
-            if hasattr(self._plot_panel, "_limits_initialized"):
-                self._plot_panel._limits_initialized = True
-        if self._settings.contains("plot/freq_x_min") and hasattr(
-            self._frequency_plot_panel, "set_view_limits"
-        ):
-            x_min = _finite("plot/freq_x_min", 0.0)
-            x_max = _finite("plot/freq_x_max", 20.0)
-            y_min = _finite("plot/freq_y_min", 0.0)
-            y_max = _finite("plot/freq_y_max", 10.0)
-            self._frequency_plot_panel.set_view_limits(x_min, x_max, y_min, y_max)
-            if hasattr(self._frequency_plot_panel, "_limits_initialized"):
-                self._frequency_plot_panel._limits_initialized = True
 
 
 def _has_saved_fit_results(single_fit_state: dict | None, global_fit_state: dict | None) -> bool:

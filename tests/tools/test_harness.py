@@ -125,6 +125,78 @@ def test_mpl_canvas_check_is_silent_for_allowlisted_survivors(tmp_path: Path) ->
     assert harness.find_duplicate_mpl_canvas_violations(gui_root) == []
 
 
+def test_current_gui_satisfies_axis_limit_policy() -> None:
+    harness = _load_harness()
+
+    assert harness.find_axis_limit_policy_violations() == []
+
+
+def test_axis_limit_policy_check_reports_stray_call_outside_owning_function(
+    tmp_path: Path,
+) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "panels").mkdir(parents=True)
+    stray = gui_root / "panels" / "plot_panel.py"
+    stray.write_text(
+        "class PlotPanel:\n"
+        "    def _apply_limits(self, limits):\n"
+        "        self._ax.set_xlim(*limits['x'])\n"
+        "\n"
+        "    def _on_canvas_button_release(self, event):\n"
+        "        self._ax.set_ylim(0.0, 1.0)\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.AXIS_LIMIT_POLICY_FUNCTIONS = {
+        stray: frozenset({"_apply_limits", "_plot_export_payloads_on_axis"})
+    }
+    harness.AXIS_LIMIT_SURFACE_ALLOWLIST = frozenset()
+
+    failures = harness.find_axis_limit_policy_violations(gui_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert "AxisLimitPolicy" in failures[0].message
+
+
+def test_axis_limit_policy_check_allows_calls_inside_owning_function(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "panels").mkdir(parents=True)
+    owned = gui_root / "panels" / "plot_panel.py"
+    owned.write_text(
+        "class PlotPanel:\n"
+        "    def _apply_limits(self, limits):\n"
+        "        self._ax.set_xlim(*limits['x'])\n"
+        "        self._ax.set_ylim(*limits['y'])\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.AXIS_LIMIT_POLICY_FUNCTIONS = {
+        owned: frozenset({"_apply_limits", "_plot_export_payloads_on_axis"})
+    }
+    harness.AXIS_LIMIT_SURFACE_ALLOWLIST = frozenset()
+
+    assert harness.find_axis_limit_policy_violations(gui_root) == []
+
+
+def test_axis_limit_policy_check_is_silent_for_allowlisted_surfaces(tmp_path: Path) -> None:
+    gui_root = tmp_path / "gui"
+    (gui_root / "widgets").mkdir(parents=True)
+    allowlisted = gui_root / "widgets" / "detector_schematic.py"
+    allowlisted.write_text(
+        "class DetectorSchematic:\n"
+        "    def _draw(self, ax):\n"
+        "        ax.set_xlim(-1.25, 1.25)\n"
+        "        ax.set_ylim(-1.25, 1.25)\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.AXIS_LIMIT_POLICY_FUNCTIONS = {}
+    harness.AXIS_LIMIT_SURFACE_ALLOWLIST = frozenset({allowlisted})
+
+    assert harness.find_axis_limit_policy_violations(gui_root) == []
+
+
 def test_current_gui_has_no_bespoke_qthread_construction() -> None:
     harness = _load_harness()
 

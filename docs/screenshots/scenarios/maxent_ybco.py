@@ -63,16 +63,15 @@ class MaxEntYbcoScenario(Scenario):
         # its extreme edges (~23.04 and ~31.17 MHz), so an Auto X / Auto Y
         # pair that frames the *full* data extent leaves the real
         # vortex-lattice line squashed into a quarter of the plot height.
-        # Restrict the X range to sit inside those artifacts through the
-        # panel's real X-range pathway (the same toolbar fields a user would
-        # type into, via set_view_limits) with Auto X switched off so it
-        # cannot snap back to the full extent, then re-autoscale Y from that
-        # narrower window so the line fills the frame.
+        # Hold the X range inside those artifacts through the panel's real
+        # X-range pathway (the same toolbar fields a user would type into) —
+        # set_view_limits holds both axes and clears both Auto buttons — then
+        # click Auto Y back on (the real button path, not a programmatic
+        # setChecked, which would not trigger the re-render) so it reframes
+        # from that narrower held window instead of the full extent.
         freq_panel = window._frequency_plot_panel
-        freq_panel._auto_x_btn.setChecked(False)
         freq_panel.set_view_limits(23.5, 30.5, 0.0, 1.0)
-        freq_panel._auto_y_btn.setChecked(True)
-        freq_panel._auto_y_limits()
+        freq_panel._auto_y_btn.click()
         _process_events_for(milliseconds=120)
         return window
 

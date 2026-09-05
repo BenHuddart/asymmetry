@@ -1651,9 +1651,8 @@ class TestMainWindowFourier:
 
     def test_frequency_overlay_retoggle_restores_view_limits(self, mainwindow: MainWindow) -> None:
         # Toggling Overlay off and back on with the same run selection must not
-        # discard a manually-set view window: the overlay used to always
-        # auto-range on re-enable because the panel treats an overlay <->
-        # single-run transition as brand-new plotted content.
+        # discard a manually-set view window: a held axis stays held across
+        # every render, so no overlay <-> single-run transition reframes it.
         ds1 = self._compute_run_fft(mainwindow, 8890)
         ds2 = self._compute_run_fft(mainwindow, 8891)  # becomes active; domain -> frequency
         panel = mainwindow._frequency_plot_panel
@@ -2248,10 +2247,9 @@ class TestMainWindowFourier:
     ) -> None:
         """The exact user-reported scenario: typed limits survive a transient blank.
 
-        Plan-A #2: typing takes control of the frame; browsing onto a run with no
-        spectrum clears the plot only transiently (``preserve_view_state=True``),
-        so returning to the original run keeps the typed window rather than
-        reframing over it.
+        Typing holds both axes; browsing onto a run with no spectrum only blanks
+        the canvas, which never touches a held value, so returning to the
+        original run keeps the typed window rather than reframing over it.
         """
         dataset = _make_fourier_ready_dataset(8890, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
@@ -2260,13 +2258,13 @@ class TestMainWindowFourier:
         _compute_fourier_sync(mainwindow)
 
         panel = mainwindow._frequency_plot_panel
-        # Type a deliberate window (drives the real user-lock path).
+        # Type a deliberate window (drives the real field-commit path).
         panel._x_min.setValue(1.5)
         panel._x_max.setValue(3.5)
+        panel._on_x_limit_field_edited()
         panel._y_min.setValue(-4.0)
         panel._y_max.setValue(9.0)
-        panel._on_limit_fields_edited()
-        assert panel._limits_user_locked is True
+        panel._on_y_limit_field_edited()
 
         # Browse onto a state with nothing to show (transient clear path) …
         mainwindow._sync_frequency_plot_for_run(None)
@@ -2278,10 +2276,10 @@ class TestMainWindowFourier:
     def test_frequency_same_run_recompute_preserves_both_x_and_y(
         self, mainwindow: MainWindow
     ) -> None:
-        """A same-run recompute must keep BOTH the X and the Y window (Plan-A #3).
+        """A same-run recompute must keep BOTH the X and the Y window.
 
-        Previously only X was re-applied and the plot's own Y was accepted, so a
-        recompute silently reset the vertical zoom.
+        ``set_view_limits`` holds each axis independently, so recomputing the
+        spectrum re-draws inside the held window rather than resetting either.
         """
         dataset = _make_fourier_ready_dataset(8891, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
@@ -2300,40 +2298,38 @@ class TestMainWindowFourier:
     def test_frequency_first_compute_frames_spectrum_not_precompute_defaults(
         self, mainwindow: MainWindow
     ) -> None:
-        """The first compute frames the spectrum, not stale pre-compute fields (Plan-A #4).
+        """The first compute frames the spectrum, not the pre-compute field values.
 
-        On a genuine first paint the freshly computed smart framing must survive;
-        the caller-preserved limits captured from the pre-compute spin fields must
-        not be re-applied over it.
+        Before anything is computed the panel holds no window — an axis with
+        nothing held takes the bounds, and that is the first frame — so the
+        empty-prompt panel's default field values never become the view.
         """
         dataset = _make_fourier_ready_dataset(8892, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
         mainwindow._on_dataset_selected(8892)
         mainwindow._on_domain_button_clicked("frequency")
 
-        # Leftover, clearly-wrong window in the (empty-prompt) fields before compute.
         panel = mainwindow._frequency_plot_panel
-        panel.set_view_limits(0.0, 999.0, -777.0, 777.0)
+        # The empty prompt shows default field values, but nothing is held.
+        assert panel._limits.held("x") is None
+        assert panel._limits.held(panel._y_axis_id(panel._active_y_axis())) is None
+        pre_compute = panel.get_view_limits()
 
         _compute_fourier_sync(mainwindow)
 
         x_min, x_max, y_min, y_max = panel.get_view_limits()
         # Framed to the data (Nyquist ~10 MHz; FFT magnitudes are ~1e7), not the
-        # stale 999 MHz / ±777 pre-compute window.
+        # pre-compute field window.
         assert x_max < 100.0
-        assert (y_min, y_max) != pytest.approx((-777.0, 777.0))
+        assert (x_min, x_max, y_min, y_max) != pytest.approx(pre_compute)
         assert y_max > 1000.0
 
-    def test_frequency_render_reframes_new_run_ignoring_carried_stale_limits(
-        self, mainwindow: MainWindow
-    ) -> None:
-        """A reframing draw ignores caller-preserved limits (Plan-A #4 discriminator).
+    def test_frequency_new_run_holds_window_unless_auto_is_on(self, mainwindow: MainWindow) -> None:
+        """A new run's spectrum is drawn inside the held window; Auto X refits it.
 
-        When a transient ``preserve_view_state`` clear carries a stale frame latch
-        across a run switch and the next compute reframes to the new run, the
-        stale preserved window must NOT be restored — the render restores
-        preserved limits only when the draw did not reframe. This is the case a
-        naive "was the latch set before the draw?" check gets wrong.
+        The Auto toggle is the whole answer to "does this axis follow the data":
+        a run switch never reframes a held axis, and turning Auto X on makes the
+        very same render frame the new run's spectrum instead.
         """
         dataset = _make_fourier_ready_dataset(8893, with_grouping=True)
         mainwindow._data_browser.add_dataset(dataset)
@@ -2345,22 +2341,19 @@ class TestMainWindowFourier:
         spectra = mainwindow._frequency_spectra_from_cache(8893, rep)
         assert spectra
 
-        # Reproduce the carried-stale-frame state a preserve_view_state clear
-        # during a run switch leaves: latch initialized for a DIFFERENT run,
-        # not locked, an out-of-range window still in the fields.
         panel = mainwindow._frequency_plot_panel
-        panel.clear(preserve_view_state=True)
-        panel._limits_initialized = True
-        panel._limits_user_locked = False
-        panel._framed_identity = ("stale-other-run",)
+        # A deliberate window well outside the run's own spectrum (Nyquist ~10 MHz).
         panel.set_view_limits(50.0, 100.0, -5.0, 5.0)
+        panel.clear()
 
-        # The completing compute passes the stale window as "preserved".
-        mainwindow._render_frequency_spectra(8893, rep, spectra, (50.0, 100.0), (-5.0, 5.0))
+        # Auto off (the browsing default): the render holds the chosen window.
+        mainwindow._render_frequency_spectra(8893, rep, spectra)
+        assert panel.get_view_limits()[:2] == pytest.approx((50.0, 100.0))
 
-        _x_min, x_max, _y_min, _y_max = panel.get_view_limits()
-        # Reframed to the run's own spectrum (Nyquist ~10 MHz), not the stale 100.
-        assert x_max < 20.0
+        # Auto X on: the same render frames the spectrum instead.
+        panel._auto_x_btn.setChecked(True)
+        mainwindow._render_frequency_spectra(8893, rep, spectra)
+        assert panel.get_view_limits()[1] < 20.0
 
     @pytest.mark.timeout(300)
     def test_compute_maxent_uses_maxent_view_and_separate_cache(
@@ -6773,65 +6766,6 @@ class TestReductionSettingsPersistence:
         mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
 
         assert "binning_mode" not in dataset.run.grouping
-
-
-class TestPlotRangeSettingsNaNRecovery:
-    """A NaN persisted in the plot-range settings must never crash startup.
-
-    Regression: a session persisted ``plot/freq_y_min``/``plot/freq_y_max`` as
-    NaN at shutdown; every subsequent launch replayed them through
-    ``set_view_limits`` into ``Axes.set_ylim``, which raises ``ValueError:
-    Axis limits cannot be NaN or Inf`` before the window appeared — an
-    unrecoverable crash loop short of hand-editing the settings store.
-    """
-
-    def _seed_poisoned_settings(self) -> None:
-        settings = QSettings()
-        settings.setValue(mw_module._UI_SCALE_SETTINGS_KEY, 1.0)
-        settings.setValue("plot/time_x_min", 0.0)
-        settings.setValue("plot/time_x_max", 107520.0)
-        settings.setValue("plot/time_y_min", -96.278)
-        settings.setValue("plot/time_y_max", float("nan"))
-        settings.setValue("plot/freq_x_min", -0.025)
-        settings.setValue("plot/freq_x_max", 0.525)
-        settings.setValue("plot/freq_y_min", float("nan"))
-        settings.setValue("plot/freq_y_max", float("nan"))
-        settings.sync()
-
-    def test_startup_survives_nan_plot_ranges_and_falls_back_to_defaults(
-        self, qapp: QApplication
-    ) -> None:
-        self._seed_poisoned_settings()
-
-        window = MainWindow()  # must not raise
-
-        # Finite saved values are honoured; each NaN falls back to its default.
-        x_min, x_max, y_min, y_max = window._plot_panel.get_view_limits()
-        assert y_min == pytest.approx(-96.278)
-        assert y_max == pytest.approx(30.0)  # NaN -> time-panel default
-        x_min, x_max, y_min, y_max = window._frequency_plot_panel.get_view_limits()
-        assert (x_min, x_max) == pytest.approx((-0.025, 0.525))
-        assert (y_min, y_max) == pytest.approx((0.0, 10.0))  # NaN -> freq defaults
-
-    def test_close_event_never_persists_non_finite_limits(
-        self, mainwindow: MainWindow, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The write side is guarded too: a non-finite limit set is skipped,
-        keeping the previous session's good ranges in the store."""
-        settings = QSettings()
-        settings.setValue("plot/freq_y_min", 1.5)
-        settings.setValue("plot/freq_y_max", 7.5)
-        monkeypatch.setattr(
-            mainwindow._frequency_plot_panel,
-            "get_view_limits",
-            lambda: (0.0, 20.0, float("nan"), float("inf")),
-        )
-
-        mainwindow.close()
-
-        settings.sync()
-        assert float(settings.value("plot/freq_y_min", type=float)) == pytest.approx(1.5)
-        assert float(settings.value("plot/freq_y_max", type=float)) == pytest.approx(7.5)
 
 
 class TestRefitCoadded:

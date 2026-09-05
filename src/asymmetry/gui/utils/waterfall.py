@@ -91,8 +91,8 @@ def auto_waterfall_delta(
     the window — the samples the plot will actually show — with a per-trace
     fallback to the full array when fewer than ``_MIN_WINDOW_SAMPLES`` finite
     samples fall inside. Callers resolve Δ once at plot time from the window
-    then shown (the first-paint frame, or the manually set limits); a later
-    interactive zoom — including the decimation re-render it schedules —
+    then shown (the resolved x window); a later interactive zoom — including
+    the re-render it triggers —
     deliberately does not re-resolve Δ (the plot panel caches the plot-time Δ
     per content identity), so the stack never re-spaces under the user
     mid-inspection.

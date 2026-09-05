@@ -114,17 +114,13 @@ def test_plot_panel_renders_combined_reconstruction_on_one_axis(qapp: QApplicati
 
 
 @pytest.mark.parametrize("combined", [False, True])
-def test_reconstruction_survives_viewport_refresh_triggers(
-    qapp: QApplication, combined: bool
-) -> None:
-    """A reconstruction layout must not be clobbered by a viewport refresh.
+def test_reconstruction_survives_a_redraw(qapp: QApplication, combined: bool) -> None:
+    """A reconstruction layout must be rebuilt, not replaced, by a redraw.
 
-    Reconstructions are drawn with plain ``ax.plot`` (never decimated) and
-    ``_redraw_current_view`` cannot rebuild them — it falls through to a plain
-    dataset plot. Both editing the limit fields (pre-existing) and clicking
-    Auto X (which now schedules a viewport refresh to re-decimate normal views)
-    route through ``_schedule_viewport_refresh``; it must skip reconstruction
-    views so the data+model+residual layout stays intact.
+    Every limit change now re-renders through ``_redraw_current_view``, so the
+    panel remembers which reconstruction layout is on screen and re-plots it;
+    otherwise a typed limit or an Auto click would collapse the
+    data+model+residual stack into a plain dataset plot.
     """
     panel = PlotPanel()
     try:
@@ -135,16 +131,55 @@ def test_reconstruction_survives_viewport_refresh_triggers(
         expected_axes = 2 if combined else 2 * len(datasets)
         assert len(panel._figure.axes) == expected_axes
 
-        # Pre-existing trigger: editing the limit fields schedules a refresh.
-        panel._on_limit_fields_edited()
+        # Typing a limit re-renders; the layout must come back intact.
+        panel._x_min.setValue(0.5)
+        panel._x_max.setValue(4.0)
+        panel._on_x_limit_field_edited()
         qapp.processEvents()
         assert len(panel._figure.axes) == expected_axes
 
-        # New trigger from the Auto-X decimation fix.
-        panel._auto_x_btn.setChecked(True)
-        panel._on_auto_x_button_clicked(True)
+        # As must clicking Auto X.
+        panel._auto_x_btn.click()
         qapp.processEvents()
         assert len(panel._figure.axes) == expected_axes
+    finally:
+        panel.close()
+        panel.deleteLater()
+
+
+@pytest.mark.parametrize("combined", [False, True])
+def test_reconstruction_axes_join_the_limit_policy(qapp: QApplication, combined: bool) -> None:
+    """MaxEnt panes resolve x and one y each through the shared policy.
+
+    The reconstruction views used to bypass the limit fields entirely; they now
+    supply their own bounds from the plotted arrays and are held or auto'd like
+    any other pane.
+    """
+    panel = PlotPanel()
+    try:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        datasets = _reconstruction_datasets()
+        panel.plot_maxent_reconstruction(datasets, combined=combined)
+
+        # Every main reconstruction axis has a held y under its own id …
+        for axis_key, ax in panel._subplot_axes_by_polarization.items():
+            held = panel._limits.held(panel._y_axis_id(axis_key))
+            assert held is not None
+            assert ax.get_ylim() == pytest.approx(held)
+        # … and the shared x is mirrored into the fields.
+        held_x = panel._limits.held("x")
+        assert held_x is not None
+        assert panel._x_min.value() == pytest.approx(held_x[0], abs=1e-3)
+        assert panel._x_max.value() == pytest.approx(held_x[1], abs=1e-3)
+
+        # A typed x holds across a re-plot of the same reconstruction.
+        panel._x_min.setValue(0.5)
+        panel._x_max.setValue(4.0)
+        panel._on_x_limit_field_edited()
+        panel.plot_maxent_reconstruction(datasets, combined=combined)
+        assert panel._x_min.value() == pytest.approx(0.5)
+        assert panel._x_max.value() == pytest.approx(4.0)
     finally:
         panel.close()
         panel.deleteLater()

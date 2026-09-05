@@ -202,10 +202,11 @@ trigger the refresh explicitly, exactly once (`_populate_group_table` in
 **Don't paint what isn't visible; paint once when you do.** A hidden panel's
 sync updates bookkeeping only and defers `plot_*`/rasterisation to view entry
 (`_render_frequency_spectra`'s visibility gate). Completion paths use
-`draw_idle()`, never `draw()`; and never issue an immediate draw that a
-scheduled deferred redraw will overwrite (`_apply_limits` skips its
-synchronous draw exactly when `_schedule_viewport_refresh()` reports a
-deferred pass will genuinely run).
+`draw_idle()`, never `draw()`; and resolve axis limits before drawing, not
+after, so no draw is ever "one view behind" a pending reframe (`PlotPanel`
+resolves x through `AxisLimitPolicy`, decimates and measures y for that
+window, then draws once — see `_resolve_x`/`_apply_limits` in
+`panels/plot_panel.py`).
 
 **Loops that must touch widgets get the chunked runner.** Work that mutates
 widgets or window state cannot go to a worker; if it is a bounded-item loop

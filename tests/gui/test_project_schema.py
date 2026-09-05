@@ -41,12 +41,23 @@ def _minimal_state() -> dict:
         "plot_state": {
             "current_run_number": None,
             "bunch_factor": 1,
-            "x_min": 0.0,
-            "x_max": 10.0,
-            "y_min": -30.0,
-            "y_max": 30.0,
+            "axis_limits": {
+                "axes": {
+                    "x": {"auto": False, "held": [0.0, 10.0], "quantity": None},
+                    "y": {"auto": False, "held": [-30.0, 30.0], "quantity": None},
+                }
+            },
             "fit_curve": None,
             "fit_curves": {},
+            "frequency_plot_state": {
+                "plot_panel_domain": "frequency",
+                "axis_limits": {
+                    "axes": {
+                        "x": {"auto": False, "held": [0.0, 100.0], "quantity": None},
+                        "y": {"auto": False, "held": [-1.0, 10.0], "quantity": None},
+                    }
+                },
+            },
         },
         "single_fit_state": {
             "model_name": "ExponentialRelaxation",
@@ -225,7 +236,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 17
+        assert CURRENT_SCHEMA_VERSION == 18
 
     def test_v15_migrates_to_v16_frequency_axis_mode(self):
         # v16 replaces the frequency relative-axis boolean with a real axis mode
@@ -252,9 +263,70 @@ class TestSchemaMigration:
         assert freq["frequency_axis_mode"] == "shift"
         assert freq["frequency_reference_mode"] == "common"
         assert "frequency_axis_relative_to_reference" not in freq
-        # The retired :relative stash key is dropped; the absolute one is kept.
-        assert "field_gauss:relative" not in freq["frequency_x_limits_by_unit"]
-        assert "field_gauss:absolute" in freq["frequency_x_limits_by_unit"]
+        # v18 retires the per-mode x-limit stash entirely (the policy converts
+        # full-precision held values in place instead).
+        assert "frequency_x_limits_by_unit" not in freq
+        assert set(freq["axis_limits"]["axes"]) == {"x", "y"}
+
+    def test_v17_migrates_to_v18_axis_limits_block(self):
+        # v18 collapses the plot panels' limit pairs, Auto flags and
+        # per-projection y cache into one per-axis Auto/Hold block.
+        state = {
+            "schema_version": 17,
+            "datasets": [],
+            "plot_state": {
+                "x_min": 1.0,
+                "x_max": 4.0,
+                "y_min": -30.0,
+                "y_max": 30.0,
+                "auto_x_enabled": True,
+                "auto_y_enabled": False,
+                "y_limits_by_polarization": {"P_x": [-0.2, 0.4], "P_y": [1.0, -1.0]},
+                "frequency_plot_state": {
+                    "plot_panel_domain": "frequency",
+                    "x_min": 0.0,
+                    "x_max": 100.0,
+                    "y_min": -1.0,
+                    "y_max": 10.0,
+                    "frequency_x_limits_by_unit": {"field_gauss:absolute": [0.0, 100.0]},
+                },
+            },
+        }
+        result = migrate_to_current(state)
+        assert result["schema_version"] == CURRENT_SCHEMA_VERSION
+
+        plot_state = result["plot_state"]
+        axes = plot_state["axis_limits"]["axes"]
+        assert axes["x"] == {"auto": True, "held": [1.0, 4.0], "quantity": None}
+        assert axes["y"] == {"auto": False, "held": [-30.0, 30.0], "quantity": None}
+        # Each cached projection becomes its own y axis, inheriting Auto Y
+        # (the toggle governed every subplot then and governs them now), and an
+        # inverted pair is stored low-to-high.
+        assert axes["y:P_x"] == {"auto": False, "held": [-0.2, 0.4], "quantity": None}
+        assert axes["y:P_y"] == {"auto": False, "held": [-1.0, 1.0], "quantity": None}
+        for legacy in (
+            "x_min",
+            "x_max",
+            "y_min",
+            "y_max",
+            "auto_x_enabled",
+            "auto_y_enabled",
+            "y_limits_by_polarization",
+        ):
+            assert legacy not in plot_state
+
+        freq = plot_state["frequency_plot_state"]
+        assert freq["axis_limits"]["axes"]["x"]["held"] == [0.0, 100.0]
+        assert "frequency_x_limits_by_unit" not in freq
+
+    def test_v17_migrates_to_v18_creates_a_frequency_block_when_absent(self):
+        # The reader is strict about ``axis_limits``, so a file that never had a
+        # frequency panel still gains a complete block.
+        state = {"schema_version": 17, "datasets": [], "plot_state": {}}
+        result = migrate_to_current(state)
+        freq = result["plot_state"]["frequency_plot_state"]
+        assert set(freq["axis_limits"]["axes"]) == {"x", "y"}
+        assert freq["axis_limits"]["axes"]["x"]["auto"] is False
 
     def test_v15_migrates_to_v16_absolute_default_when_flag_off(self):
         state = {
@@ -1052,15 +1124,15 @@ class TestPlotPanelState:
         for key in (
             "current_run_number",
             "bunch_factor",
-            "x_min",
-            "x_max",
-            "y_min",
-            "y_max",
+            "axis_limits",
             "fit_curve",
             "fit_curves",
         ):
             assert key in state
         assert state["bunch_factor"] == 1
+        # One per-axis Auto/Hold record replaces the old x/y pairs + Auto flags.
+        assert set(state["axis_limits"]["axes"]) >= {"x"}
+        assert set(state["axis_limits"]["axes"]["x"]) == {"auto", "held", "quantity"}
 
     def test_restore_state_accepts_legacy_bunch_factor_key(self, qapp):
         from asymmetry.gui.panels.plot_panel import PlotPanel
@@ -1072,10 +1144,12 @@ class TestPlotPanelState:
         panel.restore_state(
             {
                 "bunch_factor": 4,
-                "x_min": 0.0,
-                "x_max": 5.0,
-                "y_min": -20.0,
-                "y_max": 20.0,
+                "axis_limits": {
+                    "axes": {
+                        "x": {"auto": False, "held": [0.0, 5.0], "quantity": None},
+                        "y": {"auto": False, "held": [-20.0, 20.0], "quantity": None},
+                    }
+                },
                 "fit_curve": None,
                 "fit_curves": {},
             }
@@ -1092,10 +1166,12 @@ class TestPlotPanelState:
 
         fit_state = {
             "bunch_factor": 1,
-            "x_min": 0.0,
-            "x_max": 10.0,
-            "y_min": -30.0,
-            "y_max": 30.0,
+            "axis_limits": {
+                "axes": {
+                    "x": {"auto": False, "held": [0.0, 10.0], "quantity": None},
+                    "y": {"auto": False, "held": [-30.0, 30.0], "quantity": None},
+                }
+            },
             "fit_curve": {"t": [0.0, 1.0, 2.0], "y": [0.2, 0.1, 0.05], "label": "Fit"},
             "fit_curves": {},
         }
@@ -1121,7 +1197,7 @@ class TestPlotPanelState:
         state2 = panel2.get_state()
 
         assert state1["bunch_factor"] == state2["bunch_factor"]
-        assert state1["x_min"] == pytest.approx(state2["x_min"])
+        assert state1["axis_limits"] == state2["axis_limits"]
 
     def test_restore_global_fit_curves(self, qapp):
         from asymmetry.gui.panels.plot_panel import PlotPanel
@@ -1132,10 +1208,12 @@ class TestPlotPanelState:
 
         fit_state = {
             "bunch_factor": 1,
-            "x_min": 0.0,
-            "x_max": 10.0,
-            "y_min": -30.0,
-            "y_max": 30.0,
+            "axis_limits": {
+                "axes": {
+                    "x": {"auto": False, "held": [0.0, 10.0], "quantity": None},
+                    "y": {"auto": False, "held": [-30.0, 30.0], "quantity": None},
+                }
+            },
             "fit_curve": None,
             "fit_curves": {
                 "42": {"t": [0.0, 1.0], "y": [0.2, 0.1], "label": "Global Fit"},
@@ -1183,9 +1261,17 @@ class TestPlotPanelState:
             pytest.skip("matplotlib not available")
         panel.set_overlay_enabled(True)
         panel.set_waterfall_enabled(True)
-        # A pre-v14 blob carries no waterfall key -> restore must clear it.
+        # A migrated blob carrying no waterfall key -> restore must clear it.
         panel.restore_state(
-            {"bunch_factor": 1, "x_min": 0.0, "x_max": 10.0, "y_min": -30.0, "y_max": 30.0}
+            {
+                "bunch_factor": 1,
+                "axis_limits": {
+                    "axes": {
+                        "x": {"auto": False, "held": [0.0, 10.0], "quantity": None},
+                        "y": {"auto": False, "held": [-30.0, 30.0], "quantity": None},
+                    }
+                },
+            }
         )
         assert panel.is_waterfall_enabled() is False
         assert panel.waterfall_offset() is None
@@ -1774,9 +1860,10 @@ class TestMainWindowProjectState:
         window1._plot_panel.plot_dataset(ds)
         window1._plot_panel._x_min.setValue(0.25)
         window1._plot_panel._x_max.setValue(2.75)
+        window1._plot_panel._on_x_limit_field_edited()
         window1._plot_panel._y_min.setValue(20.0)
         window1._plot_panel._y_max.setValue(45.0)
-        window1._plot_panel._apply_limits()
+        window1._plot_panel._on_y_limit_field_edited()
 
         state = window1.collect_project_state()
         path = tmp_path / "roundtrip.asymp"
@@ -1806,10 +1893,10 @@ class TestMainWindowProjectState:
         assert restored.run.grouping.get("forward_group") == 1
         assert restored.run.grouping.get("backward_group") == 2
 
-        # The saved fit range still spans the full dataset, so restoring it
-        # widens the visible x-limits back out to include that range.
-        assert window2._plot_panel._x_min.value() == pytest.approx(0.0)
-        assert window2._plot_panel._x_max.value() == pytest.approx(3.0)
+        # The typed window is held per axis and comes back exactly as typed;
+        # the fit range is independent of the view and never widens it.
+        assert window2._plot_panel._x_min.value() == pytest.approx(0.25)
+        assert window2._plot_panel._x_max.value() == pytest.approx(2.75)
         assert window2._plot_panel.get_fit_range() == pytest.approx((0.0, 3.0))
         assert window2._plot_panel._y_min.value() == pytest.approx(20.0)
         assert window2._plot_panel._y_max.value() == pytest.approx(45.0)

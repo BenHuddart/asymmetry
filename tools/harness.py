@@ -43,6 +43,30 @@ MPL_CANVAS_CONSTRUCTION_ALLOWLIST = frozenset(
         GUI_ROOT / "widgets" / "detector_schematic.py",
     }
 )
+# Every limit an axis-limit-policy plot surface applies is a value returned by
+# `AxisLimitPolicy.resolve`, written to the axes inside one owning function, so
+# the fields, the axes and the policy can never disagree
+# (docs/plans/axis-limit-policy.md). A `set_xlim(`/`set_ylim(` call elsewhere
+# in these files bypasses the policy.
+AXIS_LIMIT_POLICY_FUNCTIONS: dict[Path, frozenset[str]] = {
+    GUI_ROOT / "panels" / "plot_panel.py": frozenset(
+        {"_apply_limits", "_plot_export_payloads_on_axis"}
+    ),
+    GUI_ROOT / "panels" / "alc_panel.py": frozenset({"_apply_axis_limits"}),
+}
+# Surfaces that are not axis-limit-policy plots at all (a fit-parameter chart,
+# the detector schematic, the suggestion-overlay band, the grouping preview
+# pane, the user-function-authoring preview), so any `set_xlim(`/`set_ylim(`
+# there is exempt outright.
+AXIS_LIMIT_SURFACE_ALLOWLIST = frozenset(
+    {
+        GUI_ROOT / "panels" / "fit_parameters_panel.py",
+        GUI_ROOT / "widgets" / "detector_schematic.py",
+        GUI_ROOT / "widgets" / "suggestion_overlay.py",
+        GUI_ROOT / "windows" / "grouping" / "preview_pane.py",
+        GUI_ROOT / "windows" / "new_user_function_dialog.py",
+    }
+)
 # Canonical home for manual QThread lifecycles. Everything else in gui/ should
 # run background work via `asymmetry.gui.tasks.TaskRunner`.
 TASK_RUNNER_HOME = GUI_ROOT / "tasks.py"
@@ -301,6 +325,62 @@ def find_duplicate_mpl_canvas_violations(gui_root: Path = GUI_ROOT) -> list[Harn
                         ),
                     )
                 )
+    return failures
+
+
+def _enclosing_function_name(tree: ast.Module, lineno: int) -> str | None:
+    """Name of the innermost function/method containing *lineno*, if any."""
+
+    best: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.lineno <= lineno <= node.end_lineno:
+                if best is None or node.lineno > best.lineno:
+                    best = node
+    return None if best is None else best.name
+
+
+def find_axis_limit_policy_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFailure]:
+    """Return `set_xlim(`/`set_ylim(` calls outside AxisLimitPolicy's resolve path.
+
+    A call inside a file listed in :data:`AXIS_LIMIT_POLICY_FUNCTIONS` is only
+    allowed inside one of that file's named functions (where the resolved
+    dict from `AxisLimitPolicy.resolve` is applied); a call in any other file
+    is only allowed when that file is on :data:`AXIS_LIMIT_SURFACE_ALLOWLIST`
+    (a surface that is not an axis-limit-policy plot). Anything else bypasses
+    the policy, so the fields, the axes and the policy could disagree. See
+    ``docs/plans/axis-limit-policy.md``.
+    """
+
+    failures: list[HarnessFailure] = []
+    for path in _iter_python_files(gui_root):
+        if path in AXIS_LIMIT_SURFACE_ALLOWLIST:
+            continue
+        allowed_functions = AXIS_LIMIT_POLICY_FUNCTIONS.get(path)
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            if node.func.attr not in ("set_xlim", "set_ylim"):
+                continue
+            if allowed_functions is not None and (
+                _enclosing_function_name(tree, node.lineno) in allowed_functions
+            ):
+                continue
+            failures.append(
+                HarnessFailure(
+                    path,
+                    node.lineno,
+                    (
+                        f"`{node.func.attr}(` outside AxisLimitPolicy's resolve path. "
+                        "Apply resolved limits through AxisLimitPolicy.resolve inside "
+                        "the owning panel's apply function (_apply_limits / "
+                        "_plot_export_payloads_on_axis / _apply_axis_limits), or add the "
+                        "file to the explicit allowlist for surfaces that are not "
+                        "axis-limit-policy plots (see docs/plans/axis-limit-policy.md)."
+                    ),
+                )
+            )
     return failures
 
 
@@ -1010,6 +1090,7 @@ def run_structural_checks() -> int:
         *find_core_boundary_violations(),
         *find_duplicate_limit_field_violations(),
         *find_duplicate_mpl_canvas_violations(),
+        *find_axis_limit_policy_violations(),
         *find_bespoke_qthread_violations(),
         *find_widget_screen_call_violations(),
         *find_process_events_violations(),
