@@ -1893,10 +1893,10 @@ class TestMainWindowProjectState:
         assert restored.run.grouping.get("forward_group") == 1
         assert restored.run.grouping.get("backward_group") == 2
 
-        # The saved fit range still spans the full dataset, so restoring it
-        # widens the visible x-limits back out to include that range.
-        assert window2._plot_panel._x_min.value() == pytest.approx(0.0)
-        assert window2._plot_panel._x_max.value() == pytest.approx(3.0)
+        # The typed window is held per axis and comes back exactly as typed;
+        # the fit range is independent of the view and never widens it.
+        assert window2._plot_panel._x_min.value() == pytest.approx(0.25)
+        assert window2._plot_panel._x_max.value() == pytest.approx(2.75)
         assert window2._plot_panel.get_fit_range() == pytest.approx((0.0, 3.0))
         assert window2._plot_panel._y_min.value() == pytest.approx(20.0)
         assert window2._plot_panel._y_max.value() == pytest.approx(45.0)

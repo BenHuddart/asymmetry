@@ -8641,7 +8641,10 @@ class PlotPanel(QWidget):
         # The per-axis Auto/Hold snapshot IS the restored view: the buttons
         # mirror its Auto flags and the replot below resolves through it, so
         # there is no separate lock and no post-plot re-apply.
-        self._limits.restore(state["axis_limits"])
+        # Optional like every other key here: partial states are a legal input
+        # (the file boundary migrates real projects to a complete block).
+        if "axis_limits" in state:
+            self._limits.restore(state["axis_limits"])
         self._mirror_auto_buttons([self._y_axis_id(self._active_y_axis())])
 
         # Adopt the saved current selection as the default when valid, then let the
