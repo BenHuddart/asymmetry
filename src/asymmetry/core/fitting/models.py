@@ -427,8 +427,8 @@ def _bounded_cache_get(
     When full, the *oldest* entry is evicted (dicts are insertion-ordered)
     rather than clearing the cache, which would force a full recompute on the
     next call.  Shared by the grid caches of the static Lorentzian-LF line
-    shape, the dynamic Kubo-Toyabe family, and the dynamic F-mu-F solver, so
-    cache-policy fixes (eviction, thread-safety) happen in one place.
+    shape and the dynamic Kubo-Toyabe family, so cache-policy fixes (eviction,
+    thread-safety) happen in one place.
     """
     cached = cache.get(key)
     if cached is None:
@@ -439,18 +439,103 @@ def _bounded_cache_get(
     return cached
 
 
-# Cache of (time grid, static Lorentzian-LF line shape) keyed by quantised
-# (a_L, omega0, tmax, grid sizes).
+# Cache of (uniform time grid, static Lorentzian-LF line shape) keyed by
+# quantised (a_L, omega0, tmax).
 _LOR_LF_CACHE: dict[tuple, tuple[NDArray, NDArray]] = {}
 _LOR_LF_CACHE_MAX = 64
 
+# Longest spectral FFT the longitudinal-field Lorentzian line shape will use.
+# The frequency sampling step must resolve the strip of analyticity of the
+# spectral density, whose half-width is a_L, so the sample count grows like
+# 1/a_L; below a_L ~ 1e-4 us^-1 the cap is reached and the aliasing error grows
+# instead of the cost -- harmless there, because a field that exceeds the
+# distribution width by four orders of magnitude has decoupled the muon and the
+# line shape is unity to within the same 1e-4.
+_LOR_LF_FFT_CAP = 1 << 20
+# Period margin, in units of 1/a_L, that the spectral sampling adds beyond the
+# requested time window: the transform decays like exp(-a_L t), so 30/a_L puts
+# the aliased copy at exp(-30) ~ 1e-13.
+_LOR_LF_ALIAS_MARGIN = 30.0
+# Larmor phase per time-grid step for the cached static line shape: linear
+# interpolation of a cos(omega0 t) oscillation from a grid of step h errs by
+# (omega0 h)^2 / 8 of its amplitude, ~1e-4 here.
+_LOR_LF_STATIC_STEP_RAD = 0.03
 
-def _lorentzian_lf_lineshape(a_L: float, omega0: float, t: NDArray, n_w: int = 2400) -> NDArray:
-    """Static Lorentzian-LF line shape by the analytic angular + time average.
+
+def _lorentzian_lf_uniform(a_L: float, omega0: float, h: float, n: int) -> NDArray:
+    """Static Lorentzian-LF line shape on the uniform grid ``t_i = i h``, ``i < n``.
 
     The stochastic field average (eqn 5.3 of Blundell et al. 2022) over an
+    isotropic Lorentzian local-field distribution of half-width ``a`` in a
+    longitudinal field of Larmor rate ``omega0`` is
+
+        G(t) = integral_0^inf dw f(w) integral_-1^1 (dmu/2)
+               [cos^2(alpha) + sin^2(alpha) cos(W t)],
+
+    with W = |omega0 z + w n| the total-field magnitude and alpha its angle to
+    z.  Changing the angular variable to W (W dW = omega0 w dmu) and swapping
+    the order of the two integrals turns the time-dependent part into a
+    cosine transform of a **spectral density** that integrates in closed form,
+
+        G(t) = 1 - integral_0^inf S(W) dW + integral_0^inf S(W) cos(W t) dW,
+        S(W) = a / (2 pi omega0^3 W)
+               [ (a^2 + W^2 + omega0^2) ln( (a^2 + (W + omega0)^2)
+                                            / (a^2 + (W - omega0)^2) )
+                 - 4 omega0 W ],
+
+    for f(w) = (4a/pi) w^2 / (a^2 + w^2)^2.  Its large-W expansion is
+    (8a/3pi) [1/W^2 - (2a^2 - 2 omega0^2/5)/W^4 + ...]: the 1/W^2 tail is
+    exactly the zero-field density (8a/3pi) W^2/(W^2 + a^2)^2, whose transform
+    is the analytic (2/3)(1 - a t) e^{-a t} carrying the e^{-a t} cusp, and
+    the 1/W^4 term is removed with c4/(W^2 + kappa^2)^2, c4 = 16 a omega0^2
+    / (15 pi), whose transform is (pi c4 / 4 kappa^3)(1 + kappa t) e^{-kappa t}.
+    The remainder is even, O(W^-6), and analytic in the strip |Im W| < a, so
+    the trapezoidal rule on a uniform W grid -- one real FFT, with the grid
+    chosen so its conjugate time step is exactly ``h`` -- converges
+    exponentially in the step (validated against the original quadrature
+    :func:`_lorentzian_lf_lineshape_reference` to that reference's own
+    accuracy, and self-consistent to ~1e-12 under grid refinement).  The
+    constant term is fixed by G(0) = 1.
+    """
+    a = float(a_L)
+    w0 = float(omega0)
+    n = int(n)
+    t = float(h) * np.arange(n)
+    g_zf = static_lorentzian_kt_zf(t, 1.0, a, 0.0)
+    if n < 2:
+        return np.asarray(g_zf, dtype=float)
+    c4 = 16.0 * a * w0 * w0 / (15.0 * np.pi)
+    kappa = float(np.hypot(a, w0))
+    period = (n - 1) * h + _LOR_LF_ALIAS_MARGIN / a
+    n_fft = 1 << int(np.ceil(np.log2(max(2 * n, period / h))))
+    n_fft = max(min(n_fft, _LOR_LF_FFT_CAP), 1 << int(np.ceil(np.log2(2 * n))))
+    d_w = 2.0 * np.pi / (n_fft * h)
+    w = d_w * np.arange(1, n_fft)
+    q = a * a + (w - w0) ** 2
+    s = (a / (2.0 * np.pi * w0**3 * w)) * (
+        (a * a + w * w + w0 * w0) * np.log1p(4.0 * w0 * w / q) - 4.0 * w0 * w
+    )
+    s -= (8.0 * a / (3.0 * np.pi)) * w * w / (w * w + a * a) ** 2
+    s -= c4 / (w * w + kappa * kappa) ** 2
+    # Even extension of length 2 n_fft: [S(0), s_1 .. s_{N-1}, S(W_N) ~ 0,
+    # s_{N-1} .. s_1]; S(0) is the tail-subtraction value, the rest vanish at 0.
+    ext = np.concatenate(([-c4 / kappa**4], s, [0.0], s[::-1]))
+    spectrum = np.fft.rfft(ext).real * (0.5 * d_w)  # cos transform at t_k = k h / 2
+    g_delta = spectrum[0 : 2 * n : 2]
+    tail = c4 * (np.pi / (4.0 * kappa**3)) * ((1.0 + kappa * t) * np.exp(-kappa * t) - 1.0)
+    return np.asarray(g_zf + (g_delta - g_delta[0]) + tail, dtype=float)
+
+
+def _lorentzian_lf_lineshape_reference(
+    a_L: float, omega0: float, t: NDArray, n_w: int = 2400
+) -> NDArray:
+    """Static Lorentzian-LF line shape by direct angular-average quadrature.
+
+    This is the original implementation, kept as the validation reference for
+    :func:`_lorentzian_lf_uniform` (``tests/core/test_dynamic_relaxation.py``).
+    The stochastic field average (eqn 5.3 of Blundell et al. 2022) over an
     isotropic Lorentzian local-field distribution reduces, after doing the
-    angular average and the precession integral analytically, to a single smooth
+    angular average and the precession integral analytically, to a single
     1-D quadrature over the local-field magnitude ``w``:
 
         G(t) = integral_0^inf f(w) [ A_cos(w) + B_sin(w, t) ] dw,
@@ -465,9 +550,10 @@ def _lorentzian_lf_lineshape(a_L: float, omega0: float, t: NDArray, n_w: int = 2
                         - (c^2/(4 omega0^2)) (Ci(W_hi t) - Ci(W_lo t)) ] / (2 omega0 w)
 
     where I1 = integral W cos(Wt) dW and I3 = integral W^3 cos(Wt) dW over
-    [W_lo, W_hi] (elementary), and Ci is the cosine integral.  Avoiding any
-    frequency-domain truncation, this captures the e^{-a_L t} cusp exactly and is
-    accurate to better than ~0.1-0.3 % for B_L >~ 20 G (finer for larger fields).
+    [W_lo, W_hi] (elementary), and Ci is the cosine integral.  The integrand
+    has an integrable logarithmic singularity at w = omega0, so the midpoint
+    rule on the tan-graded grid converges only slowly: ~1e-3 at the default
+    ``n_w``, ~1e-4 at ``n_w = 48000``.
     """
     a = float(a_L)
     w0 = float(omega0)
@@ -532,21 +618,21 @@ def _lorentzian_lf_lineshape(a_L: float, omega0: float, t: NDArray, n_w: int = 2
     return out
 
 
-def _static_lorentzian_lf_grid(
-    a_L: float, omega0: float, tmax: float, n_t: int = 220
-) -> tuple[NDArray, NDArray]:
-    """Cached (grid, line shape) for the static Lorentzian-LF, for interpolation.
+def _static_lorentzian_lf_grid(a_L: float, omega0: float, tmax: float) -> tuple[NDArray, NDArray]:
+    """Cached (uniform grid, line shape) for the static Lorentzian-LF, for interpolation.
 
-    The line shape is smooth, so it is evaluated on a modest grid and linearly
-    interpolated onto the requested times; this bounds the cost of the (otherwise
-    O(n_w * n_t)) ``sici`` evaluation while keeping the interpolation error
-    negligible.
+    The grid step resolves the Larmor oscillation (``_LOR_LF_STATIC_STEP_RAD``
+    of phase per step, never coarser than 0.02 us), so linear interpolation
+    onto the requested times errs by ~1e-4 of the oscillation amplitude at any
+    field; the FFT evaluation costs ~O(n log n) in the grid length.
     """
-    key = (round(a_L, 6), round(omega0, 6), round(tmax, 5), n_t)
+    key = (round(a_L, 6), round(omega0, 6), round(tmax, 5))
 
     def _compute() -> tuple[NDArray, NDArray]:
-        grid = np.linspace(0.0, tmax, n_t)
-        return grid, _lorentzian_lf_lineshape(a_L, omega0, grid)
+        h = min(0.02, _LOR_LF_STATIC_STEP_RAD / max(float(omega0), 1e-12))
+        n = int(np.ceil(float(tmax) / h)) + 1
+        grid = h * np.arange(n)
+        return grid, _lorentzian_lf_uniform(a_L, omega0, h, n)
 
     return _bounded_cache_get(_LOR_LF_CACHE, _LOR_LF_CACHE_MAX, key, _compute)
 
@@ -565,16 +651,18 @@ def static_lorentzian_kt_lf(
     [and] must be computed numerically".  This evaluates the stochastic field
     average (eqn 5.3) over an isotropic Lorentzian local-field distribution of
     half-width ``a_L`` (us^-1) with applied longitudinal field ``B_L`` (Gauss),
-    via the analytic angular + time reduction in :func:`_lorentzian_lf_lineshape`.
+    via the closed-form spectral density of :func:`_lorentzian_lf_uniform`.
 
     - ``B_L -> 0``   : reduces to the zero-field Lorentzian KT (eqn 5.47),
       1/3 + 2/3 (1 - a_L t) e^{-a_L t}.
     - ``B_L -> inf`` : decoupling, G -> 1.
 
-    Accurate to better than ~0.1-0.3 % for B_L >~ 20 G (finer at higher field);
-    very small fields (omega0 < 0.05 a_L) are treated as zero field, where the
-    eqn 5.47 form is exact. The line shape is computed once on a grid and
-    interpolated, and cached per (a_L, B_L, tmax).
+    The line shape is evaluated by the closed-form spectral density of
+    :func:`_lorentzian_lf_uniform` (accurate to ~1e-6 at any field) on a grid
+    that resolves the Larmor oscillation, linearly interpolated onto the
+    requested times, and cached per (a_L, B_L, tmax); very small fields
+    (omega0 < 0.05 a_L) are treated as zero field, where the eqn 5.47 form is
+    exact.
     """
     t = np.asarray(t, dtype=float)
     scalar = t.ndim == 0
@@ -802,6 +890,64 @@ def _strong_collision_solve_reference(
     return g
 
 
+def _strong_collision_modes(
+    A: NDArray, b: NDArray, c: NDArray, nu: float
+) -> tuple[NDArray, NDArray]:
+    """Exponential modes of the strong-collision solution for a static function
+    with a finite state-space realisation.
+
+    If the static polarisation is ``G_s(t) = c^T exp(A t) b`` for a small real
+    matrix ``A`` and vectors ``b``, ``c`` -- true of any finite sum of
+    exponentials, damped cosines and ``t^k e^{-at}`` terms -- then with
+    ``x(t) = exp((A - nu I) t) b + nu * integral_0^t exp((A - nu I)(t - tau)) b
+    G_d(tau) dtau`` the strong-collision equation
+
+        G_d(t) = f(t) + nu * integral_0^t f(t - tau) G_d(tau) dtau,
+        f(t) = e^{-nu t} G_s(t),
+
+    is exactly the linear system ``x' = M x``, ``x(0) = b``, ``G_d = c^T x``
+    with ``M = A - nu I + nu b c^T``: the fluctuations are a rank-one feedback
+    of the observed polarisation into the initial state.  Hence
+    ``G_d(t) = sum_k w_k exp(lambda_k t)`` over the eigenvalues ``lambda_k`` of
+    ``M``, with ``w_k = (c^T v_k) (V^{-1} b)_k``.  Unlike the equivalent
+    rational Laplace transform ``G_s~(s + nu) / (1 - nu G_s~(s + nu))`` this
+    never expands a polynomial, so it stays well conditioned when ``nu``
+    exceeds the static frequencies by many orders of magnitude (the fast modes
+    are a non-defective cluster near ``-nu`` split linearly by ``A``).
+
+    Returns ``(lambda, w)`` restricted to the modes with non-negative imaginary
+    part, the weights of the complex pairs doubled, so that
+    ``G_d(t) = Re sum_k w_k exp(lambda_k t)``; see :func:`_exponential_sum`.
+    """
+    a_mat = np.asarray(A, dtype=float)
+    b = np.asarray(b, dtype=float)
+    c = np.asarray(c, dtype=float)
+    feedback = a_mat - float(nu) * np.eye(a_mat.shape[0]) + float(nu) * np.outer(b, c)
+    lam, vectors = np.linalg.eig(feedback)
+    weights = (c @ vectors) * np.linalg.solve(vectors, b.astype(complex))
+    keep = lam.imag >= 0.0
+    weights = np.where(lam.imag > 0.0, 2.0 * weights, weights)
+    return lam[keep], weights[keep]
+
+
+def _exponential_sum(t: NDArray, lam: NDArray, weights: NDArray) -> NDArray:
+    """``Re sum_k w_k exp(lambda_k t)`` for ``t >= 0`` (any shape), see above."""
+    return np.real(np.exp(np.multiply.outer(np.asarray(t, dtype=float), lam)) @ weights)
+
+
+def _lorentzian_kt_zf_realisation(a_L: float) -> tuple[NDArray, NDArray, NDArray]:
+    """State-space ``(A, b, c)`` of the static zero-field Lorentzian Kubo-Toyabe.
+
+    ``G_s(t) = 1/3 + (2/3) e^{-a t} - (2a/3) t e^{-a t}``: a constant mode and a
+    2x2 Jordan block for the ``t e^{-a t}`` term.
+    """
+    a = float(a_L)
+    a_mat = np.array([[0.0, 0.0, 0.0], [0.0, -a, 1.0], [0.0, 0.0, -a]])
+    b = np.array([1.0 / 3.0, 2.0 / 3.0, -2.0 * a / 3.0])
+    c = np.array([1.0, 1.0, 0.0])
+    return a_mat, b, c
+
+
 # Cache of dynamic-KT solutions keyed by quantised (kind, width, nu, B_L, tmax).
 _DYN_KT_CACHE: dict[tuple, tuple[NDArray, NDArray]] = {}
 _DYN_KT_CACHE_MAX = 256
@@ -814,57 +960,64 @@ _DYN_KT_CACHE_MAX = 256
 # system is then deep in the fast-fluctuation regime, where the analytic
 # motional-narrowing limit is accurate -- for the Gaussian case the Keren function
 # matches a converged solver to < 0.5 % for nu >~ 6*Delta, which is satisfied at
-# this crossover for any physical width.
+# this crossover for any physical width.  (The zero-field Lorentzian case never
+# reaches the solver: it has the exact closed form of
+# :func:`_strong_collision_modes` at every rate.)
 _DYN_KT_NU_SWITCH = 12.0
 
 
 def _dynamic_kt_grid(
     kind: str, width: float, nu: float, B_L: float, tmax: float
 ) -> tuple[NDArray, NDArray]:
-    """Return (grid, G_d) for a dynamic KT, computing+caching as needed."""
+    """Return (grid, G_d) for a grid-solved dynamic KT, computing+caching as needed.
+
+    Serves the Gaussian family and the longitudinal-field Lorentzian; the
+    zero-field Lorentzian is evaluated in closed form by
+    :func:`dynamic_lorentzian_kt` and never comes here.
+    """
     key = (kind, round(width, 6), round(nu, 6), round(B_L, 4), round(tmax, 5))
     cached = _DYN_KT_CACHE.get(key)
     if cached is not None:
         return cached
 
+    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+    omega0 = abs(gamma_mu * (float(B_L) * GAUSS_TO_TESLA))
     if nu <= _DYN_KT_NU_SWITCH:
-        # Slow/intermediate regime: strong-collision Volterra solve with a step
-        # sized so that nu*h <= 0.02 (stable and < 1 % here).
-        h_des = min(0.02, 0.02 / max(nu, 1e-3))
-        n = int(min(max(round(tmax / h_des) + 1, 64), 20001))
-        grid = np.linspace(0.0, tmax, n)
-        h = grid[1] - grid[0] if n > 1 else tmax
-        if kind == "gaussian":
-            if abs(B_L) < 1e-9:
-                gs = static_gkt_zf(grid, 1.0, width, 0.0)
-            else:
-                gs = longitudinal_field_kubo_toyabe(grid, 1.0, width, B_L, 0.0)
-        else:  # lorentzian (zero-field analytic; LF computed numerically)
-            if abs(B_L) < 1e-9:
-                gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
-            else:
-                gs = static_lorentzian_kt_lf(grid, 1.0, width, B_L, 0.0)
-        gd = _strong_collision_solve(np.asarray(gs, dtype=float), nu, h)
+        # Slow/intermediate regime: strong-collision Volterra solve.
+        nu_solve = float(nu)
     elif kind == "gaussian":
         # Fast-fluctuation Gaussian: the Keren function is the analytic motional-
         # narrowing limit (rate ~2*Delta^2/nu), accurate to <0.5% here and bounded.
         grid = np.linspace(0.0, tmax, 800)
         gd = keren(grid, 1.0, width, nu, B_L)
+        if len(_DYN_KT_CACHE) >= _DYN_KT_CACHE_MAX:
+            _DYN_KT_CACHE.pop(next(iter(_DYN_KT_CACHE)))  # see _bounded_cache_get
+        _DYN_KT_CACHE[key] = (grid, gd)
+        return grid, gd
     else:
-        # Fast-fluctuation Lorentzian: the relaxation rate saturates (it is
-        # ~independent of nu, since a Lorentzian distribution has no finite second
-        # moment), so reuse the stable solver evaluated at the crossover rate --
-        # continuous across the switch and physically correct.
-        nu_eff = _DYN_KT_NU_SWITCH
-        h_des = min(0.02, 0.02 / nu_eff)
-        n = int(min(max(round(tmax / h_des) + 1, 64), 20001))
-        grid = np.linspace(0.0, tmax, n)
-        h = grid[1] - grid[0] if n > 1 else tmax
+        # Fast-fluctuation Lorentzian in a field: the relaxation rate saturates
+        # (it is ~independent of nu, since a Lorentzian distribution has no
+        # finite second moment -- the zero-field closed form shows the rate
+        # tending to 4 a_L / 3), so reuse the stable solver evaluated at the
+        # crossover rate: continuous across the switch and physically correct.
+        nu_solve = _DYN_KT_NU_SWITCH
+
+    # Step sized so that nu*h <= 0.02 (stable and < 1 % here) and so that the
+    # static line shape's Larmor oscillation is resolved (<= 0.1 rad per step).
+    h_des = min(0.02, 0.02 / max(nu_solve, 1e-3), 0.1 / max(omega0, 1e-3))
+    n = int(min(max(round(tmax / h_des) + 1, 64), 20001))
+    grid = np.linspace(0.0, tmax, n)
+    h = grid[1] - grid[0] if n > 1 else tmax
+    if kind == "gaussian":
         if abs(B_L) < 1e-9:
-            gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
+            gs = static_gkt_zf(grid, 1.0, width, 0.0)
         else:
-            gs = static_lorentzian_kt_lf(grid, 1.0, width, B_L, 0.0)
-        gd = _strong_collision_solve(np.asarray(gs, dtype=float), nu_eff, h)
+            gs = longitudinal_field_kubo_toyabe(grid, 1.0, width, B_L, 0.0)
+    elif width <= 0 or omega0 < _FIELD_DECOUPLING_RATIO * width:
+        gs = static_lorentzian_kt_zf(grid, 1.0, width, 0.0)
+    else:
+        gs = _lorentzian_lf_uniform(width, omega0, h, n)
+    gd = _strong_collision_solve(np.asarray(gs, dtype=float), nu_solve, h)
 
     if len(_DYN_KT_CACHE) >= _DYN_KT_CACHE_MAX:
         _DYN_KT_CACHE.pop(next(iter(_DYN_KT_CACHE)))  # see _bounded_cache_get
@@ -920,21 +1073,38 @@ def dynamic_lorentzian_kt(
     Lorentzian local-field distribution of half-width ``a_L`` (us^-1) fluctuating
     at rate ``nu`` (MHz), with optional longitudinal field ``B_L`` (Gauss).
 
+    In zero field (``omega0 < 0.05 a_L``) the solution is **exact and closed
+    form**: the static function is a three-state linear system, so the
+    strong-collision integral equation reduces to a 3x3 eigenproblem and
+    ``G_d`` is a sum of three exponentials (:func:`_strong_collision_modes`),
+    valid at every rate with no grid, cache or fast-fluctuation switch.  In a
+    longitudinal field the static line shape has no finite realisation, and the
+    Volterra equation is solved on a grid (:func:`_dynamic_kt_grid`).
+
     - ``nu -> 0``    : recovers the static Lorentzian KT (zero-field analytic
       eqn 5.47; longitudinal field computed numerically per Blundell et al. 2022).
+    - ``nu >> a_L``  : the relaxation rate saturates at ``4 a_L / 3`` (a
+      Lorentzian distribution has no second moment to narrow).
     - ``B_L -> inf`` : decoupling, G -> 1.
     """
     t = np.asarray(t, dtype=float)
     scalar = t.ndim == 0
     tt = np.atleast_1d(np.abs(t))
+    a = float(a_L)
+    gamma_mu = 2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T
+    omega0 = abs(gamma_mu * (float(B_L) * GAUSS_TO_TESLA))
+    zero_field = a <= 0 or omega0 < _FIELD_DECOUPLING_RATIO * a
     if nu <= 1e-9:
-        if abs(B_L) < 1e-9:
-            gd = static_lorentzian_kt_zf(tt, 1.0, a_L, 0.0)
+        if zero_field:
+            gd = static_lorentzian_kt_zf(tt, 1.0, a, 0.0)
         else:
-            gd = static_lorentzian_kt_lf(tt, 1.0, a_L, B_L, 0.0)
+            gd = static_lorentzian_kt_lf(tt, 1.0, a, B_L, 0.0)
+    elif zero_field:
+        lam, weights = _strong_collision_modes(*_lorentzian_kt_zf_realisation(a), float(nu))
+        gd = _exponential_sum(tt, lam, weights)
     else:
         tmax = float(max(tt.max(), 1e-6))
-        grid, gd_grid = _dynamic_kt_grid("lorentzian", float(a_L), float(nu), float(B_L), tmax)
+        grid, gd_grid = _dynamic_kt_grid("lorentzian", a, float(nu), float(B_L), tmax)
         gd = np.interp(tt, grid, gd_grid)
     out = A0 * np.asarray(gd, dtype=float) + baseline
     return float(out[0]) if scalar else out
