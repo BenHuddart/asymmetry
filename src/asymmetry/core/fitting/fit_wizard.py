@@ -3797,12 +3797,10 @@ def _continuation_parameters(seed: ParameterSet, result: FitResult) -> Parameter
     """``seed``'s structure carrying ``result``'s fitted values.
 
     Not ``result.parameters`` directly. The engine now carries the ``fixed``
-    flag and the bounds through (it used to drop both, which silently freed the
-    multiplet envelope amplitudes pinned at 1 to keep each ``Osc × Env`` product
-    non-degenerate), but ``expr`` constraints are still not round-tripped and a
-    restart must not depend on the engine's packing at all: the seed is the
-    authoritative structure. Only the values move, clipped back inside the
-    seed's bounds.
+    flag and the bounds through (it used to drop both), but ``expr``
+    constraints are still not round-tripped and a restart must not depend on
+    the engine's packing at all: the seed is the authoritative structure.
+    Only the values move, clipped back inside the seed's bounds.
     """
     continued = _clone_parameter_set(seed)
     for parameter in continued:
@@ -4451,9 +4449,9 @@ def _initial_parameters_for_template(
             overrides["sigma"] = rate
     elif (multiplet := _MULTIPLET_TEMPLATE_KEY_RE.match(template.key)) is not None:
         # One damped cosine per detected line: frequencies/amplitudes from the
-        # peaks; the envelope amplitude of each (Osc x Env) pair is fixed at 1
-        # so the pair's scale lives in the oscillatory amplitude alone (the
-        # parenthesised product would otherwise be A_i*A_j degenerate).
+        # peaks. Each (Osc x Env) pair carries exactly one amplitude by
+        # construction (CompositeModel suppresses the envelope factor's
+        # scale), so only the oscillatory amplitude is seeded here.
         n_components = int(multiplet.group(1))
         has_relax = multiplet.group(3) is not None
         # Must select the SAME subset the builder counted: a relaxing shape's
@@ -4498,8 +4496,6 @@ def _initial_parameters_for_template(
             peak = pair_peaks[k] if k < len(pair_peaks) else None
             overrides[_pname("A", osc)] = _seeded_amplitude(peak, max(amplitude * share, _EPS))
             overrides[_pname("phase", osc)] = _seeded_phase(peak, phase_guess)
-            overrides[_pname("A", env)] = 1.0
-            fixed_names.add(_pname("A", env))
             overrides[_pname("Lambda", env)] = lambda_guess
             overrides[_pname("sigma", env)] = gaussian_width
             if peak is not None:
