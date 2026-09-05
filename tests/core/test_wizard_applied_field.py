@@ -185,6 +185,22 @@ def test_muonium_field_parameter_is_still_pinned() -> None:
     assert seeded["field"].value == pytest.approx(100.0)
 
 
+@pytest.mark.parametrize("geometry", [FieldGeometry.TF, None])
+def test_recorded_zero_setpoint_pins_field_at_zero(geometry) -> None:
+    # Recorded is recorded: a 0 G setpoint is metadata like any other value,
+    # and the transverse applied-field carriers have nothing to precess in.
+    template = _template(["MuoniumLowTF", "Constant"], ["+"], "muonium_low_tf_constant")
+    seeded = _seeded(template, field_gauss=0.0, geometry=geometry)
+    assert seeded["field"].fixed is True
+    assert seeded["field"].value == pytest.approx(0.0)
+
+
+def test_unrecorded_field_leaves_field_free() -> None:
+    template = _template(["MuoniumLowTF", "Constant"], ["+"], "muonium_low_tf_constant")
+    seeded = _seeded(template, field_gauss=None, geometry=None)
+    assert seeded["field"].fixed is False
+
+
 # --- end to end -------------------------------------------------------------
 
 

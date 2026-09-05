@@ -4528,7 +4528,11 @@ def _initial_parameters_for_template(
     model_bases = {split_parameter_name(name)[0] for name in template.model.param_names}
     field_gauss = seed_context.field_gauss if seed_context is not None else None
     geometry = seed_context.geometry if seed_context is not None else None
-    if field_gauss and "field" in model_bases:
+    if field_gauss is not None and "field" in model_bases:
+        # Recorded is recorded: a 0 G setpoint pins ``field`` at 0 too. Every
+        # ``field`` carrier the wizard screens is a transverse applied-field
+        # model (muonium TF, vortex lattice), so at 0 G it honestly has nothing
+        # to precess in, rather than being free to invent a field.
         overrides.setdefault("field", field_gauss)
         fixed_names.add("field")
     if "B_L" in model_bases:
