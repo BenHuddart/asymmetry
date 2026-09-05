@@ -59,6 +59,7 @@ from asymmetry.core.fitting.resolution import (
     assess_component_resolution,
     relaxation_rate_parameter_names,
 )
+from asymmetry.core.fitting.seeding import record_scale_estimate, record_scale_window_counts
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.fitting.wizard_scope import (
     ScopeResolution,
@@ -474,14 +475,13 @@ def fingerprint_spectrum(
     same peaks by construction.
     """
     n_points = max(int(dataset.n_points), 1)
-    early_count = min(n_points, max(5, n_points // 20))
-    late_count = min(n_points, max(5, n_points // 10))
+    early_count, late_count = record_scale_window_counts(n_points)
 
     y = np.asarray(dataset.asymmetry, dtype=float)
     t = np.asarray(dataset.time, dtype=float)
-    tail_estimate = float(np.mean(y[-late_count:]))
-    early_mean = float(np.mean(y[:early_count]))
-    initial_amplitude_estimate = float(early_mean - tail_estimate)
+    # The same (amplitude, tail) reading the parameter-seeding layers use, so a
+    # wizard candidate and a hand-built model start from one estimate.
+    initial_amplitude_estimate, tail_estimate = record_scale_estimate(t, y)
 
     centered = y - tail_estimate
     zero_crossings = _count_zero_crossings(centered)
