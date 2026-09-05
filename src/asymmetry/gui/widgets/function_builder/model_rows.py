@@ -14,6 +14,14 @@ This flat state is the single source of truth. Rendering derives a container
 tree from the parenthesis counts and paints it recursively; every editing
 operation mutates the flat state, re-renders, and emits ``structure_changed``.
 
+A sixth, parallel list, ``origins: list[int | None]``, tracks which component
+in the model the dialog *opened with* each row descends from (``None`` for a
+row added since). It is maintained by exactly the operations that maintain
+``component_names`` — see ``_insert_component_at`` / ``_remove_component_at`` /
+``_swap_terms_no_render`` / ``duplicate_row`` / ``set_structure`` / ``clear`` —
+so parameter carry-over (values following the component, not its name) has a
+map from "row now" to "row when the dialog opened" to work from.
+
 The fiddly part is index arithmetic under insert/delete: inserting a component
 at index ``i`` shifts every later component's operator/paren counts by one and
 remaps every ``(start, end)`` fraction-group pair; deleting does the reverse.
@@ -116,6 +124,41 @@ class _Node:
     end: int = 0
     is_fraction: bool = False
     children: list[_Node] = field(default_factory=list)
+
+
+def _align_component_names(old: Sequence[str], new: Sequence[str]) -> tuple[int | None, ...]:
+    """Align *new* component names onto *old* by longest common subsequence.
+
+    Returns, for each index in *new*, the index in *old* it is matched to (in
+    order, same-named components matched greedily by the LCS), or ``None``
+    when that position has no match. This is a local stand-in for
+    ``asymmetry.core.fitting.parameter_carry.align_component_names`` (Phase 1
+    of the parameter-carry-over plan, developed concurrently on a different
+    branch): identical signature and semantics, isolated to this one function
+    so the caller can swap the import in without touching anything else.
+    """
+    m, n = len(old), len(new)
+    # lcs_len[i][j] = length of the LCS of old[i:] and new[j:].
+    lcs_len = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(m - 1, -1, -1):
+        for j in range(n - 1, -1, -1):
+            if old[i] == new[j]:
+                lcs_len[i][j] = lcs_len[i + 1][j + 1] + 1
+            else:
+                lcs_len[i][j] = max(lcs_len[i + 1][j], lcs_len[i][j + 1])
+
+    alignment: list[int | None] = [None] * n
+    i = j = 0
+    while i < m and j < n:
+        if old[i] == new[j]:
+            alignment[j] = i
+            i += 1
+            j += 1
+        elif lcs_len[i + 1][j] >= lcs_len[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return tuple(alignment)
 
 
 def _pretty_param_name(name: str) -> str:
@@ -356,6 +399,7 @@ class ModelRowList(QWidget):
         self._enable_fraction_groups = enable_fraction_groups
 
         self._component_names: list[str] = []
+        self._origins: list[int | None] = []
         self._operators: list[str] = []
         self._open_parentheses: list[int] = []
         self._close_parentheses: list[int] = []
@@ -400,9 +444,26 @@ class ModelRowList(QWidget):
         open_parentheses: Sequence[int],
         close_parentheses: Sequence[int],
         fraction_groups: Sequence[tuple[int, int]],
+        *,
+        origins: Sequence[int | None] | None = None,
     ) -> None:
-        """Replace the whole structure and re-render (does not emit)."""
-        self._component_names = list(component_names)
+        """Replace the whole structure and re-render (does not emit).
+
+        *origins* is the origin for each of *component_names*, in order. When
+        omitted, origins are derived by aligning *component_names* against the
+        *current* component names (:meth:`compose_origins`) — the contract
+        text-mode edits rely on (``_apply_text`` -> ``set_structure`` with no
+        ``origins``) so a same-named row keeps the value it carried before the
+        edit. The very first seed from a model has no current rows to align
+        against, so it must pass ``origins`` explicitly (the identity map) —
+        see ``FunctionBuilderDialog._seed_structure``.
+        """
+        new_names = list(component_names)
+        new_origins = (
+            list(origins) if origins is not None else list(self.compose_origins(new_names))
+        )
+        self._component_names = new_names
+        self._origins = new_origins
         self._operators = list(operators)
         self._open_parentheses = list(open_parentheses)
         self._close_parentheses = list(close_parentheses)
@@ -423,6 +484,28 @@ class ModelRowList(QWidget):
             list(self._fraction_groups),
         )
 
+    def origins(self) -> tuple[int | None, ...]:
+        """Return each row's origin: its component index in the model the
+        dialog opened with, or ``None`` for a component added since."""
+        return tuple(self._origins)
+
+    def compose_origins(self, new_component_names: Sequence[str]) -> tuple[int | None, ...]:
+        """Return the origins *new_component_names* would carry via alignment.
+
+        Aligns *new_component_names* against the *current* component names
+        (:func:`_align_component_names`, longest common subsequence) and
+        composes the match through the current origins. This is exactly what
+        :meth:`set_structure` computes when called without an explicit
+        ``origins`` argument, exposed standalone so a caller can ask "what
+        would the origins be" without mutating the row list — used by
+        :meth:`~asymmetry.gui.widgets.function_builder.dialog.FunctionBuilderDialog.component_origins`
+        to answer for the text-mode buffer before it is applied.
+        """
+        alignment = _align_component_names(self._component_names, list(new_component_names))
+        return tuple(
+            self._origins[old_index] if old_index is not None else None for old_index in alignment
+        )
+
     def expression(self) -> str:
         """Return the canonical builder expression (includes ``{frac}``)."""
         return build_component_expression(
@@ -435,6 +518,7 @@ class ModelRowList(QWidget):
 
     def clear(self) -> None:
         self._component_names = []
+        self._origins = []
         self._operators = []
         self._open_parentheses = []
         self._close_parentheses = []
@@ -506,17 +590,22 @@ class ModelRowList(QWidget):
         operator: str,
         opens: int,
         closes: int,
+        origin: int | None = None,
     ) -> None:
         """Insert *name* at component index *at*, fixing all parallel lists.
 
         The operator joins the new component to its predecessor when ``at > 0``;
         when inserting at index 0 the operator slot for the *old* head is added
-        instead so the head still has no leading operator.
+        instead so the head still has no leading operator. *origin* is the new
+        row's origin: ``None`` for a genuinely new component (the default, used
+        by :meth:`append_component`); :meth:`duplicate_row` passes the source
+        row's own origin instead, since a duplicate starts from the original.
         """
         n = len(self._component_names)
         at = max(0, min(at, n))
 
         self._component_names.insert(at, name)
+        self._origins.insert(at, origin)
         self._open_parentheses.insert(at, opens)
         self._close_parentheses.insert(at, closes)
 
@@ -545,6 +634,7 @@ class ModelRowList(QWidget):
         closes = self._close_parentheses[at]
 
         del self._component_names[at]
+        del self._origins[at]
         del self._open_parentheses[at]
         del self._close_parentheses[at]
 
@@ -654,6 +744,7 @@ class ModelRowList(QWidget):
         if not (0 <= component_index < len(self._component_names)):
             return
         name = self._component_names[component_index]
+        origin = self._origins[component_index]
         # Same operator as the source; if the source is a container head the
         # duplicate simply joins with '+' inside the same context.
         if component_index > 0:
@@ -673,7 +764,9 @@ class ModelRowList(QWidget):
         # `_extend_group_end` on top would double-extend it and swallow the
         # next sibling (see tests/gui/test_function_builder_rows.py).
         is_last_member = group is not None and component_index == group[1]
-        self._insert_component_at(insert_at, name, operator=operator, opens=0, closes=0)
+        self._insert_component_at(
+            insert_at, name, operator=operator, opens=0, closes=0, origin=origin
+        )
 
         if is_last_member:
             self._extend_group_end(group, insert_at)
@@ -869,11 +962,14 @@ class ModelRowList(QWidget):
         ri0, ri1 = right
 
         names = self._component_names
+        origins = self._origins
         opens = self._open_parentheses
         closes = self._close_parentheses
 
         left_names = slice_of(names, left)
         right_names = slice_of(names, right)
+        left_origins = slice_of(origins, left)
+        right_origins = slice_of(origins, right)
         left_opens = slice_of(opens, left)
         right_opens = slice_of(opens, right)
         left_closes = slice_of(closes, left)
@@ -884,6 +980,7 @@ class ModelRowList(QWidget):
 
         # Rebuild names / parens with right block first, then left block.
         new_names = names[:li0] + right_names + left_names + names[ri1 + 1 :]
+        new_origins = origins[:li0] + right_origins + left_origins + origins[ri1 + 1 :]
         new_opens = opens[:li0] + right_opens + left_opens + opens[ri1 + 1 :]
         new_closes = closes[:li0] + right_closes + left_closes + closes[ri1 + 1 :]
 
@@ -901,6 +998,7 @@ class ModelRowList(QWidget):
         new_operators = before + right_internal + [joining_operator] + left_internal + after
 
         self._component_names = new_names
+        self._origins = new_origins
         self._open_parentheses = new_opens
         self._close_parentheses = new_closes
         self._operators = new_operators

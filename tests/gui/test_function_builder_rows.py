@@ -35,6 +35,20 @@ def _seed(widget: ModelRowList, expression: str) -> None:
     widget.set_structure(names, ops, opens, closes, fracs)
 
 
+def _seed_identity(widget: ModelRowList, expression: str) -> None:
+    """Seed *widget* the way a real dialog does: identity origins.
+
+    ``_seed`` (above) omits ``origins`` and is used throughout this file for
+    tests that don't care about origins — against a freshly-constructed
+    (empty) row list, that alignment yields all-``None``. Origin tests need
+    the true "opened with this model" identity map, which is what
+    ``FunctionBuilderDialog._seed_structure`` passes explicitly for the real
+    initial seed.
+    """
+    names, ops, opens, closes, fracs = parse_composite_expression(expression)
+    widget.set_structure(names, ops, opens, closes, fracs, origins=range(len(names)))
+
+
 # ----------------------------------------------------------------- round-trip
 @pytest.mark.parametrize(
     "expression",
@@ -430,3 +444,153 @@ def test_row_param_summary_uses_formatted_labels(qapp: QApplication) -> None:
     # here fit comfortably within the elide budget so it round-trips exactly).
     assert label.text() == expected_full
     assert "λ" in expected_full  # lambda symbol present in the formatted label
+
+
+# ------------------------------------------------------------------- origins
+# Origins track which component in the model the row list was seeded with
+# each row descends from (`None` for a component added since); see
+# `docs/plans/parameter-carry-over.md` design item 1 and the module docstring
+# of model_rows.py. Every test below seeds with `_seed_identity` (the
+# identity map `0..n-1`, matching what a real dialog passes for its initial
+# seed) so the origin under test is unambiguous.
+def test_initial_seed_with_explicit_origins_is_identity(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Constant")
+    assert widget.origins() == (0, 1)
+
+
+def test_seed_without_explicit_origins_against_empty_rows_is_all_none(
+    qapp: QApplication,
+) -> None:
+    # `_seed` (used throughout the rest of this file) omits `origins`; with no
+    # current rows to align against, every row's alignment is unmatched.
+    widget = _rows()
+    _seed(widget, "Exponential + Constant")
+    assert widget.origins() == (None, None)
+
+
+def test_append_at_top_level_gets_none_origin(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Constant")
+    widget.append_component("Gaussian")
+    assert widget.origins() == (0, 1, None)
+
+
+def test_append_after_selected_row_gets_none_origin(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Constant")
+    widget._selected_indices = {0}
+    widget.append_component("Gaussian")
+    assert widget.origins() == (0, None, 1)
+
+
+def test_duplicate_row_copies_source_origin(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Constant")
+    widget.duplicate_row(0)
+    names, *_rest = widget.structure()
+    assert names == ["Exponential", "Exponential", "Constant"]
+    assert widget.origins() == (0, 0, 1)
+
+
+def test_delete_row_drops_only_that_components_origin(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Gaussian + Constant")
+    widget.delete_row(1)  # Gaussian, origin 1
+    names, *_rest = widget.structure()
+    assert names == ["Exponential", "Constant"]
+    assert widget.origins() == (0, 2)
+
+
+def test_delete_selected_drops_only_selected_origins(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Gaussian + Constant")
+    widget._selected_indices = {0, 2}
+    widget.delete_selected()
+    names, *_rest = widget.structure()
+    assert names == ["Gaussian"]
+    assert widget.origins() == (1,)
+
+
+def test_move_row_carries_origin_with_the_row(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Gaussian + Constant")
+    widget.move_row(0, 1)  # Exponential (origin 0) moves past Gaussian (origin 1)
+    names, *_rest = widget.structure()
+    assert names == ["Gaussian", "Exponential", "Constant"]
+    assert widget.origins() == (1, 0, 2)
+
+
+def test_drop_row_reorder_carries_origins(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Gaussian + Constant")
+    assert widget._drop_row(0, (0, 2), 3) is True
+    names, *_rest = widget.structure()
+    assert names == ["Gaussian", "Constant", "Exponential"]
+    assert widget.origins() == (1, 2, 0)
+
+
+def test_group_span_leaves_origins_unchanged(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Gaussian + Constant")
+    assert widget.group_span((0, 1)) is True
+    assert widget.origins() == (0, 1, 2)
+
+
+def test_set_fraction_leaves_origins_unchanged(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Gaussian + Constant")
+    assert widget.set_fraction((0, 1), True) is True
+    assert widget.origins() == (0, 1, 2)
+
+
+def test_ungroup_span_leaves_origins_unchanged(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "( Exponential + Gaussian ){frac} + Constant")
+    assert widget.ungroup_span((0, 1)) is True
+    assert widget.origins() == (0, 1, 2)
+
+
+def test_clear_empties_origins(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Constant")
+    widget.clear()
+    assert widget.origins() == ()
+
+
+# ------------------------------------------------------ text-mode alignment
+def test_text_mode_alignment_new_component_between_survivors(qapp: QApplication) -> None:
+    # The parameter-carry-over plan's canonical example: typing a component in
+    # between two survivors gives the survivors their origins back and `None`
+    # to the new one.
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Constant")
+    names, ops, opens, closes, fracs = parse_composite_expression(
+        "Exponential + Gaussian + Constant"
+    )
+    widget.set_structure(names, ops, opens, closes, fracs)
+    assert widget.origins() == (0, None, 1)
+
+
+def test_text_mode_alignment_drops_removed_components_origin(qapp: QApplication) -> None:
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Gaussian + Constant")
+    names, ops, opens, closes, fracs = parse_composite_expression("Exponential + Constant")
+    widget.set_structure(names, ops, opens, closes, fracs)
+    assert widget.origins() == (0, 2)
+
+
+def test_compose_append_then_text_edit(qapp: QApplication) -> None:
+    # append_component (an insert, tested above) followed by a text-mode edit
+    # (an alignment) must compose: the appended row's None origin survives
+    # the alignment just like a "real" origin would.
+    widget = _rows()
+    _seed_identity(widget, "Exponential + Constant")
+    widget.append_component("Oscillatory")
+    assert widget.origins() == (0, 1, None)
+
+    names, ops, opens, closes, fracs = parse_composite_expression(
+        "Exponential + Constant + Gaussian + Oscillatory"
+    )
+    widget.set_structure(names, ops, opens, closes, fracs)
+    assert widget.origins() == (0, 1, None, None)
