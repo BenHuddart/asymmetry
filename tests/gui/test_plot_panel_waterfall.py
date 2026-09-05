@@ -75,10 +75,10 @@ def _spy_errorbar(panel: PlotPanel) -> list[np.ndarray]:
     calls: list[np.ndarray] = []
     original = panel._plot_errorbar_masked
 
-    def _record(ax, time, asymmetry, error, mask, **kwargs):
+    def _record(ax, time, asymmetry, error, mask, window, **kwargs):
         if kwargs.get("color") not in ("0.6",):  # skip the grey low-count series
             calls.append(np.asarray(asymmetry, dtype=float).copy())
-        return original(ax, time, asymmetry, error, mask, **kwargs)
+        return original(ax, time, asymmetry, error, mask, window, **kwargs)
 
     panel._plot_errorbar_masked = _record  # type: ignore[assignment]
     return calls
@@ -88,9 +88,9 @@ def _spy_frequency(panel: PlotPanel) -> list[np.ndarray]:
     calls: list[np.ndarray] = []
     original = panel._plot_frequency_line_masked
 
-    def _record(ax, freq, values, error, mask, **kwargs):
+    def _record(ax, freq, values, error, mask, window, **kwargs):
         calls.append(np.asarray(values, dtype=float).copy())
-        return original(ax, freq, values, error, mask, **kwargs)
+        return original(ax, freq, values, error, mask, window, **kwargs)
 
     panel._plot_frequency_line_masked = _record  # type: ignore[assignment]
     return calls
@@ -655,10 +655,12 @@ class TestWaterfallDeltaField:
         time_panel.restore_state(
             {
                 "bunch_factor": 1,
-                "x_min": 0.0,
-                "x_max": 10.0,
-                "y_min": -30.0,
-                "y_max": 30.0,
+                "axis_limits": {
+                    "axes": {
+                        "x": {"auto": False, "held": [0.0, 10.0], "quantity": None},
+                        "y": {"auto": False, "held": [-30.0, 30.0], "quantity": None},
+                    }
+                },
                 "waterfall": {"enabled": True, "offset": 2.5},
             }
         )

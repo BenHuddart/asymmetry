@@ -81,8 +81,10 @@ class FourierTfScenario(Scenario):
         # Frame the frequency view onto the Larmor peak
         # (γ_μ·B_app ≈ 27.1 MHz for 200 mT) so the canonical asymmetric
         # vortex P(B) shape is recognisable rather than lost in a wide
-        # near-empty axis. _on_compute_fourier honours these limits because
-        # _sync_frequency_plot_for_run is invoked with preserve_x_limits=True.
+        # near-empty axis. set_view_limits() holds both axes at this window;
+        # it is applied below once the real spectrum has actually rendered
+        # (see the poll loop), not before compute when the panel is still
+        # showing the pre-compute placeholder trace.
         freq_panel = window._frequency_plot_panel
         center_mhz = GAMMA_MU_MHZ_PER_G * 2000.0
         x_min, x_max = center_mhz - 1.0, center_mhz + 1.5

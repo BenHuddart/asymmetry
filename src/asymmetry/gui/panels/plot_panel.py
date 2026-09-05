@@ -22,10 +22,12 @@ cluster thematically in roughly this order:
 - **Frequency-axis unit/reference conversion** — the ``_convert_frequency_*``
   and ``_display_x_*``/``_display_y_*`` helpers translate between canonical
   MHz storage and the user-selected display unit/reference.
-- **Navigation mode and axis-limit sync** — ``_set_navigation_mode``,
-  ``_connect_axis_limit_callbacks``, ``_sync_limits_from_axes``,
-  ``_on_axis_limits_changed``: keeps the Matplotlib toolbar pan/zoom state,
-  the limit spin fields, and the stored view limits consistent.
+- **Navigation mode and axis limits** — ``_set_navigation_mode`` keeps the
+  Matplotlib toolbar pan/zoom state and the nav buttons consistent; the
+  axis window itself is owned by one
+  :class:`~asymmetry.gui.widgets.axis_limits.AxisLimitPolicy` (``_limits``),
+  resolved once per render and mirrored into the limit fields and the Auto
+  X/Y buttons (see :meth:`PlotPanel._apply_limits`).
 - **Dataset/projection plumbing** — ``get_analysis_dataset``, projection
   axis helpers (``_axis_key_for_dataset``, ``set_projections``,
   ``fit_target_projection``), and the low-count/low-confidence masking used
@@ -33,8 +35,11 @@ cluster thematically in roughly this order:
 - **Rendering** — the ``plot_*`` family is the core draw path:
   ``plot_datasets``/``plot_dataset`` (single/overlay), ``plot_vector_subplots``,
   ``plot_grouped_time_domain_subplots``, ``plot_maxent_reconstruction*``, and
-  ``plot_fit``/``set_global_fits`` for fit-curve overlay. ``_apply_limits`` and
-  the ``_auto_x_limits``/``_auto_y_limits*`` helpers frame the axes afterward.
+  ``plot_fit``/``set_global_fits`` for fit-curve overlay. Each render resolves
+  its axes through ``_limits`` and applies the result with ``_apply_limits``;
+  ``_default_x_limits`` and ``_signal_y_limits_from_last_plot`` /
+  ``_auto_y_limits_from_display_arrays`` are the *bounds suppliers* an Auto (or
+  never-framed) axis follows.
 - **Interaction** — mouse/canvas event handlers (``_on_canvas_button_press``,
   ``_on_canvas_motion_notify``, ``_on_canvas_button_release``) drive fit-range
   and moments-window drag handles, annotation add/edit/delete, and the cursor
@@ -55,6 +60,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -130,7 +136,11 @@ from asymmetry.gui.utils.gle_export import (
     show_export_result_dialog,
 )
 from asymmetry.gui.utils.waterfall import auto_waterfall_delta
-from asymmetry.gui.widgets.axis_limits import AxisLimitControls, FloatLimitField
+from asymmetry.gui.widgets.axis_limits import (
+    AxisLimitControls,
+    AxisLimitPolicy,
+    FloatLimitField,
+)
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.projection_chip_bar import ProjectionChipBar
@@ -261,6 +271,24 @@ _SIGNAL_FRAME_WEIGHTED_QUANTILE = 0.0025
 _SIGNAL_FRAME_WEIGHT_ERROR_FLOOR = 1e-6
 
 
+@dataclass(frozen=True)
+class _DisplayEntry:
+    """One dataset's drawable display arrays, materialised once per render.
+
+    ``time``/``asymmetry``/``error`` are already through the analysis + RRF +
+    frequency-display pipeline, so the bounds a render resolves and the samples
+    it draws come from exactly the same arrays.
+    """
+
+    dataset: MuonDataset
+    analysis: MuonDataset
+    time: np.ndarray
+    asymmetry: np.ndarray
+    error: np.ndarray
+    low_count_mask: np.ndarray
+    finite_mask: np.ndarray
+
+
 class PlotPanel(QWidget):
     """Matplotlib canvas for time- and frequency-domain plots.
 
@@ -350,11 +378,6 @@ class PlotPanel(QWidget):
         self._frequency_axis_unit_before_correlation = "frequency_mhz"
         self._frequency_axis_mode_before_correlation = "absolute"
         self._frequency_reference_mode_before_correlation = "run"
-        self._frequency_x_limits_by_unit: dict[str, tuple[float, float]] = {}
-        #: Per-mode y windows for unit-area density views (session-local): only
-        #: populated when the density Jacobian differs between two modes, so a
-        #: revisited mode restores its exact y window instead of re-quantizing.
-        self._frequency_y_limits_by_unit: dict[str, tuple[float, float]] = {}
         #: Optional ``(run_number, time_us, signal)`` diamagnetic-fit overlay for
         #: the time view; only drawn when the displayed run matches ``run_number``.
         self._diamagnetic_overlay: tuple[int | None, np.ndarray, np.ndarray] | None = None
@@ -422,9 +445,6 @@ class PlotPanel(QWidget):
             style_figure(self._figure)
             style_axes(self._ax)
             self._nav_toolbar.hide()
-            self._axis_limit_callback_ids: list[tuple[object, int, int]] = []
-            self._syncing_limits_from_axes = False
-            self._connect_axis_limit_callbacks([self._ax])
             default_x_label, default_y_label = self._default_axis_labels()
             self._ax.set_xlabel(default_x_label)
             self._ax.set_ylabel(default_y_label)
@@ -509,29 +529,23 @@ class PlotPanel(QWidget):
             # Store current dataset for rebunching
             self._current_dataset = None
             self._current_datasets: list[MuonDataset] = []
-            self._limits_initialized = False
-            # Signature of the content the current first-paint frame was computed
-            # for. First-paint auto-framing is one-shot per identity: it re-fires
-            # when the displayed content changes (a different run, axis, or
-            # view-mode) so a freshly loaded or switched dataset frames to itself
-            # instead of inheriting the previous view's — or a persisted
-            # cross-session — limits, but not on incidental redraws (bunching, fit
-            # overlays, annotations) that must preserve a user's manual zoom.
-            self._framed_identity: tuple | None = None
-            # Set once the user takes explicit control of the limits (edits a
-            # limit field, or opens a project whose saved view is restored).
-            # While set, a content switch keeps the current limits instead of
-            # reframing — so the "compare the same window across a run series"
-            # workflow survives switching runs. Auto-framing never sets it, so an
-            # untouched view reframes to each newly shown dataset. Cleared by
-            # clear() (a blank/new view starts fresh).
-            self._limits_user_locked = False
-            # Whether the most recent plot_dataset/plot_datasets draw first-paint
-            # framed the axes (as opposed to preserving an existing frame). Read
-            # by the frequency render path so it restores caller-preserved limits
-            # only when the draw did NOT reframe — a genuine first paint keeps its
-            # freshly computed smart framing instead of stale preserved defaults.
-            self._last_draw_reframed = False
+            #: Per-axis Auto/Hold resolver — the single decision point for
+            #: *when* an axis reframes. Axis ids are ``"x"`` and one y per
+            #: displayed pane (:meth:`_y_axis_id`). Every render resolves it
+            #: once and mirrors the result into the limit fields, so the
+            #: fields, the axes and the policy cannot disagree.
+            self._limits = AxisLimitPolicy()
+            # Seed x/y from the Auto buttons so a never-rendered panel already
+            # serialises both axes and a restore mirrors the same state back.
+            self._sync_auto_from_buttons([self._y_axis_id(None)])
+            #: Axis limits captured at zoom/pan button-press, compared at
+            #: release so only the axes the gesture actually moved are held.
+            self._gesture_start: dict[str, tuple[float, float]] = {}
+            #: ``(datasets, combined)`` of the MaxEnt reconstruction currently
+            #: on screen, so ``_redraw_current_view`` can rebuild that layout
+            #: instead of falling through to a plain dataset plot. ``None``
+            #: whenever any other render path drew last.
+            self._maxent_reconstruction: tuple[list[MuonDataset], bool] | None = None
             self._current_polarization_axis: str | None = None
             # Ordered projection specs ({"label", "tint"}) and the per-label tint
             # lookup used for frame-tinting subplots; driven by the chip bar.
@@ -541,7 +555,6 @@ class PlotPanel(QWidget):
             # Which stacked subplot is the active single-fit target (multi-view).
             self._fit_target_projection: str | None = None
             self._fit_target_artists: list = []
-            self._y_limits_by_polarization: dict[str, tuple[float, float]] = {}
             self._subplot_axes_by_polarization: dict[str, object] = {}
             self._vector_subplot_datasets: dict[str, list[MuonDataset]] = {}
             self._grouped_time_subplot_datasets: list[MuonDataset] = []
@@ -593,8 +606,6 @@ class PlotPanel(QWidget):
             #: Chip Text artist per axis id; cleared on every view reset.
             self._decimation_chip_artists: dict[int, object] = {}
             self._max_render_points_per_trace = 4000
-            self._viewport_refresh_pending = False
-            self._viewport_refresh_in_progress = False
 
             self._canvas.mpl_connect("button_press_event", self._on_canvas_button_press)
             self._canvas.mpl_connect("motion_notify_event", self._on_canvas_motion_notify)
@@ -633,8 +644,10 @@ class PlotPanel(QWidget):
         self._x_unit_label.setText("MHz" if self._is_frequency_plot_panel() else "µs")
         self._y_unit_label.setText("a.u." if self._is_frequency_plot_panel() else "%")
 
-        self._auto_x_btn.clicked.connect(self._on_auto_x_button_clicked)
-        self._auto_y_btn.clicked.connect(self._on_auto_y_button_clicked)
+        # The Auto buttons ARE the answer to "does this axis follow the data":
+        # every resolve reads them, so a click only has to re-render.
+        self._auto_x_btn.clicked.connect(self._on_auto_button_clicked)
+        self._auto_y_btn.clicked.connect(self._on_auto_button_clicked)
 
         self._limit_toolbar.addWidget(self._axis_controls)
 
@@ -1110,7 +1123,7 @@ class PlotPanel(QWidget):
 
         The dimensionless ppm axis is unit-independent, so it keys on the mode
         alone; absolute/shift axes key on ``unit:mode`` so each unit + transform
-        keeps its own stashed window.
+        is a distinct x quantity (a held window is converted between them).
         """
         resolved_mode = self._frequency_axis_mode if mode is None else str(mode)
         if resolved_mode == "relative_ppm":
@@ -1425,15 +1438,6 @@ class PlotPanel(QWidget):
             to_unit=unit,
         )
 
-    def _set_view_limits_fields(
-        self, x_min: float, x_max: float, y_min: float, y_max: float
-    ) -> None:
-        """Update toolbar-backed view-limit fields without drawing."""
-        self._set_limit_field_value(self._x_min, float(x_min))
-        self._set_limit_field_value(self._x_max, float(x_max))
-        self._set_limit_field_value(self._y_min, float(y_min))
-        self._set_limit_field_value(self._y_max, float(y_max))
-
     def set_frequency_axis_mode(self, mode: str) -> None:
         """Set the frequency x-axis transform mode programmatically.
 
@@ -1526,8 +1530,7 @@ class PlotPanel(QWidget):
         nothing" or "loses traces". Instead the current window is converted to
         canonical absolute MHz with the OLD active reference and back into
         display space with the NEW one, so the view keeps showing the same
-        physical frequencies; the per-``unit:mode`` limit stash entry is
-        invalidated because its stored window belonged to the old reference.
+        physical frequencies.
 
         In Run-field mode the per-trace references differ, so the window can
         only follow one anchor — the ACTIVE dataset's reference (the same
@@ -1543,24 +1546,18 @@ class PlotPanel(QWidget):
         if old_ref != new_ref:
             unit = self._current_frequency_x_unit
             mode = self._frequency_axis_mode
-            x_min, x_max, y_min, y_max = self.get_view_limits()
-            canonical_lo = self._convert_display_limit_to_canonical_mhz(
-                float(x_min), unit=unit, mode=mode, reference_mhz=old_ref
-            )
-            canonical_hi = self._convert_display_limit_to_canonical_mhz(
-                float(x_max), unit=unit, mode=mode, reference_mhz=old_ref
-            )
-            new_x_min = self._convert_canonical_mhz_to_display_limit(
-                canonical_lo, unit=unit, mode=mode, reference_mhz=new_ref
-            )
-            new_x_max = self._convert_canonical_mhz_to_display_limit(
-                canonical_hi, unit=unit, mode=mode, reference_mhz=new_ref
-            )
-            # The stashed window for this unit:mode belonged to the old
-            # reference; drop it so a later mode round-trip restores the
-            # re-anchored window (re-stashed on switch-away), not the stale one.
-            self._frequency_x_limits_by_unit.pop(self._frequency_limit_mode_key(), None)
-            self._set_view_limits_fields(new_x_min, new_x_max, y_min, y_max)
+
+            def _reanchor(value: float) -> float:
+                canonical = self._convert_display_limit_to_canonical_mhz(
+                    value, unit=unit, mode=mode, reference_mhz=old_ref
+                )
+                return self._convert_canonical_mhz_to_display_limit(
+                    canonical, unit=unit, mode=mode, reference_mhz=new_ref
+                )
+
+            # A held window is re-anchored, not refitted: the same physical
+            # slice, expressed about the new reference.
+            self._limits.convert("x", _reanchor, self._frequency_limit_mode_key())
         # Redraw even when the active reference is unchanged: a Run↔Common
         # switch re-shifts overlay members whose own fields differ from the
         # active one, so the traces move although the window does not.
@@ -1568,7 +1565,7 @@ class PlotPanel(QWidget):
             self._redraw_current_view()
         else:
             self._apply_axis_labels(*self._default_axis_labels())
-            self._apply_limits()
+            self._reapply_held_limits()
 
     def get_frequency_view_window_mhz(
         self,
@@ -1617,9 +1614,10 @@ class PlotPanel(QWidget):
     ) -> None:
         """Switch frequency-axis display unit/mode with a single redraw.
 
-        Each ``unit:mode`` pair keeps its own stashed x-window, so switching back
-        and forth restores each view's limits. When no stash exists, the current
-        window is converted through canonical MHz into the new mode.
+        The window is *converted*, never refitted: a held x limit is mapped
+        old display → canonical MHz → new display and re-stamped with the new
+        quantity, so switching MHz ↔ G ↔ T (or absolute ↔ shift) round-trips at
+        full precision and leaves the user on the same physical slice.
         """
         if not self._is_frequency_plot_panel():
             return
@@ -1633,68 +1631,42 @@ class PlotPanel(QWidget):
         if not force and new_unit == old_unit and new_mode == old_mode:
             return
 
-        current_x_min, current_x_max, current_y_min, current_y_max = self.get_view_limits()
-        old_key = self._frequency_limit_mode_key(unit=old_unit, mode=old_mode)
-        self._frequency_x_limits_by_unit[old_key] = (float(current_x_min), float(current_x_max))
+        def _to_new_display(value: float) -> float:
+            canonical = self._convert_display_limit_to_canonical_mhz(
+                value, unit=old_unit, mode=old_mode
+            )
+            return self._convert_canonical_mhz_to_display_limit(
+                canonical, unit=new_unit, mode=new_mode
+            )
 
-        new_key = self._frequency_limit_mode_key(unit=new_unit, mode=new_mode)
-        if new_key in self._frequency_x_limits_by_unit:
-            new_x_min, new_x_max = self._frequency_x_limits_by_unit[new_key]
-        else:
-            canonical_min = self._convert_display_limit_to_canonical_mhz(
-                current_x_min,
-                unit=old_unit,
-                mode=old_mode,
-            )
-            canonical_max = self._convert_display_limit_to_canonical_mhz(
-                current_x_max,
-                unit=old_unit,
-                mode=old_mode,
-            )
-            new_x_min = self._convert_canonical_mhz_to_display_limit(
-                canonical_min,
-                unit=new_unit,
-                mode=new_mode,
-            )
-            new_x_max = self._convert_canonical_mhz_to_display_limit(
-                canonical_max,
-                unit=new_unit,
-                mode=new_mode,
-            )
+        self._limits.convert(
+            "x",
+            _to_new_display,
+            self._frequency_limit_mode_key(unit=new_unit, mode=new_mode),
+        )
 
         # A displayed unit-area density is rescaled by the dν/dB Jacobian when
-        # the x unit changes; the y-limit fields track it so the view window
-        # stays on the same physical slice of the distribution. Mirroring the
-        # x machinery above, a per-mode stash restores a previously visited
-        # mode's y window exactly (the 3-decimal limit fields would otherwise
-        # quantize a converted-back value); an unvisited mode converts by the
-        # factor ratio. Keyed off the same label-driving dataset as the axis
-        # labels; for calibrated spectra both factors are 1 and the y window
-        # carries through untouched (no stash entry).
-        new_y_min, new_y_max = float(current_y_min), float(current_y_max)
+        # the x unit changes; the held y windows track it so the view stays on
+        # the same physical slice of the distribution. For calibrated spectra
+        # both factors are 1 and the ratio is an identity.
         density_dataset = (
             self._current_datasets[0] if self._current_datasets else self._current_dataset
         )
         factor_old = self._density_factor_for_unit(density_dataset, old_unit)
         factor_new = self._density_factor_for_unit(density_dataset, new_unit)
-        if factor_new != factor_old:
-            self._frequency_y_limits_by_unit[old_key] = (new_y_min, new_y_max)
-            if new_key in self._frequency_y_limits_by_unit:
-                new_y_min, new_y_max = self._frequency_y_limits_by_unit[new_key]
-            elif factor_old > 0.0:
-                ratio = factor_new / factor_old
-                new_y_min *= ratio
-                new_y_max *= ratio
+        ratio = factor_new / factor_old if factor_old > 0.0 else 1.0
+        new_density_key = self._density_quantity_key(density_dataset, new_unit)
+        for axis_id in (self._y_axis_id(key) for key in self._displayed_y_axes()):
+            self._limits.convert(axis_id, lambda value: value * ratio, new_density_key)
 
         self._current_frequency_x_unit = new_unit
         self._frequency_axis_mode = new_mode
-        self._set_view_limits_fields(new_x_min, new_x_max, new_y_min, new_y_max)
 
         if self.has_plot_content():
             self._redraw_current_view()
         else:
             self._apply_axis_labels(*self._default_axis_labels())
-            self._apply_limits()
+            self._reapply_held_limits()
 
     def _current_axis_labels(self) -> tuple[str, str]:
         """Return the axis labels for the currently plotted datasets."""
@@ -1925,38 +1897,86 @@ class PlotPanel(QWidget):
         """Toggle Matplotlib zoom mode from toolbar button."""
         self._set_navigation_mode("zoom" if checked else "none")
 
-    def _connect_axis_limit_callbacks(self, axes: list[object]) -> None:
-        """Attach x/y-limit listeners used to mirror interactive nav updates."""
-        self._disconnect_axis_limit_callbacks()
-        self._axis_limit_callback_ids = []
+    def _y_axis_id(self, axis_key: str | None) -> str:
+        """The policy axis id for the y axis of the pane keyed *axis_key*.
 
-        for axis_obj in axes:
-            callbacks = getattr(axis_obj, "callbacks", None)
-            if callbacks is None:
-                continue
-            connect = getattr(callbacks, "connect", None)
-            if connect is None:
-                continue
-            x_cid = connect("xlim_changed", self._on_axis_limits_changed)
-            y_cid = connect("ylim_changed", self._on_axis_limits_changed)
-            self._axis_limit_callback_ids.append((axis_obj, x_cid, y_cid))
+        The single view keys on the current polarization axis, so per-projection
+        y memory is simply "a different id"; stacked views key on each subplot's
+        own key. ``None`` (no projection at all) is the plain ``"y"`` axis.
+        """
+        return "y" if axis_key is None else f"y:{axis_key}"
 
-    def _disconnect_axis_limit_callbacks(self) -> None:
-        """Disconnect previously attached x/y-limit listeners."""
-        callback_ids = getattr(self, "_axis_limit_callback_ids", None)
-        if not callback_ids:
-            return
+    def _displayed_y_axes(self) -> dict[str | None, object]:
+        """Axis key → Matplotlib axes for every y axis currently on screen."""
+        if self._subplot_axes_by_polarization:
+            return dict(self._subplot_axes_by_polarization)
+        return {self._current_polarization_axis: self._ax}
 
-        for axis_obj, x_cid, y_cid in callback_ids:
-            callbacks = getattr(axis_obj, "callbacks", None)
-            disconnect = getattr(callbacks, "disconnect", None)
-            if disconnect is None:
-                continue
-            for cid in (x_cid, y_cid):
-                try:
-                    disconnect(cid)
-                except Exception:
-                    continue
+    def _x_quantity(self) -> str:
+        """What the x axis currently measures (a change refits a held axis once)."""
+        if self._is_frequency_plot_panel():
+            return self._frequency_limit_mode_key()
+        return "time"
+
+    def _y_quantity(self) -> str:
+        """What the y axis currently measures.
+
+        The frequency panel keys on the displayed density Jacobian (a unit-area
+        spectrum is rescaled when the x unit changes); the time panel keys on
+        the view mode plus the waterfall stack, whose ``i·Δ`` pedestals rescale
+        the natural y extent just as a different view mode would.
+        """
+        if self._is_frequency_plot_panel():
+            dataset = self._current_datasets[0] if self._current_datasets else self._current_dataset
+            return self._density_quantity_key(dataset, self._current_frequency_x_unit)
+        return (
+            f"{self._current_time_view_mode}|{self.is_waterfall_enabled()}|{self._waterfall_offset}"
+        )
+
+    def _density_quantity_key(self, dataset: MuonDataset | None, x_unit: str) -> str:
+        """Stable y-quantity key for *dataset* drawn against x-unit *x_unit*."""
+        return f"density:{self._density_factor_for_unit(dataset, x_unit):.12g}"
+
+    def _sync_auto_from_buttons(self, y_ids: list[str]) -> None:
+        """Push the Auto X/Y buttons into the policy before resolving.
+
+        The buttons are the truth for "does this axis follow the data", so a
+        subplot that appears while Auto Y is off is Held from its first frame
+        and the policy can never disagree with what the user sees.
+        """
+        self._limits.set_auto("x", self._auto_x_btn.isChecked())
+        auto_y = self._auto_y_btn.isChecked()
+        for axis_id in y_ids:
+            self._limits.set_auto(axis_id, auto_y)
+
+    def _mirror_auto_buttons(self, y_ids: list[str]) -> None:
+        """Show the policy's Auto flags on the buttons (after a gesture/restore)."""
+        with QSignalBlocker(self._auto_x_btn):
+            self._auto_x_btn.setChecked(self._limits.is_auto("x"))
+        with QSignalBlocker(self._auto_y_btn):
+            self._auto_y_btn.setChecked(all(self._limits.is_auto(a) for a in y_ids))
+
+    def _padded_x_limits(self, lo: float, hi: float) -> tuple[float, float]:
+        """Expand a degenerate x pair — Matplotlib warns on identical limits."""
+        if np.isclose(lo, hi):
+            pad = max(1e-9, abs(lo) * 1e-6)
+            return lo - pad, hi + pad
+        return lo, hi
+
+    def _axis_limits_snapshot(self) -> dict[str, tuple[float, float]]:
+        """Every displayed axis's current limits, in policy (control) units."""
+        axes = self._displayed_y_axes()
+        snapshot: dict[str, tuple[float, float]] = {}
+        first = next(iter(axes.values()))
+        x0, x1 = first.get_xlim()
+        snapshot["x"] = (
+            self._convert_frequency_axis_limit_to_control_value(x0),
+            self._convert_frequency_axis_limit_to_control_value(x1),
+        )
+        for axis_key, axis_obj in axes.items():
+            y0, y1 = axis_obj.get_ylim()
+            snapshot[self._y_axis_id(axis_key)] = (float(y0), float(y1))
+        return snapshot
 
     def _set_limit_field_value(self, field: FloatLimitField, value: float) -> None:
         """Set a limit field value without signal churn."""
@@ -1964,204 +1984,137 @@ class PlotPanel(QWidget):
         field.setValue(float(value))
         field.blockSignals(False)
 
-    def _sync_limits_from_axes(self, source_axis: object | None = None) -> bool:
-        """Update x/y limit fields from current Matplotlib axis limits."""
-        if not self._has_mpl or self._syncing_limits_from_axes:
-            return False
+    def _mirror_limit_fields(self, limits: dict[str, tuple[float, float]]) -> None:
+        """Show the resolved limits in the X/Y fields.
 
-        self._syncing_limits_from_axes = True
-        try:
-            if self._subplot_axes_by_polarization:
-                subplot_axes = list(self._subplot_axes_by_polarization.values())
-                if source_axis is not None and not any(
-                    source_axis is axis for axis in subplot_axes
-                ):
-                    return False
-
-                axis_obj = None
-                if source_axis in self._subplot_axes_by_polarization.values():
-                    axis_obj = source_axis
-                else:
-                    ordered = self._all_mode_axes_order()
-                    if ordered:
-                        axis_obj = self._subplot_axes_by_polarization.get(ordered[0])
-                    if axis_obj is None:
-                        axis_obj = next(iter(self._subplot_axes_by_polarization.values()), None)
-
-                if axis_obj is None or not hasattr(axis_obj, "get_xlim"):
-                    return False
-
-                x0, x1 = axis_obj.get_xlim()
-                self._set_limit_field_value(
-                    self._x_min,
-                    self._convert_frequency_axis_limit_to_control_value(x0),
-                )
-                self._set_limit_field_value(
-                    self._x_max,
-                    self._convert_frequency_axis_limit_to_control_value(x1),
-                )
-
-                for axis_key, subplot_axis in self._subplot_axes_by_polarization.items():
-                    if not hasattr(subplot_axis, "get_ylim"):
-                        continue
-                    y0, y1 = subplot_axis.get_ylim()
-                    lo, hi = (float(y0), float(y1)) if y0 <= y1 else (float(y1), float(y0))
-                    self._y_limits_by_polarization[axis_key] = (lo, hi)
-
-                current_axis = self._current_polarization_axis
-                if current_axis in self._subplot_axes_by_polarization:
-                    current_obj = self._subplot_axes_by_polarization[current_axis]
-                    if hasattr(current_obj, "get_ylim"):
-                        y0, y1 = current_obj.get_ylim()
-                        self._set_limit_field_value(self._y_min, y0)
-                        self._set_limit_field_value(self._y_max, y1)
-                else:
-                    self._sync_y_controls_with_visible_axis()
-                return True
-
-            if not hasattr(self._ax, "get_xlim") or not hasattr(self._ax, "get_ylim"):
-                return False
-            if source_axis is not None and source_axis is not self._ax:
-                return False
-
-            x0, x1 = self._ax.get_xlim()
-            y0, y1 = self._ax.get_ylim()
-            self._set_limit_field_value(
-                self._x_min,
-                self._convert_frequency_axis_limit_to_control_value(x0),
-            )
-            self._set_limit_field_value(
-                self._x_max,
-                self._convert_frequency_axis_limit_to_control_value(x1),
-            )
-            self._set_limit_field_value(self._y_min, y0)
-            self._set_limit_field_value(self._y_max, y1)
-            self._cache_current_y_limits_for_axis()
-            self._emit_view_limits_changed()
-            return True
-        finally:
-            self._syncing_limits_from_axes = False
-
-    def _is_reconstruction_view(self) -> bool:
-        """True when the panel shows a MaxEnt reconstruction layout.
-
-        Reconstruction subplots are keyed ``recon:<run>:<idx>`` /
-        ``recon:combined:<run>``. They are drawn with plain ``ax.plot`` (never
-        decimated) and ``_redraw_current_view`` cannot rebuild them — it would
-        fall through to a plain dataset plot — so they must be excluded from the
-        viewport-refresh path.
+        The Y fields always mirror :meth:`_active_y_axis`'s id — the focused
+        (fit-target) subplot in a stacked view, the single pane otherwise.
         """
-        return any(
-            isinstance(key, str) and key.startswith("recon:")
-            for key in self._subplot_axes_by_polarization
+        if "x" in limits:
+            self._set_limit_field_value(self._x_min, limits["x"][0])
+            self._set_limit_field_value(self._x_max, limits["x"][1])
+        y_id = self._y_axis_id(self._active_y_axis())
+        if y_id in limits:
+            self._set_limit_field_value(self._y_min, limits[y_id][0])
+            self._set_limit_field_value(self._y_max, limits[y_id][1])
+
+    def _stacked_x_bounds(
+        self,
+        arrays_by_axis: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None],
+    ) -> tuple[float, float] | None:
+        """Auto x-bounds shared by every stacked subplot.
+
+        The subplots share one x axis, so they share one set of bounds: the
+        same ``_default_x_limits`` framing (pad + t0 lower-clamp) the single and
+        overlay views use, over every pane's data at once.
+        """
+        usable = [arrays for arrays in arrays_by_axis.values() if arrays is not None]
+        if not usable:
+            return None
+        return self._default_x_limits(
+            np.concatenate([arrays[0] for arrays in usable]),
+            np.concatenate([arrays[1] for arrays in usable]),
         )
 
-    def _schedule_viewport_refresh(self) -> bool:
-        """Coalesce viewport-triggered density refreshes onto the next event loop turn.
+    def _resolve_x(
+        self, bounds: tuple[float, float] | None
+    ) -> tuple[dict[str, tuple[float, float]], tuple[float, float] | None]:
+        """Resolve x, mirror the X fields, and return the draw window.
 
-        Returns ``True`` when a deferred refresh will genuinely run — either it
-        was armed now, or one is already pending (a queued refresh covers this
-        request). Returns ``False`` when a guard bails (no mpl, no datasets, a
-        refresh already in progress, or a reconstruction view that
-        ``_redraw_current_view`` cannot rebuild), so callers can fall back to a
-        synchronous draw rather than leave the canvas undrawn.
+        Called before anything is drawn, so decimation and the y bounds are
+        computed for the window the canvas is about to show — never one view
+        behind. The window is in plotted-axis units; ``None`` means there was no
+        finite data to frame and the axis has never framed.
         """
-        if (
-            not self._has_mpl
-            or not self._current_datasets
-            or self._viewport_refresh_in_progress
-            # MaxEnt reconstructions are not decimated and cannot be rebuilt by
-            # _redraw_current_view; refreshing one would replace it with a plain
-            # dataset plot. (Pre-existing: limit-field edits also route here.)
-            or self._is_reconstruction_view()
-        ):
-            return False
-        if self._viewport_refresh_pending:
-            # A queued refresh already covers this request; it will draw once.
-            return True
-        self._viewport_refresh_pending = True
-        QTimer.singleShot(0, self._apply_viewport_refresh)
-        return True
+        resolved = self._limits.resolve({"x": bounds}, {"x": self._x_quantity()})
+        if "x" not in resolved:
+            return resolved, None
+        lo, hi = resolved["x"]
+        self._set_limit_field_value(self._x_min, lo)
+        self._set_limit_field_value(self._x_max, hi)
+        return resolved, (
+            self._convert_frequency_control_value_to_axis_limit(lo),
+            self._convert_frequency_control_value_to_axis_limit(hi),
+        )
 
-    def _apply_viewport_refresh(self) -> None:
-        """Re-render the current view using the latest visible-axis limits."""
-        if not self._viewport_refresh_pending:
-            return
-        self._viewport_refresh_pending = False
-        if not self._current_datasets or self._viewport_refresh_in_progress:
-            return
+    def _resolve_y(
+        self, axis_id: str, bounds: tuple[float, float] | None
+    ) -> dict[str, tuple[float, float]]:
+        """Resolve one y axis, whose bounds were measured inside the resolved x."""
+        return self._limits.resolve({axis_id: bounds}, {axis_id: self._y_quantity()})
 
-        self._viewport_refresh_in_progress = True
-        try:
+    def _apply_limits(self, limits: dict[str, tuple[float, float]]) -> None:
+        """Apply a resolved limit dict to the axes, mirror the fields, draw once.
+
+        *limits* comes straight from :meth:`AxisLimitPolicy.resolve`, so this is
+        the only place the panel writes ``set_xlim``/``set_ylim`` on the live
+        axes: whatever the policy decided is what the canvas and the fields show.
+        """
+        if not self._has_mpl:
+            return
+        axes = self._displayed_y_axes()
+        if "x" in limits:
+            x0 = self._convert_frequency_control_value_to_axis_limit(limits["x"][0])
+            x1 = self._convert_frequency_control_value_to_axis_limit(limits["x"][1])
+            for axis_obj in axes.values():
+                axis_obj.set_xlim(x0, x1)
+        for axis_key, axis_obj in axes.items():
+            y_limits = limits.get(self._y_axis_id(axis_key))
+            if y_limits is not None:
+                axis_obj.set_ylim(*y_limits)
+        self._mirror_limit_fields(limits)
+        self._draw_fit_range_artists()
+        self._canvas.draw()
+        self._emit_view_limits_changed()
+
+    def _reapply_held_limits(self) -> None:
+        """Re-resolve with no data — a blank canvas keeps every held value.
+
+        Used by the paths that change what an axis *means* (a frequency unit or
+        reference switch) while nothing is plotted, and after a project restore:
+        ``None`` bounds leave a held axis exactly where it is, so this only ever
+        re-applies and re-displays what the policy already holds. No quantity is
+        passed: with nothing plotted there is nothing to measure, and stamping a
+        quantity derived from no data would mask the refit the first real render
+        owes a held axis.
+        """
+        y_ids = [self._y_axis_id(key) for key in self._displayed_y_axes()]
+        self._sync_auto_from_buttons(y_ids)
+        bounds: dict[str, tuple[float, float] | None] = {"x": None}
+        for axis_id in y_ids:
+            bounds[axis_id] = None
+        self._apply_limits(self._limits.resolve(bounds))
+
+    def _refresh_view_for_limits(self) -> None:
+        """Re-render after a policy change, or just re-apply when nothing is drawn."""
+        if self.has_plot_content():
             self._redraw_current_view()
-        finally:
-            self._viewport_refresh_in_progress = False
-
-    def _on_axis_limits_changed(self, axis_obj) -> None:
-        """Sync limit controls when Matplotlib axes change via pan/zoom."""
-        synced = self._sync_limits_from_axes(source_axis=axis_obj)
-        if not synced:
-            return
-        # A limit change while a navigation tool (Zoom/Pan) is armed is a genuine
-        # interactive gesture — a rubber-band zoom or pan drag can only happen in
-        # that mode. That is the user taking control of the view, exactly like a
-        # manual limit-field edit, so drop the persistent Auto toggles: otherwise
-        # the next redraw's ``_apply_auto_limits_if_enabled`` reframes the gesture
-        # straight back to the data extent (the reported friction). Programmatic
-        # limit changes from auto-framing or field edits run with nav mode
-        # ``"none"`` and are deliberately left alone. The lock itself is set at
-        # gesture end (``_on_canvas_button_release`` with a nav tool armed), so
-        # a completed zoom/pan holds its window across later run/polarization
-        # switches exactly like a typed limit; re-enabling Auto X/Y is the
-        # explicit escape hatch that releases it.
-        if self._current_navigation_mode() != "none":
-            self._clear_auto_limit_toggles()
-        if not self._viewport_refresh_in_progress:
-            self._schedule_viewport_refresh()
-
-    def _clear_auto_limit_toggles(self) -> None:
-        """Un-check Auto X/Y without re-entering their ``clicked`` handlers.
-
-        ``setChecked(False)`` does not emit ``clicked`` (only ``toggled``), so
-        this clears the persistent toggles without re-running the auto path —
-        the same pattern used by ``_on_x_limit_field_edited``. Both axes are
-        cleared even for a constrained (x- or y-only) zoom, since the limit
-        callback cannot tell which axis moved; "zoom turns off auto" is the
-        simplest mental model and the un-zoomed axis simply keeps its limits.
-        """
-        if self._auto_x_btn.isChecked():
-            self._auto_x_btn.setChecked(False)
-        if self._auto_y_btn.isChecked():
-            self._auto_y_btn.setChecked(False)
+        else:
+            self._reapply_held_limits()
 
     def _on_canvas_draw_event(self, _event) -> None:
-        """Keep nav buttons and limit controls aligned after Matplotlib redraws."""
+        """Keep the nav buttons aligned after Matplotlib redraws."""
         self._sync_navigation_buttons()
-        if self._current_navigation_mode() != "none":
-            self._sync_limits_from_axes()
 
-    def _on_limit_fields_edited(self) -> None:
-        """Apply edited limits and refresh display density for the new viewport."""
-        # An explicit limit edit is the user taking control: hold these limits
-        # across later content switches rather than reframing over them.
-        self._limits_user_locked = True
-        self._apply_limits(schedule_viewport_refresh=True)
+    def _on_auto_button_clicked(self, _checked: bool) -> None:
+        """Re-render; the render's resolve reads the buttons for the Auto flags."""
+        self._refresh_view_for_limits()
 
     def _on_x_limit_field_edited(self) -> None:
-        """Apply a manual X-limit edit, disabling Auto X so it is not overwritten.
-
-        ``setChecked(False)`` does not emit ``clicked``, so this does not re-enter
-        the auto path; it only clears the persistent toggle.
-        """
-        if self._auto_x_btn.isChecked():
+        """Hold x at the typed pair and turn Auto X off."""
+        lo, hi = sorted((self._x_min.value(), self._x_max.value()))
+        self._limits.set_manual("x", *self._padded_x_limits(lo, hi))
+        with QSignalBlocker(self._auto_x_btn):
             self._auto_x_btn.setChecked(False)
-        self._on_limit_fields_edited()
+        self._refresh_view_for_limits()
 
     def _on_y_limit_field_edited(self) -> None:
-        """Apply a manual Y-limit edit, disabling Auto Y so it is not overwritten."""
-        if self._auto_y_btn.isChecked():
+        """Hold the focused pane's y at the typed pair and turn Auto Y off."""
+        lo, hi = sorted((self._y_min.value(), self._y_max.value()))
+        self._limits.set_manual(self._y_axis_id(self._active_y_axis()), lo, hi)
+        with QSignalBlocker(self._auto_y_btn):
             self._auto_y_btn.setChecked(False)
-        self._on_limit_fields_edited()
+        self._refresh_view_for_limits()
 
     def _active_label_field_key(self) -> str:
         """Return the label field that should currently be shown/used.
@@ -2788,30 +2741,32 @@ class PlotPanel(QWidget):
             and np.asarray(dataset.error).size > 0
         )
 
-    def _visible_plot_indices(self, time: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        """Return indices inside the current viewport before any density reduction."""
+    def _visible_plot_indices(
+        self,
+        time: np.ndarray,
+        mask: np.ndarray,
+        window: tuple[float, float] | None,
+    ) -> np.ndarray:
+        """Indices inside *window* (axis units) before any density reduction.
+
+        The render resolves its x window before it draws and passes it down, so
+        decimation is always computed for the window the canvas is about to
+        show. ``None`` means "no window decided yet" (no finite data to frame),
+        in which case every masked sample is a candidate.
+        """
         indices = np.flatnonzero(np.asarray(mask, dtype=bool))
-        if indices.size <= 0:
+        if indices.size <= 0 or window is None:
             return indices
 
-        visible_indices = indices
-        if self._limits_initialized:
-            x_lo = float(self._x_min.value())
-            x_hi = float(self._x_max.value())
-            if self._is_frequency_plot_panel():
-                x_lo = self._convert_frequency_control_value_to_axis_limit(x_lo)
-                x_hi = self._convert_frequency_control_value_to_axis_limit(x_hi)
-            lo, hi = (x_lo, x_hi) if x_lo <= x_hi else (x_hi, x_lo)
-            visible_mask = (
-                np.asarray(mask, dtype=bool)
-                & np.isfinite(time)
-                & (np.asarray(time, dtype=float) >= lo)
-                & (np.asarray(time, dtype=float) <= hi)
-            )
-            candidate = np.flatnonzero(visible_mask)
-            if candidate.size > 0:
-                visible_indices = candidate
-        return visible_indices
+        lo, hi = (window[0], window[1]) if window[0] <= window[1] else (window[1], window[0])
+        visible_mask = (
+            np.asarray(mask, dtype=bool)
+            & np.isfinite(time)
+            & (np.asarray(time, dtype=float) >= lo)
+            & (np.asarray(time, dtype=float) <= hi)
+        )
+        candidate = np.flatnonzero(visible_mask)
+        return candidate if candidate.size > 0 else indices
 
     def _decimated_plot_indices(
         self,
@@ -2819,7 +2774,7 @@ class PlotPanel(QWidget):
         mask: np.ndarray,
         values: np.ndarray | None = None,
         *,
-        visible_indices: np.ndarray | None = None,
+        visible_indices: np.ndarray,
     ) -> np.ndarray:
         """Return bounded sample indices for display-only errorbar rendering.
 
@@ -2827,11 +2782,9 @@ class PlotPanel(QWidget):
         of noisy data (a min-max envelope would exaggerate the noise).
         Frequency-domain spectra use min-max bucketing on *values* instead:
         a stride can drop a narrow spectral peak entirely, and the peaks are
-        the physics. Callers that already computed the viewport's
-        ``visible_indices`` pass them in to avoid a second full-array scan.
+        the physics. The caller supplies the viewport's ``visible_indices``
+        (see :meth:`_visible_plot_indices`), which it needs anyway.
         """
-        if visible_indices is None:
-            visible_indices = self._visible_plot_indices(time, mask)
         if visible_indices.size <= 0:
             return visible_indices
         if not self.decimation_enabled():
@@ -2894,10 +2847,11 @@ class PlotPanel(QWidget):
         asymmetry: np.ndarray,
         error: np.ndarray,
         mask: np.ndarray,
+        window: tuple[float, float] | None,
         **kwargs,
     ) -> int:
         """Plot a masked errorbar series using bounded display density."""
-        visible_indices = self._visible_plot_indices(time, mask)
+        visible_indices = self._visible_plot_indices(time, mask, window)
         indices = self._decimated_plot_indices(
             time, mask, values=asymmetry, visible_indices=visible_indices
         )
@@ -2928,6 +2882,7 @@ class PlotPanel(QWidget):
         values: np.ndarray,
         error: np.ndarray,
         mask: np.ndarray,
+        window: tuple[float, float] | None,
         *,
         color: str | None,
         label: str,
@@ -2948,7 +2903,7 @@ class PlotPanel(QWidget):
         line the same hue rather than each independently advancing the
         property cycle.
         """
-        visible_indices = self._visible_plot_indices(freq, mask)
+        visible_indices = self._visible_plot_indices(freq, mask, window)
         indices = self._decimated_plot_indices(
             freq, mask, values=values, visible_indices=visible_indices
         )
@@ -3246,23 +3201,25 @@ class PlotPanel(QWidget):
             float(self._y_max.value()),
         )
 
-    def view_reframed_on_last_draw(self) -> bool:
-        """Whether the most recent plot draw first-paint framed the axes.
-
-        Lets a caller that re-applies preserved limits after a draw (the
-        frequency render path) tell a same-content recompute — which must keep
-        the user's window — apart from a genuine first paint, whose freshly
-        computed smart framing must survive rather than be overwritten by stale
-        preserved defaults.
-        """
-        return bool(self._last_draw_reframed)
-
     def set_view_limits(self, x_min: float, x_max: float, y_min: float, y_max: float) -> None:
-        """Apply x/y limits through the existing toolbar-backed controls."""
+        """Hold both axes at the given window, as an explicit typed limit would."""
         if not self._has_mpl:
             return
-        self._set_view_limits_fields(x_min, x_max, y_min, y_max)
-        self._apply_limits(schedule_viewport_refresh=True)
+        self._limits.set_manual("x", *self._padded_x_limits(float(x_min), float(x_max)))
+        self._limits.set_manual(self._y_axis_id(self._active_y_axis()), float(y_min), float(y_max))
+        with QSignalBlocker(self._auto_x_btn):
+            self._auto_x_btn.setChecked(False)
+        with QSignalBlocker(self._auto_y_btn):
+            self._auto_y_btn.setChecked(False)
+        self._refresh_view_for_limits()
+
+    def reset_view_limits(self) -> None:
+        """Forget every held axis limit, so the next render frames afresh.
+
+        Project teardown only (close / new project): a blank canvas or a run
+        switch never resets a held value.
+        """
+        self._limits.reset()
 
     def get_bunch_factor(self) -> int:
         """Return the currently configured plot-panel bunch factor."""
@@ -3296,6 +3253,10 @@ class PlotPanel(QWidget):
 
     def _redraw_current_view(self) -> None:
         """Redraw using the active single- or multi-dataset context."""
+        if self._maxent_reconstruction is not None:
+            reconstruction_datasets, combined = self._maxent_reconstruction
+            self.plot_maxent_reconstruction(reconstruction_datasets, combined=combined)
+            return
         if self._grouped_time_subplot_datasets:
             self.plot_grouped_time_domain_subplots(self._grouped_time_subplot_datasets)
             return
@@ -3599,33 +3560,18 @@ class PlotPanel(QWidget):
             return self.fit_target_projection()
         return self._current_polarization_axis
 
-    def _cache_current_y_limits_for_axis(self) -> None:
-        """Store current y-limits under the active (focused) axis, if any."""
-        axis = self._active_y_axis()
-        if axis is None or axis == "ALL":
-            return
-        y0 = float(self._y_min.value())
-        y1 = float(self._y_max.value())
-        lo, hi = (y0, y1) if y0 <= y1 else (y1, y0)
-        self._y_limits_by_polarization[axis] = (lo, hi)
+    def _mirror_y_fields_for_axis(self, axis_key: str | None) -> None:
+        """Show *axis_key*'s held y limits in the Y fields (a selection switch).
 
-    def _restore_y_limits_for_axis(self, axis: str | None) -> None:
-        """Restore the y-limit controls to *axis*'s cached (or live) limits."""
-        if axis is None or axis == "ALL":
-            return
-        limits = self._y_limits_by_polarization.get(axis)
-        if limits is None:
-            # No cached value yet — reflect the subplot's actual current limits.
-            ax = self._subplot_axes_by_polarization.get(axis)
-            if ax is not None and hasattr(ax, "get_ylim"):
-                try:
-                    limits = ax.get_ylim()
-                except Exception:
-                    limits = None
-        if limits is None:
-            return
-        self._y_min.setValue(float(limits[0]))
-        self._y_max.setValue(float(limits[1]))
+        Per-projection y memory is just "a different axis id", so switching the
+        selected pane is nothing more than re-reading what that id holds; an id
+        that has never framed leaves the fields alone until the next render
+        resolves it.
+        """
+        held = self._limits.held(self._y_axis_id(axis_key))
+        if held is not None:
+            self._set_limit_field_value(self._y_min, held[0])
+            self._set_limit_field_value(self._y_max, held[1])
 
     def _axis_for_selection(self, labels: list[str]) -> str | None:
         """Map a chip selection onto the internal polarization-axis token.
@@ -3645,12 +3591,10 @@ class PlotPanel(QWidget):
             return
         previous_axis = self._current_polarization_axis
         if previous_axis != axis:
-            self._cache_current_y_limits_for_axis()
             self._current_polarization_axis = str(axis)
-            self._restore_y_limits_for_axis(self._current_polarization_axis)
+            self._mirror_y_fields_for_axis(self._current_polarization_axis)
             self._sync_y_controls_with_visible_axis()
             self._update_y_limit_controls_for_axis(self._current_polarization_axis)
-            self._apply_limits()
         self.polarization_axis_changed.emit(str(axis))
 
     def _update_y_limit_controls_for_axis(self, axis: str | None) -> None:
@@ -3705,25 +3649,23 @@ class PlotPanel(QWidget):
         # than a span across all of them.
         axis = self._active_y_axis()
         if axis in self._subplot_axes_by_polarization:
-            limits = self._y_limits_by_polarization.get(axis)
-            if limits is not None:
-                self._y_min.setValue(float(limits[0]))
-                self._y_max.setValue(float(limits[1]))
+            self._mirror_y_fields_for_axis(axis)
             return
 
         # No focused subplot (e.g. nothing selected yet): show a global y-range
         # spanning all visible subplot axes.
-        ranges: list[tuple[float, float]] = []
-        for axis_key in self._all_mode_axes_order():
-            limits = self._y_limits_by_polarization.get(axis_key)
-            if limits is not None:
-                ranges.append((float(limits[0]), float(limits[1])))
+        ranges = [
+            held
+            for held in (
+                self._limits.held(self._y_axis_id(axis_key))
+                for axis_key in self._all_mode_axes_order()
+            )
+            if held is not None
+        ]
         if not ranges:
             return
-        y_lo = min(lo for lo, _ in ranges)
-        y_hi = max(hi for _, hi in ranges)
-        self._y_min.setValue(y_lo)
-        self._y_max.setValue(y_hi)
+        self._set_limit_field_value(self._y_min, min(lo for lo, _ in ranges))
+        self._set_limit_field_value(self._y_max, max(hi for _, hi in ranges))
 
     def set_projections(
         self,
@@ -3742,7 +3684,6 @@ class PlotPanel(QWidget):
 
         specs = [dict(p) for p in (projections or []) if p.get("label")]
         if len(specs) < 2:
-            self._cache_current_y_limits_for_axis()
             # Was a vector multi-pane (EMU ``ALL`` or stacked transverse
             # projections) on screen? ``_vector_subplot_datasets`` is populated
             # only by plot_vector_subplots and is the precise indicator — unlike
@@ -3777,16 +3718,11 @@ class PlotPanel(QWidget):
 
         new_axis = self._axis_for_selection(self._selected_projection_labels)
         previous_axis = self._current_polarization_axis
-        if previous_axis != new_axis:
-            self._cache_current_y_limits_for_axis()
         self._current_polarization_axis = new_axis
         if previous_axis != new_axis:
-            self._restore_y_limits_for_axis(new_axis)
+            self._mirror_y_fields_for_axis(new_axis)
             self._sync_y_controls_with_visible_axis()
-            self._update_y_limit_controls_for_axis(new_axis)
-            self._apply_limits()
-        else:
-            self._update_y_limit_controls_for_axis(new_axis)
+        self._update_y_limit_controls_for_axis(new_axis)
 
     def selected_projection_labels(self) -> list[str]:
         """Return the projection labels currently selected.
@@ -3818,8 +3754,7 @@ class PlotPanel(QWidget):
         """Mark *label*'s subplot as the single-fit target and redraw its box.
 
         The fit target is also the focus for the manual Y-limit controls, so a
-        change caches the outgoing subplot's limits and surfaces the incoming
-        subplot's into the Y fields.
+        change re-mirrors the incoming subplot's held limits into the Y fields.
         """
         if label is not None and label not in self._subplot_axes_by_polarization:
             return
@@ -3827,11 +3762,9 @@ class PlotPanel(QWidget):
         if not changed:
             return  # no-op re-click: skip the tight-bbox recompute and redraw
         in_subplots = bool(self._subplot_axes_by_polarization)
-        if in_subplots:
-            self._cache_current_y_limits_for_axis()  # caches the outgoing target
         self._fit_target_projection = label
         if in_subplots:
-            self._restore_y_limits_for_axis(label)
+            self._mirror_y_fields_for_axis(label)
             self._update_y_limit_controls_for_axis(self._current_polarization_axis)
         self._refresh_fit_target_decoration()
         if emit and label is not None:
@@ -3955,7 +3888,6 @@ class PlotPanel(QWidget):
         )
         if already_single:
             return
-        self._disconnect_axis_limit_callbacks()
         self._figure.clf()
         self._ax = self._figure.add_subplot(111)
         style_figure(self._figure)
@@ -3991,49 +3923,45 @@ class PlotPanel(QWidget):
         self._fit_max_handles = []
 
     def _plot_datasets_on_axis(
-        self, ax, datasets: list[MuonDataset], axis_key: str | None
-    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]:
-        """Plot one or more datasets on ``ax`` and return flattened arrays for auto-y."""
+        self,
+        ax,
+        entries: list[_DisplayEntry],
+        axis_key: str | None,
+        window: tuple[float, float] | None,
+    ) -> None:
+        """Draw pre-materialised display *entries* on ``ax`` inside *window*.
+
+        The arrays are materialised once by :meth:`_display_entries` — the same
+        list feeds the x/y bounds the render resolves — so the analysis + RRF
+        pipeline runs once per dataset per render.
+        """
         # Handoff plot grammar: y = 0 reference line under the data (it is
         # excluded from autoscaling, so positive-only data never stretches).
         draw_zero_line(ax)
         self._rrf_frame_drawn = None
-        all_times: list[np.ndarray] = []
-        all_asym: list[np.ndarray] = []
-        all_err: list[np.ndarray] = []
-        all_low: list[np.ndarray] = []
         period_color_counts: dict[str, int] = {}
 
-        for i, dataset in enumerate(datasets):
+        for i, entry in enumerate(entries):
+            dataset = entry.dataset
             color = f"C{i % 10}"
             period_color = self._period_mode_color_for_dataset(dataset)
             if period_color is not None:
                 variant_idx = period_color_counts.get(period_color, 0)
                 color = self._period_mode_color_variant(period_color, variant_idx)
                 period_color_counts[period_color] = variant_idx + 1
-            analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
-            if analysis_dataset is None:
-                continue
 
-            time = self._convert_frequency_axis_for_display(analysis_dataset.time, dataset)
-            asymmetry = analysis_dataset.asymmetry
-            error = analysis_dataset.error
-            low_count_mask = self._low_count_mask_for_dataset(
-                analysis_dataset,
-                source_dataset=dataset,
-            )
-
-            finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
-            valid_low = finite_mask & low_count_mask
-            valid_main = finite_mask & ~low_count_mask
+            finite_mask = entry.finite_mask
+            valid_low = finite_mask & entry.low_count_mask
+            valid_main = finite_mask & ~entry.low_count_mask
 
             if np.any(valid_low):
                 self._plot_errorbar_masked(
                     ax,
-                    time,
-                    asymmetry,
-                    error,
+                    entry.time,
+                    entry.asymmetry,
+                    entry.error,
                     valid_low,
+                    window,
                     fmt=".",
                     markersize=3,
                     color="0.6",
@@ -4044,10 +3972,11 @@ class PlotPanel(QWidget):
             draw_mask = valid_main if np.any(valid_main) else finite_mask
             self._plot_errorbar_masked(
                 ax,
-                time,
-                asymmetry,
-                error,
+                entry.time,
+                entry.asymmetry,
+                entry.error,
                 draw_mask,
+                window,
                 fmt=".",
                 markersize=3,
                 color=color,
@@ -4055,7 +3984,7 @@ class PlotPanel(QWidget):
             )
 
             fit_to_plot = self._fit_curve_for_dataset(dataset, axis_override=axis_key)
-            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot, analysis_dataset)
+            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot, entry.analysis)
             if fit_to_plot is not None:
                 t_fit, y_fit, fit_label = fit_to_plot
                 fit_color = self._fit_line_color_for_dataset(
@@ -4066,25 +3995,13 @@ class PlotPanel(QWidget):
                 )
                 ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label="_nolegend_")
 
-            if np.any(finite_mask):
-                all_times.append(time[finite_mask])
-                all_asym.append(asymmetry[finite_mask])
-                all_err.append(error[finite_mask])
-                all_low.append(low_count_mask[finite_mask])
-
-        _, y_label = self._axis_labels_for_dataset(datasets[0] if datasets else None, axis_key)
+        _, y_label = self._axis_labels_for_dataset(
+            entries[0].dataset if entries else None, axis_key
+        )
         ax.set_ylabel(y_label)
         # Decimation chip: applied by the caller once every axis is drawn —
         # the chip counters are still accumulating while subplots render.
         rrf_draw_badge(self, ax)
-        if all_times:
-            return (
-                np.concatenate(all_times),
-                np.concatenate(all_asym),
-                np.concatenate(all_err),
-                np.concatenate(all_low),
-            )
-        return None, None, None, None
 
     def _projection_subplot_order(
         self, datasets_by_axis: dict[str, list[MuonDataset]]
@@ -4129,6 +4046,7 @@ class PlotPanel(QWidget):
 
         self._set_alpha_label(None)
         self._grouped_time_subplot_datasets = []
+        self._maxent_reconstruction = None
         self._reset_decimation_view_state()
         self._clear_waterfall_render_record()
         self._vector_subplot_datasets = {k: list(v) for k, v in datasets_by_axis.items() if v}
@@ -4136,9 +4054,20 @@ class PlotPanel(QWidget):
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
         self._update_plot_header()
 
-        # Stop listening to old axes before clearing the figure; stale callbacks
-        # can otherwise push default [0, 1] limits into the limit fields.
-        self._disconnect_axis_limit_callbacks()
+        # Materialise every subplot's display arrays first: the shared x window
+        # is resolved from all of them together and must be known before any
+        # subplot is decimated and drawn.
+        entries_by_axis = {
+            axis_key: self._display_entries(self._vector_subplot_datasets.get(axis_key, []))
+            for axis_key in order
+        }
+        arrays_by_axis = {
+            axis_key: self._finite_display_arrays(entries)
+            for axis_key, entries in entries_by_axis.items()
+        }
+        self._sync_auto_from_buttons([self._y_axis_id(axis_key) for axis_key in order])
+        resolved, window = self._resolve_x(self._stacked_x_bounds(arrays_by_axis))
+
         self._figure.clf()
         style_figure(self._figure)
         self._subplot_axes_by_polarization = {}
@@ -4153,19 +4082,8 @@ class PlotPanel(QWidget):
             self._subplot_axes_by_polarization[axis_key] = ax
             self._ax = ax if idx == 0 else self._ax
 
-            t, a, e, low = self._plot_datasets_on_axis(
-                ax, self._vector_subplot_datasets.get(axis_key, []), axis_key
-            )
+            self._plot_datasets_on_axis(ax, entries_by_axis[axis_key], axis_key, window)
             self._apply_projection_frame_tint(ax, axis_key)
-            if axis_key in self._y_limits_by_polarization:
-                y0, y1 = self._y_limits_by_polarization[axis_key]
-                ax.set_ylim(y0, y1)
-            elif t is None:
-                # All-NaN projection: give it a neutral asymmetry range instead
-                # of matplotlib's default (0, 1). Not cached in
-                # _y_limits_by_polarization, so a later render with real data
-                # auto-scales normally.
-                ax.set_ylim(*_EMPTY_PROJECTION_YLIM)
             if idx == len(order) - 1:
                 x_label, _ = self._axis_labels_for_dataset(
                     self._vector_subplot_datasets.get(axis_key, [None])[0],
@@ -4176,9 +4094,20 @@ class PlotPanel(QWidget):
                 ax.tick_params(labelbottom=False)
             if idx == 0:
                 style_legend(ax.legend())
-            if t is not None:
-                last_arrays = (t, a, e, low)
-                vector_x_ranges.append((float(np.min(t)), float(np.max(t))))
+            arrays = arrays_by_axis[axis_key]
+            # An all-NaN projection has no signal to frame; give it a neutral
+            # asymmetry range rather than matplotlib's default (0, 1).
+            resolved.update(
+                self._resolve_y(
+                    self._y_axis_id(axis_key),
+                    _EMPTY_PROJECTION_YLIM
+                    if arrays is None
+                    else self._auto_y_limits_from_display_arrays(arrays, window),
+                )
+            )
+            if arrays is not None:
+                last_arrays = arrays
+                vector_x_ranges.append((float(np.min(arrays[0])), float(np.max(arrays[0]))))
 
         # One chip on the bottom axis, after every subplot's points are
         # counted — applying per axis mid-loop would show partial totals.
@@ -4188,19 +4117,6 @@ class PlotPanel(QWidget):
         self._last_plot_asymmetry = last_arrays[1]
         self._last_plot_error = last_arrays[2]
         self._last_low_count_mask = last_arrays[3]
-
-        self._reframe_if_content_changed()
-        if (not self._limits_initialized) and self._last_plot_time is not None:
-            # Route x through _default_x_limits so the shared pad + t0 lower-clamp
-            # apply here exactly as in the single/overlay views (no pre-t0 band).
-            x_limits = self._default_x_limits(self._last_plot_time, self._last_plot_asymmetry)
-            if x_limits is not None:
-                self._x_min.setValue(x_limits[0])
-                self._x_max.setValue(x_limits[1])
-            # Frame each subplot to its own signal so first paint isn't squashed by
-            # matplotlib autoscaling over sentinel/late-tail points.
-            self._frame_subplot_axes_to_signal()
-            self._mark_frame_initialized()
 
         if vector_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
             seed = self._raw_fit_seed_range(
@@ -4213,19 +4129,8 @@ class PlotPanel(QWidget):
                 )
             self._fit_x_min, self._fit_x_max = seed
 
-        if self._current_polarization_axis in self._subplot_axes_by_polarization:
-            y_limits = self._y_limits_by_polarization.get(self._current_polarization_axis)
-            if y_limits is not None:
-                self._y_min.setValue(float(y_limits[0]))
-                self._y_max.setValue(float(y_limits[1]))
-        else:
-            self._sync_y_controls_with_visible_axis()
-
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
-
-        self._apply_limits(schedule_viewport_refresh=True)
-        self._apply_auto_limits_if_enabled()
-        self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
+        self._apply_limits(resolved)
 
         # Auto-select a fit target so fitting is never dead-on-arrival; keep the
         # prior target when it is still visible. Emit so the fit panel rebinds.
@@ -4241,30 +4146,40 @@ class PlotPanel(QWidget):
         self._set_canvas_minimum_height_for_axes(len(datasets))
 
         self._set_alpha_label(None)
-        self._disconnect_axis_limit_callbacks()
-        self._figure.clf()
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
+        self._maxent_reconstruction = None
         self._reset_decimation_view_state()
         self._clear_waterfall_render_record()
         self._grouped_time_subplot_datasets = list(datasets)
         self._current_datasets = list(datasets)
         self._current_dataset = datasets[-1]
         self._update_plot_header()
-        self._current_polarization_axis = None
         if hasattr(self, "_projection_bar"):
             self._projection_bar.hide()
 
+        # Raw and corrected builds share synthetic run numbers but live on very
+        # different y scales; qualify the key so a y limit held for one mode is
+        # never applied to the other.
+        ordered_keys = [self._grouped_subplot_axis_key(dataset) for dataset in datasets]
+        entries_by_axis = {
+            axis_key: self._display_entries([dataset])
+            for axis_key, dataset in zip(ordered_keys, datasets)
+        }
+        arrays_by_axis = {
+            axis_key: self._finite_display_arrays(entries)
+            for axis_key, entries in entries_by_axis.items()
+        }
+        self._current_polarization_axis = ordered_keys[0] if ordered_keys else None
+        self._sync_auto_from_buttons([self._y_axis_id(key) for key in ordered_keys])
+        resolved, window = self._resolve_x(self._stacked_x_bounds(arrays_by_axis))
+
+        self._figure.clf()
         shared_ax = None
         last_arrays = (None, None, None, None)
-        ordered_keys: list[str] = []
         grouped_x_ranges: list[tuple[float, float]] = []
         for idx, dataset in enumerate(datasets):
-            # Raw and corrected builds share synthetic run numbers but live on
-            # very different y scales; qualify the key so pinned y-limits from
-            # one mode are not applied to the other.
-            axis_key = self._grouped_subplot_axis_key(dataset)
-            ordered_keys.append(axis_key)
+            axis_key = ordered_keys[idx]
             ax = self._figure.add_subplot(len(datasets), 1, idx + 1, sharex=shared_ax)
             style_axes(ax)
             if shared_ax is None:
@@ -4273,43 +4188,35 @@ class PlotPanel(QWidget):
             if idx == 0:
                 self._ax = ax
 
-            t, a, e, low = self._plot_datasets_on_axis(ax, [dataset], axis_key)
+            self._plot_datasets_on_axis(ax, entries_by_axis[axis_key], axis_key, window)
             ax.set_title(str(dataset.run_label), loc="left", fontsize=10)
-            if axis_key in self._y_limits_by_polarization:
-                y0, y1 = self._y_limits_by_polarization[axis_key]
-                ax.set_ylim(y0, y1)
             if idx == len(datasets) - 1:
                 x_label, _ = self._axis_labels_for_dataset(dataset, axis_key)
                 ax.set_xlabel(x_label)
             else:
                 ax.tick_params(labelbottom=False)
             style_legend(ax.legend(loc="upper right"))
-            if t is not None:
-                last_arrays = (t, a, e, low)
-                grouped_x_ranges.append((float(np.min(t)), float(np.max(t))))
+            arrays = arrays_by_axis[axis_key]
+            resolved.update(
+                self._resolve_y(
+                    self._y_axis_id(axis_key),
+                    None
+                    if arrays is None
+                    else self._auto_y_limits_from_display_arrays(arrays, window),
+                )
+            )
+            if arrays is not None:
+                last_arrays = arrays
+                grouped_x_ranges.append((float(np.min(arrays[0])), float(np.max(arrays[0]))))
 
         # One chip on the bottom axis, after every subplot's points are
         # counted — applying per axis mid-loop would show partial totals.
         self._apply_x_axis_decimation_indicator(ax)
 
-        self._current_polarization_axis = ordered_keys[0] if ordered_keys else None
         self._last_plot_time = last_arrays[0]
         self._last_plot_asymmetry = last_arrays[1]
         self._last_plot_error = last_arrays[2]
         self._last_low_count_mask = last_arrays[3]
-
-        self._reframe_if_content_changed()
-        if (not self._limits_initialized) and self._last_plot_time is not None:
-            # Route x through _default_x_limits so the shared pad + t0 lower-clamp
-            # apply here exactly as in the single/overlay views (no pre-t0 band).
-            x_limits = self._default_x_limits(self._last_plot_time, self._last_plot_asymmetry)
-            if x_limits is not None:
-                self._x_min.setValue(x_limits[0])
-                self._x_max.setValue(x_limits[1])
-            # Frame each group's subplot to its own signal so first paint isn't
-            # squashed by matplotlib autoscaling over sentinel/late-tail points.
-            self._frame_subplot_axes_to_signal()
-            self._mark_frame_initialized()
 
         if grouped_x_ranges and (self._fit_x_min is None or self._fit_x_max is None):
             seed = self._raw_fit_seed_range(list(datasets))
@@ -4320,11 +4227,8 @@ class PlotPanel(QWidget):
                 )
             self._fit_x_min, self._fit_x_max = seed
 
-        self._sync_y_controls_with_visible_axis()
         self._update_y_limit_controls_for_axis(self._current_polarization_axis)
-        self._apply_limits(schedule_viewport_refresh=True)
-        self._apply_auto_limits_if_enabled()
-        self._connect_axis_limit_callbacks(list(self._subplot_axes_by_polarization.values()))
+        self._apply_limits(resolved)
         self._apply_log_counts_scale()
 
     def plot_maxent_reconstruction(
@@ -4348,16 +4252,46 @@ class PlotPanel(QWidget):
         if not self._has_mpl or not datasets:
             return
         self._clear_waterfall_render_record()
+        # Remember the layout so a zoom/pan (or any other re-render) rebuilds
+        # the reconstruction instead of falling through to a plain dataset plot.
+        self._maxent_reconstruction = (list(datasets), bool(combined))
         if combined:
             self._plot_maxent_reconstruction_combined(datasets)
         else:
             self._plot_maxent_reconstruction_per_group(datasets)
 
+    @staticmethod
+    def _maxent_curves(
+        dataset: MuonDataset,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """``(time, data, model, residual)`` for one reconstruction group."""
+        time = np.asarray(dataset.time, dtype=float)
+        data = np.asarray(dataset.asymmetry, dtype=float)
+        model = np.asarray(dataset.metadata.get("maxent_model", data), dtype=float)
+        residual = np.asarray(dataset.metadata.get("maxent_residual", data - model), dtype=float)
+        return time, data, model, residual
+
+    @staticmethod
+    def _maxent_y_bounds(data: np.ndarray, model: np.ndarray) -> tuple[float, float] | None:
+        """Padded y-bounds covering a reconstruction pane's data and model.
+
+        A reconstruction carries no per-bin error, so the signal-envelope
+        framing used for asymmetry data does not apply; the padded extent of
+        what is drawn is the bound an Auto (or never-framed) axis follows.
+        """
+        values = np.concatenate([np.asarray(data, dtype=float), np.asarray(model, dtype=float)])
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            return None
+        lo = float(np.min(finite))
+        hi = float(np.max(finite))
+        pad = (hi - lo) * 0.05 if hi > lo else max(abs(hi) * 0.05, 1e-6)
+        return lo - pad, hi + pad
+
     def _plot_maxent_reconstruction_per_group(self, datasets: list[MuonDataset]) -> None:
         """Stacked per-group data+model axes, each above its own residuals strip."""
         self._set_canvas_minimum_height_for_axes(len(datasets))
         self._set_alpha_label(None)
-        self._disconnect_axis_limit_callbacks()
         self._figure.clf()
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
@@ -4370,18 +4304,24 @@ class PlotPanel(QWidget):
             self._projection_bar.hide()
 
         n = len(datasets)
+        curves = [self._maxent_curves(dataset) for dataset in datasets]
+        axis_keys = [f"recon:{dataset.run_number}:{idx}" for idx, dataset in enumerate(datasets)]
+        self._current_polarization_axis = axis_keys[0]
+        self._sync_auto_from_buttons([self._y_axis_id(key) for key in axis_keys])
+        resolved, _window = self._resolve_x(
+            self._default_x_limits(
+                np.concatenate([time for time, _, _, _ in curves]),
+                np.concatenate([data for _, data, _, _ in curves]),
+            )
+        )
+
         gridspec = self._figure.add_gridspec(2 * n, 1, height_ratios=[3, 1] * n, hspace=0.45)
         shared_ax = None
         total_chi2 = 0.0
         total_obs = 0
         last_time = None
         for idx, dataset in enumerate(datasets):
-            time = np.asarray(dataset.time, dtype=float)
-            data = np.asarray(dataset.asymmetry, dtype=float)
-            model = np.asarray(dataset.metadata.get("maxent_model", data), dtype=float)
-            residual = np.asarray(
-                dataset.metadata.get("maxent_residual", data - model), dtype=float
-            )
+            time, data, model, residual = curves[idx]
             total_chi2 += float(
                 dataset.metadata.get("maxent_group_chi2", float(np.sum(residual**2)))
             )
@@ -4395,8 +4335,7 @@ class PlotPanel(QWidget):
                 self._ax = ax_main
             style_axes(ax_main)
             style_axes(ax_res)
-            axis_key = f"recon:{dataset.run_number}:{idx}"
-            self._subplot_axes_by_polarization[axis_key] = ax_main
+            self._subplot_axes_by_polarization[axis_keys[idx]] = ax_main
 
             ax_main.plot(
                 time, data, ".", markersize=3, color=tokens.PLOT_DATA, label="Data", alpha=0.7
@@ -4416,9 +4355,11 @@ class PlotPanel(QWidget):
                 ax_res.set_xlabel("Time (µs)")
             else:
                 ax_res.tick_params(labelbottom=False)
+            resolved.update(
+                self._resolve_y(self._y_axis_id(axis_keys[idx]), self._maxent_y_bounds(data, model))
+            )
             last_time = time
 
-        self._current_polarization_axis = next(iter(self._subplot_axes_by_polarization), None)
         if total_obs:
             chi2_per_n = total_chi2 / float(total_obs)
             self._figure.suptitle(
@@ -4427,7 +4368,7 @@ class PlotPanel(QWidget):
             )
         if last_time is not None and last_time.size:
             self._last_plot_time = last_time
-        self._figure.canvas.draw_idle()
+        self._apply_limits(resolved)
 
     def _plot_maxent_reconstruction_combined(self, datasets: list[MuonDataset]) -> None:
         """All groups' data+model on one colour-coded axis + a shared residuals strip.
@@ -4439,7 +4380,6 @@ class PlotPanel(QWidget):
         """
         self._set_canvas_minimum_height_for_axes(2)
         self._set_alpha_label(None)
-        self._disconnect_axis_limit_callbacks()
         self._figure.clf()
         self._subplot_axes_by_polarization = {}
         self._vector_subplot_datasets = {}
@@ -4447,7 +4387,6 @@ class PlotPanel(QWidget):
         self._current_datasets = list(datasets)
         self._current_dataset = datasets[-1]
         self._update_plot_header()
-        self._current_polarization_axis = None
         if hasattr(self, "_projection_bar"):
             self._projection_bar.hide()
 
@@ -4461,16 +4400,20 @@ class PlotPanel(QWidget):
         self._subplot_axes_by_polarization[axis_key] = ax_main
         self._current_polarization_axis = axis_key
 
+        curves = [self._maxent_curves(dataset) for dataset in datasets]
+        self._sync_auto_from_buttons([self._y_axis_id(axis_key)])
+        resolved, _window = self._resolve_x(
+            self._default_x_limits(
+                np.concatenate([time for time, _, _, _ in curves]),
+                np.concatenate([data for _, data, _, _ in curves]),
+            )
+        )
+
         total_chi2 = 0.0
         total_obs = 0
         last_time = None
         for idx, dataset in enumerate(datasets):
-            time = np.asarray(dataset.time, dtype=float)
-            data = np.asarray(dataset.asymmetry, dtype=float)
-            model = np.asarray(dataset.metadata.get("maxent_model", data), dtype=float)
-            residual = np.asarray(
-                dataset.metadata.get("maxent_residual", data - model), dtype=float
-            )
+            time, data, model, residual = curves[idx]
             total_chi2 += float(
                 dataset.metadata.get("maxent_group_chi2", float(np.sum(residual**2)))
             )
@@ -4489,6 +4432,16 @@ class PlotPanel(QWidget):
         ax_res.set_ylabel("(d−m)/σ")
         ax_res.set_xlabel("Time (µs)")
 
+        resolved.update(
+            self._resolve_y(
+                self._y_axis_id(axis_key),
+                self._maxent_y_bounds(
+                    np.concatenate([data for _, data, _, _ in curves]),
+                    np.concatenate([model for _, _, model, _ in curves]),
+                ),
+            )
+        )
+
         if total_obs:
             chi2_per_n = total_chi2 / float(total_obs)
             self._figure.suptitle(
@@ -4498,7 +4451,7 @@ class PlotPanel(QWidget):
             )
         if last_time is not None and last_time.size:
             self._last_plot_time = last_time
-        self._figure.canvas.draw_idle()
+        self._apply_limits(resolved)
 
     def _alpha_value_for_dataset(self, dataset: MuonDataset) -> float | None:
         """Return the asymmetry alpha value used for *dataset*, if available."""
@@ -4654,11 +4607,11 @@ class PlotPanel(QWidget):
         if self._waterfall_offset is not None and self._waterfall_offset > 0.0:
             delta = float(self._waterfall_offset)
         else:
-            identity = self._current_frame_identity()
+            identity = self._waterfall_content_identity()
             cached = self._waterfall_auto_delta_cache
             if cached is not None and cached[0] == identity:
-                # Re-render of the same stacked content (a zoom's decimation
-                # viewport refresh, a bunch change): keep the plot-time Δ so
+                # Re-render of the same stacked content (a zoom's re-render, a
+                # bunch change): keep the plot-time Δ so
                 # the stack never re-spaces under the user mid-inspection.
                 delta = cached[1]
             else:
@@ -4695,6 +4648,7 @@ class PlotPanel(QWidget):
 
         self._ensure_single_axis_mode()
         self._grouped_time_subplot_datasets = []
+        self._maxent_reconstruction = None
         self._set_alpha_label(None)
         self._reset_decimation_view_state()
         self._rrf_frame_drawn = None
@@ -4727,7 +4681,7 @@ class PlotPanel(QWidget):
 
         # Each trace's display x-axis and y values (density Jacobian applied for
         # unit-area spectra), computed once and shared by the Δ resolution, the
-        # first-paint framing, and the draw loop. The source dataset is passed so
+        # x framing, and the draw loop. The source dataset is passed so
         # a shift-mode overlay shifts each trace about ITS OWN reference (the
         # alignment point).
         display_times = [
@@ -4743,35 +4697,28 @@ class PlotPanel(QWidget):
             for dataset, analysis in display_entries
         ]
 
-        # Decide the x-window this render will show BEFORE resolving Δ, so the
-        # auto spacing measures only displayed samples (an FFT's long near-zero
-        # tail otherwise deflates Δ to a no-op — see auto_waterfall_delta).
-        # First-paint framing is decided here once — from the RAW (un-offset)
-        # values, whose per-trace waterfall pedestals would corrupt the
-        # peak-significance baseline — and reused by the framing block below.
-        self._reframe_if_content_changed()
-        default_x_limits: tuple[float, float] | None = None
-        if not self._limits_initialized:
-            frame_times: list[np.ndarray] = []
-            frame_raw: list[np.ndarray] = []
-            for time, raw, err in zip(display_times, display_values, display_errors):
-                finite = np.isfinite(time) & np.isfinite(raw) & np.isfinite(err)
-                if np.any(finite):
-                    frame_times.append(time[finite])
-                    frame_raw.append(raw[finite])
-            if frame_times:
-                default_x_limits = self._default_x_limits(
-                    np.concatenate(frame_times), np.concatenate(frame_raw)
-                )
-        # The Δ window in display-axis units: the fresh first-paint frame when
-        # one was computed, else the current (persisted/manual) limit fields.
-        if default_x_limits is not None:
-            window_lo, window_hi = default_x_limits
-        else:
-            window_lo, window_hi = float(self._x_min.value()), float(self._x_max.value())
-        if self._is_frequency_plot_panel():
-            window_lo = self._convert_frequency_control_value_to_axis_limit(window_lo)
-            window_hi = self._convert_frequency_control_value_to_axis_limit(window_hi)
+        # Resolve the x window BEFORE anything is drawn: decimation, the Δ auto
+        # spacing (an FFT's long near-zero tail otherwise deflates Δ to a no-op
+        # — see auto_waterfall_delta) and the y bounds are all measured inside
+        # the window the canvas is about to show. The bounds an Auto (or
+        # never-framed) axis follows come from the RAW (un-offset) values, whose
+        # per-trace waterfall pedestals would corrupt the peak-significance
+        # baseline.
+        frame_times: list[np.ndarray] = []
+        frame_raw: list[np.ndarray] = []
+        for time, raw, err in zip(display_times, display_values, display_errors):
+            finite = np.isfinite(time) & np.isfinite(raw) & np.isfinite(err)
+            if np.any(finite):
+                frame_times.append(time[finite])
+                frame_raw.append(raw[finite])
+        x_bounds = (
+            self._default_x_limits(np.concatenate(frame_times), np.concatenate(frame_raw))
+            if frame_times
+            else None
+        )
+        y_axis_id = self._y_axis_id(self._current_polarization_axis)
+        self._sync_auto_from_buttons([y_axis_id])
+        resolved, window = self._resolve_x(x_bounds)
 
         # Render-time waterfall offset: each drawn trace is stacked by i*Δ.
         # None when waterfall is off (offsets collapse to 0). Source arrays are
@@ -4781,7 +4728,7 @@ class PlotPanel(QWidget):
             datasets,
             display_values,
             x_arrays=display_times,
-            x_window=(window_lo, window_hi),
+            x_window=window,
         )
         self._waterfall_stacked = waterfall_delta is not None
 
@@ -4817,6 +4764,7 @@ class PlotPanel(QWidget):
                     asymmetry,
                     error,
                     finite_mask,
+                    window,
                     color=color,
                     label=self._dataset_label_for(dataset),
                 )
@@ -4831,6 +4779,7 @@ class PlotPanel(QWidget):
                         asymmetry,
                         error,
                         valid_low,
+                        window,
                         fmt=".",
                         markersize=3,
                         color="0.6",
@@ -4845,6 +4794,7 @@ class PlotPanel(QWidget):
                     asymmetry,
                     error,
                     draw_mask,
+                    window,
                     fmt=".",
                     markersize=3,
                     color=color,
@@ -4899,33 +4849,17 @@ class PlotPanel(QWidget):
             self._last_plot_sentinel_mask = np.concatenate(all_sentinel)
             style_legend(self._ax.legend())
 
-            # First-paint framing was decided (and the default x-frame computed
-            # from the raw concatenation) before Δ resolution above, so the Δ
-            # window and the frame shown are one decision, made once.
-            # Same one-view-behind guard as plot_dataset: a reframe moves the
-            # axes after a draw decimated for the previous content's viewport.
-            reframed = not self._limits_initialized
-            if not self._limits_initialized:
+            # Y framed to the signal within the resolved x window, ignoring
+            # ±100 % saturation sentinels and the error-divergent tail. Fall
+            # back to the raw envelope only when no good-bin points exist.
+            y_bounds = self._signal_y_limits_from_last_plot()
+            if y_bounds is None:
                 a_all = self._last_plot_asymmetry
                 e_all = self._last_plot_error
-                # X first: time panels span the full data; frequency panels frame
-                # the dominant non-DC peak (high-TF Larmor lines sit far above the
-                # DC peak that would otherwise dominate the full-Nyquist view).
-                if default_x_limits is not None:
-                    self._x_min.setValue(default_x_limits[0])
-                    self._x_max.setValue(default_x_limits[1])
-                # Y framed to the signal within that window, ignoring ±100 %
-                # saturation sentinels and the error-divergent tail. Fall back to
-                # the raw envelope only when no good-bin points exist.
-                y_limits = self._signal_y_limits_from_last_plot()
-                if y_limits is None:
-                    y_min = float((a_all - e_all).min())
-                    y_max = float((a_all + e_all).max())
-                    ypad = (y_max - y_min) * 0.05
-                    y_limits = (y_min - ypad, y_max + ypad)
-                self._y_min.setValue(y_limits[0])
-                self._y_max.setValue(y_limits[1])
-                self._mark_frame_initialized()
+                y_min = float((a_all - e_all).min())
+                y_max = float((a_all + e_all).max())
+                ypad = (y_max - y_min) * 0.05
+                y_bounds = (y_min - ypad, y_max + ypad)
 
             # Set fit range to span all datasets (raw axes — see _raw_fit_seed_range).
             if self._fit_x_min is None or self._fit_x_max is None:
@@ -4944,14 +4878,11 @@ class PlotPanel(QWidget):
             self._clear_waterfall_render_record()
             self._fit_x_min = None
             self._fit_x_max = None
-            reframed = False
+            y_bounds = None
 
-        self._last_draw_reframed = reframed
-        self._draw_fit_range_artists()
-        self._apply_limits(schedule_viewport_refresh=reframed)
-        self._apply_auto_limits_if_enabled()
+        resolved.update(self._resolve_y(y_axis_id, y_bounds))
+        self._apply_limits(resolved)
         self._update_export_enabled()
-        self._connect_axis_limit_callbacks([self._ax])
 
     def set_diamagnetic_overlay(
         self,
@@ -5061,6 +4992,7 @@ class PlotPanel(QWidget):
 
         self._ensure_single_axis_mode()
         self._grouped_time_subplot_datasets = []
+        self._maxent_reconstruction = None
         self._reset_decimation_view_state()
         self._rrf_frame_drawn = None
         self._clear_waterfall_render_record()
@@ -5087,6 +5019,15 @@ class PlotPanel(QWidget):
         self._last_plot_error = error
         self._last_low_count_mask = low_count_mask
 
+        # X first, before anything is drawn: decimation and the y bounds are
+        # both measured inside the window the canvas is about to show. Time
+        # panels span the full data; frequency panels frame the dominant non-DC
+        # peak so high-TF Larmor lines aren't squashed off the full-Nyquist view
+        # by the DC peak.
+        y_axis_id = self._y_axis_id(self._current_polarization_axis)
+        self._sync_auto_from_buttons([y_axis_id])
+        resolved, window = self._resolve_x(self._default_x_limits(time, asymmetry))
+
         self._ax.clear()
         style_axes(self._ax)
         draw_zero_line(self._ax)
@@ -5106,6 +5047,7 @@ class PlotPanel(QWidget):
                 asymmetry,
                 error,
                 finite_mask,
+                window,
                 color=point_color,
                 label=self._dataset_label_for(dataset),
             )
@@ -5121,6 +5063,7 @@ class PlotPanel(QWidget):
                     asymmetry,
                     error,
                     valid_low,
+                    window,
                     fmt=".",
                     markersize=3,
                     color="0.6",
@@ -5135,6 +5078,7 @@ class PlotPanel(QWidget):
                 asymmetry,
                 error,
                 draw_mask,
+                window,
                 fmt=".",
                 markersize=3,
                 color=point_color,
@@ -5174,38 +5118,15 @@ class PlotPanel(QWidget):
 
         style_legend(self._ax.legend())
 
-        # Initialize limits once per content; preserve user-set limits on redraw.
-        # Re-arm when the displayed run/axis/view-mode changed so a switched or
-        # freshly loaded dataset frames to itself instead of inheriting stale
-        # (incl. persisted cross-session) limits.
-        self._reframe_if_content_changed()
-        # A reframe moves the axes AFTER the draw above, whose decimation was
-        # clipped to the PREVIOUS content's viewport — a switched dataset would
-        # otherwise render one view behind (fresh limits over data sampled for
-        # the old window, the new run's line missing entirely). Remember to
-        # re-decimate once the new limits are applied; a same-content redraw
-        # keeps its viewport and skips the extra pass.
-        reframed = not self._limits_initialized
-        if not self._limits_initialized:
-            # X first: time panels span the full data; frequency panels frame the
-            # dominant non-DC peak so high-TF Larmor lines aren't squashed off the
-            # full-Nyquist view by the DC peak.
-            x_limits = self._default_x_limits(time, asymmetry)
-            if x_limits is not None:
-                self._x_min.setValue(x_limits[0])
-                self._x_max.setValue(x_limits[1])
-            # Y framed to the signal within that window, ignoring ±100 % saturation
-            # sentinels and the error-divergent late-time tail. Fall back to the raw
-            # envelope only when no good-bin points exist.
-            y_limits = self._signal_y_limits_from_last_plot()
-            if y_limits is None:
-                y_min = float((asymmetry - error).min())
-                y_max = float((asymmetry + error).max())
-                y_padding = (y_max - y_min) * 0.05
-                y_limits = (y_min - y_padding, y_max + y_padding)
-            self._y_min.setValue(y_limits[0])
-            self._y_max.setValue(y_limits[1])
-            self._mark_frame_initialized()
+        # Y framed to the signal within the resolved x window, ignoring ±100 %
+        # saturation sentinels and the error-divergent late-time tail. Fall back
+        # to the raw envelope only when no good-bin points exist.
+        y_bounds = self._signal_y_limits_from_last_plot()
+        if y_bounds is None:
+            y_min = float((asymmetry - error).min())
+            y_max = float((asymmetry + error).max())
+            y_padding = (y_max - y_min) * 0.05
+            y_bounds = (y_min - y_padding, y_max + y_padding)
 
         if self._fit_x_min is None or self._fit_x_max is None:
             seed = self._raw_fit_seed_range([dataset])
@@ -5220,97 +5141,18 @@ class PlotPanel(QWidget):
                     seed = (float(time.min()), float(time.max()))
             self._fit_x_min, self._fit_x_max = seed
 
-        self._last_draw_reframed = reframed
-        self._draw_fit_range_artists()
-
-        # Apply the limits; a reframe re-decimates for the window just applied.
-        self._apply_limits(schedule_viewport_refresh=reframed)
-        self._apply_auto_limits_if_enabled()
+        resolved.update(self._resolve_y(y_axis_id, y_bounds))
+        self._apply_limits(resolved)
         self._update_export_enabled()
-        self._connect_axis_limit_callbacks([self._ax])
 
-    def _apply_limits(self, *, schedule_viewport_refresh: bool = False) -> None:
-        """Apply the specified axis limits to the plot."""
-        if not self._has_mpl:
-            return
+    def _waterfall_content_identity(self) -> tuple:
+        """Signature of what is plotted, keying the waterfall auto-Δ cache.
 
-        x0 = float(self._x_min.value())
-        x1 = float(self._x_max.value())
-        if self._is_frequency_plot_panel():
-            x0 = self._convert_frequency_control_value_to_axis_limit(x0)
-            x1 = self._convert_frequency_control_value_to_axis_limit(x1)
-        y0 = float(self._y_min.value())
-        y1 = float(self._y_max.value())
-
-        # Matplotlib warns on identical x-limits; expand degenerate ranges slightly.
-        if np.isclose(x0, x1):
-            pad = max(1e-9, abs(x0) * 1e-6)
-            x0 -= pad
-            x1 += pad
-
-        if self._subplot_axes_by_polarization:
-            self._draw_fit_range_artists()
-            self._syncing_limits_from_axes = True
-            try:
-                focused_axis = self._active_y_axis()
-                for axis_key, axis_obj in self._subplot_axes_by_polarization.items():
-                    axis_obj.set_xlim(x0, x1)
-                    # Manual Y applies only to the focused (selected) subplot.
-                    if focused_axis == axis_key:
-                        lo, hi = (y0, y1) if y0 <= y1 else (y1, y0)
-                        self._y_limits_by_polarization[axis_key] = (lo, hi)
-                    limits = self._y_limits_by_polarization.get(axis_key)
-                    if limits is not None:
-                        axis_obj.set_ylim(float(limits[0]), float(limits[1]))
-                    # A non-focused subplot with no cached limit keeps its own
-                    # (auto-scaled) y-range — manual Y never bleeds across
-                    # subplots.
-            finally:
-                self._syncing_limits_from_axes = False
-            # Try to defer the rasterisation onto the coalesced viewport refresh:
-            # on a reframe (schedule_viewport_refresh=True) the immediate draw
-            # would be replaced one event-loop turn later by _redraw_current_view
-            # with correct decimation, so skip it when a deferred pass will run.
-            deferred = (
-                schedule_viewport_refresh
-                and not self._viewport_refresh_in_progress
-                and self._schedule_viewport_refresh()
-            )
-            if not deferred:
-                self._canvas.draw()
-            self._emit_view_limits_changed()
-            return
-
-        self._ax.set_xlim(x0, x1)
-        self._ax.set_ylim(y0, y1)
-        self._cache_current_y_limits_for_axis()
-        self._draw_fit_range_artists()
-        # See the subplot path above: defer the draw to the coalesced viewport
-        # refresh when one will genuinely run, else rasterise synchronously now.
-        deferred = (
-            schedule_viewport_refresh
-            and not self._viewport_refresh_in_progress
-            and self._schedule_viewport_refresh()
-        )
-        if not deferred:
-            self._canvas.draw()
-        self._emit_view_limits_changed()
-
-    def _current_frame_identity(self) -> tuple:
-        """Signature of what is currently plotted, for first-paint reframing.
-
-        Captures the dimensions that change the natural axis scale — which runs
-        are shown, the polarization axis, the time-view mode (asymmetry vs raw
-        counts vs groups), and the stacked subplot set. Incidental redraws
+        A zoom re-renders the same content through ``plot_datasets``; without a
+        content key the auto Δ would re-resolve from the zoomed window and the
+        stack would re-space under the user mid-inspection. Incidental redraws
         (bunching, fit overlays, annotation edits) leave every component
-        unchanged, so the frame — and any manual zoom layered on top of it — is
-        preserved; a genuine content switch changes at least one component and
-        re-arms first-paint framing. The frequency x-unit is deliberately *not*
-        included: switching MHz↔field is a coordinate transform that converts
-        the existing limits in place, not a content change that should reframe.
-
-        Must be called after the plot path has set the current dataset/axis/
-        view-mode state so the signature reflects what is about to be drawn.
+        unchanged; a genuine content switch changes at least one.
         """
         runs: list[int] = []
         for dataset in self._current_datasets or ():
@@ -5321,59 +5163,12 @@ class PlotPanel(QWidget):
         return (
             tuple(sorted(runs)),
             self._current_polarization_axis,
-            getattr(self, "_current_time_view_mode", None),
+            self._current_time_view_mode,
             self._is_frequency_plot_panel(),
             tuple(sorted(self._subplot_axes_by_polarization)),
-            # Waterfall stacking rescales the natural y-extent (each trace adds
-            # i*Δ), so toggling it — or editing the manual Δ — must re-arm
-            # first-paint framing or the stack draws outside stale limits.
             self.is_waterfall_enabled(),
             self._waterfall_offset,
         )
-
-    def _reframe_if_content_changed(self) -> None:
-        """Re-arm first-paint auto-framing when the plotted content identity changed.
-
-        Resets the one-shot ``_limits_initialized`` latch so the per-path
-        first-paint block recomputes data-derived limits for the new content.
-        A no-op when the identity is unchanged, so manual zoom and persisted
-        same-content limits survive incidental redraws, and a no-op once the
-        user has taken explicit control of the limits (see
-        ``_limits_user_locked``), so a deliberate window survives run switches.
-        """
-        if self._limits_user_locked:
-            return
-        if self._current_frame_identity() != self._framed_identity:
-            self._limits_initialized = False
-
-    def _mark_frame_initialized(self) -> None:
-        """Record that the current content has been first-paint framed."""
-        self._limits_initialized = True
-        self._framed_identity = self._current_frame_identity()
-
-    def _apply_auto_limits_if_enabled(self) -> None:
-        """Re-apply persistent auto-limit toggles after a dataset redraw."""
-        if not self._has_mpl:
-            return
-
-        if self._auto_x_btn.isChecked():
-            self._auto_x_limits()
-        if self._auto_y_btn.isChecked():
-            self._auto_y_limits()
-
-    def _on_auto_x_button_clicked(self, checked: bool) -> None:
-        """Apply auto X immediately when the toggle is enabled."""
-        if checked:
-            # Turning an Auto toggle ON is the explicit "always follow the data"
-            # escape hatch: release any manual frame lock so reframing resumes.
-            self._limits_user_locked = False
-            self._auto_x_limits()
-
-    def _on_auto_y_button_clicked(self, checked: bool) -> None:
-        """Apply auto Y immediately when the toggle is enabled."""
-        if checked:
-            self._limits_user_locked = False
-            self._auto_y_limits()
 
     def _draw_persistent_frequency_markers(self) -> None:
         """Redraw the pinned frequency-line markers on the active axis.
@@ -5447,7 +5242,7 @@ class PlotPanel(QWidget):
 
         Time panels frame the full data span. Frequency panels frame the dominant
         non-DC spectral peak when one stands out, so high-transverse-field Larmor
-        lines are visible on first paint instead of being squashed off-screen by a
+        lines are visible when the axis frames instead of being squashed off-screen by a
         full-Nyquist view dominated by the DC peak.
         """
         finite = np.isfinite(time)
@@ -5572,7 +5367,7 @@ class PlotPanel(QWidget):
     ) -> tuple[np.ndarray, np.ndarray, float] | None:
         """Return ``(line_freqs, line_ratios, f_max)`` for baseline-clearing bins.
 
-        The shared line finder behind the first-paint framing helpers;
+        The shared line finder behind the x-framing helpers;
         ``line_ratios`` is each bin's height over its LOCAL baseline. Returns
         ``None`` for DC-only or featureless spectra, where no non-DC bin clears
         the baseline and zooming would merely chase a noise spike. The DC
@@ -5720,104 +5515,6 @@ class PlotPanel(QWidget):
         if np.any(strict_freqs < lower) or np.any(strict_freqs > upper):
             return None
         return lower, upper
-
-    def _auto_x_limits(self) -> None:
-        """Auto-scale x-axis and update x-limit controls."""
-        if not self._has_mpl:
-            return
-
-        if self._last_plot_time is None:
-            return
-
-        finite_mask = np.isfinite(self._last_plot_time)
-        if not np.any(finite_mask):
-            return
-
-        # On a frequency spectrum, "Auto X" should frame the line sensibly (the
-        # dominant non-DC peak / field-derived window), not span the full Nyquist
-        # range where a high-TF Larmor line is squashed to sub-pixel by the DC
-        # peak. Delegate to the same smart framing used on first paint; it already
-        # returns control-value units and skips correlation axes. Fall back to the
-        # raw padded span when it declines (e.g. correlation axis, no finite data).
-        if self._is_frequency_plot_panel() and self._last_plot_asymmetry is not None:
-            smart = self._default_x_limits(self._last_plot_time, self._last_plot_asymmetry)
-            if smart is not None:
-                self._x_min.setValue(smart[0])
-                self._x_max.setValue(smart[1])
-                self._apply_limits(schedule_viewport_refresh=True)
-                return
-
-        time = self._last_plot_time[finite_mask]
-        x_min = float(np.min(time))
-        x_max = float(np.max(time))
-        if x_max <= x_min:
-            delta = max(abs(x_min) * 0.05, 1e-6)
-            x_min -= delta
-            x_max += delta
-        else:
-            padding = (x_max - x_min) * 0.05
-            x_min -= padding
-            x_max += padding
-
-        self._x_min.setValue(self._convert_frequency_axis_limit_to_control_value(x_min))
-        self._x_max.setValue(self._convert_frequency_axis_limit_to_control_value(x_max))
-        # Widening the x-window past the previous (possibly zoomed-in) view leaves
-        # the rendered points decimated for the *old* narrow viewport — the data
-        # outside it stays missing until a redraw recomputes decimation. Schedule a
-        # viewport refresh so Auto X re-decimates over the full range it just set.
-        # (_last_plot_time is already full-resolution, so the computed range is
-        # correct; only the on-screen sample was stale.) The refresh is coalesced
-        # and self-suppresses while one is already in progress, so the render-path
-        # call via _apply_auto_limits_if_enabled cannot recurse.
-        self._apply_limits(schedule_viewport_refresh=True)
-
-    def _auto_y_limits(self) -> None:
-        """Auto-scale y-axis from visible, non-low-count points only."""
-        if not self._has_mpl:
-            return
-
-        if self._grouped_time_subplot_datasets and self._subplot_axes_by_polarization:
-            updated = False
-            for dataset in self._grouped_time_subplot_datasets:
-                axis_key = self._grouped_subplot_axis_key(dataset)
-                if axis_key not in self._subplot_axes_by_polarization:
-                    continue
-                limits = self._auto_y_limits_for_datasets([dataset])
-                if limits is None:
-                    continue
-                self._y_limits_by_polarization[axis_key] = limits
-                updated = True
-            if not updated:
-                return
-            self._sync_y_controls_with_visible_axis()
-            self._apply_limits()
-            return
-
-        if self._subplot_axes_by_polarization and self._current_polarization_axis == "ALL":
-            updated = False
-            for axis_key in self._all_mode_axes_order():
-                limits = self._auto_y_limits_for_datasets(
-                    self._vector_subplot_datasets.get(axis_key, [])
-                )
-                if limits is None:
-                    continue
-                self._y_limits_by_polarization[axis_key] = limits
-                updated = True
-            if not updated:
-                return
-            self._sync_y_controls_with_visible_axis()
-            self._apply_limits()
-            return
-
-        limits = self._signal_y_limits_from_last_plot()
-        if limits is None:
-            return
-        y_min, y_max = limits
-
-        self._y_min.setValue(y_min)
-        self._y_max.setValue(y_max)
-
-        self._apply_limits()
 
     def _signal_y_limits_from_last_plot(self) -> tuple[float, float] | None:
         """Robust y-limits framing the signal in the current x-window.
@@ -6044,61 +5741,70 @@ class PlotPanel(QWidget):
             return None
         return scale * _SIGNAL_FRAME_ERROR_CEILING_FACTOR
 
-    def _auto_y_limits_for_datasets(
-        self,
-        datasets: list[MuonDataset],
-    ) -> tuple[float, float] | None:
-        """Return auto y-limits for one polarization's datasets."""
-        all_times: list[np.ndarray] = []
-        all_asymmetry: list[np.ndarray] = []
-        all_error: list[np.ndarray] = []
-        all_low_masks: list[np.ndarray] = []
+    def _display_entries(self, datasets: list[MuonDataset]) -> list[_DisplayEntry]:
+        """Materialise each dataset's drawable display arrays exactly once.
 
+        The stacked render paths use one list per subplot for all three jobs —
+        the shared x bounds, that subplot's y bounds, and the draw itself — so
+        the analysis + RRF pipeline runs once per dataset per render.
+        """
+        entries: list[_DisplayEntry] = []
         for dataset in datasets:
             analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
             if analysis_dataset is None:
                 continue
-
             time = self._convert_frequency_axis_for_display(analysis_dataset.time, dataset)
             asymmetry = self._convert_frequency_values_for_display(
                 analysis_dataset.asymmetry, dataset
             )
             error = self._convert_frequency_values_for_display(analysis_dataset.error, dataset)
-            low_mask = self._low_count_mask_for_dataset(
-                analysis_dataset,
-                source_dataset=dataset,
+            low_count_mask = self._low_count_mask_for_dataset(
+                analysis_dataset, source_dataset=dataset
             )
+            entries.append(
+                _DisplayEntry(
+                    dataset=dataset,
+                    analysis=analysis_dataset,
+                    time=time,
+                    asymmetry=asymmetry,
+                    error=error,
+                    low_count_mask=low_count_mask,
+                    finite_mask=(np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)),
+                )
+            )
+        return entries
 
-            finite_mask = np.isfinite(time) & np.isfinite(asymmetry) & np.isfinite(error)
-            if not np.any(finite_mask):
-                continue
-
-            all_times.append(time[finite_mask])
-            all_asymmetry.append(asymmetry[finite_mask])
-            all_error.append(error[finite_mask])
-            all_low_masks.append(low_mask[finite_mask])
-
-        if not all_times:
+    def _finite_display_arrays(
+        self, entries: list[_DisplayEntry]
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+        """Concatenated finite ``(time, asymmetry, error, low_count)`` for *entries*."""
+        usable = [entry for entry in entries if np.any(entry.finite_mask)]
+        if not usable:
             return None
+        return (
+            np.concatenate([e.time[e.finite_mask] for e in usable]),
+            np.concatenate([e.asymmetry[e.finite_mask] for e in usable]),
+            np.concatenate([e.error[e.finite_mask] for e in usable]),
+            np.concatenate([e.low_count_mask[e.finite_mask] for e in usable]),
+        )
 
-        time = np.concatenate(all_times)
-        asymmetry = np.concatenate(all_asymmetry)
-        error = np.concatenate(all_error)
-        low_mask = np.concatenate(all_low_masks)
-
-        x_lo = float(self._x_min.value())
-        x_hi = float(self._x_max.value())
-        if self._is_frequency_plot_panel():
-            x_lo = self._convert_frequency_control_value_to_axis_limit(x_lo)
-            x_hi = self._convert_frequency_control_value_to_axis_limit(x_hi)
-        lo, hi = (x_lo, x_hi) if x_lo <= x_hi else (x_hi, x_lo)
-
+    def _auto_y_limits_from_display_arrays(
+        self,
+        arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+        window: tuple[float, float] | None,
+    ) -> tuple[float, float] | None:
+        """Auto y-bounds for one pane's display arrays inside the x *window*."""
+        time, asymmetry, error, low_mask = arrays
+        in_window = (
+            np.ones_like(time, dtype=bool)
+            if window is None
+            else (time >= min(window)) & (time <= max(window))
+        )
         mask = (
             np.isfinite(time)
             & np.isfinite(asymmetry)
             & np.isfinite(error)
-            & (time >= lo)
-            & (time <= hi)
+            & in_window
             & (~low_mask)
         )
         if not np.any(mask):
@@ -6107,42 +5813,6 @@ class PlotPanel(QWidget):
             mask = np.isfinite(asymmetry) & np.isfinite(error)
 
         return self._auto_y_limits_from_arrays(asymmetry, error, mask)
-
-    def _subplot_datasets_for_axis(self, axis_key: str) -> list[MuonDataset]:
-        """Datasets feeding the stacked subplot keyed by *axis_key*."""
-        if self._grouped_time_subplot_datasets:
-            return [
-                dataset
-                for dataset in self._grouped_time_subplot_datasets
-                if self._grouped_subplot_axis_key(dataset) == axis_key
-            ]
-        return list(self._vector_subplot_datasets.get(axis_key, []))
-
-    def _frame_subplot_axes_to_signal(self) -> None:
-        """Frame each stacked subplot's y-axis to its own signal envelope.
-
-        Used at first paint so the Individual-groups / vector views open framed on
-        the good-bin region (sentinels and the error-divergent tail excluded)
-        instead of matplotlib's raw autoscale over every plotted point. Mirrors
-        what the Auto Y button does per axis; manual/cached limits still win in
-        :meth:`_apply_limits`.
-        """
-        if not self._subplot_axes_by_polarization:
-            return
-        for axis_key, ax in self._subplot_axes_by_polarization.items():
-            # Respect an already-cached (e.g. restored or manually pinned) limit,
-            # matching the build loop which only auto-scales axes without one.
-            if axis_key in self._y_limits_by_polarization:
-                continue
-            datasets = self._subplot_datasets_for_axis(axis_key)
-            if not datasets:
-                continue
-            limits = self._auto_y_limits_for_datasets(datasets)
-            if limits is None:
-                continue
-            self._y_limits_by_polarization[axis_key] = limits
-            if hasattr(ax, "set_ylim"):
-                ax.set_ylim(float(limits[0]), float(limits[1]))
 
     def _low_count_mask_for_dataset(
         self,
@@ -6876,6 +6546,9 @@ class PlotPanel(QWidget):
         if not self._has_mpl:
             return
         if self._current_navigation_mode() != "none":
+            # Start of a zoom/pan gesture: remember where every displayed axis
+            # was, so the release can hold exactly the axes it moved.
+            self._gesture_start = self._axis_limits_snapshot()
             return
 
         if event.button == 3:
@@ -7052,12 +6725,21 @@ class PlotPanel(QWidget):
         """End drag and open numeric editor on click without drag."""
         if self._current_navigation_mode() != "none":
             # A completed pan/zoom gesture is the user choosing a window, exactly
-            # like typing in a limit field: take control of the frame so later
-            # content switches and recomputes hold it instead of reframing over
-            # it. Only interactive gestures reach here — programmatic set_xlim
-            # routes through the xlim_changed callback (_on_axis_limits_changed),
-            # never button_release — so this never fires on a draw-driven change.
-            self._limits_user_locked = True
+            # like typing in a limit field. The toolbar's own release handler has
+            # already applied the zoom rectangle / pan by the time this runs, so
+            # comparing the axes against the button-press snapshot holds only the
+            # axes the gesture actually moved — a horizontal zoom leaves Auto Y
+            # on. Only interactive gestures reach here; a programmatic set_xlim
+            # never produces a button_release.
+            after = self._axis_limits_snapshot()
+            y_ids = [axis_id for axis_id in after if axis_id != "x"]
+            # Buttons in, policy decides what moved, buttons out: syncing first
+            # means a toggle changed since the last render cannot be written
+            # back stale by the mirror below.
+            self._sync_auto_from_buttons(y_ids)
+            self._limits.record_gesture(self._gesture_start, after)
+            self._mirror_auto_buttons(y_ids)
+            self._refresh_view_for_limits()
             return
 
         if self._active_fit_handle is not None:
@@ -7289,7 +6971,7 @@ class PlotPanel(QWidget):
         # Redraw current view while preserving multi-selection overlays.
         self._redraw_current_view()
 
-    def clear(self, *, message: str | None = None, preserve_view_state: bool = False) -> None:
+    def clear(self, *, message: str | None = None) -> None:
         """Clear the plot and reset stored data.
 
         When *message* is given, draw it as a centred grey placeholder over the
@@ -7299,14 +6981,10 @@ class PlotPanel(QWidget):
         is computed on demand, never automatically); every other caller leaves
         *message* ``None`` and gets an unchanged blank plot.
 
-        *preserve_view_state* keeps the frame latches (``_limits_initialized``,
-        ``_limits_user_locked``, ``_framed_identity``) rather than resetting
-        them. It is for *transient* empty states — browsing past an uncomputed
-        run, or an empty-spectrum render — where the blank is momentary and the
-        user's chosen window must survive to the next compute. Genuine teardown
-        (project close/new, dataset removal) leaves it ``False`` so a fresh view
-        reframes from scratch. It does not touch the spin *fields*, which clear()
-        never reset; callers re-apply the preserved limits explicitly.
+        A blank canvas never touches the held axis limits: browsing onto an
+        uncomputed run is momentary, and the user's window must survive to the
+        next compute. Only project teardown forgets them, via
+        :meth:`reset_view_limits`.
         """
         # A cleared panel shows no run, so the transverse-field grouping nudge
         # (which is per-run) must go with it; the next render re-derives it.
@@ -7333,10 +7011,7 @@ class PlotPanel(QWidget):
             self._fit_components_by_key = {}
             self._fit_metadata = {}
             self._fit_metadata_by_key = {}
-            if not preserve_view_state:
-                self._limits_initialized = False
-                self._limits_user_locked = False
-                self._framed_identity = None
+            self._maxent_reconstruction = None
             self._last_plot_time = None
             self._last_plot_asymmetry = None
             self._last_plot_error = None
@@ -7356,7 +7031,6 @@ class PlotPanel(QWidget):
             self._fit_max_handles = []
             self._active_fit_axis = None
             self._current_polarization_axis = None
-            self._y_limits_by_polarization = {}
             self._subplot_axes_by_polarization = {}
             self._vector_subplot_datasets = {}
             if self._is_frequency_plot_panel():
@@ -7889,11 +7563,15 @@ class PlotPanel(QWidget):
                 x_hi = self._convert_frequency_control_value_to_axis_limit(x_hi)
             ax.set_xlim(x_lo, x_hi)
 
-        if axis_key in self._y_limits_by_polarization and hasattr(ax, "set_ylim"):
-            y0, y1 = self._y_limits_by_polarization[axis_key]
-            ax.set_ylim(float(y0), float(y1))
-        elif hasattr(ax, "set_ylim"):
-            ax.set_ylim(float(self._y_min.value()), float(self._y_max.value()))
+        # An exported layout can stack panes that are not on screen (e.g. the
+        # individual-groups export from a single view); a pane the policy has
+        # never framed takes the focused pane's window from the fields.
+        held_y = self._limits.held(self._y_axis_id(axis_key))
+        if hasattr(ax, "set_ylim"):
+            if held_y is None:
+                ax.set_ylim(float(self._y_min.value()), float(self._y_max.value()))
+            else:
+                ax.set_ylim(float(held_y[0]), float(held_y[1]))
 
         if show_legend:
             style_legend(ax.legend(loc="best"))
@@ -8841,18 +8519,11 @@ class PlotPanel(QWidget):
                 "offset": self.waterfall_offset(),
             },
             "bunch_factor": self._bunch_factor.value() if self._has_mpl else 1,
-            "auto_x_enabled": self._auto_x_btn.isChecked() if self._has_mpl else False,
-            "auto_y_enabled": self._auto_y_btn.isChecked() if self._has_mpl else False,
-            "x_min": self._x_min.value() if self._has_mpl else 0.0,
-            "x_max": self._x_max.value() if self._has_mpl else 10.0,
-            "y_min": self._y_min.value() if self._has_mpl else -30.0,
-            "y_max": self._y_max.value() if self._has_mpl else 30.0,
+            # One per-axis Auto/Hold snapshot replaces the old x_min/x_max/
+            # y_min/y_max + auto flags + per-projection y cache (schema v18).
+            "axis_limits": self._limits.state(),
             "polarization_axis": self._current_polarization_axis,
             "projection_selection": list(self._selected_projection_labels),
-            "y_limits_by_polarization": {
-                axis: [float(lim[0]), float(lim[1])]
-                for axis, lim in self._y_limits_by_polarization.items()
-            },
             "fit_curve": None,
             "fit_curve_run_number": self._fit_curve_run_number,
             "fit_curves": {},
@@ -8876,10 +8547,6 @@ class PlotPanel(QWidget):
                 state["frequency_common_reference_mhz"] = float(
                     self._frequency_common_reference_mhz
                 )
-            state["frequency_x_limits_by_unit"] = {
-                unit: [float(limits[0]), float(limits[1])]
-                for unit, limits in self._frequency_x_limits_by_unit.items()
-            }
 
         if self._has_mpl:
             if self._fit_curve is not None:
@@ -8950,9 +8617,6 @@ class PlotPanel(QWidget):
         if hasattr(self, "_rrf_controls"):
             self._rrf_controls.set_state(state.get("rrf"))
 
-        self._auto_x_btn.setChecked(bool(state.get("auto_x_enabled", False)))
-        self._auto_y_btn.setChecked(bool(state.get("auto_y_enabled", False)))
-
         default_label_field = state.get("default_label_field", state.get("label_field", "run"))
         if not self._is_restorable_label_field(default_label_field):
             default_label_field = "run"
@@ -8976,23 +8640,14 @@ class PlotPanel(QWidget):
             if isinstance(raw_selection, list)
             else []
         )
-        self._y_limits_by_polarization = {}
-        raw_y_limits_by_axis = state.get("y_limits_by_polarization", {})
-        if isinstance(raw_y_limits_by_axis, dict):
-            for raw_axis, raw_limits in raw_y_limits_by_axis.items():
-                axis = self._axis_canonical_key(raw_axis)
-                if (
-                    axis is None
-                    or not isinstance(raw_limits, (list, tuple))
-                    or len(raw_limits) != 2
-                ):
-                    continue
-                try:
-                    lo = float(raw_limits[0])
-                    hi = float(raw_limits[1])
-                except (TypeError, ValueError):
-                    continue
-                self._y_limits_by_polarization[axis] = (lo, hi)
+        # The per-axis Auto/Hold snapshot IS the restored view: the buttons
+        # mirror its Auto flags and the replot below resolves through it, so
+        # there is no separate lock and no post-plot re-apply.
+        # Optional like every other key here: partial states are a legal input
+        # (the file boundary migrates real projects to a complete block).
+        if "axis_limits" in state:
+            self._limits.restore(state["axis_limits"])
+        self._mirror_auto_buttons([self._y_axis_id(self._active_y_axis())])
 
         # Adopt the saved current selection as the default when valid, then let the
         # combo target that intent. A saved *custom* column that the host has not
@@ -9031,39 +8686,6 @@ class PlotPanel(QWidget):
         self._refresh_log_counts_visibility()
 
         if self._is_frequency_plot_panel():
-            # Valid per-mode limit-stash keys: absolute/shift keyed on unit, ppm
-            # unit-independent. Bare-unit keys are a pre-mode legacy shape; the
-            # ``:relative`` keys are the retired old relative axis (view state,
-            # discarded — new limits reframe cleanly).
-            valid_stash_keys = {
-                "frequency_mhz",
-                "field_gauss",
-                "field_tesla",
-                "frequency_mhz:absolute",
-                "field_gauss:absolute",
-                "field_tesla:absolute",
-                "frequency_mhz:shift",
-                "field_gauss:shift",
-                "field_tesla:shift",
-                "relative_ppm",
-            }
-            self._frequency_x_limits_by_unit = {}
-            raw_limits_by_unit = state.get("frequency_x_limits_by_unit", {})
-            if isinstance(raw_limits_by_unit, dict):
-                for raw_unit, raw_limits in raw_limits_by_unit.items():
-                    if (
-                        raw_unit not in valid_stash_keys
-                        or not isinstance(raw_limits, (list, tuple))
-                        or len(raw_limits) != 2
-                    ):
-                        continue
-                    try:
-                        lo = float(raw_limits[0])
-                        hi = float(raw_limits[1])
-                    except (TypeError, ValueError):
-                        continue
-                    self._frequency_x_limits_by_unit[str(raw_unit)] = (lo, hi)
-
             restored_unit = str(state.get("frequency_x_unit", "frequency_mhz"))
             if restored_unit not in {"frequency_mhz", "field_gauss", "field_tesla"}:
                 restored_unit = "frequency_mhz"
@@ -9101,24 +8723,6 @@ class PlotPanel(QWidget):
         self._bunch_factor.blockSignals(True)
         self._bunch_factor.setValue(1)
         self._bunch_factor.blockSignals(False)
-
-        # Restore axis limit fields (will be applied after optional re-plot).
-        for spin, key, default in (
-            (self._x_min, "x_min", 0.0),
-            (self._x_max, "x_max", 10.0),
-            (self._y_min, "y_min", -30.0),
-            (self._y_max, "y_max", 30.0),
-        ):
-            spin.blockSignals(True)
-            spin.setValue(state.get(key, default))
-            spin.blockSignals(False)
-
-        # Treat restored limits as user-defined so later dataset additions do
-        # not overwrite them with auto-derived bounds — a restored project view
-        # is explicit user intent, held across content switches like a manual
-        # edit (see _limits_user_locked).
-        self._limits_initialized = True
-        self._limits_user_locked = True
 
         fit_x_min = state.get("fit_x_min")
         fit_x_max = state.get("fit_x_max")
@@ -9262,17 +8866,7 @@ class PlotPanel(QWidget):
                 redraw=True,
             )
 
-        # Re-apply saved axis limits last, after any redraw/autoscale, so the
-        # restored view wins over data-derived or autoscale-margin defaults.
-        for spin, key, default in (
-            (self._x_min, "x_min", 0.0),
-            (self._x_max, "x_max", 10.0),
-            (self._y_min, "y_min", -30.0),
-            (self._y_max, "y_max", 30.0),
-        ):
-            spin.blockSignals(True)
-            spin.setValue(state.get(key, default))
-            spin.blockSignals(False)
-
-        # Always apply the restored limits.
-        self._apply_limits()
+        # Surface the restored held limits, whether or not a dataset was
+        # replotted above: ``None`` bounds leave every held axis exactly where
+        # the project file put it.
+        self._reapply_held_limits()
