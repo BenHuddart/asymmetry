@@ -41,6 +41,7 @@ import dataclasses
 import functools
 import html
 import os
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
@@ -112,6 +113,7 @@ from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_state,
 )
 from asymmetry.core.fitting.member_quality import member_quality_flags
+from asymmetry.core.fitting.parameter_carry import align_component_names, carry_parameters
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
@@ -207,6 +209,32 @@ BATCH_SEEDING_TOOLTIP = (
     "• Chain from previous run — each run starts from the previous run's fit "
     "(best for an ordered temperature/field scan)."
 )
+
+
+def _fit_table_restore_entries(
+    state: Mapping[str, Mapping[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Translate ``{value, type, bounds}`` row state into restore entries.
+
+    The two-tier parameter tables describe a row as a value, a role text and a
+    combined ``"min, max"`` bounds string;
+    :meth:`FitParameterTable.restore_parameters` wants a value, a ``fixed``
+    flag and separate ``min``/``max``. The single grouped physics table is a
+    :class:`FitParameterTable` fed from that shared shape by both the
+    project-restore path and the model-edit rebuild, so both go through this
+    one translation.
+    """
+    entries: dict[str, dict[str, object]] = {}
+    for name, entry in state.items():
+        minimum, _, maximum = str(entry.get("bounds", "-inf, inf")).partition(",")
+        entries[str(name)] = {
+            "name": str(name),
+            "value": float(entry.get("value", 0.0)),
+            "fixed": str(entry.get("type", "")) == "Fixed",
+            "min": minimum.strip() or "-inf",
+            "max": maximum.strip() or "inf",
+        }
+    return entries
 
 
 class GlobalFitTab(FitTabBase):
@@ -1257,7 +1285,18 @@ class GlobalFitTab(FitTabBase):
                 return
             inherited_values_by_run[run_number] = typed_values
 
-        self._set_composite_model(inherited_model)
+        # The inherited model arrives from the single tab's fits rather than
+        # from an edit, so no component map was recorded; matching component
+        # names in order recovers one (the same fallback a retyped expression
+        # uses), and where the model is simply the one already in the table
+        # that map is the identity, so every row's role, value and bounds
+        # survive the rebuild.
+        self._set_composite_model(
+            inherited_model,
+            origins=align_component_names(
+                self._composite_model.component_names, inherited_model.component_names
+            ),
+        )
 
         if not grouped:
             averages = self._inherited_param_averages(
@@ -1315,6 +1354,54 @@ class GlobalFitTab(FitTabBase):
             }
         return state
 
+    def _carry_row_state(
+        self,
+        model: CompositeModel,
+        origins: Sequence[int | None] | None,
+    ) -> tuple[
+        dict[str, dict[str, str]],
+        dict[str, dict[str, str]],
+        dict[int, dict[str, float]],
+    ]:
+        """Translate what the parameter tables hold onto ``model``'s names.
+
+        Returns the run-batch table's carried ``{value, type, bounds}`` map, the
+        grouped physics table's, and the per-run initial values re-keyed for the
+        new model. Each is empty of anything belonging to a component the edit
+        did not keep, and empty altogether when there is no ``origins`` map —
+        with no record of which component became which, nothing can be carried
+        and every row is reseeded.
+
+        The per-(run, group) nuisance values are *not* re-keyed: their names
+        (``GROUP_NUISANCE_PARAMS``) belong to the grouped fit's nuisance block,
+        not to the fit function, so a model edit leaves them untouched.
+        """
+        if origins is None:
+            return {}, {}, {}
+        old_identities = self._composite_model.parameter_identities()
+        new_identities = model.parameter_identities()
+        # The grouped physics table is built from the default-fraction-group
+        # form of the model, whose parameter names (shared group amplitudes,
+        # free fractions) differ from the plain model's — but its components,
+        # and so ``origins``, are the same.
+        old_grouped = self._composite_model.with_default_fraction_groups()
+        new_grouped = model.with_default_fraction_groups()
+        return (
+            carry_parameters(
+                old_identities, new_identities, origins, self._current_parameter_row_state()
+            ),
+            carry_parameters(
+                old_grouped.parameter_identities(),
+                new_grouped.parameter_identities(),
+                origins,
+                self._current_grouped_model_row_state(),
+            ),
+            {
+                run_number: carry_parameters(old_identities, new_identities, origins, values)
+                for run_number, values in self._user_initial_values_by_run.items()
+            },
+        )
+
     def _set_composite_model(
         self,
         model: CompositeModel,
@@ -1322,16 +1409,27 @@ class GlobalFitTab(FitTabBase):
         seed_bounds: dict[str, str] | None = None,
         *,
         seed_frequency: bool = True,
+        origins: Sequence[int | None] | None = None,
     ) -> None:
         """Set the active composite model and rebuild classification rows.
 
         ``seed_values`` (parameter name → value text) supplies initial values
-        that take priority over preserved state and model defaults. It is used
+        that take priority over carried state and model defaults. It is used
         when seeding a batch from the single-fit tab so the batch starts from
-        the current single-fit seeds rather than defaults or stale preserved
-        state (BUG B8c). ``seed_bounds`` (parameter name → ``"min, max"`` text)
+        the current single-fit seeds rather than defaults or stale table state
+        (BUG B8c). ``seed_bounds`` (parameter name → ``"min, max"`` text)
         likewise carries the single-fit min/max so a bound set there survives
         the hand-off rather than reverting to the model default.
+
+        ``origins[i]`` is the index, in the *current* model, of the component
+        that is now at index ``i`` — ``None`` for a component that did not
+        exist before. The function builder reports one on accept
+        (``component_origins()``), and given it the value, role and bounds of
+        every surviving component follow that component onto its new rows in
+        both parameter tables, as do the per-run initial values. Callers that
+        replace the model outright — a domain switch, the fit wizard, inherited
+        single-fit seeds, a project restore — pass no origins, and the rows are
+        rebuilt from seeds alone.
 
         Restore paths pass ``seed_frequency=False`` because restored parameter
         values are replayed by ``restore_parameters`` and must not be
@@ -1340,11 +1438,10 @@ class GlobalFitTab(FitTabBase):
         """
         seed_values = seed_values or {}
         seed_bounds = seed_bounds or {}
-        preserved_state = self._current_parameter_row_state()
-        grouped_model_state = self._current_grouped_model_row_state()
-        # A new model invalidates any per-run initial values keyed by old names.
-        self._user_initial_values_by_run = {}
-        self._user_grouped_initial_values = {}
+        carried_state, carried_grouped_state, carried_initial_values = self._carry_row_state(
+            model, origins
+        )
+        self._user_initial_values_by_run = carried_initial_values
         self._updating_fraction_values = True
         self._composite_model = model
         _set_formula_label_text(self._formula_label, model.formula_string())
@@ -1377,7 +1474,7 @@ class GlobalFitTab(FitTabBase):
         fixed_default_params = model.fixed_by_default_params()
         self._param_table.setRowCount(len(model.param_names))
         for i, pname in enumerate(model.param_names):
-            previous = preserved_state.get(pname, {})
+            previous = carried_state.get(pname, {})
             # Parameter name
             name_item = _make_param_name_item(format_param_label(pname), pname)
             self._param_table.setItem(i, 0, name_item)
@@ -1415,8 +1512,8 @@ class GlobalFitTab(FitTabBase):
                     type_combo.setCurrentIndex(previous_index)
             self._param_table.setCellWidget(i, 2, type_combo)
 
-            # Bounds (min, max) — a bound carried from the single-fit tab wins
-            # over preserved state and the model default; otherwise default the
+            # Bounds (min, max) — a bound seeded from the single-fit tab wins
+            # over carried state and the model default; otherwise default the
             # lower bound to 0 for positive-definite parameters.
             seed_bound = seed_bounds.get(pname)
             if seed_bound is not None:
@@ -1435,7 +1532,7 @@ class GlobalFitTab(FitTabBase):
             type_column=2,
         )
         _size_param_table_to_content(self._param_table)
-        self._rebuild_grouped_model_table(grouped_model_state)
+        self._rebuild_grouped_model_table(carried_grouped_state)
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
         if self.is_grouped_time_domain_mode():
@@ -1548,7 +1645,7 @@ class GlobalFitTab(FitTabBase):
         if dialog.exec():
             new_model = dialog.get_composite_model()
             if new_model is not None:
-                self._set_composite_model(new_model)
+                self._set_composite_model(new_model, origins=dialog.component_origins())
 
     def _open_fit_wizard(self) -> None:
         """Launch or refresh the non-modal global fit wizard window."""
@@ -4691,7 +4788,13 @@ class GlobalFitTab(FitTabBase):
         finally:
             table.blockSignals(blocked)
 
-    def _rebuild_grouped_model_table(self, preserved_state: dict[str, dict[str, str]]) -> None:
+    def _rebuild_grouped_model_table(self, carried_state: dict[str, dict[str, str]]) -> None:
+        """Rebuild the grouped physics table, applying ``carried_state`` over the seeds.
+
+        ``carried_state`` is keyed by the *new* model's parameter names (see
+        :meth:`_carry_row_state`): every entry belongs to a component that
+        survived the model change, and a parameter with no entry is seeded.
+        """
         grouped_model = self._grouped_fit_model()
         grouped_groups, _grouped_datasets, _message = self._grouped_mode_context()
         visible_param_names = [
@@ -4699,13 +4802,13 @@ class GlobalFitTab(FitTabBase):
         ]
         if self._grouped_single:
             self._rebuild_grouped_single_model_table(
-                grouped_model, visible_param_names, preserved_state
+                grouped_model, visible_param_names, carried_state
             )
             return
         self._updating_group_model_fraction_values = True
         self._group_model_table.setRowCount(len(visible_param_names))
         for row, pname in enumerate(visible_param_names):
-            previous = preserved_state.get(pname, {})
+            previous = carried_state.get(pname, {})
             base_name, _index = split_parameter_name(pname)
             name_item = _make_param_name_item(format_param_label(pname), pname)
             self._group_model_table.setItem(row, 0, name_item)
@@ -4753,13 +4856,11 @@ class GlobalFitTab(FitTabBase):
         self,
         grouped_model: CompositeModel,
         visible_param_names: list[str],
-        preserved_state: dict[str, dict[str, str]],
+        carried_state: dict[str, dict[str, str]],
     ) -> None:
         """Populate the single grouped fit's physics table (shared Fix tickbox).
 
-        Reuses :class:`FitParameterTable`. ``preserved_state`` (the shared
-        {value, type, bounds} shape, from the edit-rebuild capture or a restored
-        project) seeds value / Fix / bounds; otherwise:
+        Reuses :class:`FitParameterTable`. Every row is seeded first:
 
         - ``field``/``B_L`` params seed from the run's applied field (every such
           param, so models with more than one oscillatory component all start at
@@ -4769,6 +4870,11 @@ class GlobalFitTab(FitTabBase):
           the shared oscillation phase at zero and carries the full per-group
           phase in the ``relative_phase`` nuisances, removing the degeneracy
           between a shared phase and the per-group phase offsets.
+
+        ``carried_state`` (the shared {value, type, bounds} shape, keyed by the
+        new model's names) then lands on top through the table's own restore —
+        value, Fix *and* bounds in one pass — for every parameter whose
+        component survived the model change.
         """
         table = self._group_model_table
         field_overrides = _field_value_overrides(
@@ -4776,34 +4882,13 @@ class GlobalFitTab(FitTabBase):
         )
         value_overrides: dict[str, float] = {}
         fixed_names: set[str] = set()
-        preserved_bounds: dict[str, tuple[str, str]] = {}
         for pname in visible_param_names:
-            prev = preserved_state.get(pname, {})
-            prev_value = str(prev.get("value", "")).strip()
             base_name, _index = split_parameter_name(pname)
-            if prev_value:
-                try:
-                    value_overrides[pname] = float(prev_value)
-                except ValueError:
-                    pass
-            elif is_background_parameter(pname):
+            if is_background_parameter(pname) or base_name == "phase":
                 value_overrides[pname] = 0.0
-            elif base_name == "phase":
-                value_overrides[pname] = 0.0
+                fixed_names.add(pname)
             elif pname in field_overrides:
                 value_overrides[pname] = field_overrides[pname]
-
-            default_fixed = is_background_parameter(pname) or base_name == "phase"
-            if str(prev.get("type", "")) == "Fixed" or (not prev and default_fixed):
-                fixed_names.add(pname)
-
-            bounds_text = str(prev.get("bounds", "")).strip()
-            if bounds_text:
-                try:
-                    lo, hi = (part.strip() for part in bounds_text.split(",", maxsplit=1))
-                    preserved_bounds[pname] = (lo, hi)
-                except ValueError:
-                    pass
 
         table.populate(
             grouped_model,
@@ -4811,19 +4896,16 @@ class GlobalFitTab(FitTabBase):
             value_overrides=value_overrides,
             fixed_names=fixed_names,
         )
-        # populate() resets bounds to defaults; restore any the user/project had.
-        for row in range(table.rowCount()):
-            name_item = table.item(row, FitParameterTable.COL_NAME)
-            name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
-            if not isinstance(name, str) or name not in preserved_bounds:
-                continue
-            lo, hi = preserved_bounds[name]
-            min_item = table.item(row, FitParameterTable.COL_MIN)
-            max_item = table.item(row, FitParameterTable.COL_MAX)
-            if min_item is not None:
-                min_item.setText(lo)
-            if max_item is not None:
-                max_item.setText(hi)
+        # The amplitudes this table hides have no row to land on; passing them
+        # to restore_parameters would resurrect them as auxiliary parameters.
+        visible = set(visible_param_names)
+        table.restore_parameters(
+            {
+                name: entry
+                for name, entry in _fit_table_restore_entries(carried_state).items()
+                if name in visible
+            }
+        )
 
     def _parse_grouped_parameter_configuration(self) -> dict[str, object]:
         global_params: list[str] = []
@@ -5059,21 +5141,7 @@ class GlobalFitTab(FitTabBase):
         if isinstance(table, FitParameterTable):
             # Apply the saved {value, type, bounds} entries onto the Fix-tickbox
             # table: type "Fixed" → checked, bounds → min/max.
-            params_data: dict[str, dict] = {}
-            for name, entry in by_name.items():
-                bounds = str(entry.get("bounds", "-inf, inf"))
-                try:
-                    lo, hi = (part.strip() for part in bounds.split(",", maxsplit=1))
-                except ValueError:
-                    lo, hi = "-inf", "inf"
-                params_data[name] = {
-                    "name": name,
-                    "value": entry.get("value", 0.0),
-                    "fixed": str(entry.get("type", "")) == "Fixed",
-                    "min": lo,
-                    "max": hi,
-                }
-            table.restore_parameters(params_data)
+            table.restore_parameters(_fit_table_restore_entries(by_name))
             return
         for row in range(table.rowCount()):
             name_item = table.item(row, 0)

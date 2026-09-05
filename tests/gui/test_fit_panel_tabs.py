@@ -37,7 +37,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     GlobalParameterRecommendation,
     RunResidualDiagnostic,
 )
-from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -50,10 +50,14 @@ from asymmetry.gui.panels.fit.wizard_cache import (
     GlobalWizardCacheEntry,
     WizardCacheEntry,
 )
+from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.fit_panel import (
     FitPanel,
+    FitParameterTable,
     GlobalFitTab,
     SingleFitTab,
+    _set_tie_button_value,
+    _tie_button_value,
     _ValueUncertaintyDelegate,
 )
 
@@ -4035,3 +4039,454 @@ def test_grouped_context_memo_follows_reassigned_member_arrays(qapp: QApplicatio
 
     dataset.asymmetry = dataset.asymmetry + 1.0
     assert tab._grouped_mode_context() is not first
+
+
+# ── parameter carry-over across a model edit ────────────────────────────────
+#
+# Accepting the fit-function builder rebuilds the host's parameter table. What
+# the user had typed belongs to the *component instance*, so it follows that
+# component wherever the edit moved it and whatever its parameters are now
+# called; a component that did not exist before starts from seeds. These tests
+# drive the real builder rows, so the origins under test are the ones a user's
+# edit actually produces.
+
+
+def _accept_builder_edit(monkeypatch, edit) -> None:
+    """Make the next builder dialog apply ``edit`` to its rows, then accept."""
+
+    def _exec(dialog) -> int:
+        edit(dialog._rows)
+        dialog._on_accept()
+        return 1
+
+    monkeypatch.setattr(FitFunctionBuilderDialog, "exec", _exec)
+
+
+def _insert_component_first(name: str):
+    """Edit: add ``name`` and walk it to the head, shifting every other index."""
+
+    def edit(rows) -> None:
+        rows.append_component(name)
+        for index in range(len(rows.origins()) - 1, 0, -1):
+            rows.move_row(index, -1)
+
+    return edit
+
+
+def _append_component(name: str):
+    def edit(rows) -> None:
+        rows.append_component(name)
+
+    return edit
+
+
+def _delete_component(index: int):
+    def edit(rows) -> None:
+        rows.delete_row(index)
+
+    return edit
+
+
+def _no_structural_change(rows) -> None:
+    """Edit: none at all — the user opened the builder and pressed OK."""
+
+
+def _single_row(tab: SingleFitTab, param_name: str) -> int:
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            return row
+    raise AssertionError(f"no row for {param_name}")
+
+
+def _set_single_row(
+    tab: SingleFitTab,
+    param_name: str,
+    *,
+    value: float | None = None,
+    fixed: bool | None = None,
+    bounds: tuple[str, str] | None = None,
+) -> None:
+    row = _single_row(tab, param_name)
+    table = tab._param_table
+    if value is not None:
+        table.item(row, FitParameterTable.COL_VALUE).setText(str(value))
+    if fixed is not None:
+        table.cellWidget(row, FitParameterTable.COL_FIX).findChild(QCheckBox).setChecked(fixed)
+    if bounds is not None:
+        table.item(row, FitParameterTable.COL_MIN).setText(bounds[0])
+        table.item(row, FitParameterTable.COL_MAX).setText(bounds[1])
+
+
+def _single_row_bounds(tab: SingleFitTab, param_name: str) -> tuple[str, str]:
+    row = _single_row(tab, param_name)
+    return (
+        tab._param_table.item(row, FitParameterTable.COL_MIN).text(),
+        tab._param_table.item(row, FitParameterTable.COL_MAX).text(),
+    )
+
+
+def _single_row_names(tab: SingleFitTab) -> list[str]:
+    return [
+        tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        for row in range(tab._param_table.rowCount())
+    ]
+
+
+def _single_tie(tab: SingleFitTab, param_name: str) -> AffineTie | None:
+    row = _single_row(tab, param_name)
+    return _tie_button_value(tab._param_table.cellWidget(row, FitParameterTable.COL_TIE))
+
+
+def _seeded_single_tab() -> SingleFitTab:
+    """A single-fit tab on ``Exponential + Constant`` with every cell touched."""
+    tab = SingleFitTab()
+    tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+    _set_single_row(tab, "A_1", value=0.31)
+    _set_single_row(tab, "Lambda", value=1.7, fixed=True, bounds=("0.5", "3.5"))
+    _set_single_row(tab, "A_bg", value=0.02)
+    return tab
+
+
+def test_single_carries_state_when_a_component_is_inserted_before(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inserting ahead of the exponential shifts A_1 → A_2; the value follows it."""
+    tab = _seeded_single_tab()
+
+    _accept_builder_edit(monkeypatch, _insert_component_first("Gaussian"))
+    tab._edit_function()
+
+    assert tab._composite_model.component_names == ["Gaussian", "Exponential", "Constant"]
+    # A_1 still exists but now names the Gaussian's amplitude: the exponential's
+    # 0.31 must be on A_2, not on the name it used to have.
+    assert _row_value(tab, "A_2") == pytest.approx(0.31)
+    assert _row_value(tab, "Lambda") == pytest.approx(1.7)
+    assert _row_value(tab, "A_bg") == pytest.approx(0.02)
+    assert _row_fix_checkbox(tab, "Lambda").isChecked()
+    assert _single_row_bounds(tab, "Lambda") == ("0.5", "3.5")
+    # The new component is seeded, not inherited.
+    defaults = tab._composite_model.param_defaults
+    assert _row_value(tab, "A_1") == pytest.approx(defaults["A_1"])
+    assert _row_value(tab, "sigma") == pytest.approx(defaults["sigma"])
+    assert not _row_fix_checkbox(tab, "A_1").isChecked()
+
+
+def test_single_carries_state_through_a_rename_when_appending(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second exponential renames Lambda → Lambda_1; value, Fix and bounds follow."""
+    tab = _seeded_single_tab()
+
+    _accept_builder_edit(monkeypatch, _append_component("Exponential"))
+    tab._edit_function()
+
+    assert _single_row_names(tab) == ["A_1", "Lambda_1", "A_bg", "A_3", "Lambda_3"]
+    assert _row_value(tab, "A_1") == pytest.approx(0.31)
+    assert _row_value(tab, "Lambda_1") == pytest.approx(1.7)
+    assert _row_fix_checkbox(tab, "Lambda_1").isChecked()
+    assert _single_row_bounds(tab, "Lambda_1") == ("0.5", "3.5")
+    assert _row_value(tab, "A_bg") == pytest.approx(0.02)
+    defaults = tab._composite_model.param_defaults
+    assert _row_value(tab, "A_3") == pytest.approx(defaults["A_3"])
+    assert _row_value(tab, "Lambda_3") == pytest.approx(defaults["Lambda_3"])
+
+
+def test_single_carries_link_group_and_retargets_tie(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Link groups carry as they are; a tie is re-targeted onto the new spelling."""
+    tab = SingleFitTab()
+    tab._set_composite_model(
+        CompositeModel(["Exponential", "Exponential", "Constant"], operators=["+", "+"])
+    )
+    _set_single_row(tab, "Lambda_1", value=1.7)
+    _set_row_link_group(tab, "A_1", 2)
+    _set_tie_button_value(
+        tab._param_table.cellWidget(_single_row(tab, "A_bg"), FitParameterTable.COL_TIE),
+        AffineTie(main="Lambda_1", scale=0.5),
+    )
+
+    _accept_builder_edit(monkeypatch, _insert_component_first("Gaussian"))
+    tab._edit_function()
+
+    # The first exponential is now component 1: A_1 → A_2, Lambda_1 → Lambda_2.
+    assert _row_value(tab, "Lambda_2") == pytest.approx(1.7)
+    assert _link_group_combo_value_for(_row_link_combo(tab, "A_2")) == 2
+    assert _single_tie(tab, "A_bg") == AffineTie(main="Lambda_2", scale=0.5)
+
+
+def test_single_drops_a_tie_whose_target_was_deleted(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tie to a parameter that did not survive has nothing to point at."""
+    tab = SingleFitTab()
+    tab._set_composite_model(
+        CompositeModel(["Exponential", "Gaussian", "Constant"], operators=["+", "+"])
+    )
+    _set_tie_button_value(
+        tab._param_table.cellWidget(_single_row(tab, "A_bg"), FitParameterTable.COL_TIE),
+        AffineTie(main="sigma", scale=0.5),
+    )
+
+    _accept_builder_edit(monkeypatch, _delete_component(1))
+    tab._edit_function()
+
+    assert tab._composite_model.component_names == ["Exponential", "Constant"]
+    assert _single_tie(tab, "A_bg") is None
+
+
+def test_single_deleting_a_component_keeps_the_survivors(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = _seeded_single_tab()
+    _accept_builder_edit(monkeypatch, _insert_component_first("Gaussian"))
+    tab._edit_function()
+    _set_single_row(tab, "sigma", value=0.9)
+
+    _accept_builder_edit(monkeypatch, _delete_component(0))
+    tab._edit_function()
+
+    assert _single_row_names(tab) == ["A_1", "Lambda", "A_bg"]
+    assert _row_value(tab, "A_1") == pytest.approx(0.31)
+    assert _row_value(tab, "Lambda") == pytest.approx(1.7)
+    assert _row_fix_checkbox(tab, "Lambda").isChecked()
+    assert _single_row_bounds(tab, "Lambda") == ("0.5", "3.5")
+
+
+def test_single_accepting_an_unchanged_model_is_a_no_op(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = _seeded_single_tab()
+    before = tab._param_table.parameters_state()
+
+    _accept_builder_edit(monkeypatch, _no_structural_change)
+    tab._edit_function()
+
+    assert tab._param_table.parameters_state() == before
+
+
+def test_single_reset_still_returns_to_defaults(qapp: QApplication) -> None:
+    """Reset is the route back to seeds — carry-over must not make it a no-op."""
+    tab = _seeded_single_tab()
+
+    tab._reset_parameters()
+
+    assert _row_value(tab, "Lambda") == pytest.approx(tab._composite_model.param_defaults["Lambda"])
+    assert not _row_fix_checkbox(tab, "Lambda").isChecked()
+
+
+def _two_tier_row(table, param_name: str) -> int:
+    for row in range(table.rowCount()):
+        name_item = table.item(row, 0)
+        if name_item and name_item.data(Qt.ItemDataRole.UserRole) == param_name:
+            return row
+    raise AssertionError(f"no row for {param_name}")
+
+
+def _two_tier_state(table, param_name: str) -> tuple[float, str, str]:
+    """``(value, type, bounds)`` of a Name·Value·Type·Bounds table row."""
+    row = _two_tier_row(table, param_name)
+    return (
+        float(table.item(row, 1).text()),
+        table.cellWidget(row, 2).currentText(),
+        table.item(row, 3).text(),
+    )
+
+
+def _set_two_tier_state(
+    table,
+    param_name: str,
+    *,
+    value: float | None = None,
+    type_text: str | None = None,
+    bounds: str | None = None,
+) -> None:
+    row = _two_tier_row(table, param_name)
+    if value is not None:
+        table.item(row, 1).setText(str(value))
+    if type_text is not None:
+        table.cellWidget(row, 2).setCurrentText(type_text)
+    if bounds is not None:
+        table.item(row, 3).setText(bounds)
+
+
+def _seeded_global_tab() -> GlobalFitTab:
+    """A batch tab on ``Exponential + Exponential`` with distinct row state."""
+    tab = GlobalFitTab()
+    tab._set_composite_model(CompositeModel(["Exponential", "Exponential"], operators=["+"]))
+    table = tab._param_table
+    _set_two_tier_state(table, "Lambda_1", value=1.7, type_text="Global", bounds="0.5, 3.5")
+    _set_two_tier_state(table, "Lambda_2", value=3.3, type_text="Fixed", bounds="1, 9")
+    _set_two_tier_state(table, "A_1", value=0.31)
+    return tab
+
+
+def test_global_batch_table_carries_state_onto_the_shifted_rows(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both exponentials are renamed by the insert; neither value crosses rows."""
+    tab = _seeded_global_tab()
+
+    _accept_builder_edit(monkeypatch, _insert_component_first("Gaussian"))
+    tab._edit_function()
+
+    table = tab._param_table
+    # Lambda_1 → Lambda_2 and Lambda_2 → Lambda_3: keying by name would have
+    # landed the *second* exponential's 3.3 on the first one's row.
+    assert _two_tier_state(table, "Lambda_2") == (1.7, "Global", "0.5, 3.5")
+    assert _two_tier_state(table, "Lambda_3") == (3.3, "Fixed", "1, 9")
+    assert _two_tier_state(table, "A_2")[0] == pytest.approx(0.31)
+    # The Gaussian is new: seeded value, default role and default bounds.
+    defaults = tab._composite_model.param_defaults
+    assert _two_tier_state(table, "sigma") == (defaults["sigma"], "Local", "0.0, inf")
+    assert _two_tier_state(table, "A_1")[0] == pytest.approx(defaults["A_1"])
+
+
+def test_global_batch_table_accepting_an_unchanged_model_is_a_no_op(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = _seeded_global_tab()
+    before = tab._current_parameter_row_state()
+
+    _accept_builder_edit(monkeypatch, _no_structural_change)
+    tab._edit_function()
+
+    assert tab._current_parameter_row_state() == before
+
+
+def test_global_batch_table_drops_only_the_deleted_component(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = _seeded_global_tab()
+
+    _accept_builder_edit(monkeypatch, _delete_component(0))
+    tab._edit_function()
+
+    table = tab._param_table
+    assert tab._composite_model.component_names == ["Exponential"]
+    assert _two_tier_state(table, "Lambda") == (3.3, "Fixed", "1, 9")
+
+
+def test_global_per_run_initial_values_follow_the_component(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-run seeds are re-keyed by the edit instead of being wiped."""
+    tab = GlobalFitTab()
+    tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+    tab._user_initial_values_by_run = {101: {"A_1": 0.31, "Lambda": 1.7}}
+    # Per-(run, group) nuisances are not fit-function parameters, so a model
+    # edit leaves them alone entirely.
+    tab._user_grouped_initial_values = {5: {"relative_phase": 0.4}}
+
+    _accept_builder_edit(monkeypatch, _insert_component_first("Gaussian"))
+    tab._edit_function()
+
+    assert tab._user_initial_values_by_run == {101: {"A_2": 0.31, "Lambda": 1.7}}
+    assert tab._user_grouped_initial_values == {5: {"relative_phase": 0.4}}
+
+
+def test_global_per_run_initial_values_drop_a_deleted_component(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = GlobalFitTab()
+    tab._set_composite_model(
+        CompositeModel(["Exponential", "Gaussian", "Constant"], operators=["+", "+"])
+    )
+    tab._user_initial_values_by_run = {101: {"A_1": 0.31, "Lambda": 1.7, "sigma": 0.9}}
+
+    _accept_builder_edit(monkeypatch, _delete_component(1))
+    tab._edit_function()
+
+    assert tab._user_initial_values_by_run == {101: {"A_1": 0.31, "Lambda": 1.7}}
+
+
+def _grouped_tab(*, grouped_single: bool) -> GlobalFitTab:
+    tab = GlobalFitTab(member_kind="groups", grouped_single=grouped_single)
+    # Stub only the grouped context, so the physics table can be rebuilt
+    # without a live dataset/grouping; the model itself stays real.
+    tab._grouped_mode_context = lambda: ([], [], "")  # type: ignore[method-assign]
+    tab._set_composite_model(CompositeModel(["Exponential", "Exponential"], operators=["+"]))
+    return tab
+
+
+def test_grouped_batch_physics_table_carries_state_onto_the_shifted_rows(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = _grouped_tab(grouped_single=False)
+    table = tab._group_model_table
+    _set_two_tier_state(table, "Lambda_1", value=1.7, type_text="Global", bounds="0.5, 3.5")
+    _set_two_tier_state(table, "Lambda_2", value=3.3, type_text="Fixed", bounds="1, 9")
+
+    _accept_builder_edit(monkeypatch, _insert_component_first("Gaussian"))
+    tab._edit_function()
+
+    table = tab._group_model_table
+    assert _two_tier_state(table, "Lambda_2") == (1.7, "Global", "0.5, 3.5")
+    assert _two_tier_state(table, "Lambda_3") == (3.3, "Fixed", "1, 9")
+    defaults = tab._grouped_fit_model().param_defaults
+    assert _two_tier_state(table, "sigma") == (defaults["sigma"], "Local", "0.0, inf")
+
+
+def test_grouped_batch_physics_table_accept_with_no_change_is_a_no_op(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = _grouped_tab(grouped_single=False)
+    _set_two_tier_state(tab._group_model_table, "Lambda_2", value=3.3, type_text="Fixed")
+    before = tab._current_grouped_model_row_state()
+
+    _accept_builder_edit(monkeypatch, _no_structural_change)
+    tab._edit_function()
+
+    assert tab._current_grouped_model_row_state() == before
+
+
+def _grouped_single_state(tab: GlobalFitTab, param_name: str) -> tuple[float, bool, str, str]:
+    table = tab._group_model_table
+    row = _two_tier_row(table, param_name)
+    return (
+        float(table.item(row, FitParameterTable.COL_VALUE).text()),
+        table.cellWidget(row, FitParameterTable.COL_FIX).findChild(QCheckBox).isChecked(),
+        table.item(row, FitParameterTable.COL_MIN).text(),
+        table.item(row, FitParameterTable.COL_MAX).text(),
+    )
+
+
+def test_grouped_single_physics_table_carries_value_fix_and_bounds(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Fix-tickbox physics table carries in one restore — no bounds patch-back."""
+    tab = _grouped_tab(grouped_single=True)
+    table = tab._group_model_table
+    table.item(_two_tier_row(table, "Lambda_1"), FitParameterTable.COL_VALUE).setText("1.7")
+    table.item(_two_tier_row(table, "Lambda_1"), FitParameterTable.COL_MIN).setText("0.5")
+    table.item(_two_tier_row(table, "Lambda_1"), FitParameterTable.COL_MAX).setText("3.5")
+    table.cellWidget(_two_tier_row(table, "Lambda_2"), FitParameterTable.COL_FIX).findChild(
+        QCheckBox
+    ).setChecked(True)
+    table.item(_two_tier_row(table, "Lambda_2"), FitParameterTable.COL_VALUE).setText("3.3")
+
+    _accept_builder_edit(monkeypatch, _insert_component_first("Gaussian"))
+    tab._edit_function()
+
+    assert _grouped_single_state(tab, "Lambda_2") == (1.7, False, "0.5", "3.5")
+    assert _grouped_single_state(tab, "Lambda_3")[:2] == (3.3, True)
+    # The new Gaussian keeps its seeded default rather than a neighbour's value.
+    defaults = tab._grouped_fit_model().param_defaults
+    assert _grouped_single_state(tab, "sigma")[0] == pytest.approx(defaults["sigma"])
+    # The amplitude this table hides must not come back as an auxiliary row.
+    assert tab._group_model_table._auxiliary_param_state == []
+
+
+def test_grouped_single_physics_table_accept_with_no_change_is_a_no_op(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tab = _grouped_tab(grouped_single=True)
+    table = tab._group_model_table
+    table.item(_two_tier_row(table, "Lambda_1"), FitParameterTable.COL_VALUE).setText("1.7")
+    before = tab._current_grouped_model_row_state()
+
+    _accept_builder_edit(monkeypatch, _no_structural_change)
+    tab._edit_function()
+
+    assert tab._current_grouped_model_row_state() == before
