@@ -24,11 +24,21 @@ frequency plot panel's Y pair (``AxisLimitControls(y_value_range=...)``): a
 grouped-count FFT magnitude scales with the event count and legitimately
 exceeds 1e6 on a high-statistics run, so clamping there hid the spectrum
 above the top of the axis.
+
+The module also owns :class:`AxisLimitPolicy`, the Qt-free per-axis Auto/Hold
+resolver that decides *when* a plot reframes. It lives beside the widgets
+because the fields and the Auto buttons are a view of it: the panels resolve
+their axis limits through one :meth:`AxisLimitPolicy.resolve` call per render
+and display what comes back, so the fields, the axes and the policy cannot
+disagree. See ``docs/plans/axis-limit-policy.md`` for the design.
 """
 
 from __future__ import annotations
 
 import math
+from collections import defaultdict
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QDoubleValidator, QKeyEvent
@@ -347,3 +357,145 @@ class AxisLimitControls(QWidget):
         row.addWidget(self.auto_x_btn)
         row.addWidget(self.auto_y_btn)
         row.addStretch()
+
+
+def _ordered(lo: float, hi: float) -> tuple[float, float]:
+    """The pair as ``(low, high)``, floats, whichever way round it arrived."""
+    low, high = sorted((float(lo), float(hi)))
+    return (low, high)
+
+
+@dataclass
+class AxisLimitState:
+    """One axis's state: is it following the data, and what is it holding."""
+
+    auto: bool = True
+    held: tuple[float, float] | None = None
+    quantity: str | None = None
+
+
+class AxisLimitPolicy:
+    """Per-axis Auto/Hold resolver shared by every plot panel.
+
+    An axis is either **Auto** — it follows the bounds it is given on every
+    render — or **Held**, in which case it keeps its value across run
+    switches, view changes and redraws. An axis with no held value has
+    nothing to hold and takes the bounds instead; that, and not a latch, is
+    what makes the first frame frame.
+
+    Axes are keyed by string id (``"x"``, ``"y"``, and one y per subplot in
+    stacked views: ``"y:P_x"``, ``"y:group:2"``, …). Unknown ids spring into
+    existence Auto, so a panel never has to register an axis before using it.
+    The policy stores what it is given (as a sorted pair) and does not pad,
+    clamp or otherwise second-guess it: producing sane bounds is the caller's
+    job. See ``docs/plans/axis-limit-policy.md``.
+    """
+
+    def __init__(self) -> None:
+        self._axes: dict[str, AxisLimitState] = defaultdict(AxisLimitState)
+
+    def axis(self, axis_id: str) -> AxisLimitState:
+        """The axis's state, created Auto if this id is new."""
+        return self._axes[axis_id]
+
+    def is_auto(self, axis_id: str) -> bool:
+        return self.axis(axis_id).auto
+
+    def held(self, axis_id: str) -> tuple[float, float] | None:
+        return self.axis(axis_id).held
+
+    def set_auto(self, axis_id: str, on: bool) -> None:
+        self.axis(axis_id).auto = bool(on)
+
+    def set_manual(self, axis_id: str, lo: float, hi: float) -> None:
+        """Hold *axis_id* at ``(lo, hi)`` — a typed field or a view-mode limit."""
+        state = self.axis(axis_id)
+        state.held = _ordered(lo, hi)
+        state.auto = False
+
+    def record_gesture(
+        self,
+        before: Mapping[str, tuple[float, float]],
+        after: Mapping[str, tuple[float, float]],
+    ) -> None:
+        """Hold every axis a zoom/pan actually moved, leaving the rest alone.
+
+        A horizontal zoom therefore does not turn off Auto Y.
+        """
+        for axis_id, limits in after.items():
+            if before.get(axis_id) != tuple(limits):
+                self.set_manual(axis_id, *limits)
+
+    def convert(self, axis_id: str, fn: Callable[[float], float], quantity: str) -> None:
+        """Map a held value through *fn* and stamp *quantity* (a unit switch).
+
+        Converting rather than refitting is what keeps the user's window when
+        the same axis is redrawn in different units (MHz ↔ field): the new
+        quantity is already stamped, so the next :meth:`resolve` sees no
+        change and holds. The auto flag is untouched.
+        """
+        state = self.axis(axis_id)
+        if state.held is not None:
+            state.held = _ordered(fn(state.held[0]), fn(state.held[1]))
+        state.quantity = quantity
+
+    def resolve(
+        self,
+        bounds: Mapping[str, tuple[float, float] | None],
+        quantities: Mapping[str, str] | None = None,
+    ) -> dict[str, tuple[float, float]]:
+        """Decide the limits for every axis in *bounds*; called once per render.
+
+        An axis takes the supplied bounds when it is Auto, when it has
+        nothing held yet (the first frame), or when its *quantity* changed —
+        a new view mode or domain refits a held axis exactly once. Otherwise
+        it keeps its held value. ``None`` bounds mean "no data": a held axis
+        stays where it is, and an axis that has never framed is left out of
+        the result. Every value returned becomes the new held value, so the
+        fields and the axes always agree with the policy.
+        """
+        resolved: dict[str, tuple[float, float]] = {}
+        for axis_id, limits in bounds.items():
+            state = self.axis(axis_id)
+            quantity = None if quantities is None else quantities.get(axis_id)
+            quantity_changed = (
+                quantity is not None and state.quantity is not None and quantity != state.quantity
+            )
+            if quantity is not None:
+                state.quantity = quantity
+
+            take_bounds = state.auto or state.held is None or quantity_changed
+            if take_bounds and limits is not None:
+                state.held = _ordered(*limits)
+            if state.held is not None:
+                resolved[axis_id] = state.held
+        return resolved
+
+    def reset(self) -> None:
+        """Forget every held value, keeping the toggles — project teardown only."""
+        for state in self._axes.values():
+            state.held = None
+
+    def state(self) -> dict:
+        """JSON-serialisable snapshot for project files."""
+        return {
+            "axes": {
+                axis_id: {
+                    "auto": state.auto,
+                    "held": None if state.held is None else [state.held[0], state.held[1]],
+                    "quantity": state.quantity,
+                }
+                for axis_id, state in self._axes.items()
+            }
+        }
+
+    def restore(self, state: Mapping) -> None:
+        """Replace every axis with the snapshot from :meth:`state`."""
+        self._axes.clear()
+        for axis_id, entry in state["axes"].items():
+            held = entry["held"]
+            self._axes[axis_id] = AxisLimitState(
+                auto=bool(entry["auto"]),
+                held=None if held is None else _ordered(*held),
+                quantity=entry["quantity"],
+            )
