@@ -60,9 +60,17 @@ def wrap(
 
 
 def wrap_all(cls: type, prefixes: tuple[str, ...]) -> None:
-    for name in list(vars(cls)):
-        if name.startswith(prefixes) and callable(getattr(cls, name, None)):
-            wrap(cls, name)
+    """Wrap every plain method of *cls* whose name starts with one of *prefixes*.
+
+    Static/class methods and properties are left alone: re-binding them
+    through ``setattr`` would turn them into instance methods.
+    """
+    for name, attr in list(vars(cls).items()):
+        if not name.startswith(prefixes):
+            continue
+        if isinstance(attr, (staticmethod, classmethod, property)) or not callable(attr):
+            continue
+        wrap(cls, name)
 
 
 def dump(threshold_ms: float) -> None:
