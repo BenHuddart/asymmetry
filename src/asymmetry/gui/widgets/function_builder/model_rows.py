@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.core.fitting.composite import build_component_expression
+from asymmetry.core.fitting.parameter_carry import align_component_names
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.utils.formatting import format_param_label
 
@@ -124,41 +125,6 @@ class _Node:
     end: int = 0
     is_fraction: bool = False
     children: list[_Node] = field(default_factory=list)
-
-
-def _align_component_names(old: Sequence[str], new: Sequence[str]) -> tuple[int | None, ...]:
-    """Align *new* component names onto *old* by longest common subsequence.
-
-    Returns, for each index in *new*, the index in *old* it is matched to (in
-    order, same-named components matched greedily by the LCS), or ``None``
-    when that position has no match. This is a local stand-in for
-    ``asymmetry.core.fitting.parameter_carry.align_component_names`` (Phase 1
-    of the parameter-carry-over plan, developed concurrently on a different
-    branch): identical signature and semantics, isolated to this one function
-    so the caller can swap the import in without touching anything else.
-    """
-    m, n = len(old), len(new)
-    # lcs_len[i][j] = length of the LCS of old[i:] and new[j:].
-    lcs_len = [[0] * (n + 1) for _ in range(m + 1)]
-    for i in range(m - 1, -1, -1):
-        for j in range(n - 1, -1, -1):
-            if old[i] == new[j]:
-                lcs_len[i][j] = lcs_len[i + 1][j + 1] + 1
-            else:
-                lcs_len[i][j] = max(lcs_len[i + 1][j], lcs_len[i][j + 1])
-
-    alignment: list[int | None] = [None] * n
-    i = j = 0
-    while i < m and j < n:
-        if old[i] == new[j]:
-            alignment[j] = i
-            i += 1
-            j += 1
-        elif lcs_len[i + 1][j] >= lcs_len[i][j + 1]:
-            i += 1
-        else:
-            j += 1
-    return tuple(alignment)
 
 
 def _pretty_param_name(name: str) -> str:
@@ -493,7 +459,7 @@ class ModelRowList(QWidget):
         """Return the origins *new_component_names* would carry via alignment.
 
         Aligns *new_component_names* against the *current* component names
-        (:func:`_align_component_names`, longest common subsequence) and
+        (:func:`~asymmetry.core.fitting.parameter_carry.align_component_names`, longest common subsequence) and
         composes the match through the current origins. This is exactly what
         :meth:`set_structure` computes when called without an explicit
         ``origins`` argument, exposed standalone so a caller can ask "what
@@ -501,7 +467,7 @@ class ModelRowList(QWidget):
         :meth:`~asymmetry.gui.widgets.function_builder.dialog.FunctionBuilderDialog.component_origins`
         to answer for the text-mode buffer before it is applied.
         """
-        alignment = _align_component_names(self._component_names, list(new_component_names))
+        alignment = align_component_names(self._component_names, list(new_component_names))
         return tuple(
             self._origins[old_index] if old_index is not None else None for old_index in alignment
         )
