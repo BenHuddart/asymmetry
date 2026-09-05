@@ -227,13 +227,21 @@ def _fit_table_restore_entries(
     entries: dict[str, dict[str, object]] = {}
     for name, entry in state.items():
         minimum, _, maximum = str(entry.get("bounds", "-inf, inf")).partition(",")
-        entries[str(name)] = {
+        restore: dict[str, object] = {
             "name": str(name),
-            "value": float(entry.get("value", 0.0)),
             "fixed": str(entry.get("type", "")) == "Fixed",
             "min": minimum.strip() or "-inf",
             "max": maximum.strip() or "inf",
         }
+        # The value is the cell's text as the user left it — blank or half-typed
+        # mid-edit is a real "no value" case, and a row without a value keeps
+        # the seed it was just given rather than restoring 0.
+        value_text = str(entry.get("value", "")).strip()
+        try:
+            restore["value"] = float(value_text)
+        except ValueError:
+            pass
+        entries[str(name)] = restore
     return entries
 
 

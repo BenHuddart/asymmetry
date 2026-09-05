@@ -4478,6 +4478,27 @@ def test_grouped_single_physics_table_carries_value_fix_and_bounds(
     assert tab._group_model_table._auxiliary_param_state == []
 
 
+def test_restore_entry_without_a_value_keeps_the_seeded_value(qapp: QApplication) -> None:
+    """A blank value in row state is no value: Fix and bounds restore, the seed stays."""
+    from asymmetry.gui.panels.fit.global_tab import _fit_table_restore_entries
+
+    entries = _fit_table_restore_entries(
+        {
+            "Lambda_1": {"value": "", "type": "Fixed", "bounds": "0.5, inf"},
+            "Lambda_2": {"value": " 1.5 ", "type": "Shared", "bounds": "-inf, inf"},
+        }
+    )
+    assert "value" not in entries["Lambda_1"]
+    assert entries["Lambda_1"]["fixed"] is True and entries["Lambda_1"]["min"] == "0.5"
+    assert entries["Lambda_2"]["value"] == 1.5
+
+    tab = _grouped_tab(grouped_single=True)
+    seeded = _grouped_single_state(tab, "Lambda_1")[0]
+    tab._group_model_table.restore_parameters(entries)
+    assert _grouped_single_state(tab, "Lambda_1") == (seeded, True, "0.5", "inf")
+    assert _grouped_single_state(tab, "Lambda_2")[0] == 1.5
+
+
 def test_grouped_single_physics_table_accept_with_no_change_is_a_no_op(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
