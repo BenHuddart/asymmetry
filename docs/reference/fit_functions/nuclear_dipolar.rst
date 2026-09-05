@@ -307,15 +307,18 @@ fluctuation rate :math:`\nu`:
 
 Use when an F–μ–F signal that is clear at low temperature progressively damps
 and loses its oscillations on warming because the muon hops away from the
-site (or the coupling fluctuates). :math:`\nu = 0` recovers ``FmuF_Linear``
-exactly; large :math:`\nu` gives motional narrowing toward
-:math:`\exp(-2\omega_d^2 t/\nu)` via an Abragam-form interpolation that
-keeps the model smooth in :math:`\nu` across the solver crossover (seam
-below ~1 % at physical distances). Fitting a temperature series with shared
+site (or the coupling fluctuates). Because :math:`G_{F\mu F}` is a constant
+plus three cosines, the integral equation has an **exact closed-form
+solution**: a sum of seven exponentials whose rates and weights come from a
+7 × 7 eigenproblem, evaluated directly at the requested times with no
+integration grid, cache, or fast-fluctuation crossover. :math:`\nu = 0`
+recovers ``FmuF_Linear`` exactly; for :math:`\nu \gg \omega_d` the solution
+tends to the motional-narrowing exponential :math:`\exp(-2\omega_d^2
+t/\nu)` with the Abragam-form quadratic onset at short times, and it is
+smooth in :math:`\nu` throughout. Fitting a temperature series with shared
 :math:`r_{\mu F}` and free :math:`\nu` yields the hop rate and hence an
 activation energy for muon diffusion in the fluoride. Assumes the
-equal-distance collinear geometry of ``FmuF_Linear``; the solver and caching
-follow :ref:`fit-dynamic-gaussian-kt`.
+equal-distance collinear geometry of ``FmuF_Linear``.
 
 =========  ==================  =====  ==========================================
 Name       Symbol              Unit   Description
