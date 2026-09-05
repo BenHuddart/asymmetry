@@ -185,6 +185,44 @@ class TestSimulateDialog:
         dialog._on_edit_model()  # accepted builder, same model
         assert dialog._table_parameters()[name] == pytest.approx(33.5)
 
+    def test_edit_model_appending_component_carries_by_identity(self, qapp, monkeypatch) -> None:
+        """Appending a second Exponential renames the first's "Lambda" to
+        "Lambda_1" (a name the old model never had) — the collision-driven
+        renaming from Design §"Problem" that name-keying loses. Carrying by
+        component identity instead keeps A_1/Lambda_1 at the values typed for
+        the surviving first component and seeds the new second component's
+        A_2/Lambda_2 fresh, rather than reusing unrelated old values by
+        coincidence of name."""
+        from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
+
+        model = CompositeModel(["Exponential"])
+        fitted_values = {"A_1": 17.25, "Lambda": 3.3}
+        state = {
+            "composite_model": model.to_dict(),
+            "parameters": [{"name": name, "value": value} for name, value in fitted_values.items()],
+        }
+        dialog = SimulateDialog(
+            [_template_dataset()],
+            preselected_run=1234,
+            fit_state_provider=lambda rn: state if rn == 1234 else None,
+        )
+        assert dialog._table_parameters()["A_1"] == pytest.approx(17.25)
+        assert dialog._table_parameters()["Lambda"] == pytest.approx(3.3)
+
+        new_model = CompositeModel(["Exponential", "Exponential"], ["+"])
+        monkeypatch.setattr(FitFunctionBuilderDialog, "exec", lambda self: 1)
+        monkeypatch.setattr(FitFunctionBuilderDialog, "get_composite_model", lambda self: new_model)
+        # Component 0 (the surviving Exponential) continues the old model's
+        # sole component; component 1 is new.
+        monkeypatch.setattr(FitFunctionBuilderDialog, "component_origins", lambda self: (0, None))
+        dialog._on_edit_model()
+
+        values = dialog._table_parameters()
+        assert values["A_1"] == pytest.approx(17.25)
+        assert values["Lambda_1"] == pytest.approx(3.3)
+        assert values["A_2"] == pytest.approx(new_model.param_defaults["A_2"])
+        assert values["Lambda_2"] == pytest.approx(new_model.param_defaults["Lambda_2"])
+
     def test_save_as_nexus_round_trips(self, qapp, tmp_path, monkeypatch) -> None:
         dialog = SimulateDialog([_template_dataset()], preselected_run=1234)
         dialog._events_spin.setValue(1.0)

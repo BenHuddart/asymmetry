@@ -178,6 +178,49 @@ def test_send_to_batch_copies_model_and_seeds(qapp) -> None:
     )
 
 
+def test_send_grouped_model_to_batch_preserves_batch_role_across_resend(qapp) -> None:
+    """A batch Type override must survive re-sending the same-named model.
+
+    Mirrors ``test_send_to_batch_seeds_from_single_fit
+    .test_send_to_batch_preserves_batch_role_across_resend`` for the grouped
+    ("Single -> Batch" on the multi-group window) path: before
+    ``aligned_origins`` was threaded through
+    ``_on_send_grouped_model_to_batch``, resending the same model reset every
+    row's Type combo to the model's default assignment (Fixed for
+    ``OscillatoryField``'s ``phase``), clobbering a role the user had chosen
+    (Local) on the batch surface itself.
+    """
+    win = MultiGroupFitWindow()
+    win.set_dataset(_member(413, field=222.0, phi=0.3, seed=13))
+    win._batch_fit_tab.set_member_datasets(
+        [_member(413, field=222.0, phi=0.3, seed=13), _member(414, field=222.0, phi=0.3, seed=14)]
+    )
+    single = win._single_fit_tab
+    single._set_composite_model(CompositeModel(["OscillatoryField", "Constant"], operators=["+"]))
+
+    single.send_grouped_model_to_batch_requested.emit()
+
+    batch = win._batch_fit_tab
+    phase_combo = batch._group_model_table.cellWidget(_physics_row(batch, "phase"), 2)
+    assert isinstance(phase_combo, QComboBox)
+    assert phase_combo.currentText() == "Fixed"  # OscillatoryField's declared default
+    phase_combo.setCurrentText("Local")
+
+    # User sets a new field value in Single and sends the same model again.
+    single._group_model_table.item(_physics_row(single, "field"), 1).setText("444.0")
+    single.send_grouped_model_to_batch_requested.emit()
+
+    phase_row = _physics_row(batch, "phase")
+    phase_combo = batch._group_model_table.cellWidget(phase_row, 2)
+    assert phase_combo.currentText() == "Local", (
+        "resending the model reset the batch Type combo to its default role "
+        "instead of carrying the user's override"
+    )
+    assert float(batch._group_model_table.item(_physics_row(batch, "field"), 1).text()) == (
+        pytest.approx(444.0)
+    ), "resending the model did not carry the single tab's new field value"
+
+
 def test_batch_hides_per_group_table_single_keeps_it(qapp) -> None:
     win = MultiGroupFitWindow()
     win.set_dataset(_member(409, field=100.0, phi=0.3, seed=9))

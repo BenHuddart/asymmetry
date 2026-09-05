@@ -388,6 +388,24 @@ class FunctionBuilderDialog(QDialog):
         """Return the model captured when the dialog was accepted."""
         return self._model
 
+    def component_origins(self) -> tuple[int | None, ...]:
+        """Return each accepted component's origin in the opened-with model.
+
+        In structured mode this is simply the row list's own
+        :meth:`~asymmetry.gui.widgets.function_builder.model_rows.ModelRowList.origins`.
+        In text mode, ``_on_accept`` builds the model straight from the typed
+        text via ``_model_parser`` without syncing the rows (see
+        ``_current_expression`` / ``_on_accept``) — that acceptance path is
+        unchanged here — so this instead reports the origins the rows *would*
+        carry were the buffer applied (:meth:`ModelRowList.compose_origins`),
+        i.e. exactly what ``_apply_text`` -> ``set_structure`` would compute.
+        """
+        if self._stack.currentWidget() is self._text_edit:
+            expression = self._text_edit.toPlainText().strip()
+            names, *_rest = self._expression_parser(expression)
+            return self._rows.compose_origins(names)
+        return self._rows.origins()
+
     # ------------------------------------------------------------- seeding
     def _seed_structure(self, expression: str) -> None:
         expression = (expression or "").strip()
@@ -412,7 +430,13 @@ class FunctionBuilderDialog(QDialog):
             self._ungroup_button.setEnabled(False)
             self._set_status(str(exc), valid=False)
             return
-        self._rows.set_structure(names, operators, opens, closes, fractions)
+        # The very first seed has no prior rows to align against, so origins
+        # must be passed explicitly as the identity map (each row descends
+        # from the same-indexed component of the model the dialog opened
+        # with) rather than derived by name alignment against nothing.
+        self._rows.set_structure(
+            names, operators, opens, closes, fractions, origins=range(len(names))
+        )
 
     # ------------------------------------------------------------ structured
     def _on_component_activated(self, name: str) -> None:

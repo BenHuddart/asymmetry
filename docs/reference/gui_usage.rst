@@ -842,6 +842,34 @@ Parameter naming rules in the table:
   indexed when duplicates exist in the same expression
   (for example ``Lambda_1``, ``Lambda_2``)
 
+Editing the function keeps your values
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Adding, removing, moving, or duplicating a component in the builder does not
+throw away the table you have already filled in. Every parameter belonging to
+a component that is still in the function afterwards keeps its value, Fix
+state, bounds, links, and ties — whatever the parameter happens to be called
+once you confirm the edit. Inserting a component before an existing
+``Exponential`` renames its ``Lambda`` to ``Lambda_1``, but the value you set
+for it survives, because the table follows the *component*, not the name it
+is currently spelled with. A component that is genuinely new to the function
+starts from seeded defaults instead. Confirming the dialog with **OK** when
+you have not changed the structure is therefore a no-op on the table — every
+value, bound, and role is exactly as it was. Click **Reset** on the "Single"
+tab to discard the current values instead and put every parameter back to its
+default.
+
+Typing the expression directly (**Edit as text**) matches the components you
+type against the ones already in the function by name, preserving order, so a
+retyped expression carries values the same way — a component whose name is
+unchanged keeps its values, one that is renamed, reordered past a name match,
+or newly introduced is treated as new and reseeded.
+
+This carrying-forward is not specific to the Single tab: the same rule holds
+wherever a function-builder edit rebuilds a parameter table — the Batch tab's
+run table and its grouped physics tables, the **Individual Groups** tables,
+the parameter-trend model editor, and the Simulate dialog.
+
 Fitting workflow:
 
 1. **Select a dataset** in the data browser (it will be plotted)

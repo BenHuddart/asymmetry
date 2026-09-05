@@ -160,6 +160,49 @@ For fraction groups the free fractions *are* the weights (each clamped to
 sum-normalisation, so the fitted free values are directly interpretable as the
 physical fractional weights.
 
+Carrying parameter state across a model edit
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Because collision-driven naming renumbers parameters when a model changes
+shape, a script that edits a model and wants to keep the values it already
+has should not re-key a ``ParameterSet`` by name. ``parameter_identities()``
+names what each parameter *is* — which component it belongs to, and its local
+name there — independently of its current spelling, and
+:func:`~asymmetry.core.fitting.parameter_carry.carry_parameter_set` uses that
+to re-key a ``ParameterSet`` from an old model onto a new one, following the
+component instance wherever it moved rather than the name it used to answer
+to. ``origins`` is one entry per component of the *new* model: the index of
+the component in the *old* model it continues, or ``None`` for a component
+that is new. Inserting a second ``Exponential`` between the existing
+``Exponential`` and ``Constant`` of ``Exponential + Constant`` gives
+``origins = (0, None, 1)`` for the resulting three-term model — the original
+``Exponential`` continues as component 0, the inserted one is new, and
+``Constant`` continues the old model's second component (now shifted to
+index 2):
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import CompositeModel, Parameter, ParameterSet
+   from asymmetry.core.fitting.parameter_carry import carry_parameter_set
+
+   old = CompositeModel(["Exponential", "Constant"], operators=["+"])
+   new = CompositeModel(["Exponential", "Exponential", "Constant"], operators=["+", "+"])
+   old.param_names  # ['A_1', 'Lambda', 'A_bg']
+   new.param_names  # ['A_1', 'Lambda_1', 'A_2', 'Lambda_2', 'A_bg']
+
+   params = ParameterSet([Parameter("Lambda", value=0.5)])
+   carried = carry_parameter_set(old, new, origins=(0, None, 1), parameters=params)
+   carried["Lambda_1"].value  # 0.5 — the value follows the surviving Exponential
+
+A carried value is a **seed**: any ``uncertainty`` is cleared, since it
+described a fit of the old model, not the new one. A tie or ``expr``
+constraint has its referenced names re-targeted through the same map, and is
+dropped rather than left dangling when a name it references did not survive.
+``carry_parameter_entries`` does the same for the GUI's list-of-dict row
+state; ``align_component_names(old_names, new_names)`` recovers an ``origins``
+map by matching component names in order when no explicit map is available
+(for example, a model retyped as an expression).
+
 Always read ``.param_names`` before building a ``ParameterSet``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

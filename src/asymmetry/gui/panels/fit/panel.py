@@ -1234,8 +1234,13 @@ class FitPanel(QWidget):
             return False
         seed_values = self._single_tab.current_seed_values()
         seed_bounds = self._single_tab.current_bounds()
+        # Values and bounds come from the single tab; batch roles (Global/Local/
+        # Fixed) belong to the batch tab and follow same-named components.
         self._global_tab._set_composite_model(
-            model, seed_values=seed_values, seed_bounds=seed_bounds
+            model,
+            seed_values=seed_values,
+            seed_bounds=seed_bounds,
+            origins=self._global_tab.aligned_origins(model),
         )
         return True
 

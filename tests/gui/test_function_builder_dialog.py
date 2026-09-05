@@ -115,6 +115,66 @@ def test_built_model_is_composite(qapp: QApplication) -> None:
     assert model.component_names == ["Exponential", "Constant"]
 
 
+# ---------------------------------------------------------- component_origins
+def test_component_origins_after_initial_seed_is_identity(qapp: QApplication) -> None:
+    dialog = _fit_dialog("Exponential + Constant")
+    assert dialog.component_origins() == (0, 1)
+
+
+def test_component_origins_after_append(qapp: QApplication) -> None:
+    dialog = _fit_dialog("Exponential + Constant")
+    dialog._library.component_activated.emit("Gaussian")
+    assert dialog.component_origins() == (0, 1, None)
+
+
+def test_component_origins_after_accept_structured_mode(qapp: QApplication) -> None:
+    dialog = _fit_dialog("Exponential + Constant")
+    dialog._library.component_activated.emit("Gaussian")
+    dialog._on_accept()
+    model = dialog.built_model()
+    assert isinstance(model, CompositeModel)
+    assert model.component_names == ["Exponential", "Constant", "Gaussian"]
+    assert dialog.component_origins() == (0, 1, None)
+
+
+def test_component_origins_in_text_mode_before_apply(qapp: QApplication) -> None:
+    # component_origins() answers for the typed buffer as if _apply_text had
+    # run, without actually mutating the row list yet.
+    dialog = _fit_dialog("Exponential + Constant")
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("Exponential + Gaussian + Constant")
+    assert dialog.component_origins() == (0, None, 1)
+    assert dialog._rows.origins() == (0, 1)  # rows themselves untouched
+
+
+def test_component_origins_after_accept_from_text_mode(qapp: QApplication) -> None:
+    # _on_accept builds the model straight from the typed text (unchanged
+    # acceptance semantics: the rows are never synced), but component_origins()
+    # still reports the origins the typed expression would carry.
+    dialog = _fit_dialog("Exponential + Constant")
+    dialog._toggle_text_mode()
+    dialog._text_edit.setPlainText("Exponential + Gaussian + Constant")
+    dialog._on_accept()
+    model = dialog.built_model()
+    assert isinstance(model, CompositeModel)
+    assert model.component_names == ["Exponential", "Gaussian", "Constant"]
+    assert dialog._stack.currentWidget() is dialog._text_edit
+    assert dialog.component_origins() == (0, None, 1)
+
+
+def test_parameter_model_builder_dialog_component_origins(qapp: QApplication) -> None:
+    # ParameterModelBuilderDialog subclasses FunctionBuilderDialog and adds no
+    # override of component_origins() — verify it inherits correctly.
+    from asymmetry.gui.panels.model_fit_dialog import ParameterModelBuilderDialog
+
+    dialog = ParameterModelBuilderDialog(component_pool=["Linear", "Arrhenius", "Constant"])
+    # Seeded from the sorted pool's first entry: a single component.
+    assert dialog._rows.expression() == "Arrhenius"
+    assert dialog.component_origins() == (0,)
+    dialog._library.component_activated.emit("Constant")
+    assert dialog.component_origins() == (0, None)
+
+
 # ------------------------------------------------------- unparseable seed
 def test_unparseable_initial_expression_opens_in_text_mode_with_error(qapp: QApplication) -> None:
     # Regression: an initial_expression that fails to parse (e.g. a bad name

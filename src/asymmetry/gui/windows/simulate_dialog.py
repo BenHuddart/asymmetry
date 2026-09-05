@@ -28,7 +28,7 @@ one already running.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -54,6 +54,7 @@ from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.domain_library import default_model_for_domain
 from asymmetry.core.fitting.grouped_time_domain import normalize_to_grouped_contract
+from asymmetry.core.fitting.parameter_carry import carry_parameters
 from asymmetry.core.io.nexus_writer import write_nexus_v1
 from asymmetry.core.simulate import (
     BUILTIN_TEMPLATES,
@@ -71,6 +72,33 @@ from asymmetry.gui.tasks import TaskRunner
 
 #: Synthetic runs are numbered from here, clear of real ISIS/PSI run series.
 _SYNTHETIC_RUN_SERIES = 90001
+
+
+def _carry_simulate_values(
+    old_model: CompositeModel,
+    new_model: CompositeModel,
+    origins: Sequence[int | None],
+    values: dict[str, float],
+) -> dict[str, float]:
+    """Carry the simulate dialogs' plain ``name -> value`` state across a model edit.
+
+    A value follows the component instance that owns it (see
+    :mod:`asymmetry.core.fitting.parameter_carry`), not its name — a
+    component with no predecessor in ``origins`` has nothing to carry and
+    keeps ``new_model``'s own default. Shared by both simulate surfaces
+    (single/two-period ``SimulateDialog`` and ``MultiGroupSimulateDialog``)
+    so the merge is written once.
+    """
+    merged = dict(new_model.param_defaults)
+    merged.update(
+        carry_parameters(
+            old_model.parameter_identities(),
+            new_model.parameter_identities(),
+            origins,
+            values,
+        )
+    )
+    return merged
 
 
 class _SimulateDialogBase(QDialog):
@@ -439,14 +467,16 @@ class SimulateDialog(_SimulateDialogBase):
         # Capture in-table edits first — the table rebuild below would
         # otherwise silently revert values typed since the last Generate.
         self._param_values.update(self._table_parameters())
+        old_model = self._model
         dialog = FitFunctionBuilderDialog(self, initial_model=self._model, domain="time")
         if dialog.exec():
             model = dialog.get_composite_model()
             if model is not None:
+                origins = dialog.component_origins()
                 self._model = model
-                merged = dict(model.param_defaults)
-                merged.update({k: v for k, v in self._param_values.items() if k in merged})
-                self._param_values = merged
+                self._param_values = _carry_simulate_values(
+                    old_model, model, origins, self._param_values
+                )
                 self._refresh_model_view()
 
     def _refresh_model_view(self) -> None:
@@ -765,14 +795,16 @@ class MultiGroupSimulateDialog(_SimulateDialogBase):
         )
 
     def _on_edit_model(self) -> None:
+        old_model = self._model
         dialog = FitFunctionBuilderDialog(self, initial_model=self._model, domain="time")
         if dialog.exec():
             model = dialog.get_composite_model()
             if model is not None:
+                origins = dialog.component_origins()
                 self._model = model
-                merged = dict(model.param_defaults)
-                merged.update({k: v for k, v in self._base_values.items() if k in merged})
-                self._base_values = merged
+                self._base_values = _carry_simulate_values(
+                    old_model, model, origins, self._base_values
+                )
                 self._normalize_base()
                 self._model_label.setText(self._model.formula_string())
 

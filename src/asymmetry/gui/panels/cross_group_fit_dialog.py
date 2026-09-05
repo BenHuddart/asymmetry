@@ -25,6 +25,7 @@ from asymmetry.core.fitting.cross_group_roles import (
     CrossGroupRoleRecommendation,
     suggest_cross_group_roles,
 )
+from asymmetry.core.fitting.parameter_carry import carry_parameter_set
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
     ErrorMode,
@@ -38,7 +39,6 @@ from asymmetry.core.fitting.parameter_models import (
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.model_fit_dialog import (
     ModelFitDialog,
-    _should_reset_param_on_model_change,
     _show_info,
     _show_warning,
 )
@@ -519,23 +519,26 @@ class CrossGroupFitDialog(ModelFitDialog):
             return
         self._fit.ranges[0].model = model
 
-    def _rebuild_param_table(self) -> None:
-        """Compatibility helper: rebuild table from the current first-range model."""
+    def _rebuild_param_table(
+        self, old_model: ParameterCompositeModel, origins: tuple[int | None, ...]
+    ) -> None:
+        """Rebuild the parameter table after ``_model`` was swapped to a new model.
+
+        Mirrors ``ModelFitDialog._edit_model``'s carry-then-seed contract for
+        the shared cross-group range: ``old_model`` and ``origins`` describe
+        the just-completed edit (the caller reads ``self._model`` before
+        reassigning it), and identity-carried parameters take precedence over
+        fresh defaults for whatever did not survive.
+        """
         if not self._fit.ranges:
             return
         fit_range = self._fit.ranges[0]
         model = fit_range.model
+        carried = carry_parameter_set(old_model, model, origins, fit_range.parameters)
         new_params = ParameterSet()
         for pname in model.param_names:
-            if pname in fit_range.parameters and not _should_reset_param_on_model_change(
-                model, pname
-            ):
-                old = fit_range.parameters[pname]
-                new_params.add(
-                    Parameter(
-                        name=pname, value=old.value, min=old.min, max=old.max, fixed=old.fixed
-                    )
-                )
+            if pname in carried:
+                new_params.add(carried[pname])
             else:
                 new_params.add(
                     Parameter(
@@ -563,31 +566,22 @@ class CrossGroupFitDialog(ModelFitDialog):
             except Exception:
                 model = None
             if model is not None:
+                # The range's parameters at this point are whatever the base
+                # dialog's bootstrap default range holds — not a predecessor of
+                # ``model``, so there is no component map to carry through (no
+                # map, no carry): seed fresh defaults here, and let the
+                # ``parameter_rows`` restore below (same model, same config,
+                # matched by name against the exact snapshot it was saved
+                # from) supply the persisted values.
                 fit_range.model = model
-                new_params = ParameterSet()
-                for pname in model.param_names:
-                    if pname in fit_range.parameters and not _should_reset_param_on_model_change(
-                        model, pname
-                    ):
-                        old = fit_range.parameters[pname]
-                        new_params.add(
-                            Parameter(
-                                name=pname,
-                                value=old.value,
-                                min=old.min,
-                                max=old.max,
-                                fixed=old.fixed,
-                            )
-                        )
-                    else:
-                        new_params.add(
-                            Parameter(
-                                name=pname,
-                                value=float(model.param_defaults[pname]),
-                                fixed=(pname == "shape_factor_a"),
-                            )
-                        )
-                fit_range.parameters = new_params
+                fit_range.parameters = ParameterSet(
+                    Parameter(
+                        name=pname,
+                        value=float(model.param_defaults[pname]),
+                        fixed=(pname == "shape_factor_a"),
+                    )
+                    for pname in model.param_names
+                )
 
         fit_x_min = config.get("fit_x_min")
         fit_x_max = config.get("fit_x_max")

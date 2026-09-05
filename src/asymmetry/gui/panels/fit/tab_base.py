@@ -1719,7 +1719,9 @@ class FitParameterTable(QTableWidget):
                 p_data = params_data[param_name]
 
                 value_item = self.item(i, self.COL_VALUE)
-                if value_item:
+                # An entry without a value restores everything but the value
+                # cell, which keeps the seed the row was populated with.
+                if value_item and "value" in p_data:
                     value_item.setText(
                         str(normalized_state_values.get(param_name, p_data.get("value", 0.0)))
                     )

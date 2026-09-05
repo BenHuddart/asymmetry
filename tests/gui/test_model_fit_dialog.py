@@ -263,7 +263,15 @@ def test_run_fit_sets_in_progress_state_immediately(qapp: QApplication, monkeypa
     assert dlg._fit_in_progress is False
 
 
-def test_edit_model_to_redfield_resets_m_to_default(qapp: QApplication, monkeypatch) -> None:
+def test_edit_model_replacing_linear_with_redfield_seeds_m_from_default(
+    qapp: QApplication, monkeypatch
+) -> None:
+    """Linear and Redfield both have a parameter called "m", but they are
+    different components: replacing one with the other is a brand-new
+    component instance (no predecessor), so "m" gets Redfield's own default
+    (2.0) rather than Linear's carried-over slope. This is the identity-keyed
+    replacement for the deleted name-based Redfield special case
+    (_should_reset_param_on_model_change)."""
     x = np.linspace(1.0, 10.0, 20)
     y = 0.01 * x + 0.2
     yerr = np.full_like(x, 0.01)
@@ -299,6 +307,11 @@ def test_edit_model_to_redfield_resets_m_to_default(qapp: QApplication, monkeypa
         def get_model(self):
             return ParameterCompositeModel(["Redfield"], [])
 
+        def component_origins(self):
+            # Redfield is a new component, not a continuation of the old
+            # Linear -- there is nothing for it to carry from.
+            return (None,)
+
     monkeypatch.setattr(
         "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder
     )
@@ -306,6 +319,65 @@ def test_edit_model_to_redfield_resets_m_to_default(qapp: QApplication, monkeypa
 
     params = dlg.get_model_fit().ranges[0].parameters
     assert params["m"].value == pytest.approx(2.0)
+
+
+def test_edit_model_appending_second_linear_keeps_first_and_seeds_second(
+    qapp: QApplication, monkeypatch
+) -> None:
+    """Appending a second Linear component keeps the first component's carried
+    m/b (now suffixed _1) and seeds the new second component's m_2/b_2 from
+    defaults -- trend seeds only apply to the un-carried (new) component, per
+    Design item 4."""
+    x = np.linspace(1.0, 10.0, 20)
+    y = 0.01 * x + 0.2
+    yerr = np.full_like(x, 0.01)
+
+    fit = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="field",
+        ranges=[
+            ModelFitRange(
+                x_min=1.0,
+                x_max=10.0,
+                model=ParameterCompositeModel(["Linear"], []),
+                parameters=ParameterSet([Parameter("m", 0.01), Parameter("b", 0.2)]),
+            )
+        ],
+    )
+    dlg = ModelFitDialog(
+        parameter_name="Lambda",
+        x_key="field",
+        x_values=x,
+        y_values=y,
+        y_errors=yerr,
+        existing_fit=fit,
+    )
+
+    class _FakeBuilder:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def get_model(self):
+            return ParameterCompositeModel(["Linear", "Linear"], ["+"])
+
+        def component_origins(self):
+            # Component 0 continues the old Linear; component 1 is new.
+            return (0, None)
+
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder
+    )
+    dlg._edit_model(0)
+
+    params = dlg.get_model_fit().ranges[0].parameters
+    assert params["m_1"].value == pytest.approx(0.01)
+    assert params["b_1"].value == pytest.approx(0.2)
+    new_model = dlg.get_model_fit().ranges[0].model
+    assert params["m_2"].value == pytest.approx(new_model.param_defaults["m_2"])
+    assert params["b_2"].value == pytest.approx(new_model.param_defaults["b_2"])
 
 
 def test_edit_model_to_critical_divergence_seeds_tc_from_data(
@@ -347,6 +419,9 @@ def test_edit_model_to_critical_divergence_seeds_tc_from_data(
 
         def get_model(self):
             return ParameterCompositeModel(["CriticalDivergence"], [])
+
+        def component_origins(self):
+            return (None,)
 
     monkeypatch.setattr(
         "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder
@@ -395,6 +470,9 @@ def test_edit_model_to_sc_component_keeps_shape_factor_a_fixed_by_default(
 
         def get_model(self):
             return ParameterCompositeModel(["SC_PWaveAxial"], [])
+
+        def component_origins(self):
+            return (None,)
 
     monkeypatch.setattr(
         "asymmetry.gui.panels.model_fit_dialog.ParameterModelBuilderDialog", _FakeBuilder
