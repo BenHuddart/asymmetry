@@ -239,6 +239,66 @@ invocation-count regression tests (monkeypatch a counter on the expensive
 function, drive the real user action, assert the exact count) — they are what
 keeps a fixed path fixed.
 
+**Dots with error bars go through `add_errorbar_dots`.** `Axes.errorbar`
+builds one `Path` per point for the bars (`vlines` → `LineCollection`), which
+at the interactive 4 000-point display budget costs 40–90 ms per trace on
+every run switch, pan tick and redraw. `gui/utils/errorbar_dots.py` draws the
+same picture as a marker-only `Line2D` plus one single-path, NaN-separated
+`LineCollection` (~1 ms), keeps the errorbar legend glyph through a registered
+handler, and keeps the bars out of the `loc="best"` legend search (a Line2D's
+vertices are scored per candidate position; a collection's are not).
+`plot_panel._plot_errorbar_masked` is the one time-domain call site; pinned by
+`TestSwitchCostPins` in `tests/gui/test_plot_panel.py`.
+
+**A run switch hands out one crop object.** `MainWindow._get_fit_dataset` is
+memoised per source dataset (key: identity of the three data arrays and the
+run, bunch factor, fit range; lifetime on a `weakref.finalize`; metadata
+refreshed on every hit because field overrides are edited in place). The
+same object then hits every identity-keyed memo downstream —
+`GlobalFitTab._grouped_mode_context` (whose key carries the member arrays'
+ids, because re-reductions *reassign* a dataset's arrays in place) — and
+`GlobalFitTab.set_current_dataset` is a no-op for the object it already
+holds. Before this, one switch rebuilt the same run's grouped count domains
+four times. `_update_selected_datasets` also no longer re-binds the *leaving*
+run when a single-run switch is in progress (`dataset_selected` follows and
+binds the new one). Pinned by `tests/gui/test_run_switch_responsiveness.py`.
+
+**Hidden fit surfaces don't track the selection.** The multi-group fit
+window rebuilds FFT-seeded per-group tables on every bind (~25 ms); while it
+is swapped out of the fit dock, `MainWindow._grouped_fit_surface_active`
+gates its dataset/member bindings and `_sync_fit_dock_mode` re-binds both on
+entry — the same shape as the hidden frequency panel's render gate.
+
+**Full garbage collections are settled after loads, not during switches.**
+A loaded session holds ~270 k collector-tracked objects; CPython's
+generation-2 collection re-scans all of them (35–110 ms) and the per-switch
+allocations trigger one every couple of switches. `gui/utils/memory.py::
+settle_memory` collects once and `gc.freeze()`s the survivors;
+`MainWindow._schedule_memory_settle` coalesces it onto the event-loop turn
+after every bulk load, project open and clear-all (each settle unfreezes
+first, so earlier survivors that have died are reclaimed).
+`ASYMMETRY_GC_FREEZE=0` disables it. Reference counting is untouched.
+
+**Async results must be awaited by everyone who needs them.** A faster GUI
+path exposes latent races: an explicit Compute FFT (or an overlay
+auto-compute) issued while a view-triggered recompute was in flight for the
+same run used to report itself done immediately, and the in-flight result was
+cached under whatever recipe the explicit compute had just installed. The
+ensure path now parks behind in-flight keys (`_await_frequency_recomputes` /
+`_notify_frequency_recompute_done`) and re-enters when they land, and a
+completion whose recipe snapshot no longer matches is dropped as superseded.
+When you speed a path up, re-run the async suites several times.
+
+**Trace a run switch with wall-clock wrappers, not cProfile.** cProfile drops
+the frames Qt dispatches (slots reached from a C++ signal emission never
+appear under their caller), so its cumulative view of a selection change is
+misleading. `tools/trace_run_switch.py` opens a project in a live
+`MainWindow`, selects runs through the real browser path and prints a
+per-switch call tree of the pipeline (plot build, draw, fit-panel binds,
+grouped context, GC pauses, deferred event-loop turns). Run it on the real
+display (`QT_QPA_PLATFORM` unset) for numbers that include Retina
+rasterisation.
+
 ## What the harness enforces
 
 `python tools/harness.py structural` fails fast on:

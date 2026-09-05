@@ -69,10 +69,32 @@ def _set_pol(panel: PlotPanel, axes: list[str], current: str | None) -> None:
     panel.set_projections(specs, selected)
 
 
+def _capture_errorbar_dots(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Record every time-domain trace drawn through the shared dots helper.
+
+    Each record mirrors the old ``ax.errorbar(x, y, yerr=..., **kw)`` capture
+    shape — ``args == (x, y)`` and ``kwargs`` carrying ``yerr`` plus the style
+    kwargs — so assertions written against the errorbar idiom read unchanged.
+    """
+    import asymmetry.gui.panels.plot_panel as plot_panel_module
+
+    calls: list[dict[str, object]] = []
+    original = plot_panel_module.add_errorbar_dots
+
+    def _capture(ax, x, y, yerr, **kwargs):
+        calls.append({"args": (x, y), "kwargs": {"yerr": yerr, **kwargs}})
+        return original(ax, x, y, yerr, **kwargs)
+
+    monkeypatch.setattr(plot_panel_module, "add_errorbar_dots", _capture)
+    return calls
+
+
 class _FakeAxis:
     def __init__(self) -> None:
         self.errorbar_calls: list[dict[str, object]] = []
         self.plot_calls: list[dict[str, object]] = []
+        self.added_lines: list[object] = []
+        self.added_collections: list[object] = []
         self.text_calls: list[dict[str, object]] = []
         self.xlim_calls: list[tuple[float, float]] = []
         self.ylim_calls: list[tuple[float, float]] = []
@@ -91,6 +113,15 @@ class _FakeAxis:
 
     def errorbar(self, *args, **kwargs) -> None:
         self.errorbar_calls.append({"args": args, "kwargs": kwargs})
+
+    def add_line(self, line) -> None:
+        self.added_lines.append(line)
+
+    def add_collection(self, collection, autolim: bool = True) -> None:
+        self.added_collections.append(collection)
+
+    def update_datalim(self, *_args, **_kwargs) -> None:
+        return
 
     def plot(self, *args, **kwargs) -> None:
         self.plot_calls.append({"args": args, "kwargs": kwargs})
@@ -1361,14 +1392,7 @@ class TestPlotPanel:
             run=run,
         )
 
-        errorbar_calls: list[dict[str, object]] = []
-        original_errorbar = panel._ax.errorbar
-
-        def _capture_errorbar(*args, **kwargs):
-            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
-            return original_errorbar(*args, **kwargs)
-
-        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+        errorbar_calls = _capture_errorbar_dots(monkeypatch)
 
         panel.plot_dataset(ds)
 
@@ -1407,14 +1431,7 @@ class TestPlotPanel:
             run=run,
         )
 
-        errorbar_calls: list[dict[str, object]] = []
-        original_errorbar = panel._ax.errorbar
-
-        def _capture_errorbar(*args, **kwargs):
-            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
-            return original_errorbar(*args, **kwargs)
-
-        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+        errorbar_calls = _capture_errorbar_dots(monkeypatch)
 
         panel.plot_dataset(ds)
 
@@ -1452,14 +1469,7 @@ class TestPlotPanel:
             run=run,
         )
 
-        errorbar_calls: list[dict[str, object]] = []
-        original_errorbar = panel._ax.errorbar
-
-        def _capture_errorbar(*args, **kwargs):
-            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
-            return original_errorbar(*args, **kwargs)
-
-        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+        errorbar_calls = _capture_errorbar_dots(monkeypatch)
 
         panel.plot_dataset(ds)
 
@@ -2029,14 +2039,7 @@ class TestPlotPanel:
         )
         panel._max_render_points_per_trace = 10
 
-        errorbar_calls: list[dict[str, object]] = []
-        original_errorbar = panel._ax.errorbar
-
-        def _capture_errorbar(*args, **kwargs):
-            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
-            return original_errorbar(*args, **kwargs)
-
-        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+        errorbar_calls = _capture_errorbar_dots(monkeypatch)
 
         panel.plot_dataset(ds)
 
@@ -2072,14 +2075,7 @@ class TestPlotPanel:
         panel._max_render_points_per_trace = 10
         panel.set_decimation_enabled(False, redraw=False)
 
-        errorbar_calls: list[dict[str, object]] = []
-        original_errorbar = panel._ax.errorbar
-
-        def _capture_errorbar(*args, **kwargs):
-            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
-            return original_errorbar(*args, **kwargs)
-
-        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+        errorbar_calls = _capture_errorbar_dots(monkeypatch)
 
         panel.plot_dataset(ds)
 
@@ -3267,14 +3263,7 @@ class TestPlotPanel:
         )
         panel._max_render_points_per_trace = 12
 
-        errorbar_calls: list[dict[str, object]] = []
-        original_errorbar = panel._ax.errorbar
-
-        def _capture_errorbar(*args, **kwargs):
-            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
-            return original_errorbar(*args, **kwargs)
-
-        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+        errorbar_calls = _capture_errorbar_dots(monkeypatch)
 
         panel.plot_datasets([ds1, ds2])
 
@@ -3308,14 +3297,7 @@ class TestPlotPanel:
         )
         panel._max_render_points_per_trace = 50
 
-        errorbar_calls: list[dict[str, object]] = []
-        original_errorbar = panel._ax.errorbar
-
-        def _capture_errorbar(*args, **kwargs):
-            errorbar_calls.append({"args": args, "kwargs": dict(kwargs)})
-            return original_errorbar(*args, **kwargs)
-
-        monkeypatch.setattr(panel._ax, "errorbar", _capture_errorbar)
+        errorbar_calls = _capture_errorbar_dots(monkeypatch)
 
         panel.plot_dataset(ds)
         initial_visible = np.asarray(errorbar_calls[-1]["args"][0], dtype=float)
@@ -5440,9 +5422,16 @@ class TestFrequencyLineRendering:
         )
         panel.plot_dataset(ds)
 
-        assert len(panel._ax.containers) >= 1
+        # Dots: a marker-only line; bars: one collection holding a single
+        # NaN-separated path (the fast-path idiom — see
+        # ``gui/utils/errorbar_dots.py``), never a per-point ``errorbar``.
+        assert len(panel._ax.containers) == 0
         marker_lines = [ln for ln in panel._ax.lines if ln.get_marker() == "."]
         assert len(marker_lines) >= 1
+        bars = [getattr(ln, "bar_line", None) for ln in marker_lines]
+        assert all(bar is not None for bar in bars)
+        assert bars[0] in panel._ax.collections
+        assert len(bars[0].get_paths()) == 1
 
 
 class TestDecimationStrategies:
@@ -5619,3 +5608,49 @@ class TestViewportRefreshDrawCoalescing:
 
         # Exactly one synchronous rasterisation, before any event loop turn.
         assert counter["n"] == 1
+
+
+class TestSwitchCostPins:
+    """Per-switch work the plot panel must not do (responsiveness pins)."""
+
+    def test_time_domain_trace_never_uses_axes_errorbar(
+        self, panel: PlotPanel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+
+        def _boom(*_args, **_kwargs):
+            raise AssertionError("Axes.errorbar builds one Path per point; use add_errorbar_dots")
+
+        monkeypatch.setattr(panel._ax, "errorbar", _boom)
+        t = np.linspace(0.0, 10.0, 200)
+        panel.plot_dataset(
+            MuonDataset(
+                time=t,
+                asymmetry=0.2 * np.exp(-0.3 * t),
+                error=np.full_like(t, 0.01),
+                metadata={"run_number": 4300},
+            )
+        )
+        marker_lines = [ln for ln in panel._ax.lines if ln.get_marker() == "."]
+        assert marker_lines
+
+    def test_clearing_an_absent_moments_overlay_does_not_redraw(
+        self, panel: PlotPanel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every selection re-evaluates the moments readout of the (hidden)
+        frequency panel; clearing an overlay that was never drawn must not
+        cost a canvas rasterisation."""
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        draws: list[int] = []
+        monkeypatch.setattr(panel._canvas, "draw_idle", lambda: draws.append(1))
+
+        panel.clear_moments_overlay()
+        panel.clear_moments_overlay()
+        assert draws == []
+
+        # A real overlay still triggers exactly one redraw when cleared.
+        panel._moments_span_artists = [panel._ax.axvspan(0.1, 0.2)]
+        panel.clear_moments_overlay()
+        assert draws == [1]
