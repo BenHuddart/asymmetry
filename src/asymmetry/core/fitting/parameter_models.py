@@ -35,6 +35,7 @@ from asymmetry.core.fitting.muonium import (
     G_MU_MHZ_PER_G,
     VACUUM_MUONIUM_A_HF_MHZ,
 )
+from asymmetry.core.fitting.parameter_carry import ComponentParameter, ParameterIdentity
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
@@ -1472,6 +1473,23 @@ class ParameterCompositeModel:
             self.open_parentheses,
             self.close_parentheses,
         )
+
+    def parameter_identities(self) -> dict[str, ParameterIdentity]:
+        """Map every unique parameter name to what that parameter *is*.
+
+        A trend model has no fraction groups and no suppressed amplitudes, so
+        every parameter belongs to one component instance. Keyed identities let
+        parameter state follow a component across a model edit instead of being
+        matched by its collision-driven name (see
+        :mod:`asymmetry.core.fitting.parameter_carry`).
+        """
+        return {
+            mapping[pname]: ComponentParameter(idx, pname)
+            for idx, (mapping, component) in enumerate(
+                zip(self._param_mappings, self.components, strict=True)
+            )
+            for pname in component.param_names
+        }
 
     def component_param_name(self, component_index: int, local_name: str) -> str:
         """Global (possibly index-suffixed) param name for a component's param.

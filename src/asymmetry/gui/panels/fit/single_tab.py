@@ -16,7 +16,7 @@ import copy
 import functools
 import html
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
@@ -49,6 +49,7 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_state,
 )
+from asymmetry.core.fitting.parameter_carry import carry_parameter_entries
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
@@ -554,14 +555,38 @@ class SingleFitTab(FitTabBase):
             return
         self._set_composite_model(reduced)
 
-    def _set_composite_model(self, model: CompositeModel, *, seed_frequency: bool = True) -> None:
+    def _set_composite_model(
+        self,
+        model: CompositeModel,
+        *,
+        seed_frequency: bool = True,
+        origins: Sequence[int | None] | None = None,
+    ) -> None:
         """Set the active composite model and rebuild the parameter table.
+
+        ``origins[i]`` is the index, in the *current* model, of the component
+        that is now at index ``i`` — ``None`` for a component that did not
+        exist before. The function builder reports one on accept
+        (``component_origins()``), and given it every surviving component's
+        value, Fix, bounds, batch role, link group and tie follow that
+        component onto its new rows, whatever its parameters are now called.
+        Callers that replace the model outright — Reset (the route back to
+        defaults), a domain switch, dropping the background, the fit wizard, a
+        project restore — pass no origins, and the table is rebuilt from seeds
+        alone.
 
         Restore paths pass ``seed_frequency=False`` because restored parameter
         values are replayed by ``restore_parameters`` and must not be
         re-derived (and the restore-time dataset may still be the previous
         domain's).
         """
+        carried = (
+            carry_parameter_entries(
+                self._composite_model, model, origins, self._param_table.parameters_state()
+            )
+            if origins is not None
+            else []
+        )
         self._composite_model = model
         # Any model (re)build — including Reset, which reuses the same object —
         # invalidates an in-flight fit's table/diagnostic write-back. (The table
@@ -584,6 +609,10 @@ class SingleFitTab(FitTabBase):
         # the model's declared fixed-by-default parameters.
         fixed_names = set(model.fixed_by_default_params()) | {"shape_factor_a"}
         self._param_table.populate(model, value_overrides=value_overrides, fixed_names=fixed_names)
+        # The carried entries are seeds for surviving components, so they land
+        # on top of the freshly seeded rows; components with no predecessor keep
+        # the seeds populate() just wrote.
+        self._param_table.restore_parameters({entry["name"]: entry for entry in carried})
         self._update_drop_background_enabled()
 
     def reseed_frequency_peaks(self) -> None:
@@ -633,7 +662,7 @@ class SingleFitTab(FitTabBase):
         if dialog.exec():
             new_model = dialog.get_composite_model()
             if new_model is not None:
-                self._set_composite_model(new_model)
+                self._set_composite_model(new_model, origins=dialog.component_origins())
 
     def set_full_fit_context_provider(self, provider: Callable[[], tuple] | None) -> None:
         """Install the accessor returning ``(full_dataset, (t_min, t_max))``."""

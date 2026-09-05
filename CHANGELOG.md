@@ -178,6 +178,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quadrature, `fixed` only if every folded entry was); this migration is
   alpha-only and is deleted whole at v1.0 (see `RELEASING.md`).
 
+- **Editing the fit function no longer loses or misplaces the values you already
+  typed.** Every host that rebuilds a parameter table after the function
+  builder is accepted — the Single tab, the Batch tab's run table and its two
+  grouped physics tables, the individual-groups tables, the parameter-trend
+  model editor (and its cross-group sibling), and both Simulate dialogs — used
+  to key the old table by parameter *name* and reuse whatever still matched.
+  Naming is collision-driven, so that was wrong in both directions: adding a
+  second `Exponential` to `Exponential + Constant` renames the first one's
+  `Lambda` to `Lambda_1`, so the name-keyed carry lost the value outright, and
+  inserting a component *before* an existing one shifts every later index
+  (`A_2` now names a different component's amplitude), so the value that
+  carried landed on the wrong row entirely. A value, Fix state, bound, link
+  group, or tie now belongs to the *component instance* that owns it and
+  follows that instance wherever the edit moved it, however its parameter is
+  now spelled; a component that is genuinely new to the function starts from
+  seeded defaults. Two different components sharing a local name (`Linear.m`
+  and `Redfield.m`) no longer carries a meaningless value between them either —
+  a hand-written exception that reset `Redfield`'s `m` on exactly that
+  substitution is gone, because identity-based carrying makes it unnecessary
+  for any pair of components, not just that one. Accepting the builder with no
+  structural change is now a no-op on every one of these tables; **Reset** (on
+  the Single tab) remains the way back to defaults for a parameter that is
+  still there.
+
 ### Fixed
 
 - **A parenthesis next to a fraction group made the model refuse to build.**
