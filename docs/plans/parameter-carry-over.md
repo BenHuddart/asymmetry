@@ -115,8 +115,10 @@ host).
 
 ## Phase 6 design (PR 2): one seeding function, with provenance
 
-Status: refined 2026-09-05 before implementation (branch
-`feat/seed-provenance`); two sequential Opus phases, 6a (core) and 6b (GUI).
+Status: implemented 2026-09-05 on branch `feat/seed-provenance` (6a: core
+`seeding.py`; 6b: provenance and re-seeding in the hosts). Recorded below as
+designed; the notes in "Phase 6b" say where the implementation chose
+differently.
 
 Today's defaults are static per component (`ComponentDefinition.param_defaults`)
 plus ad-hoc layers: applied field into `field`/`B_L`
@@ -224,6 +226,21 @@ is in `model.param_names`. Gate: that file, `tests/core/test_fit_wizard*.py`
 (the factored helper), `--tier fast`, `lint`, `structural`.
 
 ### Phase 6b — provenance and re-seeding in the hosts (Opus, after 6a)
+
+Implemented 2026-09-05. Two deviations from the design as written, both to
+keep the "a restored fit is never re-seeded" promise literal:
+
+- The single tab's `set_dataset` does **not** re-seed. `FitPanel` owns what the
+  form becomes on a run switch (restore verbatim / carry / reset), and every
+  branch already establishes seeds; re-seeding on bind would run a spectrum
+  peak search whose result the next line discards. The panel calls `reseed()`
+  in the one branch that keeps the displayed form (a dataset with no run
+  number), and `reseed_carried_form()` on the carry path.
+- The batch table is re-seeded by member-set changes (`set_datasets`,
+  a member checkbox, `set_member_datasets`), not by the active run: its seeds
+  describe the members it fits. The grouped physics table is re-seeded by
+  `set_current_dataset`, and its context is always time-domain (grouped
+  fitting has no frequency surface).
 
 Files: `gui/panels/fit/tab_base.py` (provenance role, `populate`,
 `restore_parameters`, `parameters_state`, `apply_value_seeds` →
@@ -361,7 +378,7 @@ both fall out of the one function. Gate: `--tier fast`, affected GUI files,
 | 3 | fit-panel GUI tests, `--tier fast`, `validate` |
 | 4 | trending / cross-group / simulate tests |
 | 5 | `docs`, `validate`, PR |
-| 6 | separate PR, same ladder |
+| 6 | separate PR, same ladder — run 2026-09-05: gate files, `--tier fast`, `lint`, `structural`, `docs`, `validate` |
 
 ## Decisions recorded
 

@@ -60,6 +60,15 @@ _AMPLITUDE_ROLE_BASE_NAMES: frozenset[str] = frozenset(
     if is_amplitude_parameter(name) and not is_background_parameter(name)
 )
 
+#: Trend parameters that read as a baseline (start at the series' mean), as a
+#: slope/amplitude (start at its span), or as a characteristic x (start at half
+#: the fitted range). Exact names for the first two — ``m``/``a``/``b``/``c`` are
+#: whole parameter names in the trend components, never prefixes — and prefixes
+#: for the third, so a repeated component's ``tau_2`` reads the same as ``tau``.
+_TREND_BASELINE_NAMES: frozenset[str] = frozenset({"c", "b"})
+_TREND_SPAN_NAMES: frozenset[str] = frozenset({"m", "a"})
+_TREND_HALF_RANGE_PREFIXES: tuple[str, ...] = ("B0", "tau", "nu")
+
 #: Parameters that start held whatever model they appear in. ``shape_factor_a``
 #: is a switch, not a fitted quantity: ``0`` selects the Carrington-Manzano
 #: interpolation and any positive value the generalized reduced-gap law, so a
@@ -143,12 +152,17 @@ def seed_trend_parameters(
 ) -> dict[str, Seed]:
     """Return a starting :class:`Seed` for every parameter of a trend model.
 
-    Static component defaults with :func:`~asymmetry.core.fitting.parameter_models.suggest_trend_seeds`
-    over the top, which is what makes a critical-temperature component converge
-    without a hand reseed. A trend is fitted against a series rather than a run,
-    so nothing here is run-bound.
+    Three layers, as for a fit model: static component defaults, then the
+    series' own scale (:func:`_trend_scale_values` — a baseline at the mean of
+    ``y``, a slope/amplitude at its span, a characteristic x at half the fitted
+    range), then
+    :func:`~asymmetry.core.fitting.parameter_models.suggest_trend_seeds`, which
+    is what makes a critical-temperature component converge without a hand
+    reseed. A trend is fitted against a series rather than a run, so nothing
+    here is run-bound.
     """
     seeds = _base_seeds(model.param_names, model.param_defaults, frozenset())
+    _apply_values(seeds, _trend_scale_values(model, x, y), run_bound=False)
     _apply_values(seeds, suggest_trend_seeds(model, x, y), run_bound=False)
     return seeds
 
@@ -208,6 +222,43 @@ def _frequency_peak_values(model: CompositeModel, context: SeedContext) -> dict[
         name: float(value)
         for name, value in seed_peak_parameters_from_dataset(context.dataset, model).items()
     }
+
+
+def _trend_scale_values(
+    model: ParameterCompositeModel, x: NDArray[np.float64], y: NDArray[np.float64]
+) -> dict[str, float]:
+    """The trend layer beneath :func:`suggest_trend_seeds`: the series' scale.
+
+    A plain trend component knows nothing about the quantity it is fitted to,
+    so its declared defaults are arbitrary numbers. These three readings put it
+    in the data's neighbourhood instead: a constant/intercept starts at the mean
+    of ``y``, a slope or amplitude at ``y``'s span, and a characteristic x
+    (``B0``, ``tau``, ``nu``) at half the fitted x-range. A positive-definite
+    decay constant (``D``) is only floored off zero. Names are matched by
+    prefix, which is what makes the same reading apply to a repeated
+    component's suffixed parameters.
+    """
+    y_values = np.asarray(y, dtype=float)
+    x_values = np.asarray(x, dtype=float)
+    finite_y = np.any(np.isfinite(y_values))
+    y_mean = float(np.nanmean(y_values)) if finite_y else 0.0
+    y_span = float(np.nanmax(y_values) - np.nanmin(y_values)) if finite_y else 1.0
+    finite_x = np.any(np.isfinite(x_values))
+    x_min = float(np.nanmin(x_values)) if finite_x else 0.0
+    x_max = float(np.nanmax(x_values)) if finite_x else 1.0
+
+    values: dict[str, float] = {}
+    for param_name in model.param_names:
+        default = float(model.param_defaults[param_name])
+        if param_name in _TREND_BASELINE_NAMES:
+            values[param_name] = y_mean
+        elif param_name in _TREND_SPAN_NAMES:
+            values[param_name] = y_span if y_span > 0.0 else default
+        elif param_name.startswith(_TREND_HALF_RANGE_PREFIXES):
+            values[param_name] = max(1e-6, (x_max - x_min) / 2.0)
+        elif param_name.startswith("D"):
+            values[param_name] = max(1e-6, default)
+    return values
 
 
 def _individual_group_held_names(model: CompositeModel, context: SeedContext) -> list[str]:

@@ -329,15 +329,42 @@ def test_trend_seeds_place_tc_beyond_the_fitted_range() -> None:
     assert not any(seed.run_bound for seed in seeds.values())
 
 
-def test_trend_seeds_fall_back_to_static_defaults_without_a_trend_component() -> None:
+def test_trend_seeds_place_a_plain_component_on_the_series_scale() -> None:
+    """Without a critical-temperature component the series' own scale seeds it."""
     model = ParameterCompositeModel(["Linear"])
     x = np.linspace(0.0, 10.0, 11)
     y = np.linspace(0.0, 5.0, 11)
 
     seeds = seed_trend_parameters(model, x, y)
 
+    # Intercept at the mean of y, slope at its span — the reading the trend
+    # dialog used to make inline, now the layer beneath suggest_trend_seeds.
+    assert seeds["b"].value == pytest.approx(2.5)
+    assert seeds["m"].value == pytest.approx(5.0)
+
+
+def test_trend_seeds_keep_the_component_default_for_a_flat_series() -> None:
+    """A span of zero is no scale at all, so the component's own default stands."""
+    model = ParameterCompositeModel(["Linear"])
+    x = np.linspace(0.0, 10.0, 11)
+    y = np.full(11, 3.0)
+
+    seeds = seed_trend_parameters(model, x, y)
+
     assert seeds["m"].value == model.param_defaults["m"]
-    assert seeds["b"].value == model.param_defaults["b"]
+    assert seeds["b"].value == pytest.approx(3.0)
+
+
+def test_trend_seeds_put_a_characteristic_x_at_half_the_fitted_range() -> None:
+    """``B0``/``tau``/``nu`` are x-like: they start at half the x-range."""
+    model = ParameterCompositeModel(["ExponentialDecay"])
+    x = np.linspace(0.0, 40.0, 21)
+    y = 10.0 * np.exp(-x / 12.0)
+
+    seeds = seed_trend_parameters(model, x, y)
+
+    assert "tau" in seeds
+    assert seeds["tau"].value == pytest.approx(20.0)
 
 
 def test_trend_seeds_hold_the_shape_factor_switch() -> None:

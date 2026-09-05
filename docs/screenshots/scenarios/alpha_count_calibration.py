@@ -61,6 +61,7 @@ class AlphaCountCalibrationScenario(Scenario):
 
     def build(self) -> QWidget:
         from asymmetry.core.fitting.composite import CompositeModel
+        from asymmetry.core.fitting.seeding import Seed
         from asymmetry.core.simulate import (
             build_builtin_template,
             reduce_run_to_dataset,
@@ -112,7 +113,7 @@ class AlphaCountCalibrationScenario(Scenario):
         tab = window._single_fit_tab
         tab._set_composite_model(CompositeModel(["Oscillatory"]))
         _process_events_for(milliseconds=60)
-        tab._group_model_table.apply_value_seeds({"frequency": 1.5, "phase": 0.3})
+        tab._group_model_table.reseed({"frequency": Seed(1.5), "phase": Seed(0.3)})
         _process_events_for(milliseconds=40)
 
         # Run the real forward/backward free-α count fit synchronously (worker

@@ -38,6 +38,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     RunResidualDiagnostic,
 )
 from asymmetry.core.fitting.parameters import AffineTie, Parameter, ParameterSet
+from asymmetry.core.fitting.seeding import record_scale_estimate
 from asymmetry.core.utils.constants import (
     GAUSS_TO_TESLA,
     MUON_GYROMAGNETIC_RATIO_MHZ_PER_T,
@@ -4511,3 +4512,143 @@ def test_grouped_single_physics_table_accept_with_no_change_is_a_no_op(
     tab._edit_function()
 
     assert tab._current_grouped_model_row_state() == before
+
+
+# ── seeding provenance: which values follow the data, and which are the user's ──
+
+
+def _field_dataset(run_number: int, field: float) -> MuonDataset:
+    """A decaying record whose run carries an applied field."""
+    time = np.linspace(0.0, 4.0, 120)
+    return MuonDataset(
+        time=time,
+        asymmetry=0.02 + 0.2 * np.exp(-3.0 * time),
+        error=np.full_like(time, 0.01),
+        metadata={"run_number": run_number, "field": field},
+        run=Run(run_number=run_number, metadata={"field": field}),
+    )
+
+
+def _table_value(table, name: str) -> float:
+    for row in range(table.rowCount()):
+        item = table.item(row, 0)
+        if item is not None and item.data(Qt.ItemDataRole.UserRole) == name:
+            return float(table.item(row, 1).text())
+    raise AssertionError(f"no row for {name}")
+
+
+def _set_table_value(table, name: str, text: str) -> None:
+    for row in range(table.rowCount()):
+        item = table.item(row, 0)
+        if item is not None and item.data(Qt.ItemDataRole.UserRole) == name:
+            table.item(row, 1).setText(text)
+            return
+    raise AssertionError(f"no row for {name}")
+
+
+def test_single_tab_seeds_amplitude_and_background_from_the_record(
+    qapp: QApplication,
+) -> None:
+    """A fresh model starts at the record's own scale, not the component's 25/0."""
+    tab = SingleFitTab()
+    tab.set_dataset(_field_dataset(101, 0.0))
+    tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+
+    table = tab._param_table
+    # The record decays from ~0.22 onto a flat 0.02 tail, and the seeds read
+    # that off it — not the component's own 25 (a percentage-scale asymmetry)
+    # and 0. The early-window mean sits a little below the true amplitude,
+    # which is what makes it a seed rather than an answer.
+    amplitude, tail = record_scale_estimate(
+        tab._current_dataset.time, tab._current_dataset.asymmetry
+    )
+    # The cells hold the seed to six significant figures.
+    assert _table_value(table, "A_1") == pytest.approx(amplitude, rel=1e-5)
+    assert _table_value(table, "A_bg") == pytest.approx(tail, rel=1e-5)
+    assert 0.1 < _table_value(table, "A_1") < 0.25
+    assert _table_value(table, "A_bg") == pytest.approx(0.02, abs=0.005)
+
+
+def test_typed_amplitude_survives_a_run_switch_while_bl_follows_the_run(
+    qapp: QApplication,
+) -> None:
+    """The rule in one test: a run-bound value follows the run, a typed one does not."""
+    panel = FitPanel()
+    panel.set_single_fit_restore_provider(lambda _ds: None)
+    d1 = _field_dataset(101, 50.0)
+    d2 = _field_dataset(102, 150.0)
+
+    panel.set_dataset(d1)
+    tab = panel._single_tab
+    tab._set_composite_model(CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"]))
+    assert _table_value(tab._param_table, "B_L") == pytest.approx(50.0)
+    _set_table_value(tab._param_table, "A_1", "0.31")
+    tab.fit_completed.emit(FitResult(success=True, parameters=ParameterSet()), None, [])
+
+    panel.set_dataset(d2)
+
+    assert _table_value(tab._param_table, "B_L") == pytest.approx(150.0)
+    assert _table_value(tab._param_table, "A_1") == pytest.approx(0.31)
+
+
+def test_single_fit_provenance_round_trips_through_get_and_restore_state(
+    qapp: QApplication,
+) -> None:
+    """A saved form remembers which of its values were still seeds."""
+    tab = SingleFitTab()
+    tab.set_dataset(_field_dataset(101, 50.0))
+    tab._set_composite_model(CompositeModel(["LongitudinalFieldKT", "Constant"], operators=["+"]))
+    _set_table_value(tab._param_table, "A_1", "0.31")
+
+    state = tab.get_state()
+    by_name = {entry["name"]: entry for entry in state["parameters"]}
+    assert by_name["A_1"]["seeded"] is False
+    assert by_name["B_L"]["seeded"] is True
+
+    restored = SingleFitTab()
+    restored.set_dataset(_field_dataset(102, 150.0))
+    restored.restore_state(state)
+    # Restored verbatim: nothing is re-seeded until the form is carried.
+    assert _table_value(restored._param_table, "B_L") == pytest.approx(50.0)
+
+    restored.reseed_carried_form()
+    assert _table_value(restored._param_table, "B_L") == pytest.approx(150.0)
+    assert _table_value(restored._param_table, "A_1") == pytest.approx(0.31)
+
+
+def test_identity_carry_over_keeps_value_provenance(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A builder edit moves values onto new rows *and* their provenance with them."""
+    tab = SingleFitTab()
+    tab.set_dataset(_field_dataset(101, 50.0))
+    tab._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
+    _set_table_value(tab._param_table, "Lambda", "1.7")
+
+    _accept_builder_edit(monkeypatch, _insert_component_first("Gaussian"))
+    tab._edit_function()
+
+    by_name = {entry["name"]: entry for entry in tab._param_table.parameters_state()}
+    assert by_name["Lambda"]["value"] == pytest.approx(1.7)
+    assert by_name["Lambda"]["seeded"] is False
+    # The Gaussian is new: its rows are seeds and still follow the data.
+    assert by_name["sigma"]["seeded"] is True
+
+
+def test_batch_member_change_reseeds_only_the_seeded_field_cell(
+    qapp: QApplication,
+) -> None:
+    """A new member set moves an untouched field seed; a typed one stays."""
+    tab = GlobalFitTab()
+    tab.set_datasets([_field_dataset(101, 50.0), _field_dataset(102, 50.0)])
+    tab._set_composite_model(
+        CompositeModel(["LongitudinalFieldKT", "LongitudinalFieldKT"], operators=["+"])
+    )
+    table = tab._param_table
+    assert _table_value(table, "B_L_1") == pytest.approx(50.0)
+    _set_table_value(table, "B_L_2", "12.0")  # the user's own field
+
+    tab.set_datasets([_field_dataset(201, 300.0), _field_dataset(202, 300.0)])
+
+    assert _table_value(table, "B_L_1") == pytest.approx(300.0)
+    assert _table_value(table, "B_L_2") == pytest.approx(12.0)

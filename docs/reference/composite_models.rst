@@ -203,6 +203,34 @@ state; ``align_component_names(old_names, new_names)`` recovers an ``origins``
 map by matching component names in order when no explicit map is available
 (for example, a model retyped as an expression).
 
+Seeding a model for a dataset
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The GUI never invents start values itself: it asks
+:func:`~asymmetry.core.fitting.seeding.seed_parameters` what a model's
+parameters should start at for the data in front of it, and a script can ask
+the same question. It returns one ``Seed`` per parameter — value, ``fixed``,
+``min``, ``max``, and ``run_bound`` (true for a value that describes the
+particular run it came from, the applied field and the frequency peak) — from
+the component defaults, the record's own amplitude/background scale, the
+applied field, and, in the frequency domain, the displayed spectrum's peak:
+
+.. code-block:: python
+
+   from asymmetry.core.fitting import CompositeModel
+   from asymmetry.core.fitting.seeding import SeedContext, seed_parameters
+
+   model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+   # ``record`` is a MuonDataset decaying from ~0.22 onto a 0.02 tail.
+   seeds = seed_parameters(model, SeedContext(dataset=record, field_gauss=150.0))
+   print({name: round(seed.value, 3) for name, seed in seeds.items()})
+   # {'A_1': 0.158, 'Lambda': 0.5, 'A_bg': 0.02}
+
+Feed them to a fit by building each :class:`~asymmetry.core.fitting.Parameter`
+from its seed's ``value``, ``fixed`` and bounds.
+:func:`~asymmetry.core.fitting.seeding.seed_trend_parameters` is the same
+answer for a parameter-trend model, seeded from the series' ``x``/``y``.
+
 Always read ``.param_names`` before building a ``ParameterSet``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
