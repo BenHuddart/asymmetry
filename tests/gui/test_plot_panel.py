@@ -31,6 +31,20 @@ from asymmetry.gui.widgets.axis_limits import FloatLimitField
 _PROJECTION_TINTS = {"P_x": "#534AB7", "P_y": "#BA7517", "P_z": "#0F6E56"}
 
 
+def _gesture(panel: PlotPanel, move) -> None:
+    """Simulate a completed zoom/pan gesture.
+
+    Matplotlib's own toolbar release handler applies the rubber-band rectangle
+    (or the pan) before the panel's handler runs, so *move* stands in for it:
+    press with a nav tool armed, move the axes, release.
+    """
+    panel._set_navigation_mode("zoom")
+    panel._on_canvas_button_press(SimpleNamespace(button=1))
+    move()
+    panel._on_canvas_button_release(SimpleNamespace(button=1))
+    panel._set_navigation_mode("none")
+
+
 def _projection_specs(axes: list[str]) -> list[dict]:
     """Build chip-bar specs from canonical axis labels (ignoring 'ALL')."""
     return [{"label": a, "tint": _PROJECTION_TINTS.get(a, "#000000")} for a in axes if a != "ALL"]
@@ -358,17 +372,25 @@ class TestPlotPanel:
         assert "#1f4d8a" in panel._pan_btn.styleSheet()
         assert panel._pan_btn.styleSheet() == panel._zoom_btn.styleSheet()
 
-    def test_limit_fields_follow_axis_limit_changes(
+    def test_limit_fields_follow_a_completed_gesture(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
+        """A zoom/pan gesture is mirrored into the fields at gesture end.
+
+        Nothing tracks the axes mid-drag any more: the release compares the
+        axes against the press snapshot, holds what moved, and the redraw
+        mirrors the held values back into the fields.
+        """
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
         panel.plot_dataset(sample_dataset)
 
-        panel._ax.set_xlim(1.1, 3.9)
-        panel._ax.set_ylim(-0.15, 0.25)
-        panel._canvas.draw()
+        def move() -> None:
+            panel._ax.set_xlim(1.1, 3.9)
+            panel._ax.set_ylim(-0.15, 0.25)
+
+        _gesture(panel, move)
 
         assert panel._x_min.value() == pytest.approx(1.1)
         assert panel._x_max.value() == pytest.approx(3.9)
@@ -385,21 +407,22 @@ class TestPlotPanel:
 
         panel._x_min.setValue(1.0)
         panel._x_max.setValue(2.0)
+        panel._on_x_limit_field_edited()
         panel._y_min.setValue(-10.0)
         panel._y_max.setValue(10.0)
-        panel._apply_limits()
+        panel._on_y_limit_field_edited()
 
         x_before = panel._ax.get_xlim()
         y_before = panel._ax.get_ylim()
 
-        panel._auto_x_limits()
+        panel._auto_x_btn.click()
         x_after_x = panel._ax.get_xlim()
         y_after_x = panel._ax.get_ylim()
 
         assert x_after_x != x_before
         assert y_after_x == pytest.approx(y_before)
 
-        panel._auto_y_limits()
+        panel._auto_y_btn.click()
         x_after_y = panel._ax.get_xlim()
 
         assert x_after_y == pytest.approx(x_after_x)
@@ -465,17 +488,14 @@ class TestPlotPanel:
         assert second_x[0] > 40.0
         assert second_y[1] > first_y[1]
 
-    def test_interactive_zoom_drops_auto_limit_toggles_and_sets_lock(
+    def test_interactive_zoom_holds_only_the_axes_it_moved(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
-        """A zoom/pan gesture clears Auto X/Y AND takes control of the frame.
+        """A gesture holds the axes it moved and leaves the others Auto.
 
-        The two halves of the gesture contract: the limit callback (fired
-        mid-drag) drops the persistent Auto toggles so the next redraw does not
-        reframe the gesture back to the data extent, and the gesture's end
-        (button release with a nav tool armed) sets ``_limits_user_locked`` so
-        the chosen window then survives run/polarization switches like a typed
-        limit.
+        The release compares the axes against the button-press snapshot, so a
+        two-axis zoom drops both toggles while a horizontal-only zoom leaves
+        Auto Y alone (see the dedicated test below).
         """
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
@@ -486,43 +506,44 @@ class TestPlotPanel:
         assert panel._auto_x_btn.isChecked()
         assert panel._auto_y_btn.isChecked()
 
-        # Arm the Zoom tool, then simulate the rubber-band result: Matplotlib's
-        # set_xlim/set_ylim fire xlim_changed/ylim_changed with nav mode "zoom",
-        # which is the discriminator for a genuine interactive gesture.
-        panel._zoom_btn.click()
-        assert panel._current_navigation_mode() == "zoom"
-        panel._ax.set_xlim(1.1, 3.9)
-        panel._ax.set_ylim(-0.15, 0.25)
-        panel._canvas.draw()
+        def move() -> None:
+            panel._ax.set_xlim(1.1, 3.9)
+            panel._ax.set_ylim(-0.15, 0.25)
 
-        # The gesture takes control: both toggles drop, mirroring a field edit.
+        _gesture(panel, move)
+
+        # The gesture takes control of both axes: both toggles drop.
         assert not panel._auto_x_btn.isChecked()
         assert not panel._auto_y_btn.isChecked()
-        # The lock is set at gesture END, never from the limit callback itself
-        # (which also fires for programmatic set_xlim during auto-framing).
-        assert panel._limits_user_locked is False
-
-        # Complete the gesture: releasing the mouse with the tool armed locks
-        # the chosen window, so later content switches keep it.
-        panel._on_canvas_button_release(SimpleNamespace(button=1))
-        assert panel._limits_user_locked is True
-
-        # The next redraw's re-apply of the (now-off) toggles must be a no-op:
-        # the zoomed window survives instead of snapping back to the data extent.
-        panel._apply_auto_limits_if_enabled()
+        assert panel._limits.held("x") == pytest.approx((1.1, 3.9))
+        assert panel._limits.held("y") == pytest.approx((-0.15, 0.25))
+        # And the redraw the release triggered kept the chosen window instead of
+        # snapping back to the data extent.
         assert panel._ax.get_xlim() == pytest.approx((1.1, 3.9))
         assert panel._ax.get_ylim() == pytest.approx((-0.15, 0.25))
 
-    def test_gesture_then_auto_reenable_releases_lock_and_follows_data(
+    def test_horizontal_gesture_leaves_auto_y_on(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
-        """The full round trip: gesture locks, re-enabling Auto releases and follows.
+        """An x-only zoom must not turn Auto Y off — only moved axes are held."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
 
-        Composes the two mechanisms: a completed zoom gesture drops the Auto
-        toggles and sets the frame lock; the user clicking Auto X back on is the
-        explicit "follow the data" escape hatch — it clears the lock and
-        auto-scales, and the next content switch reframes again.
-        """
+        panel.plot_dataset(sample_dataset)
+        panel._auto_y_btn.click()
+        assert panel._auto_y_btn.isChecked()
+
+        _gesture(panel, lambda: panel._ax.set_xlim(1.1, 3.9))
+
+        assert not panel._auto_x_btn.isChecked()
+        assert panel._auto_y_btn.isChecked()
+        assert panel._limits.is_auto("y")
+        assert panel._ax.get_xlim() == pytest.approx((1.1, 3.9))
+
+    def test_gesture_then_auto_reenable_follows_data_again(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """Clicking Auto X back on is the escape hatch out of a held window."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -530,34 +551,27 @@ class TestPlotPanel:
         panel._auto_x_btn.click()
         assert panel._auto_x_btn.isChecked()
 
-        # Complete zoom gesture: toggles drop, lock set.
-        panel._zoom_btn.click()
-        panel._ax.set_xlim(1.1, 3.9)
-        panel._canvas.draw()
-        panel._on_canvas_button_release(SimpleNamespace(button=1))
-        panel._set_navigation_mode("none")
+        _gesture(panel, lambda: panel._ax.set_xlim(1.1, 3.9))
         assert not panel._auto_x_btn.isChecked()
-        assert panel._limits_user_locked is True
 
-        # Re-enabling Auto X releases the lock and follows the data again.
+        # Re-enabling Auto X follows the data again.
         panel._auto_x_btn.click()
         assert panel._auto_x_btn.isChecked()
-        assert panel._limits_user_locked is False
         assert panel._ax.get_xlim()[1] > 3.9  # back out to the data extent
 
-        # And with the lock released, a run switch reframes to the new content.
+        # With Auto X on, a run switch keeps following the new content.
         t = np.linspace(0.0, 10.0, 100)
         e = np.full_like(t, 0.01)
         other = MuonDataset(
             time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 6301}
         )
         panel.plot_dataset(other)
-        assert panel._y_max.value() > 1.0  # framed to the 4.0-amplitude run
+        assert panel._x_max.value() > 9.0  # framed to the 10 µs run
 
     def test_programmatic_limit_change_keeps_auto_toggles(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
-        """Auto-framing (nav mode "none") must not clear the Auto toggles."""
+        """A render with no gesture in flight must not clear the Auto toggles."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -566,9 +580,7 @@ class TestPlotPanel:
         panel._auto_y_btn.click()
         assert panel._current_navigation_mode() == "none"
 
-        # Re-applying auto limits fires the same xlim_changed callback, but with
-        # no nav tool armed it is a programmatic change and must leave auto on.
-        panel._apply_auto_limits_if_enabled()
+        panel.plot_dataset(sample_dataset)
         assert panel._auto_x_btn.isChecked()
         assert panel._auto_y_btn.isChecked()
 
@@ -602,8 +614,8 @@ class TestPlotPanel:
 
         panel._x_min.setValue(1.0)
         panel._x_max.setValue(3.0)
-        panel._apply_limits()
-        panel._auto_y_limits()
+        panel._on_x_limit_field_edited()
+        panel._auto_y_btn.click()
 
         assert panel._y_max.value() < 1.0
         assert panel._y_min.value() > -1.0
@@ -1027,16 +1039,13 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
-    def test_interactive_zoom_in_shift_mode_drops_toggles_and_locks(
-        self, qapp: QApplication
-    ) -> None:
-        """The #254 gesture contract holds unchanged on a shift axis.
+    def test_interactive_zoom_in_shift_mode_holds_the_moved_axis(self, qapp: QApplication) -> None:
+        """The gesture contract holds unchanged on a shift axis.
 
         The shift-mode plotted axis IS the display axis (identity limit-box
         mapping), so a rubber-band zoom while a shift mode is active must behave
-        exactly like absolute mode: the mid-drag limit callback drops the Auto
-        toggles, button release sets ``_limits_user_locked``, and the zoomed
-        shift-space window survives the next auto-limits pass.
+        exactly like absolute mode: the moved axis is held at its new value, its
+        Auto toggle drops, and the zoomed shift-space window survives the redraw.
         """
         panel = PlotPanel(domain="frequency")
         try:
@@ -1057,22 +1066,15 @@ class TestPlotPanel:
             panel._auto_x_btn.setChecked(True)
             panel._auto_y_btn.setChecked(True)
 
-            panel._zoom_btn.click()
-            assert panel._current_navigation_mode() == "zoom"
-            panel._ax.set_xlim(-0.5, 0.5)
-            panel._canvas.draw()
+            _gesture(panel, lambda: panel._ax.set_xlim(-0.5, 0.5))
 
-            # Mid-drag: toggles drop; lock waits for the gesture end.
+            # The moved axis is held; the untouched y axis keeps following.
             assert not panel._auto_x_btn.isChecked()
-            assert not panel._auto_y_btn.isChecked()
-            assert panel._limits_user_locked is False
+            assert panel._auto_y_btn.isChecked()
 
-            panel._on_canvas_button_release(SimpleNamespace(button=1))
-            assert panel._limits_user_locked is True
-
-            # The zoomed shift-space window survives the auto-limits pass, and
-            # the limit boxes read the same (identity) shift values.
-            panel._apply_auto_limits_if_enabled()
+            # The zoomed shift-space window survives the redraw, and the limit
+            # boxes read the same (identity) shift values.
+            panel.plot_dataset(ds)
             assert panel._ax.get_xlim() == pytest.approx((-0.5, 0.5))
             assert panel._x_min.value() == pytest.approx(-0.5)
             assert panel._x_max.value() == pytest.approx(0.5)
@@ -1081,13 +1083,13 @@ class TestPlotPanel:
             panel.deleteLater()
 
     def test_dataset_switch_redecimates_for_the_new_frame(self, qapp: QApplication) -> None:
-        """Switching datasets must not render one viewport behind.
+        """A reframing switch must not render one viewport behind.
 
-        The draw decimates against the CURRENT axes window, and a switched
-        dataset's reframe moves the axes only afterwards — without the deferred
-        viewport refresh, run B rendered only the points inside run A's old
-        window (its own line missing entirely), one view behind on every
-        switch. The refresh re-decimates for the window just applied.
+        The x window is resolved BEFORE anything is drawn, so the decimation and
+        the frame are one decision: with Auto X on, run B reframes and the drawn
+        line covers the new window. (Historically the reframe moved the axes
+        after a draw decimated for run A's window, so run B's own line was
+        missing entirely.)
         """
         panel = PlotPanel(domain="frequency")
         try:
@@ -1121,6 +1123,9 @@ class TestPlotPanel:
                 assert lines, "no spectrum line drawn"
                 xd = np.asarray(lines[-1].get_xdata(), dtype=float)
                 return bool(xd.min() <= x_lo + 1.0 and xd.max() >= x_hi - 1.0)
+
+            panel._auto_x_btn.click()
+            panel._auto_y_btn.click()
 
             panel.plot_dataset(_spectrum(1, 813.0))
             _drain()
@@ -1184,15 +1189,14 @@ class TestPlotPanel:
             panel.close()
             panel.deleteLater()
 
-    def test_frequency_auto_x_frames_dominant_peak_and_clears_prior_lock(
+    def test_frequency_auto_x_frames_dominant_peak_over_a_held_window(
         self, qapp: QApplication
     ) -> None:
-        """Auto X on a spectrum frames the peak (not full Nyquist) and clears a lock.
+        """Auto X on a spectrum frames the peak, not the full Nyquist span.
 
-        Plan-A #5/#6: frequency Auto X should mean "frame the line sensibly" via
-        the same smart window used on first paint, not span the whole Nyquist
-        range; and enabling Auto X is the explicit follow-the-data escape hatch,
-        so it releases any manual frame lock.
+        Frequency Auto X means "frame the line sensibly" via the same
+        ``_default_x_limits`` window used on first paint, and turning it on is
+        the escape hatch out of a held (here full-Nyquist) window.
         """
         panel = PlotPanel(domain="frequency")
         try:
@@ -1216,13 +1220,13 @@ class TestPlotPanel:
             )
             panel.plot_dataset(ds)
 
-            # Manually take control (a locked, full-Nyquist window) …
+            # Manually take control (a held, full-Nyquist window) …
             panel.set_view_limits(0.0, 2000.0, panel._y_min.value(), panel._y_max.value())
-            panel._limits_user_locked = True
+            assert not panel._limits.is_auto("x")
 
-            # … then enable Auto X: the lock clears and the axis frames the peak.
+            # … then enable Auto X: the axis follows the data and frames the peak.
             panel._auto_x_btn.click()
-            assert panel._limits_user_locked is False
+            assert panel._limits.is_auto("x")
             x_max = panel._x_max.value()
             assert x_max >= 813.0
             assert x_max < 1600.0  # framed to the peak, not the 2000 MHz span
@@ -1716,15 +1720,15 @@ class TestPlotPanel:
         )
 
         panel.plot_dataset(ds1)
-        # A deliberate manual limit edit takes control of the frame: it must
-        # survive switching runs (the "compare the same window across a run
-        # series" workflow). Drive the real edit path so the user-lock is set;
-        # an untouched auto-frame instead reframes to each switched-in dataset.
+        # A deliberate manual limit edit holds both axes: it must survive
+        # switching runs (the "compare the same window across a run series"
+        # workflow). Turning Auto back on is the only way out.
         panel._x_min.setValue(0.5)
         panel._x_max.setValue(2.5)
+        panel._on_x_limit_field_edited()
         panel._y_min.setValue(-0.1)
         panel._y_max.setValue(0.4)
-        panel._on_limit_fields_edited()
+        panel._on_y_limit_field_edited()
 
         panel.plot_dataset(ds2)
         panel.plot_dataset(ds1)
@@ -1741,10 +1745,12 @@ class TestPlotPanel:
             pytest.skip("matplotlib not available")
 
         restored_state = {
-            "x_min": 0.25,
-            "x_max": 2.75,
-            "y_min": -0.2,
-            "y_max": 0.35,
+            "axis_limits": {
+                "axes": {
+                    "x": {"auto": False, "held": [0.25, 2.75], "quantity": None},
+                    "y": {"auto": False, "held": [-0.2, 0.35], "quantity": None},
+                }
+            },
             "fit_x_min": None,
             "fit_x_max": None,
         }
@@ -1756,13 +1762,40 @@ class TestPlotPanel:
         assert panel._y_min.value() == pytest.approx(-0.2)
         assert panel._y_max.value() == pytest.approx(0.35)
 
-    def test_first_paint_reframes_on_dataset_switch(self, panel: PlotPanel) -> None:
-        """An untouched (auto-framed) view reframes to each switched-in dataset.
+    def test_project_state_round_trip_restores_hold_and_auto_per_axis(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """get_state/restore_state carry each axis's Auto flag and held value."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
 
-        P1-1: the one-shot first-paint latch must re-arm when the displayed
-        content changes, so a run with a different natural scale is framed to
-        itself instead of inheriting the previous run's limits.
-        """
+        panel.plot_dataset(sample_dataset)
+        panel._auto_x_btn.click()  # x follows the data
+        panel._y_min.setValue(-0.1)
+        panel._y_max.setValue(0.4)
+        panel._on_y_limit_field_edited()  # y is held
+
+        state = panel.get_state()
+
+        other = PlotPanel()
+        try:
+            other.restore_state(state, dataset=None)
+            assert other._auto_x_btn.isChecked()
+            assert not other._auto_y_btn.isChecked()
+            assert other._limits.is_auto("x")
+            assert other._limits.held("y") == pytest.approx((-0.1, 0.4))
+
+            # The held y survives the replot; the auto x follows the data.
+            other.plot_dataset(sample_dataset)
+            assert other._y_min.value() == pytest.approx(-0.1)
+            assert other._y_max.value() == pytest.approx(0.4)
+            assert other._x_max.value() == pytest.approx(panel._x_max.value())
+        finally:
+            other.close()
+            other.deleteLater()
+
+    def test_auto_axes_follow_each_switched_in_dataset(self, panel: PlotPanel) -> None:
+        """With Auto on, each switched-in run is framed to its own scale."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -1775,6 +1808,7 @@ class TestPlotPanel:
             time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 5002}
         )
 
+        panel._auto_y_btn.click()
         panel.plot_dataset(small)
         small_y_max = panel._y_max.value()
 
@@ -1785,8 +1819,38 @@ class TestPlotPanel:
         # keeping the small run's frame.
         assert large_y_max > small_y_max * 5
 
-    def test_first_paint_preserves_user_locked_limits_across_switch(self, panel: PlotPanel) -> None:
-        """A manual limit edit holds the window across a dataset switch (P1-1)."""
+    def test_a_fresh_panel_frames_its_first_dataset(self, panel: PlotPanel) -> None:
+        """An axis with nothing held takes the bounds — that IS the first frame.
+
+        There is no latch: the first render of a fresh panel frames both axes
+        even with the Auto toggles off, because neither axis has a value to hold
+        yet. The second render holds it.
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        t = np.linspace(0.0, 10.0, 100)
+        e = np.full_like(t, 0.01)
+        small = MuonDataset(
+            time=t, asymmetry=0.2 * np.exp(-0.4 * t), error=e, metadata={"run_number": 5011}
+        )
+        large = MuonDataset(
+            time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 5012}
+        )
+
+        assert not panel._auto_x_btn.isChecked()
+        assert not panel._auto_y_btn.isChecked()
+        panel.plot_dataset(small)
+        framed = panel.get_view_limits()
+        assert framed[1] > 9.0  # x framed to the 10 µs span
+        assert 0.0 < framed[3] < 1.0  # y framed to the 0.2 amplitude
+
+        # Browsing to a very different run now HOLDS: only Auto follows.
+        panel.plot_dataset(large)
+        assert panel.get_view_limits() == pytest.approx(framed)
+
+    def test_typed_limits_hold_across_a_dataset_switch(self, panel: PlotPanel) -> None:
+        """A manual limit edit holds the window across a dataset switch."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
@@ -1802,9 +1866,10 @@ class TestPlotPanel:
         panel.plot_dataset(ds_a)
         panel._x_min.setValue(1.0)
         panel._x_max.setValue(3.0)
+        panel._on_x_limit_field_edited()
         panel._y_min.setValue(-0.5)
         panel._y_max.setValue(0.5)
-        panel._on_limit_fields_edited()
+        panel._on_y_limit_field_edited()
 
         panel.plot_dataset(ds_b)
 
@@ -1813,36 +1878,36 @@ class TestPlotPanel:
         assert panel._y_min.value() == pytest.approx(-0.5)
         assert panel._y_max.value() == pytest.approx(0.5)
 
-    def test_stale_cross_session_latch_reframes_first_dataset(
-        self, panel: PlotPanel, sample_dataset: MuonDataset
-    ) -> None:
-        """Persisted cross-session limits must not suppress first-paint framing.
-
-        P1-1 root cause: ``_restore_plot_ranges_from_settings`` restores the
-        previous session's axis ranges and sets ``_limits_initialized`` without
-        framing any real data (``_framed_identity`` stays ``None``). The next
-        loaded dataset must reframe to itself rather than inherit the unrelated
-        stale ±220 % / pre-t0 window.
-        """
+    def test_auto_x_leaves_a_typed_y_untouched_across_a_run_switch(self, panel: PlotPanel) -> None:
+        """Auto is per axis: Auto X must never discard a typed Y."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        # Reproduce the post-startup state: stale limits, latch set, never framed.
-        panel._x_min.setValue(-1.47)
-        panel._x_max.setValue(2.0)
-        panel._y_min.setValue(-220.0)
-        panel._y_max.setValue(220.0)
-        panel._limits_initialized = True
-        panel._framed_identity = None
-        panel._limits_user_locked = False
+        e = np.full(100, 0.01)
+        ds_a = MuonDataset(
+            time=np.linspace(0.0, 10.0, 100),
+            asymmetry=0.2 * np.exp(-0.4 * np.linspace(0.0, 10.0, 100)),
+            error=e,
+            metadata={"run_number": 5201},
+        )
+        ds_b = MuonDataset(
+            time=np.linspace(0.0, 24.0, 100),
+            asymmetry=4.0 * np.exp(-0.4 * np.linspace(0.0, 24.0, 100)),
+            error=e,
+            metadata={"run_number": 5202},
+        )
 
-        panel.plot_dataset(sample_dataset)
+        panel.plot_dataset(ds_a)
+        panel._y_min.setValue(-0.5)
+        panel._y_max.setValue(0.5)
+        panel._on_y_limit_field_edited()
+        panel._auto_x_btn.click()
 
-        # Reframed to the data: not the stale ±220 % envelope, and the lower x
-        # edge is clamped to t0 (=0) rather than the stale −1.47 µs.
-        assert panel._y_max.value() < 100.0
-        assert panel._y_min.value() > -100.0
-        assert panel._x_min.value() == pytest.approx(0.0)
+        panel.plot_dataset(ds_b)
+
+        assert panel._y_min.value() == pytest.approx(-0.5)
+        assert panel._y_max.value() == pytest.approx(0.5)
+        assert panel._x_max.value() > 20.0  # x followed the 24 µs run
 
     def test_fit_overlay_redraw_preserves_frame(
         self, panel: PlotPanel, sample_dataset: MuonDataset
@@ -1860,82 +1925,65 @@ class TestPlotPanel:
 
         assert panel.get_view_limits() == pytest.approx(framed)
 
-    def test_pan_zoom_gesture_sets_user_lock_but_programmatic_change_does_not(
-        self, panel: PlotPanel, sample_dataset: MuonDataset
-    ) -> None:
-        """A completed pan/zoom gesture locks the frame; a programmatic set does not.
-
-        Plan-A #1: interactive nav (button release while in pan/zoom mode) is the
-        user choosing a window, so it must set ``_limits_user_locked`` just like
-        typing a limit. Programmatic paths (``plot_dataset``, ``set_view_limits``)
-        route ``set_xlim`` through the axes callback, never ``button_release``, so
-        they must leave the lock clear or every redraw would freeze the frame.
-        """
-        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
-            pytest.skip("matplotlib not available")
-
-        panel.plot_dataset(sample_dataset)
-        assert panel._limits_user_locked is False  # first paint never locks
-        panel.set_view_limits(1.0, 3.0, -0.1, 0.4)
-        assert panel._limits_user_locked is False  # programmatic set never locks
-
-        # A real interactive gesture: enter zoom mode, then release the mouse.
-        panel._set_navigation_mode("zoom")
-        assert panel._current_navigation_mode() == "zoom"
-        panel._on_canvas_button_release(SimpleNamespace(button=1))
-        assert panel._limits_user_locked is True
-
-    def test_zoom_locked_view_survives_run_switch_but_unlocked_reframes(
+    def test_zoomed_window_holds_across_a_run_switch_and_auto_y_refits_inside_it(
         self, panel: PlotPanel
     ) -> None:
-        """A zoom-locked window holds across a run switch; an unlocked one reframes.
+        """The reported bug: zoom run A, browse to run B, click Auto Y.
 
-        Plan-A #2 (contract): zoom/pan counts as user intent, so a switched-in run
-        keeps the locked window; without the lock the switch reframes to the new
-        run's own scale.
+        The x window must stay where the gesture put it, y must refit to run B
+        *inside* that window, and the drawn line must actually cover it — the
+        old machinery jumped x back to the full span and left the points
+        decimated for the stale window.
         """
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        t = np.linspace(0.0, 10.0, 100)
-        e = np.full_like(t, 0.01)
+        t_a = np.linspace(0.0, 16.0, 4000)
+        t_b = np.linspace(0.0, 16.0, 4000)
         ds_a = MuonDataset(
-            time=t, asymmetry=0.2 * np.exp(-0.4 * t), error=e, metadata={"run_number": 6201}
+            time=t_a,
+            asymmetry=0.2 * np.exp(-0.4 * t_a),
+            error=np.full_like(t_a, 0.001),
+            metadata={"run_number": 6201},
         )
         ds_b = MuonDataset(
-            time=t, asymmetry=4.0 * np.exp(-0.4 * t), error=e, metadata={"run_number": 6202}
+            time=t_b,
+            asymmetry=4.0 * np.exp(-0.4 * t_b),
+            error=np.full_like(t_b, 0.001),
+            metadata={"run_number": 6202},
         )
 
-        # Locked branch: choose a window by gesture, then switch runs.
         panel.plot_dataset(ds_a)
-        panel.set_view_limits(1.0, 3.0, -0.5, 0.5)
-        panel._set_navigation_mode("zoom")
-        panel._on_canvas_button_release(SimpleNamespace(button=1))
-        panel._set_navigation_mode("none")
+        _gesture(panel, lambda: panel._ax.set_xlim(1.0, 4.0))
+        assert panel._ax.get_xlim() == pytest.approx((1.0, 4.0))
+
         panel.plot_dataset(ds_b)
+        panel._auto_y_btn.click()
+
+        # x stayed exactly where the gesture put it …
+        assert panel._ax.get_xlim() == pytest.approx((1.0, 4.0))
         assert panel._x_min.value() == pytest.approx(1.0)
-        assert panel._x_max.value() == pytest.approx(3.0)
-        assert panel._y_min.value() == pytest.approx(-0.5)
-        assert panel._y_max.value() == pytest.approx(0.5)
+        assert panel._x_max.value() == pytest.approx(4.0)
+        # … y refit to run B inside that window (0.2·e^-0.4t at t=1 ≈ 2.7) …
+        assert 1.0 < panel._y_max.value() < 3.5
+        # … and the drawn points cover the window rather than a stale one.
+        drawn = [
+            np.asarray(line.get_xdata(), dtype=float)
+            for line in panel._ax.lines
+            if np.asarray(line.get_xdata()).size > 2
+        ]
+        assert drawn, "no data line drawn"
+        xd = drawn[0]
+        assert xd.min() <= 1.05
+        assert xd.max() >= 3.95
 
-        # Unlocked branch: a fresh panel with no gesture reframes on the switch.
-        other = PlotPanel()
-        try:
-            other.plot_dataset(ds_a)
-            small_y_max = other._y_max.value()
-            other.plot_dataset(ds_b)
-            assert other._y_max.value() > small_y_max * 5
-        finally:
-            other.close()
-            other.deleteLater()
-
-    def test_clear_preserve_view_state_keeps_latches_but_plain_clear_resets(
+    def test_blank_canvas_never_forfeits_a_held_window(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:
-        """``clear(preserve_view_state=True)`` keeps the frame latches; plain resets.
+        """``clear()`` blanks the canvas only; ``reset_view_limits`` forgets holds.
 
-        Plan-A #2: a transient blank must not forfeit the user's window, so the
-        latches survive and a subsequent same-identity plot holds the limits.
+        Browsing past an uncomputed run is momentary, so the user's window must
+        survive to the next compute; only project teardown resets.
         """
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
@@ -1943,46 +1991,63 @@ class TestPlotPanel:
         panel.plot_dataset(sample_dataset)
         panel._x_min.setValue(0.5)
         panel._x_max.setValue(2.5)
+        panel._on_x_limit_field_edited()
         panel._y_min.setValue(-0.1)
         panel._y_max.setValue(0.4)
-        panel._on_limit_fields_edited()
-        assert panel._limits_user_locked is True
+        panel._on_y_limit_field_edited()
 
-        panel.clear(preserve_view_state=True)
-        assert panel._limits_user_locked is True
-        assert panel._limits_initialized is True
-        assert panel._framed_identity is not None
+        panel.clear()
+        assert panel._limits.held("x") == pytest.approx((0.5, 2.5))
+        assert panel._limits.held("y") == pytest.approx((-0.1, 0.4))
 
-        # A subsequent plot of the same content keeps the locked window.
+        # A subsequent plot keeps the held window.
         panel.plot_dataset(sample_dataset)
         assert panel._x_min.value() == pytest.approx(0.5)
         assert panel._x_max.value() == pytest.approx(2.5)
         assert panel._y_min.value() == pytest.approx(-0.1)
         assert panel._y_max.value() == pytest.approx(0.4)
 
-        # Plain clear() is a teardown: it drops every latch.
-        panel.clear()
-        assert panel._limits_user_locked is False
-        assert panel._limits_initialized is False
-        assert panel._framed_identity is None
+        # Project teardown forgets them, so the next render frames afresh.
+        panel.reset_view_limits()
+        assert panel._limits.held("x") is None
+        panel.plot_dataset(sample_dataset)
+        assert panel._x_max.value() > 2.5
 
-    def test_view_reframed_on_last_draw_tracks_first_paint_vs_redraw(
-        self, panel: PlotPanel, sample_dataset: MuonDataset
-    ) -> None:
-        """The reframe accessor reports first-paint True, same-content redraw False.
-
-        Plan-A #4: the frequency render path restores caller-preserved limits only
-        when the draw did NOT reframe. The accessor is that signal — a genuine
-        first paint framed the axes (True), an incidental redraw preserved them
-        (False).
-        """
+    def test_view_mode_change_refits_a_held_y_once(self, panel: PlotPanel) -> None:
+        """A y-quantity change (view mode) refits a Held y exactly once."""
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
             pytest.skip("matplotlib not available")
 
-        panel.plot_dataset(sample_dataset)
-        assert panel.view_reframed_on_last_draw() is True  # first paint framed
-        panel.plot_dataset(sample_dataset)
-        assert panel.view_reframed_on_last_draw() is False  # same content, no reframe
+        counts = np.full(200, 900.0)
+        hist = Histogram(counts=counts, bin_width=0.05, t0_bin=0)
+        run = Run(run_number=6250, histograms=[hist])
+        t = hist.time_axis.copy()
+        ds = MuonDataset(
+            time=t,
+            asymmetry=20.0 * np.exp(-0.4 * t),
+            error=np.full_like(t, 0.2),
+            metadata={"run_number": 6250},
+            run=run,
+        )
+        panel.set_time_view_modes(["fb_asymmetry", "raw_counts"], "fb_asymmetry")
+        panel.plot_dataset(ds)
+        panel._y_min.setValue(-100.0)
+        panel._y_max.setValue(100.0)
+        panel._on_y_limit_field_edited()
+        panel.plot_dataset(ds)
+        assert panel._limits.held("y") == pytest.approx((-100.0, 100.0))
+
+        # A different view mode is a different y quantity: the held window is
+        # meaningless there, so it refits from the data.
+        panel.set_current_time_view_mode("raw_counts")
+        panel.plot_dataset(ds)
+        refit = panel._limits.held("y")
+        assert refit is not None
+        assert refit != pytest.approx((-100.0, 100.0))
+
+        # And the refit happens exactly once: a redraw in the same mode holds it.
+        panel.plot_dataset(ds)
+        assert panel._limits.held("y") == pytest.approx(refit)
 
     def test_default_x_limits_clamps_pre_t0_band_in_time_domain(self, panel: PlotPanel) -> None:
         """Time-domain first-paint x never frames into the empty pre-t0 band (P1-1)."""
@@ -4178,8 +4243,10 @@ class TestPlotPanel:
 
         panel._x_min.setValue(1.25)
         panel._x_max.setValue(8.75)
+        panel._on_x_limit_field_edited()
         panel._y_min.setValue(-0.3)
         panel._y_max.setValue(0.4)
+        panel._on_y_limit_field_edited()
 
         monkeypatch.setattr(
             "asymmetry.gui.panels.plot_panel.QFileDialog.getSaveFileName",
@@ -5453,7 +5520,9 @@ class TestDecimationStrategies:
         mask = np.ones(n, dtype=bool)
         panel._max_render_points_per_trace = 1000
 
-        indices = panel._decimated_plot_indices(freq, mask, values=amplitude)
+        indices = panel._decimated_plot_indices(
+            freq, mask, values=amplitude, visible_indices=np.flatnonzero(mask)
+        )
 
         assert indices.size < n
         assert indices.size <= 1002  # 2 per bucket + endpoints
@@ -5471,7 +5540,9 @@ class TestDecimationStrategies:
         mask = np.ones(n, dtype=bool)
         panel._max_render_points_per_trace = 1000
 
-        indices = panel._decimated_plot_indices(t, mask, values=asym)
+        indices = panel._decimated_plot_indices(
+            t, mask, values=asym, visible_indices=np.flatnonzero(mask)
+        )
 
         assert indices.size <= 1001
         # All gaps equal except possibly the appended final point.
@@ -5490,7 +5561,9 @@ class TestDecimationStrategies:
         mask = np.ones(n, dtype=bool)
         panel._max_render_points_per_trace = 1000
 
-        indices = panel._decimated_plot_indices(freq, mask, values=amplitude)
+        indices = panel._decimated_plot_indices(
+            freq, mask, values=amplitude, visible_indices=np.flatnonzero(mask)
+        )
 
         assert indices.size > 0
         kept = amplitude[indices]
@@ -5499,16 +5572,12 @@ class TestDecimationStrategies:
         assert np.all(np.isfinite(kept))
 
 
-class TestViewportRefreshDrawCoalescing:
-    """The double rasterisation on a content switch collapses to one draw.
+class TestRenderDrawCount:
+    """One resolve, one draw: a render must not rasterise twice.
 
-    A content switch reframes, and a reframe re-decimates for the new window on
-    a deferred ``_redraw_current_view`` pass. Before the fix ``_apply_limits``
-    also rasterised synchronously first, so every switch paid two full draws;
-    the first was overwritten one event-loop turn later before the user saw it.
-    ``_apply_limits`` now skips its synchronous ``canvas.draw()`` whenever a
-    deferred refresh will genuinely run, and falls back to the synchronous draw
-    when ``_schedule_viewport_refresh`` bails.
+    The x window is resolved before anything is drawn, so a reframing switch no
+    longer needs a deferred second pass to repair decimation — and the canvas is
+    up to date within the call rather than on a later event-loop turn.
     """
 
     @staticmethod
@@ -5531,82 +5600,39 @@ class TestViewportRefreshDrawCoalescing:
         e = np.full_like(t, 0.01)
         return MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": run_number})
 
-    def test_content_switch_pays_one_deferred_draw(
+    def test_content_switch_pays_exactly_one_draw(
         self, qapp: QApplication, panel: PlotPanel
     ) -> None:
-        """Switching datasets defers to a single synchronous draw, not two."""
+        """Switching datasets rasterises once, synchronously, with Auto on."""
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
 
-        # Plot A and let its own first-paint deferred refresh settle so the
-        # counter measures only the A -> B switch.
+        panel._auto_x_btn.click()
+        panel._auto_y_btn.click()
         panel.plot_dataset(self._dataset(1))
         qapp.processEvents()
-        assert panel._viewport_refresh_pending is False
 
         counter = self._install_draw_counter(panel)
-
-        # A genuine content change (new run number) re-arms first-paint framing,
-        # so _apply_limits schedules a deferred refresh instead of drawing now.
         panel.plot_dataset(self._dataset(2))
-        assert panel._viewport_refresh_pending is True
-        # No synchronous rasterisation happened during the switch itself.
-        assert counter["n"] == 0
 
-        # The deferred pass runs exactly once and consumes the pending flag,
-        # ending in a single draw with decimation clipped to the new window.
-        qapp.processEvents()
-        assert panel._viewport_refresh_pending is False
         assert counter["n"] == 1
-        # The second pass did not re-arm another deferred pass (no loop).
-        assert panel._viewport_refresh_in_progress is False
+        # And nothing is queued to draw again on the next event-loop turn.
+        qapp.processEvents()
+        assert counter["n"] == 1
 
-    def test_reconstruction_guard_falls_back_to_synchronous_draw(
-        self, qapp: QApplication, panel: PlotPanel
-    ) -> None:
-        """When the refresh guard bails, _apply_limits draws synchronously."""
+    def test_held_redraw_pays_exactly_one_draw(self, qapp: QApplication, panel: PlotPanel) -> None:
+        """A same-content redraw over a held window also draws exactly once."""
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
 
         panel.plot_dataset(self._dataset(1))
         qapp.processEvents()
-        assert panel._viewport_refresh_pending is False
 
-        # Force the reconstruction guard: _schedule_viewport_refresh must return
-        # False, so _apply_limits keeps the immediate draw (canvas never left
-        # undrawn) and arms no deferred pass.
-        panel._is_reconstruction_view = lambda: True  # type: ignore[method-assign]
         counter = self._install_draw_counter(panel)
-
-        panel._apply_limits(schedule_viewport_refresh=True)
+        panel.plot_dataset(self._dataset(1))
 
         assert counter["n"] == 1
-        assert panel._viewport_refresh_pending is False
-
-    def test_same_content_redraw_draws_once_immediately(
-        self, qapp: QApplication, panel: PlotPanel
-    ) -> None:
-        """schedule_viewport_refresh=False rasterises once, synchronously.
-
-        With no reframe requested ``_apply_limits`` must draw immediately rather
-        than defer, so the canvas is up to date within the call and does not
-        depend on a later event-loop turn. (Setting the axis limits still fires
-        Matplotlib's ``*lim_changed`` callback, which independently coalesces a
-        density refresh onto the next turn — that pre-existing pan/zoom path is
-        unaffected here; what matters is that the synchronous draw happened.)
-        """
-        if not getattr(panel, "_has_mpl", False):
-            pytest.skip("matplotlib not available")
-
-        panel.plot_dataset(self._dataset(1))
         qapp.processEvents()
-        assert panel._viewport_refresh_pending is False
-
-        counter = self._install_draw_counter(panel)
-
-        panel._apply_limits(schedule_viewport_refresh=False)
-
-        # Exactly one synchronous rasterisation, before any event loop turn.
         assert counter["n"] == 1
 
 

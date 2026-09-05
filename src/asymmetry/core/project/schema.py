@@ -11,8 +11,17 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 17)
+Current schema (version 18)
 ---------------------------
+
+Version 18 replaces the plot panels' scattered view-limit state — ``x_min``,
+``x_max``, ``y_min``, ``y_max``, ``auto_x_enabled``, ``auto_y_enabled``,
+``y_limits_by_polarization`` and the frequency panel's
+``frequency_x_limits_by_unit`` — with a single ``axis_limits`` block: one
+per-axis Auto/Hold record keyed by axis id (``"x"``, ``"y"``, and one
+``"y:<projection>"`` per stacked subplot). Each record is ``{"auto": bool,
+"held": [lo, hi] | null, "quantity": str | null}``. Lives inside ``plot_state``
+and its nested ``frequency_plot_state``; see :func:`_migrate_v17_to_v18`.
 
 Version 17 makes the run→profile link explicit so multiple grouping profiles
 can be in concurrent use (e.g. one per sample). Every resolvable dataset
@@ -112,24 +121,28 @@ Version 11 schema
         "plot_state": {
             "current_run_number": 3077,
             "bunch_factor": 1,
-            "x_min": 0.0,
-            "x_max": 10.0,
-            "y_min": -30.0,
-            "y_max": 30.0,
+            "axis_limits": {
+                "axes": {
+                    "x": {"auto": false, "held": [0.0, 10.0], "quantity": null},
+                    "y": {"auto": false, "held": [-30.0, 30.0], "quantity": null}
+                }
+            },
             "waterfall": {"enabled": false, "offset": null},
             "workspace_state": {
                 "active_domain": "time"
             },
             "frequency_plot_state": {
                 "plot_panel_domain": "frequency",
-                "x_min": 0.0,
-                "x_max": 100.0,
-                "y_min": -1.0,
-                "y_max": 10.0,
+                "axis_limits": {
+                    "axes": {
+                        "x": {"auto": false, "held": [0.0, 100.0],
+                              "quantity": "frequency_mhz:absolute"},
+                        "y": {"auto": false, "held": [-1.0, 10.0], "quantity": null}
+                    }
+                },
                 "frequency_x_unit": "frequency_mhz",
                 "frequency_axis_mode": "absolute",
                 "frequency_reference_mode": "run",
-                "frequency_x_limits_by_unit": {},
                 "waterfall": {"enabled": false, "offset": null}
             },
             "fit_curve": null,
@@ -185,10 +198,10 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 17
+CURRENT_SCHEMA_VERSION: int = 18
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -302,6 +315,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 16
     if version == 16:
         migrated = _migrate_v16_to_v17(migrated)
+        version = 17
+    if version == 17:
+        migrated = _migrate_v17_to_v18(migrated)
     return migrated
 
 
@@ -1041,6 +1057,95 @@ def _domain_fit_state(domain: str, source: object) -> dict:
         "global_fit_state": src.get("global_fit_state") or {},
         "fit_ui_state": src.get("fit_ui_state") or {},
     }
+
+
+def _migrate_v17_to_v18(data: dict) -> dict:
+    """Migrate schema v17 project state to v18.
+
+    v18 collapses every plot-panel view-limit key into one ``axis_limits``
+    block, so that each axis carries its own Auto/Hold decision instead of the
+    view being reconstructed from a pair of Auto flags, one x/y window and a
+    per-projection y cache:
+
+    * ``x_min``/``x_max`` + ``auto_x_enabled`` → the ``"x"`` axis;
+    * ``y_min``/``y_max`` + ``auto_y_enabled`` → the ``"y"`` axis;
+    * each ``y_limits_by_polarization`` entry → a ``"y:<projection>"`` axis,
+      inheriting ``auto_y_enabled`` (the toggle governed every subplot then and
+      governs every subplot now).
+
+    ``quantity`` starts ``null`` everywhere: an unstamped axis adopts whatever
+    the first render measures, so a restored project never spuriously refits.
+    The frequency panel's ``frequency_x_limits_by_unit`` per-mode stash is
+    dropped — it existed only because the 3-decimal limit fields made unit
+    round-trips lossy, and the policy now converts full-precision held values in
+    place. Missing keys fall back to the historical field defaults, so the
+    restored block is always complete.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 18
+
+    def _pair(state: dict, lo_key: str, hi_key: str, lo_default: float, hi_default: float):
+        try:
+            lo = float(state.get(lo_key, lo_default))
+            hi = float(state.get(hi_key, hi_default))
+        except (TypeError, ValueError):
+            return [lo_default, hi_default]
+        return [lo, hi] if lo <= hi else [hi, lo]
+
+    def _upgrade_panel_state(panel_state: dict) -> dict:
+        panel_state = dict(panel_state)
+        auto_x = bool(panel_state.get("auto_x_enabled", False))
+        auto_y = bool(panel_state.get("auto_y_enabled", False))
+        axes: dict = {
+            "x": {
+                "auto": auto_x,
+                "held": _pair(panel_state, "x_min", "x_max", 0.0, 10.0),
+                "quantity": None,
+            },
+            "y": {
+                "auto": auto_y,
+                "held": _pair(panel_state, "y_min", "y_max", -30.0, 30.0),
+                "quantity": None,
+            },
+        }
+        legacy_y = panel_state.get("y_limits_by_polarization")
+        if isinstance(legacy_y, dict):
+            for axis_key, limits in legacy_y.items():
+                if not isinstance(limits, (list, tuple)) or len(limits) != 2:
+                    continue
+                try:
+                    lo = float(limits[0])
+                    hi = float(limits[1])
+                except (TypeError, ValueError):
+                    continue
+                axes[f"y:{axis_key}"] = {
+                    "auto": auto_y,
+                    "held": [lo, hi] if lo <= hi else [hi, lo],
+                    "quantity": None,
+                }
+        panel_state["axis_limits"] = {"axes": axes}
+        for legacy_key in (
+            "x_min",
+            "x_max",
+            "y_min",
+            "y_max",
+            "auto_x_enabled",
+            "auto_y_enabled",
+            "y_limits_by_polarization",
+            "frequency_x_limits_by_unit",
+        ):
+            panel_state.pop(legacy_key, None)
+        return panel_state
+
+    plot_state = migrated.get("plot_state")
+    if isinstance(plot_state, dict):
+        plot_state = _upgrade_panel_state(plot_state)
+        freq_state = plot_state.get("frequency_plot_state")
+        if isinstance(freq_state, dict):
+            plot_state["frequency_plot_state"] = _upgrade_panel_state(freq_state)
+        migrated["plot_state"] = plot_state
+
+    return migrated
 
 
 def _migrate_v10_to_v11(data: dict) -> dict:
