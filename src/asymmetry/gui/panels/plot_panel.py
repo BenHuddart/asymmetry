@@ -120,6 +120,7 @@ from asymmetry.gui.styles.plots import (
 )
 from asymmetry.gui.styles.widgets import build_nav_button_qss
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.errorbar_dots import add_errorbar_dots
 from asymmetry.gui.utils.gle_export import (
     GleExportBuild,
     dedup_export_token,
@@ -2908,10 +2909,14 @@ class PlotPanel(QWidget):
         self._decimation_points_shown += int(indices.size)
         self._decimation_points_total += int(visible_indices.size)
 
-        ax.errorbar(
+        # ``Axes.errorbar`` builds one Path per point for the bars (40–90 ms
+        # per 4k-point trace, on every run switch); the shared helper draws the
+        # same dots-and-bars picture as two Line2D artists in ~1 ms.
+        add_errorbar_dots(
+            ax,
             time[indices],
             asymmetry[indices],
-            yerr=error[indices],
+            error[indices],
             **kwargs,
         )
         return int(indices.size)
@@ -6592,9 +6597,15 @@ class PlotPanel(QWidget):
         """Hide the moment window/cutoff overlay."""
         if not self._has_mpl:
             return
+        had_artists = bool(self._moments_span_artists or self._moments_cutoff_artists)
         self._moments_overlay_visible = False
         self._clear_moments_artists()
-        self._canvas.draw_idle()
+        # Only rasterise when an overlay was actually removed: this is called
+        # on every dataset selection (the moments readout is re-evaluated for
+        # the hidden frequency panel too), and an unconditional draw_idle was
+        # a full extra Agg pass of the hidden panel per run switch.
+        if had_artists:
+            self._canvas.draw_idle()
 
     def _clear_moments_artists(self) -> None:
         for artist in (*self._moments_span_artists, *self._moments_cutoff_artists):

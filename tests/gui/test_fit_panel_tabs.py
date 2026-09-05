@@ -3929,3 +3929,61 @@ def test_restore_preserves_out_of_range_link_group(qapp: QApplication) -> None:
     # And it round-trips back out.
     restored = {p["name"]: p for p in tab.get_state()["parameters"]}
     assert restored["Lambda"]["link_group"] == 7
+
+
+def test_rebinding_the_same_dataset_object_keeps_the_grouped_context(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A same-object re-bind must not rebuild the grouped count domains.
+
+    One run switch hands the same fit-range crop to the grouped tab several
+    times; rebuilding the O(bins) grouped context (and the FFT-seeded nuisance
+    table) on each was most of the switch's fit-side cost.
+    """
+    import asymmetry.gui.panels.fit.global_tab as global_tab_module
+
+    tab = GlobalFitTab(member_kind="runs")
+    tab._grouped_single = True
+    dataset = _grouped_run_dataset(700, 5.0)
+    calls: list[int] = []
+    original = global_tab_module.build_grouped_time_domain_groups
+
+    def _counting(ds, **kwargs):
+        calls.append(int(ds.run_number))
+        return original(ds, **kwargs)
+
+    monkeypatch.setattr(global_tab_module, "build_grouped_time_domain_groups", _counting)
+    rebuilds: list[int] = []
+    original_rebuild = tab._rebuild_group_nuisance_table
+
+    def _counting_rebuild(*args, **kwargs):
+        rebuilds.append(1)
+        return original_rebuild(*args, **kwargs)
+
+    monkeypatch.setattr(tab, "_rebuild_group_nuisance_table", _counting_rebuild)
+
+    tab.set_current_dataset(dataset)
+    first_builds, first_rebuilds = len(calls), len(rebuilds)
+    assert first_builds >= 1 and first_rebuilds >= 1
+
+    tab.set_current_dataset(dataset)
+    tab.set_current_dataset(dataset)
+    assert len(calls) == first_builds
+    assert len(rebuilds) == first_rebuilds
+
+    # A different object (a fresh crop) is a genuine change and recomputes.
+    tab.set_current_dataset(_grouped_run_dataset(700, 5.0))
+    assert len(calls) == first_builds + 1
+    assert len(rebuilds) == first_rebuilds + 1
+
+
+def test_grouped_context_memo_follows_reassigned_member_arrays(qapp: QApplication) -> None:
+    """Re-reductions reassign a member's arrays in place: the memo must miss."""
+    tab = GlobalFitTab(member_kind="runs")
+    dataset = _grouped_run_dataset(701, 5.0)
+    tab.set_current_dataset(dataset)
+    first = tab._grouped_mode_context()
+    assert tab._grouped_mode_context() is first
+
+    dataset.asymmetry = dataset.asymmetry + 1.0
+    assert tab._grouped_mode_context() is not first

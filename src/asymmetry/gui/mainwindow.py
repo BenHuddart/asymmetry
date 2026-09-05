@@ -82,6 +82,7 @@ import hashlib
 import math
 import os
 import time
+import weakref
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import nullcontext
 from datetime import datetime
@@ -280,6 +281,7 @@ from asymmetry.gui.ui_manager import (
     UIManager,
 )
 from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
+from asymmetry.gui.utils.memory import settle_memory
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
 from asymmetry.gui.utils.reduction_cache import ReductionCache
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
@@ -754,6 +756,9 @@ class MainWindow(QMainWindow):
         # _frequency_display_key (the displayed (run, rep)) guards stale redraws.
         self._frequency_recompute_inflight: set[tuple[int, RepresentationType]] = set()
         self._frequency_recompute_limits: dict[tuple[int, RepresentationType], tuple] = {}
+        # Callbacks parked until a set of in-flight (run, rep) recomputes land
+        # (see _await_frequency_recomputes).
+        self._frequency_recompute_waiters: list[tuple[set, Callable[[], None]]] = []
         self._frequency_display_key: tuple[int, RepresentationType] | None = None
         # True while the frequency view shows a multi-run overlay (a comparison
         # display with no single fit/moments target). Gates single-fit blocking.
@@ -2128,7 +2133,7 @@ class MainWindow(QMainWindow):
                 self._fit_panel.set_domain("time")
             if self._current_dataset is not None:
                 self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
-                if self._multi_group_fit_window is not None:
+                if self._grouped_fit_surface_active():
                     self._multi_group_fit_window.set_dataset(
                         self._get_fit_dataset(self._current_dataset)
                     )
@@ -3407,6 +3412,8 @@ class MainWindow(QMainWindow):
         finally:
             self._bulk_load_active = False
             self._bulk_load_cancel = None
+        # Runs after the caller has added the loaded runs to the browser.
+        self._schedule_memory_settle()
         was_cancelled = dialog.wasCanceled()
         dialog.close()
         dialog.deleteLater()
@@ -6084,6 +6091,28 @@ class MainWindow(QMainWindow):
             return False
         return self._grouped_time_domain_available()
 
+    def _grouped_fit_surface_active(self) -> bool:
+        """True when the multi-group fit window is the visible fit surface.
+
+        The window's dataset/member bindings rebuild its per-group tables and
+        grouped count domains; while it is swapped out of the fit dock those
+        rebuilds are pure cost on every run switch, so selection tracking is
+        gated on this and ``_sync_fit_dock_mode`` re-binds on entry.
+        """
+        return (
+            self._multi_group_fit_window is not None
+            and self._should_launch_multi_group_fit_window()
+        )
+
+    def _selected_time_fit_datasets(self) -> list[MuonDataset]:
+        """Fit-range crops of the browser selection (the grouped-series members)."""
+        selected = self._data_browser.get_selected_datasets()
+        return [
+            fit_dataset
+            for fit_dataset in (self._get_fit_dataset(ds) for ds in selected)
+            if fit_dataset is not None
+        ]
+
     def _sync_fit_dock_mode(self) -> None:
         """Swap the fit dock between regular, grouped and ALC content."""
         if self._fit_stack is None or getattr(self, "_parameters_stack", None) is None:
@@ -6108,6 +6137,11 @@ class MainWindow(QMainWindow):
                 self._get_fit_dataset(self._current_dataset) if self._current_dataset else None
             )
             self._multi_group_fit_window.set_dataset(dataset)
+            # The window only tracks the selection while it is the visible fit
+            # surface (see _grouped_fit_surface_active), so entering the groups
+            # view must also hand it the series members it missed.
+            if hasattr(self._multi_group_fit_window, "set_member_datasets"):
+                self._multi_group_fit_window.set_member_datasets(self._selected_time_fit_datasets())
             self._dock_fit.setWindowTitle(self._multi_group_fit_window.dock_title())
         else:
             self._dock_fit.setWindowTitle("Fit")  # inspector tab label — title case per spec
@@ -7405,13 +7439,23 @@ class MainWindow(QMainWindow):
             return
         self._frequency_recompute_inflight.add(key)
         started_at = time.perf_counter()
+        # What the worker is about to compute against. An explicit Compute FFT
+        # can re-recipe this representation while the worker runs; the
+        # completion compares against this snapshot and drops a superseded
+        # result instead of caching it under the new recipe.
+        recipe_at_start = copy.deepcopy(getattr(representation, "recipe", None))
         # compute() is pure (returns curves; mutates nothing), so it is safe to
         # run on the worker thread; the result is promoted into the shared
         # representation back on the GUI thread in the completion handler.
         self._tasks.start(
             lambda _worker: representation.compute(run),
             on_finished=lambda spectra: self._on_frequency_recompute_finished(
-                run_number, rep_type, representation, spectra, started_at
+                run_number,
+                rep_type,
+                representation,
+                spectra,
+                started_at,
+                recipe_at_start=recipe_at_start,
             ),
             on_error=lambda message: self._on_frequency_recompute_error(
                 run_number, rep_type, representation, message
@@ -7431,12 +7475,31 @@ class MainWindow(QMainWindow):
         representation: object,
         spectra: object,
         started_at: float,
+        *,
+        recipe_at_start: object = None,
     ) -> None:
         key = (run_number, rep_type)
         self._frequency_recompute_inflight.discard(key)
         preserved_x_limits, preserved_y_limits = self._frequency_recompute_limits.pop(
             key, (None, None)
         )
+        if getattr(representation, "recipe", None) != recipe_at_start:
+            # Superseded: the recipe changed while the worker ran (an explicit
+            # Compute FFT re-recipes and invalidates the representation), so
+            # these curves describe settings nobody asked for any more. Drop
+            # them; whoever changed the recipe is waiting on this key (below)
+            # and re-enters the ensure path, which now recomputes afresh.
+            self._log_perf_event(
+                "lazy_spectrum_recompute", started_at, run=run_number, superseded=1
+            )
+            self._finish_frequency_recompute_ui()
+            awaited = any(key in pending for pending, _cb in self._frequency_recompute_waiters)
+            self._notify_frequency_recompute_done(key)
+            if self._frequency_display_key == key and not awaited:
+                # Nobody is re-entering the ensure path for this run, yet it
+                # is on screen: re-sync so the fresh recipe gets computed.
+                self._sync_frequency_plot_for_run(run_number)
+            return
         # Promote the worker-computed curves into the shared representation on
         # the GUI thread, then let the cache helper cache + clear pending.
         representation.cache_datasets(list(spectra) if spectra else [])
@@ -7478,6 +7541,40 @@ class MainWindow(QMainWindow):
                     success=True,
                 )
         self._refresh_fourier_staleness()
+        self._notify_frequency_recompute_done(key)
+
+    def _await_frequency_recomputes(self, keys, callback: Callable[[], None]) -> None:
+        """Run *callback* once every in-flight recompute in *keys* has landed.
+
+        Fires immediately when none of *keys* is in flight. Batch callers use
+        this so a run whose view-triggered recompute is still running is
+        *waited for* rather than reported ready — before this, an explicit
+        Compute FFT (or an overlay auto-compute) issued while a lazy recompute
+        was in flight for the same run declared itself done at once, and a
+        faster selection path made that race a routine occurrence.
+        """
+        pending = {key for key in keys if key in self._frequency_recompute_inflight}
+        if not pending:
+            callback()
+            return
+        self._frequency_recompute_waiters.append((pending, callback))
+
+    def _notify_frequency_recompute_done(self, key) -> None:
+        """Release waiters whose last awaited recompute is *key*."""
+        waiters = self._frequency_recompute_waiters
+        if not waiters:
+            return
+        ready: list[Callable[[], None]] = []
+        remaining: list[tuple[set, Callable[[], None]]] = []
+        for pending, callback in waiters:
+            pending.discard(key)
+            if pending:
+                remaining.append((pending, callback))
+            else:
+                ready.append(callback)
+        self._frequency_recompute_waiters = remaining
+        for callback in ready:
+            callback()
 
     def _on_frequency_recompute_error(
         self,
@@ -7497,6 +7594,7 @@ class MainWindow(QMainWindow):
             self._render_frequency_spectra(
                 run_number, rep_type, spectra, preserved_x_limits, preserved_y_limits
             )
+        self._notify_frequency_recompute_done(key)
 
     def _ensure_frequency_spectra_for_runs_async(
         self,
@@ -7517,14 +7615,31 @@ class MainWindow(QMainWindow):
         not recomputable, or in flight are left as-is, so ``on_ready`` always
         runs (once) even when nothing was recomputed.
         """
-        targets: list[tuple[int, object, object]] = []
+        requested: list[int] = []
         for raw in run_numbers:
             try:
-                run_number = int(raw)
+                requested.append(int(raw))
             except (TypeError, ValueError):
                 continue
-            if (run_number, rep_type) in self._frequency_recompute_inflight:
-                continue
+        inflight = [
+            (run_number, rep_type)
+            for run_number in requested
+            if (run_number, rep_type) in self._frequency_recompute_inflight
+        ]
+        if inflight:
+            # Some requested runs are already recomputing (the view path):
+            # wait for them, then re-enter — by then each is either cached
+            # (done) or, if its recipe changed meanwhile and the result was
+            # dropped as superseded, due for a fresh compute here.
+            self._await_frequency_recomputes(
+                inflight,
+                lambda: self._ensure_frequency_spectra_for_runs_async(
+                    requested, rep_type, on_ready, busy_message=busy_message
+                ),
+            )
+            return
+        targets: list[tuple[int, object, object]] = []
+        for run_number in requested:
             target = self._frequency_recompute_target(run_number, rep_type)
             if target is not None:
                 representation, run = target
@@ -7557,6 +7672,8 @@ class MainWindow(QMainWindow):
             self._finish_frequency_recompute_ui()
             self._log_perf_event("batch_spectrum_recompute", started_at, runs=len(results))
             on_ready()
+            for run_number, _spectra in results:
+                self._notify_frequency_recompute_done((run_number, rep_type))
 
         def _error(message):
             # The batch compute is one task, so a single bad recipe fails the
@@ -7570,6 +7687,8 @@ class MainWindow(QMainWindow):
             self._set_fourier_status(f"Could not recompute {name}: {message}")
             # Proceed with whatever is cached; callers report still-missing runs.
             on_ready()
+            for run_number, _rep, _run in targets:
+                self._notify_frequency_recompute_done((run_number, rep_type))
 
         self._tasks.start(_worker, on_finished=_finished, on_error=_error)
 
@@ -10046,10 +10165,16 @@ class MainWindow(QMainWindow):
                     _fit_range = self._plot_panel.get_fit_range()
                 if hasattr(self._fit_panel, "set_fit_range_display"):
                     self._fit_panel.set_fit_range_display(*_fit_range)
-                if self._multi_group_fit_window is not None:
+                if self._grouped_fit_surface_active():
+                    # Binding the grouped surfaces rebuilds their per-group
+                    # tables (FFT-seeded) — ~25 ms per switch — so only the
+                    # visible surface tracks the selection; _sync_fit_dock_mode
+                    # binds the window when the groups view is entered.
                     self._multi_group_fit_window.set_dataset(self._get_fit_dataset(dataset))
-                    if hasattr(self._multi_group_fit_window, "set_fit_range_display"):
-                        self._multi_group_fit_window.set_fit_range_display(*_fit_range)
+                if self._multi_group_fit_window is not None and hasattr(
+                    self._multi_group_fit_window, "set_fit_range_display"
+                ):
+                    self._multi_group_fit_window.set_fit_range_display(*_fit_range)
                 self._log_panel.log(f"Selected run {run_number}")
                 self.statusBar().showMessage(f"Viewing run {run_number}")
         finally:
@@ -10230,7 +10355,7 @@ class MainWindow(QMainWindow):
                 if hasattr(self._fit_panel, "set_domain"):
                     self._fit_panel.set_domain("time")
                 self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
-            if self._multi_group_fit_window is not None:
+            if self._grouped_fit_surface_active():
                 self._multi_group_fit_window.set_dataset(
                     self._get_fit_dataset(self._current_dataset)
                 )
@@ -14106,9 +14231,20 @@ class MainWindow(QMainWindow):
 
         # Refresh the single-fit tab with the currently active dataset so that
         # bunch-factor or fit-range changes are reflected immediately.
+        switching_run = (
+            len(selected) == 1
+            and self._current_dataset is not None
+            and selected[0] is not self._current_dataset
+        )
         if is_frequency_domain:
             self._fit_panel.set_dataset(self._active_frequency_fit_dataset())
-        elif self._current_dataset is not None:
+        elif self._current_dataset is not None and not switching_run:
+            # A single selection that is not the current run is a run switch
+            # in progress: the browser emits selection_changed first and
+            # dataset_selected next, and _on_dataset_selected binds the new
+            # run. Re-binding the *leaving* run here first (saving and
+            # restoring its form, rebuilding the grouped context) was pure
+            # cost on every switch.
             self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
 
         self._fit_panel.set_datasets(analysis_datasets)
@@ -14119,8 +14255,8 @@ class MainWindow(QMainWindow):
             self._fit_panel.clear_bound_group()
         # The grouped surface fits a *series* across the selected runs.
         if (
-            self._multi_group_fit_window is not None
-            and not is_frequency_domain
+            not is_frequency_domain
+            and self._grouped_fit_surface_active()
             and hasattr(self._multi_group_fit_window, "set_member_datasets")
         ):
             self._multi_group_fit_window.set_member_datasets(analysis_datasets)
@@ -14240,9 +14376,64 @@ class MainWindow(QMainWindow):
         self._status_coords_label.setText(text)
 
     def _get_fit_dataset(self, dataset):
-        """Return analysis dataset restricted to the active fit range."""
-        analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)
-        return self._plot_panel.get_fit_dataset(analysis_dataset)
+        """Return analysis dataset restricted to the active fit range.
+
+        Memoised per source dataset: one run switch asks for the crop several
+        times (the selection update, the dataset-selected handler, the grouped
+        surfaces), and every fresh crop is a new object that defeats the
+        identity-keyed memos downstream (``GlobalFitTab._grouped_mode_context``
+        rebuilds its grouped count domains — O(bins) — for each new object).
+        The key embeds everything the crop reads: the identity of the three
+        data arrays and the run (grouping edits, projection changes and
+        re-reductions all *reassign* those attributes; nothing mutates them in
+        place), the bunch factor and the fit range. The entry rides a
+        ``weakref.finalize`` on the source so a recycled ``id`` can never
+        alias, and the cached crop's metadata is refreshed from the source on
+        every hit (metadata is edited in place, e.g. field overrides).
+        """
+        if dataset is None:
+            return None
+        memo = self.__dict__.get("_fit_dataset_memo")
+        if memo is None:
+            memo = self._fit_dataset_memo = {}
+        bunch_factor = getattr(self._plot_panel, "get_bunch_factor", None)
+        fit_range = getattr(self._plot_panel, "get_fit_range", None)
+        if callable(bunch_factor):
+            analysis_key: object = int(bunch_factor())
+            analysis_dataset = None
+        else:
+            # A panel without the accessor (test doubles): key on the analysis
+            # dataset's identity instead, so a re-binned copy never aliases.
+            analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)
+            analysis_key = id(analysis_dataset)
+        key = (
+            id(dataset.time),
+            id(dataset.asymmetry),
+            id(dataset.error),
+            id(dataset.run),
+            analysis_key,
+            tuple(fit_range()) if callable(fit_range) else (None, None),
+        )
+        entry = memo.get(id(dataset))
+        if entry is not None and entry[0] == key:
+            crop = entry[1]
+            if crop is None:
+                return dataset
+            crop.metadata = dict(dataset.metadata)
+            return crop
+        if analysis_dataset is None:
+            analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)
+        crop = self._plot_panel.get_fit_dataset(analysis_dataset)
+        if entry is None:
+            try:
+                weakref.finalize(dataset, memo.pop, id(dataset), None)
+            except TypeError:
+                # A source that cannot be weakly referenced is never memoised.
+                return crop
+        # Never hold the source itself (no fit range → the crop *is* the
+        # source): the entry must not keep a removed run alive.
+        memo[id(dataset)] = (key, None if crop is dataset else crop)
+        return crop
 
     def _get_full_fit_context(self):
         """Return the current analysis dataset **uncropped**, plus the fit range.
@@ -14645,6 +14836,30 @@ class MainWindow(QMainWindow):
             return
         self._open_project_file(path)
 
+    def _schedule_memory_settle(self) -> None:
+        """Coalesce a :func:`settle_memory` onto the next event-loop turn.
+
+        Called after every bulk data arrival or departure (file loads, project
+        open, clear-all). Deferred so it runs once the caller has finished
+        adding datasets, and coalesced so a load that fans out into several
+        hooks settles once.
+        """
+        if getattr(self, "_memory_settle_pending", False):
+            return
+        self._memory_settle_pending = True
+        window_ref = weakref.ref(self)
+
+        def _run() -> None:
+            window = window_ref()
+            if window is not None:
+                window._memory_settle_pending = False
+            started_at = time.perf_counter()
+            stats = settle_memory()
+            if window is not None and stats is not None:
+                window._log_perf_event("memory_settle", started_at, **stats)
+
+        QTimer.singleShot(0, _run)
+
     def _open_project_file(self, path: str) -> None:
         """Load and restore a project from *path*."""
         if getattr(self, "_bulk_load_active", False):
@@ -14685,6 +14900,7 @@ class MainWindow(QMainWindow):
         self._add_recent_project(path)
         self._clear_dirty()
         self._update_window_title()
+        self._schedule_memory_settle()
 
     def collect_project_state(self) -> dict:
         """Return a full serialisable snapshot of the current application state.
@@ -15641,6 +15857,9 @@ class MainWindow(QMainWindow):
     def _clear_all_state(self) -> None:
         """Reset every panel to its empty initial state."""
         self._current_dataset = None
+        # The closed session's runs were frozen out of the collector's reach
+        # (settle_memory); let the next settle reclaim them.
+        self._schedule_memory_settle()
         # A fresh/cleared session is complete by definition; a later cancelled
         # restore re-sets this before any save can see it.
         self._project_load_incomplete = False
@@ -15657,6 +15876,7 @@ class MainWindow(QMainWindow):
         # nothing displayed and the overlay must not survive into it.
         self._frequency_recompute_inflight = set()
         self._frequency_recompute_limits = {}
+        self._frequency_recompute_waiters = []
         self._frequency_display_key = None
         if hasattr(self, "_frequency_overlay"):
             self._frequency_overlay.hide()
