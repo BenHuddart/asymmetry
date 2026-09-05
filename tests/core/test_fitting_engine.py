@@ -71,7 +71,7 @@ def test_fit_success_with_fixed_and_free_parameters(
     params = ParameterSet(
         [
             Parameter("A0", value=0.2, min=0.0, max=1.0),
-            Parameter("Lambda", value=0.4, fixed=True),
+            Parameter("Lambda", value=0.4, min=0.0, max=5.0, fixed=True),
             Parameter("baseline", value=0.0, fixed=True),
         ]
     )
@@ -84,6 +84,35 @@ def test_fit_success_with_fixed_and_free_parameters(
     assert "A0" in result.uncertainties
     assert "Lambda" not in result.uncertainties
     assert result.reduced_chi_squared == pytest.approx(1.23 / (len(dataset.time) - 1))
+
+
+def test_single_fit_result_keeps_the_fixed_flag_and_bounds(
+    dataset: MuonDataset, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pinned parameter must come back pinned.
+
+    Returning it as a plain value made ``free_parameters`` over-count it — so
+    every k-penalised information criterion was wrong by 2 per pinned
+    parameter — unticked the GUI's fix box when the result was applied, and
+    un-pinned it for anything that re-fits from the result.
+    """
+    _install_fake_iminuit(monkeypatch)
+
+    params = ParameterSet(
+        [
+            Parameter("A0", value=0.2, min=0.0, max=1.0),
+            Parameter("Lambda", value=0.4, min=0.1, max=5.0, fixed=True),
+            Parameter("baseline", value=0.0, fixed=True),
+        ]
+    )
+
+    result = FitEngine().fit(dataset, _exp_model, params)
+
+    fitted = result.parameters["Lambda"]
+    assert fitted.fixed is True
+    assert (fitted.min, fitted.max) == (0.1, 5.0)
+    assert result.parameters["baseline"].fixed is True
+    assert [p.name for p in result.parameters.free_parameters] == ["A0"]
 
 
 def test_fit_import_error_returns_failure(
@@ -229,6 +258,43 @@ def test_global_fit_success_with_fake_iminuit(monkeypatch: pytest.MonkeyPatch) -
     assert results[2].parameters["Lambda"].value == pytest.approx(0.5)
     assert results[1].parameters["baseline"].fixed is True
     assert results[1].success is True
+
+
+def test_global_fit_result_keeps_fixed_flag_and_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The joint path carries a pinned *global* through with its bounds too."""
+    _install_fake_iminuit(monkeypatch)
+
+    t = np.linspace(0.0, 3.0, 30)
+    ds1 = MuonDataset(t, _exp_model(t, 0.2, 0.3), np.full_like(t, 0.01), {"run_number": 1})
+    ds2 = MuonDataset(t, _exp_model(t, 0.2, 0.5), np.full_like(t, 0.01), {"run_number": 2})
+
+    def _params() -> ParameterSet:
+        return ParameterSet(
+            [
+                Parameter("A0", 0.2, min=0.0, max=1.0),
+                Parameter("Lambda", 0.3, min=0.0, max=2.0),
+                Parameter("baseline", 0.05, min=-0.5, max=0.5, fixed=True),
+            ]
+        )
+
+    results, fitted_global = FitEngine().global_fit(
+        [ds1, ds2],
+        _exp_model,
+        # A free global keeps this on the joint path rather than the
+        # block-separable shortcut.
+        global_params=["A0", "baseline"],
+        local_params=["Lambda"],
+        initial_params={1: _params(), 2: _params()},
+        method="simplex",
+    )
+
+    assert fitted_global["baseline"].fixed is True
+    assert (fitted_global["baseline"].min, fitted_global["baseline"].max) == (-0.5, 0.5)
+    for run in (1, 2):
+        pinned = results[run].parameters["baseline"]
+        assert pinned.fixed is True
+        assert (pinned.min, pinned.max) == (-0.5, 0.5)
+        assert "baseline" not in {p.name for p in results[run].parameters.free_parameters}
 
 
 def test_global_fit_rejects_non_finite_initial_values(monkeypatch: pytest.MonkeyPatch) -> None:

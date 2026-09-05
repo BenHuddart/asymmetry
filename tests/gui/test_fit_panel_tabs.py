@@ -479,6 +479,46 @@ def test_single_fit_apply_fit_wizard_assessment_emits_fit_completed(
     assert tab._composite_model.component_names == ["Exponential", "Constant"]
 
 
+def test_single_fit_apply_fit_wizard_assessment_ticks_fix_for_pinned_parameter(
+    qapp: QApplication,
+    dataset: MuonDataset,
+) -> None:
+    """Applying a wizard result must keep the wizard's pins.
+
+    The wizard pins applied-field parameters (``field``, and ``B_L`` on a
+    ZF/LF run); Apply has always read ``fitted.fixed``, but the engine used to
+    drop the flag on its way out of the fit, so a pinned parameter landed in
+    the table unticked and unbounded.
+    """
+    assessment, recommendation = _wizard_payload_for_dataset(dataset)
+    pinned = assessment.fit_result.parameters["Lambda"]
+    pinned.fixed = True
+
+    tab = SingleFitTab()
+    tab.set_dataset(dataset)
+    tab._apply_fit_wizard_assessment(assessment, recommendation)
+
+    checked_by_name: dict[str, bool] = {}
+    bounds_by_name: dict[str, tuple[str, str]] = {}
+    for row in range(tab._param_table.rowCount()):
+        name_item = tab._param_table.item(row, 0)
+        name = name_item.data(Qt.ItemDataRole.UserRole) if name_item else None
+        if not isinstance(name, str):
+            continue
+        fix_widget = tab._param_table.cellWidget(row, 2)
+        checkbox = fix_widget.findChild(QCheckBox) if fix_widget else None
+        if checkbox is not None:
+            checked_by_name[name] = checkbox.isChecked()
+        bounds_by_name[name] = (
+            tab._param_table.item(row, 3).text(),
+            tab._param_table.item(row, 4).text(),
+        )
+
+    assert checked_by_name["Lambda"] is True
+    assert checked_by_name["A_1"] is False
+    assert bounds_by_name["Lambda"] == ("0", "5")
+
+
 def test_fit_panel_forwards_fit_wizard_apply_via_normal_fit_completed_signal(
     qapp: QApplication,
     dataset: MuonDataset,

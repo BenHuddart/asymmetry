@@ -118,7 +118,10 @@ Name       Symbol           Unit   Description
 
 When a dataset's metadata carries a known applied field, the fit panel
 initialises ``B_L`` from it; fix ``B_L`` whenever it is not the quantity of
-interest. :math:`\Delta` is partially degenerate with the amplitude in a
+interest. The :ref:`fit wizard <fit-wizard-applied-field>` does that for you —
+it pins ``B_L`` from the recorded geometry and setpoint (at 0 on a zero-field
+run) and leaves it ticked **Fix** in the parameter table when you apply the
+candidate. :math:`\Delta` is partially degenerate with the amplitude in a
 single run — pin it with a decoupling field sweep, or a global fit sharing
 :math:`\Delta` across runs (:doc:`../global_fit_wizard`). The oscillatory
 integral is evaluated for all requested times at once by cumulative

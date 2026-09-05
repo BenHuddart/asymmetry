@@ -131,6 +131,30 @@ class ModelDefinition:
 # ill-conditioned 1/omega0 prefactors of the longitudinal-field expressions.
 _FIELD_DECOUPLING_RATIO = 0.05
 
+#: Muon Larmor angular frequency per Gauss of applied field, in rad/µs — the
+#: ``omega0 = gamma_mu * B_L`` conversion every longitudinal-field line shape
+#: below performs, hoisted so callers can reason about the decoupling window
+#: without re-deriving it (≈ 0.0851 rad µs⁻¹ G⁻¹).
+LARMOR_RAD_PER_US_PER_GAUSS: float = (
+    2.0 * np.pi * MUON_GYROMAGNETIC_RATIO_MHZ_PER_T * GAUSS_TO_TESLA
+)
+
+
+def field_decoupling_threshold_gauss(width_per_us: float) -> float:
+    """Smallest ``|B_L|`` (Gauss) that still moves a Kubo-Toyabe line shape.
+
+    Below ``omega0 < 0.05 * width`` the longitudinal-field Kubo-Toyabe
+    functions fall back to their exact zero-field form (see
+    ``_FIELD_DECOUPLING_RATIO``), so the objective is *exactly flat* in ``B_L``
+    there: a fit seeded inside this window has no gradient to follow.  Callers
+    that must leave ``B_L`` free — the fit wizard's unknown-field case — seed it
+    clear of the returned threshold.
+
+    ``width_per_us`` is the model's local-field width in µs⁻¹ (``Delta`` for
+    the Gaussian shapes, ``a_L`` for the Lorentzian one).
+    """
+    return _FIELD_DECOUPLING_RATIO * max(float(width_per_us), 0.0) / LARMOR_RAD_PER_US_PER_GAUSS
+
 
 def exponential_relaxation(t: NDArray, A0: float, Lambda: float, baseline: float = 0.0) -> NDArray:
     """Simple exponential: A(t) = A0 exp(−Λt) + baseline."""
