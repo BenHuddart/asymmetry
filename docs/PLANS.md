@@ -6,6 +6,12 @@ subsystems or days.
 
 ## Active
 
+### Axis limits: one per-axis Auto/Hold policy for every plot representation
+
+Status: plan drafted 2026-09-05, awaiting maintainer sign-off; single PR on
+`feat/axis-limit-policy`, phased subagent work with a lead review gate per
+phase. Full plan: [docs/plans/axis-limit-policy.md](plans/axis-limit-policy.md).
+
 ### Fit Wizard: matched-apodisation scan for heavily damped lines
 
 Status: plan agreed with maintainer (2026-09-04); single PR on
