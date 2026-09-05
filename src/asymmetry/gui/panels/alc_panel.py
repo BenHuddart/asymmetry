@@ -56,7 +56,7 @@ from asymmetry.gui.styles.widgets import (
     info_html,
     make_provenance_label,
 )
-from asymmetry.gui.widgets.axis_limits import AxisLimitControls
+from asymmetry.gui.widgets.axis_limits import AxisLimitControls, AxisLimitPolicy
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
@@ -218,11 +218,10 @@ class ALCScanView(QWidget):
         self._handle_artists: dict[tuple[str, int, int], object] = {}
         #: Pending click-to-toggle candidate: (run_number, press x/y in px).
         self._toggle_candidate: tuple[int, float, float] | None = None
-        #: Auto-scale state per axis (matches the PlotPanel limit toolbar): when
-        #: on, the axis frames the data and its fields mirror the result; when
-        #: off, the axis is pinned to the typed field values.
-        self._auto_x = True
-        self._auto_y = True
+        #: Per-axis Auto/Hold resolver (matches the PlotPanel limit toolbar):
+        #: Auto frames the data into the fields; Held pins the axis at its
+        #: last resolved value. The fields and Auto buttons are a view of it.
+        self._limits = AxisLimitPolicy()
         layout = QVBoxLayout(self)
 
         # The view is two relocatable sections: the plot section (view
@@ -355,21 +354,23 @@ class ALCScanView(QWidget):
         return self._axis_controls
 
     def _on_auto_x_toggled(self, checked: bool) -> None:
-        self._auto_x = checked
+        self._limits.set_auto("x", checked)
         self._render_plot()
 
     def _on_auto_y_toggled(self, checked: bool) -> None:
-        self._auto_y = checked
+        self._limits.set_auto("y", checked)
         self._render_plot()
 
     def _on_x_limit_edited(self) -> None:
-        self._auto_x = False
+        lo, hi = sorted((self._x_min.value(), self._x_max.value()))
+        self._limits.set_manual("x", *(self._padded(lo, hi) if lo == hi else (lo, hi)))
         with QSignalBlocker(self._auto_x_btn):
             self._auto_x_btn.setChecked(False)
         self._render_plot()
 
     def _on_y_limit_edited(self) -> None:
-        self._auto_y = False
+        lo, hi = sorted((self._y_min.value(), self._y_max.value()))
+        self._limits.set_manual("y", *(self._padded(lo, hi) if lo == hi else (lo, hi)))
         with QSignalBlocker(self._auto_y_btn):
             self._auto_y_btn.setChecked(False)
         self._render_plot()
@@ -439,42 +440,25 @@ class ALCScanView(QWidget):
         pad = (hi - lo) * frac
         return lo - pad, hi + pad
 
-    def _axis_target(
-        self, auto: bool, data_range: tuple[float, float] | None, lo_field, hi_field
-    ) -> tuple[float, float] | None:
-        """Target ``(lo, hi)`` for one axis, or ``None`` to leave it unchanged.
-
-        Auto frames the padded data range (``None`` when there is no data, so the
-        axis is left as-is). Manual uses the typed fields, sorted so an inverted
-        entry is read as a range, and expanded when degenerate so a min==max
-        entry still produces a valid axis instead of being silently dropped.
-        """
-        if auto:
-            return None if data_range is None else self._padded(*data_range)
-        lo, hi = sorted((lo_field.value(), hi_field.value()))
-        return self._padded(lo, hi) if lo == hi else (lo, hi)
-
     def _apply_axis_limits(self) -> None:
-        """Pin manual axes to their fields, frame auto axes from the data, and
-        sync the fields to the applied limits.
+        """Resolve x/y through the policy, apply them, and sync the fields.
 
         Called at the end of :meth:`_render_plot` once every artist is drawn, so
         the limits it writes back are the ones the canvas will show.
         """
         bounds = self._auto_data_bounds()
-        x_range = None if bounds is None else (bounds[0], bounds[1])
-        y_range = None if bounds is None else (bounds[2], bounds[3])
-        xlim = self._axis_target(self._auto_x, x_range, self._x_min, self._x_max)
-        ylim = self._axis_target(self._auto_y, y_range, self._y_min, self._y_max)
-        if xlim is not None:
-            self._ax.set_xlim(*xlim)
-        if ylim is not None:
-            self._ax.set_ylim(*ylim)
+        x_range = None if bounds is None else self._padded(bounds[0], bounds[1])
+        y_range = None if bounds is None else self._padded(bounds[2], bounds[3])
+        limits = self._limits.resolve({"x": x_range, "y": y_range})
+        if "x" in limits:
+            self._ax.set_xlim(*limits["x"])
+        if "y" in limits:
+            self._ax.set_ylim(*limits["y"])
         # Reflect the applied limits (fall back to the current view only when we
         # left an axis unchanged — auto with no data — never clobbering a typed
         # value with a stale axis extent).
-        x0, x1 = xlim if xlim is not None else self._ax.get_xlim()
-        y0, y1 = ylim if ylim is not None else self._ax.get_ylim()
+        x0, x1 = limits.get("x", self._ax.get_xlim())
+        y0, y1 = limits.get("y", self._ax.get_ylim())
         for field, value in (
             (self._x_min, x0),
             (self._x_max, x1),
@@ -1161,12 +1145,13 @@ class ALCScanView(QWidget):
         """Reset to the pristine initial state for a new project.
 
         Beyond :meth:`clear` (scan, regions, peaks, overlays, results), this also
-        restores the default baseline model so a new project does not inherit the
-        previous scan's baseline choice. ``clear`` deliberately leaves the model
-        alone because the empty-axis re-render paths reuse it; only New Project
-        should wipe it.
+        forgets any held axis limits and restores the default baseline model, so
+        a new project does not inherit the previous scan's view or baseline
+        choice. ``clear`` deliberately leaves both alone because the empty-axis
+        re-render paths reuse them; only New Project should wipe them.
         """
         self.clear()
+        self._limits.reset()
         with QSignalBlocker(self._baseline_model_combo):
             self._baseline_model_combo.setCurrentIndex(0)
 
@@ -1230,8 +1215,8 @@ class ALCScanView(QWidget):
 
     def _reset_auto_scale(self) -> None:
         """Re-enable auto-scaling on both axes (and the Auto toggles)."""
-        self._auto_x = True
-        self._auto_y = True
+        self._limits.set_auto("x", True)
+        self._limits.set_auto("y", True)
         for btn in (self._auto_x_btn, self._auto_y_btn):
             with QSignalBlocker(btn):
                 btn.setChecked(True)

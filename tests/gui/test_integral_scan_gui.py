@@ -1045,13 +1045,13 @@ def test_alc_scan_axis_limit_controls(qapp: QApplication):
     view._x_min.setValue(2500.0)
     view._x_max.setValue(4500.0)
     view._on_x_limit_edited()
-    assert view._auto_x is False and not view._auto_x_btn.isChecked()
+    assert view._limits.is_auto("x") is False and not view._auto_x_btn.isChecked()
     assert view._auto_y_btn.isChecked()
     assert view._ax.get_xlim() == pytest.approx((2500.0, 4500.0))
 
     # Re-enabling Auto X reframes to the data extent.
     view._auto_x_btn.setChecked(True)
-    assert view._auto_x is True
+    assert view._limits.is_auto("x") is True
     assert view._ax.get_xlim()[0] <= 2000.0 and view._ax.get_xlim()[1] >= 5000.0
 
     # A new scan (show_scan) resets both axes to auto — a stale manual range in
@@ -1059,7 +1059,7 @@ def test_alc_scan_axis_limit_controls(qapp: QApplication):
     view._y_min.setValue(0.0)
     view._y_max.setValue(1.0)
     view._on_y_limit_edited()
-    assert view._auto_y is False
+    assert view._limits.is_auto("y") is False
     view.show_scan(
         np.array([100.0, 200.0]),
         np.array([50.0, 60.0]),
@@ -1068,7 +1068,7 @@ def test_alc_scan_axis_limit_controls(qapp: QApplication):
         x_label="B (G)",
         y_label="A (%)",
     )
-    assert view._auto_x is True and view._auto_y is True
+    assert view._limits.is_auto("x") is True and view._limits.is_auto("y") is True
     assert view._auto_x_btn.isChecked() and view._auto_y_btn.isChecked()
 
 
@@ -1150,11 +1150,11 @@ def test_alc_show_scan_reset_view_false_keeps_manual_zoom(qapp: QApplication):
     view._on_y_limit_edited()
 
     view.show_scan(*args, **kw, reset_view=False)
-    assert view._auto_y is False
+    assert view._limits.is_auto("y") is False
     assert view._ax.get_ylim() == pytest.approx((0.0, 50.0))
     # A normal (reset_view=True) render still reframes.
     view.show_scan(*args, **kw)
-    assert view._auto_y is True
+    assert view._limits.is_auto("y") is True
 
 
 def test_integral_strip_release_ignores_nonleft_button(qapp: QApplication):
