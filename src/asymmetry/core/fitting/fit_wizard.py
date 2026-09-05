@@ -29,6 +29,7 @@ from asymmetry.core.fitting.composite import (
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.envelope_match import match_envelope_banks
+from asymmetry.core.fitting.legacy_product_amplitudes import fold_legacy_product_amplitude_set
 from asymmetry.core.fitting.models import field_decoupling_threshold_gauss
 from asymmetry.core.fitting.muonium import VACUUM_MUONIUM_A_HF_MHZ
 from asymmetry.core.fitting.parameters import (
@@ -3599,7 +3600,14 @@ def _migrate_fit_result_fractions(result: FitResult, model: CompositeModel) -> F
     weights, last-term entry dropped) and the uncertainty keys are re-mapped so
     the cached fit still applies after the model rows switch to ``f_<Component>``.
     A no-op when there are no legacy keys.
+
+    Legacy per-factor product amplitudes (``A_2`` beside ``A_1`` in a cached
+    multiplet) are folded onto the one-scale-per-product names first, on the
+    same in-place result.
     """
+    result.parameters, result.uncertainties = fold_legacy_product_amplitude_set(
+        model, result.parameters, result.uncertainties
+    )
     migrated = migrate_legacy_fraction_parameter_set(model, result.parameters)
     if migrated is result.parameters:
         # No legacy fraction keys for this model — nothing to rename or re-key.
@@ -3789,12 +3797,10 @@ def _continuation_parameters(seed: ParameterSet, result: FitResult) -> Parameter
     """``seed``'s structure carrying ``result``'s fitted values.
 
     Not ``result.parameters`` directly. The engine now carries the ``fixed``
-    flag and the bounds through (it used to drop both, which silently freed the
-    multiplet envelope amplitudes pinned at 1 to keep each ``Osc × Env`` product
-    non-degenerate), but ``expr`` constraints are still not round-tripped and a
-    restart must not depend on the engine's packing at all: the seed is the
-    authoritative structure. Only the values move, clipped back inside the
-    seed's bounds.
+    flag and the bounds through (it used to drop both), but ``expr``
+    constraints are still not round-tripped and a restart must not depend on
+    the engine's packing at all: the seed is the authoritative structure.
+    Only the values move, clipped back inside the seed's bounds.
     """
     continued = _clone_parameter_set(seed)
     for parameter in continued:
@@ -4443,9 +4449,9 @@ def _initial_parameters_for_template(
             overrides["sigma"] = rate
     elif (multiplet := _MULTIPLET_TEMPLATE_KEY_RE.match(template.key)) is not None:
         # One damped cosine per detected line: frequencies/amplitudes from the
-        # peaks; the envelope amplitude of each (Osc x Env) pair is fixed at 1
-        # so the pair's scale lives in the oscillatory amplitude alone (the
-        # parenthesised product would otherwise be A_i*A_j degenerate).
+        # peaks. Each (Osc x Env) pair carries exactly one amplitude by
+        # construction (CompositeModel suppresses the envelope factor's
+        # scale), so only the oscillatory amplitude is seeded here.
         n_components = int(multiplet.group(1))
         has_relax = multiplet.group(3) is not None
         # Must select the SAME subset the builder counted: a relaxing shape's
@@ -4490,8 +4496,6 @@ def _initial_parameters_for_template(
             peak = pair_peaks[k] if k < len(pair_peaks) else None
             overrides[_pname("A", osc)] = _seeded_amplitude(peak, max(amplitude * share, _EPS))
             overrides[_pname("phase", osc)] = _seeded_phase(peak, phase_guess)
-            overrides[_pname("A", env)] = 1.0
-            fixed_names.add(_pname("A", env))
             overrides[_pname("Lambda", env)] = lambda_guess
             overrides[_pname("sigma", env)] = gaussian_width
             if peak is not None:
@@ -4655,6 +4659,19 @@ def _initial_parameters_for_template(
             # ``fixed_names`` is matched on the base name in the loop below.
             overrides.setdefault("B_L", pinned_b_l)
             fixed_names.add("B_L")
+        elif field_gauss is not None and geometry is not FieldGeometry.TF:
+            # A real setpoint was recorded but the geometry tag that would let
+            # ``_pinned_longitudinal_field`` pin it is missing (unconfirmed —
+            # neither ZF, LF, nor TF) — the exact shape of this Ag LF-KT
+            # decoupling series, whose runs carry a numeric field but no
+            # ``field_direction``/``field_state`` metadata. It is still our
+            # best evidence for ``B_L``: a confirmed TF run is excluded above
+            # because its longitudinal component is "small" by construction,
+            # but an unconfirmed one is not known to be transverse, so seeding
+            # at the recorded magnitude (free to move) beats guessing from the
+            # local-field width alone. One value for every carrier, as with
+            # the pinned branch above.
+            overrides.setdefault("B_L", abs(float(field_gauss)))
         else:
             # Free, but per *name*: carriers disagree on the default (0 for the
             # Kubo-Toyabe shapes, 10 G for MuoniumLFRelax), and a base-name

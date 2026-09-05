@@ -46,6 +46,9 @@ from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     FitWizardRecommendation,
 )
+from asymmetry.core.fitting.legacy_product_amplitudes import (
+    fold_legacy_product_amplitude_state,
+)
 from asymmetry.core.fitting.parameters import (
     Parameter,
     ParameterSet,
@@ -1285,9 +1288,11 @@ class SingleFitTab(FitTabBase):
         self._cached_wizard_signature = None
         self._cached_wizard_log_text = ""
 
-        # Migrate legacy ``fraction_<k>`` parameter entries (pre-rework projects)
-        # to the n-1 free-fraction scheme before restoring the table rows.
+        # Migrate pre-rework parameter entries before restoring the table rows:
+        # legacy ``fraction_<k>`` names to the n-1 free-fraction scheme, and
+        # legacy per-factor amplitudes onto the one-scale-per-product policy.
         state = migrate_legacy_fraction_state(state)
+        state = fold_legacy_product_amplitude_state(state)
 
         composite_data = state.get("composite_model")
         if isinstance(composite_data, dict):

@@ -70,6 +70,10 @@ from asymmetry.core.fitting.global_search.homogeneity import (
     classify_parameter_homogeneity,
     wald_subset_delta_chi2,
 )
+from asymmetry.core.fitting.legacy_product_amplitudes import (
+    fold_legacy_product_amplitude_names,
+    fold_legacy_product_amplitude_set,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.peak_detection import (
     analyze_dataset_peaks,
@@ -2988,17 +2992,18 @@ def _serialize_global_candidate_assessment(
 def _migrate_global_param_name_tuple(
     names: tuple[str, ...], model: CompositeModel
 ) -> tuple[str, ...]:
-    """Rename/drop legacy ``fraction_<k>`` entries in a cached parameter-role tuple.
+    """Rename/drop legacy entries in a cached parameter-role tuple.
 
-    Applies the same rename map as
+    Applies the same rename maps as
     :func:`asymmetry.core.fitting.composite.migrate_legacy_fraction_parameter_set`
+    and
+    :func:`asymmetry.core.fitting.legacy_product_amplitudes.fold_legacy_product_amplitude_names`
     to a ``global_param_names``/``local_param_names``/``fixed_param_names`` tuple,
-    preserving order and dropping names that map to ``None`` (the derived last
-    term of a fraction group, which never has a free-parameter name of its own).
+    preserving order and dropping names that have no parameter under the current
+    schemes (a fraction group's derived last term, a folded-away product
+    amplitude).
     """
     rename = _legacy_fraction_rename_map(model)
-    if not rename:
-        return names
     migrated: list[str] = []
     for name in names:
         if name in rename:
@@ -3007,7 +3012,7 @@ def _migrate_global_param_name_tuple(
                 migrated.append(new_name)
         elif name not in migrated:
             migrated.append(name)
-    return tuple(migrated)
+    return fold_legacy_product_amplitude_names(model, migrated)
 
 
 def _deserialize_global_candidate_assessment(
@@ -3049,8 +3054,12 @@ def _deserialize_global_candidate_assessment(
         for run_number, entry in (payload.get("component_curves_by_run", {}) or {}).items()
     }
 
-    global_parameters = migrate_legacy_fraction_parameter_set(
-        template.model, _deserialize_parameter_set(payload.get("global_parameters", []))
+    global_parameters, _ = fold_legacy_product_amplitude_set(
+        template.model,
+        migrate_legacy_fraction_parameter_set(
+            template.model, _deserialize_parameter_set(payload.get("global_parameters", []))
+        ),
+        {},
     )
     global_param_names = _migrate_global_param_name_tuple(
         tuple(name for name in payload.get("global_param_names", []) if isinstance(name, str)),
