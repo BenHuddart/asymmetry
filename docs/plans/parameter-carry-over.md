@@ -115,36 +115,128 @@ host).
 
 ## Phase 6 design (PR 2): one seeding function, with provenance
 
+Status: refined 2026-09-05 before implementation (branch
+`feat/seed-provenance`); two sequential Opus phases, 6a (core) and 6b (GUI).
+
 Today's defaults are static per component (`ComponentDefinition.param_defaults`)
 plus ad-hoc layers: applied field into `field`/`B_L`
-(`seeding._field_value_overrides`), frequency-domain peak seeds
-(`seed_peak_parameters_from_dataset`), individual-groups overrides
-(background and phase fixed at 0), trend seeds (`suggest_trend_seeds`), and
-a dataset-switch reseed that only touches a cell if it still equals the
-*previous* auto-default (`tab_base._refresh_field_defaults_in_table`), a
-"was it untouched?" guess by value comparison.
+(`gui/panels/fit/seeding._field_value_overrides`), frequency-domain peak
+seeds (`core/fitting/spectral.seed_peak_parameters_from_dataset`),
+individual-groups overrides (background and phase fixed at 0, in
+`_rebuild_grouped_*`), trend seeds (`parameter_models.suggest_trend_seeds`),
+and three re-seed mechanisms that each guess what the user has touched:
+`tab_base._refresh_field_defaults_in_table` (global tab, member change:
+re-seed a field cell only if it still equals the *previous* auto-default),
+`panel._reseed_file_value_parameters` (single tab, form carried to another
+run: overwrite `field`/`B_L` from the target run), and
+`panel._reseed_frequency_peaks_if_default` / `single_tab.reseed_frequency_peaks`
+(carried form in the frequency domain: overwrite the peak seeds).
 
-1. `seed_parameters(model, context) -> dict[str, Seed]` in core, where
-   `Seed = (value, fixed, min, max)` and `context` carries what is known
-   (dataset or datasets, applied field, domain, mode flags such as
-   individual-groups). Layers, in order, later overriding earlier:
-   component static defaults → dataset-derived physics (field into
-   `field`/`B_L`; amplitude scale and background tail from the record, as
-   the wizard's fingerprint already computes; frequency from field or the
-   FFT peak in the frequency domain) → mode overrides (individual groups:
-   background and phase fixed at 0). A sibling `seed_trend_parameters`
-   wraps `suggest_trend_seeds` for `ParameterCompositeModel`.
-2. Every value cell records **provenance**: `seeded` (written by
-   `seed_parameters`) or `user` (typed, restored from a project, or written
-   back from a fit). A carried value keeps its provenance.
-3. On a dataset switch, `seed_parameters` runs again and replaces
-   `seeded` cells only. `_refresh_field_defaults_in_table` and
-   `reseed_frequency_peaks` are deleted; the GUI-guide promise
-   ("field-dependent parameters reseeded for the newly selected run") is
-   met by construction.
-4. `_field_value_overrides`, the grouped-mode default branches in
-   `_rebuild_grouped_*`, and the trending seed call become layers of the
-   one function; hosts call `seed_parameters` and nothing else.
+**Promises that must survive** (pinned by tests, keep them green):
+`test_fit_panel_refresh_reseeds_bl_from_target_field` (a `B_L` the user typed
+for run A is re-seeded from run B's field when the form is carried to B);
+`test_frequency_restored_real_fit_is_not_reseeded` and
+`test_domain_switch_restore_does_not_reseed` (a run's own recorded fit, or a
+restored state, is never re-seeded); the global tab's member-change tests
+(an untouched field cell follows the new members' field; a typed one does
+not).
+
+1. **One seeding function (core).** New `core/fitting/seeding.py`:
+   `seed_parameters(model, context) -> dict[str, Seed]` with
+   `Seed(value, fixed, min, max, run_bound: bool)` and
+   `SeedContext(dataset | None, datasets: tuple, field_gauss: float | None,
+   domain: "time" | "frequency", individual_groups: bool)`. Layers, later
+   overriding earlier, each a small pure function:
+   - component static defaults (`param_defaults`, `default_min`, the
+     model's `fixed_by_default_params`);
+   - record scale (time domain, when a dataset is present): amplitude-role
+     parameters from the early-mean-minus-tail estimate and background
+     from the tail, exactly the fingerprint arithmetic in
+     `fit_wizard.fingerprint_spectrum` (factor it into a small pure helper
+     both call; do not duplicate); shared across additive terms the way
+     the wizard's `_seeded_amplitude`/share logic does for multiplets is
+     **out of scope** — one amplitude estimate per amplitude parameter;
+   - applied field: `field` and `B_L` from `field_gauss` when it is
+     non-zero (today's `_field_value_overrides`), **run-bound**;
+   - frequency-domain peaks: `seed_peak_parameters_from_dataset` for the
+     dataset (single) or the per-key mean across `datasets` (batch),
+     **run-bound**;
+   - individual-groups overrides: background and `phase` at 0, fixed.
+   `seed_trend_parameters(model, x, y)` wraps `suggest_trend_seeds` for
+   `ParameterCompositeModel` with the same `Seed` shape (nothing run-bound).
+   `_field_value_overrides`, the grouped-mode branches and the two
+   `_set_composite_model` seed computations are deleted in favour of it.
+
+2. **Per-cell provenance (GUI).** Every value cell carries a provenance
+   item-data role: `seeded` (written by `seed_parameters`) or `user`
+   (typed, written back from a fit, restored from a project, carried by
+   Phase 3–4's identity carry-over, or sent from another tab). Serialised
+   as `"seeded": bool` in `parameters_state()` entries; a missing key on
+   load means `user`. `populate` writes `seeded`; `restore_parameters`
+   writes what the entry says; the fit write-back and the item-changed
+   handler write `user`.
+
+3. **Re-seed rule (GUI).** Whenever a table's seed context changes — the
+   single tab's dataset, the batch tab's member set or current grouped
+   dataset, a domain switch — `seed_parameters` runs again and replaces
+   the value of every cell whose provenance is `seeded`, leaving `user`
+   cells alone. That is the whole rule for the batch and grouped surfaces
+   and replaces `_refresh_field_defaults_in_table` and
+   `_applied_field_default_gauss`.
+
+4. **Carried forms (single tab).** When `FitPanel` carries a form from run A
+   to run B (`_carry_forward_single_fit_form`), a value that describes run
+   A is not a user value for run B: every **run-bound** cell is marked
+   `seeded` before the re-seed of rule 3 runs, so `field`/`B_L` and the
+   frequency peak follow the target run exactly as today, while a typed
+   amplitude or rate is kept as the user's starting guess. A run's own
+   recorded fit (`own_slot`) and a restored state are applied with every
+   cell `user` and are not re-seeded. `_reseed_file_value_parameters`,
+   `_reseed_frequency_peaks_if_default` and `reseed_frequency_peaks` are
+   deleted; `panel.py` keeps its *form* provenance kinds (why the form holds
+   its contents) — that is a different notion from cell provenance and
+   stays.
+
+5. **Docs.** `gui_usage.rst`: the "Value" bullet and the carried-form
+   paragraph say which values follow the run (field, `B_L`, frequency
+   peak) and that a value you typed or fitted is kept until you Reset;
+   `composite_models.rst`: a short scripting note on `seed_parameters`.
+   `CHANGELOG.md` **Changed** entry.
+
+Out of scope: wizard seeding (`fit_wizard._initial_parameters_for_template`
+has its own, richer policy and stays), the per-group nuisance seeds
+(`_seed_group_*` in `gui/panels/fit/seeding.py`; they move to the core module
+only if they are Qt-free and untouched otherwise), MaxEnt's use of the peak
+seeder.
+
+### Phase 6a — core seeding function (Opus)
+
+Files: new `src/asymmetry/core/fitting/seeding.py`; `fit_wizard.py` (factor
+the early/tail estimate into a shared pure helper); `parameter_models.py`
+only if `seed_trend_parameters` belongs beside `suggest_trend_seeds`; new
+`tests/core/test_seeding.py`. No GUI files. Tests: layer order and override
+precedence; record-scale seeds against a synthetic exponential (amplitude
+≈ early mean minus tail, background ≈ tail); field layer only when
+non-zero and only on `field`/`B_L`, flagged run-bound; frequency peaks
+flagged run-bound; individual-groups overrides fixed at 0; trend seeds;
+`seed_parameters` with no dataset returns static defaults only; every key
+is in `model.param_names`. Gate: that file, `tests/core/test_fit_wizard*.py`
+(the factored helper), `--tier fast`, `lint`, `structural`.
+
+### Phase 6b — provenance and re-seeding in the hosts (Opus, after 6a)
+
+Files: `gui/panels/fit/tab_base.py` (provenance role, `populate`,
+`restore_parameters`, `parameters_state`, `apply_value_seeds` →
+`reseed(seeds)` that honours provenance), `single_tab.py`, `global_tab.py`,
+`panel.py`, `gui/panels/fit/seeding.py` (delete what moved),
+`model_fit_dialog.py` (trend seeds via `seed_trend_parameters`; provenance
+is not needed in the trend table unless a re-seed path exists there — check
+and say). Tests: `test_fit_panel_tabs.py`, `test_frequency_domain_fitting.py`,
+`test_fit_parameter_table.py`, grouped-mode and send-to-batch files; add a
+provenance round-trip through `get_state`/`restore_state`, a typed amplitude
+surviving a run switch while `B_L` follows the run, a member change
+re-seeding only seeded field cells, and the identity carry-over keeping
+provenance. Gate: those files, `--tier fast`, `docs`, `validate`.
 
 ## Agent rules (embedded verbatim in every phase prompt)
 
