@@ -64,7 +64,12 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True)
+# ``eq=False`` (identity equality): the generated ``__eq__`` would compare the
+# recommendations field-by-field, and those carry numpy arrays — a comparison
+# of two different caches would raise "truth value of an array is ambiguous"
+# in whatever code happened to compare two state dicts. Identity is also the
+# only equality this handle means: one cached analysis, shared.
+@dataclass(frozen=True, eq=False)
 class WizardCacheEntry:
     """A single-fit wizard recommendation held by reference in session state.
 
@@ -120,7 +125,7 @@ class WizardCacheEntry:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class GlobalWizardCacheEntry:
     """A global-fit wizard recommendation held by reference in session state.
 

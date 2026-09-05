@@ -282,6 +282,10 @@ class TestRunSwitchCost:
         entry = state["wizard_state"]
         assert isinstance(entry, WizardCacheEntry)
 
+        # Identity equality: comparing two entries field-by-field would compare
+        # numpy arrays and raise, so the handle never grows a value __eq__.
+        assert entry != WizardCacheEntry(recommendation=recommendation, signature={}, log_text="")
+
         copied = copy.deepcopy(state)
         # The handle is immutable, so a deep copy of the state that carries it
         # is O(form size): this is what keeps FitPanel's per-switch copies cheap.
