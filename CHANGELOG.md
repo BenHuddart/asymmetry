@@ -124,6 +124,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Switching runs after applying a Fit Wizard recommendation hung for
+  several seconds, and project files grew by hundreds of megabytes per fitted
+  run.** The single-fit form's session snapshot embedded a *serialised* copy
+  of the cached wizard analysis, and that snapshot is taken, restored and
+  deep-copied several times on every run switch: on a ~90 000-bin run each
+  switch cost 3.0–5.4 s (and applying a recommendation 5.5 s) moving a 225 MB
+  payload around, most of it full-resolution fitted curves and residuals for
+  all 33 assessed candidates. The snapshot now carries the analysis by
+  reference and serialises only when a fit slot or project file is written, in
+  a compact form (curves sampled to at most 512 points, residual series
+  dropped — its summary statistics are stored). The same switch is now ~190 ms,
+  applying a recommendation ~0.6 s, and the stored cache 0.9 MB instead of
+  225 MB. Reopening the wizard on an unchanged run still shows the cached
+  result without re-running it, and existing projects load unchanged; the
+  only visible difference is that the residual panel of a *cached* result
+  restored from a project file now says the residuals were not stored.
+
 - **Fitted parameter sets lost the `fixed` flag and the bounds of pinned
   parameters.** `FitEngine` packed a fixed parameter into its result as a bare
   name/value pair, so `FitResult.parameters.free_parameters` counted it as

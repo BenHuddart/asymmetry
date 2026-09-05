@@ -396,6 +396,44 @@ def test_plot_title_shown_when_alternative_selected(qapp: QApplication) -> None:
     assert figure.axes[0].get_title() == "Gaussian + Constant"
 
 
+def test_residual_panel_says_so_when_a_cached_result_has_no_residuals(
+    qapp: QApplication,
+) -> None:
+    """A project-restored recommendation carries no residual series — say why.
+
+    The series is dropped at the persistence boundary (see
+    docs/reference/project_files.rst); an empty axes would read as "the fit has
+    no residuals" rather than "they were not stored".
+    """
+    from dataclasses import replace
+
+    recommendation = _recommendation()
+    winner = recommendation.recommended_assessment
+    assert winner is not None
+    recommendation = replace(
+        recommendation,
+        assessments=(
+            replace(winner, fit_result=replace(winner.fit_result, residuals=None)),
+            recommendation.assessments[1],
+        ),
+    )
+    time = np.linspace(0.0, 8.0, 60)
+
+    card = WizardAnswerCard()
+    card.set_plot_data(time, 0.2 * np.exp(-0.4 * time), np.full_like(time, 0.01))
+    card.set_recommendation(recommendation)
+    card._residuals_toggle.setChecked(True)
+
+    figure = card._plot_widget._figure
+    notes = [
+        text.get_text()
+        for axes in figure.axes
+        if axes.get_title() == "Residuals"
+        for text in axes.texts
+    ]
+    assert any("re-run the wizard" in note for note in notes)
+
+
 def test_residual_axis_follows_the_recommendation_rebin_factor(qapp: QApplication) -> None:
     """A rebinned fit's residuals must be drawn against the rebinned axis.
 

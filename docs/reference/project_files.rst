@@ -141,6 +141,31 @@ These blocks are optional and backward-compatible. Older project files do not
 need them, but when present they allow wizard results to reopen immediately
 without rerunning the expensive analysis.
 
+The stored recommendation is a **compact** form of the in-memory one. A live
+recommendation keeps, for every candidate it assessed, a fitted curve, its
+component curves and the fit residuals at the resolution of the analysed
+record — hundreds of megabytes on a fine-resolution run. What is written to
+the file instead is:
+
+* each curve sampled on a uniform stride down to at most 512 points (all the
+  curves of one candidate share a stride, so they stay aligned), with each
+  sample rounded to seven significant digits — these arrays are only ever
+  drawn, and the wizard's own plots decimate more aggressively than that;
+* no residual *series* — the numbers derived from it (residual RMS, runs
+  z-score, autocorrelation, FFT peak SNR and the gate reasons) are stored on
+  the assessment itself, so only the residual panel of a *cached* redisplay
+  is affected: it is blank until the wizard is re-run for that run.
+
+Everything else — the ranking, scores, fitted parameters, uncertainties,
+diagnostics, peak analysis and narrative — is stored in full, so a reopened
+project still shows the cached recommendation, its comparison table and its
+answer card without re-running the analysis. Re-running the wizard always
+restores full-resolution curves and residuals.
+
+Payloads written before this change (full-resolution curves, residuals
+included) still load unchanged; no schema bump is involved, since the block is
+optional and both shapes deserialise.
+
 Grouping profiles and assignments
 ---------------------------------
 

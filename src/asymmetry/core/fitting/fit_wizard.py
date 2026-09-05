@@ -3173,15 +3173,28 @@ def rerank_fit_wizard_recommendation(
 
 def serialize_fit_wizard_recommendation(
     recommendation: FitWizardRecommendation,
+    *,
+    compact: bool = False,
 ) -> dict[str, object]:
-    """Return a JSON-serialisable snapshot of a single-fit wizard recommendation."""
+    """Return a JSON-serialisable snapshot of a single-fit wizard recommendation.
+
+    ``compact=True`` is the *persistence* form: each candidate's curves are
+    strided down to :data:`PERSISTED_CURVE_MAX_POINTS` points and the residual
+    series is dropped (see :func:`_serialize_fit_result`), which takes a
+    90k-bin run's recommendation from hundreds of MB to well under one. Use it
+    everywhere a recommendation leaves the session (project files, fit-slot
+    ``ui_state``); the full form stays the default so existing callers and
+    payloads are unchanged. Both forms deserialise through
+    :func:`deserialize_fit_wizard_recommendation`.
+    """
     return {
         "fingerprint": _serialize_spectrum_fingerprint(recommendation.fingerprint),
         "templates": [
             _serialize_candidate_template(template) for template in recommendation.templates
         ],
         "assessments": [
-            _serialize_candidate_assessment(assessment) for assessment in recommendation.assessments
+            _serialize_candidate_assessment(assessment, compact=compact)
+            for assessment in recommendation.assessments
         ],
         "metric": recommendation.metric.value,
         "recommended_key": recommendation.recommended_key,
@@ -3204,6 +3217,10 @@ def serialize_fit_wizard_recommendation(
         "scope_note": recommendation.scope_note,
         "rebin_factor": int(recommendation.rebin_factor),
         "analysed_points": int(recommendation.analysed_points),
+        # Marks the payload as curve-decimated / residual-free, so a file can be
+        # told apart from a pre-this-change full-resolution one at a glance.
+        # Read by nothing — deserialisation tolerates both shapes.
+        "compact": bool(compact),
     }
 
 
@@ -3445,7 +3462,72 @@ def _deserialize_parameter_set(payload: object) -> ParameterSet:
     return parameters
 
 
-def _serialize_fit_result(result: FitResult) -> dict[str, object]:
+#: Point budget applied to each stored curve when a wizard recommendation is
+#: serialised for *persistence* (``compact=True``).
+#:
+#: A recommendation holds a dense fitted curve, its component curves and the
+#: fit residuals for every candidate it assessed, all at the resolution of the
+#: analysed record.  On a 90k-bin run that is ~7 MB of JSON per candidate and
+#: ~225 MB for a full 33-candidate recommendation — a payload that has to be
+#: written into (and read back out of) the project file for every fitted run.
+#: The curves exist only to be *drawn* (the wizard answer card's fit line, and
+#: the global wizard's per-run preview when it seeds from cached single-fit
+#: assessments), so a uniform stride down to this budget keeps the cached
+#: display faithful — the card already decimates the *data* it draws them over
+#: to 2000 points — while bounding the payload.  Same uniform-stride contract
+#: as ``gui/utils/plot_decimation.decimate_for_preview``, re-stated here
+#: because the core layer must stay GUI-free.  Re-running the wizard always
+#: restores full resolution; only a *cached* redisplay reads these arrays.
+PERSISTED_CURVE_MAX_POINTS = 512
+
+#: Significant digits kept per persisted curve sample.  Halves the payload
+#: again (a JSON double is written at full 17-digit precision otherwise) and
+#: is far finer than a plotted pixel.  Significant digits rather than decimal
+#: places so the rounding is scale-free: a percent-scale asymmetry (~10²) and
+#: a small component curve (~10⁻⁴) keep the same relative fidelity.
+PERSISTED_CURVE_SIGNIFICANT_DIGITS = 7
+
+
+def _persisted_curve_stride(n_points: int, max_points: int = PERSISTED_CURVE_MAX_POINTS) -> int:
+    """Stride that brings ``n_points`` samples down to ``max_points`` or fewer."""
+    if n_points <= max_points or max_points <= 0:
+        return 1
+    return (n_points + max_points - 1) // max_points
+
+
+def _round_significant(
+    values: NDArray[np.float64], digits: int = PERSISTED_CURVE_SIGNIFICANT_DIGITS
+) -> NDArray[np.float64]:
+    """Round each finite, non-zero sample to ``digits`` significant digits."""
+    array = np.asarray(values, dtype=float)
+    mask = np.isfinite(array) & (array != 0.0)
+    if not mask.any():
+        return array
+    rounded = array.copy()
+    scale = np.power(10.0, digits - 1 - np.floor(np.log10(np.abs(array[mask]))))
+    rounded[mask] = np.round(array[mask] * scale) / scale
+    return rounded
+
+
+def _persisted_curve_list(values: object, *, stride: int = 1, compact: bool = False) -> list[float]:
+    """Return one curve as a JSON list, strided and rounded when ``compact``."""
+    array = np.asarray(values, dtype=float)[::stride]
+    return (_round_significant(array) if compact else array).tolist()
+
+
+def _serialize_fit_result(
+    result: FitResult, *, include_residuals: bool = True
+) -> dict[str, object]:
+    """Serialise a fit result; ``include_residuals=False`` drops the residual array.
+
+    A persisted wizard cache drops it: the residual *series* is only used to
+    draw the answer card's residual panel, while every number computed from it
+    (RMS, runs z-score, autocorrelation, FFT peak SNR, and the gate reasons
+    derived from them) is already stored on the assessment. It is the second
+    largest array in the payload and cannot be decimated — it is paired with a
+    rebinned time axis at display time, so a strided copy would plot against
+    the wrong times.
+    """
     return {
         "success": bool(result.success),
         "chi_squared": float(result.chi_squared),
@@ -3454,7 +3536,7 @@ def _serialize_fit_result(result: FitResult) -> dict[str, object]:
         "uncertainties": {name: float(value) for name, value in result.uncertainties.items()},
         "residuals": (
             np.asarray(result.residuals, dtype=float).tolist()
-            if result.residuals is not None
+            if (include_residuals and result.residuals is not None)
             else None
         ),
         "message": result.message,
@@ -3527,11 +3609,14 @@ def _migrate_fit_result_fractions(result: FitResult, model: CompositeModel) -> F
 
 def _serialize_component_curves(
     curves: tuple[tuple[str, NDArray[np.float64]], ...],
+    *,
+    stride: int = 1,
+    compact: bool = False,
 ) -> list[dict[str, object]]:
     return [
         {
             "name": name,
-            "values": np.asarray(values, dtype=float).tolist(),
+            "values": _persisted_curve_list(values, stride=stride, compact=compact),
         }
         for name, values in curves
     ]
@@ -3558,10 +3643,15 @@ def _deserialize_component_curves(
 
 def _serialize_candidate_assessment(
     assessment: CandidateAssessment,
+    *,
+    compact: bool = False,
 ) -> dict[str, object]:
+    # One stride for every curve of this assessment: they all live on the same
+    # ``fitted_time`` grid, so sampling them together keeps them aligned.
+    stride = _persisted_curve_stride(int(np.asarray(assessment.fitted_time).size)) if compact else 1
     return {
         "template": _serialize_candidate_template(assessment.template),
-        "fit_result": _serialize_fit_result(assessment.fit_result),
+        "fit_result": _serialize_fit_result(assessment.fit_result, include_residuals=not compact),
         "aic": assessment.aic,
         "aicc": assessment.aicc,
         "bic": assessment.bic,
@@ -3573,9 +3663,15 @@ def _serialize_candidate_assessment(
         "residual_gate_passed": bool(assessment.residual_gate_passed),
         "residual_gate_reasons": list(assessment.residual_gate_reasons),
         "bound_hits": list(assessment.bound_hits),
-        "fitted_time": np.asarray(assessment.fitted_time, dtype=float).tolist(),
-        "fitted_curve": np.asarray(assessment.fitted_curve, dtype=float).tolist(),
-        "component_curves": _serialize_component_curves(assessment.component_curves),
+        "fitted_time": _persisted_curve_list(
+            assessment.fitted_time, stride=stride, compact=compact
+        ),
+        "fitted_curve": _persisted_curve_list(
+            assessment.fitted_curve, stride=stride, compact=compact
+        ),
+        "component_curves": _serialize_component_curves(
+            assessment.component_curves, stride=stride, compact=compact
+        ),
         "stage": assessment.stage,
         "disqualification_reasons": list(assessment.disqualification_reasons),
         "is_null_baseline": bool(assessment.is_null_baseline),

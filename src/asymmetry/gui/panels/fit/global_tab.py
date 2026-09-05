@@ -92,8 +92,6 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     GlobalFitWizardRecommendation,
-    deserialize_global_fit_wizard_recommendation,
-    serialize_global_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.global_search.heuristics import (
     is_amplitude_parameter,
@@ -183,6 +181,7 @@ from .tab_base import (
     dataset_error_oversampling,
     param_name_col_width,
 )
+from .wizard_cache import GlobalWizardCacheEntry, global_wizard_cache_entry
 
 #: (label, mode) for the batch-series seeding selector, shared by the Batch-tab
 #: combobox and the ``Analysis ▸ Batch seeding`` menu so the two cannot drift.
@@ -1066,8 +1065,16 @@ class GlobalFitTab(FitTabBase):
             log_text=log_text,
         )
 
-    def _serialize_wizard_cache_store(self) -> list[dict[str, object]]:
-        serialized: list[dict[str, object]] = []
+    def _wizard_cache_store_entries(self) -> list[GlobalWizardCacheEntry]:
+        """Return the per-run-set wizard cache as immutable session handles.
+
+        No serialisation: ``get_state`` runs on every grouped run switch (the
+        multi-group window saves the leaving run's form), and a global
+        recommendation carries a fitted curve per run per candidate. The
+        handles deep-copy to themselves and are converted to their compact
+        JSON form only at a persistence boundary (see ``wizard_cache``).
+        """
+        entries: list[GlobalWizardCacheEntry] = []
         for run_set in sorted(self._wizard_cache_by_run_set):
             entry = self._wizard_cache_by_run_set.get(run_set)
             if not isinstance(entry, dict):
@@ -1078,40 +1085,33 @@ class GlobalFitTab(FitTabBase):
                 signature, dict
             ):
                 continue
-            serialized.append(
-                {
-                    "run_numbers": list(run_set),
-                    "signature": copy.deepcopy(signature),
-                    "recommendation": serialize_global_fit_wizard_recommendation(recommendation),
-                    "log_text": str(entry.get("log_text", "")),
-                }
+            entries.append(
+                GlobalWizardCacheEntry(
+                    recommendation=recommendation,
+                    signature=signature,
+                    log_text=str(entry.get("log_text", "")),
+                    run_numbers=run_set,
+                )
             )
-        return serialized
+        return entries
 
     def _restore_wizard_cache_store(self, payload: object) -> None:
+        """Restore the per-run-set cache from handles or persisted dicts."""
         self._wizard_cache_by_run_set = {}
         if not isinstance(payload, list):
             self._sync_active_wizard_cache_from_selection()
             return
         for raw_entry in payload:
-            if not isinstance(raw_entry, dict):
+            entry = global_wizard_cache_entry(raw_entry)
+            if entry is None:
                 continue
-            recommendation = deserialize_global_fit_wizard_recommendation(
-                raw_entry.get("recommendation")
-            )
-            signature = raw_entry.get("signature")
-            raw_run_numbers = raw_entry.get("run_numbers")
-            if recommendation is None or not isinstance(signature, dict):
-                continue
-            if not isinstance(raw_run_numbers, tuple | list):
-                raw_run_numbers = signature.get("run_numbers")
-            run_set = self._normalized_wizard_run_set(raw_run_numbers)
+            run_set = self._normalized_wizard_run_set(entry.run_numbers)
             if not run_set:
                 continue
             self._wizard_cache_by_run_set[run_set] = {
-                "signature": self._normalized_wizard_signature(signature),
-                "recommendation": recommendation,
-                "log_text": str(raw_entry.get("log_text", "")),
+                "signature": self._normalized_wizard_signature(entry.signature_copy()),
+                "recommendation": entry.recommendation,
+                "log_text": entry.log_text,
             }
         self._sync_active_wizard_cache_from_selection()
 
@@ -4007,20 +4007,18 @@ class GlobalFitTab(FitTabBase):
             ],
             "group_model_parameters": self._table_state_for(self._group_model_table),
         }
-        wizard_state_by_run_set = self._serialize_wizard_cache_store()
+        wizard_state_by_run_set = self._wizard_cache_store_entries()
         if wizard_state_by_run_set:
             state["wizard_state_by_run_set"] = wizard_state_by_run_set
         if (
             self._cached_wizard_recommendation is not None
             and self._cached_wizard_signature is not None
         ):
-            state["wizard_state"] = {
-                "signature": copy.deepcopy(self._cached_wizard_signature),
-                "recommendation": serialize_global_fit_wizard_recommendation(
-                    self._cached_wizard_recommendation
-                ),
-                "log_text": self._cached_wizard_log_text,
-            }
+            state["wizard_state"] = GlobalWizardCacheEntry(
+                recommendation=self._cached_wizard_recommendation,
+                signature=self._cached_wizard_signature,
+                log_text=self._cached_wizard_log_text,
+            )
         return state
 
     def restore_state(self, state: dict) -> None:
@@ -4129,18 +4127,15 @@ class GlobalFitTab(FitTabBase):
         if isinstance(wizard_state_by_run_set, list):
             self._restore_wizard_cache_store(wizard_state_by_run_set)
 
-        wizard_state = state.get("wizard_state")
-        if isinstance(wizard_state, dict):
-            recommendation = deserialize_global_fit_wizard_recommendation(
-                wizard_state.get("recommendation")
+        # Both shapes: the session handle (shared by reference) and a persisted
+        # dict from a project file / grouped fit slot.
+        active_entry = global_wizard_cache_entry(state.get("wizard_state"))
+        if active_entry is not None:
+            self._cache_wizard_analysis(
+                active_entry.recommendation,
+                signature=active_entry.signature_copy(),
+                log_text=active_entry.log_text,
             )
-            signature = wizard_state.get("signature")
-            if recommendation is not None and isinstance(signature, dict):
-                self._cache_wizard_analysis(
-                    recommendation,
-                    signature=signature,
-                    log_text=str(wizard_state.get("log_text", "")),
-                )
         self._sync_active_wizard_cache_from_selection()
         self._update_mode_ui(preserve_result=True)
 
