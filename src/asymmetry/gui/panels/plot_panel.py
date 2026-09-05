@@ -1123,7 +1123,7 @@ class PlotPanel(QWidget):
 
         The dimensionless ppm axis is unit-independent, so it keys on the mode
         alone; absolute/shift axes key on ``unit:mode`` so each unit + transform
-        keeps its own stashed window.
+        is a distinct x quantity (a held window is converted between them).
         """
         resolved_mode = self._frequency_axis_mode if mode is None else str(mode)
         if resolved_mode == "relative_ppm":
@@ -1530,8 +1530,7 @@ class PlotPanel(QWidget):
         nothing" or "loses traces". Instead the current window is converted to
         canonical absolute MHz with the OLD active reference and back into
         display space with the NEW one, so the view keeps showing the same
-        physical frequencies; the per-``unit:mode`` limit stash entry is
-        invalidated because its stored window belonged to the old reference.
+        physical frequencies.
 
         In Run-field mode the per-trace references differ, so the window can
         only follow one anchor — the ACTIVE dataset's reference (the same
@@ -4611,8 +4610,8 @@ class PlotPanel(QWidget):
             identity = self._waterfall_content_identity()
             cached = self._waterfall_auto_delta_cache
             if cached is not None and cached[0] == identity:
-                # Re-render of the same stacked content (a zoom's decimation
-                # viewport refresh, a bunch change): keep the plot-time Δ so
+                # Re-render of the same stacked content (a zoom's re-render, a
+                # bunch change): keep the plot-time Δ so
                 # the stack never re-spaces under the user mid-inspection.
                 delta = cached[1]
             else:
@@ -4682,7 +4681,7 @@ class PlotPanel(QWidget):
 
         # Each trace's display x-axis and y values (density Jacobian applied for
         # unit-area spectra), computed once and shared by the Δ resolution, the
-        # first-paint framing, and the draw loop. The source dataset is passed so
+        # x framing, and the draw loop. The source dataset is passed so
         # a shift-mode overlay shifts each trace about ITS OWN reference (the
         # alignment point).
         display_times = [
@@ -5243,7 +5242,7 @@ class PlotPanel(QWidget):
 
         Time panels frame the full data span. Frequency panels frame the dominant
         non-DC spectral peak when one stands out, so high-transverse-field Larmor
-        lines are visible on first paint instead of being squashed off-screen by a
+        lines are visible when the axis frames instead of being squashed off-screen by a
         full-Nyquist view dominated by the DC peak.
         """
         finite = np.isfinite(time)
@@ -5368,7 +5367,7 @@ class PlotPanel(QWidget):
     ) -> tuple[np.ndarray, np.ndarray, float] | None:
         """Return ``(line_freqs, line_ratios, f_max)`` for baseline-clearing bins.
 
-        The shared line finder behind the first-paint framing helpers;
+        The shared line finder behind the x-framing helpers;
         ``line_ratios`` is each bin's height over its LOCAL baseline. Returns
         ``None`` for DC-only or featureless spectra, where no non-DC bin clears
         the baseline and zooming would merely chase a noise spike. The DC
@@ -7564,6 +7563,9 @@ class PlotPanel(QWidget):
                 x_hi = self._convert_frequency_control_value_to_axis_limit(x_hi)
             ax.set_xlim(x_lo, x_hi)
 
+        # An exported layout can stack panes that are not on screen (e.g. the
+        # individual-groups export from a single view); a pane the policy has
+        # never framed takes the focused pane's window from the fields.
         held_y = self._limits.held(self._y_axis_id(axis_key))
         if hasattr(ax, "set_ylim"):
             if held_y is None:
