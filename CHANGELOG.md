@@ -272,7 +272,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result directly in that case instead of calling Minuit, on the per-dataset
   path that both `fit` and the block-separable `global_fit` use. `Docs Build and Deploy` had
   been red on every push to `main` since the `B_L` pinning change above; it
-  is green again.
+  is green again. Making the scenario render its documented answer card
+  exposed two more defects behind the same pinning change. `global_fit`
+  decided whether a Global parameter was free, and what value a fixed one
+  held, from the *first* dataset alone; a parameter pinned on that dataset
+  only (`B_L` at 0 on the zero-field run of a decoupling series) was silently
+  dropped from the fit and forced to the pinned value on every run. A Global
+  parameter is now free when any dataset leaves it free, and each dataset's
+  own pin still wins for that dataset's result. And the fit wizard's free
+  `B_L` seed ignored a recorded field magnitude whenever the run's geometry
+  was unconfirmed (no direction or state metadata), falling back to a
+  width-derived guess; an unconfirmed run is not known to be transverse, so
+  the recorded setpoint is now the seed (still free), with a confirmed
+  transverse-field run excluded as before.
 
 ## [0.17.1] - 2026-08-03
 

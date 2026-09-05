@@ -52,20 +52,12 @@ class GlobalFitWizardResultScenario(Scenario):
         from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
         from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
-        # seed=1 (not the archetype's default 41): the wizard's coupled-fit
-        # search is a multi-start battery over a genuinely near-degenerate
-        # landscape (four widely-spaced fields on one Kubo-Toyabe width), and
-        # a residual-gate check that borderline can flip on which local
-        # minimum a given noise realization's Migrad run lands in. Surveyed
-        # across seeds 1-23 with the ``FitEngine.global_fit`` "any dataset
-        # free" fix (a genuine engine bug: a Global parameter pinned on the
-        # zero-field run only -- e.g. B_L -- was checked and applied from
-        # that one run alone, silently freezing it at 0 for every run in the
-        # series): 8/11 seeds recommend the documented answer with the
-        # runs-test z-score comfortably inside the +/-2 gate on every run;
-        # seed 1 is the most comfortable of those (max |z| ~= 1.3 across the
-        # series, vs. the default seed 41's 100 G run at |z| ~= 2.14, just
-        # over the gate).
+        # seed=1 rather than the archetype's default 41: fitting one Kubo-Toyabe
+        # width against four widely spaced fields is nearly degenerate, and on
+        # seed 41 the 100 G run's runs-test z-score sits just over the +/-2
+        # residual gate (|z| ~ 2.14), so the wizard recommends nothing. Seed 1
+        # keeps every run comfortably inside the gate (max |z| ~ 1.3) and the
+        # documented answer card renders deterministically.
         datasets = make_ag_lf_decoupling(seed=1, fields_g=(0.0, 15.0, 50.0, 100.0))
 
         # Keep the screening portfolio small so the build is fast: the
