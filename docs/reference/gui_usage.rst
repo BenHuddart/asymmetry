@@ -322,8 +322,8 @@ foreground points (excluding undefined/low-confidence bins when available). On
 the Frequency-domain plot, **Auto X** frames the spectrum sensibly — the
 dominant line, or the field-derived Larmor window — rather than the full
 Nyquist span. The very first plot in a new session has nothing held yet, so
-it frames from the data even with both Auto buttons off — that is the
-first-paint behaviour, not a state you need to toggle on.
+it frames from the data even with both Auto buttons off — an axis with
+nothing held simply takes the data's frame, no toggle needed.
 
 A **Zoom** or **Pan** gesture holds only the axis (or axes) it actually
 moved: a horizontal-only zoom leaves **Auto Y** exactly as it was, and a

@@ -1,8 +1,9 @@
 # Axis limits: one per-axis Auto/Hold policy for every plot representation
 
-Status: plan drafted 2026-09-05, awaiting maintainer sign-off; delivered as
-**one PR** on `feat/axis-limit-policy`, built phase by phase by subagents with
-a lead-agent review gate after every phase (see "Gates").
+Status: implemented 2026-09-05 on `feat/axis-limit-policy` (one PR), built
+phase by phase by subagents with a lead-agent review gate after every phase
+(see "Gates"). Decisions that changed during implementation are listed under
+"Decisions recorded".
 
 ## Problem
 
@@ -63,14 +64,15 @@ follow the data". Nothing reframes behind the user's back.
      `held` in place and stamps the new quantity so no refit happens),
      `reset()` (forget every `held` — used only at project teardown),
      `state()` / `restore(state)` for project files.
-   - New axes default to **Auto on**. A new session therefore frames the
-     first run by the toggles; the user turns a toggle off (or types) to
-     hold.
+   - New axes default to **Auto off** (see "Decisions recorded"): the
+     first render frames an axis that has nothing held, and every later
+     render holds until the user turns a toggle on.
 2. **Fields and buttons are a view of the policy.** Fields display the
-   resolved values; committing a field calls `set_manual`. Auto buttons
-   connect on `toggled` (not `clicked`), so programmatic `setChecked` in
-   restore and in "typing turns Auto off" reach the policy through the same
-   path. The `clicked`/`toggled` split between panels disappears.
+   resolved values; committing a field calls `set_manual`. The Auto buttons
+   are the truth for the Auto flags: every resolve first syncs them into the
+   policy (`_sync_auto_from_buttons`), a click simply re-renders, and a
+   gesture or restore mirrors the policy back onto the buttons — so the two
+   can never disagree.
 3. **Render order flips to one pass:** resolve x from full-resolution
    bounds → decimate for that window → draw → resolve y within the window →
    apply → draw once. No "one view behind" refresh, no
@@ -99,17 +101,34 @@ follow the data". Nothing reframes behind the user's back.
    run needs nothing. `policy.reset()` is called only from project
    close/new. QSettings limit save/restore is removed. `restore_state`
    restores toggles + held values; no lock.
-8. **Guard rails.** A harness structural rule: no `set_xlim(`/`set_ylim(`
-   in `src/asymmetry/gui/` outside `widgets/axis_limits.py` and an explicit
-   allowlist (GLE export axes, log-count scaling). A contract test
-   parametrised over representations runs one scenario table against each.
-   Docs rewritten once, referenced from the ALC and frequency pages.
+8. **Guard rails.** A harness structural rule
+   (`find_axis_limit_policy_violations`): in the policy-owning panels a
+   `set_xlim(`/`set_ylim(` call may appear only inside the function that
+   applies the resolved dict (`_apply_limits`, the GLE export helper,
+   `_apply_axis_limits`); elsewhere only in an explicit allowlist of
+   surfaces that are not axis-limit-policy plots. A contract test
+   (`tests/gui/test_axis_limit_contract.py`) runs one scenario table against
+   six representations. Docs rewritten once, referenced from the ALC page.
 
-Decisions recorded: Auto defaults on for a new session; a blank canvas never
-resets holds; only project teardown resets; QSettings limits are dropped;
-zoom/pan marks only the moved axes Held; the grouping preview pane keeps
-its own Home scheme (separate dialog, later adoption); fit range is
-untouched (independent of the view, seeds once from the full extent).
+Decisions recorded: **Auto defaults off for a new session** (changed from the
+draft: the policy's "an axis with nothing held takes the bounds" rule frames
+the first dataset on its own, so buttons-off gives held-by-default browsing
+directly); a blank canvas never resets holds; only project teardown resets;
+QSettings limits are dropped; zoom/pan marks only the moved axes Held; an
+all-NaN stacked pane frames to the neutral ±0.3 range and then holds like
+any pane; the ALC scan's Auto Y frames the whole scan (not the visible x
+window) so drag handles stay reachable — the contract test documents this
+as the one representation-specific exception; the individual-groups export
+can stack panes that are not on screen, so a pane the policy has never
+framed takes the focused pane's window from the fields; the grouping
+preview pane keeps its own Home scheme (separate dialog, later adoption);
+fit range is untouched (independent of the view, seeds once from the full
+extent). Phases 3 and 4 were run as one agent task (the `_apply_limits`
+rewrite reaches every render path at once); Phase 5's agent was cut off by a
+rate limit after finishing its diff and the lead committed it, plus a
+follow-up making `axis_limits` optional in `PlotPanel.restore_state` like
+the method's other keys (hand-built partial states are a legal input; the
+schema migration completes real files).
 
 ## Agent rules (embedded verbatim in every phase prompt)
 

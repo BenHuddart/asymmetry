@@ -155,7 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Auto Y after a zoom, then a run switch, reframed x instead and left the
   data clipped.** A single shared hold flag covered both axes, so releasing
   it by clicking **Auto Y** also re-armed a stale first-paint latch for x: the
-  next redraw widened the x axis label to the full data span while the
+  next redraw widened the x axis to the full data span while the
   decimated points stayed clipped to the old, zoomed window. Per-axis Held
   state (above) removes the shared flag and the latch entirely, so **Auto Y**
   now only ever changes y.

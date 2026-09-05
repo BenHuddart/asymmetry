@@ -333,7 +333,7 @@ def _enclosing_function_name(tree: ast.Module, lineno: int) -> str | None:
     best: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.lineno <= lineno <= getattr(node, "end_lineno", node.lineno):
+            if node.lineno <= lineno <= node.end_lineno:
                 if best is None or node.lineno > best.lineno:
                     best = node
     return None if best is None else best.name
