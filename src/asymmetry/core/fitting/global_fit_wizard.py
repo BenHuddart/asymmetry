@@ -5565,6 +5565,7 @@ def _warm_certificate_fit(
     if initial_step_sizes:
         _record_counter(instrumentation, "curvature_hint_applications")
         _append_metric(instrumentation, "curvature_hint_sizes", len(initial_step_sizes))
+    solve_started_at = time.perf_counter()
     results_by_run, fitted_global = fit_engine.global_fit(
         datasets,
         template.model.function,
@@ -5579,6 +5580,11 @@ def _warm_certificate_fit(
         initial_step_sizes=initial_step_sizes or None,
         screening=screening,
         strategy=strategy,
+    )
+    _record_counter(
+        instrumentation,
+        "certificate_solve_ms",
+        int(1000.0 * (time.perf_counter() - solve_started_at)),
     )
     _record_global_fit_diagnostics(instrumentation, results_by_run)
     results_by_run = _canonicalize_fit_results_by_run(
@@ -6142,6 +6148,7 @@ def _fit_exact_assignment(
             if rescue_message:
                 best_failure_message = rescue_message
 
+    assemble_started_at = time.perf_counter()
     assessment = _assemble_assignment_assessment(
         datasets,
         template,
@@ -6154,6 +6161,11 @@ def _fit_exact_assignment(
         axis_key=axis_key,
         metric=metric,
         fit_success=fit_success,
+    )
+    _record_counter(
+        instrumentation,
+        "exact_assemble_ms",
+        int(1000.0 * (time.perf_counter() - assemble_started_at)),
     )
     if assessment.is_successful:
         _progress_log(
@@ -9454,6 +9466,7 @@ def _fit_separable_assignment(
         return cached
     strategy = _separable_coupled_strategy(datasets, global_names, local_names)
     _record_counter(instrumentation, f"separable_{strategy}_fits")
+    warm_started_at = time.perf_counter()
     warm_start_by_run = _separable_warm_start(
         datasets,
         state,
@@ -9462,6 +9475,12 @@ def _fit_separable_assignment(
         global_param_names=global_names,
         local_param_names=local_names,
     )
+    _record_counter(
+        instrumentation,
+        "separable_warm_start_ms",
+        int(1000.0 * (time.perf_counter() - warm_started_at)),
+    )
+    node_started_at = time.perf_counter()
     assessment = _fit_exact_assignment(
         datasets,
         state.template,
@@ -9486,6 +9505,11 @@ def _fit_separable_assignment(
             target_local_names=local_names,
         ),
         cancel_callback=cancel_callback,
+    )
+    _record_counter(
+        instrumentation,
+        "separable_node_ms",
+        int(1000.0 * (time.perf_counter() - node_started_at)),
     )
     key = (global_names, local_names)
     state.exact_cache[key] = assessment
