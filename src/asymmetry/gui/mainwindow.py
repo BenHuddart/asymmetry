@@ -1880,8 +1880,7 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._data_browser, "ungroup_requested"):
             self._data_browser.ungroup_requested.connect(self._on_ungroup_requested)
-        if hasattr(self._data_browser, "remove_phases_requested"):
-            self._data_browser.remove_phases_requested.connect(self._on_remove_phases_requested)
+        self._data_browser.remove_phases_requested.connect(self._on_remove_phases_requested)
         if hasattr(self._data_browser, "group_membership_changed"):
             self._data_browser.group_membership_changed.connect(self._on_group_membership_changed)
         if hasattr(self._data_browser, "extra_columns_changed"):

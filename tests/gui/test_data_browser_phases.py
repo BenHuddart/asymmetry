@@ -15,6 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFontMetrics
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.representation.base import RepresentationType
@@ -38,6 +39,10 @@ pytestmark = [pytest.mark.gui, pytest.mark.usefixtures("qapp")]
 _PHASE_I_RUNS = (1, 2, 3)
 _PHASE_II_RUNS = (4, 5)
 _EXCLUDED_RUN = 6
+
+#: Cell padding either side of the Run column's text, allowed for when checking
+#: that a phase header's label fits inside the column's 150 px cap.
+_RUN_COLUMN_TEXT_MARGIN_PX = 8
 
 
 def _dataset(rn: int, *, temperature: float) -> MuonDataset:
@@ -157,10 +162,10 @@ def test_phases_render_between_series_header_and_its_runs() -> None:
     ]
 
 
-def test_phase_header_shows_ordinal_swatch_and_range() -> None:
+def test_phase_header_shows_name_range_and_indicator() -> None:
     panel, _model, _parent_id, phase_ids = _panel_with_partition()
     row = _row_of_key(panel, f"group:{phase_ids[0]}")
-    assert panel._table.item(row, 0).text().strip() == "▾ ■ Phase I"
+    assert panel._table.item(row, 0).text().strip() == "▾ Phase I"
     assert panel._table.item(row, 1).text() == "1.8 – 16.0 K"
     assert panel._table.item(row, 3).text() == f"3 runs{_INFO_INDICATOR}"
 
@@ -491,6 +496,32 @@ def test_popover_omits_rows_for_provenance_a_phase_does_not_carry_yet() -> None:
     assert "series end" in text  # Boundaries always render; both ends are open.
 
 
+def test_popover_is_wide_enough_for_its_widest_row() -> None:
+    """The frame sizes to its content, so no provenance row is clipped.
+
+    ``KeyValueGrid``'s value labels do not wrap — a frame pinned to a fixed
+    width truncates the model title and the boundary estimates rather than
+    eliding them, which reads as a wrong value rather than a shortened one.
+    """
+    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel._open_phase_popover(phase_ids[0], _row_of_key(panel, f"group:{phase_ids[0]}"))
+    popover = panel._phase_popover
+    widest = max(label.sizeHint().width() for label in popover.findChildren(type(popover._title)))
+    assert popover.width() >= widest
+    assert popover.width() <= popover.maximumWidth()
+
+
+def test_popover_elides_a_pathological_model_title_at_the_cap() -> None:
+    """Content sizing has a ceiling: a runaway title cannot stretch the frame."""
+    panel, model, parent_id, phase_ids = _panel_with_partition()
+    phase = model.data_group(phase_ids[0])
+    phase.phase_provenance["model_title"] = "Damped line " * 40
+    panel._open_phase_popover(phase_ids[0], _row_of_key(panel, f"group:{phase_ids[0]}"))
+    popover = panel._phase_popover
+    assert popover.width() <= popover.maximumWidth()
+    assert "…" in _popover_text(panel)
+
+
 def test_popover_actions_reach_the_panel_signals() -> None:
     panel, _model, _parent_id, phase_ids = _panel_with_partition()
     panel._open_phase_popover(phase_ids[1], _row_of_key(panel, f"group:{phase_ids[1]}"))
@@ -566,3 +597,32 @@ def test_an_unpartitioned_group_header_has_no_info_zone() -> None:
     row = _row_of_key(panel, f"group:{gid}")
     right = panel._table.columnViewportPosition(3) + panel._table.columnWidth(3)
     assert not panel._hit_info_indicator(row, right - 1)
+
+
+def test_default_phase_names_fit_the_run_column() -> None:
+    """The Run column is capped at 150 px, so a phase header must fit inside it.
+
+    The wizard's own default names run to "Phase V"; if the widest of them
+    elides, every phase past the first reads as "Phase …" and the ordinal — the
+    one thing the sub-header exists to state — is lost.
+    """
+    panel, model, parent_id, _phase_ids = _panel_with_partition()
+    numerals = ("I", "II", "III", "IV", "V")
+    phase_ids = model.create_phase_groups(
+        parent_id,
+        [
+            _phase_spec(ordinal, f"Phase {numeral}", (rn,), (1.8, 1.8), lower=None, upper=None)
+            for ordinal, (numeral, rn) in enumerate(
+                zip(numerals, (1, 2, 3, 4, 5), strict=True), start=1
+            )
+        ],
+    )
+    panel.sync_groups_from_project_model()
+
+    measured = []
+    for phase_id in phase_ids:
+        item = panel._table.item(_row_of_key(panel, f"group:{phase_id}"), 0)
+        measured.append(item.text())
+        width = QFontMetrics(item.font()).horizontalAdvance(item.text())
+        assert width <= panel._table.columnWidth(0) - _RUN_COLUMN_TEXT_MARGIN_PX, item.text()
+    assert len(measured) == len(numerals)

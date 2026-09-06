@@ -1836,22 +1836,27 @@ class DataBrowserPanel(QWidget):
             self._table.setItem(row, col, blank)
 
     def _add_phase_header_row(self, phase: DataGroup) -> None:
-        """Render one phase sub-header: ``▾ ■ Phase I   1.8 – 16.0 K   ⓘ``.
+        """Render one phase sub-header: ``▾ Phase I   1.8 – 16.0 K   ⓘ``.
 
         Indented one level under its parent's header and painted on the group
         *member* tint, so the phase reads as part of the series rather than as a
-        second top-level group. The swatch is the phase colour on a left-edge
-        stripe (the same decoration its member rows wear, so header and members
-        are visibly one band); the Title column carries the range and the count
+        second top-level group. The Title column carries the range and the count
         cell the ⓘ indicator. Model and fit text deliberately stay out of the
         header — that is what the popover is for.
+
+        The phase's swatch is the coloured left-edge stripe plus the label drawn
+        in the phase colour, rather than a ``■`` glyph in the text: the Run
+        column is capped at 150 px (``_resize_columns_to_content``) and the
+        glyph costs enough width there to elide the wizard's own default names
+        from "Phase II" on. The stripe runs down the header and every member of
+        the phase, so it reads as one band rather than a mark on one row.
         """
         member_bg = _GROUP_MEMBER_BACKGROUND
         row = self._table.rowCount()
         self._table.insertRow(row)
 
         prefix = "▸" if self._is_collapsed(phase.group_id) else "▾"
-        run_item = QTableWidgetItem(f"{_INDENT}{prefix} ■ {phase.name}")
+        run_item = QTableWidgetItem(f"{_INDENT}{prefix} {phase.name}")
         run_item.setData(self._GROUP_ROLE, f"{self._GROUP_SENTINEL_PREFIX}{phase.group_id}")
         run_item.setData(_GROUP_KIND_ROLE, phase.kind)
         run_item.setData(_INDENT_LEVEL_ROLE, 1)
