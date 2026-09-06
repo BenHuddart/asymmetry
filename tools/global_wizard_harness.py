@@ -299,11 +299,11 @@ def _build_case_datasets(case: SyntheticCase) -> list[Any]:
 #
 # A tier maps to a callable that runs the wizard with a particular configuration
 # and returns the ``GlobalFitWizardRecommendation`` plus its instrumentation
-# dict. Each harness tier drives the user-facing ``EffortTier`` enum. As of the
-# PR 5 rework **every tier resolves to the exact bounded wavefront** (byte-for-
-# byte the frozen-baseline path): the heuristic Low/Balanced engines were
-# empirically dominated by bounded-exhaustive and removed from the user-facing
-# slider, so all four tiers now produce identical verdicts and fit counts. The
+# dict. Each harness tier drives the user-facing ``EffortTier`` enum. Every tier
+# now resolves to the **separable** role-search engine (see ``--engine``): the
+# heuristic Low/Balanced engines were empirically dominated by bounded-
+# exhaustive and removed from the user-facing slider, so all four tiers still
+# produce identical verdicts and fit counts under a given ``--engine``. The
 # retained heuristic engines (and the I/J/K knobs) live behind the low-level
 # ``search_engine`` string and are covered by the core test-suite, not this sweep.
 
@@ -1060,9 +1060,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=TIERS,
         default="exhaustive",
         help=(
-            "Effort tier. As of the PR 5 rework every tier resolves to the exact "
-            "bounded wavefront, so all four report identical verdicts and fit "
-            "counts (the evidence the collapsed slider is honest)."
+            "Effort tier. Every tier resolves to the same role-search engine "
+            "(the separable engine by default; see --engine), so all four "
+            "report identical verdicts and fit counts (the evidence the "
+            "collapsed slider is honest)."
         ),
     )
     parser.add_argument(

@@ -88,3 +88,25 @@ this.
 
 The 5-PR detail, sequencing, parallelization and model-tier assignments are in
 `implementation-options.md`.
+
+## 4. Outcome
+
+The 5-PR plan shipped as scoped, then one more finding from a real transition
+series (study of 2026-09-05) sent the role search's engine choice down a
+different path than PR 4's heuristic-search design: see
+[docs/plans/global-wizard-transitions.md](../../plans/global-wizard-transitions.md)
+("The role search is separable, not exhaustive"). The shipped engine is a
+**separable** search — the all-local answer comes straight from the per-run
+pre-screen (never re-fitted jointly), a full-covariance surrogate ranks every
+Global/Local sharing pattern, and backward elimination fits the exact path in
+`O(P)` coupled fits per template instead of the exhaustive wavefront's
+`O(2^P)` — and it is now the **default engine for every effort tier** rather
+than a fourth tier alongside the heuristic Low/Balanced engines this study
+originally scoped. The exhaustive wavefront this study measured is retained as
+the harness referee, reachable through the low-level `search_engine` argument;
+`tools/global_wizard_harness.py --engine {separable,exhaustive}` measures a
+candidate against it (acceptance: >= 95% verdict agreement, every disagreement
+inside the IC-gap tolerance — measured at 100% agreement on the harness's case
+set). The heuristic Low/Balanced engines this study designed remain reachable
+behind the same argument for large-`P` use and regression coverage, but are no
+longer reached from `effort_tier` or the GUI.

@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Global Fit Wizard can now split a series at a transition into
+  independently-fitted phases, instead of forcing one model across a break it
+  cannot describe.** A screening pass looks for the smallest total penalty
+  (BIC per segment plus a per-break cost, in the style of Killick, Fearnhead &
+  Eckley, J. Am. Stat. Assoc. **107**, 1590 (2012), scored with the modified-BIC
+  penalty floor of Zhang & Siegmund, Biometrics **63**, 22 (2007)) over every
+  way of partitioning the series into contiguous phases of at least three runs,
+  and shows the whole penalty path — not just its own pick — in a new
+  **Transitions** card on the Result page, with the largest admissible break
+  count pre-selected. Selecting a row and pressing **Optimize phases** runs the
+  coupled search on each phase independently (plus the neighbouring solutions
+  the wizard checks to confirm its pick); **Apply phases** then nests one data
+  group per phase under the series group and records one global-fit series per
+  phase. Phase data groups render in the Data Browser as coloured sub-headers
+  beneath their series, with a 4 px stripe on every member row, a "Move to
+  phase ▸" override on any run, and an ⓘ popover naming the phase's model, fit
+  state, shared parameters, and boundary estimates; a run the partition leaves
+  out renders as an excluded, hatched member of the series instead. The Fit
+  Parameters trending panel colours a phase-owned series by its phase, and for
+  the active series shades its run range and draws its boundary estimates
+  (with an uncertainty band) directly on the plot — mirrored in the GLE
+  export. Project files gain six additive `data_groups` fields for this
+  (`parent_group_id`, `phase_ordinal`, `phase_range`, `phase_boundaries`,
+  `phase_color`, `phase_provenance` — schema v19).
+
 - **The fit wizard now measures a heavily damped line's envelope instead of
   guessing at it.** The early-window crop ladder added in 0.17.0 could see such
   a line but could not describe one: it inferred an envelope from whichever
@@ -88,6 +113,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comparable. `instrumentation` records `alphabet_size`, `series_rebin_factor`
   and `completion_fits`. The effort tier now narrows that alphabet rather than a
   guessed portfolio; multiplet and pattern-matched candidates are never trimmed.
+  The coupled optimisation that follows is now **separable** by default too:
+  every effort tier runs the same engine, which takes the all-local assignment
+  straight from the per-run fits, ranks every Global/Local sharing pattern with
+  a full-covariance surrogate, and walks backward elimination with one warm fit
+  per step instead of re-fitting all `2^P` role assignments — `O(P)` coupled
+  fits per template where the previous exhaustive wavefront cost `O(2^P)`, with
+  no change in the winning assignment (100% verdict agreement against the
+  frozen baseline on the harness's case set). The exhaustive wavefront is
+  retained behind `search_engine="exhaustive"` as that baseline's referee;
+  `tools/global_wizard_harness.py` gains `--engine {separable,exhaustive}`.
 
 - **Every fit parameter's starting value now comes from one place, and the
   table remembers which values are still starting guesses.** Start values used
@@ -245,6 +280,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still there.
 
 ### Fixed
+
+- **The Global Fit Wizard's role search no longer re-solves the all-local
+  answer as one joint problem and no longer times out on a real multi-run
+  segment.** The exhaustive wavefront spent most of its 180 s budget
+  re-fitting the all-local assignment as a single joint Minuit problem even
+  though the per-run pre-screen already held every one of those fits; on an
+  11- or 14-run segment it exhausted the budget before finishing even one
+  shared-parameter candidate and fell back to reporting no sharing at all. The
+  new separable engine assembles the all-local anchor from the pre-screen
+  directly and never re-fits it (see the Changed entry above).
+- **A sub-threshold or unsamplable residual-FFT peak near Nyquist no longer
+  pins a run's analysis — and, through the series minimum, the whole series —
+  at full resolution.** The rebin-bandwidth cap that protects a seeded line
+  from aliasing used to protect every detected peak, not just the ones
+  eligible to seed an oscillatory component; a peak too weak to ever be seeded,
+  or with a period under eight native bins that no factor could resolve
+  anyway, still forced full resolution for a line no fit could use. The cap
+  now follows the same eligibility rule multiplet seeding already uses.
+- **A detected line above the analysed record's Nyquist is no longer seeded.**
+  Peak detection runs at full bandwidth but a fit runs on the rebinned copy;
+  a residual-FFT spike above the *rebinned* record's Nyquist was seeded into a
+  multiplet template whose frequency bounds then inverted on the Nyquist
+  clamp, and Minuit refused the limit. Lines above the analysed record's own
+  Nyquist are now dropped where that record is decided.
 
 - **A parenthesis next to a fraction group made the model refuse to build.**
   `(Oscillatory * (Exponential + Gaussian){frac})`,
