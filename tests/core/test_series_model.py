@@ -227,6 +227,73 @@ def test_data_group_kind_round_trips_and_tolerant_read():
     assert DataGroup.from_dict({"group_id": "g2", "name": "old"}).kind == "user"
 
 
+# ── DataGroup phase fields (D1, Global Fit Wizard transitions) ───────────────
+
+
+def test_data_group_is_not_a_phase_by_default():
+    group = DataGroup("g1", "scan", member_run_numbers=[1, 2, 3])
+    assert group.parent_group_id is None
+    assert not group.is_phase
+    assert group.phase_ordinal is None
+    assert group.phase_range is None
+    assert group.phase_boundaries == {"lower": None, "upper": None}
+    assert group.phase_color is None
+    assert group.phase_provenance == {}
+
+
+def test_data_group_phase_fields_set_and_is_phase_true():
+    phase = DataGroup(
+        "p1",
+        "Phase I",
+        member_run_numbers=[10, 11, 12],
+        parent_group_id="series-1",
+        phase_ordinal=1,
+        phase_range=(1.8, 16.0),
+        phase_boundaries={"lower": None, "upper": (16.5, 0.5)},
+        phase_color="#2F4DA0",
+        phase_provenance={"axis_key": "temperature", "gains": [12.4]},
+    )
+    assert phase.is_phase
+    assert phase.parent_group_id == "series-1"
+    assert phase.phase_ordinal == 1
+    assert phase.phase_range == (1.8, 16.0)
+    assert phase.phase_boundaries == {"lower": None, "upper": (16.5, 0.5)}
+    assert phase.phase_color == "#2F4DA0"
+    assert phase.phase_provenance == {"axis_key": "temperature", "gains": [12.4]}
+
+
+def test_data_group_phase_fields_round_trip():
+    phase = DataGroup(
+        "p1",
+        "Phase I",
+        member_run_numbers=[10, 11, 12],
+        parent_group_id="series-1",
+        phase_ordinal=1,
+        phase_range=(1.8, 16.0),
+        phase_boundaries={"lower": None, "upper": (16.5, 0.5)},
+        phase_color="#2F4DA0",
+        phase_provenance={"axis_key": "temperature"},
+    )
+    restored = DataGroup.from_dict(phase.to_dict())
+    assert restored.is_phase
+    assert restored.parent_group_id == "series-1"
+    assert restored.phase_ordinal == 1
+    assert restored.phase_range == (1.8, 16.0)
+    assert restored.phase_boundaries == {"lower": None, "upper": (16.5, 0.5)}
+    assert restored.phase_color == "#2F4DA0"
+    assert restored.phase_provenance == {"axis_key": "temperature"}
+
+
+def test_data_group_phase_fields_tolerant_defaults_from_dict():
+    # Pre-v19 dict carrying none of the phase keys migrates to "not a phase".
+    restored = DataGroup.from_dict({"group_id": "g1", "name": "scan", "member_run_numbers": [1, 2]})
+    assert not restored.is_phase
+    assert restored.phase_range is None
+    assert restored.phase_boundaries == {"lower": None, "upper": None}
+    assert restored.phase_color is None
+    assert restored.phase_provenance == {}
+
+
 # ── group_id / exclusions / staleness (D1) ────────────────────────────────────
 
 
