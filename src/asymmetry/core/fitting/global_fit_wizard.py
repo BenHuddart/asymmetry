@@ -5440,6 +5440,15 @@ def _fit_exact_assignment(
     )
     difficult_assignment = free_count >= 20 or len(local_param_names) >= 2
 
+    # The separable engine's cheap node escalates to a *capped* battery when its
+    # one warm fit fails: the first seed only, one staged cycle, no prefit-only
+    # fallback. The full ladder exists for anchor nodes without a warm start; a
+    # node that already sits in the collapse's basin needs a second try, not a
+    # dozen, and the winner is refitted at full resolution afterwards anyway.
+    staged_cycles = 1 if warm_start_only else (4 if search_strategy == "staged_v2" else 2)
+    if warm_start_only:
+        attempt_variants = attempt_variants[:1]
+
     def _evaluate_attempt_variants(
         variants: tuple[dict[int, ParameterSet], ...],
         *,
@@ -5471,8 +5480,8 @@ def _fit_exact_assignment(
                 local_param_names=local_param_names,
                 initial_params=initial_params,
                 progress_callback=progress_callback,
-                max_cycles=4 if search_strategy == "staged_v2" else 2,
-                include_mixed_polish=search_strategy == "staged_v2",
+                max_cycles=staged_cycles,
+                include_mixed_polish=search_strategy == "staged_v2" and not warm_start_only,
                 strategy=strategy,
                 instrumentation=instrumentation,
             )
@@ -5645,7 +5654,7 @@ def _fit_exact_assignment(
     fit_success = best_results is not None and all(
         result.success for result in best_results.values()
     )
-    if not fit_success and warm_start_by_run is not None:
+    if not fit_success and warm_start_by_run is not None and not warm_start_only:
         fallback_attempt_variants = _assignment_attempt_variants(
             base_by_run,
             template,
@@ -9734,41 +9743,6 @@ def _windows_of(solution: PartitionSolution) -> tuple[_PhaseWindow, ...]:
     )
 
 
-def _shifted_break_variants(
-    windows: tuple[_PhaseWindow, ...], min_segment: int
-) -> list[tuple[_PhaseWindow, ...]]:
-    """Every one-run shift of a single break that keeps each phase legal.
-
-    The elbow is a claim about *where* the series changes as much as about how
-    many times, and the DP found the break from a closed-form surrogate. Fitting
-    the two neighbouring positions is what turns "the surrogate liked run 16" into
-    "the exact fit prefers run 16 to runs 15 and 17".
-
-    Only breaks between two ordinary phases move. An end stub is short *because*
-    it is excluded, so a shift into it would have to redefine what it is; it is
-    left where the DP put it.
-    """
-
-    variants: list[tuple[_PhaseWindow, ...]] = []
-    for index in range(len(windows) - 1):
-        left, right = windows[index], windows[index + 1]
-        if left.excluded or right.excluded:
-            continue
-        for delta in (-1, 1):
-            boundary = left.stop + delta
-            if boundary - left.start < min_segment or right.stop - boundary < min_segment:
-                continue
-            variants.append(
-                (
-                    *windows[:index],
-                    _PhaseWindow(left.start, boundary, False),
-                    _PhaseWindow(boundary, right.stop, False),
-                    *windows[index + 2 :],
-                )
-            )
-    return variants
-
-
 def _restrict_prescreen_assessment(
     assessment: GlobalCandidateAssessment,
     datasets: Sequence[MuonDataset],
@@ -9913,15 +9887,17 @@ def _optimise_partition_phases(
 ) -> tuple[PartitionPath, dict[tuple[int, int], GlobalCandidateAssessment], int]:
     """Tier 3: fit each phase of the selected partition, and verify the elbow.
 
-    Verification covers the elbow's neighbours in **both** senses — ``k*−1``,
-    ``k*`` and ``k*+1`` where they exist, and each break of ``k*`` shifted one run
-    either way — because a partition can be wrong about how many transitions there
-    are or about where one of them is, and the closed-form path cannot tell those
-    apart. Every distinct segment across all of those is fitted **once**
-    (neighbouring solutions share most of their segments), and the path rows they
-    touch are re-scored with the exact per-segment BIC, still on the BIC scale
-    (:data:`_PARTITION_METRIC`) whatever ranking metric the user chose. ``selected_k``
-    is then re-derived from the exact gains.
+    Verification covers the selected solution ``k*`` and the one below it,
+    ``k*−1``, so the last accepted break's gain is measured exactly rather than
+    predicted. Every distinct segment across the two is fitted **once**
+    (neighbouring solutions share most of their segments), and the path rows
+    they touch are re-scored with the exact per-segment BIC, still on the BIC
+    scale (:data:`_PARTITION_METRIC`) whatever ranking metric the user chose.
+    ``selected_k`` is then re-derived from the exact gains. The wider set — the
+    solution above, and each break shifted one run either way — was measured
+    on a real 29-run series at 18 distinct segments of several minutes each,
+    so it is not run by default; the boundary's ``± half_gap`` already states
+    the position uncertainty the shifts would have probed.
 
     An excluded end stub never receives a coupled fit and keeps its per-run cost
     from the closed-form path, which is precisely what "not part of any phase"
@@ -9938,12 +9914,9 @@ def _optimise_partition_phases(
 
     solutions = path.solutions
     candidates: dict[int, list[tuple[_PhaseWindow, ...]]] = {}
-    for k in (partition_k - 1, partition_k, partition_k + 1):
+    for k in (partition_k - 1, partition_k):
         if 0 <= k < len(solutions):
             candidates[k] = [_windows_of(solutions[k])]
-    candidates[partition_k].extend(
-        _shifted_break_variants(candidates[partition_k][0], config.min_segment)
-    )
 
     stub_ic: dict[tuple[int, int], float] = {
         (segment.start, segment.stop): float(segment.ic)

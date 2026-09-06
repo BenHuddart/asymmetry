@@ -285,16 +285,13 @@ def test_the_optimised_recommendation_names_its_transition(planted_series):
 
 
 @pytest.mark.integration
-def test_verification_covers_the_neighbours_in_k_and_in_position(planted_series):
-    """Both senses of "neighbour", and the elbow survives both."""
+def test_verification_covers_the_elbow_and_the_solution_below_it(planted_series):
+    """k* and k*−1 are refitted exactly, and the elbow survives the exact gain."""
     _datasets, _table, _screening, optimised = planted_series
     path = optimised.partition_path
 
-    # Neighbours in k: 0, 1 and 2 all carry exactly re-scored totals.
     assert path.selected_k == 1
     assert optimised.recommended_partition_k == 1
-    # Neighbours in position: the one-run-shifted breaks were fitted and lost, so
-    # the winning solution still sits on the planted boundary.
     assert [(segment.start, segment.stop) for segment in path.solutions[1].segments] == [
         (0, PLANTED_BREAK),
         (PLANTED_BREAK, 10),
@@ -322,9 +319,8 @@ def test_every_distinct_verified_segment_is_fitted_exactly_once(planted_series):
             instrumentation=instrumentation,
         )
 
-    # k = 0 → (0, 10); k = 1 → (0, 5), (5, 10); no k = 2 exists for two
-    # structures; the shifted breaks → (0, 4), (4, 10), (0, 6), (6, 10).
-    assert instrumentation["partition_segments_fitted"] == 7
+    # k = 0 → (0, 10); k = 1 → (0, 5), (5, 10): three distinct segments.
+    assert instrumentation["partition_segments_fitted"] == 3
 
 
 @pytest.mark.integration

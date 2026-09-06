@@ -547,3 +547,11 @@ the feature branch. Phase F runs the full validation once.
   16-run segment, and pushed the path towards short segments of simple
   templates (a "relaxation" description of the ordered phase). The exactly
   refitted rows are scored the same way (`_partition_bic`).
+- 2026-09-07 (integration, private gate): **tier-3 verification is `k*` and
+  `k*−1` only.** The full set (`k*±1` plus every one-run shift of each break)
+  came to 18 distinct segments on the real series at several minutes each; the
+  shifts are dropped in v1 (the boundary's ± half-gap already states the
+  position uncertainty) and `k*+1` is not refitted (its surrogate gain was
+  already below the floor). A warm node whose one fit fails now escalates to a
+  *capped* battery (first seed, one staged cycle, no prefit-only fallback)
+  instead of the full multi-start ladder.
