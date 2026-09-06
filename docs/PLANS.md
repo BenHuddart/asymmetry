@@ -6,6 +6,12 @@ subsystems or days.
 
 ## Active
 
+### Global Fit Wizard: transition breaks, phases, and a separable role search
+
+Status: plan agreed with maintainer (2026-09-06); single PR on
+`feat/global-wizard-transitions`, phased subagent work with a lead review gate
+per phase. Full plan: [docs/plans/global-wizard-transitions.md](plans/global-wizard-transitions.md).
+
 ### Axis limits: one per-axis Auto/Hold policy for every plot representation
 
 Status: implemented 2026-09-05; single PR on `feat/axis-limit-policy`
