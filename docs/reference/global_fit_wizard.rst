@@ -287,20 +287,39 @@ see :ref:`grouped-cross-run-global-api` in
 Calling the global wizard from a script
 ---------------------------------------
 
-``build_global_fit_wizard_screening_recommendation`` first builds a per-run
-single-fit comparison table for every dataset in the series. Each of those
-tables is a full candidate sweep for one run, so on a long series the screening
-pass legitimately runs for **many minutes** before it returns; it reports each
-completed table through ``progress_callback`` so you can see it advancing rather
-than guessing whether it has stalled. Pass a ``cancel_callback`` if you need to
-be able to stop it — it is polled several times a second throughout, including
-while the fits are running in worker processes.
+``build_global_fit_wizard_screening_recommendation`` starts by analysing every
+dataset in the series with the **single-run Fit Wizard** — the same tiered family
+screen, peak analysis and damped-line scan
+:func:`~asymmetry.core.fitting.fit_wizard.build_fit_wizard_recommendation`
+performs on one spectrum. The series' candidate list is then the union of the
+templates those per-run analyses assessed, so a model that describes only part of
+a temperature series (a heavily damped pair below a transition, say) is
+considered for the whole series instead of being averaged away. Runs are analysed
+one at a time, because each analysis already uses the whole machine.
 
-The screening pass fans those tables across a process pool, so the
+Every run is then scored against every candidate at one common rebinning factor —
+the smallest any run's own analysis chose — so the information criteria of two
+runs, or of two candidates, may be summed and compared. The cells a run's own
+analysis already holds at that factor are kept; the rest are fitted, warm-started
+from that run's or a sibling run's values.
+
+On a long series this legitimately runs for **many minutes** before it returns;
+each completed analysis and each completed score row is reported through
+``progress_callback`` so you can see it advancing rather than guessing whether it
+has stalled. Pass a ``cancel_callback`` if you need to be able to stop it — it is
+polled several times a second throughout, including while fits are running in
+worker processes.
+
+The scoring pass fans its per-run work across a process pool, so the
 ``if __name__ == "__main__":`` rule in
 :ref:`fit-wizard-scripting-and-parallelism` applies here too: an unguarded
 script degrades to serial execution with a ``SpawnUnsafeWarning`` rather than
 crashing.
+
+A cached single-run analysis is reused instead of repeated when it answers the
+same question — same candidate scope, same user-declared frequencies. That is
+what the Fit tabs' own wizard results give the global wizard: analyse a run once
+in the Fit Wizard and the series analysis does not pay for it again.
 
 Screening never sets ``recommended_key``. That is deliberate — a pre-screen score
 comes from independent per-dataset fits, which are not evidence about a *coupled*
@@ -316,26 +335,29 @@ from an ordinary one.
 Buying a cheaper answer: effort tiers
 -------------------------------------
 
-Screening cost is (candidates × datasets × per-fit cost), and the portfolio
-offered for a broad scope includes numerically integrated dynamic Kubo-Toyabe
-candidates that can cost an order of magnitude more than the rest of the
-portfolio combined. On a fourteen-dataset series that is the difference between
-a screen that returns and one that does not.
+Scoring cost is (candidates × datasets × per-fit cost), and the candidate list a
+broad scope produces includes numerically integrated dynamic Kubo-Toyabe models
+that can cost an order of magnitude more than the rest of the list combined. On a
+fourteen-dataset series that is the difference between a screen that returns and
+one that does not.
 
-``effort_tier`` controls it:
+``effort_tier`` controls it. It narrows the series' candidate list after the
+per-run analyses have produced it, so it buys a cheaper *scoring* pass, not a
+cheaper per-run analysis:
 
 ``EffortTier.LOW``
-   Screens a small portfolio of the cheapest, most parsimonious candidates.
-   Coarse, and fast enough to be interactive.
+   Scores a small set of the cheapest, most parsimonious candidates. Coarse, and
+   fast enough to be interactive.
 
 ``EffortTier.BALANCED``
    Drops only the numerically expensive candidates.
 
 ``EffortTier.THOROUGH`` / ``EffortTier.EXHAUSTIVE`` (the default)
-   Screen the whole portfolio, exactly as before.
+   Score the whole candidate list, exactly as before.
 
-Candidates named by a multiplet pattern match are never dropped — those are
-identified by the data, so removing them would change the answer rather than
+Candidates a run's peak search positively identified — a multiplet pattern match,
+or a multiplet model built from that run's detected lines — are never dropped:
+those come from the data, so removing them would change the answer rather than
 coarsen it. Whatever *is* skipped is announced through ``progress_callback`` and
 listed in ``instrumentation["screening_skipped_template_keys"]``, so a coarser
 answer always says what it was coarsened by.

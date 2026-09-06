@@ -8,6 +8,8 @@ one without reading the process tree.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -21,12 +23,15 @@ from asymmetry.core.fitting.fit_wizard import (
     _rate_dimension,
     _stage2_variant_budget,
     build_fit_wizard_recommendation,
+    build_fit_wizard_recommendation_for_templates,
     fingerprint_spectrum,
+    single_fit_build_signature,
 )
 from asymmetry.core.fitting.global_fit_wizard import (
     _screening_no_recommendation_summary,
     build_global_fit_wizard_candidate_portfolio,
     build_global_fit_wizard_screening_recommendation,
+    build_or_complete_single_fit_wizard_recommendations_for_global_portfolio,
     screening_templates_for_effort_tier,
 )
 from asymmetry.core.fitting.wizard_scope import (
@@ -81,6 +86,46 @@ def _template(expression: str, key: str) -> CandidateTemplate:
         rationale="test",
         model=CompositeModel.from_expression(expression),
     )
+
+
+def _stub_phase_one(
+    monkeypatch: pytest.MonkeyPatch,
+    templates: tuple[CandidateTemplate, ...],
+) -> None:
+    """Replace phase 1's per-run single-run wizard with a fixed template table.
+
+    Phase 1 runs the whole single-run Fit Wizard on every dataset. That is the
+    behaviour under test in ``tests/core/test_global_fit_wizard.py``; here it is
+    only the fixture that produces a series alphabet, so a fixed, signed table
+    stands in for it.
+    """
+    import asymmetry.core.fitting.global_fit_wizard as module
+
+    def _fake_build(dataset, current_model=None, **kwargs):
+        recommendation = build_fit_wizard_recommendation_for_templates(
+            dataset,
+            templates,
+            metric=kwargs.get("metric", SelectionMetric.AICC),
+        )
+        return replace(
+            recommendation,
+            build_signature=single_fit_build_signature(
+                kwargs.get("scope"), kwargs.get("user_frequencies_mhz")
+            ),
+        )
+
+    monkeypatch.setattr(module, "build_fit_wizard_recommendation", _fake_build)
+
+
+def _covering_tables(
+    datasets: list[MuonDataset],
+    templates: tuple[CandidateTemplate, ...],
+) -> dict[int, object]:
+    """A per-run score table covering ``templates`` — enough to skip phase 1."""
+    return {
+        int(dataset.run_number): build_fit_wizard_recommendation_for_templates(dataset, templates)
+        for dataset in datasets
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -138,35 +183,81 @@ def test_pattern_matched_templates_are_never_pruned() -> None:
     assert expensive.key not in {template.key for template in skipped}
 
 
-def test_screening_respects_the_effort_tier_end_to_end() -> None:
-    """A cheaper tier really does screen fewer candidates, end to end.
+def test_effort_tier_trims_the_series_alphabet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tier now narrows the *alphabet* phase 1 produced, not a guessed portfolio.
 
     Low is compared against Balanced rather than Thorough: an unpruned screen of
-    this scope's portfolio is exactly the multi-minute job the tiers exist to
-    avoid, so running one here would make the test the thing it is testing.
+    a full alphabet is exactly the multi-minute job the tiers exist to avoid, so
+    running one here would make the test the thing it is testing.
     """
     datasets = _series(count=2, points=120)
+    alphabet_source = tuple(
+        _template(expression, key)
+        for expression, key in (
+            ("Exponential + Constant", "exp_constant"),
+            ("Exponential + Exponential + Constant", "biexp_constant"),
+            ("Gaussian + Constant", "gaussian_constant"),
+            ("StretchedExponential + Constant", "stretched_constant"),
+            ("Exponential + Gaussian + Constant", "exp_gaussian_constant"),
+            ("Gaussian + Gaussian + Constant", "double_gaussian_constant"),
+            ("Exponential + Exponential + Exponential + Constant", "triple_exp_constant"),
+            ("Gaussian + Gaussian + Gaussian + Constant", "triple_gaussian_constant"),
+        )
+    )
+    _stub_phase_one(monkeypatch, alphabet_source)
     instrumentation: dict[str, object] = {}
 
-    low = build_global_fit_wizard_screening_recommendation(
+    low = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         datasets,
-        metric=SelectionMetric.AICC,
-        scope=ZF_SCOPE,
         effort_tier=EffortTier.LOW,
         instrumentation=instrumentation,
     )
-    balanced = build_global_fit_wizard_screening_recommendation(
+    balanced = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         datasets,
-        metric=SelectionMetric.AICC,
-        scope=ZF_SCOPE,
         effort_tier=EffortTier.BALANCED,
     )
 
-    assert len(low.assessments) < len(balanced.assessments)
+    assert len(low.portfolio.templates) < len(balanced.portfolio.templates)
+    assert instrumentation["alphabet_size"] == len(low.portfolio.templates)
     # The skipped candidates are named, never silently dropped.
     skipped = instrumentation.get("screening_skipped_template_keys")
     assert isinstance(skipped, list) and skipped
     assert instrumentation.get("screening_effort_tier") == EffortTier.LOW.value
+
+
+def test_multiplet_alphabet_entries_survive_the_cheapest_tier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A peak-seeded multiplet is evidence, so no tier may trim it away."""
+    datasets = _series(count=2, points=120)
+    multiplet = _template(
+        "Oscillatory * Exponential + Oscillatory * Exponential + Constant",
+        "oscillatory2_exp_constant",
+    )
+    alphabet_source = (
+        multiplet,
+        *(
+            _template(expression, key)
+            for expression, key in (
+                ("Exponential + Constant", "exp_constant"),
+                ("Exponential + Exponential + Constant", "biexp_constant"),
+                ("Gaussian + Constant", "gaussian_constant"),
+                ("StretchedExponential + Constant", "stretched_constant"),
+                ("Exponential + Gaussian + Constant", "exp_gaussian_constant"),
+                ("Gaussian + Gaussian + Constant", "double_gaussian_constant"),
+                ("Exponential + Exponential + Exponential + Constant", "triple_exp_constant"),
+            )
+        ),
+    )
+    _stub_phase_one(monkeypatch, alphabet_source)
+
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        effort_tier=EffortTier.LOW,
+    )
+
+    assert "oscillatory2_exp_constant" in table.portfolio.pattern_template_keys
+    assert "oscillatory2_exp_constant" in {t.key for t in table.portfolio.templates}
 
 
 # --------------------------------------------------------------------------- #
@@ -174,14 +265,31 @@ def test_screening_respects_the_effort_tier_end_to_end() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_screening_summary_distinguishes_a_ranked_table_from_a_failed_screen() -> None:
-    datasets = _series(count=3, points=120)
-    recommendation = build_global_fit_wizard_screening_recommendation(
+def _screened(datasets: list[MuonDataset], monkeypatch: pytest.MonkeyPatch):
+    """A screening recommendation over a small fixed alphabet, without phase 1."""
+    templates = tuple(
+        _template(expression, key)
+        for expression, key in (
+            ("Exponential + Constant", "exp_constant"),
+            ("Gaussian + Constant", "gaussian_constant"),
+            ("Exponential + Exponential + Constant", "biexp_constant"),
+        )
+    )
+    _stub_phase_one(monkeypatch, templates)
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(datasets)
+    return build_global_fit_wizard_screening_recommendation(
         datasets,
         metric=SelectionMetric.AICC,
-        scope=ZF_SCOPE,
-        effort_tier=EffortTier.LOW,
+        portfolio=table.portfolio,
+        single_fit_recommendations_by_run=table.recommendations_by_run,
     )
+
+
+def test_screening_summary_distinguishes_a_ranked_table_from_a_failed_screen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    datasets = _series(count=3, points=120)
+    recommendation = _screened(datasets, monkeypatch)
 
     # Screening never recommends: prescreen assessments are not evidence about a
     # coupled global fit. That is by design — and the summary now says so, and
@@ -199,16 +307,12 @@ def test_screening_summary_distinguishes_a_ranked_table_from_a_failed_screen() -
     assert min(scored, key=lambda a: a.selected_score).template.key in recommendation.summary
 
 
-def test_screening_summary_calls_an_unscoreable_table_a_failure() -> None:
+def test_screening_summary_calls_an_unscoreable_table_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The genuinely empty case must not read like an ordinary screen."""
     datasets = _series(count=3, points=120)
-    recommendation = build_global_fit_wizard_screening_recommendation(
-        datasets,
-        metric=SelectionMetric.AICC,
-        scope=ZF_SCOPE,
-        effort_tier=EffortTier.LOW,
-    )
-    from dataclasses import replace
+    recommendation = _screened(datasets, monkeypatch)
 
     broken = replace(
         recommendation,
@@ -232,15 +336,11 @@ def test_screening_summary_calls_an_unscoreable_table_a_failure() -> None:
     assert "run 1000" in summary
 
 
-def test_screening_summary_reports_an_empty_portfolio_as_a_failure() -> None:
+def test_screening_summary_reports_an_empty_portfolio_as_a_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     datasets = _series(count=3, points=120)
-    recommendation = build_global_fit_wizard_screening_recommendation(
-        datasets,
-        metric=SelectionMetric.AICC,
-        scope=ZF_SCOPE,
-        effort_tier=EffortTier.LOW,
-    )
-    from dataclasses import replace
+    recommendation = _screened(datasets, monkeypatch)
 
     summary = _screening_no_recommendation_summary(replace(recommendation, assessments=()))
 
@@ -387,15 +487,23 @@ def test_stage_timer_records_the_stage_even_when_it_raises() -> None:
     assert events[-1].event == "end"
 
 
-def test_screening_populates_the_standard_timing_block() -> None:
+def test_screening_populates_the_standard_timing_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     datasets = _series(count=3, points=120)
+    _stub_phase_one(
+        monkeypatch,
+        (
+            _template("Exponential + Constant", "exp_constant"),
+            _template("Gaussian + Constant", "gaussian_constant"),
+        ),
+    )
     instrumentation: dict[str, object] = {}
     events: list[WizardStageProgress] = []
 
     build_global_fit_wizard_screening_recommendation(
         datasets,
         metric=SelectionMetric.AICC,
-        scope=ZF_SCOPE,
         effort_tier=EffortTier.LOW,
         instrumentation=instrumentation,
         stage_callback=events.append,
@@ -405,6 +513,7 @@ def test_screening_populates_the_standard_timing_block() -> None:
     assert isinstance(block, dict)
     stage_names = {stage["stage"] for stage in block["stages"]}
     assert "screening.single_fit_tables" in stage_names
+    assert "screening.completion_fits" in stage_names
     assert "screening.aggregate_assessments" in stage_names
     assert block["elapsed_seconds"] > 0.0
     # CPU is what distinguishes "slow" from "hung", so it must be present and

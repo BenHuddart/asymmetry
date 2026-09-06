@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Executor, ThreadPoolExecutor
 from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass, replace
@@ -413,6 +414,14 @@ class FitWizardRecommendation:
     #: between recommendations with the same value. Additive — old payloads
     #: default to ``0`` (unknown).
     analysed_points: int = 0
+    #: The question this recommendation answers: the scope and the user-declared
+    #: frequencies :func:`build_fit_wizard_recommendation` was asked for, encoded
+    #: by :func:`single_fit_build_signature`. Empty on every payload that did not
+    #: come from that full single-run path (an explicit-template table, a
+    #: completed global-wizard screening row, an old persisted payload), so a
+    #: caller can tell a reusable single-run analysis from a derived table
+    #: without inspecting its contents.
+    build_signature: str = ""
 
     @property
     def recommended_assessment(self) -> CandidateAssessment | None:
@@ -1762,6 +1771,17 @@ def build_null_baseline_templates() -> tuple[CandidateTemplate, ...]:
 #: and the relaxing twin ``oscillatory{n}_{env}_relax_constant`` (group 3).
 _MULTIPLET_TEMPLATE_KEY_RE = re.compile(r"^oscillatory(\d+)_(exp|gaussian)(_relax)?_constant$")
 
+
+def is_multiplet_template_key(key: str) -> bool:
+    """True for a peak-seeded multiplet template key (``oscillatory{n}_...``).
+
+    The key shape is stable across runs (only the seeds carry the measured
+    frequencies), so it is how a series-level caller recognises the templates a
+    per-run peak search built.
+    """
+    return _MULTIPLET_TEMPLATE_KEY_RE.match(key) is not None
+
+
 #: Muonium TF templates whose ``field``/``A_hf`` seeding shares one rule.
 _MUONIUM_TF_TEMPLATE_KEYS = frozenset(
     {"muonium_low_tf_constant", "muonium_tf_constant", "muonium_high_tf_constant"}
@@ -2068,6 +2088,11 @@ class _AssessmentTask:
     variant_budget: int
     stage: int
     screening_cap: bool = False
+    #: Already-fitted values for this template — the same model fitted on a
+    #: sibling run, or on this run at a different rebin factor. Tried first,
+    #: ahead of the seed ladder, so a completion fit starts from an answer
+    #: rather than from a guess.
+    warm_start: ParameterSet | None = None
 
 
 def _execute_assessment_task(
@@ -2092,6 +2117,7 @@ def _execute_assessment_task(
         stage=task.stage,
         cancel_callback=cancel_callback,
         migrad_ncall=migrad_ncall,
+        warm_start=task.warm_start,
     )
 
 
@@ -2308,6 +2334,7 @@ def build_fit_wizard_recommendation(
     # (see ``wizard_scope.infer_auto_query``); a scope of ``None`` means no
     # resolution ran at all, so the note stays empty rather than guessing.
     scope_note = resolution.inference_note if resolution is not None else ""
+    build_signature = single_fit_build_signature(scope, user_frequencies_mhz)
     families = build_wizard_families(fingerprint, current_model, scope_resolution=resolution)
 
     def _progress(message: str) -> None:
@@ -2331,6 +2358,7 @@ def build_fit_wizard_recommendation(
                 "to run the analysis."
             ),
             scope_note=scope_note,
+            build_signature=build_signature,
         )
 
     field_gauss = dataset.field
@@ -2776,6 +2804,7 @@ def build_fit_wizard_recommendation(
             scope_note=scope_note,
             rebin_factor=rebin_factor,
             analysed_points=int(analysis_dataset.n_points),
+            build_signature=build_signature,
         ),
         metric,
     )
@@ -2787,13 +2816,28 @@ def build_fit_wizard_recommendation_for_templates(
     *,
     fingerprint: SpectrumFingerprint | None = None,
     metric: SelectionMetric = SelectionMetric.AICC,
+    seed_context: TemplateSeedContext | None = None,
+    warm_start_by_template: Mapping[str, ParameterSet] | None = None,
+    variant_budget: int = 5,
 ) -> FitWizardRecommendation:
-    """Evaluate one dataset against an explicit candidate-template list."""
+    """Evaluate one dataset against an explicit candidate-template list.
+
+    This path runs no peak detection of its own, so ``seed_context`` is how a
+    caller hands it the measurement one was made elsewhere — the run's own
+    :class:`PeakAnalysis` and multiplet matches from a full single-run build.
+    Without it a multiplet template seeds every one of its lines at the same
+    guessed frequency, which is not a fit of that template at all.
+    ``warm_start_by_template`` supplies already-fitted values per template key
+    (the same model fitted on a sibling run, or on this run at another rebin
+    factor); they are tried ahead of the seed ladder, whose depth is
+    ``variant_budget``.
+    """
     active_fingerprint = fingerprint or fingerprint_spectrum(dataset)
     active_templates = tuple(templates)
+    warm_starts = dict(warm_start_by_template or {})
     # No peak detection on this path, but the applied field is metadata rather
     # than a measurement — so the field/B_L policy still applies.
-    seed_context = _field_seed_context(dataset)
+    active_seed_context = seed_context or _field_seed_context(dataset)
     # max_workers=1 preserves this function's historical serial semantics (one
     # fit engine's worth of work at a time, in list order); the previous single
     # shared FitEngine() is replaced by one-per-task, which is equivalent since
@@ -2806,10 +2850,11 @@ def build_fit_wizard_recommendation_for_templates(
                     fingerprint=active_fingerprint,
                     template=template,
                     metric=metric,
-                    seed_context=seed_context,
-                    variant_budget=5,
+                    seed_context=active_seed_context,
+                    variant_budget=variant_budget,
                     stage=2,
                     screening_cap=False,
+                    warm_start=warm_starts.get(template.key),
                 )
                 for template in active_templates
             ],
@@ -3218,6 +3263,7 @@ def serialize_fit_wizard_recommendation(
         "scope_note": recommendation.scope_note,
         "rebin_factor": int(recommendation.rebin_factor),
         "analysed_points": int(recommendation.analysed_points),
+        "build_signature": recommendation.build_signature,
         # Marks the payload as curve-decimated / residual-free, so a file can be
         # told apart from a pre-this-change full-resolution one at a glance.
         # Read by nothing — deserialisation tolerates both shapes.
@@ -3283,6 +3329,9 @@ def deserialize_fit_wizard_recommendation(
         # not rebinned is exactly what factor 1 means.
         rebin_factor=max(1, int(payload.get("rebin_factor", 1) or 1)),
         analysed_points=max(0, int(payload.get("analysed_points", 0) or 0)),
+        # Additive: old payloads carry no signature, which is exactly what an
+        # empty one means — "not known to come from the full single-run path".
+        build_signature=str(payload.get("build_signature", "")),
     )
 
 
@@ -3298,6 +3347,28 @@ def recommendation_template_keys(
 ) -> tuple[str, ...]:
     """Return the ordered template-key sequence embedded in one recommendation."""
     return candidate_template_keys(recommendation.templates)
+
+
+def single_fit_build_signature(
+    scope: WizardScope | None,
+    user_frequencies_mhz: Sequence[float] | None = None,
+) -> str:
+    """Encode the question :func:`build_fit_wizard_recommendation` was asked.
+
+    Two calls with the same scope and the same user-declared frequencies screen
+    the same candidate families from the same seeds, so their recommendations
+    are interchangeable; anything else is a different analysis. The encoding is
+    a canonical JSON string so it survives persistence and dict ordering, and it
+    is never empty — an empty signature marks a payload that did not come from
+    the full single-run path at all.
+    """
+    return json.dumps(
+        {
+            "scope": scope.to_payload() if scope is not None else None,
+            "user_frequencies_mhz": [float(value) for value in (user_frequencies_mhz or ())],
+        },
+        sort_keys=True,
+    )
 
 
 def _serialize_candidate_template(template: CandidateTemplate) -> dict[str, object]:
@@ -3856,6 +3927,7 @@ def _assess_candidate_template(
     stage: int = 2,
     cancel_callback: Callable[[], bool] | None = None,
     migrad_ncall: int | None = None,
+    warm_start: ParameterSet | None = None,
 ) -> CandidateAssessment:
     # Frequencies measured from spectral peaks are trusted seeds: the 0.5x/2x
     # variant scaling that rescues a blind FFT guess would only destroy them.
@@ -3866,12 +3938,17 @@ def _assess_candidate_template(
         and seed_context.peak_analysis.peaks
     ):
         frozen_scale_names = frozenset({"frequency"})
+    seeded = _initial_parameters_for_template(
+        dataset, fingerprint, template, seed_context=seed_context
+    )
     attempts = _parameter_variants(
-        _initial_parameters_for_template(dataset, fingerprint, template, seed_context=seed_context),
+        seeded,
         template=template,
         variant_budget=variant_budget,
         frozen_scale_names=frozen_scale_names,
     )
+    if warm_start is not None:
+        attempts = (_warm_started_parameters(seeded, warm_start), *attempts)
 
     # Screening cap (Stage 1 only): forwarded to the engine's migrad drive, not
     # the scipy fallback below (scipy has no call-count knob).
@@ -5068,6 +5145,25 @@ def _mixture_component_variant(
         elif component_name == "Gaussian":
             scale_overrides[mapping["sigma"]] = component_shape_scales[component_index]
     return _parameter_variant_by_name(parameters, scale_overrides)
+
+
+def _warm_started_parameters(base: ParameterSet, warm: ParameterSet) -> ParameterSet:
+    """``base`` with every value it shares with ``warm`` taken from ``warm``.
+
+    Only free values move. Bounds, fixed flags and expressions stay the
+    template's own, and a *constrained* parameter keeps its own value too: a
+    pinned ``B_L`` or applied field is this run's metadata, so importing the
+    sibling run's pin would silently move this fit onto another run's field. A
+    borrowed value outside this template's bounds is clamped into them — that is
+    the same parameter measured on different data, not a different parameter.
+    """
+    seeded = _clone_parameter_set(base)
+    for parameter in seeded:
+        if parameter.is_constrained or parameter.name not in warm:
+            continue
+        value = float(warm[parameter.name].value)
+        parameter.value = min(max(value, parameter.min), parameter.max)
+    return seeded
 
 
 def _clone_parameter_set(parameters: ParameterSet) -> ParameterSet:
