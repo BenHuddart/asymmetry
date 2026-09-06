@@ -3057,6 +3057,29 @@ def _format_boundary(estimate: float, half_gap: float, unit: str) -> str:
     return f"{text} {unit}" if unit else text
 
 
+def format_transition_boundaries(
+    solution: PartitionSolution,
+    axis_label: str,
+) -> str:
+    """The solution's boundary estimates as one phrase, or ``""`` for no break.
+
+    ``"16.5 ± 0.5 K and 28.5 ± 0.5 K"`` — the same phrase
+    :func:`transitions_summary` embeds in its sentence, so the wizard's
+    Transitions table can tabulate the boundaries without re-deriving the
+    formatting (or the unit) from the axis label itself.
+    """
+
+    unit = _axis_unit(axis_label)
+    formatted = [
+        _format_boundary(estimate, half_gap, unit) for estimate, half_gap in solution.boundaries
+    ]
+    if not formatted:
+        return ""
+    if len(formatted) == 1:
+        return formatted[0]
+    return ", ".join(formatted[:-1]) + f" and {formatted[-1]}"
+
+
 def transitions_summary(
     solution: PartitionSolution,
     axis_label: str,
@@ -3068,7 +3091,6 @@ def transitions_summary(
     from the global fit" is the one part of the answer a reader must not miss.
     """
 
-    unit = _axis_unit(axis_label)
     excluded = [segment for segment in solution.segments if segment.excluded]
     excluded_note = ""
     if excluded:
@@ -3084,15 +3106,10 @@ def transitions_summary(
     if not solution.boundaries:
         return f"No transitions found: one phase describes the whole series.{excluded_note}"
 
-    formatted = [
-        _format_boundary(estimate, half_gap, unit) for estimate, half_gap in solution.boundaries
-    ]
-    if len(formatted) == 1:
-        listed = formatted[0]
-    else:
-        listed = ", ".join(formatted[:-1]) + f" and {formatted[-1]}"
-    noun = "transition" if len(formatted) == 1 else "transitions"
-    return f"{len(formatted)} {noun} found: {listed}.{excluded_note}"
+    listed = format_transition_boundaries(solution, axis_label)
+    count = len(solution.boundaries)
+    noun = "transition" if count == 1 else "transitions"
+    return f"{count} {noun} found: {listed}.{excluded_note}"
 
 
 def rerank_global_fit_wizard_recommendation(

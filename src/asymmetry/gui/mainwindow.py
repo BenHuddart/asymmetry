@@ -215,6 +215,7 @@ from asymmetry.core.representation.global_fit_study import (
     compute_group_input_digest,
     study_from_legacy_cross_group_payload,
 )
+from asymmetry.core.representation.group import PhaseSpec, phase_group_name
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     ASYMMETRY_PERCENT,
@@ -349,6 +350,20 @@ def _safe_float(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if np.isfinite(result) else None
+
+
+def _phase_reduced_chi_squared_text(assessment) -> str:
+    """``"χ²ᵣ 1.03"`` for one phase's coupled fit, pooled over its runs.
+
+    A coupled fit is one problem across the phase's datasets, so the honest
+    single number is the pooled Σχ² / Σdof rather than a mean of per-run ratios.
+    """
+    results = list(assessment.fit_results_by_run.values())
+    total_chi2 = sum(float(result.chi_squared) for result in results)
+    total_dof = sum(int(result.dof) for result in results)
+    if total_dof <= 0:
+        return "χ²ᵣ n/a"
+    return f"χ²ᵣ {total_chi2 / total_dof:.2f}"
 
 
 def _normalise_source_path(path: str) -> str:
@@ -1986,6 +2001,7 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
+        self._fit_panel.apply_wizard_phases_requested.connect(self._on_apply_wizard_phases)
         if hasattr(self._fit_panel, "batch_seeding_mode_changed"):
             self._fit_panel.batch_seeding_mode_changed.connect(self._sync_batch_seeding_menu)
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
@@ -12097,6 +12113,136 @@ class MainWindow(QMainWindow):
             if gid is not None:
                 return gid
         return None
+
+    # ── Global Fit Wizard: transitions → phase groups (D3) ───────────────────
+
+    def _on_apply_wizard_phases(self, recommendation, partition_k: int) -> None:
+        """Turn the wizard's optimised partition into phase groups and their series.
+
+        The series group comes from the ordinary batch-group policy
+        (:meth:`_resolve_batch_group`: the bound group, else the group every run
+        already shares, else an auto-group), the phases nest under it
+        (:meth:`ProjectModel.create_phase_groups`), and each phase's global fit
+        is then applied through the Batch tab with that phase's group bound — so
+        the existing ``global_fit_completed`` seam records one
+        :class:`FitSeries` per phase with no phase concept of its own. Runs no
+        phase claimed stay members of the parent alone.
+
+        The Batch tab's dataset list is snapshotted first and restored after the
+        group work: minting an auto-group and re-rendering the browser both
+        rebuild its table, and a rebuilt table publishes an empty selection,
+        which would otherwise leave the per-phase applies with no datasets to
+        read the fitted values from.
+        """
+        series_datasets = self._fit_panel.batch_datasets()
+        solution = recommendation.partition_path.solutions[int(partition_k)]
+        axis_key = recommendation.series_axis_key
+        series_runs = sorted(
+            int(run) for segment in solution.segments for run in segment.run_numbers
+        )
+        parent_id = self._series_group_for_phases(series_runs)
+        if parent_id is None:
+            # _resolve_batch_group refuses when the browser cannot mint a group
+            # (fewer than two fittable runs). Nothing to nest phases under.
+            self.statusBar().showMessage(
+                "No data group could be created for the series — phases were not applied."
+            )
+            return
+        parent = self._project_model.data_group(parent_id)
+        # The phase ranges and boundaries are read on the wizard's own sweep
+        # axis, so the owning group must trend along it too (an auto-group is
+        # minted "field" by default, which would mislabel a temperature scan).
+        parent.order_key = axis_key
+
+        provenance_base = {
+            "found_at": self._fit_record_timestamp(),
+            "selected_breaks": int(solution.breaks),
+            "gains": [
+                float(recommendation.partition_path.solutions[index].gain)
+                for index in range(1, int(partition_k) + 1)
+            ],
+            "axis_key": axis_key,
+        }
+        specs: list[PhaseSpec] = []
+        assessments = []
+        ordinal = 0
+        last_index = len(solution.segments) - 1
+        for segment_index, segment in enumerate(solution.segments):
+            if segment.excluded:
+                continue
+            assessment = recommendation.phase_assessments[(int(partition_k), segment_index)]
+            ordinal += 1
+            members = tuple(int(run) for run in segment.run_numbers)
+            axis_values = [self._series_axis_position(run, axis_key) for run in members]
+            spans = [value for value in axis_values if value is not None]
+            specs.append(
+                PhaseSpec(
+                    ordinal=ordinal,
+                    name=phase_group_name(ordinal),
+                    member_run_numbers=members,
+                    phase_range=(min(spans), max(spans)) if spans else None,
+                    phase_boundaries={
+                        "lower": (
+                            solution.boundaries[segment_index - 1] if segment_index > 0 else None
+                        ),
+                        "upper": (
+                            solution.boundaries[segment_index]
+                            if segment_index < last_index
+                            else None
+                        ),
+                    },
+                    phase_color=phase_color(ordinal),
+                    phase_provenance={
+                        **provenance_base,
+                        "model_title": assessment.template.title,
+                        "confidence": ("high" if assessment.residual_gate_passed else "medium"),
+                        "shared_parameters": list(assessment.global_param_names),
+                        "fit_state": "converged",
+                        "reduced_chi_squared": _phase_reduced_chi_squared_text(assessment),
+                    },
+                )
+            )
+            assessments.append(assessment)
+
+        phase_ids = self._project_model.create_phase_groups(parent_id, specs)
+        self._data_browser.sync_groups_from_project_model()
+        self._fit_panel.set_datasets(series_datasets)
+        self._fit_panel.apply_wizard_phase_assessments(
+            recommendation,
+            [
+                (group_id, spec.name, assessment)
+                for group_id, spec, assessment in zip(phase_ids, specs, assessments, strict=True)
+            ],
+        )
+        self._mark_dirty()
+        self.statusBar().showMessage(
+            f"Applied {len(specs)} phases under {parent.name} ({solution.breaks} transition(s))."
+        )
+
+    def _series_group_for_phases(self, series_runs) -> str | None:
+        """The group a partition's phases nest under.
+
+        A phase can never be its own parent, so a Batch tab left bound to a phase
+        by an earlier apply resolves to that phase's *parent* — re-applying a
+        partition re-partitions the same series rather than nesting phases inside
+        Phase I. With no phase binding this is the ordinary batch-group policy.
+        """
+        bound_id = self._fit_panel.bound_group_id()
+        bound = self._project_model.data_group(bound_id) if bound_id else None
+        if bound is not None and bound.is_phase:
+            return bound.parent_group_id
+        return self._resolve_batch_group(series_runs)
+
+    def _series_axis_position(self, run_number: int, axis_key: str) -> float | None:
+        """A run's position on the wizard's sweep axis, or ``None`` when unknown.
+
+        Mirrors the core's ordering rule: a run-ordered series is positioned by
+        run number, a field/temperature one by the coordinate the browser
+        displays (so a logged-temperature series lands on its true abscissa).
+        """
+        if axis_key == "run":
+            return float(run_number)
+        return self._dataset_trend_coords(int(run_number)).get(axis_key)
 
     def _series_exclusions_for_group(self, group_id: str | None, fitted_runs) -> list[int]:
         """Return the runs a group-bound series excludes: group members − fitted (D1).

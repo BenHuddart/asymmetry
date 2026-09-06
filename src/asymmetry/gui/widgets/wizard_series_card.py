@@ -70,6 +70,12 @@ class SeriesRunTrace:
     temperature); ``None`` means the run cannot be graded, so the card falls back
     to a cycled palette. ``fitted_time`` / ``fitted_curve`` are optional — a run
     with no converged fit still draws its data.
+
+    ``colour`` overrides the card's own grading with an identity colour the host
+    assigns (the Global Fit Wizard passes each run's *phase* colour once the
+    series is partitioned, so the overlay reads as phases rather than as a
+    smooth sweep). The host sets it on every run or on none: a half-graded,
+    half-identity overlay would encode two meanings in one channel.
     """
 
     run_label: str
@@ -79,6 +85,7 @@ class SeriesRunTrace:
     error: np.ndarray | None
     fitted_time: np.ndarray | None
     fitted_curve: np.ndarray | None
+    colour: str | None = None
 
 
 @dataclass(frozen=True)
@@ -301,11 +308,15 @@ class WizardSeriesCard(QWidget):
         return container
 
     def _trace_colours(self) -> list[str]:
-        """One colour per run: viridis-graded along the axis, else cycled palette.
+        """One colour per run: host-assigned identity, else viridis-graded, else cycled.
 
-        Grading needs every run to carry an ``axis_value`` and a non-degenerate
-        range; otherwise the six Okabe-Ito trace colours cycle by index.
+        A host that assigns identity colours (phases) assigns them to every run,
+        so they win outright over the axis gradient. Otherwise grading needs
+        every run to carry an ``axis_value`` and a non-degenerate range; failing
+        that, the six Okabe-Ito trace colours cycle by index.
         """
+        if self._runs and all(run.colour is not None for run in self._runs):
+            return [str(run.colour) for run in self._runs]
         values = [run.axis_value for run in self._runs]
         if values and all(v is not None for v in values):
             floats = [float(v) for v in values]  # type: ignore[arg-type]

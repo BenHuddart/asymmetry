@@ -87,6 +87,17 @@ def format_axis_value(value: float, order_key: str) -> str:
     return f"{template.format(float(value))}{unit}"
 
 
+def format_axis_range(low: float, high: float, order_key: str) -> str:
+    """Spell a span along the sweep axis, e.g. ``"1.8 – 16.0 K"``.
+
+    The unit is written once, after the pair, so a range reads as one quantity.
+    Shared with the Global Fit Wizard's Transitions card, which spells a phase's
+    span before that phase is a :class:`DataGroup` at all.
+    """
+    template, unit = _AXIS_FORMATS[order_key]
+    return f"{template.format(float(low))}{_RANGE_DASH}{template.format(float(high))}{unit}"
+
+
 def format_phase_range(group: DataGroup) -> str:
     """Spell a phase's span, e.g. ``"1.8 – 16.0 K"`` (``""`` when unknown).
 
@@ -97,8 +108,7 @@ def format_phase_range(group: DataGroup) -> str:
     if group.phase_range is None:
         return ""
     low, high = group.phase_range
-    template, unit = _AXIS_FORMATS[group.order_key]
-    return f"{template.format(low)}{_RANGE_DASH}{template.format(high)}{unit}"
+    return format_axis_range(low, high, group.order_key)
 
 
 def format_phase_boundary(boundary: tuple[float, float] | None, order_key: str) -> str:

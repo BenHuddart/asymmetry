@@ -64,6 +64,34 @@ class PhaseSpec:
     phase_provenance: dict[str, Any] = field(default_factory=dict)
 
 
+#: Roman numerals for :func:`phase_group_name`, high value first.
+_ROMAN_NUMERALS: tuple[tuple[int, str], ...] = (
+    (10, "X"),
+    (9, "IX"),
+    (5, "V"),
+    (4, "IV"),
+    (1, "I"),
+)
+
+
+def phase_group_name(ordinal: int) -> str:
+    """The display name of phase *ordinal*: ``"Phase I"``, ``"Phase II"``, ….
+
+    Roman numerals keep a phase's identity visually distinct from the run
+    numbers and axis values it sits next to, so "Phase II" is never misread as a
+    temperature or a run.
+    """
+    remaining = int(ordinal)
+    if remaining < 1:
+        raise ValueError(f"Phase ordinals are 1-based; got {ordinal!r}.")
+    numeral: list[str] = []
+    for value, symbol in _ROMAN_NUMERALS:
+        while remaining >= value:
+            numeral.append(symbol)
+            remaining -= value
+    return f"Phase {''.join(numeral)}"
+
+
 def _as_pair(value: object) -> tuple[float, float] | None:
     """Coerce a 2-element sequence (tuple, list, or JSON array) to ``(float, float)``.
 
