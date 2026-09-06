@@ -27,6 +27,7 @@ surface (``set_analysis_context``, ``set_cached_recommendation``, the
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 
 import numpy as np
 from PySide6.QtCore import Qt, Signal
@@ -57,6 +58,7 @@ from asymmetry.core.fitting.fit_wizard import (
     CandidateAssessment,
     FitWizardRecommendation,
     SelectionMetric,
+    assessment_with_curves,
     build_fit_wizard_recommendation,
     rerank_fit_wizard_recommendation,
 )
@@ -214,6 +216,17 @@ class FitWizardWindow(WizardWindowBase):
         self._current_model: CompositeModel | None = None
         self._recommendation: FitWizardRecommendation | None = None
         self._selected_key: str | None = None
+        #: Assessment keys this window has already asked for dense curves for,
+        #: under the current ``_curve_generation``. The card re-asks on every
+        #: redraw it cannot draw a fit line for, so a key stays here once
+        #: requested — in flight, finished, or failed — which makes "one build
+        #: per row per recommendation" structural rather than a race to win.
+        #: Cleared whenever the recommendation is replaced.
+        self._requested_curve_keys: set[str] = set()
+        #: Bumped every time the recommendation this window holds is replaced.
+        #: A curve result tagged with an older generation belongs to a
+        #: recommendation that is gone, and is dropped rather than merged.
+        self._curve_generation = 0
         self._analysis_stale = False
         self._user_peaks: list[dict] = []
         self._fft_ax = None
@@ -337,6 +350,7 @@ class FitWizardWindow(WizardWindowBase):
         self._answer_card = WizardAnswerCard()
         self._answer_card.apply_requested.connect(self._on_card_apply_requested)
         self._answer_card.selection_changed.connect(self._on_card_selection_changed)
+        self._answer_card.curves_required.connect(self._on_card_curves_required)
         layout.addWidget(self._answer_card)
 
         layout.addWidget(TrailSeparator())
@@ -548,6 +562,7 @@ class FitWizardWindow(WizardWindowBase):
         self.set_context_chips(self._context_chip_labels())
         self._recommendation = None
         self._selected_key = None
+        self._invalidate_pending_curves()
         # Install the scope resolver and reset the selector to Auto (signal-silent).
         self._scope_selector.set_resolver(self._resolve_scope)
         self._scope_selector.set_scope(None)
@@ -631,12 +646,20 @@ class FitWizardWindow(WizardWindowBase):
     def _reset_result_state(self) -> None:
         self._recommendation = None
         self._selected_key = None
+        self._invalidate_pending_curves()
+        # The card drops the recommendation with the window, so a redraw it
+        # makes afterwards (the residuals toggle, a resize) has no row to ask
+        # curves for: ``_on_card_curves_required`` is reached only while both
+        # hold the same recommendation, by construction rather than by a guard.
+        self._answer_card.set_recommendation(None)
 
     def _on_analysis_failed(self, message: str) -> None:
         # Keep the "Fit wizard analysis failed:" prefix (GlobalFitWizardWindow
         # keeps it too — the two wizards must match) and return to Welcome so the
         # metric combo cannot resurrect a stale success.
         self._recommendation = None
+        self._invalidate_pending_curves()
+        self._answer_card.set_recommendation(None)
         # First line only in the header status — a multi-line exception message
         # would balloon the header band; the full text goes in the tooltip.
         failure_text = str(message).strip() or "unknown error"
@@ -710,6 +733,7 @@ class FitWizardWindow(WizardWindowBase):
     def _populate_results(self, result: object) -> None:
         recommendation = result
         self._recommendation = recommendation
+        self._invalidate_pending_curves()
         self._selected_key = recommendation.recommended_key
         if self._selected_key is None and recommendation.assessments:
             self._selected_key = recommendation.assessments[0].template.key
@@ -738,6 +762,7 @@ class FitWizardWindow(WizardWindowBase):
     ) -> None:
         """Populate the window from an already-computed recommendation (→ Result)."""
         self._recommendation = recommendation
+        self._invalidate_pending_curves()
         self._cached_signature = copy.deepcopy(signature) if isinstance(signature, dict) else None
         self._selected_key = recommendation.recommended_key
         if self._selected_key is None and recommendation.assessments:
@@ -1488,6 +1513,7 @@ class FitWizardWindow(WizardWindowBase):
             self._recommendation,
             SelectionMetric.from_value(text),
         )
+        self._invalidate_pending_curves()
         self._selected_key = selected_key or self._recommendation.recommended_key
         self._status_label.setText(self._recommendation.summary)
         self._answer_card.set_recommendation(self._recommendation)
@@ -1528,6 +1554,85 @@ class FitWizardWindow(WizardWindowBase):
                 self._compare_table.blockSignals(False)
                 break
         self._update_compare_warnings()
+
+    # ------------------------------------------------------------------
+    # On-demand candidate curves
+    # ------------------------------------------------------------------
+
+    def _invalidate_pending_curves(self) -> None:
+        """Retire every in-flight curve build; the recommendation is being replaced.
+
+        A result carries the generation it was requested under, so one that
+        lands after this belongs to a recommendation this window no longer holds
+        and is dropped instead of merged into the new one.
+        """
+        self._curve_generation += 1
+        self._requested_curve_keys.clear()
+
+    def _on_card_curves_required(self, key: str) -> None:
+        """Build one candidate's dense curves on a worker, for the card to draw.
+
+        A build materialises curves only for the rows it exposes as its answer
+        (the dense-curve contract on
+        :class:`~asymmetry.core.fitting.fit_wizard.CandidateAssessment`), while
+        this window lets the user select any of the two-to-three dozen
+        candidates it assessed — from the alternatives strip or the compare
+        table. Rebuilding one is a model evaluation plus one per additive
+        component over a 10⁴–10⁵-sample grid: tens of milliseconds, far past
+        what a selection click may spend on the GUI thread, so it goes through
+        the window's :class:`~asymmetry.gui.tasks.TaskRunner` exactly as the
+        analysis itself does. The closure captures the recommendation, the
+        record and the key — plain data, no widgets — and the result is merged
+        on the GUI thread by :meth:`_on_curves_materialised`.
+
+        The card emits this from its redraw, so it is reached only with a
+        recommendation populated on the card and the record
+        ``set_analysis_context`` supplied. One build per row per recommendation:
+        the card re-asks on every redraw it cannot draw a fit line for (the
+        residuals toggle, a re-rank, a row whose rebuilt curve is itself empty
+        because the record is), and a key already in
+        ``_requested_curve_keys`` adds nothing.
+        """
+        if key in self._requested_curve_keys:
+            return
+        recommendation = self._recommendation
+        dataset = self._dataset
+        generation = self._curve_generation
+        self._requested_curve_keys.add(key)
+
+        def _materialise(_worker: object) -> tuple[int, str, CandidateAssessment]:
+            return generation, key, assessment_with_curves(recommendation, key, dataset)
+
+        self._tasks.start(
+            _materialise,
+            on_finished=self._on_curves_materialised,
+            on_error=self._on_curve_materialisation_failed,
+        )
+
+    def _on_curves_materialised(self, result: object) -> None:
+        """GUI-thread relay: fold one rebuilt row back into the recommendation."""
+        generation, key, assessment = result
+        if generation != self._curve_generation:
+            return
+        self._recommendation = replace(
+            self._recommendation,
+            assessments=tuple(
+                assessment if row.template.key == key else row
+                for row in self._recommendation.assessments
+            ),
+        )
+        # Same ranking, one row's curves filled in — the card re-points and
+        # redraws without disturbing its selection or its alternatives strip.
+        self._answer_card.refresh_curves(self._recommendation)
+
+    def _on_curve_materialisation_failed(self, message: str) -> None:
+        """A row that could not be rebuilt keeps drawing its data alone.
+
+        The failed key stays in ``_requested_curve_keys``, so this
+        recommendation does not retry it on every redraw of that row; a
+        re-analysis or a re-rank clears the set and gives it a fresh chance.
+        """
+        self.statusBar().showMessage(f"Could not draw that candidate: {message}")
 
     def _update_compare_warnings(self) -> None:
         assessment = self._selected_assessment()

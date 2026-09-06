@@ -479,3 +479,95 @@ def test_residual_axis_follows_the_recommendation_rebin_factor(qapp: QApplicatio
     x = np.asarray(lines[0].get_xdata(), dtype=float)
     # The full record's span, not its first fifth.
     assert x[-1] == pytest.approx(time[-1], abs=0.5)
+
+
+# --------------------------------------------------------------------------- #
+# On-demand dense curves. A build materialises curves only for the rows it
+# exposes as its answer, so the card asks its owner for any other row it is
+# pointed at rather than drawing a fit line it does not have.
+# --------------------------------------------------------------------------- #
+
+
+def _bare(assessment: CandidateAssessment) -> CandidateAssessment:
+    """The same assessment as a build leaves a row it does not answer with."""
+    from dataclasses import replace
+
+    empty = np.array([], dtype=float)
+    return replace(assessment, fitted_time=empty, fitted_curve=empty, component_curves=())
+
+
+def test_recommended_row_draws_its_fit_line_immediately(qapp: QApplication) -> None:
+    """The answer itself is materialised by the build, so it costs nothing here."""
+    time, asym, error = _plot_arrays()
+    requested: list[str] = []
+
+    card = WizardAnswerCard()
+    card.curves_required.connect(requested.append)
+    card.set_plot_data(time, asym, error)
+    card.set_recommendation(_recommendation())
+
+    assert requested == []
+    labels = [line.get_label() for axes in card._plot_widget._figure.axes for line in axes.lines]
+    assert "Fit" in labels
+
+
+def test_selecting_a_row_without_curves_asks_the_owner_for_them(qapp: QApplication) -> None:
+    """The card never builds a dense curve itself — it is far too expensive to draw.
+
+    Selecting an alternative the build left bare emits ``curves_required`` with
+    that row's key and draws the data alone; the owner is expected to build the
+    curves off the GUI thread and hand them back via ``refresh_curves``.
+    """
+    from dataclasses import replace
+
+    time, asym, error = _plot_arrays()
+    recommendation = _recommendation(comparable=("gaussian_constant",))
+    winner, alternative = recommendation.assessments
+    recommendation = replace(recommendation, assessments=(winner, _bare(alternative)))
+    requested: list[str] = []
+
+    card = WizardAnswerCard()
+    card.curves_required.connect(requested.append)
+    card.set_plot_data(time, asym, error)
+    card.set_recommendation(recommendation)
+    assert requested == []
+
+    card.set_selected_key("gaussian_constant")
+
+    assert requested == ["gaussian_constant"]
+    labels = [line.get_label() for axes in card._plot_widget._figure.axes for line in axes.lines]
+    assert "Fit" not in labels
+
+
+def test_refresh_curves_draws_the_row_without_disturbing_the_selection(
+    qapp: QApplication,
+) -> None:
+    """The answer to ``curves_required``: same ranking, one row filled in."""
+    from dataclasses import replace
+
+    time, asym, error = _plot_arrays()
+    recommendation = _recommendation(comparable=("gaussian_constant",))
+    winner, alternative = recommendation.assessments
+    bare = replace(recommendation, assessments=(winner, _bare(alternative)))
+
+    card = WizardAnswerCard()
+    card.set_plot_data(time, asym, error)
+    card.set_recommendation(bare)
+    card.set_selected_key("gaussian_constant")
+
+    requested: list[str] = []
+    card.curves_required.connect(requested.append)
+    card.refresh_curves(recommendation)
+
+    assert card.selected_key() == "gaussian_constant"
+    assert requested == [], "a row that now has curves must not be requested again"
+    fit_lines = [
+        line
+        for axes in card._plot_widget._figure.axes
+        for line in axes.lines
+        if line.get_label() == "Fit"
+    ]
+    assert fit_lines
+    assert np.array_equal(
+        np.asarray(fit_lines[0].get_ydata(), dtype=float), alternative.fitted_curve
+    )
