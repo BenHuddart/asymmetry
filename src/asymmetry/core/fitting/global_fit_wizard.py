@@ -11100,7 +11100,13 @@ def _rescored_partition_path(
     The gains are recomputed for the whole path so the exact rows and the
     surrogate rows around them stay one sequence, and ``selected_k`` is re-derived
     by the same rule the closed-form path uses: the largest ``k`` whose gains are
-    *all* admissible, so a rejected break still ends the path.
+    *all* admissible, so a rejected break still ends the path — but never past
+    the last row tier 3 measured. An exact total is pessimistic beside a
+    surrogate one (one template per phase against the per-run best of each
+    family), so the gain from the top exact row into the surrogate row above
+    it is not evidence for that break: on a real series it read +180 for a
+    fourth break nobody had fitted. The rows above the verified window keep
+    their recomputed gains for display; the elbow stops at the window.
     """
 
     solutions: list[PartitionSolution] = []
@@ -11118,7 +11124,8 @@ def _rescored_partition_path(
         previous_total = current.total_ic
 
     selected_k = 0
-    for index in range(1, len(solutions)):
+    verified_top = max(rescored)
+    for index in range(1, verified_top + 1):
         if not solutions[index].admissible:
             break
         selected_k = index

@@ -1024,3 +1024,20 @@ def test_a_relaxation_phase_is_never_touched_by_the_rule():
     plain = _gated_assessment(key="exp_constant", aicc=100.0, gate_passed=True)
 
     assert global_fit_wizard_module._oscillatory_admissible_phase_candidates([plain]) == (plain,)
+
+
+def test_the_rescored_elbow_never_passes_the_verified_window():
+    # Rows 2 and 3 were measured exactly; row 4 keeps its surrogate total,
+    # which is optimistic beside an exact one, so its gain is not evidence.
+    from dataclasses import replace as dc_replace
+
+    rows = tuple(
+        dc_replace(_solution(tuple((10.0 * (i + 1), 0.5) for i in range(k))), total_ic=total)
+        for k, total in enumerate((1000.0, 900.0, 800.0, 700.0, 300.0))
+    )
+    path = PartitionPath(solutions=rows, selected_k=3, beta_floor=16.0)
+    rescored = {2: dc_replace(rows[2], total_ic=820.0), 3: dc_replace(rows[3], total_ic=790.0)}
+    updated = global_fit_wizard_module._rescored_partition_path(path, rescored)
+    assert [round(s.gain, 1) for s in updated.solutions] == [0.0, 100.0, 80.0, 30.0, 490.0]
+    assert updated.solutions[4].admissible
+    assert updated.selected_k == 3
