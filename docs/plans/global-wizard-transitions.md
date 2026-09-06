@@ -458,3 +458,12 @@ the feature branch. Phase F runs the full validation once.
   as real data groups; compact headers with ⓘ popover; excluded runs stay in
   their origin group; trend panel gets swatches, bands and boundaries; the
   five-colour phase palette above.
+- 2026-09-06 (Phase C): the separable engine chooses its minimiser architecture
+  per node rather than always profiling. `strategy="profiled"` is used once the
+  node's free-parameter count (`n_global + n_local·G`) reaches 20, `"joint"`
+  below it. §5 specified profiled throughout; profiled's saving is a smaller
+  Hessian, and on a short series there is no large Hessian to save while its
+  outer loop re-solves every dataset each iteration (measured on the harness's
+  5-parameter, 3-run cases: several times the joint cost for the same verdict).
+  The full-resolution refit of the winner and its flip-neighbourhood stays
+  joint, as specified.

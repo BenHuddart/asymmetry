@@ -126,6 +126,67 @@ def test_profiled_matches_joint_multiple_globals():
     assert abs(_total_ic(prof, k) - _total_ic(joint, k)) < 0.5
 
 
+def test_profiled_applies_clamped_initial_step_sizes_to_the_free_globals():
+    """A curvature hint reaches the *outer* Minuit, clamped like the joint path.
+
+    The separable role search warm-starts a profiled fit from a GLS collapse and
+    hands over the step sizes that collapse implies. Without plumbing they were
+    silently dropped: the outer search then took Minuit's default first step,
+    which is the opposite of what warm-starting is for. The hint is consulted
+    only for free globals (per-dataset locals are solved by ``fit``, which owns
+    their steps) and is clamped to the parameter's bounds by the same
+    ``_clamp_minuit_step_size`` the joint path uses — here with a hint far wider
+    than the ``[0, 100]`` limit on ``A0``, so an unclamped value would be
+    rejected by Minuit outright.
+    """
+    from asymmetry.core.fitting import engine as engine_module
+
+    model = MODELS["ExponentialRelaxation"].function
+    datasets, inits = _make_series(n_datasets=3, a0_true=20.0, lambdas=[0.4, 0.7, 1.0], seed=11)
+    for params in inits.values():
+        params["A0"].max = 100.0
+
+    clamped: list[tuple[str, float, float]] = []
+    real_clamp = engine_module._clamp_minuit_step_size
+
+    def _recording_clamp(step, lower, upper):
+        result = real_clamp(step, lower, upper)
+        clamped.append((step, upper, result))
+        return result
+
+    engine_module._clamp_minuit_step_size = _recording_clamp
+    try:
+        results, fitted_global = FitEngine().global_fit(
+            datasets,
+            model,
+            ["A0"],
+            ["Lambda"],
+            inits,
+            strategy="profiled",
+            # A step wider than the whole allowed range, plus a hint for a
+            # *local* the outer problem must ignore.
+            initial_step_sizes={"A0": 5000.0, "Lambda": 0.1},
+        )
+    finally:
+        engine_module._clamp_minuit_step_size = real_clamp
+
+    assert [entry[0] for entry in clamped] == [5000.0], (
+        "only the free global's hint may reach the outer Minuit"
+    )
+    _step, upper, applied = clamped[0]
+    assert 0.0 < applied <= upper / 2.0
+
+    # The hint changes the search's first step, never its answer.
+    reference, reference_global = FitEngine().global_fit(
+        datasets, model, ["A0"], ["Lambda"], inits, strategy="profiled"
+    )
+    assert fitted_global["A0"].value == pytest.approx(reference_global["A0"].value, abs=1e-2)
+    for run_number in results:
+        assert results[run_number].parameters["Lambda"].value == pytest.approx(
+            reference[run_number].parameters["Lambda"].value, abs=1e-2
+        )
+
+
 def test_profiled_single_dataset_reduces_to_single_fit():
     """A one-dataset profiled global fit matches the joint one-dataset fit."""
     model = MODELS["ExponentialRelaxation"].function

@@ -1510,6 +1510,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                 use_simplex_rescue=use_simplex_rescue,
                 minuit_strategy=minuit_strategy,
                 minuit_tol=minuit_tol,
+                initial_step_sizes=initial_step_sizes,
                 minos=minos,
                 screening=screening,
                 use_varpro=use_varpro,
@@ -1940,6 +1941,7 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         use_simplex_rescue: bool,
         minuit_strategy: int | None,
         minuit_tol: float | None,
+        initial_step_sizes: dict[str, float] | None,
         minos: bool,
         screening: bool,
         use_varpro: bool,
@@ -1967,6 +1969,14 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         errors. MINOS is not supported on the profiled path — asymmetric local
         intervals would need the coupled joint problem — so ``minos`` is accepted
         for signature parity with the joint path but ignored here.
+
+        ``initial_step_sizes`` seeds the *outer* Minuit's initial step for the
+        named free globals, clamped by :func:`_clamp_minuit_step_size` exactly as
+        the joint path clamps its own. Only free-global names are consulted: the
+        per-dataset locals are solved by :meth:`fit`, which owns their steps.
+        A curvature hint is what lets the outer search take a first step scaled to
+        the parameter rather than to Minuit's default guess, which is the whole
+        point of warm-starting a profiled fit from the GLS collapse.
 
         ``error_oversampling`` is *not* forwarded to the inner ``self.fit`` calls
         (they stay on the raw, uncorrected χ² so the outer search and its warm
@@ -2101,6 +2111,12 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             hi = p.max if p.max != float("inf") else None
             if lo is not None or hi is not None:
                 m.limits[i] = (lo, hi)
+            if initial_step_sizes:
+                hint = initial_step_sizes.get(name)
+                if hint is not None:
+                    step_size = _clamp_minuit_step_size(hint, p.min, p.max)
+                    if step_size > 0.0:
+                        m.errors[i] = step_size
 
         try:
             if method == "simplex":

@@ -117,19 +117,20 @@ class WizardScopePreset(str, Enum):
 
 
 class EffortTier(str, Enum):
-    """User-facing global-fit-wizard effort level (PR 5 of the efficiency plan).
+    """User-facing global-fit-wizard effort level.
 
-    Originally bound the search-engine/knob choices from PRs 2-4 to a four-
-    position slider. As of the PR 5 rework, **every tier resolves to the exact
-    bounded-wavefront engine** (see :mod:`asymmetry.core.fitting.global_fit_wizard`
-    ``_EFFORT_TIER_SEARCH_ENGINE``): PR 2's exact bounds already made the
-    exhaustive path near-minimal and 12-way parallel, so the heuristic Low/
-    Balanced engines were empirically dominated (serial, slower, no fit-count
-    headroom). The user-facing control therefore collapses to a single honest
-    "Optimize" mode. The enum and its serialised payload are retained so a
-    future *scope-based* quick-look tier can be added without a schema/UI change;
-    the heuristic engines stay reachable behind the low-level ``search_engine``
-    string for future large-P use and regression coverage.
+    Originally bound a four-position slider to different search engines and
+    knobs. **Every tier now resolves to the separable role-search engine** (see
+    :mod:`asymmetry.core.fitting.global_fit_wizard` ``_EFFORT_TIER_SEARCH_ENGINE``):
+    that search takes the all-local assignment straight from the per-run fits,
+    ranks every sharing pattern with a full-covariance surrogate, and walks
+    backward elimination with one warm fit per step, so it costs O(P) coupled
+    fits per template instead of O(2^P) — the honest answer at every tier rather
+    than a coarser one, which leaves the control a single "Optimize" mode. The
+    enum and its serialised payload are retained so a future *scope-based*
+    quick-look tier can be added without a schema/UI change; the exhaustive
+    wavefront (the harness referee) and the heuristic engines stay reachable
+    behind the low-level ``search_engine`` string.
     """
 
     LOW = "low"
@@ -138,17 +139,17 @@ class EffortTier(str, Enum):
     EXHAUSTIVE = "exhaustive"
 
 
-#: Default effort tier — the exact bounded-wavefront engine, now the only
+#: Default effort tier — the separable role-search engine, now the only
 #: user-facing mode (see ``EffortTier``). Persisted/legacy payloads default here.
 DEFAULT_EFFORT_TIER = EffortTier.EXHAUSTIVE
 
 #: Short human-readable labels for the effort control. Every tier now runs the
-#: exact engine, so the visible control surfaces one honest "Optimize" mode.
+#: separable engine, so the visible control surfaces one honest "Optimize" mode.
 EFFORT_TIER_LABELS: dict[EffortTier, str] = {
     EffortTier.LOW: "Low (screening-grade)",
     EffortTier.BALANCED: "Balanced (recommended)",
     EffortTier.THOROUGH: "Thorough",
-    EffortTier.EXHAUSTIVE: "Optimize — exhaustive (~30 s)",
+    EffortTier.EXHAUSTIVE: "Optimize",
 }
 
 #: One-line descriptions surfaced as tooltips next to the control.
@@ -160,11 +161,12 @@ EFFORT_TIER_DESCRIPTIONS: dict[EffortTier, str] = {
     EffortTier.BALANCED: (
         "Heuristic search engine (retained behind the search_engine seam; not a user-facing tier)."
     ),
-    EffortTier.THOROUGH: ("Full exact wavefront search (same engine as Optimize)."),
+    EffortTier.THOROUGH: ("Separable role search (same engine as Optimize)."),
     EffortTier.EXHAUSTIVE: (
-        "Exact bounded role search over all promotable parameters. PR 2's exact "
-        "bounds keep it near-minimal (~1000 fits, 12-way parallel), so it is the "
-        "single honest optimisation mode."
+        "Separable role search over all promotable parameters: the all-local "
+        "answer comes from the per-run fits, a full-covariance surrogate ranks "
+        "every sharing pattern, and backward elimination fits the exact path. "
+        "It is the single honest optimisation mode."
     ),
 }
 
