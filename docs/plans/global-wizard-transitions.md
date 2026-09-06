@@ -667,3 +667,38 @@ the feature branch. Phase F runs the full validation once.
     once the ladder is warm-aware); lazy dense curves on `CandidateAssessment`
     (1.1 MB per cell, ~30 MB per run recommendation — a memory concern for an
     8 GB host, not a time one; deferred as a follow-up).
+- 2026-09-06 (Phase C3, tier-3 coupled fits): **coupled nodes are solved by a
+  sparse-Jacobian least-squares solver, not by re-solving every run inside an
+  outer Minuit.** With phase 1 at 269 s and screening at 7 s, the end-to-end
+  gate on the real series spent 30 minutes per phase in tier 3 and tripped the
+  budget with nothing kept. Measured on the 12-run low-temperature phase with
+  the two-line damped template (9 free parameters per run, 217 k points at the
+  series binning): the all-local node takes 9 s; one node sharing a single
+  frequency takes **809 s** on the ``"profiled"`` strategy (4 308 inner Minuit
+  fits — about 360 outer evaluations, each re-solving all 12 runs — 1.55 M
+  model evaluations) and the ``"joint"`` Minuit problem (97 parameters) fails
+  to converge in 102 s. Backward elimination wants ~9 such nodes plus ~9 flips
+  per raced template, so no wall budget can hold. The joint problem's Jacobian
+  is arrow-shaped — every residual depends on the globals and on one run's
+  locals — which is exactly what a trust-region least-squares solver with a
+  declared sparsity pattern exploits: `scipy.optimize.least_squares(method=
+  "trf", jac_sparsity=…, tr_solver="lsmr", x_scale="jac")` reached the same
+  minimum in **3.9 s with 18 residual evaluations** (a dense TRF took 45 s;
+  the sparse pattern lets one finite-difference evaluation perturb the same
+  local in every run at once, so a Jacobian costs ~n_local + n_global
+  evaluations rather than 97).
+  Design: `FitEngine.global_fit(strategy="least_squares")` builds the same
+  parameter vector, limits, ties and `model_wrapper` as the joint path, solves
+  with bounded TRF over the block-sparse pattern (grouped local ties share a
+  column across their group), takes the covariance as (JᵀJ)⁻¹ at the solution
+  (the Gauss–Newton form of Minuit's errordef = 1 covariance for a χ² cost),
+  and packs per-run `FitResult`s exactly as the joint path does. It supports
+  only the least-squares cost (a `cost_factory` raises). Convergence is
+  verified against the joint Minuit path on the synthetic series (χ² within
+  0.1, values within uncertainties); a solve that stops on the relative-cost
+  tolerance short of the Minuit optimum by more than that is polished (tighter
+  tolerances first; a warm joint migrad only if needed). The separable engine
+  uses it for every coupled node (`_separable_coupled_strategy` → "least_
+  squares"); "joint" and "profiled" stay reachable through the `strategy` seam
+  and the exhaustive referee keeps its path, so the harness still compares
+  like with like. The all-local anchor stays G independent fits.
