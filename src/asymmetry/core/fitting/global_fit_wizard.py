@@ -7654,13 +7654,17 @@ def _fit_heuristic_assignment(
     progress_callback: Callable[[str], None] | None,
     instrumentation: dict[str, object] | None,
     warm_start_source: GlobalCandidateAssessment | None = None,
+    warm_start_only: bool = False,
 ) -> GlobalCandidateAssessment:
     """Fit one role assignment for a heuristic template and cache it.
 
     Reuses :func:`_fit_exact_assignment` verbatim (same fidelity, same
     instrumentation counters the harness reads) so every heuristic-fit IC is on
     the same footing as the exhaustive baseline. Warm-starts from a neighbour
-    assessment when one is supplied.
+    assessment when one is supplied; with ``warm_start_only`` that warm fit is
+    the whole attempt (escalating once to the capped battery if it fails),
+    which is what a node already placed in its basin — a flip of the winner,
+    or the winner itself refitted at full resolution — needs.
     """
 
     global_names = _global_names_for(state.free_param_names, local_names)
@@ -7712,6 +7716,7 @@ def _fit_heuristic_assignment(
         search_strategy=search_strategy,
         instrumentation=instrumentation,
         initial_step_sizes=initial_step_sizes,
+        warm_start_only=warm_start_only and warm_start_by_run is not None,
     )
     key = (global_names, local_names)
     state.exact_cache[key] = assessment
@@ -8072,6 +8077,7 @@ def _fill_winner_flip_neighbourhood(
             progress_callback=progress_callback,
             instrumentation=instrumentation,
             warm_start_source=winner,
+            warm_start_only=True,
         )
 
 
@@ -8259,6 +8265,9 @@ def _refit_states_at_full_resolution(
                 )
             continue
         _record_counter(instrumentation, "decimation_full_res_refits")
+        # The decimated winner's fitted values are the seed: a parameter's value
+        # does not depend on the binning it was fitted at, so one warm fit at
+        # full resolution is the whole refit, not a fresh multi-start ladder.
         full_winner = _fit_heuristic_assignment(
             datasets,
             full_state,
@@ -8268,6 +8277,8 @@ def _refit_states_at_full_resolution(
             search_strategy=search_strategy,
             progress_callback=progress_callback,
             instrumentation=instrumentation,
+            warm_start_source=winner,
+            warm_start_only=True,
         )
         if full_winner.is_successful:
             _fill_winner_flip_neighbourhood(
