@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-06
+
 ### Added
 
 - **The Global Fit Wizard can now split a series at a transition into
