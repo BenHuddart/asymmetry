@@ -14,8 +14,15 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from asymmetry.core.data.dataset import MuonDataset
-from asymmetry.core.fitting.engine import FitCancelledError, FitResult
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fitting.engine import (
+    COST_FACTORIES,
+    GAUSSIAN_COST,
+    POISSON_COST,
+    CostFactory,
+    FitCancelledError,
+    FitResult,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.fitting.series import fit_asymmetry_series
 
@@ -354,3 +361,165 @@ def test_parallel_cancellation_tears_down_pool_and_raises(monkeypatch):
     # tore the pool down without waiting on in-flight fits.
     assert all(proc.killed and proc.joined for proc in pool._processes.values())
     assert any(cancel_futures for _wait, cancel_futures in pool.shutdown_calls)
+
+
+# --- What a batch payload carries across the process boundary ----------------------
+#
+# A payload pickles whatever its dataset still references. The source run's raw
+# detector histograms are two orders of magnitude larger than the fitted arrays they
+# hang off, and a time-domain fit never reads them, so a time-domain payload ships a
+# fit record. A count-domain (Poisson) cost does read them, so its payload keeps the
+# full record. The cost factory declares which through ``needs_histograms``.
+
+
+class _RecordingFakePool(_EagerFakePool):
+    """An eager in-process pool that also keeps every payload it was handed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.payloads: list[tuple] = []
+
+    def submit(self, fn, payload):
+        self.payloads.append(payload)
+        return super().submit(fn, payload)
+
+
+def _histogram_backed_batch():
+    """The exponential batch, each run backed by 15 detector histograms."""
+    datasets, initial = _real_batch()
+    for dataset in datasets:
+        dataset.run = Run(
+            run_number=int(dataset.metadata["run_number"]),
+            histograms=[
+                Histogram(counts=np.full(4096, 120.0), bin_width=0.016, t0_bin=10)
+                for _ in range(15)
+            ],
+            metadata={"title": "Synthetic", "temperature": 5.0, "field": 100.0},
+            grouping={"groups": {0: [0, 1], 1: [2, 3]}},
+        )
+    return datasets, initial
+
+
+def _fit_histogram_backed_batch(max_workers, **overrides):
+    datasets, initial = _histogram_backed_batch()
+    kwargs = dict(
+        global_params=[],
+        local_params=["A0", "Lambda"],
+        initial_params=initial,
+        seeding="as_provided",
+        amplitude_param="A0",
+        max_workers=max_workers,
+    )
+    kwargs.update(overrides)
+    return datasets, fit_asymmetry_series(datasets, _exp_model, **kwargs)
+
+
+def _record_batch_payloads(monkeypatch, **overrides):
+    """Fit the histogram-backed batch through a recording pool; return (pool, datasets)."""
+    import asymmetry.core.fitting.series as series_module
+
+    pool = _RecordingFakePool()
+    monkeypatch.setattr(series_module, "open_spawn_pool", lambda workers: pool)
+    datasets, _ = _fit_histogram_backed_batch(4, **overrides)
+    return pool, datasets
+
+
+def test_time_domain_batch_payloads_carry_no_histograms(monkeypatch):
+    # No cost factory → the default Gaussian objective, which reads only the fitted
+    # arrays. Every payload ships a fit record: same provenance, empty histograms.
+    pool, datasets = _record_batch_payloads(monkeypatch)
+
+    assert len(pool.payloads) == len(datasets)
+    for payload in pool.payloads:
+        shipped = payload[1]
+        assert shipped.run is not None
+        assert shipped.run.histograms == []
+        # Provenance is what results are keyed and labelled by, so it survives.
+        assert shipped.run_number in {101, 102, 103}
+        assert shipped.run_label == str(shipped.run_number)
+        assert shipped.run.grouping == {"groups": {0: [0, 1], 1: [2, 3]}}
+    # The caller's own datasets are untouched — they still hold their counts.
+    assert all(len(dataset.run.histograms) == 15 for dataset in datasets)
+
+
+def _payloads_for_cost(monkeypatch, cost_factory):
+    """Payloads the parallel dispatcher builds under one cost factory.
+
+    Drives ``_fit_runs_parallel`` directly rather than through
+    ``fit_asymmetry_series``: the built-in factories carry lambdas, so the caller's
+    ``_series_payload_picklable`` check would divert any explicitly-passed factory to
+    the sequential path before a payload is ever built. The payload site itself is
+    what this pins.
+    """
+    import asymmetry.core.fitting.series as series_module
+
+    pool = _RecordingFakePool()
+    monkeypatch.setattr(series_module, "open_spawn_pool", lambda workers: pool)
+    datasets, initial = _histogram_backed_batch()
+    dataset_by_run = {int(ds.run_number): ds for ds in datasets}
+    series_module._fit_runs_parallel(
+        list(dataset_by_run),
+        dataset_by_run,
+        _exp_model,
+        initial,
+        t_min=None,
+        t_max=None,
+        method="migrad",
+        minos=False,
+        cost_factory=cost_factory,
+        error_oversampling=1.0,
+        cancel_callback=None,
+        workers=4,
+    )
+    return pool
+
+
+def test_gaussian_cost_batch_payloads_also_carry_no_histograms(monkeypatch):
+    # An explicitly-passed Gaussian factory declares needs_histograms=False and so
+    # reaches the same fit-record payload as the implicit default.
+    pool = _payloads_for_cost(monkeypatch, GAUSSIAN_COST)
+
+    assert len(pool.payloads) == 3
+    assert all(payload[1].run.histograms == [] for payload in pool.payloads)
+
+
+def test_count_domain_batch_payloads_keep_the_counts(monkeypatch):
+    # The Poisson cost declares needs_histograms=True: the count-domain setup behind it
+    # reads run.histograms, so the full record has to cross the boundary.
+    pool = _payloads_for_cost(monkeypatch, POISSON_COST)
+
+    assert len(pool.payloads) == 3
+    assert all(len(payload[1].run.histograms) == 15 for payload in pool.payloads)
+
+
+def test_every_cost_factory_declares_whether_it_reads_counts():
+    # The distinction is a declared property of the cost, not a name the payload site
+    # pattern-matches on, and a new factory cannot be built without stating it.
+    assert GAUSSIAN_COST.needs_histograms is False
+    assert POISSON_COST.needs_histograms is True
+    assert all(isinstance(f.needs_histograms, bool) for f in COST_FACTORIES.values())
+    with pytest.raises(TypeError):
+        CostFactory("undeclared", lambda *a: None, lambda *a: 0.0)
+
+
+def test_dropping_the_counts_does_not_change_the_fit(monkeypatch):
+    # Parallel ships fit records, sequential fits the full records in-process. The
+    # fitted arrays are identical either way, so the results must be too — this is a
+    # payload-size change, not a numerical one.
+    import asymmetry.core.fitting.series as series_module
+
+    monkeypatch.setattr(series_module, "open_spawn_pool", lambda workers: _RecordingFakePool())
+    _, parallel = _fit_histogram_backed_batch(4)
+    monkeypatch.undo()
+    _, sequential = _fit_histogram_backed_batch(1)
+
+    assert parallel.order == sequential.order
+    assert set(parallel.results) == set(sequential.results)
+    for run, from_record in parallel.results.items():
+        from_full = sequential.results[run]
+        assert from_record.success == from_full.success
+        for name in from_record.parameters.names:
+            assert float(from_record.parameters[name].value) == pytest.approx(
+                float(from_full.parameters[name].value), rel=0, abs=0
+            )
+    assert parallel.member_quality == sequential.member_quality

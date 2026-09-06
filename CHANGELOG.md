@@ -146,7 +146,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detector histograms no fit reads — instead of the whole run. On a synthetic
   twelve-run series of fifteen-detector records a completion cell's payload fell
   from ~11 MB to ~0.4 MB and a separable search task from ~130 MB to under
-  0.1 MB, halving the wall time of the completion stage. Inside a phase the answer is the best
+  0.1 MB, halving the wall time of the completion stage. The batch (F–B series)
+  fit sends fit records to its workers too: on a synthetic fifteen-detector,
+  90 000-bin record a per-run payload fell from ~10.9 MB to ~49 kB, so a
+  twenty-nine-run batch ships ~1.4 MB instead of ~315 MB before the first fit
+  starts. Which payload a batch builds is now declared rather than guessed — a
+  cost factory states through ``needs_histograms`` whether fitting under it reads
+  the run's raw counts, so the count-domain (Poisson) cost still receives the
+  full record while every time-domain cost gets the record without them.
+  Inside a phase the answer is the best
   partition score among the converged candidates — the same per-run BIC
   convention the partition path is totalled with, so a phase cannot pick a
   template by a laxer criterion than the one that then judges the break beside
