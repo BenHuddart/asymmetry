@@ -710,3 +710,32 @@ the feature branch. Phase F runs the full validation once.
   finite-difference Jacobian is the floor: below ~1e-8 the steps chase
   round-off. Set to 1e-8; referee agreement stays 100 % at 8.4 s (11.0 s at
   1e-10).
+- 2026-09-06 (Phase C4 and the tier-3 verdict on the real series): **the phase
+  answer follows the criterion; the flip neighbourhood runs across the pool;
+  and what the exact re-scoring says about the elbow.** Two findings from the
+  first complete gate runs. (1) `_recommended_segment_assessment` ranked on
+  the residual and series-consistency gates before the criterion, so on the
+  lowest phase a two-line damped template 1 043 AICc better than a stretched
+  exponential lost to it (two phase angles wrapped between runs → "changes
+  abruptly" warnings; one boundary run tripped a runs test). Inside a phase
+  the criterion now decides and a gate-clean candidate wins only within
+  `_LAYER_BOUND_MARGIN`. (2) The coupled solve crawled near the optimum at
+  ftol 1e-8 (18–88 evaluations for near-identical starts); ftol 1e-7 ends it
+  (87 → 11 on the wizard's own warm start, within 0.7 χ²), and the series
+  fingerprints are cached per record (2.4 s of every node). With the winning
+  eleven-parameter template (two damped lines plus a relaxation) some nodes
+  still cost 50 s (170 evaluations) against 11 s for others — the extra
+  relaxation term is near-degenerate with the envelopes — so the remaining
+  lever is parallelism: the flips (82 of 100 coupled fits in one run) are
+  independent and now go across the pool as one task each (C4), instead of
+  serially inside each template's task with 2–3 workers busy on eight cores.
+  Not changed, for the owner to decide: the exact re-scoring of the verified
+  window put the two-break solution 63 units *below* the three-break one
+  (a damped-cosine-plus-relaxation template spans the two highest phases
+  with per-run parameters, and the BIC penalty for splitting it exceeds the
+  χ² gain), while the screening path's k=1 row, still a surrogate total,
+  makes the k=2 gain inadmissible; the recommendation therefore falls back
+  to the screening elbow (three breaks). Whether a template whose
+  oscillation amplitude vanishes should count as a family change, and
+  whether the partition totals should be AICc rather than BIC, are modelling
+  choices; the code reports the elbow the user asked to optimise.
