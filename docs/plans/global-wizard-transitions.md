@@ -798,3 +798,25 @@ the feature branch. Phase F runs the full validation once.
   oscillation amplitude vanishes in a run should count as the relaxation
   family there. Until then the acceptance bar (two breaks at ~16/17 K and
   ~28/29 K, under ten minutes cold) is not met and no PR is opened.
+- 2026-09-06 (Phase C7, decided by Ben): **a vanished oscillation is a change
+  of family, and a phase's answer is ranked by the partition score.** Two
+  rules. (1) The phase answer was chosen by AICc and the break beside it
+  judged by the partition's per-run BIC; the highest oscillatory phase picked
+  a two-line template that led by 19 AICc, the path scored its twenty extra
+  per-run parameters at ~170, and the 27.5 K break looked unsupported by 63,
+  while the one-line template the partition convention prefers has fewer
+  parameters than the merged 23–35 K alternative and supports the break by
+  ~75. `_recommended_segment_assessment` now ranks by `_partition_bic`
+  (landed, 59598d7). (2) Ben: "a vanishing oscillation should certainly be
+  considered a family change" — an oscillatory template whose fitted line
+  amplitudes are all consistent with zero on a run describes that run as
+  relaxation, not as oscillatory, whatever its criterion says: the template
+  has degenerated to its envelope. Rule: a cell (tier 2) or a phase fit's run
+  (tier 3) of a multiplet template is *oscillatory-admissible* only if at
+  least one line amplitude is significant, |A| > 2σ_A with σ_A the fit's own
+  uncertainty; a cell that fails is infeasible for the oscillatory family in
+  the partition, and a phase assessment of an oscillatory template that fails
+  on any run is not a description of that phase. The threshold is the
+  conventional two-sigma; the decision is structural, so it sits beside the
+  family map (`series_template_families`) and the cell-cost builders, not in
+  the scoring.
