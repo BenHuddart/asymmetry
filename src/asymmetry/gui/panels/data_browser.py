@@ -1004,6 +1004,10 @@ class DataBrowserPanel(QWidget):
         the registry, then integrates the registry's groups into the display
         order, re-derives multi-membership, and repaints. Idempotent — safe to
         call after a load rebinds a fresh model or after a browser-only restore.
+
+        A seed entry's ``parent_group_id`` (D1) is passed straight through, so
+        a phase recreated here nests under its parent — rendering the nested
+        row is a later phase's concern, not this method's.
         """
         for entry in self._legacy_group_seed:
             gid = str(entry.get("group_id") or "")
@@ -1019,6 +1023,7 @@ class DataBrowserPanel(QWidget):
                 members,
                 kind=str(entry.get("kind", "user")),
                 group_id=gid,
+                parent_group_id=entry.get("parent_group_id"),
             )
             self._collapsed.setdefault(gid, bool(entry.get("collapsed", False)))
         # Drop collapse flags for groups that no longer exist.
@@ -4940,6 +4945,10 @@ class DataBrowserPanel(QWidget):
                     "member_run_numbers": [int(rn) for rn in group.member_run_numbers],
                     "collapsed": self._is_collapsed(group.group_id),
                     "kind": group.kind,
+                    # Echoed so a legacy seed (a pre-registry project, or a
+                    # standalone panel restore/tests) can recreate a phase
+                    # under its parent (D1). ``None`` for an ordinary group.
+                    "parent_group_id": group.parent_group_id,
                 }
             )
         selected_group_ids = self._get_selected_group_ids()
