@@ -2613,6 +2613,36 @@ def test_rebin_factor_is_capped_so_the_fastest_seeded_line_stays_sampled() -> No
     assert period_us / float(np.median(np.diff(rebinned.time))) >= 8.0
 
 
+def test_rebin_factor_ignores_a_sub_threshold_residual_peak_near_nyquist() -> None:
+    # A residual-FFT peak at 4.9 GHz that no template would ever be seeded at
+    # must not pin the record at full resolution: only seed-eligible peaks
+    # (scan/early/user lines, or Hann peaks above the multiplet SNR) set f_max.
+    dataset = _rebin_dataset(90_000)
+    noise = DetectedPeak(
+        frequency_mhz=4907.0,
+        amplitude=0.1,
+        snr=2.5,
+        width_mhz=1.0,
+        prominence=0.0,
+        source="residual_fft",
+    )
+    analysis = _scan_peak_analysis([_damped_scan_peak(240.0), noise], threshold=34.0)
+
+    assert analysis_rebin_factor(dataset, analysis) == 5
+
+    strong_noise = DetectedPeak(
+        frequency_mhz=4907.0,
+        amplitude=1.0,
+        snr=6.0,
+        width_mhz=1.0,
+        prominence=0.0,
+        source="residual_fft",
+    )
+    binding = _scan_peak_analysis([_damped_scan_peak(240.0), strong_noise], threshold=34.0)
+
+    assert analysis_rebin_factor(dataset, binding) == 1
+
+
 def test_rebin_factor_falls_back_to_the_larmor_frequency_then_to_cost_alone() -> None:
     dataset = _rebin_dataset(90_000)
     empty = _scan_peak_analysis([], threshold=None)

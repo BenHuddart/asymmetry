@@ -5390,10 +5390,16 @@ def analysis_rebin_factor(
       to the budget. Below the budget the factor is 1 and nothing is rebinned.
     * **Bandwidth.** ``⌊1 / (_FIT_SAMPLES_PER_CYCLE · f_max · dt)⌋``, where
       ``f_max`` is the highest frequency anything will be *seeded* at — the
-      detected peaks, or the Larmor frequency of the applied field when there
-      are none. Rebinning past this point aliases the very line the seeds name,
-      so the cost constraint is not allowed to override it. With no peaks and no
-      field there is nothing to protect and only the cost constraint applies.
+      peaks eligible to seed an oscillatory component
+      (:func:`_multiplet_seed_peaks`: a user, early-window or damped-scan line,
+      or a Hann/residual peak above ``_MULTIPLET_MIN_SNR``), or the Larmor
+      frequency of the applied field when there are none. Rebinning past this
+      point aliases the very line the seeds name, so the cost constraint is not
+      allowed to override it. A sub-threshold residual-FFT peak is *not*
+      protected: nothing will be seeded at it, and one such peak near the
+      Nyquist frequency would otherwise pin the whole record at full resolution.
+      With no eligible peaks and no field there is nothing to protect and only
+      the cost constraint applies.
 
     Never returns less than 1. Peak detection and the fingerprint are NOT
     rebinned: they are cheap relative to a Stage-2 fit set and they need the
@@ -5414,8 +5420,11 @@ def analysis_rebin_factor(
     factor = n // budget
 
     f_max = 0.0
-    if peak_analysis is not None and peak_analysis.peaks:
-        f_max = max(abs(float(peak.frequency_mhz)) for peak in peak_analysis.peaks)
+    seeded = _multiplet_seed_peaks(
+        peak_analysis, len(peak_analysis.peaks) if peak_analysis is not None else 0
+    )
+    if seeded:
+        f_max = max(abs(float(peak.frequency_mhz)) for peak in seeded)
     elif field_gauss:
         larmor = field_gauss_to_frequency_mhz(float(field_gauss))
         if np.isfinite(larmor):
