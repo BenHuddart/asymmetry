@@ -62,6 +62,7 @@ from asymmetry.core.fitting.fit_wizard import (
     compute_information_criteria,
     dataset_field_geometry,
     fingerprint_spectrum,
+    fit_result_is_oscillatory_admissible,
     is_multiplet_template_key,
     rerank_fit_wizard_recommendation,
     single_fit_build_signature,
@@ -2339,6 +2340,7 @@ def build_global_fit_wizard_screening_recommendation(
                 for run_number, recommendation in recommendations_by_run.items()
             },
             family_by_template=series_template_families(recommendations_by_run),
+            instrumentation=instrumentation,
         )
     _set_metric(instrumentation, "partition_seconds", time.monotonic() - partition_started)
     if partition_path is not None:
@@ -2662,6 +2664,7 @@ def _partition_inputs_from_prescreen(
     prescreen_assessments: Mapping[str, GlobalCandidateAssessment],
     *,
     analysed_points_by_run: Mapping[int, int],
+    instrumentation: dict[str, object] | None = None,
 ) -> tuple[dict[int, dict[str, float]], dict[str, dict[int, RunEstimate]], int]:
     """The per-run BIC table and per-run estimates the partition search runs on.
 
@@ -2672,6 +2675,19 @@ def _partition_inputs_from_prescreen(
     containing that run, which on a real series forced breaks around single weak
     runs *inside* a phase. Handing the IC the run's real χ² instead lets the
     partition cost decide, which is what it is for.
+
+    **One exception, and it is not a quality judgement.** A multiplet template
+    whose fitted line amplitudes are *all* consistent with zero on a run has
+    degenerated to its envelope there: it is describing that run as relaxation,
+    not as oscillation, so it is not a candidate for the oscillatory family on
+    that run and its cell is dropped
+    (:func:`~asymmetry.core.fitting.fit_wizard.is_oscillatory_admissible`). The
+    difference from a disqualifier is that this one is about *which family the
+    fit belongs to*, not about how good it is — the partition's whole alphabet is
+    families, so a cell in the wrong one would let a phase of oscillation run
+    straight through the runs where the oscillation stopped. Every other template
+    on the run is untouched, so the relaxation the run really is stays available
+    and the path breaks where the lines vanish.
 
     Per-run costs are ``χ² + k·ln(n_run)`` at the series search resolution, with
     ``n_run`` the points that run was actually fitted over
@@ -2692,11 +2708,17 @@ def _partition_inputs_from_prescreen(
         )
         if not free_names:
             continue
+        lines_required = is_multiplet_template_key(template_key)
         per_run: dict[int, RunEstimate] = {}
         for dataset in ordered_datasets:
             run_number = int(dataset.run_number)
             result = assessment.fit_results_by_run.get(run_number)
             if result is None or not result.success:
+                continue
+            if lines_required and not fit_result_is_oscillatory_admissible(
+                assessment.template, result
+            ):
+                _record_counter(instrumentation, "oscillation_vanished_cells")
                 continue
             sample_count = int(analysed_points_by_run[run_number])
             table[run_number][template_key] = float(result.chi_squared) + surrogate_metric_penalty(
@@ -2746,6 +2768,7 @@ def build_series_partition_path(
     analysed_points_by_run: Mapping[int, int],
     family_by_template: Mapping[str, str],
     config: PartitionConfig = PartitionConfig(),
+    instrumentation: dict[str, object] | None = None,
 ) -> PartitionPath | None:
     """Where the series breaks, read off the completed phase-1 table.
 
@@ -2765,6 +2788,12 @@ def build_series_partition_path(
     — a two-line and a one-line damped oscillation are the same ordered phase,
     and a background that becomes shareable is not a transition. A template
     absent from the map is its own family.
+
+    A multiplet template is only a candidate for the oscillatory family on runs
+    where its lines are actually measured; where they have all collapsed into the
+    envelope its cells are dropped before the search sees them (see
+    :func:`_partition_inputs_from_prescreen`), which is what makes a vanishing
+    oscillation a break rather than a slow drift within one phase.
     """
 
     order = [int(dataset.run_number) for dataset in ordered_datasets]
@@ -2775,6 +2804,7 @@ def build_series_partition_path(
         ordered_datasets,
         prescreen_assessments,
         analysed_points_by_run=analysed_points_by_run,
+        instrumentation=instrumentation,
     )
     if not any(table[run] for run in order):
         return None
@@ -10696,6 +10726,41 @@ def _partition_bic(
     )
 
 
+def _oscillatory_admissible_phase_candidates(
+    assessments: Sequence[GlobalCandidateAssessment],
+    instrumentation: dict[str, object] | None = None,
+) -> tuple[GlobalCandidateAssessment, ...]:
+    """Drop phase fits whose oscillation has vanished somewhere in the phase.
+
+    A multiplet template is a description of a *phase* of oscillation only where
+    its lines are measured. If a phase fit of one leaves the amplitudes of every
+    line consistent with zero on even a single run
+    (:func:`~asymmetry.core.fitting.fit_wizard.is_oscillatory_admissible`), the
+    template has degenerated to its envelope over part of the phase — it is
+    describing those runs as relaxation while claiming the whole stretch is one
+    oscillatory phase, which is precisely the transition the partition exists to
+    find. Such a candidate is not an answer for this phase, so it never enters
+    the ranking; the phase falls to the best remaining template, or to no answer
+    at all, which makes the containing partition infeasible.
+
+    The rule is applied to converged candidates only. A failed fit is already
+    excluded by :attr:`GlobalCandidateAssessment.is_successful` and its
+    parameters mean nothing, so counting it here would only inflate the audit.
+    """
+
+    kept: list[GlobalCandidateAssessment] = []
+    for assessment in assessments:
+        if assessment.is_successful and is_multiplet_template_key(assessment.template.key):
+            if not all(
+                fit_result_is_oscillatory_admissible(assessment.template, result)
+                for result in assessment.fit_results_by_run.values()
+            ):
+                _record_counter(instrumentation, "oscillation_vanished_phases")
+                continue
+        kept.append(assessment)
+    return tuple(kept)
+
+
 def _recommended_segment_assessment(
     assessments: Sequence[GlobalCandidateAssessment],
     points_by_run: Mapping[int, int],
@@ -10722,7 +10787,11 @@ def _recommended_segment_assessment(
     A gate-clean candidate is preferred only within ``_LAYER_BOUND_MARGIN``,
     the margin the search treats as "not distinguishable". ``None`` means
     nothing converged on this phase, which makes the candidate partition
-    containing it infeasible: a real answer rather than a failure.
+    containing it infeasible: a real answer rather than a failure. The same
+    ``None`` is reached when every converged candidate was an oscillatory
+    template whose lines vanished somewhere in the phase — those are removed
+    from the phase's candidate list before it gets here, by
+    :func:`_oscillatory_admissible_phase_candidates`.
     """
 
     converged = [assessment for assessment in assessments if assessment.is_successful]
@@ -10873,33 +10942,39 @@ def _optimise_partition_phases(
             seeds_by_window[(start, stop)] = {
                 key: base_by_run for key, (base_by_run, _fixed) in segment_contexts.items()
             }
-            searched_by_window[(start, stop)] = _run_separable_search(
-                segment_datasets,
-                shortlisted_templates=list(templates),
-                template_contexts=segment_contexts,
-                prescreen_assessments={
-                    key: _restrict_prescreen_assessment(
-                        assessment,
-                        segment_datasets,
-                        metric=metric,
-                        analysed_points_by_run=analysed_points_by_run,
-                    )
-                    for key, assessment in prescreen_assessments.items()
-                },
-                axis_key=axis_key,
-                metric=metric,
-                progress_callback=progress_callback,
-                search_strategy=search_strategy,
-                instrumentation=instrumentation,
-                single_run_prefit_cache_for=single_run_prefit_cache_for,
-                cancel_callback=cancel_callback,
-                search_rebin_factor=search_rebin_factor,
-                prescreen_rebin_factor=search_rebin_factor,
-                full_resolution_refit=False,
-                # Only one assessment per phase is kept, so the curves are built
-                # for those and not for every converged node of every template.
-                materialise_curves=False,
-                time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
+            # The phase's candidate list, with any template whose oscillation
+            # has vanished on one of its runs removed before anything ranks it.
+            searched_by_window[(start, stop)] = _oscillatory_admissible_phase_candidates(
+                _run_separable_search(
+                    segment_datasets,
+                    shortlisted_templates=list(templates),
+                    template_contexts=segment_contexts,
+                    prescreen_assessments={
+                        key: _restrict_prescreen_assessment(
+                            assessment,
+                            segment_datasets,
+                            metric=metric,
+                            analysed_points_by_run=analysed_points_by_run,
+                        )
+                        for key, assessment in prescreen_assessments.items()
+                    },
+                    axis_key=axis_key,
+                    metric=metric,
+                    progress_callback=progress_callback,
+                    search_strategy=search_strategy,
+                    instrumentation=instrumentation,
+                    single_run_prefit_cache_for=single_run_prefit_cache_for,
+                    cancel_callback=cancel_callback,
+                    search_rebin_factor=search_rebin_factor,
+                    prescreen_rebin_factor=search_rebin_factor,
+                    full_resolution_refit=False,
+                    # Only one assessment per phase is kept, so the curves are
+                    # built for those and not for every converged node of every
+                    # template.
+                    materialise_curves=False,
+                    time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
+                ),
+                instrumentation,
             )
     except FitCancelledError:
         raise

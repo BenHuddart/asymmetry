@@ -246,6 +246,14 @@ that drifts smoothly along the whole series has exactly two honest
 representations, Global or Local, and can never be approximated by inserting
 breaks.
 
+An oscillation that dies out is a change of family too. A damped-cosine
+template is read as oscillatory on a run only while at least one of its line
+amplitudes is measured — larger than twice its own fitted uncertainty — so on
+the runs where every line has collapsed into the envelope the template is
+describing relaxation, is not offered as an oscillatory phase there, and the
+wizard places a break where the lines stopped rather than carrying one
+oscillatory phase across them.
+
 A **Transitions** card appears on the Result page, between the series answer
 card and the screening shortlist, whenever the series alphabet's per-run
 scores support a partition. It states the whole *penalty path* — the best

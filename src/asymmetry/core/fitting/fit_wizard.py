@@ -25,7 +25,10 @@ from asymmetry.core.fitting.component_tags import (
 from asymmetry.core.fitting.composite import (
     COMPONENTS,
     CompositeModel,
+    ExprProduct,
     _legacy_fraction_rename_map,
+    iter_nodes,
+    leaf_indices,
     migrate_legacy_fraction_parameter_set,
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
@@ -1614,6 +1617,12 @@ def _damped_envelope_rate(peak: DetectedPeak | None) -> float | None:
     return _EARLY_ENVELOPE_LIFETIMES_PER_CROP / float(peak.crop_us)
 
 
+#: The component that makes a multiplet term a *line*. :func:`_multiplet_model`
+#: writes it and :func:`oscillatory_line_amplitude_names` reads it back, so the
+#: two cannot drift apart.
+_MULTIPLET_LINE_COMPONENT = "Oscillatory"
+
+
 def _multiplet_model(n: int, envelope: str, *, relax: bool) -> CompositeModel:
     """``Σ_k (Osc × Env) [+ Exp] + Const`` for ``n`` damped cosines."""
     names: list[str] = []
@@ -1621,7 +1630,7 @@ def _multiplet_model(n: int, envelope: str, *, relax: bool) -> CompositeModel:
     opens: list[int] = []
     closes: list[int] = []
     for _k in range(n):
-        names.extend(["Oscillatory", envelope])
+        names.extend([_MULTIPLET_LINE_COMPONENT, envelope])
         opens.extend([1, 0])
         closes.extend([0, 1])
         operators.extend(["*", "+"])
@@ -1798,6 +1807,89 @@ def is_multiplet_template_key(key: str) -> bool:
     per-run peak search built.
     """
     return _MULTIPLET_TEMPLATE_KEY_RE.match(key) is not None
+
+
+#: How many of its own standard deviations a fitted line amplitude must clear to
+#: count as measured: ``|A| > 2·σ_A``.
+#:
+#: Two sigma is the conventional bar for "not consistent with zero", and that is
+#: the whole of its job here. This threshold is *structural*, not a score: it
+#: decides whether an oscillatory template still describes a run as oscillatory
+#: at all, in the same way the family map decides which templates are the same
+#: kind of physics. It never enters an information criterion, never trades off
+#: against χ², and is not tunable from the GUI — a template that has decayed to
+#: its envelope on a run is a relaxation there whatever its AICc says, and one
+#: whose lines are measured is oscillatory whatever margin it wins by.
+OSCILLATORY_LINE_SIGMA = 2.0
+
+
+def oscillatory_line_amplitude_names(template: CandidateTemplate) -> tuple[str, ...]:
+    """The fitted parameter names of a multiplet template's line amplitudes.
+
+    Read off the model's own expression tree rather than off parameter spellings:
+    a multiplet is ``Σ_k (Osc × Env) [+ Exp] + Const`` (:func:`_multiplet_model`),
+    so a *line* amplitude is the single scale of a product that contains an
+    Oscillatory component. The optional relaxation term is a bare leaf, not a
+    product, so its own amplitude is never mistaken for a line — which is the
+    whole point of deriving these structurally.
+
+    Order follows the tree, so the names come out in component order (``A_1``,
+    ``A_3``, … for the built multiplets). Every product that contains a line
+    carries exactly one scale under the amplitude policy, and the unpacking below
+    says so: a shape that broke that invariant would raise here rather than
+    quietly report the wrong parameter as an amplitude.
+    """
+    model = template.model
+    names: list[str] = []
+    for node in iter_nodes(model.expression_tree()):
+        if not isinstance(node, ExprProduct):
+            continue
+        indices = leaf_indices(node)
+        if not any(model.component_names[index] == _MULTIPLET_LINE_COMPONENT for index in indices):
+            continue
+        (amplitude_name,) = [
+            name for index in indices if (name := model.scale_parameter_name(index)) is not None
+        ]
+        names.append(amplitude_name)
+    return tuple(names)
+
+
+def is_oscillatory_admissible(
+    template: CandidateTemplate,
+    values: Mapping[str, float],
+    uncertainties: Mapping[str, float],
+) -> bool:
+    """Does this fit of ``template`` still describe its run as *oscillatory*?
+
+    Yes when at least one line amplitude is significant — ``|A| > 2·σ_A``
+    (:data:`OSCILLATORY_LINE_SIGMA`) against the fit's own uncertainty. A line
+    the fit could not put an uncertainty on is not a measured line and does not
+    count, so a fit that constrained none of its amplitudes is inadmissible.
+
+    An oscillatory template whose amplitudes are all consistent with zero has
+    degenerated to its envelope on that run: it is describing relaxation, and the
+    partition treats it as the relaxation family there rather than as a phase of
+    oscillation. Only multiplet templates have lines, so anything else is
+    admissible by construction and callers gate on
+    :func:`is_multiplet_template_key` before asking.
+    """
+    for name in oscillatory_line_amplitude_names(template):
+        sigma = float(uncertainties.get(name, 0.0))
+        if not math.isfinite(sigma) or sigma <= 0.0:
+            continue
+        amplitude = float(values[name])
+        if abs(amplitude) > OSCILLATORY_LINE_SIGMA * sigma:
+            return True
+    return False
+
+
+def fit_result_is_oscillatory_admissible(template: CandidateTemplate, result: FitResult) -> bool:
+    """:func:`is_oscillatory_admissible` for one run's :class:`FitResult`."""
+    return is_oscillatory_admissible(
+        template,
+        {name: result.parameters[name].value for name in result.parameters.names},
+        result.uncertainties,
+    )
 
 
 #: Muonium TF templates whose ``field``/``A_hf`` seeding shares one rule.

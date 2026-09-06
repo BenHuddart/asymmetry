@@ -26,6 +26,7 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_wizard import (
     CandidateTemplate,
     SelectionMetric,
+    _multiplet_model,
     build_fit_wizard_recommendation_for_templates,
 )
 from asymmetry.core.fitting.global_fit_wizard import (
@@ -779,3 +780,247 @@ def test_a_phase_is_ranked_by_the_partition_score_not_the_search_metric():
     )
     chosen = global_fit_wizard_module._recommended_segment_assessment([rich, lean], points)
     assert chosen is lean
+
+
+# --------------------------------------------------------------------------- #
+# A vanished oscillation is a change of family
+# --------------------------------------------------------------------------- #
+
+#: A relaxing one-line multiplet, ``(Osc x Exp) + Exp + Const``. Its single line
+#: amplitude is ``A_1``; ``A_3`` belongs to the relaxation, not to a line.
+MULTIPLET_TEMPLATE = CandidateTemplate(
+    key="oscillatory1_exp_relax_constant",
+    title="1x damped cosine + relaxation + constant",
+    category="Oscillatory",
+    rationale="test",
+    model=_multiplet_model(1, "Exponential", relax=True),
+)
+OSCILLATION_RUNS = 5
+#: The multiplet's parameters on a run where the line is alive, and on one where
+#: it has collapsed into the envelope: same shape, same quality of fit, but on
+#: the collapsed run ``|A_1|`` sits inside two of its own standard deviations.
+LINE_ALIVE = ({"A_1": 0.20}, {"A_1": 0.01})
+LINE_VANISHED = ({"A_1": 0.004}, {"A_1": 0.01})
+
+
+def _multiplet_fit_result(amplitude: dict[str, float], sigma: dict[str, float], chi_squared):
+    """A converged multiplet fit whose line amplitude is the point of interest."""
+    from asymmetry.core.fitting.engine import FitResult
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+    values = {name: 0.1 for name in MULTIPLET_TEMPLATE.model.param_names}
+    values.update(amplitude)
+    uncertainties = {name: 0.001 for name in MULTIPLET_TEMPLATE.model.param_names}
+    uncertainties.update(sigma)
+    return FitResult(
+        success=True,
+        chi_squared=float(chi_squared),
+        parameters=ParameterSet(
+            [Parameter(name=name, value=value) for name, value in values.items()]
+        ),
+        uncertainties=uncertainties,
+    )
+
+
+def _relaxation_fit_result(chi_squared):
+    from asymmetry.core.fitting.engine import FitResult
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+    return FitResult(
+        success=True,
+        chi_squared=float(chi_squared),
+        parameters=ParameterSet(
+            [Parameter(name=name, value=0.1) for name in EXPONENTIAL.param_names]
+        ),
+        uncertainties=dict.fromkeys(EXPONENTIAL.param_names, 0.001),
+    )
+
+
+def _prescreen_assessment(template, results_by_run):
+    """A completed screening row: one converged fit per run, nothing else needed."""
+    from asymmetry.core.fitting.parameters import ParameterSet
+
+    return global_fit_wizard_module.GlobalCandidateAssessment(
+        template=template,
+        fit_results_by_run=results_by_run,
+        global_parameters=ParameterSet(),
+        global_param_names=(),
+        local_param_names=tuple(template.model.param_names),
+        fixed_param_names=(),
+        parameter_recommendations=(),
+        run_diagnostics=(),
+        series_warnings=(),
+        aic=0.0,
+        aicc=0.0,
+        bic=0.0,
+        selected_score=0.0,
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+    )
+
+
+def _oscillation_that_stops_series(*, line_vanishes: bool):
+    """A ten-run series whose oscillation dies halfway, and its screening rows.
+
+    The multiplet is given the *better* per-run cost on every run of the series,
+    including the ones where its line has collapsed — so on the criterion alone
+    it describes the whole series and there is no break to find. The only thing
+    that can separate the phases is the rule: past the transition its lines are
+    consistent with zero, so it is not a candidate for the oscillatory family
+    there and the relaxation template is all that is left.
+    """
+    datasets = _two_phase_series()
+    multiplet_results = {}
+    relaxation_results = {}
+    for index, dataset in enumerate(datasets):
+        run_number = int(dataset.run_number)
+        oscillating = index < OSCILLATION_RUNS
+        amplitude, sigma = LINE_ALIVE if oscillating or not line_vanishes else LINE_VANISHED
+        multiplet_results[run_number] = _multiplet_fit_result(amplitude, sigma, 250.0)
+        relaxation_results[run_number] = _relaxation_fit_result(300.0 if oscillating else 260.0)
+    return datasets, {
+        MULTIPLET_TEMPLATE.key: _prescreen_assessment(MULTIPLET_TEMPLATE, multiplet_results),
+        EXPONENTIAL_TEMPLATE.key: _prescreen_assessment(EXPONENTIAL_TEMPLATE, relaxation_results),
+    }
+
+
+def _partition_of(datasets, assessments, instrumentation=None):
+    return global_fit_wizard_module.build_series_partition_path(
+        datasets,
+        assessments,
+        axis_key="temperature",
+        analysed_points_by_run={int(d.run_number): int(d.n_points) for d in datasets},
+        family_by_template={
+            MULTIPLET_TEMPLATE.key: "oscillatory",
+            EXPONENTIAL_TEMPLATE.key: "relaxation",
+        },
+        instrumentation=instrumentation,
+    )
+
+
+def test_a_multiplet_that_keeps_its_lines_describes_the_whole_series():
+    """The control: with the lines alive throughout, the cheaper template wins flat.
+
+    This is what makes the next test's break attributable to the rule and not to
+    the costs — the same numbers, and no break.
+    """
+    datasets, assessments = _oscillation_that_stops_series(line_vanishes=False)
+
+    path = _partition_of(datasets, assessments)
+
+    assert path.selected_k == 0
+    assert path.solutions[0].segments[0].structure == "oscillatory"
+
+
+def test_the_series_breaks_where_the_oscillation_vanishes():
+    """The multiplet is cheaper on every run, and still cannot span the series.
+
+    Past the transition its line amplitude is inside two sigma, so its cells are
+    infeasible for the oscillatory family there. The zero-break solution has to
+    fall back to relaxation across the whole series, one break buys the
+    oscillatory phase back for the runs that have one, and the break lands
+    exactly where the lines stopped.
+    """
+    datasets, assessments = _oscillation_that_stops_series(line_vanishes=True)
+    instrumentation: dict[str, object] = {}
+
+    path = _partition_of(datasets, assessments, instrumentation)
+
+    assert path.selected_k == 1
+    low, high = path.solutions[1].segments
+    assert low.run_numbers == tuple(int(d.run_number) for d in datasets[:OSCILLATION_RUNS])
+    assert (low.structure, high.structure) == ("oscillatory", "relaxation")
+    # Nothing but relaxation is available once the lines are gone.
+    assert path.solutions[0].segments[0].structure == "relaxation"
+    assert instrumentation["counters"]["oscillation_vanished_cells"] == OSCILLATION_RUNS
+
+
+def test_only_the_runs_whose_lines_vanished_lose_their_multiplet_cell():
+    """The rule is per cell: it never removes a template from the whole series."""
+    datasets, assessments = _oscillation_that_stops_series(line_vanishes=True)
+
+    table, _estimates, _points = global_fit_wizard_module._partition_inputs_from_prescreen(
+        datasets,
+        assessments,
+        analysed_points_by_run={int(d.run_number): int(d.n_points) for d in datasets},
+    )
+
+    for dataset in datasets[:OSCILLATION_RUNS]:
+        assert MULTIPLET_TEMPLATE.key in table[int(dataset.run_number)]
+    for dataset in datasets[OSCILLATION_RUNS:]:
+        run = int(dataset.run_number)
+        assert MULTIPLET_TEMPLATE.key not in table[run]
+        # The run is still describable — only its *oscillatory* reading is gone.
+        assert EXPONENTIAL_TEMPLATE.key in table[run]
+
+
+def _multiplet_phase_assessment(*, key, chi_squared, vanished_runs=()):
+    """A converged two-run phase fit of a multiplet template."""
+    from asymmetry.core.fitting.parameters import ParameterSet
+
+    results = {}
+    for run_number in (1, 2):
+        amplitude, sigma = LINE_VANISHED if run_number in vanished_runs else LINE_ALIVE
+        results[run_number] = _multiplet_fit_result(amplitude, sigma, chi_squared)
+    return global_fit_wizard_module.GlobalCandidateAssessment(
+        template=replace(MULTIPLET_TEMPLATE, key=key),
+        fit_results_by_run=results,
+        global_parameters=ParameterSet(),
+        global_param_names=(),
+        local_param_names=("A_1",),
+        fixed_param_names=(),
+        parameter_recommendations=(),
+        run_diagnostics=(),
+        series_warnings=(),
+        aic=chi_squared,
+        aicc=chi_squared,
+        bic=chi_squared,
+        selected_score=chi_squared,
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+    )
+
+
+def test_a_phase_whose_oscillation_dies_on_one_run_is_not_that_phases_answer():
+    """Tier 3: a phase fit must describe *every* run of the phase as oscillatory.
+
+    The losing candidate here is the better fit — it is excluded because on one
+    run of the phase it has decayed to its envelope, so it is not a description
+    of an oscillatory phase at all.
+    """
+    points = {1: 1000, 2: 1000}
+    vanished = _multiplet_phase_assessment(
+        key="oscillatory1_exp_relax_constant", chi_squared=100.0, vanished_runs=(2,)
+    )
+    alive = _multiplet_phase_assessment(key="oscillatory2_exp_relax_constant", chi_squared=400.0)
+    instrumentation: dict[str, object] = {}
+
+    candidates = global_fit_wizard_module._oscillatory_admissible_phase_candidates(
+        [vanished, alive], instrumentation
+    )
+
+    assert candidates == (alive,)
+    assert instrumentation["counters"]["oscillation_vanished_phases"] == 1
+    assert global_fit_wizard_module._recommended_segment_assessment(candidates, points) is alive
+
+
+def test_a_phase_with_only_a_vanished_oscillation_has_no_answer():
+    """Nothing left to choose makes the containing partition infeasible, as today."""
+    vanished = _multiplet_phase_assessment(
+        key="oscillatory1_exp_relax_constant", chi_squared=100.0, vanished_runs=(2,)
+    )
+
+    candidates = global_fit_wizard_module._oscillatory_admissible_phase_candidates([vanished])
+
+    assert candidates == ()
+    assert (
+        global_fit_wizard_module._recommended_segment_assessment(candidates, {1: 1000, 2: 1000})
+        is None
+    )
+
+
+def test_a_relaxation_phase_is_never_touched_by_the_rule():
+    """Only multiplet templates have lines; everything else passes by construction."""
+    plain = _gated_assessment(key="exp_constant", aicc=100.0, gate_passed=True)
+
+    assert global_fit_wizard_module._oscillatory_admissible_phase_candidates([plain]) == (plain,)

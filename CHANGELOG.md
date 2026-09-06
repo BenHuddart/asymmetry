@@ -32,7 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (with an uncertainty band) directly on the plot — mirrored in the GLE
   export. Project files gain six additive `data_groups` fields for this
   (`parent_group_id`, `phase_ordinal`, `phase_range`, `phase_boundaries`,
-  `phase_color`, `phase_provenance` — schema v19).
+  `phase_color`, `phase_provenance` — schema v19). An oscillation that dies out
+  along the series counts as a transition in its own right: a damped-cosine
+  template is treated as oscillatory on a run only while at least one of its
+  line amplitudes exceeds twice its own fitted uncertainty. Where every line has
+  collapsed into the envelope the template is describing relaxation rather than
+  oscillation, so it is no longer offered as an oscillatory phase there and the
+  break is placed where the lines stopped instead of being carried across them
+  by a template that merely still scores well.
 
 - **The fit wizard now measures a heavily damped line's envelope instead of
   guessing at it.** The early-window crop ladder added in 0.17.0 could see such
