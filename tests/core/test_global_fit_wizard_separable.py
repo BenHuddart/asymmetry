@@ -426,13 +426,14 @@ def test_search_resolution_never_reaches_the_leaderboard(
             assert result.dof == pytest.approx(full_n_points - n_free, abs=2)
 
 
-def test_coupled_strategy_is_joint_on_a_short_series_and_profiled_when_wide() -> None:
-    """The profiled solver is used where its trade actually pays.
+def test_coupled_strategy_is_the_sparse_least_squares_solver_at_every_width() -> None:
+    """Every coupled node goes to the sparse solver, short series and wide alike.
 
-    Profiled replaces one large joint Hessian with an outer problem over the
-    globals plus ``G`` small inner solves, so it wins only once the joint problem
-    is large; on a short series the joint problem is already trivial and the
-    outer loop is pure overhead.
+    A coupled node's Jacobian is arrow-shaped at any width, and the trust-region
+    solver exploits that shape; neither Minuit architecture does. On a wide node
+    the two Minuit paths are the difference between a search that finishes and
+    one that keeps nothing, and on a short one the sparse solve is already at
+    least as cheap, so there is no width at which they win back the node.
     """
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     short_series = _all_global_series(model)
@@ -441,8 +442,22 @@ def test_coupled_strategy_is_joint_on_a_short_series_and_profiled_when_wide() ->
         for index in range(1, 15)
     ]
 
-    assert _separable_coupled_strategy(short_series, ("A_1",), ("Lambda", "A_bg")) == "joint"
-    assert _separable_coupled_strategy(long_series, ("A_1",), ("Lambda", "A_bg")) == "profiled"
+    for series in (short_series, long_series):
+        assert _separable_coupled_strategy(series, ("A_1",), ("Lambda", "A_bg")) == "least_squares"
+
+
+def test_coupled_nodes_are_counted_as_least_squares_fits() -> None:
+    """The instrumentation records the solver each coupled node actually used."""
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = _all_global_series(model)
+
+    instrumentation: dict[str, object] = {}
+    build_global_fit_wizard_recommendation(datasets, instrumentation=instrumentation)
+
+    counters = _counters(instrumentation)
+    assert counters["separable_least_squares_fits"] >= 1
+    assert "separable_profiled_fits" not in counters
+    assert "separable_joint_fits" not in counters
 
 
 # --------------------------------------------------------------------------- #

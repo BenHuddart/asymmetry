@@ -155,6 +155,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen baseline on the harness's case set). The exhaustive wavefront is
   retained behind `search_engine="exhaustive"` as that baseline's referee;
   `tools/global_wizard_harness.py` gains `--engine {separable,exhaustive}`.
+  Each of those coupled fits is now solved by a sparse-Jacobian least-squares
+  minimiser — `scipy.optimize.least_squares` in bounded trust-region-reflective
+  mode, reachable directly as `FitEngine.global_fit(strategy="least_squares")`
+  — rather than by Minuit. A coupled fit's Jacobian is arrow-shaped: every
+  residual depends on the shared parameters and on exactly one run's local
+  ones, so declaring that sparsity lets one finite-difference evaluation
+  perturb the same local in every run at once, and the Jacobian costs about a
+  run's worth of parameters instead of the whole series'. On a wide node — a
+  twelve-run phase, nine free parameters per run, a couple of hundred thousand
+  points — this is two orders of magnitude off the previous per-node cost, and
+  the equivalent ninety-odd-parameter Minuit problem did not converge at all.
+  Fitted values, χ² and uncertainties are the same quantities as before (the
+  uncertainties are the Gauss–Newton curvature at the solution, which for a χ²
+  cost is Minuit's own `errordef = 1` convention), so no verdict or reported
+  number changes.
 
 - **Every fit parameter's starting value now comes from one place, and the
   table remembers which values are still starting guesses.** Start values used

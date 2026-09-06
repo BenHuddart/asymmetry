@@ -154,7 +154,7 @@ _WAVEFRONT_TIME_BUDGET_SECONDS: float | None = 180.0
 #: Wall-clock budget (seconds) for ONE phase's separable search inside the
 #: per-phase optimisation. The 180 s series-wide backstop was sized for the
 #: harness cases; on a real 12-run phase of 90 k-point records a single
-#: elimination step is a 30–60 s profiled fit, so that backstop tripped on the
+#: elimination step is a 30–60 s coupled fit, so that backstop tripped on the
 #: first phase and — because abandoned tasks keep running in the shared pool —
 #: starved every later phase's anchor tasks into timing out with nothing done.
 #: Thirty minutes per phase is a backstop again — a 12-run phase of two raced
@@ -262,12 +262,6 @@ _SURROGATE_TOP_K = 3
 #: Template racing (technique H): how many templates advance past the shallow
 #: (layer 0–1) race into the deeper heuristic search.
 _RACING_ADVANCE_COUNT = 2
-#: Free-parameter count (``n_global + n_local * G``) at or above which a coupled
-#: node in the separable search is solved with the profiled strategy instead of
-#: the joint one. See ``_separable_coupled_strategy`` for the trade; 20 is the
-#: same "wide assignment" threshold ``_fit_exact_assignment`` already uses to
-#: decide an assignment is difficult.
-_SEPARABLE_PROFILED_FREE_PARAM_COUNT = 20
 #: How many templates advance from the separable engine's race into backward
 #: elimination. The others keep their all-local node, which costs no coupled fit
 #: at all, so a raced-out template still carries an honest score on the
@@ -2915,7 +2909,7 @@ def build_global_fit_wizard_recommendation(
     to the separable role-search engine** (see ``_EFFORT_TIER_SEARCH_ENGINE``):
     the separable search takes the all-local assignment straight from the per-run
     fits, ranks every sharing pattern with a full-covariance GLS surrogate, and
-    walks backward elimination with one warm profiled fit per step, so it costs
+    walks backward elimination with one warm coupled fit per step, so it costs
     O(P) coupled fits per template where the wavefront costs O(2^P) — and it is
     the honest answer at every tier, not a coarser one. The enum and its payload
     are retained so a future scope-based quick-look tier can be added without a
@@ -5744,9 +5738,13 @@ def _fit_exact_assignment(
     """Fit one global/local role assignment and score it.
 
     ``strategy`` selects the engine's minimiser architecture (``"joint"`` — the
-    historical path — or ``"profiled"``) and reaches *every* ``global_fit`` call
-    this function makes, staged seeding and simplex rescue included, so a node is
-    never half-profiled.
+    historical path — ``"profiled"``, or ``"least_squares"``) and reaches *every*
+    ``global_fit`` call this function makes, staged seeding and simplex rescue
+    included, so a node is never half-profiled or half-sparse. Under
+    ``"least_squares"`` the simplex rescue is a second trust-region solve from
+    the rescue seed: the engine ignores ``method="simplex"`` there (a Nelder–Mead
+    fallback has no trust-region counterpart), and what makes the rescue a real
+    second attempt is the staged seed it starts from, not the algorithm name.
 
     ``warm_start_only`` is the separable engine's cheap node: the caller has
     already placed the seed in the right basin with the GLS collapse, so a single
@@ -8984,8 +8982,8 @@ def _finalise_heuristic_assessments(
 #      warm start (shared values + conditional locals) the exact fit needs.
 #   3. **Backward elimination is the exact path.** One parameter is globalised
 #      at a time, cheapest-by-surrogate first, each step fitted exactly
-#      (profiled, one warm variant) and accepted only when the *exact* IC
-#      improves. At most P coupled fits, not 2^P.
+#      (one warm variant, sparse least squares) and accepted only when the
+#      *exact* IC improves. At most P coupled fits, not 2^P.
 #   4. **The winner's single-flip neighbourhood is fitted** so the per-parameter
 #      role recommendations are exact, then winner + neighbourhood are refitted
 #      jointly at full resolution — the leaderboard never mixes resolutions.
@@ -9360,22 +9358,29 @@ def _separable_coupled_strategy(
     global_param_names: tuple[str, ...],
     local_param_names: tuple[str, ...],
 ) -> str:
-    """Which minimiser architecture solves this node: ``"joint"`` or ``"profiled"``.
+    """Which minimiser architecture solves this node: always ``"least_squares"``.
 
-    The joint solver builds one Minuit problem over ``n_global + n_local*G``
-    parameters, so its Hessian cost grows as the square of that; the profiled
-    solver replaces it with ``n_global**2`` plus ``G`` small per-dataset blocks,
-    but pays for it by re-solving every dataset on *each* outer iteration. That
-    trade only pays once the joint problem is genuinely large: on a short series
-    the joint problem is already tiny and profiled's outer loop dominates
-    (measured on the harness's 5-parameter, 3-run near-degenerate case, profiled
-    cost roughly 5x the joint path for the same verdict). Above the threshold the
-    joint Hessian is what dominates and profiled wins by the margin that motivates
-    it in the first place.
+    A coupled node — any free global, or a grouped local tie — has an
+    arrow-shaped Jacobian: every residual depends on the shared globals and on
+    exactly one run's locals. The sparse trust-region least-squares solver is
+    built for that shape, and the two Minuit architectures are not. The joint
+    solver carries one dense ``(n_global + n_local*G)²`` Hessian; the profiled
+    solver trades it for a small outer Hessian but re-solves *every* run on each
+    outer iteration. Measured on a 12-run phase with a two-line damped template
+    (9 free parameters per run, ~217 k points): the profiled strategy took ~800 s
+    for one node — thousands of inner Minuit fits — and the 97-parameter joint
+    problem failed to converge at all, while the sparse solver reached the same
+    minimum in seconds from under twenty residual evaluations. Elimination visits
+    of order one node plus one flip per free parameter per raced template, so
+    that gap is the difference between a search that finishes inside its budget
+    and one that keeps nothing.
+
+    The strategy names what a *coupled* node uses. A node with nothing actually
+    shared (no free global, no grouped tie) is block-separable and the engine's
+    own fast path fits its runs independently whatever is passed here.
     """
 
-    free_count = len(global_param_names) + len(local_param_names) * len(datasets)
-    return "profiled" if free_count >= _SEPARABLE_PROFILED_FREE_PARAM_COUNT else "joint"
+    return "least_squares"
 
 
 def _fit_separable_assignment(
@@ -9391,7 +9396,7 @@ def _fit_separable_assignment(
     instrumentation: dict[str, object],
     cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalCandidateAssessment:
-    """One exact, warm-started, profiled coupled fit; cached on ``state``.
+    """One exact, warm-started, sparse coupled fit; cached on ``state``.
 
     Goes through :func:`_fit_exact_assignment` so its IC, diagnostics and
     instrumentation counters are identical to an exhaustive node's — only the
@@ -9505,7 +9510,7 @@ def _refit_certificate_violating_parent(
         warm_start_by_run=warm_start_by_run,
         progress_callback=None,
         search_strategy=search_strategy,
-        strategy="profiled",
+        strategy=_separable_coupled_strategy(datasets, parent_global, parent_local),
         warm_start_only=True,
         instrumentation=instrumentation,
         initial_step_sizes=_step_hints_from_assessment(

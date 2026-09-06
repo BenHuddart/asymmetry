@@ -350,6 +350,23 @@ the Batch tab's own global fit, which runs on the native record. The whole
 search costs on the order of :math:`P` coupled fits per template, where the
 previous exhaustive search cost :math:`2^P`.
 
+Each of those coupled fits is solved by a **sparse least-squares** minimiser
+rather than by Minuit. A coupled node's Jacobian is arrow-shaped — every
+residual depends on the shared parameters and on exactly one run's local ones —
+so the solver is told that pattern up front and evaluates one finite-difference
+column for the same local across every run at once. The cost of a Jacobian then
+grows with the *per-run* parameter count rather than with
+:math:`n_\text{global} + n_\text{local}\,G`. On a wide node — a twelve-run phase
+with nine free parameters per run over a couple of hundred thousand points —
+that is the difference between minutes per fit and seconds, and the equivalent
+Minuit problem over ninety-odd parameters may not converge at all. The fitted
+values, :math:`\chi^2` and parameter uncertainties are the same quantities
+Minuit reports (the uncertainties come from the Gauss–Newton curvature at the
+solution, which for a :math:`\chi^2` cost is Minuit's own convention), so
+nothing about the ranking or the reported numbers changes — only how long the
+search takes. Asymmetric MINOS intervals are the one thing this solver cannot
+produce; the wizard does not request them.
+
 The exhaustive "wavefront" search that enumerates every :math:`2^P` role
 assignment has not gone away — it is retained behind the lower-level
 ``search_engine="exhaustive"`` argument as the harness referee the separable
