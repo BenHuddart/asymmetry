@@ -820,3 +820,19 @@ the feature branch. Phase F runs the full validation once.
   conventional two-sigma; the decision is structural, so it sits beside the
   family map (`series_template_families`) and the cell-cost builders, not in
   the scoring.
+  Measured with both rules on the real series (543a5f0): screening path
+  k=0 relaxation → k=1 +635 → k=2 +415 → k=3 +196 → k=4 −9; exact
+  re-scoring k=2 +369, k=3 +115, recommendation three breaks — the same
+  three as every screening run, now with the transition above the highest
+  oscillatory phase supported exactly. Phases: one-line damped cosine with
+  relaxation (12 runs) | stretched exponential, shared β and background
+  (8) | one-line damped cosine, Gaussian envelope (5) | stretched
+  exponential (4). Wall 1658 s (phase 1 329, screening 5, optimisation
+  1277) on a host still carrying a 4 GB swap load. The elbow marker on the
+  re-scored path is clamped to the verified window (543a5f0): the gain
+  from the top exact row into the surrogate row above it is not evidence.
+  Against the owner's acceptance bar: the 27.5 K transition is found and
+  stable; the 22.5 K break is supported at both tiers and is a finding
+  about the data rather than a defect; the ten-minute target is not met —
+  tier 3 is ~100 coupled nodes at ~40 s each in the pool, dominated by the
+  eleven-parameter template's near-degenerate relaxation term.
