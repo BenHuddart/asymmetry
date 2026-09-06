@@ -2559,17 +2559,26 @@ def test_heuristic_engine_records_q_pretest_instrumentation(
     assert instrumentation.get("search_engine") == "balanced"
 
 
-def test_exhaustive_engine_default_is_unchanged(
+def test_separable_engine_is_the_default_and_agrees_with_the_referee(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The default engine is separable, and it reaches the referee's verdict.
+
+    ``search_engine="exhaustive"`` is the frozen-baseline wavefront and stays
+    reachable through the seam; the default no longer routes there, which the
+    instrumentation metric states outright.
+    """
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     _restrict_to_exp_constant_template(monkeypatch, model)
     datasets = _varying_lambda_series(model)
+    default_instrumentation: dict[str, object] = {}
 
-    default = build_global_fit_wizard_recommendation(datasets)
+    default = build_global_fit_wizard_recommendation(
+        datasets, instrumentation=default_instrumentation
+    )
     explicit = build_global_fit_wizard_recommendation(datasets, search_engine="exhaustive")
 
-    # The default engine is exhaustive; both reach the same verdict.
+    assert default_instrumentation.get("search_engine") == "separable"
     assert default.recommended_assessment is not None
     assert explicit.recommended_assessment is not None
     assert (
@@ -2608,15 +2617,13 @@ def _restrict_to_templates(
 
 
 @pytest.mark.parametrize("tier_value", ["low", "balanced", "thorough", "exhaustive"])
-def test_effort_tier_always_resolves_to_the_exact_engine(
+def test_effort_tier_always_resolves_to_the_separable_engine(
     monkeypatch: pytest.MonkeyPatch, tier_value: str
 ) -> None:
-    """Every user-facing EffortTier now runs the exact bounded wavefront.
+    """Every user-facing EffortTier runs the separable role search.
 
-    The exact engines never set the ``search_engine`` instrumentation metric
-    (that metric is emitted only on the heuristic path), so its absence for
-    *every* tier is the observable signature that the slider collapsed to one
-    honest exact mode.
+    The engine name is recorded on the instrumentation, so a tier that silently
+    routed somewhere else would show it.
     """
     from asymmetry.core.fitting.wizard_scope import EffortTier
 
@@ -2629,18 +2636,20 @@ def test_effort_tier_always_resolves_to_the_exact_engine(
         datasets, instrumentation=instrumentation, effort_tier=EffortTier(tier_value)
     )
 
-    assert instrumentation.get("search_engine") is None
+    assert instrumentation.get("search_engine") == "separable"
 
 
-def test_effort_tier_search_engine_map_collapses_to_exhaustive() -> None:
+def test_effort_tier_search_engine_map_collapses_to_separable() -> None:
     from asymmetry.core.fitting.global_fit_wizard import (
+        _DEFAULT_SEARCH_ENGINE,
         _EFFORT_TIER_SEARCH_ENGINE,
-        SEARCH_ENGINE_EXHAUSTIVE,
+        SEARCH_ENGINE_SEPARABLE,
     )
     from asymmetry.core.fitting.wizard_scope import EffortTier
 
+    assert _DEFAULT_SEARCH_ENGINE == SEARCH_ENGINE_SEPARABLE
     assert set(_EFFORT_TIER_SEARCH_ENGINE) == set(EffortTier)
-    assert all(engine == SEARCH_ENGINE_EXHAUSTIVE for engine in _EFFORT_TIER_SEARCH_ENGINE.values())
+    assert all(engine == SEARCH_ENGINE_SEPARABLE for engine in _EFFORT_TIER_SEARCH_ENGINE.values())
 
 
 def test_explicit_search_engine_overrides_effort_tier_engine_selection(
@@ -2736,7 +2745,7 @@ def test_low_portfolio_cap_is_inert_via_effort_tier(
 ) -> None:
     """Passing ``effort_tier=LOW`` no longer applies the cap.
 
-    Every user-facing tier resolves to the exact engine, so an over-budget
+    Every user-facing tier resolves to the separable engine, so an over-budget
     template still reaches the coupled search — the I/J/K knobs are only reachable
     through the ``search_engine`` override now.
     """
@@ -2760,8 +2769,8 @@ def test_low_portfolio_cap_is_inert_via_effort_tier(
         selected_template_keys=(small_template.key, big_template.key),
     )
 
-    # Exact engine (what LOW now resolves to) applies no cap: both explicitly
-    # selected templates reach the coupled search.
+    # The separable engine (what LOW now resolves to) applies no cap: both
+    # explicitly selected templates reach the coupled search.
     assert _searched_role_split_count(recommendation, small_template.key) > 0
     assert _searched_role_split_count(recommendation, big_template.key) > 0
 

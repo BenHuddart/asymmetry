@@ -48,6 +48,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _residual_gate_reasons,
     _scipy_fit_fallback,
     _template_cost_rank,
+    analysis_rebin_factor,
     build_candidate_templates,
     build_fit_wizard_recommendation_for_templates,
     build_wizard_families,
@@ -69,6 +70,14 @@ from asymmetry.core.fitting.global_search.homogeneity import (
     ParameterHomogeneity,
     classify_parameter_homogeneity,
     wald_subset_delta_chi2,
+)
+from asymmetry.core.fitting.global_search.surrogate import (
+    CollapseResult,
+    RunEstimate,
+    collapse_cost,
+    rank_assignments,
+    run_estimate_from_fit_result,
+    surrogate_ic,
 )
 from asymmetry.core.fitting.global_search.surrogate import (
     metric_penalty as surrogate_metric_penalty,
@@ -184,13 +193,20 @@ SEARCH_ENGINE_EXHAUSTIVE = "exhaustive"
 SEARCH_ENGINE_THOROUGH = "thorough"
 SEARCH_ENGINE_LOW = "low"
 SEARCH_ENGINE_BALANCED = "balanced"
-_DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_EXHAUSTIVE
+#: The separable role search: all-local straight from the per-run fits, a
+#: full-covariance GLS surrogate over every sharing pattern, backward
+#: elimination as the exact path, then the winner's flip-neighbourhood. It is
+#: the default engine for every effort tier; ``"exhaustive"`` stays reachable
+#: through the ``search_engine`` seam as the harness referee.
+SEARCH_ENGINE_SEPARABLE = "separable"
+_DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_SEPARABLE
 #: Engines that resolve to the exact wavefront (no heuristic pre-fixing/skipping).
 _EXACT_SEARCH_ENGINES = frozenset({SEARCH_ENGINE_EXHAUSTIVE, SEARCH_ENGINE_THOROUGH})
 #: Every supported ``search_engine`` value. An unrecognised value must raise
 #: rather than silently fall through to the heuristic path (a typo would
 #: otherwise change behaviour without warning).
 SEARCH_ENGINES = (
+    SEARCH_ENGINE_SEPARABLE,
     SEARCH_ENGINE_EXHAUSTIVE,
     SEARCH_ENGINE_THOROUGH,
     SEARCH_ENGINE_BALANCED,
@@ -212,6 +228,17 @@ _SURROGATE_TOP_K = 3
 #: Template racing (technique H): how many templates advance past the shallow
 #: (layer 0–1) race into the deeper heuristic search.
 _RACING_ADVANCE_COUNT = 2
+#: Free-parameter count (``n_global + n_local * G``) at or above which a coupled
+#: node in the separable search is solved with the profiled strategy instead of
+#: the joint one. See ``_separable_coupled_strategy`` for the trade; 20 is the
+#: same "wide assignment" threshold ``_fit_exact_assignment`` already uses to
+#: decide an assignment is difficult.
+_SEPARABLE_PROFILED_FREE_PARAM_COUNT = 20
+#: How many templates advance from the separable engine's race into backward
+#: elimination. The others keep their all-local node, which costs no coupled fit
+#: at all, so a raced-out template still carries an honest score on the
+#: leaderboard rather than vanishing from it.
+_SEPARABLE_RACING_ADVANCE_COUNT = 3
 _HIGH_DIMENSION_FREE_COUNT = 40
 _EXTREME_DIMENSION_FREE_COUNT = 70
 _MAX_TEMPLATE_WORKERS = 4
@@ -263,10 +290,10 @@ _OSCILLATORY_RESCUE_MAX_SCOUTS = 3
 # existing caller's answer changes.
 # --------------------------------------------------------------------------- #
 _EFFORT_TIER_SEARCH_ENGINE: dict[EffortTier, str] = {
-    EffortTier.LOW: SEARCH_ENGINE_EXHAUSTIVE,
-    EffortTier.BALANCED: SEARCH_ENGINE_EXHAUSTIVE,
-    EffortTier.THOROUGH: SEARCH_ENGINE_EXHAUSTIVE,
-    EffortTier.EXHAUSTIVE: SEARCH_ENGINE_EXHAUSTIVE,
+    EffortTier.LOW: SEARCH_ENGINE_SEPARABLE,
+    EffortTier.BALANCED: SEARCH_ENGINE_SEPARABLE,
+    EffortTier.THOROUGH: SEARCH_ENGINE_SEPARABLE,
+    EffortTier.EXHAUSTIVE: SEARCH_ENGINE_SEPARABLE,
 }
 
 
@@ -1954,23 +1981,26 @@ def build_global_fit_wizard_recommendation(
 ) -> GlobalFitWizardRecommendation:
     """Analyze one ordered dataset series and recommend a global-fit candidate.
 
-    ``effort_tier`` is the user-facing effort slider (PR 5): ``LOW``,
-    ``BALANCED``, ``THOROUGH``, ``EXHAUSTIVE`` (default ``EXHAUSTIVE``). As of the
-    PR 5 rework, **every tier resolves to the exact bounded-wavefront engine**
-    (see ``_EFFORT_TIER_SEARCH_ENGINE``): PR 2's exact bounds already made the
-    exhaustive path near-minimal and 12-way parallel, so the heuristic Low/
-    Balanced engines were empirically slower with no fit-count headroom, and the
-    user-facing slider now collapses to one honest mode. The enum and payload are
-    retained so a future scope-based quick-look tier can be added without a
+    ``effort_tier`` is the user-facing effort slider: ``LOW``, ``BALANCED``,
+    ``THOROUGH``, ``EXHAUSTIVE`` (default ``EXHAUSTIVE``). **Every tier resolves
+    to the separable role-search engine** (see ``_EFFORT_TIER_SEARCH_ENGINE``):
+    the separable search takes the all-local assignment straight from the per-run
+    fits, ranks every sharing pattern with a full-covariance GLS surrogate, and
+    walks backward elimination with one warm profiled fit per step, so it costs
+    O(P) coupled fits per template where the wavefront costs O(2^P) — and it is
+    the honest answer at every tier, not a coarser one. The enum and its payload
+    are retained so a future scope-based quick-look tier can be added without a
     schema/UI change.
 
     ``search_engine`` remains available as a lower-level override for existing
     callers/tests — when given explicitly it takes precedence over
-    ``effort_tier`` for engine selection. ``"exhaustive"`` and ``"thorough"`` run
-    the exact bounded wavefront (byte-for-byte the current call); ``"low"`` and
-    ``"balanced"`` run the retained non-exhaustive heuristic engines (techniques
-    E/F/G/H and the I/J/K knobs), reachable only through this seam for future
-    large-P use and regression coverage — never through ``effort_tier``.
+    ``effort_tier`` for engine selection. ``"separable"`` is the default engine;
+    ``"exhaustive"`` and ``"thorough"`` run the exact bounded wavefront
+    (byte-for-byte the frozen-baseline path, and the harness referee the
+    separable engine is measured against); ``"low"`` and ``"balanced"`` run the
+    retained non-exhaustive heuristic engines (techniques E/F/G/H and the I/J/K
+    knobs), reachable only through this seam for large-P use and regression
+    coverage — never through ``effort_tier``.
     """
     _set_metric(instrumentation, "strategy", "consolidated")
     if instrumentation is not None:
@@ -2285,9 +2315,24 @@ def _build_global_fit_wizard_recommendation_staged(
             progress_callback,
             "Coupled global optimisation will evaluate "
             f"{len(shortlisted_templates)} candidate(s) "
-            "via exhaustive global/local enumeration.",
+            f"via the {search_engine} global/local role search.",
         )
-    if search_engine in _EXACT_SEARCH_ENGINES:
+    _set_metric(instrumentation, "search_engine", search_engine)
+    if search_engine == SEARCH_ENGINE_SEPARABLE:
+        optimized_assessments = _run_separable_search(
+            ordered_datasets,
+            shortlisted_templates=shortlisted_templates,
+            template_contexts=template_contexts,
+            prescreen_assessments=initial_assessments,
+            axis_key=axis_key,
+            metric=metric,
+            progress_callback=progress_callback,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+            single_run_prefit_cache_for=_single_run_prefit_cache_for,
+            cancel_callback=cancel_callback,
+        )
+    elif search_engine in _EXACT_SEARCH_ENGINES:
         optimized_assessments = _run_exhaustive_wavefront_search(
             ordered_datasets,
             shortlisted_templates=shortlisted_templates,
@@ -2301,7 +2346,6 @@ def _build_global_fit_wizard_recommendation_staged(
             cancel_callback=cancel_callback,
         )
     else:
-        _set_metric(instrumentation, "search_engine", search_engine)
         optimized_assessments = _run_heuristic_search(
             ordered_datasets,
             shortlisted_templates=shortlisted_templates,
@@ -2457,9 +2501,19 @@ def rerank_global_fit_wizard_recommendation(
             ),
         )
 
+    # At an exact tie the searched assignment wins over the screening row that
+    # found the same minimum. They are the same fit with the same score, but only
+    # the searched one carries ``parameter_recommendations`` — the per-parameter
+    # role justification read from its flip-neighbourhood — so preferring it costs
+    # the reader nothing and hands them the reasoning. Which of the two landed
+    # first in ``assessments`` is an accident of engine ordering, and a
+    # last-float-bit coin flip is not a basis for dropping the justification.
     passing_sorted = sorted(
         passing,
-        key=lambda assessment: _assessment_sort_key(assessment, metric),
+        key=lambda assessment: (
+            _assessment_sort_key(assessment, metric),
+            0 if assessment.assessment_key else 1,
+        ),
     )
     primary = passing_sorted[0]
     comparable_keys: tuple[str, ...] = ()
@@ -4343,6 +4397,8 @@ def _warm_certificate_fit(
     warm_start_by_run: dict[int, ParameterSet],
     initial_step_sizes: dict[str, float],
     difficult_assignment: bool,
+    screening: bool,
+    strategy: str,
     instrumentation: dict[str, object] | None,
 ) -> tuple[dict[int, FitResult] | None, ParameterSet, float, dict[str, float]]:
     """One warm single-cycle global fit for technique D's monotonicity certificate.
@@ -4352,6 +4408,11 @@ def _warm_certificate_fit(
     caller decides whether the result clears the certificate; on failure the
     caller escalates to the full battery. Returns
     ``(results_by_run | None, fitted_global, total_chi2, step_hints)``.
+
+    ``screening`` is passed separately from ``difficult_assignment`` because the
+    separable engine's warm-only nodes are *deliberately* screened (Minuit
+    strategy 0) even when the assignment is wide: the GLS collapse has already
+    placed the seed in the right basin, so a strategy-2 hunt buys nothing.
     """
 
     warm_seed = _clone_parameter_sets(warm_start_by_run)
@@ -4379,7 +4440,8 @@ def _warm_certificate_fit(
         minuit_strategy=2 if difficult_assignment else None,
         minuit_tol=0.05 if difficult_assignment else None,
         initial_step_sizes=initial_step_sizes or None,
-        screening=not difficult_assignment,
+        screening=screening,
+        strategy=strategy,
     )
     _record_global_fit_diagnostics(instrumentation, results_by_run)
     results_by_run = _canonicalize_fit_results_by_run(
@@ -4401,6 +4463,119 @@ def _warm_certificate_fit(
     return results_by_run, fitted_global, total_chi2, step_hints
 
 
+def _assemble_assignment_assessment(
+    datasets: list[MuonDataset],
+    template: CandidateTemplate,
+    *,
+    base_by_run: dict[int, ParameterSet],
+    results_by_run: dict[int, FitResult],
+    fitted_global: ParameterSet,
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+    fixed_param_names: tuple[str, ...],
+    axis_key: str,
+    metric: SelectionMetric,
+    fit_success: bool,
+) -> GlobalCandidateAssessment:
+    """Score one role assignment's per-run results into a candidate assessment.
+
+    Information criteria, residual diagnostics, dense curves and series warnings
+    — everything that turns ``results_by_run`` into a leaderboard row. Split out
+    of :func:`_fit_exact_assignment` so the separable engine's all-local node,
+    which is assembled from the phase-1 per-run fits and is never refitted
+    jointly, is scored by *exactly* the same code as a coupled node rather than a
+    parallel reimplementation that could drift on ``k``, ``n`` or the gates.
+    """
+
+    sample_count = int(sum(dataset.n_points for dataset in datasets))
+    parameter_count = len(global_param_names) + len(local_param_names) * len(datasets)
+    if fit_success:
+        total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
+        aic, aicc, bic = compute_information_criteria(
+            total_chi2,
+            parameter_count,
+            sample_count,
+        )
+    else:
+        aic = float("inf")
+        aicc = float("inf")
+        bic = float("inf")
+
+    run_diagnostics: list[RunResidualDiagnostic] = []
+    fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
+    component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
+
+    for dataset in datasets:
+        run_number = int(dataset.run_number)
+        result = results_by_run.get(
+            run_number,
+            FitResult(success=False, message="Missing global fit result"),
+        )
+        (
+            residual_rms,
+            runs_z_score,
+            max_abs_autocorrelation,
+            residual_fft_peak_snr,
+        ) = _residual_diagnostics(dataset, result)
+        bound_hits = _bound_hit_names(result.parameters)
+        gate_reasons = _filtered_gate_reasons(
+            fit_result=result,
+            residual_rms=residual_rms,
+            runs_z_score=runs_z_score,
+            max_abs_autocorrelation=max_abs_autocorrelation,
+            residual_fft_peak_snr=residual_fft_peak_snr,
+            bound_hits=bound_hits,
+        )
+        run_diagnostics.append(
+            RunResidualDiagnostic(
+                run_number=run_number,
+                run_label=dataset.run_label,
+                axis_value=_axis_value(dataset, axis_key),
+                residual_rms=residual_rms,
+                runs_z_score=runs_z_score,
+                max_abs_autocorrelation=max_abs_autocorrelation,
+                residual_fft_peak_snr=residual_fft_peak_snr,
+                gate_passed=not gate_reasons,
+                gate_reasons=tuple(gate_reasons),
+            )
+        )
+
+        fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+            dataset,
+            template.model,
+            result.parameters,
+            fallback_parameters=base_by_run.get(run_number),
+        )
+        fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
+        component_curves_by_run[run_number] = component_curves
+
+    series_warnings = tuple(
+        _series_warnings(
+            datasets,
+            run_diagnostics,
+            results_by_run=results_by_run,
+            local_param_names=local_param_names,
+        )
+    )
+    return GlobalCandidateAssessment(
+        template=template,
+        fit_results_by_run=results_by_run,
+        global_parameters=fitted_global,
+        global_param_names=tuple(global_param_names),
+        local_param_names=tuple(local_param_names),
+        fixed_param_names=tuple(fixed_param_names),
+        parameter_recommendations=(),
+        run_diagnostics=tuple(run_diagnostics),
+        series_warnings=series_warnings,
+        aic=float(aic),
+        aicc=None if aicc is None else float(aicc),
+        bic=float(bic),
+        selected_score=_metric_value(metric, aic, aicc, bic),
+        fitted_curves_by_run=fitted_curves_by_run,
+        component_curves_by_run=component_curves_by_run,
+    )
+
+
 def _fit_exact_assignment(
     datasets: list[MuonDataset],
     template: CandidateTemplate,
@@ -4417,10 +4592,27 @@ def _fit_exact_assignment(
     warm_start_chi2: float | None = None,
     progress_callback: Callable[[str], None] | None = None,
     search_strategy: str = "legacy",
+    strategy: str = "joint",
+    warm_start_only: bool = False,
     instrumentation: dict[str, object] | None = None,
     initial_step_sizes: dict[str, float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalCandidateAssessment:
+    """Fit one global/local role assignment and score it.
+
+    ``strategy`` selects the engine's minimiser architecture (``"joint"`` — the
+    historical path — or ``"profiled"``) and reaches *every* ``global_fit`` call
+    this function makes, staged seeding and simplex rescue included, so a node is
+    never half-profiled.
+
+    ``warm_start_only`` is the separable engine's cheap node: the caller has
+    already placed the seed in the right basin with the GLS collapse, so a single
+    screened warm migrad is the whole fit. The multi-start battery runs only when
+    that one fit fails to converge (counted as ``warm_only_escalations``). It
+    requires ``warm_start_by_run`` — without a warm start there is nothing to
+    start only from.
+    """
+
     if cancel_callback is not None and cancel_callback():
         raise FitCancelledError("Global fit wizard analysis cancelled.")
     cache_key = (tuple(global_param_names), tuple(local_param_names))
@@ -4496,6 +4688,7 @@ def _fit_exact_assignment(
                 progress_callback=progress_callback,
                 max_cycles=4 if search_strategy == "staged_v2" else 2,
                 include_mixed_polish=search_strategy == "staged_v2",
+                strategy=strategy,
                 instrumentation=instrumentation,
             )
             call_budget = _global_fit_call_budget(
@@ -4522,6 +4715,7 @@ def _fit_exact_assignment(
                 minuit_tol=0.05 if difficult_assignment else None,
                 initial_step_sizes=local_step_hints or None,
                 screening=not difficult_assignment,
+                strategy=strategy,
                 cancel_callback=cancel_callback,
             )
             _record_global_fit_diagnostics(instrumentation, results_by_run)
@@ -4575,7 +4769,41 @@ def _fit_exact_assignment(
     best_failure_message = "No fit attempts were created."
     step_hints = dict(initial_step_sizes or {})
     certificate_passed = False
-    if (
+    if warm_start_only:
+        # Separable engine: the GLS collapse already placed globals and
+        # conditional locals at the second-order optimum, so one screened warm
+        # migrad IS the fit. No certificate is checked here — backward
+        # elimination owns the (opposite-direction) monotonicity certificate,
+        # comparing the child's χ² against its *parent*'s from the outside.
+        (
+            warm_results,
+            warm_global,
+            warm_score,
+            warm_step_hints,
+        ) = _warm_certificate_fit(
+            datasets,
+            template,
+            fit_engine=fit_engine,
+            global_param_names=global_param_names,
+            local_param_names=local_param_names,
+            fixed_param_names=fixed_param_names,
+            warm_start_by_run=warm_start_by_run,
+            initial_step_sizes=step_hints,
+            difficult_assignment=False,
+            screening=True,
+            strategy=strategy,
+            instrumentation=instrumentation,
+        )
+        if warm_results is not None and all(r.success for r in warm_results.values()):
+            best_results = warm_results
+            best_global = warm_global
+            best_score = warm_score
+            step_hints = warm_step_hints
+            certificate_passed = True
+            _record_counter(instrumentation, "warm_only_accepts")
+        else:
+            _record_counter(instrumentation, "warm_only_escalations")
+    elif (
         warm_start_by_run is not None
         and warm_start_chi2 is not None
         and math.isfinite(warm_start_chi2)
@@ -4596,6 +4824,8 @@ def _fit_exact_assignment(
             warm_start_by_run=warm_start_by_run,
             initial_step_sizes=step_hints,
             difficult_assignment=difficult_assignment,
+            screening=not difficult_assignment,
+            strategy=strategy,
             instrumentation=instrumentation,
         )
         if warm_results is not None and all(r.success for r in warm_results.values()):
@@ -4708,6 +4938,7 @@ def _fit_exact_assignment(
             progress_callback=progress_callback,
             max_cycles=4 if difficult_assignment else 2,
             include_mixed_polish=difficult_assignment,
+            strategy=strategy,
             instrumentation=instrumentation,
         )
         rescue_budget = _global_fit_call_budget(
@@ -4737,6 +4968,7 @@ def _fit_exact_assignment(
             minuit_strategy=2 if free_count >= 20 else None,
             minuit_tol=0.05 if free_count >= 20 else None,
             initial_step_sizes=rescue_step_hints or None,
+            strategy=strategy,
             cancel_callback=cancel_callback,
         )
         _record_global_fit_diagnostics(instrumentation, rescue_results)
@@ -4760,92 +4992,18 @@ def _fit_exact_assignment(
             if rescue_message:
                 best_failure_message = rescue_message
 
-    sample_count = int(sum(dataset.n_points for dataset in datasets))
-    parameter_count = len(global_param_names) + len(local_param_names) * len(datasets)
-    if fit_success:
-        total_chi2 = float(sum(result.chi_squared for result in best_results.values()))
-        aic, aicc, bic = compute_information_criteria(
-            total_chi2,
-            parameter_count,
-            sample_count,
-        )
-    else:
-        aic = float("inf")
-        aicc = float("inf")
-        bic = float("inf")
-
-    run_diagnostics: list[RunResidualDiagnostic] = []
-    fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
-    component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
-
-    for dataset in datasets:
-        run_number = int(dataset.run_number)
-        result = best_results.get(
-            run_number,
-            FitResult(success=False, message="Missing global fit result"),
-        )
-        (
-            residual_rms,
-            runs_z_score,
-            max_abs_autocorrelation,
-            residual_fft_peak_snr,
-        ) = _residual_diagnostics(dataset, result)
-        bound_hits = _bound_hit_names(result.parameters)
-        gate_reasons = _filtered_gate_reasons(
-            fit_result=result,
-            residual_rms=residual_rms,
-            runs_z_score=runs_z_score,
-            max_abs_autocorrelation=max_abs_autocorrelation,
-            residual_fft_peak_snr=residual_fft_peak_snr,
-            bound_hits=bound_hits,
-        )
-        run_diagnostics.append(
-            RunResidualDiagnostic(
-                run_number=run_number,
-                run_label=dataset.run_label,
-                axis_value=_axis_value(dataset, axis_key),
-                residual_rms=residual_rms,
-                runs_z_score=runs_z_score,
-                max_abs_autocorrelation=max_abs_autocorrelation,
-                residual_fft_peak_snr=residual_fft_peak_snr,
-                gate_passed=not gate_reasons,
-                gate_reasons=tuple(gate_reasons),
-            )
-        )
-
-        fitted_time, fitted_curve, component_curves = _dense_fit_curves(
-            dataset,
-            template.model,
-            result.parameters,
-            fallback_parameters=base_by_run.get(run_number),
-        )
-        fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
-        component_curves_by_run[run_number] = component_curves
-
-    series_warnings = tuple(
-        _series_warnings(
-            datasets,
-            run_diagnostics,
-            results_by_run=best_results,
-            local_param_names=local_param_names,
-        )
-    )
-    assessment = GlobalCandidateAssessment(
-        template=template,
-        fit_results_by_run=best_results,
-        global_parameters=best_global,
-        global_param_names=tuple(global_param_names),
-        local_param_names=tuple(local_param_names),
-        fixed_param_names=tuple(fixed_param_names),
-        parameter_recommendations=(),
-        run_diagnostics=tuple(run_diagnostics),
-        series_warnings=series_warnings,
-        aic=float(aic),
-        aicc=None if aicc is None else float(aicc),
-        bic=float(bic),
-        selected_score=_metric_value(metric, aic, aicc, bic),
-        fitted_curves_by_run=fitted_curves_by_run,
-        component_curves_by_run=component_curves_by_run,
+    assessment = _assemble_assignment_assessment(
+        datasets,
+        template,
+        base_by_run=base_by_run,
+        results_by_run=best_results,
+        fitted_global=best_global,
+        global_param_names=global_param_names,
+        local_param_names=local_param_names,
+        fixed_param_names=fixed_param_names,
+        axis_key=axis_key,
+        metric=metric,
+        fit_success=fit_success,
     )
     if assessment.is_successful:
         _progress_log(
@@ -5334,6 +5492,105 @@ def _initial_param_variants(
     return tuple(combined)
 
 
+def _best_single_run_fit_result(
+    dataset: MuonDataset,
+    template: CandidateTemplate,
+    *,
+    fit_engine: FitEngine,
+    seed_params: ParameterSet,
+    base_params: ParameterSet,
+    global_names: tuple[str, ...],
+    fixed_param_names: tuple[str, ...],
+    previous_success: ParameterSet | None,
+) -> FitResult | None:
+    """Best of up to three independent single-run fits of ``template``.
+
+    The per-run half of :func:`_single_run_prefit_parameter_sets`, lifted out so
+    the separable engine's all-local node — which needs the ``FitResult``s
+    themselves (χ², covariance, bound hits), not just the fitted values — is
+    produced by the same attempt ladder rather than a second, subtly different
+    one. Attempts are, in order: the previous run's converged values mapped onto
+    this run's seed (the series is ordered, so the neighbour is the best guess),
+    the caller's seed, then the template's initial-parameter variants;
+    duplicates are dropped and each attempt falls back to simplex on a failed
+    migrad. ``None`` when no attempt produced a fit at all.
+    """
+
+    run_number = int(dataset.run_number)
+    attempt_params: list[ParameterSet] = []
+    if previous_success is not None:
+        neighbor_seed = _clone_parameter_set(seed_params)
+        for parameter in neighbor_seed:
+            if parameter.name in previous_success:
+                parameter.value = float(
+                    np.clip(
+                        previous_success[parameter.name].value,
+                        parameter.min,
+                        parameter.max,
+                    )
+                )
+        attempt_params.append(neighbor_seed)
+
+    attempt_params.append(_clone_parameter_set(seed_params))
+    for variant_map in _initial_param_variants({run_number: base_params}, template):
+        attempt_params.append(_clone_parameter_set(variant_map[run_number]))
+
+    unique_attempts: list[ParameterSet] = []
+    seen_signatures: set[tuple[tuple[str, float], ...]] = set()
+    for attempt in attempt_params:
+        canonical_attempt = _canonicalize_parameter_sets(
+            {run_number: attempt},
+            template=template,
+            global_param_names=global_names,
+            local_param_names=(),
+            fixed_param_names=fixed_param_names,
+        )[run_number]
+        signature = tuple(
+            (parameter.name, float(parameter.value)) for parameter in canonical_attempt
+        )
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        unique_attempts.append(canonical_attempt)
+
+    best_result: FitResult | None = None
+    for attempt in unique_attempts[:3]:
+        try:
+            result = fit_engine.fit(
+                dataset,
+                template.model.function,
+                _clone_parameter_set(attempt),
+                method="migrad",
+            )
+        except Exception:
+            continue
+
+        if not result.success:
+            try:
+                simplex_result = fit_engine.fit(
+                    dataset,
+                    template.model.function,
+                    _clone_parameter_set(attempt),
+                    method="simplex",
+                )
+            except Exception:
+                simplex_result = FitResult(success=False, message="Single-run simplex failed")
+            if simplex_result.success and (
+                best_result is None or simplex_result.chi_squared < best_result.chi_squared
+            ):
+                best_result = simplex_result
+            elif result.success and (
+                best_result is None or result.chi_squared < best_result.chi_squared
+            ):
+                best_result = result
+            continue
+
+        if best_result is None or result.chi_squared < best_result.chi_squared:
+            best_result = result
+
+    return best_result
+
+
 def _single_run_prefit_parameter_sets(
     datasets: list[MuonDataset],
     template: CandidateTemplate,
@@ -5377,77 +5634,16 @@ def _single_run_prefit_parameter_sets(
     )
     for dataset in datasets:
         run_number = int(dataset.run_number)
-        attempt_params: list[ParameterSet] = []
-        if previous_success is not None:
-            neighbor_seed = _clone_parameter_set(seeded[run_number])
-            for parameter in neighbor_seed:
-                if parameter.name in previous_success:
-                    parameter.value = float(
-                        np.clip(
-                            previous_success[parameter.name].value,
-                            parameter.min,
-                            parameter.max,
-                        )
-                    )
-            attempt_params.append(neighbor_seed)
-
-        attempt_params.append(_clone_parameter_set(seeded[run_number]))
-        for variant_map in _initial_param_variants({run_number: base_by_run[run_number]}, template):
-            attempt_params.append(_clone_parameter_set(variant_map[run_number]))
-
-        unique_attempts: list[ParameterSet] = []
-        seen_signatures: set[tuple[tuple[str, float], ...]] = set()
-        for attempt in attempt_params:
-            canonical_attempt = _canonicalize_parameter_sets(
-                {run_number: attempt},
-                template=template,
-                global_param_names=global_names,
-                local_param_names=(),
-                fixed_param_names=fixed_param_names,
-            )[run_number]
-            signature = tuple(
-                (parameter.name, float(parameter.value)) for parameter in canonical_attempt
-            )
-            if signature in seen_signatures:
-                continue
-            seen_signatures.add(signature)
-            unique_attempts.append(canonical_attempt)
-
-        best_result: FitResult | None = None
-        for attempt in unique_attempts[:3]:
-            try:
-                result = fit_engine.fit(
-                    dataset,
-                    template.model.function,
-                    _clone_parameter_set(attempt),
-                    method="migrad",
-                )
-            except Exception:
-                continue
-
-            if not result.success:
-                try:
-                    simplex_result = fit_engine.fit(
-                        dataset,
-                        template.model.function,
-                        _clone_parameter_set(attempt),
-                        method="simplex",
-                    )
-                except Exception:
-                    simplex_result = FitResult(success=False, message="Single-run simplex failed")
-                if simplex_result.success and (
-                    best_result is None or simplex_result.chi_squared < best_result.chi_squared
-                ):
-                    best_result = simplex_result
-                elif result.success and (
-                    best_result is None or result.chi_squared < best_result.chi_squared
-                ):
-                    best_result = result
-                continue
-
-            if best_result is None or result.chi_squared < best_result.chi_squared:
-                best_result = result
-
+        best_result = _best_single_run_fit_result(
+            dataset,
+            template,
+            fit_engine=fit_engine,
+            seed_params=seeded[run_number],
+            base_params=base_by_run[run_number],
+            global_names=global_names,
+            fixed_param_names=fixed_param_names,
+            previous_success=previous_success,
+        )
         if best_result is None or not best_result.success:
             continue
 
@@ -5564,6 +5760,7 @@ def _staged_assignment_seed(
     progress_callback: Callable[[str], None] | None = None,
     max_cycles: int = 2,
     include_mixed_polish: bool = False,
+    strategy: str = "joint",
     instrumentation: dict[str, object] | None = None,
 ) -> dict[int, ParameterSet]:
     initial_params = _canonicalize_parameter_sets(
@@ -5623,6 +5820,7 @@ def _staged_assignment_seed(
             minuit_tol=0.05 if len(free_local_names) >= 2 else None,
             screening=len(free_local_names) < 2,
             initial_step_sizes=step_hints or None,
+            strategy=strategy,
         )
         _record_global_fit_diagnostics(instrumentation, local_results)
         local_results = _canonicalize_fit_results_by_run(
@@ -5673,6 +5871,7 @@ def _staged_assignment_seed(
             minuit_tol=0.05 if len(free_global_names) >= 4 else None,
             initial_step_sizes=step_hints or None,
             screening=len(free_global_names) < 4,
+            strategy=strategy,
         )
         _record_global_fit_diagnostics(instrumentation, global_results)
         global_results = _canonicalize_fit_results_by_run(
@@ -5725,6 +5924,7 @@ def _staged_assignment_seed(
                 use_simplex_rescue=False,
                 initial_step_sizes=step_hints or None,
                 screening=True,
+                strategy=strategy,
             )
             _record_global_fit_diagnostics(instrumentation, mixed_results)
             mixed_results = _canonicalize_fit_results_by_run(
@@ -7600,6 +7800,1111 @@ def _finalise_heuristic_assessments(
         )
 
     return tuple(optimized_assessments)
+
+
+# --------------------------------------------------------------------------- #
+# Separable role search (the default engine).
+#
+# The exhaustive wavefront enumerates 2^P role assignments per template and
+# refits the all-local anchor as one joint (n_global + n_local*G)-parameter
+# Minuit problem although phase 1 already holds every per-run fit. On a real
+# ordered series that is where the search's whole budget goes.
+#
+# The separable engine replaces enumeration with a statistical model of it:
+#
+#   1. **All-local comes for free.** Independent per-run fits *are* the
+#      all-local assignment, so it is assembled from the phase-1 results and
+#      never fitted jointly.
+#   2. **A full-covariance surrogate scores every assignment at once.** The GLS
+#      collapse (``global_search.surrogate``) predicts the IC of globalising any
+#      subset from the per-run estimates and covariances, and hands back the
+#      warm start (shared values + conditional locals) the exact fit needs.
+#   3. **Backward elimination is the exact path.** One parameter is globalised
+#      at a time, cheapest-by-surrogate first, each step fitted exactly
+#      (profiled, one warm variant) and accepted only when the *exact* IC
+#      improves. At most P coupled fits, not 2^P.
+#   4. **The winner's single-flip neighbourhood is fitted** so the per-parameter
+#      role recommendations are exact, then winner + neighbourhood are refitted
+#      jointly at full resolution — the leaderboard never mixes resolutions.
+#
+# The exhaustive wavefront stays reachable behind ``search_engine`` as the
+# harness referee.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class _SeparableAnchorTask:
+    """Build one template's all-local node (no coupled fit) plus its estimates."""
+
+    template_key: str
+    template: CandidateTemplate
+    datasets: list[MuonDataset]
+    base_by_run: dict[int, ParameterSet]
+    fixed_param_names: tuple[str, ...]
+    axis_key: str
+    metric: SelectionMetric
+    search_strategy: str
+    #: Per-run all-local ``FitResult``s reusable verbatim from the phase-1
+    #: pre-screen, or ``None`` when they must be fitted here (either the
+    #: pre-screen holds coupled fits rather than independent per-run ones, or it
+    #: sits at a different resolution than the search).
+    prescreen_results_by_run: dict[int, FitResult] | None
+
+
+@dataclass(frozen=True)
+class _SeparableTemplateResult:
+    template_key: str
+    state: _HeuristicTemplateState
+    estimates: tuple[RunEstimate, ...]
+    instrumentation: dict[str, object]
+
+
+@dataclass(frozen=True)
+class _SeparableEliminationTask:
+    """Run one template's backward elimination and winner flip-neighbourhood."""
+
+    template_key: str
+    state: _HeuristicTemplateState
+    estimates: tuple[RunEstimate, ...]
+    datasets: list[MuonDataset]
+    axis_key: str
+    metric: SelectionMetric
+    search_strategy: str
+
+
+def _fresh_task_instrumentation() -> dict[str, object]:
+    return {
+        "counters": {},
+        "curvature_hint_sizes": [],
+        "minuit_edm": [],
+        "relaxed_penalties": [],
+        "staged_frontier_widths": [],
+    }
+
+
+def _counter_value(instrumentation: dict[str, object], name: str) -> int:
+    """Read one counter out of a task's instrumentation dict.
+
+    Callers hold a :func:`_fresh_task_instrumentation` dict, which seeds
+    ``counters`` before anything can read it, so the lookup is total. A counter
+    nobody has recorded yet is honestly zero.
+    """
+
+    counters: dict[str, int] = instrumentation["counters"]  # type: ignore[assignment]
+    return int(counters.get(name, 0))
+
+
+def _separable_search_rebin_factor(datasets: list[MuonDataset]) -> int:
+    """One rebin factor for the whole series: the *smallest* run's factor.
+
+    Every search fit runs at this resolution so the ICs on one leaderboard share
+    an ``n``. Taking the minimum over runs means the series is never rebinned
+    past what the most bandwidth-hungry run can afford — going past a run's own
+    factor would alias the very line its seeds name.
+    """
+
+    return max(
+        1,
+        min(
+            int(analysis_rebin_factor(dataset, field_gauss=_field_value(dataset)))
+            for dataset in datasets
+        ),
+    )
+
+
+def _separable_search_datasets(
+    datasets: list[MuonDataset],
+    *,
+    search_rebin_factor: int,
+    instrumentation: dict[str, object] | None,
+) -> list[MuonDataset]:
+    if search_rebin_factor <= 1:
+        return datasets
+    _record_counter(instrumentation, "separable_search_rebin_applied")
+    return [dataset.rebin(search_rebin_factor) for dataset in datasets]
+
+
+def _all_local_run_fit_results(
+    datasets: list[MuonDataset],
+    template: CandidateTemplate,
+    *,
+    fit_engine: FitEngine,
+    base_by_run: dict[int, ParameterSet],
+    fixed_param_names: tuple[str, ...],
+    instrumentation: dict[str, object] | None,
+) -> dict[int, FitResult]:
+    """Fit ``template`` to each run independently — the all-local assignment.
+
+    Runs are walked in series order and each converged run seeds the next
+    (``_best_single_run_fit_result``'s first attempt), which is why this stays
+    serial: along an ordered series the neighbour is the best available start,
+    and the process pool is already saturated one level up, across templates.
+    """
+
+    free_names = tuple(name for name in template.model.param_names if name not in fixed_param_names)
+    seeded = _canonicalize_parameter_sets(
+        base_by_run,
+        template=template,
+        global_param_names=free_names,
+        local_param_names=(),
+        fixed_param_names=fixed_param_names,
+    )
+    results: dict[int, FitResult] = {}
+    previous_success: ParameterSet | None = None
+    for dataset in datasets:
+        run_number = int(dataset.run_number)
+        _record_counter(instrumentation, "separable_all_local_fits")
+        best_result = _best_single_run_fit_result(
+            dataset,
+            template,
+            fit_engine=fit_engine,
+            seed_params=seeded[run_number],
+            base_params=base_by_run[run_number],
+            global_names=free_names,
+            fixed_param_names=fixed_param_names,
+            previous_success=previous_success,
+        )
+        if best_result is None:
+            results[run_number] = FitResult(
+                success=False,
+                message="No single-run fit attempt produced a result.",
+            )
+            continue
+        canonical = _canonicalize_fit_results_by_run(
+            {run_number: best_result},
+            template=template,
+            global_param_names=free_names,
+            local_param_names=(),
+            fixed_param_names=fixed_param_names,
+        )[run_number]
+        results[run_number] = canonical
+        if canonical.success:
+            previous_success = canonical.parameters
+    return results
+
+
+def _run_estimates_from_results(
+    datasets: list[MuonDataset],
+    results_by_run: dict[int, FitResult],
+    free_param_names: tuple[str, ...],
+) -> tuple[RunEstimate, ...]:
+    return tuple(
+        run_estimate_from_fit_result(
+            results_by_run[int(dataset.run_number)],
+            free_param_names,
+            run_number=int(dataset.run_number),
+            n_points=int(dataset.n_points),
+            at_bound=_bound_hit_names(results_by_run[int(dataset.run_number)].parameters),
+        )
+        for dataset in datasets
+    )
+
+
+def _run_separable_anchor_task(task: _SeparableAnchorTask) -> _SeparableTemplateResult:
+    """Assemble one template's all-local node — the search's starting point.
+
+    No coupled fit happens here: G independent per-run fits *are* the all-local
+    assignment, and scoring them through :func:`_assemble_assignment_assessment`
+    puts that node on exactly the same IC footing as every coupled node.
+    """
+
+    instrumentation = _fresh_task_instrumentation()
+    template = task.template
+    fixed_param_names = task.fixed_param_names
+    free_param_names = tuple(
+        name for name in template.model.param_names if name not in fixed_param_names
+    )
+    state = _HeuristicTemplateState(
+        template=template,
+        fixed_param_names=fixed_param_names,
+        prefit_base_by_run=_clone_parameter_sets(task.base_by_run),
+        free_param_names=free_param_names,
+        exact_cache={},
+        converged_assessments={},
+    )
+
+    if not free_param_names:
+        # Nothing is promotable: the single all-fixed assignment is the verdict.
+        _fit_heuristic_assignment(
+            task.datasets,
+            state,
+            (),
+            axis_key=task.axis_key,
+            metric=task.metric,
+            search_strategy=task.search_strategy,
+            progress_callback=None,
+            instrumentation=instrumentation,
+        )
+        return _SeparableTemplateResult(
+            template_key=task.template_key,
+            state=state,
+            estimates=(),
+            instrumentation=instrumentation,
+        )
+
+    if task.prescreen_results_by_run is None:
+        results_by_run = _all_local_run_fit_results(
+            task.datasets,
+            template,
+            fit_engine=FitEngine(),
+            base_by_run=task.base_by_run,
+            fixed_param_names=fixed_param_names,
+            instrumentation=instrumentation,
+        )
+    else:
+        _record_counter(instrumentation, "separable_all_local_from_prescreen")
+        results_by_run = _canonicalize_fit_results_by_run(
+            dict(task.prescreen_results_by_run),
+            template=template,
+            global_param_names=free_param_names,
+            local_param_names=(),
+            fixed_param_names=fixed_param_names,
+        )
+
+    local_param_names = _local_names_for(free_param_names, set(free_param_names))
+    fit_success = len(results_by_run) == len(task.datasets) and all(
+        result.success for result in results_by_run.values()
+    )
+    state.prefit_base_by_run = _merge_result_values_into_parameter_sets(
+        task.base_by_run,
+        results_by_run,
+    )
+    assessment = _assemble_assignment_assessment(
+        task.datasets,
+        template,
+        base_by_run=state.prefit_base_by_run,
+        results_by_run=results_by_run,
+        fitted_global=ParameterSet(),
+        global_param_names=(),
+        local_param_names=local_param_names,
+        fixed_param_names=fixed_param_names,
+        axis_key=task.axis_key,
+        metric=task.metric,
+        fit_success=fit_success,
+    )
+    anchor_key = ((), local_param_names)
+    state.exact_cache[anchor_key] = assessment
+    state.anchor_assessment = assessment
+    if assessment.is_successful:
+        state.converged_assessments[anchor_key] = assessment
+        state.best_assessment = assessment
+        estimates = _run_estimates_from_results(task.datasets, results_by_run, free_param_names)
+    else:
+        # With no usable all-local node there is no surrogate and no warm start.
+        # The template still deserves one real coupled row on the leaderboard, so
+        # fit the cheapest assignment (all-global) from the base seeds.
+        _record_counter(instrumentation, "separable_all_local_failed")
+        _fit_heuristic_assignment(
+            task.datasets,
+            state,
+            (),
+            axis_key=task.axis_key,
+            metric=task.metric,
+            search_strategy=task.search_strategy,
+            progress_callback=None,
+            instrumentation=instrumentation,
+        )
+        estimates = ()
+
+    return _SeparableTemplateResult(
+        template_key=task.template_key,
+        state=state,
+        estimates=estimates,
+        instrumentation=instrumentation,
+    )
+
+
+def _collapse_warm_start_parameter_sets(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    collapse: CollapseResult,
+    *,
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+) -> dict[int, ParameterSet]:
+    """Turn a GLS collapse into per-run start values for the coupled fit.
+
+    Shared parameters start at the pooled value; every other free parameter
+    starts at its run's *conditional* value — the shift the collapse says it
+    takes once the shared ones move. That is the second-order optimum of the
+    coupled problem, which is why one screened migrad from here is enough.
+    """
+
+    seeded: dict[int, ParameterSet] = {}
+    for dataset in datasets:
+        run_number = int(dataset.run_number)
+        parameters = _clone_parameter_set(state.prefit_base_by_run[run_number])
+        conditional = collapse.conditional_locals_by_run[run_number]
+        for parameter in parameters:
+            value = collapse.shared_values.get(parameter.name, conditional.get(parameter.name))
+            if value is None:
+                continue
+            parameter.value = float(np.clip(value, parameter.min, parameter.max))
+        seeded[run_number] = parameters
+    return _canonicalize_parameter_sets(
+        seeded,
+        template=state.template,
+        global_param_names=global_param_names,
+        local_param_names=local_param_names,
+        fixed_param_names=state.fixed_param_names,
+    )
+
+
+def _separable_warm_start(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    estimates: tuple[RunEstimate, ...],
+    incumbent: GlobalCandidateAssessment,
+    *,
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+) -> dict[int, ParameterSet]:
+    """The warm start for one candidate assignment.
+
+    Globalising a parameter — the elimination's forward move, and the
+    flip-neighbourhood's "share this one too" — is exactly what the collapse
+    models, so it supplies the seed. Freeing a global back to per-run values is
+    the reverse move, which the collapse says nothing about; there the
+    incumbent's own fitted values, spread per run, are the honest start. A
+    collapse whose pooled weight is unusable reports ``inf`` and hands back no
+    shared values, so it falls to the same reverse-move seed.
+    """
+
+    collapse = collapse_cost(estimates, global_param_names)
+    globalising = bool(set(global_param_names) - set(incumbent.global_param_names))
+    if globalising and math.isfinite(collapse.delta_chi2):
+        return _collapse_warm_start_parameter_sets(
+            datasets,
+            state,
+            collapse,
+            global_param_names=global_param_names,
+            local_param_names=local_param_names,
+        )
+    return _warm_start_parameter_sets(
+        datasets,
+        assessment=incumbent,
+        base_by_run=state.prefit_base_by_run,
+        target_global_names=global_param_names,
+        target_local_names=local_param_names,
+        fit_engine=FitEngine(),
+        template=state.template,
+        progress_callback=None,
+    )
+
+
+def _separable_coupled_strategy(
+    datasets: list[MuonDataset],
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+) -> str:
+    """Which minimiser architecture solves this node: ``"joint"`` or ``"profiled"``.
+
+    The joint solver builds one Minuit problem over ``n_global + n_local*G``
+    parameters, so its Hessian cost grows as the square of that; the profiled
+    solver replaces it with ``n_global**2`` plus ``G`` small per-dataset blocks,
+    but pays for it by re-solving every dataset on *each* outer iteration. That
+    trade only pays once the joint problem is genuinely large: on a short series
+    the joint problem is already tiny and profiled's outer loop dominates
+    (measured on the harness's 5-parameter, 3-run near-degenerate case, profiled
+    cost roughly 5x the joint path for the same verdict). Above the threshold the
+    joint Hessian is what dominates and profiled wins by the margin that motivates
+    it in the first place.
+    """
+
+    free_count = len(global_param_names) + len(local_param_names) * len(datasets)
+    return "profiled" if free_count >= _SEPARABLE_PROFILED_FREE_PARAM_COUNT else "joint"
+
+
+def _fit_separable_assignment(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    local_names: tuple[str, ...],
+    *,
+    estimates: tuple[RunEstimate, ...],
+    warm_start_source: GlobalCandidateAssessment,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    instrumentation: dict[str, object],
+    cancel_callback: Callable[[], bool] | None = None,
+) -> GlobalCandidateAssessment:
+    """One exact, warm-started, profiled coupled fit; cached on ``state``.
+
+    Goes through :func:`_fit_exact_assignment` so its IC, diagnostics and
+    instrumentation counters are identical to an exhaustive node's — only the
+    seed and the minimiser architecture differ. The warm start is built here,
+    *after* the cache lookup, because building one can itself cost a per-run
+    prefit and an already-fitted node needs neither.
+    """
+
+    global_names = _global_names_for(state.free_param_names, local_names)
+    cached = state.exact_cache.get((global_names, local_names))
+    if cached is not None and cached.is_successful:
+        _record_counter(instrumentation, "exact_fit_cache_hits")
+        return cached
+    strategy = _separable_coupled_strategy(datasets, global_names, local_names)
+    _record_counter(instrumentation, f"separable_{strategy}_fits")
+    warm_start_by_run = _separable_warm_start(
+        datasets,
+        state,
+        estimates,
+        warm_start_source,
+        global_param_names=global_names,
+        local_param_names=local_names,
+    )
+    assessment = _fit_exact_assignment(
+        datasets,
+        state.template,
+        fit_engine=FitEngine(),
+        base_by_run=state.prefit_base_by_run,
+        global_param_names=global_names,
+        local_param_names=local_names,
+        fixed_param_names=state.fixed_param_names,
+        axis_key=axis_key,
+        metric=metric,
+        cache=state.exact_cache,
+        warm_start_by_run=warm_start_by_run,
+        progress_callback=None,
+        search_strategy=search_strategy,
+        strategy=strategy,
+        warm_start_only=True,
+        instrumentation=instrumentation,
+        initial_step_sizes=_step_hints_from_assessment(
+            datasets,
+            warm_start_source,
+            target_global_names=global_names,
+            target_local_names=local_names,
+        ),
+        cancel_callback=cancel_callback,
+    )
+    key = (global_names, local_names)
+    state.exact_cache[key] = assessment
+    if assessment.is_successful:
+        state.converged_assessments[key] = assessment
+        if state.best_assessment is None or _assessment_sort_key(
+            assessment, metric
+        ) < _assessment_sort_key(state.best_assessment, metric):
+            state.best_assessment = assessment
+    return assessment
+
+
+def _assessment_chi2(assessment: GlobalCandidateAssessment) -> float:
+    return float(sum(result.chi_squared for result in assessment.fit_results_by_run.values()))
+
+
+def _refit_certificate_violating_parent(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    parent: GlobalCandidateAssessment,
+    child: GlobalCandidateAssessment,
+    *,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    instrumentation: dict[str, object],
+) -> GlobalCandidateAssessment:
+    """Redo a parent the child proved mis-converged, from the child's values.
+
+    The child shares one more parameter than its parent and so has *fewer* free
+    parameters; an honest pair therefore satisfies
+    ``chi2(child) >= chi2(parent) - eps``. A violation is not evidence about the
+    child — it says the parent settled in a worse minimum. The child's fitted
+    values, spread back to per-run locals, are a start the parent cannot do worse
+    from. Returns whichever of the two parent fits is better.
+    """
+
+    _record_counter(instrumentation, "separable_certificate_refits")
+    parent_local = parent.local_param_names
+    parent_global = parent.global_param_names
+    warm_start_by_run = _warm_start_parameter_sets(
+        datasets,
+        assessment=child,
+        base_by_run=state.prefit_base_by_run,
+        target_global_names=parent_global,
+        target_local_names=parent_local,
+        fit_engine=FitEngine(),
+        template=state.template,
+        progress_callback=None,
+    )
+    refit = _fit_exact_assignment(
+        datasets,
+        state.template,
+        fit_engine=FitEngine(),
+        base_by_run=state.prefit_base_by_run,
+        global_param_names=parent_global,
+        local_param_names=parent_local,
+        fixed_param_names=state.fixed_param_names,
+        axis_key=axis_key,
+        metric=metric,
+        # A fresh cache: the mis-converged parent already sits in ``state``'s
+        # cache and would otherwise be handed back instead of refitted.
+        cache={},
+        warm_start_by_run=warm_start_by_run,
+        progress_callback=None,
+        search_strategy=search_strategy,
+        strategy="profiled",
+        warm_start_only=True,
+        instrumentation=instrumentation,
+        initial_step_sizes=_step_hints_from_assessment(
+            datasets,
+            child,
+            target_global_names=parent_global,
+            target_local_names=parent_local,
+        ),
+    )
+    if not refit.is_successful or _assessment_sort_key(parent, metric) <= _assessment_sort_key(
+        refit, metric
+    ):
+        return parent
+    key = (parent_global, parent_local)
+    state.exact_cache[key] = refit
+    state.converged_assessments[key] = refit
+    if state.best_assessment is None or _assessment_sort_key(refit, metric) < _assessment_sort_key(
+        state.best_assessment, metric
+    ):
+        state.best_assessment = refit
+    return refit
+
+
+def _separable_backward_elimination(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    estimates: tuple[RunEstimate, ...],
+    *,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    instrumentation: dict[str, object],
+) -> GlobalCandidateAssessment:
+    """Globalise one parameter at a time, cheapest first, while the IC improves.
+
+    The incumbent starts at all-local. Each round asks the surrogate which single
+    remaining parameter is cheapest to share, fits *that* assignment exactly, and
+    keeps it only when the exact IC beats the incumbent. The first rejection ends
+    the walk.
+
+    A parameter resting on a bound in any run is never proposed: its curvature is
+    not the curvature of an interior minimum, so the collapse would be modelling
+    numerical noise rather than the parameter's spread.
+    """
+
+    # The walk's incumbent is the current node of the *chain*, which starts at
+    # all-local — not ``state.best_assessment``, which may already hold phase 1's
+    # adopted screening node from somewhere else in the assignment lattice.
+    incumbent = state.anchor_assessment
+    shared: tuple[str, ...] = ()
+    at_bound: set[str] = set()
+    for estimate in estimates:
+        at_bound |= estimate.at_bound
+
+    while True:
+        candidates = [
+            name for name in state.free_param_names if name not in shared and name not in at_bound
+        ]
+        if not candidates:
+            return incumbent
+
+        scored = sorted(
+            (surrogate_ic(estimates, (*shared, name), metric), name) for name in candidates
+        )
+        predicted_ic, best_name = scored[0]
+        if not math.isfinite(predicted_ic):
+            # Every remaining single addition has an unusable pooled weight, so
+            # the surrogate can no longer say which parameter to share next.
+            _record_counter(instrumentation, "separable_surrogate_exhausted")
+            return incumbent
+
+        candidate_shared = tuple(
+            name for name in state.free_param_names if name in {*shared, best_name}
+        )
+        local_names = _local_names_for(
+            state.free_param_names,
+            set(state.free_param_names) - set(candidate_shared),
+        )
+        _record_counter(instrumentation, "separable_steps")
+        escalations_before = _counter_value(instrumentation, "warm_only_escalations")
+        candidate = _fit_separable_assignment(
+            datasets,
+            state,
+            local_names,
+            estimates=estimates,
+            warm_start_source=incumbent,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+        )
+        if _counter_value(instrumentation, "warm_only_escalations") > escalations_before:
+            _record_counter(instrumentation, "separable_escalations")
+        if not candidate.is_successful:
+            # The warm fit failed and the multi-start battery behind it failed
+            # too. Sharing yet more parameters would only start from a worse
+            # seed, so the walk ends at the incumbent.
+            return incumbent
+
+        if _assessment_chi2(candidate) < _assessment_chi2(incumbent) - _WARM_CERTIFICATE_EPSILON:
+            incumbent = _refit_certificate_violating_parent(
+                datasets,
+                state,
+                incumbent,
+                candidate,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                instrumentation=instrumentation,
+            )
+
+        if _assessment_sort_key(candidate, metric) >= _assessment_sort_key(incumbent, metric):
+            return incumbent
+        incumbent = candidate
+        shared = candidate_shared
+
+
+def _fill_separable_flip_neighbourhood(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    winner: GlobalCandidateAssessment,
+    estimates: tuple[RunEstimate, ...],
+    *,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    instrumentation: dict[str, object],
+) -> None:
+    """Fit every single-role flip of ``winner`` the walk did not already visit.
+
+    ``_build_parameter_recommendations_from_exact_cache`` justifies each
+    parameter's role by comparing the winner against exactly these neighbours, so
+    without them the verdict layer is starved. Elimination visits only the
+    accepted chain plus its one rejected step, so most flips land here.
+    """
+
+    winner_local = set(winner.local_param_names)
+    for name in state.free_param_names:
+        if name in winner_local:
+            flipped = _local_names_for(state.free_param_names, winner_local - {name})
+        else:
+            flipped = _local_names_for(state.free_param_names, winner_local | {name})
+        global_names = _global_names_for(state.free_param_names, flipped)
+        if (global_names, flipped) in state.exact_cache:
+            continue
+        _record_counter(instrumentation, "flip_neighbourhood_fits")
+        _record_counter(instrumentation, "separable_flip_fits")
+        _fit_separable_assignment(
+            datasets,
+            state,
+            flipped,
+            estimates=estimates,
+            warm_start_source=winner,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+        )
+
+
+def _run_separable_elimination_task(
+    task: _SeparableEliminationTask,
+) -> _SeparableTemplateResult:
+    instrumentation = _fresh_task_instrumentation()
+    state = task.state
+    _separable_backward_elimination(
+        task.datasets,
+        state,
+        task.estimates,
+        axis_key=task.axis_key,
+        metric=task.metric,
+        search_strategy=task.search_strategy,
+        instrumentation=instrumentation,
+    )
+    # The flips are centred on the template's best converged node, not on the
+    # elimination's last incumbent: the walk stops at the first rejection, and a
+    # node it rejected (or an adopted screening fit) may still be the best one in
+    # the cache. A template only reaches elimination once its all-local anchor
+    # converged, and that anchor is what sets ``best_assessment`` in the first
+    # place, so there is always a node here.
+    _fill_separable_flip_neighbourhood(
+        task.datasets,
+        state,
+        state.best_assessment,
+        task.estimates,
+        axis_key=task.axis_key,
+        metric=task.metric,
+        search_strategy=task.search_strategy,
+        instrumentation=instrumentation,
+    )
+    return _SeparableTemplateResult(
+        template_key=task.template_key,
+        state=state,
+        estimates=task.estimates,
+        instrumentation=instrumentation,
+    )
+
+
+def _drain_separable_tasks(
+    tasks: Sequence[_SeparableAnchorTask] | Sequence[_SeparableEliminationTask],
+    runner: Callable[..., _SeparableTemplateResult],
+    *,
+    activity: str,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+    cancel_callback: Callable[[], bool] | None,
+    deadline: float | None,
+) -> list[_SeparableTemplateResult]:
+    """Run per-template tasks on the spawn pool, polling cancel and the deadline.
+
+    The wall budget is a backstop: a healthy search finishes on its merits long
+    before it. On expiry the pool is torn down *without* waiting, so the wall we
+    were bounding is not simply relocated into ``shutdown``, and whatever
+    completed is kept.
+    """
+
+    def _check_cancelled() -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Global fit wizard analysis cancelled.")
+
+    def _budget_exceeded() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
+    results: list[_SeparableTemplateResult] = []
+    worker_count = _template_worker_count(len(tasks))
+    executor: ProcessPoolExecutor | None = None
+    if worker_count > 1 and len(tasks) > 1:
+        executor = _try_open_process_pool(
+            max_workers=worker_count,
+            progress_callback=progress_callback,
+            activity=activity,
+        )
+
+    truncated = False
+    try:
+        if executor is None:
+            for task in tasks:
+                _check_cancelled()
+                if _budget_exceeded():
+                    truncated = True
+                    break
+                results.append(runner(task))
+        else:
+            pending = {executor.submit(runner, task) for task in tasks}
+            while pending:
+                _check_cancelled()
+                if _budget_exceeded():
+                    truncated = True
+                    break
+                done, pending = wait(
+                    pending,
+                    timeout=_WAVEFRONT_POLL_INTERVAL_SECONDS,
+                    return_when=FIRST_COMPLETED,
+                )
+                for future in done:
+                    results.append(future.result())
+    finally:
+        if executor is not None:
+            _shutdown_process_pool(executor, wait=not truncated, cancel_futures=truncated)
+
+    if truncated:
+        _progress_log(
+            progress_callback,
+            f"{activity} hit its wall-clock budget; keeping "
+            f"{len(results)}/{len(tasks)} completed template(s).",
+        )
+        _record_counter(instrumentation, "separable_budget_truncations")
+    for result in results:
+        _merge_instrumentation(instrumentation, result.instrumentation)
+    return results
+
+
+def _separable_prescreen_results_for_template(
+    datasets: list[MuonDataset],
+    assessment: GlobalCandidateAssessment | None,
+    *,
+    resolution_matches: bool,
+) -> dict[int, FitResult] | None:
+    """The pre-screen's per-run fits, when they really *are* the all-local node.
+
+    They qualify only when the pre-screen ran the independent per-run single-fit
+    path (``prescreen_only``), every run converged, and the table sits at the
+    search resolution — a full-resolution chi-squared inside an IC computed over
+    a rebinned ``n`` is meaningless. Otherwise the caller fits the node itself.
+    """
+
+    if assessment is None or not assessment.prescreen_only or not resolution_matches:
+        return None
+    results: dict[int, FitResult] = {}
+    for dataset in datasets:
+        result = assessment.fit_results_by_run.get(int(dataset.run_number))
+        if result is None or not result.success:
+            return None
+        results[int(dataset.run_number)] = result
+    return results
+
+
+def _adopt_screening_assessment(
+    state: _HeuristicTemplateState,
+    assessment: GlobalCandidateAssessment | None,
+    *,
+    metric: SelectionMetric,
+) -> None:
+    """Adopt phase 1's coupled screening fit as a node of the search's cache.
+
+    Screening already fitted one role assignment of this template exactly.
+    Re-fitting it during the search would spend a coupled fit rediscovering the
+    same minimum and then land, a last-float-bit apart, next to the screening row
+    on the leaderboard — so the two would compete over convergence noise. Adopting
+    it instead makes the searched node and the screening row *the same fit*, gives
+    the walk a better starting incumbent for the cross-template bound, and lets
+    the finaliser attach the flip-neighbourhood role justification to it.
+
+    A pre-screen row is independent per-run fits, not a coupled fit, and is never
+    adopted; nor is a screening fit that did not converge.
+    """
+
+    if assessment is None or assessment.prescreen_only or not assessment.is_successful:
+        return
+    local_names = _local_names_for(state.free_param_names, set(assessment.local_param_names))
+    global_names = _global_names_for(state.free_param_names, local_names)
+    adopted = replace(
+        assessment,
+        global_param_names=global_names,
+        local_param_names=local_names,
+        fixed_param_names=state.fixed_param_names,
+    )
+    key = (global_names, local_names)
+    state.exact_cache[key] = adopted
+    state.converged_assessments[key] = adopted
+    if state.best_assessment is None or _assessment_sort_key(
+        adopted, metric
+    ) < _assessment_sort_key(state.best_assessment, metric):
+        state.best_assessment = adopted
+
+
+def _run_separable_search(
+    datasets: list[MuonDataset],
+    *,
+    shortlisted_templates: list[CandidateTemplate],
+    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]],
+    prescreen_assessments: dict[str, GlobalCandidateAssessment],
+    axis_key: str,
+    metric: SelectionMetric,
+    progress_callback: Callable[[str], None] | None,
+    search_strategy: str,
+    instrumentation: dict[str, object] | None,
+    single_run_prefit_cache_for: Callable[
+        [CandidateTemplate], dict[object, dict[int, ParameterSet]]
+    ],
+    cancel_callback: Callable[[], bool] | None = None,
+    search_rebin_factor: int | None = None,
+    prescreen_rebin_factor: int = 1,
+    time_budget_seconds: float | None = _WAVEFRONT_TIME_BUDGET_SECONDS,
+) -> tuple[GlobalCandidateAssessment, ...]:
+    """Separable global/local role search — the default engine.
+
+    Returns the same ``tuple[GlobalCandidateAssessment, ...]`` contract as the
+    exhaustive wavefront (each template's converged assignments, carrying the
+    per-parameter role recommendations resolved from that template's exact
+    cache), so the verdict layer is engine-agnostic.
+
+    ``search_rebin_factor`` is the series search resolution; by default the
+    minimum bandwidth-aware factor across runs. ``prescreen_rebin_factor`` says
+    what resolution the pre-screen table sits at — when the two agree its per-run
+    fits *are* the all-local node and no fit is spent on it at all.
+    """
+
+    if not shortlisted_templates:
+        return ()
+
+    if search_rebin_factor is None:
+        search_rebin_factor = _separable_search_rebin_factor(datasets)
+    _set_metric(instrumentation, "separable_search_rebin_factor", int(search_rebin_factor))
+    search_datasets = _separable_search_datasets(
+        datasets,
+        search_rebin_factor=search_rebin_factor,
+        instrumentation=instrumentation,
+    )
+    if search_rebin_factor > 1:
+        _progress_log(
+            progress_callback,
+            f"Separable role search: searching at {search_rebin_factor}x coarser binning; "
+            "the winner and its flip-neighbourhood are refitted at full resolution.",
+        )
+
+    deadline: float | None = None
+    if time_budget_seconds is not None and time_budget_seconds > 0.0:
+        deadline = time.monotonic() + float(time_budget_seconds)
+
+    resolution_matches = int(prescreen_rebin_factor) == int(search_rebin_factor)
+    anchor_tasks: list[_SeparableAnchorTask] = []
+    for template in shortlisted_templates:
+        base_by_run, fixed_param_names = template_contexts[template.key]
+        anchor_tasks.append(
+            _SeparableAnchorTask(
+                template_key=template.key,
+                template=template,
+                datasets=search_datasets,
+                base_by_run=base_by_run,
+                fixed_param_names=fixed_param_names,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                prescreen_results_by_run=_separable_prescreen_results_for_template(
+                    search_datasets,
+                    prescreen_assessments.get(template.key),
+                    resolution_matches=resolution_matches,
+                ),
+            )
+        )
+
+    _progress_log(
+        progress_callback,
+        f"Separable role search: assembling all-local anchors for {len(anchor_tasks)} "
+        "shortlisted template(s) without a joint fit.",
+    )
+    anchor_results = _drain_separable_tasks(
+        anchor_tasks,
+        _run_separable_anchor_task,
+        activity="Separable role search (all-local anchors)",
+        progress_callback=progress_callback,
+        instrumentation=instrumentation,
+        cancel_callback=cancel_callback,
+        deadline=deadline,
+    )
+    result_by_key = {result.template_key: result for result in anchor_results}
+    # A screening fit is a node of *this* search's lattice only when it was
+    # measured over the same points the search measures. At a coarser search
+    # resolution its chi-squared is computed over a different ``n``, so adopting
+    # it would put a full-resolution IC next to search-resolution ones inside the
+    # same state — the very mixing the resolution rule forbids.
+    if resolution_matches:
+        for result in anchor_results:
+            _adopt_screening_assessment(
+                result.state,
+                prescreen_assessments.get(result.template_key),
+                metric=metric,
+            )
+    states = [
+        result_by_key[template.key].state
+        for template in shortlisted_templates
+        if template.key in result_by_key
+    ]
+
+    # --- Template racing -----------------------------------------------------
+    # Rank by the better of what the pre-screen already measured and what the
+    # surrogate predicts the best sharing pattern reaches. Only the top few earn
+    # coupled fits; the rest keep their (free) all-local node on the leaderboard.
+    # The pre-screen's measurement counts only when it shares the search's
+    # resolution: comparing an IC over the full record against a surrogate IC over
+    # a rebinned one ranks templates by their point count, not their fit.
+    def _race_score(result: _SeparableTemplateResult) -> float:
+        scores = [float("inf")]
+        prescreen = prescreen_assessments.get(result.template_key)
+        if resolution_matches and prescreen is not None:
+            prescreen_score = float(prescreen.metric_value(metric))
+            if np.isfinite(prescreen_score):
+                scores.append(prescreen_score)
+        ranked = rank_assignments(result.estimates, result.state.free_param_names, metric)
+        if ranked:
+            scores.append(float(ranked[0][1]))
+        return min(scores)
+
+    contenders = [
+        result for result in anchor_results if result.estimates and result.state.free_param_names
+    ]
+    ranked_results = sorted(contenders, key=_race_score)
+    advancing = ranked_results[:_SEPARABLE_RACING_ADVANCE_COUNT]
+    if len(ranked_results) > len(advancing):
+        _record_counter(
+            instrumentation,
+            "separable_templates_raced_out",
+            len(ranked_results) - len(advancing),
+        )
+        _progress_log(
+            progress_callback,
+            f"Template racing advanced {len(advancing)}/{len(ranked_results)} template(s) "
+            "into backward elimination; the rest keep their all-local score.",
+        )
+
+    # --- Cross-template incumbent bound (technique B) ------------------------
+    # A template whose all-local chi-squared floor plus the smallest penalty any
+    # of its assignments could carry still loses to the best converged IC found
+    # so far cannot produce the winner, so it never earns a coupled fit.
+    sample_count = int(sum(dataset.n_points for dataset in search_datasets))
+    converged_ics = [
+        float(result.state.best_assessment.metric_value(metric))
+        for result in anchor_results
+        if result.state.best_assessment is not None and result.state.best_assessment.is_successful
+    ]
+    cross_incumbent = min(converged_ics) if converged_ics else float("inf")
+
+    elimination_tasks: list[_SeparableEliminationTask] = []
+    for result in advancing:
+        state = result.state
+        best_possible_ic = _assessment_chi2(state.anchor_assessment) + _metric_penalty(
+            _layer_parameter_count(
+                0,
+                free_param_count=len(state.free_param_names),
+                n_datasets=len(search_datasets),
+            ),
+            sample_count=sample_count,
+            metric=metric,
+        )
+        if (
+            math.isfinite(cross_incumbent)
+            and best_possible_ic > cross_incumbent + _LAYER_BOUND_MARGIN
+        ):
+            _record_counter(instrumentation, "cross_template_templates_pruned")
+            _progress_log(
+                progress_callback,
+                f"{state.template.title}: cross-template bound fired (best possible "
+                f"{best_possible_ic:.2f} > cross-incumbent {cross_incumbent:.2f} + "
+                f"{_LAYER_BOUND_MARGIN:.1f}); skipping backward elimination.",
+            )
+            continue
+        elimination_tasks.append(
+            _SeparableEliminationTask(
+                template_key=result.template_key,
+                state=state,
+                estimates=result.estimates,
+                datasets=search_datasets,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+            )
+        )
+
+    if elimination_tasks:
+        _progress_log(
+            progress_callback,
+            f"Separable role search: backward elimination on {len(elimination_tasks)} template(s).",
+        )
+        elimination_results = _drain_separable_tasks(
+            elimination_tasks,
+            _run_separable_elimination_task,
+            activity="Separable role search (backward elimination)",
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            cancel_callback=cancel_callback,
+            deadline=deadline,
+        )
+        searched_by_key = {result.template_key: result.state for result in elimination_results}
+        states = [searched_by_key.get(state.template.key, state) for state in states]
+
+    if search_rebin_factor > 1:
+        states = _refit_states_at_full_resolution(
+            datasets,
+            states,
+            template_contexts=template_contexts,
+            single_run_prefit_cache_for=single_run_prefit_cache_for,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+        )
+
+    return _finalise_heuristic_assessments(
+        datasets, states, metric=metric, progress_callback=progress_callback
+    )
 
 
 def _run_exhaustive_wavefront_search(
