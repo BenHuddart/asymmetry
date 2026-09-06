@@ -609,3 +609,91 @@ def test_rerank_of_an_unoptimised_path_still_reports_the_screening_summary():
     assert reranked.partition_path is not None
     assert reranked.recommended_partition_k is None
     assert "transition" not in reranked.summary
+
+
+def _gated_assessment(
+    *,
+    key: str,
+    aicc: float,
+    gate_passed: bool,
+) -> global_fit_wizard_module.GlobalCandidateAssessment:
+    """A converged single-run assessment whose only distinctions are its score and gate."""
+    from asymmetry.core.fitting.engine import FitResult
+    from asymmetry.core.fitting.fit_wizard import CandidateTemplate
+    from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+
+    parameters = ParameterSet([Parameter("A_1", value=0.2, min=0.0, max=1.0)])
+    diagnostic = global_fit_wizard_module.RunResidualDiagnostic(
+        run_number=1,
+        run_label="1",
+        axis_value=1.0,
+        residual_rms=1.0,
+        runs_z_score=0.0,
+        max_abs_autocorrelation=0.0,
+        residual_fft_peak_snr=0.0,
+        gate_passed=gate_passed,
+        gate_reasons=() if gate_passed else ("runs-test z score suggests structure (2.4)",),
+    )
+    return global_fit_wizard_module.GlobalCandidateAssessment(
+        template=CandidateTemplate(
+            key=key,
+            title=key,
+            category="General",
+            rationale="test",
+            model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+        ),
+        fit_results_by_run={1: FitResult(success=True, chi_squared=1.0, parameters=parameters)},
+        global_parameters=parameters,
+        global_param_names=("A_1",),
+        local_param_names=(),
+        fixed_param_names=(),
+        parameter_recommendations=(),
+        run_diagnostics=(diagnostic,),
+        series_warnings=(),
+        aic=aicc,
+        aicc=aicc,
+        bic=aicc,
+        selected_score=aicc,
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+    )
+
+
+def test_a_phase_keeps_the_far_better_model_over_a_gate_clean_one():
+    # A phase is homogeneous by construction, so a gate caveat cannot outweigh a
+    # criterion gap the search itself treats as decisive.
+    better = _gated_assessment(key="damped", aicc=100.0, gate_passed=False)
+    clean = _gated_assessment(key="stretched", aicc=1100.0, gate_passed=True)
+    chosen = global_fit_wizard_module._recommended_segment_assessment(
+        [clean, better], SelectionMetric.AICC
+    )
+    assert chosen is better
+
+
+def test_a_phase_prefers_the_gate_clean_model_only_within_the_margin():
+    better = _gated_assessment(key="damped", aicc=100.0, gate_passed=False)
+    clean = _gated_assessment(
+        key="stretched",
+        aicc=100.0 + global_fit_wizard_module._LAYER_BOUND_MARGIN,
+        gate_passed=True,
+    )
+    chosen = global_fit_wizard_module._recommended_segment_assessment(
+        [better, clean], SelectionMetric.AICC
+    )
+    assert chosen is clean
+
+
+def test_a_phase_with_no_converged_fit_has_no_answer():
+    from dataclasses import replace as dc_replace
+
+    from asymmetry.core.fitting.engine import FitResult
+
+    failed = _gated_assessment(key="damped", aicc=100.0, gate_passed=True)
+    failed = dc_replace(
+        failed,
+        fit_results_by_run={1: FitResult(success=False, parameters=failed.global_parameters)},
+    )
+    assert (
+        global_fit_wizard_module._recommended_segment_assessment([failed], SelectionMetric.AICC)
+        is None
+    )

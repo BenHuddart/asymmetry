@@ -10227,31 +10227,40 @@ def _recommended_segment_assessment(
     assessments: Sequence[GlobalCandidateAssessment],
     metric: SelectionMetric,
 ) -> GlobalCandidateAssessment | None:
-    """The phase's answer, chosen exactly as the series-wide verdict is chosen.
+    """The phase's answer: the best information criterion among converged fits.
 
-    Same two tiers as :func:`rerank_global_fit_wizard_recommendation`: candidates
-    that converged and cleared every gate, else candidates that converged and
-    cleared every *per-run* gate with only a series-consistency caveat. ``None``
-    means nothing describes this phase — which makes the candidate partition
-    containing it infeasible, and is a real answer rather than a failure.
+    The series-wide verdict (:func:`rerank_global_fit_wizard_recommendation`)
+    lets the residual and series-consistency gates outrank the criterion, and
+    that is right for a whole series: a candidate whose parameters jump
+    between runs, or whose residuals fail in a cluster of runs, is telling the
+    user the series is not one thing. A *phase* is different by construction —
+    the partition already placed the breaks — and inside it those same gates
+    are caveats on a fit, not evidence for a different model. Ranking on them
+    first threw away, on a real series, a model 1 000 criterion units better
+    than the one it kept, because two local phases wrapped and one boundary
+    run tripped a runs test. So the criterion decides, and a gate-clean
+    candidate is preferred only when it is within ``_LAYER_BOUND_MARGIN`` of
+    the best — the margin the search already treats as "not distinguishable".
+    ``None`` means nothing converged on this phase, which makes the candidate
+    partition containing it infeasible: a real answer rather than a failure.
     """
 
-    passing = [
-        assessment
-        for assessment in assessments
-        if assessment.is_successful and assessment.residual_gate_passed
-    ]
-    if not passing:
-        passing = [
-            assessment
-            for assessment in assessments
-            if assessment.is_successful
-            and assessment.run_diagnostics
-            and all(diagnostic.gate_passed for diagnostic in assessment.run_diagnostics)
-        ]
-    if not passing:
+    converged = [assessment for assessment in assessments if assessment.is_successful]
+    if not converged:
         return None
-    return min(passing, key=lambda assessment: _assessment_sort_key(assessment, metric))
+    best = min(converged, key=lambda assessment: _assessment_sort_key(assessment, metric))
+    if best.residual_gate_passed:
+        return best
+    best_score = float(best.metric_value(metric))
+    clean = [
+        assessment
+        for assessment in converged
+        if assessment.residual_gate_passed
+        and float(assessment.metric_value(metric)) <= best_score + _LAYER_BOUND_MARGIN
+    ]
+    if not clean:
+        return best
+    return min(clean, key=lambda assessment: _assessment_sort_key(assessment, metric))
 
 
 def _optimise_partition_phases(

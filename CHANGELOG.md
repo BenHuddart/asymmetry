@@ -134,7 +134,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-fitted from the full ladder regardless. Completion is one task per **cell**
   rather than per run, and a cell re-fitted from the run's *own* values for the
   same model at another binning — the same minimum by construction — is fitted
-  once, with no ladder at all. The single-run wizard's pattern-match stage is
+  once, with no ladder at all. Inside a phase the answer is the best
+  information criterion among the converged candidates; a gate-clean candidate
+  is preferred only within the search's own comparability margin. The gates
+  (per-run residual tests and the series-consistency caveats such as a
+  parameter changing abruptly along the series) still outrank the criterion
+  for the series-wide verdict, where they say the series is not one thing —
+  but a phase is homogeneous by construction, and ranking on them first threw
+  away a model a thousand criterion units better on a real series because two
+  phase angles wrapped between runs. The single-run wizard's pattern-match stage is
   also an order of magnitude cheaper: the envelope banks (F–μ–F, μ–F and
   Kubo–Toyabe templates) were each detrended with a three-parameter curve fit,
   and that model is linear in two of its three parameters, so the detrend is
