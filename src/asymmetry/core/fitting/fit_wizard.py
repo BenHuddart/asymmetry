@@ -281,6 +281,17 @@ class CandidateAssessment:
     carries them empty; every assessment a :class:`FitWizardRecommendation`
     points at as its recommendation or a comparable alternative carries them.
     :func:`_with_dense_curves` is the crossing between the two.
+
+    A recommendation from :func:`build_fit_wizard_recommendation` states that
+    contract exactly: the rows it exposes as its answer — ``recommended_key``
+    and ``comparable_keys`` — carry curves, and **no other row does**. A build
+    assesses two to three dozen candidates and each dense curve is on the order
+    of a megabyte on a full-resolution record, so materialising all of them made
+    one run's recommendation, and a series screening table of them, hundreds of
+    times larger than the answer needed. A caller that wants to draw any other
+    row asks for them by name with :func:`assessment_with_curves`, which rebuilds
+    them from the row's own fitted parameters and is identical to what an eager
+    build would have produced.
     """
 
     template: CandidateTemplate
@@ -2568,6 +2579,11 @@ def build_fit_wizard_recommendation(
             stage=1,
             screening_cap=True,
             warm_start=warm_starts.get(template.key),
+            # Every fan-out of this build fits without dense curves; the answer's
+            # own rows get them back at the single materialisation site below,
+            # once ``rerank_fit_wizard_recommendation`` has settled which rows
+            # those are. See the contract on :class:`CandidateAssessment`.
+            dense_curves=False,
         )
 
     stage1_groups = [(family, [family.stage1_rep, *family.stage1_extras]) for family in families]
@@ -2846,6 +2862,7 @@ def build_fit_wizard_recommendation(
                 stage=2,
                 screening_cap=False,
                 warm_start=warm_starts.get(template.key),
+                dense_curves=False,
             )
 
         with stage_timer(
@@ -2880,6 +2897,7 @@ def build_fit_wizard_recommendation(
                     variant_budget=_STAGE1_VARIANT_BUDGET,
                     stage=1,
                     screening_cap=False,
+                    dense_curves=False,
                 )
                 for template in null_templates
             ],
@@ -2963,7 +2981,7 @@ def build_fit_wizard_recommendation(
         if shared_pool is not None and not caller_owns_pool and not pool_terminated:
             shared_pool.shutdown()
 
-    return rerank_fit_wizard_recommendation(
+    ranked = rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
             fingerprint=fingerprint,
             templates=all_templates,
@@ -2981,6 +2999,24 @@ def build_fit_wizard_recommendation(
             build_signature=build_signature,
         ),
         metric,
+    )
+    # The one place the dense-curve contract on :class:`CandidateAssessment` is
+    # discharged for this build. Every fan-out above fitted without curves;
+    # ranking reads none of them, so the rank is what decides which rows are the
+    # *answer* and therefore owe a drawable curve. ``analysis_dataset`` — the
+    # rebinned record the fits ran on — is deliberately what the curves are
+    # sampled between, so a row rebuilt later by
+    # :func:`assessment_with_curves` (which rebins by ``rebin_factor`` to get
+    # here) is identical to one materialised now.
+    displayed = {key for key in (ranked.recommended_key, *ranked.comparable_keys) if key}
+    return replace(
+        ranked,
+        assessments=tuple(
+            _with_dense_curves(assessment, analysis_dataset)
+            if assessment.template.key in displayed
+            else assessment
+            for assessment in ranked.assessments
+        ),
     )
 
 
@@ -4320,7 +4356,9 @@ def _with_dense_curves(
     every parameter of its model, so for the rows this is called on — a
     recommendation's own and its comparable alternatives, which are converged by
     :func:`rerank_fit_wizard_recommendation`'s construction — the fitted values
-    are the whole of it and the rebuilt arrays are identical.
+    are the whole of it and the rebuilt arrays are identical. A row that never
+    converged is drawable too (:func:`_curve_parameter_values` names anything
+    missing from the model's own defaults), it is simply not a fit.
     """
 
     fitted_time, fitted_curve, component_curves = _dense_fit_curves(
@@ -4334,6 +4372,34 @@ def _with_dense_curves(
         fitted_curve=fitted_curve,
         component_curves=component_curves,
     )
+
+
+def assessment_with_curves(
+    recommendation: FitWizardRecommendation,
+    key: str,
+    dataset: MuonDataset,
+) -> CandidateAssessment:
+    """Return ``recommendation``'s ``key`` row with its dense curves built.
+
+    The public crossing of the dense-curve contract on
+    :class:`CandidateAssessment`: a build materialises curves only for the rows
+    it exposes as its answer, and a caller that wants to *draw* any other row
+    asks for it here. ``dataset`` is the record the recommendation was built
+    from — the same one handed to :func:`build_fit_wizard_recommendation`, at
+    full resolution. Rebinning it by the recommendation's own
+    :attr:`~FitWizardRecommendation.rebin_factor` reproduces the record the fits
+    ran on, which is the grid :func:`_dense_fit_curves` samples between, so the
+    rebuilt curve is identical to the one an eager build would have attached.
+
+    ``key`` must name an assessment of ``recommendation``; a key that does not
+    is a caller bug and raises :class:`KeyError` rather than resolving to
+    anything. Calling this for a row that already carries curves rebuilds the
+    same arrays — it is idempotent, not an error.
+    """
+    assessment = {row.template.key: row for row in recommendation.assessments}[key]
+    factor = int(recommendation.rebin_factor)
+    analysis_dataset = dataset.rebin(factor) if factor > 1 else dataset
+    return _with_dense_curves(assessment, analysis_dataset)
 
 
 def _metric_value(metric: SelectionMetric, aic: float, aicc: float | None, bic: float) -> float:
@@ -5988,6 +6054,10 @@ def _refine_top_candidates(
                 variant_budget=_refinement_variant_budget(assessment.template),
                 stage=2,
                 screening_cap=False,
+                # Like every other fan-out of the build: a refined assessment is
+                # a re-scored candidate, and it is still the ranking that decides
+                # whether it is ever drawn.
+                dense_curves=False,
             )
             for assessment in targets.values()
         ],

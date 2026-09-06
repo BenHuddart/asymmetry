@@ -133,6 +133,11 @@ class WizardAnswerCard(QWidget):
     apply_requested = Signal(object)  # CandidateAssessment
     #: Emitted with the selected assessment key whenever the selection changes.
     selection_changed = Signal(str)
+    #: Emitted with an assessment key the card was asked to draw that carries no
+    #: dense curves. The owner is expected to build them (off the GUI thread —
+    #: see :func:`asymmetry.core.fitting.fit_wizard.assessment_with_curves`) and
+    #: hand the card the updated recommendation via :meth:`refresh_curves`.
+    curves_required = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -302,6 +307,19 @@ class WizardAnswerCard(QWidget):
             self._recommendation.assessment_for_key(self._selected_key)
             or self._recommendation.recommended_assessment
         )
+
+    def refresh_curves(self, recommendation: FitWizardRecommendation) -> None:
+        """Re-point the card at ``recommendation`` and redraw, keeping the selection.
+
+        The answer to :attr:`curves_required`: ``recommendation`` is the same
+        ranking the card already holds with one row's dense curves filled in, so
+        the headline, the confidence line and the alternatives strip are
+        unchanged by construction and only the plot is rebuilt. Passing a
+        *differently ranked* recommendation here is a caller bug — use
+        :meth:`set_recommendation` for that.
+        """
+        self._recommendation = recommendation
+        self._redraw_plot()
 
     def selected_key(self) -> str | None:
         return self._selected_key
@@ -500,12 +518,23 @@ class WizardAnswerCard(QWidget):
             label="Data",
         )
         if assessment is not None:
-            ax_fit.plot(
-                assessment.fitted_time,
-                assessment.fitted_curve,
-                color=tokens.PLOT_FIT,
-                label="Fit",
-            )
+            if assessment.fitted_time.size:
+                ax_fit.plot(
+                    assessment.fitted_time,
+                    assessment.fitted_curve,
+                    color=tokens.PLOT_FIT,
+                    label="Fit",
+                )
+            else:
+                # The dense-curve contract on ``CandidateAssessment``: a build
+                # materialises curves only for the rows it exposes as its answer,
+                # and this card can be pointed at any of the two-to-three dozen
+                # candidates it assessed. Ask the owner for them — building one is
+                # far too expensive for a draw — and draw the data alone until
+                # they arrive via :meth:`refresh_curves`. This is the *only* place
+                # the request is made, so every path that changes what is drawn
+                # (a selection, a re-rank, the residuals toggle) is covered by it.
+                self.curves_required.emit(assessment.template.key)
         ax_fit.set_xlabel("Time (µs)")
         ax_fit.set_ylabel("Asymmetry")
         # Only show the axes title when the user picked an alternative (it then

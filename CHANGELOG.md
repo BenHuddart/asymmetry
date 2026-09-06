@@ -224,6 +224,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exposes; the same rule applies to the per-run score table's cells. No fitted
   number, verdict or drawn curve changes (100% agreement with the frozen
   baseline).
+  The single-run fit wizard now follows the same rule: a build assesses two to
+  three dozen candidates across its screening stages and null baselines, and
+  only the rows it exposes as its answer — the recommendation and its
+  comparable alternatives — keep the dense curves that exist to be drawn, which
+  on a synthetic 15-histogram, 9×10⁴-bin record takes one recommendation from
+  38 MB pickled to 3 MB and cuts a whole series screening table by the same
+  factor. Selecting any other candidate in the wizard's alternatives strip or
+  compare table rebuilds that row's curves on a worker thread — identical
+  arrays, never on the GUI thread — and draws it as before.
 
 - **Every fit parameter's starting value now comes from one place, and the
   table remembers which values are still starting guesses.** Start values used

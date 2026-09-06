@@ -50,7 +50,9 @@ from asymmetry.core.fitting.fit_wizard import (
     _persisted_curve_stride,
     _run_template_assessments,
     _stage2_variant_budget,
+    _with_dense_curves,
     analysis_rebin_factor,
+    assessment_with_curves,
     build_fit_wizard_recommendation,
     build_fit_wizard_recommendation_for_templates,
     build_null_baseline_templates,
@@ -2824,6 +2826,183 @@ def test_recommendation_serialization_round_trips_the_rebin_metadata() -> None:
     assert restored is not None
     assert restored.rebin_factor == 5
     assert restored.analysed_points == 18_000
+
+
+# --------------------------------------------------------------------------- #
+# Dense-curve contract: a build materialises curves only for the rows it
+# exposes as its answer, and any other row is rebuilt on demand.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(300)
+def test_build_carries_curves_only_on_the_rows_it_answers_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A candidate is scored two dozen times over and drawn at most once.
+
+    Dense fitted and component curves are the largest thing an assessment
+    carries — of order a megabyte each on a full-resolution record — and a
+    build assesses two to three dozen candidates across Stage 1, Stage 2 and
+    the null baselines. Only the rows the recommendation *exposes as its
+    answer* are ever drawn, so those are the only ones built eagerly; anything
+    else the user asks to see is rebuilt by :func:`assessment_with_curves`.
+    """
+    _strip_expensive_members(monkeypatch)
+    rng = np.random.default_rng(37)
+    t = np.linspace(0.02, 10.0, 400)
+    y = 0.22 * np.exp(-0.35 * t) * np.cos(2 * np.pi * 1.4 * t) + 0.02
+    dataset = _tiered_dataset(t, y + rng.normal(0.0, 0.004, t.size), error=0.004)
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    displayed = {
+        key
+        for key in (recommendation.recommended_key, *recommendation.comparable_keys)
+        if key is not None
+    }
+    assert displayed, "this record must yield a recommendation for the contract to bite"
+    carrying = {
+        assessment.template.key
+        for assessment in recommendation.assessments
+        if assessment.fitted_time.size
+    }
+    assert carrying == displayed
+    # The saving is the point: the answer is a couple of rows out of dozens.
+    assert len(recommendation.assessments) > 2 * len(displayed)
+    # Every curve-bearing row is internally consistent.
+    for assessment in recommendation.assessments:
+        if assessment.template.key not in displayed:
+            assert assessment.fitted_curve.size == 0
+            assert assessment.component_curves == ()
+            continue
+        assert assessment.fitted_curve.size == assessment.fitted_time.size
+        for _name, values in assessment.component_curves:
+            assert values.size == assessment.fitted_time.size
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(300)
+def test_rebuilt_curves_are_identical_to_the_eagerly_built_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On-demand must mean *deferred*, not *approximated*.
+
+    The recommended row is materialised by the build itself, so asking for it
+    again is the exact comparison that proves a row rebuilt later — from its own
+    fitted parameters, against the record rebinned by the recommendation's own
+    factor — is the same array the build would have attached eagerly.
+    """
+    _strip_expensive_members(monkeypatch)
+    rng = np.random.default_rng(38)
+    t = np.linspace(0.02, 10.0, 400)
+    y = 0.22 * np.exp(-0.5 * t) + 0.02
+    dataset = _tiered_dataset(t, y + rng.normal(0.0, 0.004, t.size), error=0.004)
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+    key = recommendation.recommended_key
+    assert key is not None
+    eager = recommendation.assessment_for_key(key)
+    assert eager is not None and eager.fitted_time.size
+
+    rebuilt = assessment_with_curves(recommendation, key, dataset)
+
+    assert np.array_equal(rebuilt.fitted_time, eager.fitted_time)
+    assert np.array_equal(rebuilt.fitted_curve, eager.fitted_curve)
+    assert [name for name, _ in rebuilt.component_curves] == [
+        name for name, _ in eager.component_curves
+    ]
+    for (_name, rebuilt_values), (_eager_name, eager_values) in zip(
+        rebuilt.component_curves, eager.component_curves, strict=True
+    ):
+        assert np.array_equal(rebuilt_values, eager_values)
+    # A row the build left bare comes back with curves of its own.
+    bare = next(
+        assessment for assessment in recommendation.assessments if assessment.fitted_time.size == 0
+    )
+    filled = assessment_with_curves(recommendation, bare.template.key, dataset)
+    assert filled.fitted_time.size
+    assert filled.fitted_curve.size == filled.fitted_time.size
+    # Everything but the curves is the row itself, untouched.
+    assert filled.fit_result is bare.fit_result
+    assert filled.selected_score == bare.selected_score
+
+
+def test_assessment_with_curves_rebins_by_the_recommendations_own_factor() -> None:
+    """The curves must be sampled between the same endpoints the fit saw.
+
+    A large record is fitted as a value-rebinned copy
+    (:attr:`FitWizardRecommendation.rebin_factor`), and that copy — not the raw
+    record — is the grid the dense curves span and are sized from. Rebuilding
+    against the raw record would hand the card a curve that is not the one the
+    build would have drawn, which is exactly the bug this pins.
+    """
+    factor = 4
+    t = np.linspace(0.02, 12.0, 4_000)
+    dataset = _tiered_dataset(t, 0.2 * np.exp(-0.4 * t) + 0.01, error=0.004)
+    assessment = _dummy_assessment("exp_constant")
+    recommendation = replace(
+        _recommendation_with_extras(),
+        assessments=(assessment,),
+        recommended_key="exp_constant",
+        rebin_factor=factor,
+    )
+
+    rebuilt = assessment_with_curves(recommendation, "exp_constant", dataset)
+    against_rebinned = _with_dense_curves(assessment, dataset.rebin(factor))
+    against_raw = _with_dense_curves(assessment, dataset)
+
+    assert np.array_equal(rebuilt.fitted_time, against_rebinned.fitted_time)
+    assert np.array_equal(rebuilt.fitted_curve, against_rebinned.fitted_curve)
+    # And the factor is load-bearing: the raw record gives different arrays.
+    assert rebuilt.fitted_time.size != against_raw.fitted_time.size
+
+
+def test_assessment_with_curves_rejects_a_key_the_recommendation_does_not_carry() -> None:
+    """A key that names no row is a caller bug, not a silently empty curve."""
+    t = np.linspace(0.02, 12.0, 200)
+    dataset = _tiered_dataset(t, 0.2 * np.exp(-0.4 * t) + 0.01)
+    recommendation = replace(
+        _recommendation_with_extras(),
+        assessments=(_dummy_assessment("exp_constant"),),
+    )
+
+    with pytest.raises(KeyError):
+        assessment_with_curves(recommendation, "no_such_template", dataset)
+
+
+def test_serialization_round_trips_rows_with_and_without_curves() -> None:
+    """A cached recommendation reloads with the same contract it was stored under.
+
+    The persistence form stores whatever curves a row carries, so a stored row
+    without them reloads without them — and the reloaded recommendation still
+    answers with exactly the rows that have them.
+    """
+    with_curves = _dense_assessment("exp_constant", 2_000)
+    without_curves = _dummy_assessment("biexp_constant")
+    recommendation = replace(
+        _recommendation_with_extras(),
+        assessments=(with_curves, without_curves),
+        recommended_key="exp_constant",
+        comparable_keys=(),
+    )
+
+    for compact in (False, True):
+        payload = serialize_fit_wizard_recommendation(recommendation, compact=compact)
+        restored = deserialize_fit_wizard_recommendation(payload)
+        assert restored is not None
+        bare = restored.assessment_for_key("biexp_constant")
+        assert bare is not None
+        assert bare.fitted_time.size == 0
+        assert bare.fitted_curve.size == 0
+        assert bare.component_curves == ()
+        drawn = restored.assessment_for_key("exp_constant")
+        assert drawn is not None and drawn.fitted_time.size
+        assert {
+            assessment.template.key
+            for assessment in restored.assessments
+            if assessment.fitted_time.size
+        } == {restored.recommended_key}
 
 
 def test_recommendation_payloads_predating_rebinned_fitting_still_load() -> None:
