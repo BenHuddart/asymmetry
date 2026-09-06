@@ -263,7 +263,7 @@ from asymmetry.gui.panels.fit_panel import (
     BATCH_SEEDING_TOOLTIP,
     FitPanel,
 )
-from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
+from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, PhaseDecoration
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.maxent_panel import MaxEntPanel
@@ -285,6 +285,7 @@ from asymmetry.gui.ui_manager import (
 )
 from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
 from asymmetry.gui.utils.memory import settle_memory
+from asymmetry.gui.utils.phase_colors import phase_color
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
 from asymmetry.gui.utils.reduction_cache import ReductionCache
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
@@ -10765,15 +10766,35 @@ class MainWindow(QMainWindow):
         # Group-bound series whose live membership diverged from the last fit (D1):
         # surfaced on the series pill, cleared automatically on the next re-run.
         stale_ids: set[str] = set()
+        # Series bound to a phase group (Global Fit Wizard transitions, D1/D4):
+        # the panel's swatch/plot-colour/range-band decoration. A series whose
+        # group is not a phase — including one with no group at all — is
+        # simply absent from the map, which the panel reads as "plain series"
+        # (``phase=None``); there is no separate "not a phase" sentinel to guard.
+        phase_by_id: dict[str, PhaseDecoration] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
                 continue
             batch_id = series.batch_id
-            if series.group_id is not None and series.is_stale(
+            group = (
                 self._project_model.data_group(series.group_id)
-            ):
+                if series.group_id is not None
+                else None
+            )
+            if series.group_id is not None and series.is_stale(group):
                 stale_ids.add(batch_id)
+            if group is not None and group.is_phase and group.phase_range is not None:
+                phase_by_id[batch_id] = PhaseDecoration(
+                    color=group.phase_color or phase_color(group.phase_ordinal),
+                    color_dark=phase_color(group.phase_ordinal, dark=True),
+                    ordinal=group.phase_ordinal,
+                    name=group.name,
+                    axis_key=group.order_key,
+                    range=group.phase_range,
+                    lower=group.phase_boundaries["lower"],
+                    upper=group.phase_boundaries["upper"],
+                )
             # `label or fallback` (not display_name(fallback)) so the fallback —
             # a source-run walk + browser group lookup — is skipped for the common
             # renamed-chip case on this per-refresh loop.
@@ -10805,6 +10826,7 @@ class MainWindow(QMainWindow):
                 knight_observables_by_id=knight_observables_by_id,
                 fraction_weights_by_id=fraction_weights_by_id,
                 stale_ids=stale_ids,
+                phase_by_id=phase_by_id,
             )
             refreshed = True
 
