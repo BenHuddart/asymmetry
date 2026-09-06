@@ -600,3 +600,60 @@ the feature branch. Phase F runs the full validation once.
   behind them and timed out with nothing done. The per-phase budget is 30
   minutes (a 12-run phase measured ~40 s per coupled fit, up to 18 fits per
   raced template); the series-wide 180 s backstop is unchanged.
+- 2026-09-06 (Phase A3, phase-1 throughput, second pass): **one pool for the
+  whole of phase 1, a warm-aware seed ladder, own-resolution completion cells
+  fitted once, and a variable-projection detrend for the envelope banks.**
+  Profiled after A2 on the real 29-run series of ~10⁵-point records (Apple M2,
+  4 performance + 4 efficiency cores): phase 1 = 500 s, of which the per-run
+  analyses take 340 s and the 608 completion fits 155 s. Summed over runs the
+  analysis stages split stage 2 57 %, refinement 17 %, pattern match 15 %,
+  stage 1 8 %; the slowest run is 238 Minuit fits and 141 k cost evaluations,
+  with the model kernels already at the NumPy floor (an `exp` over 18 k points
+  is ~50 µs, the composite adds ~10 %), so the levers are *fewer fits* and
+  *less start-up*, not faster kernels. Findings and decisions:
+  - Each analysis opened two spawn pools (the build's shared pool and one more
+    inside `_refine_top_candidates`) of two workers each, and every worker
+    re-imports the fitting package (~2.5 s): four start-ups per run, ~10 CPU-s
+    each, ≈15 % of the phase's analysis CPU, plus a pool-start latency before
+    refinement. Phase 1 now opens **one** spawn pool (`os.cpu_count()` workers)
+    in `build_or_complete_single_fit_wizard_recommendations_for_global_portfolio`
+    and hands it to every analysis (`executor=` on
+    `build_fit_wizard_recommendation`, threaded to all four fan-outs including
+    refinement) and to the completion fits. A caller-owned pool also lets one
+    analysis's fan-out use workers another analysis's serial stage leaves idle,
+    which the fixed two-per-analysis split could not. The single-run wizard
+    without an `executor` behaves as before.
+  - **Warm-aware ladder.** With a neighbour's fitted values as the warm start,
+    a ladder capped at warm + base gave the same recommendation on three
+    probed runs at 0.35–0.44× the build time; the only cells that got worse
+    (three of 36 on the lowest-temperature run, Δχ² 50–120) were non-contenders,
+    and refinement re-fits the contenders with the full ladder anyway.
+    `_assess_candidate_template` therefore runs warm + base first when a warm
+    start is supplied and climbs the remaining rungs only if neither converged
+    or the two converged to different minima (Δχ² > `_WARM_LADDER_AGREEMENT`);
+    refinement keeps the full cold ladder as the safeguard for the ranking.
+  - **Completion cells.** Warm-only was probed and rejected for cells seeded
+    from a *sibling* run: two of 27 converged into a far worse basin (Δχ²
+    ≈ 1 200 and 1 900) with no failure to escalate on, so sibling-seeded cells
+    keep warm + base. A cell seeded from the run's *own* fit at another rebin
+    factor is the same data and model at another binning — the same basin by
+    construction — and is fitted once, from the warm start alone
+    (`variant_budget=0` with a warm start means no ladder). Completion tasks
+    are one **cell** each (the rebinned record, template, seed context and warm
+    start) rather than one run each, which drops the 30 MB source
+    recommendation from every task payload and removes the five-round tail of
+    29 run-sized tasks on six workers; per-run progress is still reported when
+    a run's last cell lands.
+  - **Envelope banks.** `_monotonic_detrend` ran a three-parameter `curve_fit`
+    for each of the 146 bank templates (~4 s of parent CPU per run, the whole
+    of the pattern-match stage), and the bank cache keyed on the run's error
+    weights never hits across a series. The model `A e^{-λt} + c` is linear in
+    (A, c): a variable-projection solve over λ (weighted linear least squares
+    for every template at once on a λ grid, then a bracketed scalar polish per
+    template) gives the same minimum in one vectorised pass. The cache stays.
+  - Not done, with reasons: kernel micro-optimisations (the clip is ~13 µs of
+    an 89 µs `exp` component, and a scalar pre-check needs reductions that cost
+    as much); dropping refinement in phase 1 (it is the contenders' safeguard
+    once the ladder is warm-aware); lazy dense curves on `CandidateAssessment`
+    (1.1 MB per cell, ~30 MB per run recommendation — a memory concern for an
+    8 GB host, not a time one; deferred as a follow-up).
