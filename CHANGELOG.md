@@ -68,6 +68,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The Global Fit Wizard's candidate list for a series is now the union of what
+  its runs actually show.** The series portfolio used to be built from the
+  *median* fingerprint of the runs plus a half-of-the-runs vote on plain peak
+  detection, so a model describing a minority phase of a temperature series —
+  the two heavily damped lines below a transition, say — never entered it, and
+  the wizard could only recommend a model that fits half the data badly. Phase 1
+  now runs the **single-run Fit Wizard** on every run (tiered family screening,
+  peak analysis, damped-line scan, peak-seeded multiplet candidates), and the
+  series' candidate alphabet is the union of the templates those analyses
+  assessed, ordered by what each run chose and capped at 24. A cached single-run
+  analysis is reused when it answers the same question — same scope, same
+  user-declared frequencies — instead of the old exact-template-list match,
+  which no genuine single-run analysis ever satisfied, so every run was
+  re-analysed every time. Every run is then scored against every alphabet
+  candidate at one **series search resolution** (the smallest rebinning factor
+  any run's own analysis chose), warm-started from that run's or a sibling run's
+  fitted values, so the information criteria on the series table are mutually
+  comparable. `instrumentation` records `alphabet_size`, `series_rebin_factor`
+  and `completion_fits`. The effort tier now narrows that alphabet rather than a
+  guessed portfolio; multiplet and pattern-matched candidates are never trimmed.
+
 - **Every fit parameter's starting value now comes from one place, and the
   table remembers which values are still starting guesses.** Start values used
   to be assembled differently by each surface — the Single tab, the Batch tab's

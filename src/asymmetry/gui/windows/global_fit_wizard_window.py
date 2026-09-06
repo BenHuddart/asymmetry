@@ -216,19 +216,24 @@ def _run_global_fit_wizard_analysis(
         and not existing
     )
     _raise_if_cancelled()
+    portfolio = None
     if skip_implicit_phase_one:
         single_fit_recommendations_by_run = dict(existing)
     else:
-        _portfolio, single_fit_recommendations_by_run, _generated_runs = (
-            build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
-                datasets,
-                current_model=current_model,
-                existing_recommendations_by_run=existing,
-                progress_callback=lambda message: worker.progress.emit(0, 0, message),
-                scope=resolved_scope,
-                cancel_callback=worker.is_cancelled,
-            )
+        screening_table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+            datasets,
+            current_model=current_model,
+            existing_recommendations_by_run=existing,
+            progress_callback=lambda message: worker.progress.emit(0, 0, message),
+            scope=resolved_scope,
+            cancel_callback=worker.is_cancelled,
         )
+        # ``existing`` now holds the runs' own single-run Fit Wizard analyses
+        # (what the fit tabs cache and what a later series analysis reuses); the
+        # completed table is the rectangular per-run score table the builders
+        # consume, and it travels with the portfolio it was completed against.
+        portfolio = screening_table.portfolio
+        single_fit_recommendations_by_run = screening_table.recommendations_by_run
 
     def progress_callback(message):
         return worker.progress.emit(0, 0, message)
@@ -245,6 +250,7 @@ def _run_global_fit_wizard_analysis(
             metric=metric,
             progress_callback=progress_callback,
             scope=resolved_scope,
+            portfolio=portfolio,
             cancel_callback=worker.is_cancelled,
         )
     else:
@@ -260,11 +266,12 @@ def _run_global_fit_wizard_analysis(
             selected_template_keys=selected_template_keys,
             scope=resolved_scope,
             effort_tier=effort_tier,
+            portfolio=portfolio,
             cancel_callback=worker.is_cancelled,
         )
     updated_single_fit_recommendations = {
         int(run_number): rec
-        for run_number, rec in single_fit_recommendations_by_run.items()
+        for run_number, rec in existing.items()
         if single_fit_recommendations_before_analysis.get(int(run_number)) is not rec
     }
     return _GlobalAnalysisResult(

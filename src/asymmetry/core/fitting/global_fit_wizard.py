@@ -6,7 +6,7 @@ import math
 import os
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
     ProcessPoolExecutor,
@@ -33,6 +33,7 @@ from asymmetry.core.fitting.fit_wizard import (
     FitWizardRecommendation,
     SelectionMetric,
     SpectrumFingerprint,
+    TemplateSeedContext,
     _bound_hit_names,
     _clone_parameter_set,
     _dense_fit_curves,
@@ -48,15 +49,17 @@ from asymmetry.core.fitting.fit_wizard import (
     _residual_gate_reasons,
     _scipy_fit_fallback,
     _template_cost_rank,
+    _template_family_map,
     build_candidate_templates,
+    build_fit_wizard_recommendation,
     build_fit_wizard_recommendation_for_templates,
     build_wizard_families,
-    candidate_template_keys,
     compute_information_criteria,
     dataset_field_geometry,
     fingerprint_spectrum,
-    recommendation_template_keys,
+    is_multiplet_template_key,
     rerank_fit_wizard_recommendation,
+    single_fit_build_signature,
 )
 from asymmetry.core.fitting.global_search import (
     GlobalSearchConfig,
@@ -78,11 +81,6 @@ from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_set,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.fitting.peak_detection import (
-    analyze_dataset_peaks,
-    match_multiplets,
-    merge_user_peaks,
-)
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
 from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
@@ -95,6 +93,13 @@ from asymmetry.core.fitting.wizard_timing import (
     WizardStageProgress,
     stage_timer,
 )
+
+#: Hard cap on the series template alphabet. The alphabet is a union over runs,
+#: so on a long series it grows with the number of distinct phases the runs show
+#: rather than with the number of runs — but the completion table is
+#: (runs x alphabet) fits, so the union needs a ceiling. 24 is comfortably above
+#: any single run's assessed set and keeps the table affordable on a 30-run scan.
+_SERIES_ALPHABET_CAP = 24
 
 _ROLE_DELTA_THRESHOLD = 2.0
 _COMPARABLE_SCORE_DELTA = 2.0
@@ -899,18 +904,91 @@ def _run_wavefront_assignment_task(
     )
 
 
-def _single_fit_recommendation_task(
+def _single_fit_completion_task(
     dataset: MuonDataset,
     templates: tuple[CandidateTemplate, ...],
+    source: FitWizardRecommendation,
+    rebin_factor: int,
     metric: SelectionMetric,
-) -> tuple[int, FitWizardRecommendation]:
+    sibling_values_by_template: dict[str, ParameterSet],
+) -> tuple[int, FitWizardRecommendation, int]:
+    """Score one run against the whole series alphabet at the series resolution.
+
+    Plain-data in, plain-data out, so this can cross a process boundary. Cells
+    the run's own single-fit table already holds *at this rebin factor* are kept
+    verbatim; everything else is fitted on the rebinned record, warm-started
+    from the run's own values for that template when it has them at another
+    factor and from the best sibling run's otherwise, and seeded from the run's
+    own peak analysis so a multiplet template's lines start on the lines this
+    run actually shows.
+
+    Returns the run number, the completed table, and the number of fits it cost.
+    """
     run_number = int(dataset.run_number)
-    recommendation = build_fit_wizard_recommendation_for_templates(
-        dataset,
-        templates,
-        metric=metric,
+    analysis_dataset = dataset.rebin(rebin_factor) if rebin_factor > 1 else dataset
+    same_resolution = int(source.rebin_factor) == int(rebin_factor)
+
+    assessments_by_key: dict[str, CandidateAssessment] = {}
+    warm_templates: list[CandidateTemplate] = []
+    warm_starts: dict[str, ParameterSet] = {}
+    cold_templates: list[CandidateTemplate] = []
+    for template in templates:
+        assessment = source.assessment_for_key(template.key)
+        if assessment is not None and assessment.is_successful and same_resolution:
+            assessments_by_key[template.key] = assessment
+            continue
+        if assessment is not None and assessment.is_successful:
+            warm_templates.append(template)
+            warm_starts[template.key] = assessment.fit_result.parameters
+        elif template.key in sibling_values_by_template:
+            warm_templates.append(template)
+            warm_starts[template.key] = sibling_values_by_template[template.key]
+        else:
+            cold_templates.append(template)
+
+    seed_context = TemplateSeedContext(
+        peak_analysis=source.peak_analysis,
+        multiplet_matches=source.multiplet_matches,
+        field_gauss=dataset.field,
+        geometry=dataset_field_geometry(dataset),
     )
-    return run_number, recommendation
+    # Two calls, one ladder depth each: a cell that starts from an already
+    # fitted answer needs the answer tried, not a ladder around it, while a cell
+    # no run has ever fitted gets the normal seed ladder.
+    for group, budget in ((warm_templates, 1), (cold_templates, 5)):
+        if not group:
+            continue
+        completed = build_fit_wizard_recommendation_for_templates(
+            analysis_dataset,
+            tuple(group),
+            fingerprint=source.fingerprint,
+            metric=metric,
+            seed_context=seed_context,
+            warm_start_by_template=warm_starts,
+            variant_budget=budget,
+        )
+        for assessment in completed.assessments:
+            assessments_by_key[assessment.template.key] = assessment
+
+    recommendation = rerank_fit_wizard_recommendation(
+        FitWizardRecommendation(
+            fingerprint=source.fingerprint,
+            templates=tuple(templates),
+            assessments=tuple(assessments_by_key[template.key] for template in templates),
+            metric=metric,
+            recommended_key=None,
+            comparable_keys=(),
+            summary="",
+            peak_analysis=source.peak_analysis,
+            multiplet_matches=source.multiplet_matches,
+            family_reports=source.family_reports,
+            scope_note=source.scope_note,
+            rebin_factor=int(rebin_factor),
+            analysed_points=int(analysis_dataset.n_points),
+        ),
+        metric,
+    )
+    return run_number, recommendation, len(warm_templates) + len(cold_templates)
 
 
 @dataclass(frozen=True)
@@ -923,8 +1001,11 @@ class GlobalFitWizardCandidatePortfolio:
     mixed_axes_warning: str | None
     fingerprints_by_run: dict[int, SpectrumFingerprint]
     templates: tuple[CandidateTemplate, ...]
-    #: Template keys of families supported by the cross-run multiplet pattern
-    #: vote; the staged shortlist force-includes them.
+    #: Alphabet templates something in the data positively identified — a
+    #: multiplet built from a run's detected lines, or a template whose family a
+    #: run's multiplet pattern match named. The effort tier never trims them and
+    #: the staged shortlist force-includes them. Empty on a preview portfolio,
+    #: which has run no peak search of its own.
     pattern_template_keys: tuple[str, ...] = ()
 
     @property
@@ -932,56 +1013,28 @@ class GlobalFitWizardCandidatePortfolio:
         return tuple(int(dataset.run_number) for dataset in self.ordered_datasets)
 
 
-def _series_multiplet_pattern_family_keys(
-    ordered_datasets: Sequence[MuonDataset],
-    user_frequencies_mhz: Sequence[float] | None = None,
-) -> frozenset[str]:
-    """Cross-run majority vote on multiplet pattern matches.
-
-    Each run's detected (tail-subtracted) peak set is pattern-matched against
-    the known physical multiplets; a candidate family is pattern-supported for
-    the series when at least half of the runs (and no fewer than two) show a
-    match naming it.
-    """
-    votes: dict[str, int] = {}
-    for dataset in ordered_datasets:
-        analysis = analyze_dataset_peaks(dataset)
-        if user_frequencies_mhz:
-            analysis = merge_user_peaks(analysis, tuple(user_frequencies_mhz))
-        geometry = dataset_field_geometry(dataset)
-        matches = match_multiplets(
-            analysis,
-            field_gauss=dataset.field,
-            geometry=geometry.value if geometry is not None else None,
-        )
-        for family_key in {match.family_key for match in matches}:
-            votes[family_key] = votes.get(family_key, 0) + 1
-    quorum = max(2, math.ceil(len(ordered_datasets) / 2))
-    return frozenset(key for key, count in votes.items() if count >= quorum)
-
-
-def _scoped_series_templates(
+def _preview_series_templates(
     ordered_datasets: Sequence[MuonDataset],
     aggregate_fingerprint: SpectrumFingerprint,
     current_model: CompositeModel | None,
     *,
     scope: WizardScope | None = None,
-    user_frequencies_mhz: Sequence[float] | None = None,
-) -> tuple[tuple[CandidateTemplate, ...], tuple[str, ...]]:
-    """Return the series candidate templates and pattern-forced template keys.
+) -> tuple[CandidateTemplate, ...]:
+    """The candidate list to *quote* for a series before phase 1 has run.
 
-    With ``scope is None`` the legacy hint-gated portfolio is kept (plus the
-    templates of any pattern-supported family, appended additively). With a
-    scope, the portfolio is family-based: every in-scope family contributes its
-    Stage-1 shapes; full member sets are included for families the aggregate
-    fingerprint hints at, the cross-run pattern vote names, or the baseline.
-    The returned keys mark pattern-supported families' templates so the staged
-    shortlist can never drop them.
+    A preview, not the portfolio the screen will score: it is built from the
+    scope and the median fingerprint alone, so the Setup page can size the job
+    without paying for a single fit. The portfolio that is actually screened is
+    the series alphabet — the union of what the per-run single-fit wizard
+    assessed (:func:`series_template_alphabet`) — which no aggregate can
+    anticipate, because a template that describes a minority phase of the series
+    is invisible in the median.
+
+    With ``scope is None`` this is the legacy hint-gated candidate list. With a
+    scope it is family-based: every in-scope family contributes its Stage-1
+    shapes, and the hinted families and the baseline contribute their full
+    member sets.
     """
-    pattern_family_keys = _series_multiplet_pattern_family_keys(
-        ordered_datasets, user_frequencies_mhz
-    )
-
     resolution: ScopeResolution | None = None
     if scope is not None:
         resolution = resolve_scope_for_datasets(list(ordered_datasets), scope)
@@ -989,47 +1042,183 @@ def _scoped_series_templates(
         aggregate_fingerprint, current_model, scope_resolution=resolution
     )
 
-    def _family_templates(family: object, *, members: bool) -> list[CandidateTemplate]:
-        chosen = [family.stage1_rep, *family.stage1_extras]
-        if members:
-            chosen.extend(family.stage2_members)
-        return chosen
-
-    pattern_template_keys: list[str] = []
-    for family in families:
-        if family.key in pattern_family_keys:
-            pattern_template_keys.extend(
-                template.key for template in _family_templates(family, members=True)
-            )
-
     if scope is None:
-        templates = list(
-            build_candidate_templates(aggregate_fingerprint, current_model=current_model)
-        )
-        known_keys = {template.key for template in templates}
-        for family in families:
-            if family.key not in pattern_family_keys:
-                continue
-            for template in _family_templates(family, members=True):
-                if template.key not in known_keys:
-                    templates.append(template)
-                    known_keys.add(template.key)
-    else:
-        templates = []
-        known_keys = set()
-        for family in families:
-            expand = (
-                family.priority > 0.0
-                or family.key in pattern_family_keys
-                or family.key == "baseline"
-            )
-            for template in _family_templates(family, members=expand):
-                if template.key not in known_keys:
-                    templates.append(template)
-                    known_keys.add(template.key)
+        return tuple(build_candidate_templates(aggregate_fingerprint, current_model=current_model))
 
-    forced = tuple(key for key in dict.fromkeys(pattern_template_keys) if key in known_keys)
-    return tuple(templates), forced
+    templates: list[CandidateTemplate] = []
+    known_keys: set[str] = set()
+    for family in families:
+        chosen = [family.stage1_rep, *family.stage1_extras]
+        if family.priority > 0.0 or family.key == "baseline":
+            chosen.extend(family.stage2_members)
+        for template in chosen:
+            if template.key not in known_keys:
+                templates.append(template)
+                known_keys.add(template.key)
+    return tuple(templates)
+
+
+def series_template_alphabet(
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+    *,
+    cap: int = _SERIES_ALPHABET_CAP,
+) -> tuple[CandidateTemplate, ...]:
+    """The series' candidate alphabet: the union of what its runs assessed.
+
+    Every template any run's single-fit wizard successfully fitted is a
+    candidate for the series — including a multiplet template only a couple of
+    runs produced, which is exactly the shape a median-fingerprint portfolio
+    loses. Null baselines are excluded: they are a per-run reference for "no
+    significant structure", never a model for a coupled series fit.
+
+    Order is the order to spend a bounded budget in: templates a run *chose*
+    (recommended, or scored comparable to the recommendation) first, then by the
+    best rank any single run gave them, then by first appearance in run order.
+    The first ``cap`` survive.
+    """
+    templates_by_key: dict[str, CandidateTemplate] = {}
+    best_rank: dict[str, int] = {}
+    first_seen: dict[str, tuple[int, int]] = {}
+    chosen_keys: set[str] = set()
+    for run_index, run_number in enumerate(sorted(recommendations_by_run)):
+        recommendation = recommendations_by_run[run_number]
+        ranked = [
+            assessment
+            for assessment in recommendation.sorted_assessments()
+            if not assessment.is_null_baseline and assessment.is_successful
+        ]
+        for rank, assessment in enumerate(ranked):
+            key = assessment.template.key
+            templates_by_key.setdefault(key, assessment.template)
+            first_seen.setdefault(key, (run_index, rank))
+            best_rank[key] = min(best_rank.get(key, rank), rank)
+        if recommendation.recommended_key is not None:
+            chosen_keys.add(recommendation.recommended_key)
+        chosen_keys.update(recommendation.comparable_keys)
+
+    ordered = sorted(
+        templates_by_key,
+        key=lambda key: (0 if key in chosen_keys else 1, best_rank[key], first_seen[key]),
+    )
+    return tuple(templates_by_key[key] for key in ordered[: int(cap)])
+
+
+def series_rebin_factor(
+    datasets: Sequence[MuonDataset],
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> int:
+    """One value-rebinning factor for the whole series: the smallest per run.
+
+    Every run's own factor already respects that run's bandwidth (see
+    :func:`~asymmetry.core.fitting.fit_wizard.analysis_rebin_factor`), so the
+    minimum respects all of them. The series needs a single factor because the
+    information criteria of two runs are only summable when both refer to
+    records of the same construction.
+    """
+    return max(
+        1,
+        min(
+            int(recommendations_by_run[int(dataset.run_number)].rebin_factor)
+            for dataset in datasets
+        ),
+    )
+
+
+def _series_pattern_template_keys(
+    templates: Sequence[CandidateTemplate],
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> tuple[str, ...]:
+    """Alphabet templates something in the data positively identified.
+
+    Two kinds: a multiplet template (its lines came from a run's detected peak
+    set) and a template whose family a run's multiplet pattern match named.
+    These are never trimmed by an effort tier — dropping them would change the
+    answer rather than coarsen it.
+    """
+    protected: set[str] = set()
+    for recommendation in recommendations_by_run.values():
+        family_by_template = _template_family_map(recommendation.family_reports)
+        matched_families = {match.family_key for match in recommendation.multiplet_matches}
+        for template in templates:
+            if is_multiplet_template_key(template.key):
+                protected.add(template.key)
+            elif family_by_template.get(template.key) in matched_families:
+                protected.add(template.key)
+    return tuple(template.key for template in templates if template.key in protected)
+
+
+def _sibling_warm_starts(
+    templates: Sequence[CandidateTemplate],
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+    metric: SelectionMetric,
+) -> dict[str, ParameterSet]:
+    """Best per-template fitted values across the series, for completion seeds.
+
+    A run that never fitted a template has no values of its own to start from;
+    the same model fitted on the sibling run it scored best on is the closest
+    thing the series has to an answer. Chosen deterministically (best metric
+    value, ties broken by run order) so a completion table does not depend on
+    which worker finished first.
+    """
+    best: dict[str, tuple[float, ParameterSet]] = {}
+    for run_number in sorted(recommendations_by_run):
+        recommendation = recommendations_by_run[run_number]
+        for template in templates:
+            assessment = recommendation.assessment_for_key(template.key)
+            if assessment is None or not assessment.is_successful:
+                continue
+            score = float(assessment.metric_value(metric))
+            if not np.isfinite(score):
+                continue
+            incumbent = best.get(template.key)
+            if incumbent is None or score < incumbent[0]:
+                best[template.key] = (score, assessment.fit_result.parameters)
+    return {key: parameters for key, (_score, parameters) in best.items()}
+
+
+def _scope_filtered_templates(
+    templates: Sequence[CandidateTemplate],
+    ordered_datasets: Sequence[MuonDataset],
+    scope: WizardScope | None,
+) -> tuple[CandidateTemplate, ...]:
+    """Drop templates whose components are out of scope for *every* run."""
+    if scope is None:
+        return tuple(templates)
+    resolution = resolve_scope_for_datasets(list(ordered_datasets), scope)
+    return tuple(
+        template
+        for template in templates
+        if all(name in resolution.included_set for name in template.model.component_names)
+    )
+
+
+def single_fit_table_covers_portfolio(
+    datasets: Sequence[MuonDataset],
+    templates: Sequence[CandidateTemplate],
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> bool:
+    """True when ``recommendations_by_run`` is a usable series score table.
+
+    Two conditions, and both are what the series arithmetic needs rather than
+    bookkeeping: every run carries a score for every template (a missing cell
+    makes that template's series sum meaningless), and every run was scored at
+    the *same* rebin factor (an information criterion computed on a coarser
+    record is not comparable with one computed on a finer one). Coverage is not
+    identity: a run's table may hold more templates than the series ranks, which
+    is exactly what a genuine single-run analysis does.
+    """
+    if not recommendations_by_run or not templates:
+        return False
+    factors: set[int] = set()
+    for dataset in datasets:
+        recommendation = recommendations_by_run.get(int(dataset.run_number))
+        if recommendation is None:
+            return False
+        factors.add(int(recommendation.rebin_factor))
+        for template in templates:
+            if recommendation.assessment_for_key(template.key) is None:
+                return False
+    return len(factors) == 1
 
 
 def build_global_fit_wizard_candidate_portfolio(
@@ -1037,9 +1226,18 @@ def build_global_fit_wizard_candidate_portfolio(
     current_model: CompositeModel | None = None,
     *,
     scope: WizardScope | None = None,
-    user_frequencies_mhz: Sequence[float] | None = None,
+    single_fit_recommendations_by_run: Mapping[int, FitWizardRecommendation] | None = None,
 ) -> GlobalFitWizardCandidatePortfolio:
-    """Return the ordered datasets, fingerprints, and candidate families for one series."""
+    """Return the ordered datasets, fingerprints, and candidate portfolio for one series.
+
+    With ``single_fit_recommendations_by_run`` the portfolio is the **series
+    alphabet**: the union of the templates those per-run single-fit wizard
+    recommendations assessed, scope-filtered and capped
+    (:func:`series_template_alphabet`). Without them it is the cheap
+    **preview** list the Setup page quotes before phase 1 has run — the scope's
+    families around the median fingerprint, no fits, and no claim to be the set
+    that will actually be screened.
+    """
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
 
@@ -1049,16 +1247,26 @@ def build_global_fit_wizard_candidate_portfolio(
     fingerprints_by_run = {
         int(dataset.run_number): fingerprint_spectrum(dataset) for dataset in ordered_datasets
     }
-    aggregate_fingerprint = _aggregate_fingerprints(
-        [fingerprints_by_run[int(dataset.run_number)] for dataset in ordered_datasets]
-    )
-    templates, pattern_template_keys = _scoped_series_templates(
-        ordered_datasets,
-        aggregate_fingerprint,
-        current_model,
-        scope=scope,
-        user_frequencies_mhz=user_frequencies_mhz,
-    )
+    if single_fit_recommendations_by_run:
+        templates = _scope_filtered_templates(
+            series_template_alphabet(single_fit_recommendations_by_run),
+            ordered_datasets,
+            scope,
+        )
+        pattern_template_keys = _series_pattern_template_keys(
+            templates, single_fit_recommendations_by_run
+        )
+    else:
+        aggregate_fingerprint = _aggregate_fingerprints(
+            [fingerprints_by_run[int(dataset.run_number)] for dataset in ordered_datasets]
+        )
+        templates = _preview_series_templates(
+            ordered_datasets,
+            aggregate_fingerprint,
+            current_model,
+            scope=scope,
+        )
+        pattern_template_keys = ()
     return GlobalFitWizardCandidatePortfolio(
         ordered_datasets=tuple(ordered_datasets),
         series_axis_key=axis_key,
@@ -1165,6 +1373,31 @@ def _apply_screening_effort_tier(
     return replace(portfolio, templates=screened)
 
 
+@dataclass(frozen=True)
+class GlobalFitWizardScreeningTable:
+    """Phase 1's product: a series alphabet and a complete score table for it.
+
+    Two per-run mappings, deliberately distinct:
+
+    ``single_fit_recommendations_by_run``
+        the runs' own **single-run Fit Wizard** analyses — full family screening,
+        peak analysis, damped-line scan, each at that run's own rebin factor.
+        This is what a caller caches (and what the fit tabs show), and what a
+        later series analysis reuses.
+    ``recommendations_by_run``
+        the **completed table**: every run scored against every alphabet
+        template at one common ``series_rebin_factor``, so the information
+        criteria of two runs, or of two templates, may be summed and compared.
+        Derived, never a substitute for a run's own analysis.
+    """
+
+    portfolio: GlobalFitWizardCandidatePortfolio
+    recommendations_by_run: dict[int, FitWizardRecommendation]
+    single_fit_recommendations_by_run: dict[int, FitWizardRecommendation]
+    generated_run_numbers: tuple[int, ...]
+    series_rebin_factor: int
+
+
 def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     datasets: list[MuonDataset],
     current_model: CompositeModel | None = None,
@@ -1175,41 +1408,142 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     user_frequencies_mhz: Sequence[float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    metric: SelectionMetric = SelectionMetric.AICC,
     instrumentation: dict[str, object] | None = None,
     stage_callback: Callable[[WizardStageProgress], None] | None = None,
-) -> tuple[GlobalFitWizardCandidatePortfolio, dict[int, FitWizardRecommendation], tuple[int, ...]]:
-    """Return a complete per-run single-fit table set for one global-wizard portfolio.
+) -> GlobalFitWizardScreeningTable:
+    """Run phase 1 of the global fit wizard: per-run analysis, then completion.
 
-    ``effort_tier`` sizes the screened portfolio (see
-    :func:`screening_templates_for_effort_tier`): Low and Balanced trade candidate
-    coverage for a table that finishes, Thorough and Exhaustive screen everything.
-    ``instrumentation`` and ``stage_callback`` carry the standard timing block and
-    per-stage progress events described in
-    :mod:`asymmetry.core.fitting.wizard_timing`.
+    Two stages, and the first is the whole point:
 
-    ``cancel_callback`` is polled cooperatively between per-run single-fit tasks
-    on the serial path and, on the process-pool path, *while draining* the
-    submitted futures: a ``wait`` with a ``_PHASE_ONE_CANCEL_POLL_SECONDS``
-    timeout re-checks the callback each iteration, so a cancel is honoured
-    within one poll interval instead of one in-flight table's duration (a fit
-    already running in a worker still cannot be interrupted). A truthy callback
-    raises :class:`FitCancelledError` and tears the pool down with
-    :func:`terminate_spawn_pool` — non-blocking, and force-killing the workers
-    so nothing is orphaned. This matters because a phase-1 single-fit table is a
+    1. **Every run goes through the single-run Fit Wizard**
+       (:func:`~asymmetry.core.fitting.fit_wizard.build_fit_wizard_recommendation`)
+       — tiered family screening, peak analysis including the matched-apodisation
+       damped-line scan, peak-seeded multiplet templates, null baselines and
+       refinement. That is what finds the heavily damped pair describing only the
+       low-temperature half of a series; a portfolio built from the *median*
+       fingerprint cannot. Runs are processed serially in this process because
+       each build opens its own worker pool, and pools must not nest. An existing
+       recommendation is reused when it answers the same question — same scope,
+       same user-declared frequencies, encoded by
+       :func:`~asymmetry.core.fitting.fit_wizard.single_fit_build_signature` —
+       which is the whole of the reuse rule; a table derived from some other
+       portfolio carries no signature and is never reused.
+
+    2. **Completion.** The series alphabet is the union of what those runs
+       assessed (:func:`series_template_alphabet`), narrowed by the effort tier;
+       the series search resolution is the smallest per-run rebin factor
+       (:func:`series_rebin_factor`). Every (run, template) cell the run's own
+       table does not already hold *at that factor* is fitted, warm-started and
+       peak-seeded by :func:`_single_fit_completion_task`. The result is a
+       rectangular table whose information criteria are mutually comparable.
+
+    ``cancel_callback`` is polled between runs in stage 1 and, in stage 2's
+    pooled path, *while draining* the submitted futures: a ``wait`` with a
+    ``_PHASE_ONE_CANCEL_POLL_SECONDS`` timeout re-checks it each iteration, so a
+    cancel is honoured within one poll interval instead of one in-flight table's
+    duration (a fit already running in a worker still cannot be interrupted). A
+    truthy callback raises :class:`FitCancelledError` and tears the pool down
+    with :func:`terminate_spawn_pool` — non-blocking, and force-killing the
+    workers so nothing is orphaned. This matters because phase 1 is a
     *minutes*-long job: a drain that only blocks on completion, followed by a
     ``shutdown(wait=True)``, is indistinguishable from a deadlock from the
-    caller's side, and a caller that gives up and kills the parent leaves the
-    spawn workers alive (blocked forever writing their results into a pipe
-    nobody reads). Each completed table is logged so the stage visibly advances.
+    caller's side.
+
+    ``existing_recommendations_by_run`` is *replaced in place* with the run's own
+    single-run analyses (stage 1's product), never with the completed table, so a
+    caller's cache keeps answers that stay reusable.
     """
     if cancel_callback is not None and cancel_callback():
         raise FitCancelledError("Global fit wizard analysis cancelled.")
     progress_callback = _threadsafe_progress_callback(progress_callback)
-    portfolio = build_global_fit_wizard_candidate_portfolio(
+    preview = build_global_fit_wizard_candidate_portfolio(
         datasets,
         current_model=current_model,
         scope=scope,
-        user_frequencies_mhz=user_frequencies_mhz,
+    )
+    existing = (
+        existing_recommendations_by_run if existing_recommendations_by_run is not None else {}
+    )
+
+    if preview.mixed_axes_warning:
+        return GlobalFitWizardScreeningTable(
+            portfolio=preview,
+            recommendations_by_run=_sync_single_fit_recommendation_store(
+                existing_recommendations_by_run, {}
+            ),
+            single_fit_recommendations_by_run={},
+            generated_run_numbers=(),
+            series_rebin_factor=1,
+        )
+
+    expected_signature = single_fit_build_signature(scope, user_frequencies_mhz)
+    source_by_run: dict[int, FitWizardRecommendation] = {
+        int(dataset.run_number): existing[int(dataset.run_number)]
+        for dataset in preview.ordered_datasets
+        if int(dataset.run_number) in existing
+        and existing[int(dataset.run_number)].build_signature == expected_signature
+    }
+    missing_datasets = [
+        dataset
+        for dataset in preview.ordered_datasets
+        if int(dataset.run_number) not in source_by_run
+    ]
+    generated_run_numbers: list[int] = []
+
+    if missing_datasets:
+        _progress_log(
+            progress_callback,
+            f"Running the single-run Fit Wizard on {len(missing_datasets)} dataset(s) "
+            "to build the series candidate alphabet.",
+        )
+    with stage_timer(
+        instrumentation,
+        "screening.single_fit_tables",
+        items_total=len(missing_datasets),
+        stage_callback=stage_callback,
+        message=f"Analysing {len(missing_datasets)} dataset(s) with the single-run Fit Wizard.",
+    ) as advance:
+        # Serial, deliberately: ``build_fit_wizard_recommendation`` opens its own
+        # spawn pool for the Stage-1/Stage-2 fan-outs, and a pool inside a pool
+        # oversubscribes the host while making the outer stage's progress
+        # invisible. One run at a time, each using the whole machine.
+        for dataset in missing_datasets:
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            _progress_log(
+                progress_callback,
+                f"Single-fit analysis {dataset.run_label}: screening candidate families.",
+            )
+            recommendation = build_fit_wizard_recommendation(
+                dataset,
+                current_model,
+                metric=metric,
+                scope=scope,
+                user_frequencies_mhz=user_frequencies_mhz,
+                cancel_callback=cancel_callback,
+            )
+            run_number = int(dataset.run_number)
+            source_by_run[run_number] = recommendation
+            generated_run_numbers.append(run_number)
+            message = (
+                f"Single-fit analysis {dataset.run_label}: done "
+                f"({len(generated_run_numbers)}/{len(missing_datasets)})."
+            )
+            _progress_log(progress_callback, message)
+            advance(len(generated_run_numbers), message)
+
+    _sync_single_fit_recommendation_store(existing_recommendations_by_run, source_by_run)
+
+    alphabet = _scope_filtered_templates(
+        series_template_alphabet(source_by_run),
+        preview.ordered_datasets,
+        scope,
+    )
+    portfolio = replace(
+        preview,
+        templates=alphabet,
+        pattern_template_keys=_series_pattern_template_keys(alphabet, source_by_run),
     )
     portfolio = _apply_screening_effort_tier(
         portfolio,
@@ -1217,163 +1551,146 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         progress_callback=progress_callback,
         instrumentation=instrumentation,
     )
-    expected_template_keys = candidate_template_keys(portfolio.templates)
-    existing = (
-        existing_recommendations_by_run if existing_recommendations_by_run is not None else {}
-    )
+    rebin_factor = series_rebin_factor(preview.ordered_datasets, source_by_run)
+    _set_metric(instrumentation, "alphabet_size", len(portfolio.templates))
+    _set_metric(instrumentation, "series_rebin_factor", rebin_factor)
 
-    complete_by_run: dict[int, FitWizardRecommendation] = {}
-    for dataset in portfolio.ordered_datasets:
-        run_number = int(dataset.run_number)
-        recommendation = existing.get(run_number)
-        if recommendation is None:
-            continue
-        if recommendation_template_keys(recommendation) != expected_template_keys:
-            continue
-        complete_by_run[run_number] = recommendation
-
-    if portfolio.mixed_axes_warning or not portfolio.templates:
-        complete_by_run = _sync_single_fit_recommendation_store(
-            existing_recommendations_by_run,
-            complete_by_run,
+    if not portfolio.templates:
+        _set_metric(instrumentation, "completion_fits", 0)
+        return GlobalFitWizardScreeningTable(
+            portfolio=portfolio,
+            recommendations_by_run={},
+            single_fit_recommendations_by_run=source_by_run,
+            generated_run_numbers=tuple(generated_run_numbers),
+            series_rebin_factor=rebin_factor,
         )
-        return portfolio, complete_by_run, ()
-
-    missing_datasets = [
-        dataset
-        for dataset in portfolio.ordered_datasets
-        if int(dataset.run_number) not in complete_by_run
-    ]
-    if not missing_datasets:
-        complete_by_run = _sync_single_fit_recommendation_store(
-            existing_recommendations_by_run,
-            complete_by_run,
-        )
-        return portfolio, complete_by_run, ()
 
     _progress_log(
         progress_callback,
-        "Preparing per-dataset single-fit comparison tables for "
-        f"{len(missing_datasets)} dataset(s) using the shared candidate portfolio.",
+        f"Series alphabet: {len(portfolio.templates)} candidate(s) at rebin factor "
+        f"x{rebin_factor}; completing the per-run score table.",
+    )
+    completed_by_run, completion_fits = _complete_single_fit_table(
+        preview.ordered_datasets,
+        portfolio.templates,
+        source_by_run,
+        rebin_factor=rebin_factor,
+        metric=metric,
+        progress_callback=progress_callback,
+        cancel_callback=cancel_callback,
+        instrumentation=instrumentation,
+        stage_callback=stage_callback,
+    )
+    _set_metric(instrumentation, "completion_fits", completion_fits)
+    return GlobalFitWizardScreeningTable(
+        portfolio=portfolio,
+        recommendations_by_run=completed_by_run,
+        single_fit_recommendations_by_run=source_by_run,
+        generated_run_numbers=tuple(generated_run_numbers),
+        series_rebin_factor=rebin_factor,
     )
 
-    generated_run_numbers: list[int] = []
+
+def _complete_single_fit_table(
+    ordered_datasets: Sequence[MuonDataset],
+    templates: tuple[CandidateTemplate, ...],
+    source_by_run: dict[int, FitWizardRecommendation],
+    *,
+    rebin_factor: int,
+    metric: SelectionMetric,
+    progress_callback: Callable[[str], None] | None,
+    cancel_callback: Callable[[], bool] | None,
+    instrumentation: dict[str, object] | None,
+    stage_callback: Callable[[WizardStageProgress], None] | None,
+) -> tuple[dict[int, FitWizardRecommendation], int]:
+    """Score every run against every alphabet template at one rebin factor.
+
+    Each run is one independent task, so this fans out over the spawn pool; the
+    per-task fits are serial, so no pool nests inside another.
+    """
+    sibling_values = _sibling_warm_starts(templates, source_by_run, metric)
+    completed_by_run: dict[int, FitWizardRecommendation] = {}
+    completion_fits = 0
+
+    def _task_args(dataset: MuonDataset) -> tuple[object, ...]:
+        return (
+            dataset,
+            templates,
+            source_by_run[int(dataset.run_number)],
+            rebin_factor,
+            metric,
+            sibling_values,
+        )
 
     with stage_timer(
         instrumentation,
-        "screening.single_fit_tables",
-        items_total=len(missing_datasets),
+        "screening.completion_fits",
+        items_total=len(ordered_datasets),
         stage_callback=stage_callback,
-        message=(f"Preparing single-fit comparison tables for {len(missing_datasets)} dataset(s)."),
+        message=(
+            f"Completing the per-run score table for {len(ordered_datasets)} dataset(s) "
+            f"against {len(templates)} candidate(s)."
+        ),
     ) as advance:
-        worker_count = _single_fit_table_worker_count(len(missing_datasets))
-        if worker_count <= 1:
-            for dataset in missing_datasets:
-                if cancel_callback is not None and cancel_callback():
-                    raise FitCancelledError("Global fit wizard analysis cancelled.")
-                _progress_log(
-                    progress_callback,
-                    f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
-                )
-                run_number, recommendation = _single_fit_recommendation_task(
-                    dataset,
-                    portfolio.templates,
-                    SelectionMetric.AICC,
-                )
-                complete_by_run[run_number] = recommendation
-                generated_run_numbers.append(run_number)
-                advance(
-                    len(generated_run_numbers),
-                    f"Single-fit table {dataset.run_label}: done "
-                    f"({len(generated_run_numbers)}/{len(missing_datasets)}).",
-                )
-        else:
-            _progress_log(
-                progress_callback,
-                f"Running phase-1 single-fit table generation with {worker_count} spawn-safe workers.",
-            )
-            executor = _try_open_process_pool(
+        worker_count = _single_fit_table_worker_count(len(ordered_datasets))
+        executor = (
+            _try_open_process_pool(
                 max_workers=worker_count,
                 progress_callback=progress_callback,
-                activity="Phase-1 single-fit table generation",
+                activity="Phase-1 completion fits",
             )
-            if executor is None:
-                for dataset in missing_datasets:
-                    if cancel_callback is not None and cancel_callback():
-                        raise FitCancelledError("Global fit wizard analysis cancelled.")
-                    _progress_log(
-                        progress_callback,
-                        f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
-                    )
-                    run_number, recommendation = _single_fit_recommendation_task(
-                        dataset,
-                        portfolio.templates,
-                        SelectionMetric.AICC,
-                    )
-                    complete_by_run[run_number] = recommendation
-                    generated_run_numbers.append(run_number)
-                    advance(
-                        len(generated_run_numbers),
-                        f"Single-fit table {dataset.run_label}: done "
-                        f"({len(generated_run_numbers)}/{len(missing_datasets)}).",
-                    )
-            else:
-                try:
-                    future_to_dataset = {}
-                    for dataset in missing_datasets:
-                        _progress_log(
-                            progress_callback,
-                            f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
-                        )
-                        future_to_dataset[
-                            executor.submit(
-                                _single_fit_recommendation_task,
-                                dataset,
-                                portfolio.templates,
-                                SelectionMetric.AICC,
-                            )
-                        ] = dataset
+            if worker_count > 1
+            else None
+        )
+        if executor is None:
+            for dataset in ordered_datasets:
+                if cancel_callback is not None and cancel_callback():
+                    raise FitCancelledError("Global fit wizard analysis cancelled.")
+                run_number, recommendation, fits = _single_fit_completion_task(*_task_args(dataset))
+                completed_by_run[run_number] = recommendation
+                completion_fits += fits
+                message = (
+                    f"Score table {dataset.run_label}: done "
+                    f"({len(completed_by_run)}/{len(ordered_datasets)})."
+                )
+                _progress_log(progress_callback, message)
+                advance(len(completed_by_run), message)
+            return completed_by_run, completion_fits
 
-                    # Poll cancel *while waiting* rather than blocking on the next
-                    # completion: each ``wait`` returns after a completion or after
-                    # one poll interval, so a cancel is noticed in well under a
-                    # second instead of after the remaining minutes of fits.
-                    pending = set(future_to_dataset)
-                    total = len(pending)
-                    while pending:
-                        if cancel_callback is not None and cancel_callback():
-                            raise FitCancelledError("Global fit wizard analysis cancelled.")
-                        done, pending = wait(
-                            pending,
-                            timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
-                            return_when=FIRST_COMPLETED,
-                        )
-                        for future in done:
-                            run_number, recommendation = future.result()
-                            complete_by_run[run_number] = recommendation
-                            generated_run_numbers.append(run_number)
-                            message = (
-                                f"Single-fit table {future_to_dataset[future].run_label}: "
-                                f"done ({len(generated_run_numbers)}/{total})."
-                            )
-                            _progress_log(progress_callback, message)
-                            advance(len(generated_run_numbers), message)
-                except BaseException:
-                    # Cancel, a worker crash, or a Ctrl-C: never wait on the fits
-                    # still in flight (that is the minutes-long block this stage is
-                    # trying to escape). Drop queued work and force-kill the
-                    # workers, so the caller gets control back at once and no spawn
-                    # worker is left orphaned.
-                    terminate_spawn_pool(executor)
-                    raise
-                else:
-                    _shutdown_process_pool(executor)
-
-    complete_by_run = _sync_single_fit_recommendation_store(
-        existing_recommendations_by_run,
-        complete_by_run,
-    )
-    return portfolio, complete_by_run, tuple(generated_run_numbers)
+        try:
+            future_to_dataset = {
+                executor.submit(_single_fit_completion_task, *_task_args(dataset)): dataset
+                for dataset in ordered_datasets
+            }
+            pending = set(future_to_dataset)
+            total = len(pending)
+            while pending:
+                if cancel_callback is not None and cancel_callback():
+                    raise FitCancelledError("Global fit wizard analysis cancelled.")
+                done, pending = wait(
+                    pending,
+                    timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
+                    return_when=FIRST_COMPLETED,
+                )
+                for future in done:
+                    run_number, recommendation, fits = future.result()
+                    completed_by_run[run_number] = recommendation
+                    completion_fits += fits
+                    message = (
+                        f"Score table {future_to_dataset[future].run_label}: "
+                        f"done ({len(completed_by_run)}/{total})."
+                    )
+                    _progress_log(progress_callback, message)
+                    advance(len(completed_by_run), message)
+        except BaseException:
+            # Cancel, a worker crash, or a Ctrl-C: never wait on the fits still
+            # in flight. Drop queued work and force-kill the workers, so the
+            # caller gets control back at once and nothing is orphaned.
+            terminate_spawn_pool(executor)
+            raise
+        else:
+            _shutdown_process_pool(executor)
+    return completed_by_run, completion_fits
 
 
 def build_global_fit_wizard_screening_recommendation(
@@ -1390,20 +1707,27 @@ def build_global_fit_wizard_screening_recommendation(
     user_frequencies_mhz: Sequence[float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    portfolio: GlobalFitWizardCandidatePortfolio | None = None,
     instrumentation: dict[str, object] | None = None,
     stage_callback: Callable[[WizardStageProgress], None] | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Build the ranking table from per-run single-fit wizard results only.
 
-    This stage fits every portfolio candidate to every dataset independently, so
-    its cost is (candidates x datasets x per-fit cost) and it dominates the
-    wizard's runtime on a real temperature or field series.
+    Phase 1 comes first and the portfolio comes out of it: every run is analysed
+    by the single-run Fit Wizard, the series alphabet is the union of what those
+    runs assessed, and every run is then scored against every alphabet template
+    at one series rebin factor
+    (:func:`build_or_complete_single_fit_wizard_recommendations_for_global_portfolio`).
+    Pass ``portfolio`` together with a ``single_fit_recommendations_by_run`` that
+    already covers it — the pair a previous phase-1 call returned — to skip that
+    work; anything less and phase 1 runs here.
 
-    ``effort_tier`` is the lever for that cost: Low and Balanced screen a trimmed
-    portfolio (see :func:`screening_templates_for_effort_tier`) and return a
-    coarser ranking that finishes, while Thorough and Exhaustive — the default —
-    screen the full portfolio exactly as before. The skipped candidates are
-    announced through ``progress_callback`` and recorded in ``instrumentation``.
+    ``effort_tier`` narrows the alphabet before the completion fits (see
+    :func:`screening_templates_for_effort_tier`): Low and Balanced score a
+    trimmed candidate set, while Thorough and Exhaustive — the default — score
+    all of it. Templates a run's peak search positively identified are never
+    trimmed. The skipped candidates are announced through ``progress_callback``
+    and recorded in ``instrumentation``.
 
     ``instrumentation`` additionally receives the standard timing block
     (:mod:`asymmetry.core.fitting.wizard_timing`): wall-clock, CPU seconds
@@ -1422,19 +1746,19 @@ def build_global_fit_wizard_screening_recommendation(
     current_values = current_values or {}
     parameter_bounds = parameter_bounds or {}
 
-    portfolio = build_global_fit_wizard_candidate_portfolio(
-        datasets,
-        current_model=current_model,
-        scope=scope,
-        user_frequencies_mhz=user_frequencies_mhz,
-    )
-    portfolio = _apply_screening_effort_tier(
-        portfolio,
-        effort_tier,
-        progress_callback=progress_callback,
-        instrumentation=instrumentation,
-    )
-    templates = list(portfolio.templates)
+    if portfolio is None:
+        portfolio = build_global_fit_wizard_candidate_portfolio(
+            datasets,
+            current_model=current_model,
+            scope=scope,
+            single_fit_recommendations_by_run=single_fit_recommendations_by_run,
+        )
+        portfolio = _apply_screening_effort_tier(
+            portfolio,
+            effort_tier,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+        )
     if portfolio.mixed_axes_warning:
         return rerank_global_fit_wizard_recommendation(
             GlobalFitWizardRecommendation(
@@ -1456,31 +1780,29 @@ def build_global_fit_wizard_screening_recommendation(
     recommendations_by_run = (
         single_fit_recommendations_by_run if single_fit_recommendations_by_run is not None else {}
     )
-    expected_template_keys = candidate_template_keys(templates)
-    if not recommendations_by_run or not all(
-        int(dataset.run_number) in recommendations_by_run
-        and recommendation_template_keys(recommendations_by_run[int(dataset.run_number)])
-        == expected_template_keys
-        for dataset in portfolio.ordered_datasets
+    if not single_fit_table_covers_portfolio(
+        portfolio.ordered_datasets, portfolio.templates, recommendations_by_run
     ):
         _progress_log(
             progress_callback,
             "Preparing missing single-fit wizard tables for global screening.",
         )
-        _portfolio, recommendations_by_run, _generated_runs = (
-            build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
-                list(portfolio.ordered_datasets),
-                current_model=current_model,
-                existing_recommendations_by_run=recommendations_by_run,
-                progress_callback=progress_callback,
-                scope=scope,
-                user_frequencies_mhz=user_frequencies_mhz,
-                cancel_callback=cancel_callback,
-                effort_tier=effort_tier,
-                instrumentation=instrumentation,
-                stage_callback=stage_callback,
-            )
+        table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+            list(portfolio.ordered_datasets),
+            current_model=current_model,
+            existing_recommendations_by_run=recommendations_by_run,
+            progress_callback=progress_callback,
+            scope=scope,
+            user_frequencies_mhz=user_frequencies_mhz,
+            cancel_callback=cancel_callback,
+            effort_tier=effort_tier,
+            metric=metric,
+            instrumentation=instrumentation,
+            stage_callback=stage_callback,
         )
+        portfolio = table.portfolio
+        recommendations_by_run = table.recommendations_by_run
+    templates = list(portfolio.templates)
 
     with stage_timer(
         instrumentation,
@@ -1950,9 +2272,16 @@ def build_global_fit_wizard_recommendation(
     user_frequencies_mhz: Sequence[float] | None = None,
     search_engine: str | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    portfolio: GlobalFitWizardCandidatePortfolio | None = None,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Analyze one ordered dataset series and recommend a global-fit candidate.
+
+    ``portfolio`` is the candidate set to search, normally the series alphabet a
+    phase-1 call returned together with the ``single_fit_recommendations_by_run``
+    table that covers it; without it the cheap preview portfolio is used and the
+    per-run pre-screen is only taken up when the supplied table happens to cover
+    that.
 
     ``effort_tier`` is the user-facing effort slider (PR 5): ``LOW``,
     ``BALANCED``, ``THOROUGH``, ``EXHAUSTIVE`` (default ``EXHAUSTIVE``). As of the
@@ -1996,6 +2325,7 @@ def build_global_fit_wizard_recommendation(
         scope=scope,
         user_frequencies_mhz=user_frequencies_mhz,
         search_engine=resolved_engine,
+        portfolio=portfolio,
         cancel_callback=cancel_callback,
     )
 
@@ -2015,6 +2345,7 @@ def _build_global_fit_wizard_recommendation_staged(
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
     search_engine: str = _DEFAULT_SEARCH_ENGINE,
+    portfolio: GlobalFitWizardCandidatePortfolio | None = None,
     cancel_callback: Callable[[], bool] | None = None,
 ) -> GlobalFitWizardRecommendation:
     if len(datasets) < 2:
@@ -2041,26 +2372,23 @@ def _build_global_fit_wizard_recommendation_staged(
         progress_callback,
         f"Preparing consolidated global fit wizard analysis for {len(datasets)} datasets.",
     )
-    (
-        ordered_datasets,
-        axis_key,
-        axis_label,
-        mixed_axes_warning,
-    ) = _ordered_datasets_with_axis(datasets)
-    fingerprints_by_run = {
-        int(dataset.run_number): fingerprint_spectrum(dataset) for dataset in ordered_datasets
-    }
+    if portfolio is None:
+        portfolio = build_global_fit_wizard_candidate_portfolio(
+            datasets,
+            current_model=current_model,
+            scope=scope,
+            single_fit_recommendations_by_run=available_single_fit_recommendations,
+        )
+    ordered_datasets = list(portfolio.ordered_datasets)
+    axis_key = portfolio.series_axis_key
+    axis_label = portfolio.series_axis_label
+    mixed_axes_warning = portfolio.mixed_axes_warning
+    fingerprints_by_run = portfolio.fingerprints_by_run
     aggregate_fingerprint = _aggregate_fingerprints(
         [fingerprints_by_run[int(dataset.run_number)] for dataset in ordered_datasets]
     )
-    scoped_templates, pattern_template_keys = _scoped_series_templates(
-        ordered_datasets,
-        aggregate_fingerprint,
-        current_model,
-        scope=scope,
-        user_frequencies_mhz=user_frequencies_mhz,
-    )
-    templates = list(scoped_templates)
+    pattern_template_keys = portfolio.pattern_template_keys
+    templates = list(portfolio.templates)
     template_by_key = {template.key: template for template in templates}
     if mixed_axes_warning:
         return replace(
@@ -2160,21 +2488,12 @@ def _build_global_fit_wizard_recommendation_staged(
         else templates
     )
 
-    expected_single_fit_template_keys = candidate_template_keys(templates)
-    use_single_fit_prescreen = (
-        bool(available_single_fit_recommendations)
-        and all(
-            recommendation_template_keys(
-                available_single_fit_recommendations.get(int(dataset.run_number))
-            )
-            == expected_single_fit_template_keys
-            for dataset in ordered_datasets
-            if int(dataset.run_number) in available_single_fit_recommendations
-        )
-        and all(
-            int(dataset.run_number) in available_single_fit_recommendations
-            for dataset in ordered_datasets
-        )
+    # Coverage, not identity: the per-run table has to *hold a score for* every
+    # candidate this search will rank, and nothing more. Demanding that its
+    # template list match the portfolio's exactly rejected every genuine
+    # single-run analysis, which carries the run's own fuller candidate set.
+    use_single_fit_prescreen = single_fit_table_covers_portfolio(
+        ordered_datasets, templates, available_single_fit_recommendations
     )
 
     if use_single_fit_prescreen:
