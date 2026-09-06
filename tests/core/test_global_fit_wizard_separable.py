@@ -714,3 +714,125 @@ def test_cancel_mid_search_raises_and_leaves_no_pool_orphans(
 
     assert polls["calls"] > 1
     assert multiprocessing.active_children() == []
+
+
+# --------------------------------------------------------------------------- #
+# The dense-curve contract
+# --------------------------------------------------------------------------- #
+
+
+def _curve_free(assessment) -> bool:
+    """A search node: no curves, no residual series, diagnostics intact."""
+    return (
+        not assessment.fitted_curves_by_run
+        and not assessment.component_curves_by_run
+        and all(result.residuals is None for result in assessment.fit_results_by_run.values())
+    )
+
+
+def _fully_curved(assessment) -> bool:
+    """A displayed assessment: a curve per run it holds a fit result for."""
+    for run_number in assessment.fit_results_by_run:
+        curve = assessment.fitted_curves_by_run.get(run_number)
+        if curve is None:
+            return False
+        fitted_time, fitted_curve = curve
+        if not (np.size(fitted_time) and np.size(fitted_curve)):
+            return False
+        if run_number not in assessment.component_curves_by_run:
+            return False
+    return True
+
+
+def test_search_nodes_carry_no_curves_and_no_residuals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every node the separable search caches is scored, not drawable.
+
+    The curves and the residual series are the whole size of an assessment and
+    nothing in the search reads either; the anchor, the elimination chain and the
+    winner's flips all live under that rule, and only the exit undoes it.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    template = _restrict_to_exp_constant(monkeypatch, model)
+    datasets = _local_lambda_series(model)
+
+    result = _run_separable_anchor_task(_anchor_task(datasets, template))
+    _separable_backward_elimination(
+        datasets,
+        result.state,
+        result.estimates,
+        axis_key="temperature",
+        metric=SelectionMetric.AICC,
+        search_strategy="staged_v2",
+        instrumentation=global_fit_wizard_module._fresh_task_instrumentation(),
+    )
+
+    # The anchor plus at least one coupled node from the elimination walk.
+    assert len(result.state.exact_cache) > 1
+    assert all(_curve_free(assessment) for assessment in result.state.exact_cache.values())
+    assert all(
+        _curve_free(assessment) for assessment in result.state.converged_assessments.values()
+    )
+    # The diagnostics the residuals were read for survived them.
+    anchor = result.state.anchor_assessment
+    assert anchor is not None
+    assert len(anchor.run_diagnostics) == len(datasets)
+    assert all(np.isfinite(diagnostic.residual_rms) for diagnostic in anchor.run_diagnostics)
+
+
+def test_every_assessment_a_recommendation_exposes_carries_curves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the contract: what leaves the search is drawable.
+
+    The wizard window lets a user select *any* row of the leaderboard and draws
+    it, so "the recommended one" is not enough — every assessment the
+    recommendation exposes owes a curve for every run it holds a fit for.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant(monkeypatch, model)
+    datasets = _local_lambda_series(model)
+
+    recommendation = build_global_fit_wizard_recommendation(datasets)
+
+    assert recommendation.assessments
+    assert all(_fully_curved(assessment) for assessment in recommendation.assessments)
+    # And a curve really is the model at the fitted values, not a stale copy.
+    optimized = recommendation.optimized_assessments()
+    assert optimized
+    for assessment in optimized:
+        for dataset in datasets:
+            run_number = int(dataset.run_number)
+            fitted_time, fitted_curve = assessment.fitted_curves_by_run[run_number]
+            values = {
+                parameter.name: parameter.value
+                for parameter in assessment.fit_results_by_run[run_number].parameters
+            }
+            expected = np.asarray(
+                assessment.template.model.function(fitted_time, **values), dtype=float
+            )
+            assert np.allclose(fitted_curve, expected)
+
+
+def test_a_displayed_assessment_carries_its_residual_series(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Residuals are dropped inside the search and restored on the way out."""
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant(monkeypatch, model)
+    datasets = _local_lambda_series(model)
+
+    recommendation = build_global_fit_wizard_recommendation(datasets)
+
+    assessment = recommendation.recommended_assessment
+    assert assessment is not None
+    by_run = {int(dataset.run_number): dataset for dataset in datasets}
+    for run_number, result in assessment.fit_results_by_run.items():
+        assert result.residuals is not None
+        dataset = by_run[run_number]
+        values = {parameter.name: parameter.value for parameter in result.parameters}
+        expected = np.asarray(dataset.asymmetry, dtype=float) - np.asarray(
+            assessment.template.model.function(dataset.time, **values), dtype=float
+        )
+        assert np.allclose(np.asarray(result.residuals, dtype=float), expected)

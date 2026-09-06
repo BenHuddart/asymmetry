@@ -169,6 +169,61 @@ def planted_series():
 
 
 # --------------------------------------------------------------------------- #
+# The dense-curve contract
+# --------------------------------------------------------------------------- #
+
+
+def _fully_curved(assessment) -> bool:
+    """A displayed assessment: a curve per run it holds a fit result for."""
+    for run_number in assessment.fit_results_by_run:
+        curve = assessment.fitted_curves_by_run.get(run_number)
+        if curve is None:
+            return False
+        fitted_time, fitted_curve = curve
+        if not (np.size(fitted_time) and np.size(fitted_curve)):
+            return False
+        if run_number not in assessment.component_curves_by_run:
+            return False
+    return True
+
+
+@pytest.mark.integration
+def test_every_phase_answer_carries_curves_for_its_runs(planted_series):
+    """A phase answer is drawn, so it owes a curve per run — and only it does.
+
+    Each phase's search visits and caches many nodes; one per phase is kept, and
+    the curves are built for those on the way out (see the dense-curve contract
+    on ``GlobalCandidateAssessment``).
+    """
+    datasets, _table, _screening, optimised = planted_series
+
+    assert optimised.phase_assessments
+    for (_k, _segment_index), assessment in optimised.phase_assessments.items():
+        assert _fully_curved(assessment)
+        assert assessment.fit_results_by_run
+        for result in assessment.fit_results_by_run.values():
+            assert result.residuals is not None
+
+    # A phase covers only its own runs, so its curves must not span the series.
+    series_runs = {int(dataset.run_number) for dataset in datasets}
+    covered = {
+        run_number
+        for assessment in optimised.phase_assessments.values()
+        for run_number in assessment.fitted_curves_by_run
+    }
+    assert covered <= series_runs
+
+
+@pytest.mark.integration
+def test_a_partitioned_recommendation_exposes_only_curved_assessments(planted_series):
+    """The series-wide rows a partitioned answer still exposes are drawable too."""
+    _datasets, _table, _screening, optimised = planted_series
+
+    assert optimised.assessments
+    assert all(_fully_curved(assessment) for assessment in optimised.assessments)
+
+
+# --------------------------------------------------------------------------- #
 # Screening computes the path
 # --------------------------------------------------------------------------- #
 

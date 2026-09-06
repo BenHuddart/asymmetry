@@ -188,6 +188,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uncertainties are the Gauss–Newton curvature at the solution, which for a χ²
   cost is Minuit's own `errordef = 1` convention), so no verdict or reported
   number changes.
+  A search node no longer carries what only a *drawn* fit needs. The dense
+  fitted and component curves and the per-run residual series are the whole
+  size of an assessment — tens of megabytes for a twelve-run phase against
+  kilobytes for its scores, diagnostics and parameters — and the search visits
+  hundreds of nodes per phase and caches every one, which on a long series grew
+  the analysis process until the machine swapped and the fit workers spent their
+  time waiting on paging rather than fitting. Every node is now scored without
+  them (its residual diagnostics, gates and information criteria are computed
+  exactly as before, from residuals read during assembly), and the curves are
+  built once, on the way out, for the assessments a recommendation actually
+  exposes; the same rule applies to the per-run score table's cells. No fitted
+  number, verdict or drawn curve changes (100% agreement with the frozen
+  baseline).
 
 - **Every fit parameter's starting value now comes from one place, and the
   table remembers which values are still starting guesses.** Start values used

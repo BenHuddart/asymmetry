@@ -269,7 +269,16 @@ class CandidateTemplate:
 
 @dataclass(frozen=True)
 class CandidateAssessment:
-    """Fit and comparison data for one candidate model."""
+    """Fit and comparison data for one candidate model.
+
+    **Dense-curve contract.** ``fitted_time`` / ``fitted_curve`` /
+    ``component_curves`` exist to be *drawn* — the wizard answer card's fit line
+    — and are far the largest thing an assessment carries. An assessment fitted
+    only to fill a cell of a score table (see ``_AssessmentTask.dense_curves``)
+    carries them empty; every assessment a :class:`FitWizardRecommendation`
+    points at as its recommendation or a comparable alternative carries them.
+    :func:`_with_dense_curves` is the crossing between the two.
+    """
 
     template: CandidateTemplate
     fit_result: FitResult
@@ -2102,6 +2111,13 @@ class _AssessmentTask:
     #: ahead of the seed ladder, so a completion fit starts from an answer
     #: rather than from a guess.
     warm_start: ParameterSet | None = None
+    #: Whether the assessment keeps its dense fitted/component curves. A cell of
+    #: a *score table* — fitted only so its information criterion can be summed
+    #: and compared — passes ``False``: the curves are megabytes each, they cross
+    #: a process boundary on the way back, and the table's consumers read scores
+    #: and parameters. :func:`_with_dense_curves` builds them for the rows that
+    #: are actually displayed.
+    dense_curves: bool = True
 
 
 def _execute_assessment_task(
@@ -2127,6 +2143,7 @@ def _execute_assessment_task(
         cancel_callback=cancel_callback,
         migrad_ncall=migrad_ncall,
         warm_start=task.warm_start,
+        dense_curves=task.dense_curves,
     )
 
 
@@ -3998,6 +4015,7 @@ def _assess_candidate_template(
     cancel_callback: Callable[[], bool] | None = None,
     migrad_ncall: int | None = None,
     warm_start: ParameterSet | None = None,
+    dense_curves: bool = True,
 ) -> CandidateAssessment:
     """Fit one candidate template from a seed ladder and score the best attempt.
 
@@ -4021,6 +4039,12 @@ def _assess_candidate_template(
     warm start (the sole caller that passes it is the completion of a cell from
     the run's *own* fit of the same template at another binning — the same basin
     by construction, so it is fitted once from the answer).
+
+    ``dense_curves=False`` scores the fit without building its dense fitted and
+    component curves — everything else, the residual diagnostics and the gates
+    included, is computed exactly as usual. It is for a cell of a score table,
+    whose readers want its criterion and its parameters; :func:`_with_dense_curves`
+    gives the curves back to the rows a caller displays.
     """
     # Frequencies measured from spectral peaks are trusted seeds: the 0.5x/2x
     # variant scaling that rescues a blind FFT guess would only destroy them.
@@ -4137,12 +4161,16 @@ def _assess_candidate_template(
     residual_gate_passed = not residual_gate_reasons
     disqualification_reasons = _disqualification_reasons(dataset, template, best_result, bound_hits)
 
-    fitted_time, fitted_curve, component_curves = _dense_fit_curves(
-        dataset,
-        template.model,
-        best_result.parameters,
-        fallback_parameters=best_parameters,
-    )
+    if dense_curves:
+        fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+            dataset,
+            template.model,
+            best_result.parameters,
+            fallback_parameters=best_parameters,
+        )
+    else:
+        empty = np.array([], dtype=float)
+        fitted_time, fitted_curve, component_curves = empty, empty, ()
 
     return CandidateAssessment(
         template=template,
@@ -4164,6 +4192,38 @@ def _assess_candidate_template(
         stage=stage,
         disqualification_reasons=tuple(disqualification_reasons),
         is_null_baseline=template.key in (_NULL_CONSTANT_KEY, _NULL_EXPONENTIAL_KEY),
+    )
+
+
+def _with_dense_curves(
+    assessment: CandidateAssessment,
+    dataset: MuonDataset,
+) -> CandidateAssessment:
+    """Give a score-table cell the curves a displayed assessment owes.
+
+    The counterpart of ``_AssessmentTask.dense_curves`` and the one crossing of
+    the contract on :class:`CandidateAssessment`. ``dataset`` must be the record
+    the assessment was *fitted* on — the rebinned one, at the table's factor —
+    because that is what :func:`_dense_fit_curves` samples between.
+
+    Assembly passes the winning attempt's *seed* as ``fallback_parameters``, to
+    name any parameter the fit itself did not return. A converged fit returns
+    every parameter of its model, so for the rows this is called on — a
+    recommendation's own and its comparable alternatives, which are converged by
+    :func:`rerank_fit_wizard_recommendation`'s construction — the fitted values
+    are the whole of it and the rebuilt arrays are identical.
+    """
+
+    fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+        dataset,
+        assessment.template.model,
+        assessment.fit_result.parameters,
+    )
+    return replace(
+        assessment,
+        fitted_time=fitted_time,
+        fitted_curve=fitted_curve,
+        component_curves=component_curves,
     )
 
 

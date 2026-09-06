@@ -39,6 +39,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _AssessmentTask,
     _bound_hit_names,
     _clone_parameter_set,
+    _curve_parameter_values,
     _dense_fit_curves,
     _execute_assessment_task,
     _field_seed_context,
@@ -64,6 +65,9 @@ from asymmetry.core.fitting.fit_wizard import (
     is_multiplet_template_key,
     rerank_fit_wizard_recommendation,
     single_fit_build_signature,
+)
+from asymmetry.core.fitting.fit_wizard import (
+    _with_dense_curves as _single_fit_with_dense_curves,
 )
 from asymmetry.core.fitting.global_search import (
     GlobalSearchConfig,
@@ -455,7 +459,31 @@ class GlobalParameterRecommendation:
 
 @dataclass(frozen=True)
 class GlobalCandidateAssessment:
-    """Fit and comparison data for one global-fit candidate."""
+    """Fit and comparison data for one global-fit candidate.
+
+    **Dense-curve contract.** ``fitted_curves_by_run`` and
+    ``component_curves_by_run`` exist for the GUI, which draws them; nothing in
+    the role search reads them. They are also by far the largest thing an
+    assessment carries — a dozen runs of a native-resolution record come to tens
+    of megabytes per assessment, against kilobytes for everything else — and the
+    separable search visits hundreds of nodes and caches every one. So they are
+    built exactly once, at the search's exit, and the two states are explicit:
+
+    * An assessment **inside a search** (anything in a
+      :class:`_HeuristicTemplateState`'s ``exact_cache`` /
+      ``converged_assessments`` under the separable engine) has *no* curves —
+      both dicts empty — and its per-run :class:`FitResult`\\ s carry no
+      ``residuals`` either. Its diagnostics, information criteria, gates and
+      series warnings are complete: they were computed during assembly, from
+      the residuals, before they were dropped.
+    * Every assessment a :class:`GlobalFitWizardRecommendation` exposes — the
+      series-wide leaderboard rows, the per-phase answers, the pre-screen rows —
+      has curves for every run it was fitted on, and residuals to match.
+
+    :func:`_with_dense_curves` is the one crossing between the two, and
+    :func:`_assemble_assignment_assessment`'s ``dense_curves`` flag is what
+    decides which one an assembly produces.
+    """
 
     template: CandidateTemplate
     fit_results_by_run: dict[int, FitResult]
@@ -1008,6 +1036,9 @@ class _RunCompletionPlan:
     """
 
     dataset: MuonDataset
+    #: ``dataset`` at the series rebin factor: what every cell of this run's row
+    #: is fitted on, and so what a cell's curves must be rebuilt against.
+    analysis_dataset: MuonDataset
     source: FitWizardRecommendation
     analysed_points: int
     #: Cells the run's own table already holds at the series rebin factor.
@@ -1083,10 +1114,15 @@ def _plan_run_completion(
                     if own_values is not None
                     else sibling_values_by_template[template.key]
                 ),
+                # A completion cell is a score-table entry: the table is read for
+                # its criteria and its fitted values, and the row's displayed
+                # assessments get their curves back in _assemble_completed_run.
+                dense_curves=False,
             )
         )
     return _RunCompletionPlan(
         dataset=dataset,
+        analysis_dataset=analysis_dataset,
         source=source,
         analysed_points=int(analysis_dataset.n_points),
         kept=kept,
@@ -1102,9 +1138,17 @@ def _assemble_completed_run(
     rebin_factor: int,
     metric: SelectionMetric,
 ) -> FitWizardRecommendation:
-    """One run's completed row: the kept cells plus the fitted ones, re-ranked."""
+    """One run's completed row: the kept cells plus the fitted ones, re-ranked.
+
+    The cells this pass fitted carry no dense curves (the contract on
+    :class:`~asymmetry.core.fitting.fit_wizard.CandidateAssessment`). Ranking
+    reads none of them, so they are rebuilt once the rank is known, for the rows
+    a caller displays: the recommendation and its comparable alternatives. Only
+    the fitted cells need it — a kept cell is the run's own assessment, curves
+    and all, and is carried through as the very same object.
+    """
     assessments_by_key: dict[str, CandidateAssessment] = {**plan.kept, **fitted}
-    return rerank_fit_wizard_recommendation(
+    ranked = rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
             fingerprint=plan.source.fingerprint,
             templates=tuple(templates),
@@ -1121,6 +1165,16 @@ def _assemble_completed_run(
             analysed_points=plan.analysed_points,
         ),
         metric,
+    )
+    displayed = {key for key in (ranked.recommended_key, *ranked.comparable_keys) if key in fitted}
+    return replace(
+        ranked,
+        assessments=tuple(
+            _single_fit_with_dense_curves(assessment, plan.analysis_dataset)
+            if assessment.template.key in displayed
+            else assessment
+            for assessment in ranked.assessments
+        ),
     )
 
 
@@ -2398,6 +2452,23 @@ def _build_single_fit_prescreen_assessments(
         )
         for template in templates
     }
+    # The record each run's row was scored on. A completed score table is one
+    # rebin factor across the whole series, and it is what the per-run cells were
+    # fitted at, so it is what this row's dense curves are sampled between.
+    analysis_dataset_by_run = {
+        int(dataset.run_number): (
+            dataset.rebin(factor)
+            if (
+                factor := int(
+                    single_fit_recommendations_by_run[int(dataset.run_number)].rebin_factor
+                )
+            )
+            > 1
+            else dataset
+        )
+        for dataset in datasets
+        if int(dataset.run_number) in single_fit_recommendations_by_run
+    }
     if repair_partial_incomplete:
         # NOTE (measured, deliberately still serial): repair is a *fit* per failed
         # (template, run) pair and is the largest remaining serial section of the
@@ -2481,17 +2552,18 @@ def _build_single_fit_prescreen_assessments(
                 continue
 
             fit_results_by_run[run_number] = assessment.fit_result
-            fitted_curves_by_run[run_number] = (
-                np.asarray(assessment.fitted_time, dtype=float).copy(),
-                np.asarray(assessment.fitted_curve, dtype=float).copy(),
+            # Built here rather than copied off the cell: a score-table cell
+            # carries no curves (the contract on ``CandidateAssessment``), and a
+            # pre-screen row *is* displayed, so it owes them. Rebuilding also puts
+            # the whole row on one grid — a run repaired at native resolution
+            # would otherwise contribute a denser curve than its neighbours.
+            fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+                analysis_dataset_by_run[run_number],
+                template.model,
+                assessment.fit_result.parameters,
             )
-            component_curves_by_run[run_number] = tuple(
-                (
-                    name,
-                    np.asarray(values, dtype=float).copy(),
-                )
-                for name, values in assessment.component_curves
-            )
+            fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
+            component_curves_by_run[run_number] = component_curves
             run_diagnostics.append(
                 RunResidualDiagnostic(
                     run_number=run_number,
@@ -5620,6 +5692,7 @@ def _assemble_assignment_assessment(
     axis_key: str,
     metric: SelectionMetric,
     fit_success: bool,
+    dense_curves: bool,
 ) -> GlobalCandidateAssessment:
     """Score one role assignment's per-run results into a candidate assessment.
 
@@ -5629,6 +5702,13 @@ def _assemble_assignment_assessment(
     which is assembled from the phase-1 per-run fits and is never refitted
     jointly, is scored by *exactly* the same code as a coupled node rather than a
     parallel reimplementation that could drift on ``k``, ``n`` or the gates.
+
+    ``dense_curves=False`` is a node of a search (see the dense-curve contract on
+    :class:`GlobalCandidateAssessment`): everything above is computed exactly as
+    it would be otherwise — the residuals are read here, for the diagnostics —
+    and then the two curve dicts are left empty and the per-run ``residuals``
+    dropped, because past this point nothing inside the search reads either.
+    :func:`_with_dense_curves` puts both back on the assessments that leave.
     """
 
     sample_count = int(sum(dataset.n_points for dataset in datasets))
@@ -5684,14 +5764,15 @@ def _assemble_assignment_assessment(
             )
         )
 
-        fitted_time, fitted_curve, component_curves = _dense_fit_curves(
-            dataset,
-            template.model,
-            result.parameters,
-            fallback_parameters=base_by_run.get(run_number),
-        )
-        fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
-        component_curves_by_run[run_number] = component_curves
+        if dense_curves:
+            fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+                dataset,
+                template.model,
+                result.parameters,
+                fallback_parameters=base_by_run.get(run_number),
+            )
+            fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
+            component_curves_by_run[run_number] = component_curves
 
     series_warnings = tuple(
         _series_warnings(
@@ -5701,6 +5782,13 @@ def _assemble_assignment_assessment(
             local_param_names=local_param_names,
         )
     )
+    if not dense_curves:
+        # The diagnostics above are the last read of the residual series; a
+        # search node keeps only what the search itself ranks on.
+        results_by_run = {
+            run_number: replace(result, residuals=None)
+            for run_number, result in results_by_run.items()
+        }
     return GlobalCandidateAssessment(
         template=template,
         fit_results_by_run=results_by_run,
@@ -5715,6 +5803,64 @@ def _assemble_assignment_assessment(
         aicc=None if aicc is None else float(aicc),
         bic=float(bic),
         selected_score=_metric_value(metric, aic, aicc, bic),
+        fitted_curves_by_run=fitted_curves_by_run,
+        component_curves_by_run=component_curves_by_run,
+    )
+
+
+def _with_dense_curves(
+    assessment: GlobalCandidateAssessment,
+    datasets: Sequence[MuonDataset],
+    *,
+    base_by_run: Mapping[int, ParameterSet],
+) -> GlobalCandidateAssessment:
+    """Give a search node the curves and residuals a displayed assessment owes.
+
+    The one crossing of the dense-curve contract on
+    :class:`GlobalCandidateAssessment`: call it on every assessment that leaves a
+    search for a :class:`GlobalFitWizardRecommendation`, and on nothing else.
+
+    ``datasets`` must be the records the assessment was *fitted* on — the same
+    ones :func:`_assemble_assignment_assessment` saw — and ``base_by_run`` the
+    same seed sets, because both feed :func:`_dense_fit_curves` verbatim here.
+    Give it the search-resolution records for a node fitted at a coarser binning
+    and the arrays are bit-for-bit what assembly would have produced. The
+    residual series is likewise the engine's own definition (``asymmetry −
+    model`` on the fitted record), so a restored assessment is indistinguishable
+    from one assembled with ``dense_curves=True``.
+    """
+
+    fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
+    component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
+    results_by_run: dict[int, FitResult] = dict(assessment.fit_results_by_run)
+    model = assessment.template.model
+    for dataset in datasets:
+        run_number = int(dataset.run_number)
+        result = results_by_run.get(
+            run_number,
+            FitResult(success=False, message="Missing global fit result"),
+        )
+        fallback_parameters = base_by_run.get(run_number)
+        fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+            dataset,
+            model,
+            result.parameters,
+            fallback_parameters=fallback_parameters,
+        )
+        fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
+        component_curves_by_run[run_number] = component_curves
+        if run_number in results_by_run:
+            values = _curve_parameter_values(
+                model, result.parameters, fallback_parameters=fallback_parameters
+            )
+            model_values = np.asarray(model.function(dataset.time, **values), dtype=float)
+            results_by_run[run_number] = replace(
+                result,
+                residuals=np.asarray(dataset.asymmetry, dtype=float) - model_values,
+            )
+    return replace(
+        assessment,
+        fit_results_by_run=results_by_run,
         fitted_curves_by_run=fitted_curves_by_run,
         component_curves_by_run=component_curves_by_run,
     )
@@ -5741,6 +5887,7 @@ def _fit_exact_assignment(
     instrumentation: dict[str, object] | None = None,
     initial_step_sizes: dict[str, float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    dense_curves: bool = True,
 ) -> GlobalCandidateAssessment:
     """Fit one global/local role assignment and score it.
 
@@ -5759,6 +5906,11 @@ def _fit_exact_assignment(
     that one fit fails to converge (counted as ``warm_only_escalations``). It
     requires ``warm_start_by_run`` — without a warm start there is nothing to
     start only from.
+
+    ``dense_curves`` defaults to ``True`` — a node fitted for its own sake keeps
+    the curves a caller can display. The separable engine passes ``False`` for
+    every node it visits and materialises curves once at its exit; see the
+    dense-curve contract on :class:`GlobalCandidateAssessment`.
     """
 
     if cancel_callback is not None and cancel_callback():
@@ -6162,6 +6314,7 @@ def _fit_exact_assignment(
         axis_key=axis_key,
         metric=metric,
         fit_success=fit_success,
+        dense_curves=dense_curves,
     )
     _record_counter(
         instrumentation,
@@ -8066,6 +8219,7 @@ def _fit_heuristic_assignment(
     instrumentation: dict[str, object] | None,
     warm_start_source: GlobalCandidateAssessment | None = None,
     warm_start_only: bool = False,
+    dense_curves: bool = True,
 ) -> GlobalCandidateAssessment:
     """Fit one role assignment for a heuristic template and cache it.
 
@@ -8128,6 +8282,7 @@ def _fit_heuristic_assignment(
         instrumentation=instrumentation,
         initial_step_sizes=initial_step_sizes,
         warm_start_only=warm_start_only and warm_start_by_run is not None,
+        dense_curves=dense_curves,
     )
     key = (global_names, local_names)
     state.exact_cache[key] = assessment
@@ -8456,6 +8611,7 @@ def _fill_winner_flip_neighbourhood(
     search_strategy: str,
     progress_callback: Callable[[str], None] | None,
     instrumentation: dict[str, object] | None,
+    dense_curves: bool,
 ) -> None:
     """Fit every single-flip neighbour of ``winner`` over the FULL free set.
 
@@ -8489,6 +8645,7 @@ def _fill_winner_flip_neighbourhood(
             instrumentation=instrumentation,
             warm_start_source=winner,
             warm_start_only=True,
+            dense_curves=dense_curves,
         )
 
 
@@ -8630,6 +8787,7 @@ def _refit_states_at_full_resolution(
     search_strategy: str,
     progress_callback: Callable[[str], None] | None,
     instrumentation: dict[str, object] | None,
+    dense_curves: bool,
 ) -> list[_HeuristicTemplateState]:
     """Technique K's correctness step: redo the winner at native resolution.
 
@@ -8673,6 +8831,7 @@ def _refit_states_at_full_resolution(
                     search_strategy=search_strategy,
                     progress_callback=progress_callback,
                     instrumentation=instrumentation,
+                    dense_curves=dense_curves,
                 )
             continue
         _record_counter(instrumentation, "decimation_full_res_refits")
@@ -8690,6 +8849,7 @@ def _refit_states_at_full_resolution(
             instrumentation=instrumentation,
             warm_start_source=winner,
             warm_start_only=True,
+            dense_curves=dense_curves,
         )
         if full_winner.is_successful:
             _fill_winner_flip_neighbourhood(
@@ -8701,6 +8861,7 @@ def _refit_states_at_full_resolution(
                 search_strategy=search_strategy,
                 progress_callback=progress_callback,
                 instrumentation=instrumentation,
+                dense_curves=dense_curves,
             )
         else:
             # The decimated winner failed to reproduce at full resolution — fall
@@ -8717,6 +8878,7 @@ def _refit_states_at_full_resolution(
                 search_strategy=search_strategy,
                 progress_callback=progress_callback,
                 instrumentation=instrumentation,
+                dense_curves=dense_curves,
             )
             if anchor.is_successful:
                 _fill_winner_flip_neighbourhood(
@@ -8728,6 +8890,7 @@ def _refit_states_at_full_resolution(
                     search_strategy=search_strategy,
                     progress_callback=progress_callback,
                     instrumentation=instrumentation,
+                    dense_curves=dense_curves,
                 )
     return refit_states
 
@@ -8920,6 +9083,7 @@ def _run_heuristic_search(
                 search_strategy=search_strategy,
                 progress_callback=progress_callback,
                 instrumentation=instrumentation,
+                dense_curves=True,
             )
 
     if decimation_factor > 1:
@@ -8933,10 +9097,15 @@ def _run_heuristic_search(
             search_strategy=search_strategy,
             progress_callback=progress_callback,
             instrumentation=instrumentation,
+            dense_curves=True,
         )
 
     return _finalise_heuristic_assessments(
-        datasets, states, metric=metric, progress_callback=progress_callback
+        datasets,
+        states,
+        metric=metric,
+        progress_callback=progress_callback,
+        materialise_curves=False,
     )
 
 
@@ -8946,12 +9115,20 @@ def _finalise_heuristic_assessments(
     *,
     metric: SelectionMetric,
     progress_callback: Callable[[str], None] | None,
+    materialise_curves: bool,
 ) -> tuple[GlobalCandidateAssessment, ...]:
     """Build the returned assessments exactly like the exhaustive wavefront.
 
     Each template contributes its converged assignments with per-parameter role
     recommendations resolved from the (now flip-complete) exact cache, so the
     verdict layer treats a heuristic winner identically to an exhaustive one.
+
+    This is a search's exit, so it is also where the dense-curve contract on
+    :class:`GlobalCandidateAssessment` is honoured: ``materialise_curves=True``
+    rebuilds the curves and residuals of everything it returns, which is what a
+    caller whose nodes were fitted with ``dense_curves=False`` must pass. The Low
+    engine fitted its nodes with curves and passes ``False`` — its assessments
+    already carry them, and rebuilding would only redo the work.
     """
 
     optimized_assessments: list[GlobalCandidateAssessment] = []
@@ -8968,25 +9145,28 @@ def _finalise_heuristic_assessments(
 
         if successful:
             for assessment in successful:
-                optimized_assessments.append(
-                    replace(
+                finalised = replace(
+                    assessment,
+                    fixed_param_names=state.fixed_param_names,
+                    parameter_recommendations=_build_parameter_recommendations_from_exact_cache(
+                        datasets,
                         assessment,
+                        template=state.template,
                         fixed_param_names=state.fixed_param_names,
-                        parameter_recommendations=_build_parameter_recommendations_from_exact_cache(
-                            datasets,
-                            assessment,
-                            template=state.template,
-                            fixed_param_names=state.fixed_param_names,
-                            metric=metric,
-                            cache=exact_cache,
-                            names_to_test=set(state.free_param_names),
-                        ),
-                        assessment_key=_global_candidate_assessment_key(
-                            state.template.key,
-                            global_param_names=assessment.global_param_names,
-                            local_param_names=assessment.local_param_names,
-                        ),
-                    )
+                        metric=metric,
+                        cache=exact_cache,
+                        names_to_test=set(state.free_param_names),
+                    ),
+                    assessment_key=_global_candidate_assessment_key(
+                        state.template.key,
+                        global_param_names=assessment.global_param_names,
+                        local_param_names=assessment.local_param_names,
+                    ),
+                )
+                optimized_assessments.append(
+                    _with_dense_curves(finalised, datasets, base_by_run=state.prefit_base_by_run)
+                    if materialise_curves
+                    else finalised
                 )
             best = successful[0]
             _progress_log(
@@ -9002,17 +9182,20 @@ def _finalise_heuristic_assessments(
         failed = state.best_assessment
         if failed is None:
             continue
+        finalised_failure = replace(
+            failed,
+            fixed_param_names=state.fixed_param_names,
+            parameter_recommendations=(),
+            assessment_key=_global_candidate_assessment_key(
+                state.template.key,
+                global_param_names=failed.global_param_names,
+                local_param_names=failed.local_param_names,
+            ),
+        )
         optimized_assessments.append(
-            replace(
-                failed,
-                fixed_param_names=state.fixed_param_names,
-                parameter_recommendations=(),
-                assessment_key=_global_candidate_assessment_key(
-                    state.template.key,
-                    global_param_names=failed.global_param_names,
-                    local_param_names=failed.local_param_names,
-                ),
-            )
+            _with_dense_curves(finalised_failure, datasets, base_by_run=state.prefit_base_by_run)
+            if materialise_curves
+            else finalised_failure
         )
 
     return tuple(optimized_assessments)
@@ -9289,6 +9472,7 @@ def _run_separable_anchor_task(task: _SeparableAnchorTask) -> _SeparableTemplate
             search_strategy=task.search_strategy,
             progress_callback=None,
             instrumentation=instrumentation,
+            dense_curves=False,
         )
         return _SeparableTemplateResult(
             template_key=task.template_key,
@@ -9336,6 +9520,7 @@ def _run_separable_anchor_task(task: _SeparableAnchorTask) -> _SeparableTemplate
         axis_key=task.axis_key,
         metric=task.metric,
         fit_success=fit_success,
+        dense_curves=False,
     )
     anchor_key = ((), local_param_names)
     state.exact_cache[anchor_key] = assessment
@@ -9358,6 +9543,7 @@ def _run_separable_anchor_task(task: _SeparableAnchorTask) -> _SeparableTemplate
             search_strategy=task.search_strategy,
             progress_callback=None,
             instrumentation=instrumentation,
+            dense_curves=False,
         )
         estimates = ()
 
@@ -9545,6 +9731,7 @@ def _fit_separable_assignment(
             target_local_names=local_names,
         ),
         cancel_callback=cancel_callback,
+        dense_curves=False,
     )
     _record_counter(
         instrumentation,
@@ -9625,6 +9812,7 @@ def _refit_certificate_violating_parent(
             target_global_names=parent_global,
             target_local_names=parent_local,
         ),
+        dense_curves=False,
     )
     if not refit.is_successful or _assessment_sort_key(parent, metric) <= _assessment_sort_key(
         refit, metric
@@ -10081,6 +10269,11 @@ def _adopt_screening_assessment(
         global_param_names=global_names,
         local_param_names=local_names,
         fixed_param_names=state.fixed_param_names,
+        # It becomes a node of this search, so it lives under the search's terms:
+        # no curves (:class:`GlobalCandidateAssessment`'s contract). The exit
+        # rebuilds them if this node is one of the ones that leaves.
+        fitted_curves_by_run={},
+        component_curves_by_run={},
     )
     key = (global_names, local_names)
     state.exact_cache[key] = adopted
@@ -10111,6 +10304,7 @@ def _run_separable_search(
     time_budget_seconds: float | None = _WAVEFRONT_TIME_BUDGET_SECONDS,
     shared_executor: ProcessPoolExecutor | None = None,
     full_resolution_refit: bool = True,
+    materialise_curves: bool = True,
 ) -> tuple[GlobalCandidateAssessment, ...]:
     """Separable global/local role search — the default engine.
 
@@ -10136,6 +10330,16 @@ def _run_separable_search(
     from a phase seeds the Batch tab's own global fit, which runs on the native
     record anyway. On a real 29-run series the full-resolution refit alone cost
     minutes per node (a joint fit over 12 runs × 90 k points).
+
+    Every node this search fits carries no dense curves and no residual series
+    (the contract on :class:`GlobalCandidateAssessment`), which is what keeps a
+    search of hundreds of nodes to kilobytes each. ``materialise_curves`` rebuilds
+    them on the way out, against ``datasets``. A caller that turns
+    ``full_resolution_refit`` off must turn ``materialise_curves`` off with it and
+    materialise the assessments it keeps against the *search-resolution* records —
+    ``datasets`` is not what those nodes were fitted on. Per-phase optimisation
+    does exactly that, and keeps one assessment per phase rather than every
+    converged node of every template.
     """
 
     if not shortlisted_templates:
@@ -10341,10 +10545,15 @@ def _run_separable_search(
             search_strategy=search_strategy,
             progress_callback=progress_callback,
             instrumentation=instrumentation,
+            dense_curves=False,
         )
 
     return _finalise_heuristic_assessments(
-        datasets, states, metric=metric, progress_callback=progress_callback
+        datasets,
+        states,
+        metric=metric,
+        progress_callback=progress_callback,
+        materialise_curves=materialise_curves,
     )
 
 
@@ -10387,6 +10596,12 @@ def _restrict_prescreen_assessment(
     recomputed over the segment's runs and point count. A series-wide IC says
     nothing about how a template does on one phase, and it is what the separable
     search's template racing reads.
+
+    The result is a search *input* — every phase's search reads it and nothing
+    displays it — so it drops the dense curves rather than slicing them, per the
+    contract on :class:`GlobalCandidateAssessment`. Restricting one series-wide
+    row per template with its curves attached would hold the whole pre-screen
+    table's curves alive again for every phase in turn.
     """
 
     run_numbers = [int(dataset.run_number) for dataset in datasets]
@@ -10425,16 +10640,8 @@ def _restrict_prescreen_assessment(
         aicc=None if aicc is None else float(aicc),
         bic=float(bic),
         selected_score=_metric_value(metric, aic, aicc, bic),
-        fitted_curves_by_run={
-            run_number: curves
-            for run_number, curves in assessment.fitted_curves_by_run.items()
-            if run_number in wanted
-        },
-        component_curves_by_run={
-            run_number: curves
-            for run_number, curves in assessment.component_curves_by_run.items()
-            if run_number in wanted
-        },
+        fitted_curves_by_run={},
+        component_curves_by_run={},
     )
 
 
@@ -10587,6 +10794,11 @@ def _optimise_partition_phases(
     )
 
     searched_by_window: dict[tuple[int, int], tuple[GlobalCandidateAssessment, ...]] = {}
+    # What each phase's search was measured on, kept so the phase answers can be
+    # given their dense curves on the way out: the records at the series search
+    # resolution, and the per-template seeds restricted to the phase's runs.
+    search_datasets_by_window: dict[tuple[int, int], list[MuonDataset]] = {}
+    seeds_by_window: dict[tuple[int, int], dict[str, dict[int, ParameterSet]]] = {}
     # Each phase's search opens and closes its own pool: a phase that trips its
     # budget then terminates its own workers, instead of leaving them running
     # on a shared pool where the next phase's tasks would queue behind them
@@ -10602,20 +10814,29 @@ def _optimise_partition_phases(
                 f"Phase {segment_datasets[0].run_label}–{segment_datasets[-1].run_label}: "
                 f"separable role search over {len(templates)} candidate(s).",
             )
+            segment_contexts = {
+                key: (
+                    {
+                        run_number: parameters
+                        for run_number, parameters in base_by_run.items()
+                        if run_number in segment_runs
+                    },
+                    fixed_param_names,
+                )
+                for key, (base_by_run, fixed_param_names) in template_contexts.items()
+            }
+            search_datasets_by_window[(start, stop)] = _separable_search_datasets(
+                segment_datasets,
+                search_rebin_factor=search_rebin_factor,
+                instrumentation=None,
+            )
+            seeds_by_window[(start, stop)] = {
+                key: base_by_run for key, (base_by_run, _fixed) in segment_contexts.items()
+            }
             searched_by_window[(start, stop)] = _run_separable_search(
                 segment_datasets,
                 shortlisted_templates=list(templates),
-                template_contexts={
-                    key: (
-                        {
-                            run_number: parameters
-                            for run_number, parameters in base_by_run.items()
-                            if run_number in segment_runs
-                        },
-                        fixed_param_names,
-                    )
-                    for key, (base_by_run, fixed_param_names) in template_contexts.items()
-                },
+                template_contexts=segment_contexts,
                 prescreen_assessments={
                     key: _restrict_prescreen_assessment(
                         assessment,
@@ -10635,6 +10856,9 @@ def _optimise_partition_phases(
                 search_rebin_factor=search_rebin_factor,
                 prescreen_rebin_factor=search_rebin_factor,
                 full_resolution_refit=False,
+                # Only one assessment per phase is kept, so the curves are built
+                # for those and not for every converged node of every template.
+                materialise_curves=False,
                 time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
             )
     except FitCancelledError:
@@ -10665,6 +10889,24 @@ def _optimise_partition_phases(
         return total, tuple(chosen)
 
     phase_assessments: dict[tuple[int, int], GlobalCandidateAssessment] = {}
+    # Neighbouring partition solutions share most of their segments, and a shared
+    # segment's answer is the same object both times: build its curves once.
+    displayed_by_window: dict[tuple[int, int], GlobalCandidateAssessment] = {}
+
+    def _displayable(
+        window: _PhaseWindow, assessment: GlobalCandidateAssessment
+    ) -> GlobalCandidateAssessment:
+        window_key = (window.start, window.stop)
+        materialised = displayed_by_window.get(window_key)
+        if materialised is None:
+            materialised = _with_dense_curves(
+                assessment,
+                search_datasets_by_window[window_key],
+                base_by_run=seeds_by_window[window_key][assessment.template.key],
+            )
+            displayed_by_window[window_key] = materialised
+        return materialised
+
     rescored: dict[int, PartitionSolution] = {}
     for k, windows_list in candidates.items():
         scored = [(_score(windows), windows) for windows in windows_list]
@@ -10688,7 +10930,7 @@ def _optimise_partition_phases(
                     )
                 )
                 continue
-            phase_assessments[(k, index)] = assessment
+            phase_assessments[(k, index)] = _displayable(window, assessment)
             segments.append(
                 Segment(
                     start=window.start,

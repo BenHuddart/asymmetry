@@ -696,6 +696,84 @@ def test_completion_cells_seeded_from_the_run_itself_are_fitted_once(
         assert [t.key for t in recommendation.templates] == ["exp_constant", "exp_only"]
 
 
+def test_completion_cells_carry_curves_only_where_a_row_is_displayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A score-table cell is scored, not drawn.
+
+    Every cell of a completed row carries a dense fitted curve and its component
+    curves — megabytes each, and they cross a process boundary on the way back
+    from the pool — while the table itself is read for criteria and fitted
+    values. So the completion pass fits without them and the row's *displayed*
+    rows (its recommendation and any comparable alternative) get them back once
+    the rank is known.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    exp_constant = _template_named("exp_constant", model=model)
+    exp_only = _template_named("exp_only", model=CompositeModel(["Exponential"], operators=[]))
+    datasets = [
+        _dataset_for(
+            run_number=480 + idx,
+            field=0.0,
+            temperature=5.0 + idx,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.3 + 0.1 * idx, "A_bg": 0.01},
+        )
+        for idx in range(2)
+    ]
+    coarse, fine = datasets
+    source_by_run = {
+        # Analysed coarser than the series factor: both of its cells are refitted.
+        int(coarse.run_number): replace(
+            build_fit_wizard_recommendation_for_templates(coarse, (exp_constant, exp_only)),
+            rebin_factor=3,
+        ),
+        # At the series factor already, but it never assessed ``exp_only``.
+        int(fine.run_number): build_fit_wizard_recommendation_for_templates(fine, (exp_constant,)),
+    }
+
+    recorded: list[object] = []
+    real_execute = fit_wizard_module._execute_assessment_task
+
+    def _record(task, cancel_callback=None):
+        recorded.append(task)
+        return real_execute(task, cancel_callback)
+
+    monkeypatch.setattr(global_fit_wizard_module, "_execute_assessment_task", _record)
+
+    completed, _completion_fits = global_fit_wizard_module._complete_single_fit_table(
+        datasets,
+        (exp_constant, exp_only),
+        source_by_run,
+        rebin_factor=1,
+        metric=SelectionMetric.AICC,
+        executor=None,
+        progress_callback=None,
+        cancel_callback=None,
+        instrumentation=None,
+        stage_callback=None,
+    )
+
+    assert recorded
+    assert all(task.dense_curves is False for task in recorded)
+    fitted_cells = {(int(task.dataset.run_number), task.template.key) for task in recorded}
+
+    for run_number, recommendation in completed.items():
+        displayed = {
+            key for key in (recommendation.recommended_key, *recommendation.comparable_keys) if key
+        }
+        assert displayed
+        for assessment in recommendation.assessments:
+            key = assessment.template.key
+            has_curve = bool(np.size(assessment.fitted_curve))
+            if key in displayed:
+                assert has_curve
+                assert np.size(assessment.fitted_time) == np.size(assessment.fitted_curve)
+            elif (int(run_number), key) in fitted_cells:
+                assert not has_curve
+                assert assessment.component_curves == ()
+
+
 def test_completion_reports_one_progress_message_per_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
