@@ -2393,6 +2393,7 @@ def build_fit_wizard_recommendation(
             f"Fitting a ×{rebin_factor} rebinned copy "
             f"({analysis_dataset.n_points} of {dataset.n_points} points)"
         )
+        peak_analysis = _peaks_within_analysis_band(peak_analysis, analysis_dataset)
 
     stage1_context = TemplateSeedContext(
         peak_analysis=peak_analysis, field_gauss=field_gauss, geometry=geometry
@@ -2503,6 +2504,9 @@ def build_fit_wizard_recommendation(
                     detrended_analysis = merge_user_peaks(
                         detrended_analysis, tuple(user_frequencies_mhz), record=user_record
                     )
+                detrended_analysis = _peaks_within_analysis_band(
+                    detrended_analysis, analysis_dataset
+                )
                 if detrended_analysis.peaks or not peak_analysis.peaks:
                     peak_analysis = detrended_analysis
 
@@ -5373,6 +5377,28 @@ def _max_abs_autocorrelation(values: NDArray[np.float64]) -> float:
         corr = float(np.dot(centered[:-lag], centered[lag:]) / denom)
         correlations.append(abs(corr))
     return float(max(correlations, default=0.0))
+
+
+def _peaks_within_analysis_band(analysis: PeakAnalysis, analysis_dataset: MuonDataset) -> PeakAnalysis:
+    """Drop every detected line the analysed record cannot represent.
+
+    Detection runs on the full record for its bandwidth, but every fit runs on
+    ``analysis_dataset`` — the value-rebinned copy — whose Nyquist frequency is
+    lower. A line above it (a residual-FFT noise spike a few percent below the
+    native Nyquist, say) would be seeded into a template whose frequency bounds
+    then straddle a limit the rebinned record cannot reach, so it is removed
+    here, once, where the analysed record is decided.
+    """
+
+    time = np.asarray(analysis_dataset.time, dtype=float)
+    if time.size < 2:
+        return analysis
+    dt = float(np.median(np.diff(time)))
+    nyquist_mhz = 0.5 / dt
+    kept = tuple(peak for peak in analysis.peaks if abs(float(peak.frequency_mhz)) < nyquist_mhz)
+    if len(kept) == len(analysis.peaks):
+        return analysis
+    return replace(analysis, peaks=kept)
 
 
 def analysis_rebin_factor(

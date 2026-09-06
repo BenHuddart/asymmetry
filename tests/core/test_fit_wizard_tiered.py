@@ -49,6 +49,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _persisted_curve_stride,
     _run_template_assessments,
     _stage2_variant_budget,
+    _peaks_within_analysis_band,
     analysis_rebin_factor,
     build_fit_wizard_recommendation,
     build_null_baseline_templates,
@@ -2795,3 +2796,25 @@ def test_recommendation_payloads_predating_rebinned_fitting_still_load() -> None
     # the analysed point count is genuinely unknown and says so.
     assert restored.rebin_factor == 1
     assert restored.analysed_points == 0
+
+
+def test_peaks_above_the_analysed_record_nyquist_are_dropped() -> None:
+    # A ×11 rebin of 0.1 ns bins has a Nyquist frequency of ~455 MHz; a
+    # residual-FFT spike at 4.9 GHz cannot be represented on that record and
+    # must never be seeded (its frequency bounds would invert on the clamp).
+    dataset = _rebin_dataset(90_000)
+    analysed = dataset.rebin(11)
+    spike = DetectedPeak(
+        frequency_mhz=4907.0,
+        amplitude=1.0,
+        snr=6.0,
+        width_mhz=1.0,
+        prominence=0.0,
+        source="residual_fft",
+    )
+    analysis = _scan_peak_analysis([_damped_scan_peak(240.0), spike], threshold=34.0)
+
+    kept = _peaks_within_analysis_band(analysis, analysed)
+
+    assert [peak.frequency_mhz for peak in kept.peaks] == [240.0]
+    assert _peaks_within_analysis_band(analysis, dataset) is analysis
