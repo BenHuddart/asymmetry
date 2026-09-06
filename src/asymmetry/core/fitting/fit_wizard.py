@@ -2262,6 +2262,7 @@ def build_fit_wizard_recommendation(
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
     max_workers: int | None = None,
+    warm_start_by_template: Mapping[str, ParameterSet] | None = None,
     progress_callback: Callable[[str], None] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
     refine_top_candidates: int = _REFINEMENT_CANDIDATES,
@@ -2291,6 +2292,15 @@ def build_fit_wizard_recommendation(
     pool, cancellation instead takes effect only between fits (a
     cancel_callback cannot cross a process boundary) — either way,
     cancellation raises :class:`FitCancelledError`.
+
+    ``warm_start_by_template`` supplies already-fitted values per template key —
+    the same models fitted on a *neighbouring run* of a series, which a series
+    analysis has by the time it reaches this run. They are handed to the Stage-1
+    and Stage-2 assessments as an **additional first variant**, ahead of the seed
+    ladder and never in place of it (see :func:`_assess_candidate_template`), so
+    the answer for a template can only improve or stay the same: the assessment
+    keeps the best attempt, and one more starting point cannot make that worse.
+    A key naming no screened template is simply unused.
 
     ``refine_top_candidates`` re-fits that many top-ranked candidates with the
     full seed ladder and records the χ² gained
@@ -2398,6 +2408,7 @@ def build_fit_wizard_recommendation(
     stage1_context = TemplateSeedContext(
         peak_analysis=peak_analysis, field_gauss=field_gauss, geometry=geometry
     )
+    warm_starts = dict(warm_start_by_template or {})
 
     _progress(f"Stage 1: screening {len(families)} candidate families")
 
@@ -2411,6 +2422,7 @@ def build_fit_wizard_recommendation(
             variant_budget=_STAGE1_VARIANT_BUDGET,
             stage=1,
             screening_cap=True,
+            warm_start=warm_starts.get(template.key),
         )
 
     stage1_groups = [(family, [family.stage1_rep, *family.stage1_extras]) for family in families]
@@ -2682,6 +2694,7 @@ def build_fit_wizard_recommendation(
                 variant_budget=budget,
                 stage=2,
                 screening_cap=False,
+                warm_start=warm_starts.get(template.key),
             )
 
         with stage_timer(

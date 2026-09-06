@@ -118,6 +118,22 @@ from asymmetry.core.fitting.wizard_timing import (
 #: any single run's assessed set and keeps the table affordable on a 30-run scan.
 _SERIES_ALPHABET_CAP = 24
 
+#: How many per-run single-run analyses phase 1 runs at once, at most. Each one
+#: opens its own worker pool, so the parent's concurrency multiplies the total
+#: worker count; four concurrent analyses on an eight-core host is two workers
+#: each, which is already past the point where the analyses' serial stages (peak
+#: detection, damped-line scan, fingerprint, tier gating) stop overlapping
+#: usefully with each other's fan-outs.
+_MAX_PHASE_ONE_ANALYSES = 4
+
+#: Seed-ladder depth for a completion cell no run has ever fitted. Two rungs,
+#: not the single-run wizard's five: the completion table exists to *rank*
+#: templates across the series, and phase 3 refits the winner from the coupled
+#: search anyway, so a deeper ladder here buys a better number for a cell that
+#: is about to be re-solved. Cells that start from an already-fitted answer (the
+#: run's own values at another factor, or a sibling's) get one rung.
+_COMPLETION_COLD_VARIANT_BUDGET = 2
+
 _ROLE_DELTA_THRESHOLD = 2.0
 _COMPARABLE_SCORE_DELTA = 2.0
 #: Safety margin (metric units) for the exact layer-truncation bound (technique
@@ -814,6 +830,37 @@ def _single_fit_table_worker_count(task_count: int) -> int:
     return max(1, min(task_count, cpu_count))
 
 
+def _phase_one_concurrency(task_count: int) -> int:
+    """How many per-run single-run analyses phase 1 runs at once.
+
+    A single ``build_fit_wizard_recommendation`` never keeps a machine busy:
+    peak detection, the damped-line scan, the fingerprint, the residual pass and
+    the tier gating are serial, and its own pool sits idle through all of them.
+    Measured on a 29-run series of 90 000-point records, the serial stage cost
+    ~15 s per run with most cores idle for much of it. Running a few analyses
+    side by side fills those gaps with another run's fan-out.
+
+    The count is halved from the core count and capped at
+    ``_MAX_PHASE_ONE_ANALYSES``, because each analysis still opens its own pool
+    and the *product* of the two is what lands on the host — see
+    :func:`_phase_one_analysis_workers`, which splits the cores between them.
+    """
+    if task_count <= 0:
+        return 1
+    cpu_count = os.cpu_count() or 1
+    return max(1, min(task_count, _MAX_PHASE_ONE_ANALYSES, cpu_count // 2))
+
+
+def _phase_one_analysis_workers(concurrency: int) -> int:
+    """``max_workers`` for one analysis when *concurrency* of them run at once.
+
+    The host's cores divided between the concurrent analyses, so the total
+    number of fit workers stays at the core count however phase 1 is split.
+    """
+    cpu_count = os.cpu_count() or 1
+    return max(1, cpu_count // max(1, int(concurrency)))
+
+
 def _try_open_process_pool(
     *,
     max_workers: int,
@@ -1004,7 +1051,9 @@ def _single_fit_completion_task(
     from the run's own values for that template when it has them at another
     factor and from the best sibling run's otherwise, and seeded from the run's
     own peak analysis so a multiplet template's lines start on the lines this
-    run actually shows.
+    run actually shows. A cold cell — one neither this run nor any sibling has
+    fitted — runs the short ``_COMPLETION_COLD_VARIANT_BUDGET`` ladder rather
+    than the single-run wizard's five rungs.
 
     Returns the run number, the completed table, and the number of fits it cost.
     """
@@ -1038,8 +1087,12 @@ def _single_fit_completion_task(
     )
     # Two calls, one ladder depth each: a cell that starts from an already
     # fitted answer needs the answer tried, not a ladder around it, while a cell
-    # no run has ever fitted gets the normal seed ladder.
-    for group, budget in ((warm_templates, 1), (cold_templates, 5)):
+    # no run has ever fitted gets a short ladder
+    # (``_COMPLETION_COLD_VARIANT_BUDGET``).
+    for group, budget in (
+        (warm_templates, 1),
+        (cold_templates, _COMPLETION_COLD_VARIANT_BUDGET),
+    ):
         if not group:
             continue
         completed = build_fit_wizard_recommendation_for_templates(
@@ -1140,6 +1193,100 @@ def _preview_series_templates(
                 templates.append(template)
                 known_keys.add(template.key)
     return tuple(templates)
+
+
+def alphabet_bound_dropped_keys(
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> frozenset[str]:
+    """Alphabet candidates that provably cannot win any segment of the series.
+
+    The completion pass costs one fit per (run, template) cell, so a template
+    that no partition of the series could ever select is pure expense. This is
+    the exact bound on that, and it is a *dominance* argument, run by run.
+
+    Write ``χ²_{t,r}`` for template ``t``'s χ² on run ``r`` and ``IC_{u,r}`` for
+    template ``u``'s information criterion there. A segment ``S`` is scored under
+    one template with one sharing pattern, and
+
+    * sharing only ever *raises* χ² (the all-local fit is the minimum over
+      assignments) and every penalty is non-negative, so the cost of ``t`` on
+      ``S`` is at least ``Σ_{r∈S} χ²_{t,r}``;
+    * the all-local cost of ``u`` on ``S`` is exactly ``Σ_{r∈S} IC_{u,r}``, an
+      upper bound on the cost of the best structure available on ``S``.
+
+    So if some **fixed** template ``u`` satisfies ``χ²_{t,r} ≥ IC_{u,r}`` on
+    *every* run, then ``u``'s all-local score beats ``t``'s best possible score
+    on every segment, and ``t`` can be dropped. The template must additionally
+    never have been chosen — recommended or comparable — by any run's own
+    analysis; that is not part of the arithmetic but keeps a run's own verdict
+    in the alphabet whatever the sums say.
+
+    Two things the argument needs, and does not assume away:
+
+    *The dominator has to be fixed.* Comparing ``χ²_{t,r}`` with that run's
+    *best* criterion, ``min_u IC_{u,r}``, is **not** exact, because the argmin
+    may move from run to run while a segment is scored under one template. Two
+    runs, ``IC_{u1} = (10, 100)``, ``IC_{u2} = (100, 10)``, ``χ²_t = (11, 11)``:
+    ``t`` clears the per-run minimum on both runs and still wins the segment at
+    24 against 110. Hence the search for a single ``u`` below.
+
+    *A cell we have no number for is worth nothing.* A template a run never
+    assessed contributes ``0`` to its own floor, so a template assessed on only
+    part of the series is effectively never dropped — which is the honest
+    answer, since the completion fit that would produce the missing χ² has not
+    been run. The dominator, conversely, must be successful on *every* run: it
+    has to be a structure the whole segment could actually use.
+
+    ``IC_{u,r}`` is taken as the largest of AIC, AICc and BIC, so the bound holds
+    whichever criterion the caller ranks with and whichever the partition search
+    later scores with (the plan scores partitions with BIC regardless of the
+    ranking metric). Dominators are not restricted to templates that survive the
+    bound themselves: dominance chains are sound, since ``IC ≥ χ²`` makes the
+    relation transitive, and their minimal elements are never dropped.
+
+    The caller applies the result to the *capped* alphabet
+    (:func:`series_template_alphabet`), so what the bound saves is completion
+    fits rather than slots handed to the next-ranked candidate.
+    """
+    run_numbers = sorted(recommendations_by_run)
+    chosen_keys: set[str] = set()
+    chi_squared_by_key: dict[str, dict[int, float]] = {}
+    criterion_by_key: dict[str, dict[int, float]] = {}
+    for run_number in run_numbers:
+        recommendation = recommendations_by_run[run_number]
+        for assessment in recommendation.assessments:
+            if assessment.is_null_baseline or not assessment.is_successful:
+                continue
+            chi_squared = float(assessment.fit_result.chi_squared)
+            criterion = max(
+                float(assessment.metric_value(criterion_metric))
+                for criterion_metric in SelectionMetric
+            )
+            if not (np.isfinite(chi_squared) and np.isfinite(criterion)):
+                continue
+            key = assessment.template.key
+            chi_squared_by_key.setdefault(key, {})[run_number] = chi_squared
+            criterion_by_key.setdefault(key, {})[run_number] = criterion
+        if recommendation.recommended_key is not None:
+            chosen_keys.add(recommendation.recommended_key)
+        chosen_keys.update(recommendation.comparable_keys)
+
+    dominators = [
+        key for key in sorted(criterion_by_key) if len(criterion_by_key[key]) == len(run_numbers)
+    ]
+    dropped: set[str] = set()
+    for key in sorted(chi_squared_by_key):
+        if key in chosen_keys:
+            continue
+        floors = chi_squared_by_key[key]
+        for other in dominators:
+            if other == key:
+                continue
+            beaten = criterion_by_key[other]
+            if all(floors.get(run, 0.0) >= beaten[run] for run in run_numbers):
+                dropped.add(key)
+                break
+    return frozenset(dropped)
 
 
 def series_template_alphabet(
@@ -1461,6 +1608,136 @@ def _apply_screening_effort_tier(
     return replace(portfolio, templates=screened)
 
 
+def _fitted_values_by_template(
+    recommendation: FitWizardRecommendation,
+) -> dict[str, ParameterSet]:
+    """One run's fitted values per template key, for a neighbour's warm start."""
+    return {
+        assessment.template.key: assessment.fit_result.parameters
+        for assessment in recommendation.assessments
+        if assessment.is_successful
+    }
+
+
+@dataclass(frozen=True)
+class _SingleRunAnalysisOutcome:
+    """What stage 1 produced for one run, in the order the runs finished."""
+
+    dataset: MuonDataset
+    recommendation: FitWizardRecommendation
+
+
+def _run_single_run_analyses(
+    datasets: Sequence[MuonDataset],
+    *,
+    current_model: CompositeModel | None,
+    metric: SelectionMetric,
+    scope: WizardScope | None,
+    user_frequencies_mhz: Sequence[float] | None,
+    cancel_callback: Callable[[], bool] | None,
+    concurrency: int,
+    progress_callback: Callable[[str], None] | None,
+    on_completed: Callable[[_SingleRunAnalysisOutcome], None],
+) -> int:
+    """Analyse every dataset with the single-run Fit Wizard; return warm-seed count.
+
+    ``datasets`` arrive in sweep-axis order and are *started* in that order, so
+    by the time a run begins the neighbour that finished nearest to it along the
+    axis is usually the run right beside it. That neighbour's fitted values are
+    handed to the analysis as an extra first variant per template
+    (``warm_start_by_template``); the seed ladder still runs, so the extra start
+    can only improve a template's fit or leave it alone.
+
+    ``concurrency`` analyses run at once on a thread pool in this process. That
+    is not a way to dodge the GIL — each analysis spends its time in its own
+    *spawn* pool and in NumPy — it is a way to overlap one run's serial stages
+    (detection, pattern search, gating) with another run's fan-out; the per-call
+    ``max_workers`` is divided down (:func:`_phase_one_analysis_workers`) so the
+    host still sees one machine's worth of fit workers. ``concurrency == 1``
+    keeps the plain serial path, where each analysis owns the whole machine.
+
+    Each analysis logs its start through ``progress_callback`` from its own
+    thread (the caller's callback is already serialised by
+    :func:`_threadsafe_progress_callback`), so a long stage shows which runs are
+    under way rather than nothing at all until the first one lands.
+    ``on_completed`` is called once per finished run, in completion order, on
+    this thread. ``cancel_callback`` is checked before each submission and while
+    waiting; on cancel the pool is dropped without waiting for the analyses in
+    flight — they poll the same callback and raise
+    :class:`~asymmetry.core.fitting.engine.FitCancelledError` themselves, which
+    tears down their own worker pools.
+    """
+    completed_by_index: dict[int, FitWizardRecommendation] = {}
+    state_lock = threading.Lock()
+    warm_seeded = 0
+
+    def _warm_start_for(index: int) -> dict[str, ParameterSet]:
+        """The nearest finished run's values — empty while none has finished."""
+        with state_lock:
+            if not completed_by_index:
+                return {}
+            nearest = min(completed_by_index, key=lambda other: (abs(other - index), other))
+            return _fitted_values_by_template(completed_by_index[nearest])
+
+    def _analyse(index: int) -> _SingleRunAnalysisOutcome:
+        nonlocal warm_seeded
+        warm_start = _warm_start_for(index)
+        if warm_start:
+            with state_lock:
+                warm_seeded += 1
+        _progress_log(
+            progress_callback,
+            f"Single-fit analysis {datasets[index].run_label}: screening candidate families.",
+        )
+        recommendation = build_fit_wizard_recommendation(
+            datasets[index],
+            current_model,
+            metric=metric,
+            scope=scope,
+            user_frequencies_mhz=user_frequencies_mhz,
+            cancel_callback=cancel_callback,
+            max_workers=(_phase_one_analysis_workers(concurrency) if concurrency > 1 else None),
+            warm_start_by_template=warm_start,
+        )
+        with state_lock:
+            completed_by_index[index] = recommendation
+        return _SingleRunAnalysisOutcome(dataset=datasets[index], recommendation=recommendation)
+
+    if concurrency <= 1:
+        for index in range(len(datasets)):
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            on_completed(_analyse(index))
+        return warm_seeded
+
+    executor = ThreadPoolExecutor(max_workers=concurrency)
+    try:
+        pending = set()
+        for index in range(len(datasets)):
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            pending.add(executor.submit(_analyse, index))
+        while pending:
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            done, pending = wait(
+                pending,
+                timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                on_completed(future.result())
+    except BaseException:
+        # Cancel, a worker failure or a Ctrl-C: drop the queued analyses and
+        # return control now. The analyses already running poll the same
+        # cancel_callback and raise out of their own pools.
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
+    return warm_seeded
+
+
 @dataclass(frozen=True)
 class GlobalFitWizardScreeningTable:
     """Phase 1's product: a series alphabet and a complete score table for it.
@@ -1499,6 +1776,8 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     metric: SelectionMetric = SelectionMetric.AICC,
     instrumentation: dict[str, object] | None = None,
     stage_callback: Callable[[WizardStageProgress], None] | None = None,
+    phase1_concurrency: int | None = None,
+    apply_alphabet_bound: bool = True,
 ) -> GlobalFitWizardScreeningTable:
     """Run phase 1 of the global fit wizard: per-run analysis, then completion.
 
@@ -1510,8 +1789,12 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
        damped-line scan, peak-seeded multiplet templates, null baselines and
        refinement. That is what finds the heavily damped pair describing only the
        low-temperature half of a series; a portfolio built from the *median*
-       fingerprint cannot. Runs are processed serially in this process because
-       each build opens its own worker pool, and pools must not nest. An existing
+       fingerprint cannot. A few runs are analysed at once
+       (:func:`_phase_one_concurrency`, overridable with ``phase1_concurrency``),
+       each with its worker count divided down so the host still sees one
+       machine's worth of fit workers, and each warm-started from the nearest
+       already-finished run along the sweep axis
+       (:func:`_run_single_run_analyses`). An existing
        recommendation is reused when it answers the same question — same scope,
        same user-declared frequencies, encoded by
        :func:`~asymmetry.core.fitting.fit_wizard.single_fit_build_signature` —
@@ -1519,15 +1802,18 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
        portfolio carries no signature and is never reused.
 
     2. **Completion.** The series alphabet is the union of what those runs
-       assessed (:func:`series_template_alphabet`), narrowed by the effort tier;
+       assessed (:func:`series_template_alphabet`), minus the candidates
+       :func:`alphabet_bound_dropped_keys` proves cannot win any segment
+       (``apply_alphabet_bound=False`` keeps them, which is what the benchmark
+       harness compares against), narrowed by the effort tier;
        the series search resolution is the smallest per-run rebin factor
        (:func:`series_rebin_factor`). Every (run, template) cell the run's own
        table does not already hold *at that factor* is fitted, warm-started and
        peak-seeded by :func:`_single_fit_completion_task`. The result is a
        rectangular table whose information criteria are mutually comparable.
 
-    ``cancel_callback`` is polled between runs in stage 1 and, in stage 2's
-    pooled path, *while draining* the submitted futures: a ``wait`` with a
+    ``cancel_callback`` is polled between submissions and while draining in both
+    stages: a ``wait`` with a
     ``_PHASE_ONE_CANCEL_POLL_SECONDS`` timeout re-checks it each iteration, so a
     cancel is honoured within one poll interval instead of one in-flight table's
     duration (a fit already running in a worker still cannot be interrupted). A
@@ -1585,6 +1871,12 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
             f"Running the single-run Fit Wizard on {len(missing_datasets)} dataset(s) "
             "to build the series candidate alphabet.",
         )
+    concurrency = (
+        _phase_one_concurrency(len(missing_datasets))
+        if phase1_concurrency is None
+        else max(1, min(int(phase1_concurrency), max(len(missing_datasets), 1)))
+    )
+    _set_metric(instrumentation, "phase1_concurrency", concurrency)
     with stage_timer(
         instrumentation,
         "screening.single_fit_tables",
@@ -1592,39 +1884,52 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         stage_callback=stage_callback,
         message=f"Analysing {len(missing_datasets)} dataset(s) with the single-run Fit Wizard.",
     ) as advance:
-        # Serial, deliberately: ``build_fit_wizard_recommendation`` opens its own
-        # spawn pool for the Stage-1/Stage-2 fan-outs, and a pool inside a pool
-        # oversubscribes the host while making the outer stage's progress
-        # invisible. One run at a time, each using the whole machine.
-        for dataset in missing_datasets:
-            if cancel_callback is not None and cancel_callback():
-                raise FitCancelledError("Global fit wizard analysis cancelled.")
-            _progress_log(
-                progress_callback,
-                f"Single-fit analysis {dataset.run_label}: screening candidate families.",
-            )
-            recommendation = build_fit_wizard_recommendation(
-                dataset,
-                current_model,
-                metric=metric,
-                scope=scope,
-                user_frequencies_mhz=user_frequencies_mhz,
-                cancel_callback=cancel_callback,
-            )
-            run_number = int(dataset.run_number)
-            source_by_run[run_number] = recommendation
+
+        def _record(outcome: _SingleRunAnalysisOutcome) -> None:
+            run_number = int(outcome.dataset.run_number)
+            source_by_run[run_number] = outcome.recommendation
             generated_run_numbers.append(run_number)
             message = (
-                f"Single-fit analysis {dataset.run_label}: done "
+                f"Single-fit analysis {outcome.dataset.run_label}: done "
                 f"({len(generated_run_numbers)}/{len(missing_datasets)})."
             )
             _progress_log(progress_callback, message)
             advance(len(generated_run_numbers), message)
 
+        warm_seeded = _run_single_run_analyses(
+            missing_datasets,
+            current_model=current_model,
+            metric=metric,
+            scope=scope,
+            user_frequencies_mhz=user_frequencies_mhz,
+            cancel_callback=cancel_callback,
+            concurrency=concurrency,
+            progress_callback=progress_callback,
+            on_completed=_record,
+        )
+    _set_metric(instrumentation, "phase1_warm_seeded", warm_seeded)
+
     _sync_single_fit_recommendation_store(existing_recommendations_by_run, source_by_run)
 
+    bound_dropped_keys = (
+        alphabet_bound_dropped_keys(source_by_run) if apply_alphabet_bound else frozenset()
+    )
+    ranked_alphabet = series_template_alphabet(source_by_run)
+    bounded_alphabet = tuple(
+        template for template in ranked_alphabet if template.key not in bound_dropped_keys
+    )
+    dropped_from_alphabet = tuple(
+        template.key for template in ranked_alphabet if template.key in bound_dropped_keys
+    )
+    _set_metric(instrumentation, "alphabet_bound_dropped", len(dropped_from_alphabet))
+    if dropped_from_alphabet:
+        _progress_log(
+            progress_callback,
+            f"Alphabet bound: dropping {len(dropped_from_alphabet)} candidate(s) beaten on "
+            "every run by one other template — " + ", ".join(dropped_from_alphabet) + ".",
+        )
     alphabet = _scope_filtered_templates(
-        series_template_alphabet(source_by_run),
+        bounded_alphabet,
         preview.ordered_datasets,
         scope,
     )
@@ -1911,7 +2216,6 @@ def build_global_fit_wizard_screening_recommendation(
             metric=metric,
             fit_engine=FitEngine(),
             progress_callback=progress_callback,
-        
             # The completed table already tried every cell with sibling warm
             # starts (phase 1); the serial repair pass would only repeat that.
             repair_partial_incomplete=False,
@@ -2358,6 +2662,7 @@ def build_series_partition_path(
     axis_values = {
         int(dataset.run_number): _axis_value(dataset, axis_key) for dataset in ordered_datasets
     }
+
     def family_of(template_key: str) -> str:
         return family_by_template.get(template_key, template_key)
 
@@ -9985,7 +10290,6 @@ def _optimise_partition_phases(
     )
 
     searched_by_window: dict[tuple[int, int], tuple[GlobalCandidateAssessment, ...]] = {}
-    worker_count = _template_worker_count(len(templates))
     # Each phase's search opens and closes its own pool: a phase that trips its
     # budget then terminates its own workers, instead of leaving them running
     # on a shared pool where the next phase's tasks would queue behind them

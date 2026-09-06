@@ -565,6 +565,34 @@ the feature branch. Phase F runs the full validation once.
   from a phase seeds the Batch tab's own global fit on the native record. The
   series-wide (non-partitioned) search keeps its full-resolution refit, now
   warm-started from the winner.
+- 2026-09-07 (Phase A2, phase-1 throughput): **stage 1 runs a few per-run
+  analyses at once, warm-started along the sweep axis.** §Phase A had them
+  serial "because each analysis uses the whole machine"; measured, it does not —
+  peak detection, the damped-line scan, the fingerprint, the residual pass and
+  the tier gating are serial with the analysis's own pool idle, ~15 s of the
+  ~15 s per run on the real 29-run series. `_phase_one_concurrency` runs
+  `min(4, cores // 2)` analyses on a parent thread pool with each call's
+  `max_workers` divided down (`_phase_one_analysis_workers`), so the host still
+  sees one machine's worth of fit workers and no pool nests; `concurrency == 1`
+  keeps the old serial path (it is what a two-core CI runner gets). Each
+  analysis is handed the nearest *finished* neighbour's fitted values per
+  template as an extra first variant (`warm_start_by_template` on
+  `build_fit_wizard_recommendation`, prepended by `_assess_candidate_template`
+  exactly as the completion path already did), never a replacement, so the
+  answer can only improve; the completion order therefore decides which
+  neighbour seeds which run, and phase 1 is no longer bit-reproducible.
+  Cold completion cells drop to a two-rung ladder. The alphabet also loses,
+  before scoring, every candidate that some *one* other candidate beats on
+  every run (`alphabet_bound_dropped_keys`): χ²_t,r ≥ IC_u,r on every run makes
+  u's all-local cost an upper bound on the best structure of any segment and
+  Σχ²_t a lower bound on t's, so t can never win. Comparing against each run's
+  *best* IC instead would not be exact — the argmin may move from run to run
+  while a segment is scored under one template (IC_u1 = (10, 100),
+  IC_u2 = (100, 10), χ²_t = (11, 11): t clears both per-run minima and still
+  wins the pair at 24 against 110). Measured on a synthetic 12-run,
+  8 000-point, three-family series: 115–139 s before, 73–82 s after; the bound
+  dropped nothing there (with three families no single candidate dominates
+  every run), so its value is on series where one model leads throughout.
 - 2026-09-07 (integration, private gate): **each phase's search owns its pool
   and a tripped budget terminates it.** A shared pool let a tripped phase's
   abandoned fits keep running, so every later phase's anchor tasks queued

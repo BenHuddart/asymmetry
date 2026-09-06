@@ -46,10 +46,10 @@ from asymmetry.core.fitting.fit_wizard import (
     _has_significant_damped_line,
     _initial_parameters_for_template,
     _parameter_variants,
+    _peaks_within_analysis_band,
     _persisted_curve_stride,
     _run_template_assessments,
     _stage2_variant_budget,
-    _peaks_within_analysis_band,
     analysis_rebin_factor,
     build_fit_wizard_recommendation,
     build_null_baseline_templates,
@@ -1028,6 +1028,57 @@ def test_tiered_flow_screens_all_families_and_reports() -> None:
     # Every family fitted at least its representative in Stage 1.
     assert len(stage1) >= len(report_keys)
     assert recommendation.recommended_key == "exp_constant"
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(300)
+def test_warm_start_by_template_is_an_extra_first_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A neighbour run's values are tried ahead of the seed ladder, not instead of it.
+
+    This is how a series analysis hands one run the answer found on the run
+    beside it (see the global wizard's phase 1): the ladder still runs, so the
+    extra start can only find a better minimum or leave the fit where it was.
+    """
+    rng = np.random.default_rng(23)
+    t = np.linspace(0.02, 10.0, 220)
+    y = 0.22 * np.exp(-0.8 * t) + 0.03 + rng.normal(0.0, 0.004, t.size)
+    dataset = _tiered_dataset(t, y, error=0.004)
+    neighbour_values = ParameterSet(
+        [
+            Parameter("A_1", value=0.22, min=0.0, max=1.0),
+            Parameter("Lambda", value=0.8, min=0.0, max=100.0),
+            Parameter("A_bg", value=0.03, min=-1.0, max=1.0),
+        ]
+    )
+    seen: dict[str, object] = {}
+    original = fit_wizard_module._run_template_assessments
+
+    def _capture(tasks, **kwargs):
+        for task in tasks:
+            if task.warm_start is not None:
+                seen[task.template.key] = task.warm_start
+        return original(tasks, **kwargs)
+
+    monkeypatch.setattr(fit_wizard_module, "_run_template_assessments", _capture)
+
+    recommendation = build_fit_wizard_recommendation(
+        dataset,
+        max_workers=1,
+        warm_start_by_template={"exp_constant": neighbour_values},
+    )
+
+    assert list(seen) == ["exp_constant"]
+    assert {parameter.name: parameter.value for parameter in seen["exp_constant"]} == {
+        "A_1": 0.22,
+        "Lambda": 0.8,
+        "A_bg": 0.03,
+    }
+    warmed = recommendation.assessment_for_key("exp_constant")
+    assert warmed is not None and warmed.fit_result.success
+    # The ladder still ran: every other candidate was fitted as usual.
+    assert len(recommendation.assessments) > 1
 
 
 def _strip_expensive_members(monkeypatch: pytest.MonkeyPatch) -> None:

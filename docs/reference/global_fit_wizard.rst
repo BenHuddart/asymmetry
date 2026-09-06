@@ -451,14 +451,26 @@ screen, peak analysis and damped-line scan
 performs on one spectrum. The series' candidate list is then the union of the
 templates those per-run analyses assessed, so a model that describes only part of
 a temperature series (a heavily damped pair below a transition, say) is
-considered for the whole series instead of being averaged away. Runs are analysed
-one at a time, because each analysis already uses the whole machine.
+considered for the whole series instead of being averaged away. A few runs are
+analysed side by side, in sweep-axis order, with the machine's cores divided
+between them: each analysis spends much of its time in stages that use one core
+(spectral detection, the pattern search, the tier gating), so overlapping them
+fills those gaps. Each analysis is also started from the fitted values of the
+nearest run that has already finished — an extra first attempt per candidate,
+ahead of the usual seed ladder rather than in place of it, so it can only
+improve a candidate's fit.
 
-Every run is then scored against every candidate at one common rebinning factor —
-the smallest any run's own analysis chose — so the information criteria of two
-runs, or of two candidates, may be summed and compared. The cells a run's own
-analysis already holds at that factor are kept; the rest are fitted, warm-started
-from that run's or a sibling run's values.
+A candidate no partition of the series could ever select is then dropped from
+the list before any scoring: one whose bare χ² on every run already exceeds some
+*one* other candidate's information criterion there cannot win a segment under
+any sharing, whatever the segment. A candidate a run's own analysis recommended,
+or scored comparable, is never dropped this way.
+
+Every remaining run is then scored against every candidate at one common
+rebinning factor — the smallest any run's own analysis chose — so the
+information criteria of two runs, or of two candidates, may be summed and
+compared. The cells a run's own analysis already holds at that factor are kept;
+the rest are fitted, warm-started from that run's or a sibling run's values.
 
 On a long series this legitimately runs for **many minutes** before it returns;
 each completed analysis and each completed score row is reported through

@@ -110,8 +110,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   candidate at one **series search resolution** (the smallest rebinning factor
   any run's own analysis chose), warm-started from that run's or a sibling run's
   fitted values, so the information criteria on the series table are mutually
-  comparable. `instrumentation` records `alphabet_size`, `series_rebin_factor`
-  and `completion_fits`. The effort tier now narrows that alphabet rather than a
+  comparable. That first pass no longer takes the runs one at a time: a few
+  analyses run side by side with the host's cores divided between them (each
+  one leaves most of a machine idle through its serial detection, pattern and
+  gating stages), every analysis after the first starts from the fitted values
+  of the nearest run that has already finished, and a candidate whose bare χ²
+  on every run already loses to one other candidate's information criterion is
+  dropped before the scoring pass — it cannot win a segment under any sharing,
+  so the bound costs nothing in answers. A cell no run has fitted is completed
+  on a two-rung seed ladder instead of five, since the coupled search refits
+  the winner anyway. Measured on a synthetic twelve-run series of 8 000-point
+  records with three families present, phase 1 went from ~115–139 s to ~73–82 s
+  on an eight-core laptop. `instrumentation` records `alphabet_size`,
+  `series_rebin_factor`, `completion_fits`, `phase1_concurrency`,
+  `phase1_warm_seeded` and `alphabet_bound_dropped`. The effort tier now
+  narrows that alphabet rather than a
   guessed portfolio; multiplet and pattern-matched candidates are never trimmed.
   The coupled optimisation that follows is now **separable** by default too:
   every effort tier runs the same engine, which takes the all-local assignment
