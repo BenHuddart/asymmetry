@@ -754,6 +754,14 @@ the feature branch. Phase F runs the full validation once.
   search. The same applies to the phase-1 completion cells (1.1 MB each,
   ~30 MB per run recommendation): only a run's recommended and comparable
   cells keep curves.
+  Measured after C5 on the real series: the parent process stays at ~430 MB
+  peak (it had reached 11 GB), the same verdict, and no wall-clock gain
+  (optimise 1587 s, ~46 s per node) — the host was running a media-analysis
+  daemon at 1.5 cores and a cloud file provider at 0.75, with swap at 8.3 of
+  9.2 GB before the wizard started, and each worker still unpickled ~140 MB
+  of raw histograms per task (see C6). Gate timings on this laptop are
+  environment-bound; the per-node cost on a quiet core is 8–53 s depending on
+  which parameter is shared.
 - 2026-09-06 (Phase C6, memory): **workers receive fit records, not raw
   histograms.** With the search nodes slimmed, the gate's parent still sat at
   a 6 GB footprint and the four flip workers at ~550 MB each on a host whose
