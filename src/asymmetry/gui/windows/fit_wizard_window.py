@@ -647,6 +647,11 @@ class FitWizardWindow(WizardWindowBase):
         self._recommendation = None
         self._selected_key = None
         self._invalidate_pending_curves()
+        # The card drops the recommendation with the window, so a redraw it
+        # makes afterwards (the residuals toggle, a resize) has no row to ask
+        # curves for: ``_on_card_curves_required`` is reached only while both
+        # hold the same recommendation, by construction rather than by a guard.
+        self._answer_card.set_recommendation(None)
 
     def _on_analysis_failed(self, message: str) -> None:
         # Keep the "Fit wizard analysis failed:" prefix (GlobalFitWizardWindow
@@ -654,6 +659,7 @@ class FitWizardWindow(WizardWindowBase):
         # metric combo cannot resurrect a stale success.
         self._recommendation = None
         self._invalidate_pending_curves()
+        self._answer_card.set_recommendation(None)
         # First line only in the header status — a multi-line exception message
         # would balloon the header band; the full text goes in the tooltip.
         failure_text = str(message).strip() or "unknown error"

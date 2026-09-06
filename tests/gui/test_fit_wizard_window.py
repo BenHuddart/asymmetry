@@ -1848,3 +1848,42 @@ def test_a_curve_result_for_a_replaced_recommendation_is_dropped(
 
     wait_for(lambda: window._tasks.active_count == 0, qapp)
     assert window._recommendation is replacement
+
+
+def test_dropping_the_recommendation_also_drops_it_from_the_card(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A card redraw after the window let go of its recommendation asks for nothing.
+
+    ``_on_card_curves_required`` captures the window's recommendation and
+    record for a worker, so it must only ever fire while the card and the
+    window hold the same recommendation. The window makes that true by
+    construction: when it drops its result, the card drops it too.
+    """
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _recommendation_with_bare_alternative(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+    builds: list[str] = []
+    monkeypatch.setattr(
+        wizard_window_module,
+        "assessment_with_curves",
+        lambda recommendation, key, data: builds.append(key),
+    )
+
+    window._reset_result_state()
+
+    assert window._answer_card.selected_assessment() is None
+    window._answer_card._residuals_toggle.setChecked(True)
+    window._answer_card.set_selected_key("gaussian_constant")
+    assert builds == []
+    assert window._requested_curve_keys == set()
