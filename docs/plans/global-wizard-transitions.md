@@ -780,3 +780,21 @@ the feature branch. Phase F runs the full validation once.
   halved. The batch-fit parallel path (`series.py`) still ships full records
   and needs the same treatment for the time-domain cost only (the
   count-domain cost reads the histograms); flagged as a follow-up task.
+- 2026-09-06 (final gate on the real series, all of A3–C6 landed): phase 1
+  296 s, screening 6 s, per-phase optimisation 1164 s — 1515 s in all, from
+  the 44 minutes of the first complete run, with the parent process peaking
+  at 967 MB. The tier-3 recommendation is **not stable between runs**: the
+  middle phase's answer flips between a triple exponential with two shared
+  amplitudes and a stretched exponential with a shared background (5 AICc
+  apart), and under the partition's BIC convention that flip decides whether
+  the two-break gain over the surrogate k=1 row is admissible — one run
+  recommended three breaks (the screening elbow, by fallback), the next two
+  (17.25 K and 22.5 K, dropping 27.5 K because a damped-cosine-plus-
+  relaxation template spans the two highest phases with per-run parameters
+  and the BIC penalty for splitting it exceeds the χ² gain of ~104). The
+  physics says the 27.5 K transition is the real one. Two decisions for the
+  owner: (a) partition totals on AICc (the per-cell metric) rather than BIC,
+  under which the split is supported by ~70; (b) whether a template whose
+  oscillation amplitude vanishes in a run should count as the relaxation
+  family there. Until then the acceptance bar (two breaks at ~16/17 K and
+  ~28/29 K, under ten minutes cold) is not met and no PR is opened.
