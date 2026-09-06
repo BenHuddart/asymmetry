@@ -6,22 +6,30 @@ import pytest
 
 pytestmark = [pytest.mark.integration]
 
+import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import replace
+from functools import lru_cache
 
 import numpy as np
 import pytest
 
+import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 from asymmetry.core import fitting as fitting_api
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
+    CandidateAssessment,
     CandidateTemplate,
+    FitWizardRecommendation,
     SelectionMetric,
+    SpectrumFingerprint,
     build_fit_wizard_recommendation_for_templates,
+    fingerprint_spectrum,
 )
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
@@ -47,8 +55,10 @@ from asymmetry.core.fitting.global_fit_wizard import (
     build_or_complete_single_fit_wizard_recommendations_for_global_portfolio,
     merge_global_fit_wizard_recommendations,
     rerank_global_fit_wizard_recommendation,
+    single_fit_table_covers_portfolio,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.fitting.wizard_scope import WizardScope, WizardScopePreset
 
 
 def _dataset_for(
@@ -280,7 +290,9 @@ def test_global_fit_wizard_records_consolidated_search_instrumentation(
     assert isinstance(instrumentation.get("minuit_edm"), list)
 
 
-def test_global_fit_wizard_screening_recommendation_stays_prescreen_only() -> None:
+def test_global_fit_wizard_screening_recommendation_stays_prescreen_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     datasets = [
         _dataset_for(
@@ -292,6 +304,8 @@ def test_global_fit_wizard_screening_recommendation_stays_prescreen_only() -> No
         )
         for idx in range(1, 4)
     ]
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+    _stub_single_run_wizard(monkeypatch, (template,))
 
     recommendation = build_global_fit_wizard_screening_recommendation(datasets, current_model=model)
 
@@ -301,9 +315,60 @@ def test_global_fit_wizard_screening_recommendation_stays_prescreen_only() -> No
     assert "have not yet been optimized" in recommendation.summary
 
 
-def test_build_or_complete_single_fit_tables_reuses_matching_existing_results(
+def _stub_single_run_wizard(
+    monkeypatch: pytest.MonkeyPatch,
+    templates: tuple[CandidateTemplate, ...],
+    *,
+    calls: list[int] | None = None,
+) -> None:
+    """Make phase 1's per-run single-run wizard cheap and deterministic.
+
+    Phase 1 now runs the *full* single-run Fit Wizard per dataset — minutes of
+    fitting on a real series, seconds even on a synthetic one. Every test below
+    is about what phase 1 does with those analyses, not about the analyses
+    themselves, so the per-run build is replaced by an explicit-template table
+    stamped with the signature a real one would carry.
+    """
+    from asymmetry.core.fitting.fit_wizard import single_fit_build_signature
+
+    def _fake_build(dataset, current_model=None, **kwargs):
+        if calls is not None:
+            calls.append(int(dataset.run_number))
+        recommendation = build_fit_wizard_recommendation_for_templates(
+            dataset,
+            templates,
+            metric=kwargs.get("metric", SelectionMetric.AICC),
+        )
+        return replace(
+            recommendation,
+            build_signature=single_fit_build_signature(
+                kwargs.get("scope"), kwargs.get("user_frequencies_mhz")
+            ),
+        )
+
+    monkeypatch.setattr(global_fit_wizard_module, "build_fit_wizard_recommendation", _fake_build)
+
+
+def _force_serial_phase_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make phase 1 take its no-pool path: analyses and cells run in-parent.
+
+    Phase 1 opens one spawn pool for both of its stages. A test about *what* it
+    computes does not want real worker processes in it, so this is the same
+    fallback a spawn-unsafe environment gets.
+    """
+    monkeypatch.setattr(global_fit_wizard_module, "_try_open_process_pool", lambda **_kwargs: None)
+
+
+def test_build_or_complete_single_fit_tables_reuses_a_matching_single_run_analysis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Reuse is keyed on the question asked, not on the template list returned.
+
+    The old gate demanded that a cached recommendation's templates equal the
+    series portfolio's exactly, which no genuine single-run analysis ever does —
+    so every run was re-analysed. The rule is now the scope and user frequencies
+    the cached analysis was built for.
+    """
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     datasets = [
         _dataset_for(
@@ -315,46 +380,459 @@ def test_build_or_complete_single_fit_tables_reuses_matching_existing_results(
         )
         for idx in range(1, 4)
     ]
-    portfolio = build_global_fit_wizard_candidate_portfolio(datasets, current_model=model)
-    existing_run = int(datasets[0].run_number)
-    existing_recommendation = build_fit_wizard_recommendation_for_templates(
-        datasets[0],
-        portfolio.templates,
-    )
-
-    original = global_fit_wizard_module.build_fit_wizard_recommendation_for_templates
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
     generated_calls: list[int] = []
+    _stub_single_run_wizard(monkeypatch, (template,), calls=generated_calls)
+    _force_serial_phase_one(monkeypatch)
 
-    def _wrapped(dataset, templates, *, metric=SelectionMetric.AICC):
-        generated_calls.append(int(dataset.run_number))
-        return original(dataset, templates, metric=metric)
-
-    monkeypatch.setattr(
-        global_fit_wizard_module,
-        "build_fit_wizard_recommendation_for_templates",
-        _wrapped,
+    existing_run = int(datasets[0].run_number)
+    existing_recommendation = replace(
+        build_fit_wizard_recommendation_for_templates(datasets[0], (template,)),
+        build_signature=fit_wizard_module.single_fit_build_signature(None, None),
     )
-    monkeypatch.setattr(
-        global_fit_wizard_module, "_single_fit_table_worker_count", lambda _count: 1
+    store = {existing_run: existing_recommendation}
+
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+        existing_recommendations_by_run=store,
     )
 
-    returned_portfolio, recommendations_by_run, generated_runs = (
-        build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
-            datasets,
-            current_model=model,
-            existing_recommendations_by_run={existing_run: existing_recommendation},
+    assert table.portfolio.dataset_order == tuple(int(d.run_number) for d in datasets)
+    assert table.single_fit_recommendations_by_run[existing_run] is existing_recommendation
+    assert generated_calls == [int(datasets[1].run_number), int(datasets[2].run_number)]
+    assert set(table.generated_run_numbers) == set(generated_calls)
+    # The caller's store keeps the runs' own analyses, never the derived table.
+    assert store[existing_run] is existing_recommendation
+    assert set(store) == {int(dataset.run_number) for dataset in datasets}
+    # ...and every run is scored against every alphabet template.
+    for dataset in datasets:
+        completed = table.recommendations_by_run[int(dataset.run_number)]
+        assert [t.key for t in completed.templates] == [t.key for t in table.portfolio.templates]
+
+
+def test_build_or_complete_single_fit_tables_does_not_reuse_another_scopes_analysis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = [
+        _dataset_for(
+            run_number=286 + idx,
+            field=40.0 * idx,
+            temperature=8.0,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.2 + (0.1 * idx), "A_bg": 0.01},
         )
+        for idx in range(1, 3)
+    ]
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+    generated_calls: list[int] = []
+    _stub_single_run_wizard(monkeypatch, (template,), calls=generated_calls)
+    _force_serial_phase_one(monkeypatch)
+
+    other_scope = WizardScope(preset=WizardScopePreset.FLUORIDE_FMUF)
+    stale_run = int(datasets[0].run_number)
+    stale = replace(
+        build_fit_wizard_recommendation_for_templates(datasets[0], (template,)),
+        build_signature=fit_wizard_module.single_fit_build_signature(other_scope, None),
     )
 
-    assert returned_portfolio.dataset_order == portfolio.dataset_order
-    assert recommendations_by_run[existing_run] is existing_recommendation
-    assert set(generated_calls) == {int(datasets[1].run_number), int(datasets[2].run_number)}
-    assert set(generated_runs) == set(generated_calls)
+    build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+        existing_recommendations_by_run={stale_run: stale},
+    )
+
+    assert stale_run in generated_calls
+
+
+#: Muon lifetime (us), shaping the invented error growth of the records below.
+_TAU_MU = 2.197
+
+
+def _damped_series_record(
+    run_number: int,
+    temperature: float,
+    lines: tuple[tuple[float, float, float], ...],
+    *,
+    n_points: int = 600,
+    t_max: float = 4.0,
+) -> MuonDataset:
+    """A zero-field record: optional damped cosines on a slowly relaxing tail.
+
+    Every value is invented. The lines are heavily damped — dead inside the
+    first few hundred nanoseconds — which is the regime only the single-run
+    wizard's matched-apodisation scan finds.
+    """
+    dt = t_max / n_points
+    time = np.arange(dt, t_max + 0.5 * dt, dt)[:n_points]
+    sigma = np.minimum(0.9 * np.exp(time / (2.0 * _TAU_MU)), 100.0)
+    asymmetry = 6.0 * np.exp(-0.25 * time) + 0.5
+    for amplitude, frequency, rate in lines:
+        asymmetry = asymmetry + amplitude * np.exp(-rate * time) * np.cos(
+            2.0 * np.pi * frequency * time
+        )
+    rng = np.random.default_rng(20260906 + run_number)
+    return MuonDataset(
+        time=time,
+        asymmetry=asymmetry + rng.normal(0.0, sigma),
+        error=sigma,
+        metadata={
+            "run_number": run_number,
+            "temperature": temperature,
+            "field": 0.0,
+            "field_direction": "ZF",
+            "run_label": str(run_number),
+        },
+    )
+
+
+def test_series_alphabet_holds_a_multiplet_only_a_minority_of_runs_show() -> None:
+    """Two of five runs carry a damped pair; the series must still consider it.
+
+    This is the defect Phase A exists for. The old portfolio was built from the
+    *median* fingerprint plus a half-of-the-runs vote, so a template describing
+    only the low-temperature phase of a series never entered it — and the global
+    wizard could not recommend the model that fits half the data. Going through
+    the single-run wizard per run and taking the union puts it first.
+    """
+    two_lines = ((24.0, 60.0, 10.0), (16.0, 30.0, 6.0))
+    datasets = [
+        _damped_series_record(700, 2.0, two_lines),
+        _damped_series_record(701, 4.0, two_lines),
+        _damped_series_record(702, 20.0, ()),
+        _damped_series_record(703, 24.0, ()),
+        _damped_series_record(704, 28.0, ()),
+    ]
+    instrumentation: dict[str, object] = {}
+
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        scope=WizardScope(preset=WizardScopePreset.ZF_STATIC_MAGNETISM),
+        instrumentation=instrumentation,
+    )
+
+    alphabet_keys = [template.key for template in table.portfolio.templates]
+    multiplets = [key for key in alphabet_keys if key.startswith("oscillatory2_")]
+    assert multiplets, alphabet_keys
+    # ...and the runs that carry the pair chose it.
+    chosen = {
+        run_number: recommendation.recommended_key
+        for run_number, recommendation in table.single_fit_recommendations_by_run.items()
+    }
+    assert chosen[700] in multiplets
+    assert chosen[701] in multiplets
+    # A multiplet template is evidence, so it is protected from tier trimming.
+    assert set(multiplets) <= set(table.portfolio.pattern_template_keys)
+
+    # Every (run, template) cell exists, at the one series resolution.
+    for dataset in datasets:
+        completed = table.recommendations_by_run[int(dataset.run_number)]
+        assert completed.rebin_factor == table.series_rebin_factor
+        for template in table.portfolio.templates:
+            assert completed.assessment_for_key(template.key) is not None, (
+                dataset.run_number,
+                template.key,
+            )
+
+    assert instrumentation["alphabet_size"] == len(table.portfolio.templates)
+    assert instrumentation["series_rebin_factor"] == table.series_rebin_factor
+    assert int(instrumentation["completion_fits"]) >= 0
+
+
+def test_series_rebin_factor_is_the_smallest_per_run_factor() -> None:
+    """One resolution for the series, and it is the one every run's bandwidth allows."""
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = [
+        _dataset_for(
+            run_number=810 + idx,
+            field=0.0,
+            temperature=5.0 + idx,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.3, "A_bg": 0.01},
+        )
+        for idx in range(3)
+    ]
+    template = CandidateTemplate(
+        key="exp_constant", title="e", category="General", rationale="t", model=model
+    )
+    factors = (4, 2, 7)
+    recommendations = {
+        int(dataset.run_number): replace(
+            build_fit_wizard_recommendation_for_templates(dataset, (template,)),
+            rebin_factor=factor,
+        )
+        for dataset, factor in zip(datasets, factors)
+    }
+
+    assert global_fit_wizard_module.series_rebin_factor(datasets, recommendations) == 2
+
+
+def test_completion_refits_a_cell_recorded_at_another_rebin_factor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run analysed at a coarser resolution is re-scored, not copied across.
+
+    Information criteria are only summable when every run refers to a record of
+    the same construction, so a cell carried over at the wrong factor would make
+    the whole series table incomparable.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = [
+        _dataset_for(
+            run_number=820 + idx,
+            field=0.0,
+            temperature=5.0 + idx,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.3 + 0.1 * idx, "A_bg": 0.01},
+        )
+        for idx in range(2)
+    ]
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+
+    coarse_run = int(datasets[0].run_number)
+
+    def _fake_build(dataset, current_model=None, **kwargs):
+        recommendation = build_fit_wizard_recommendation_for_templates(dataset, (template,))
+        return replace(
+            recommendation,
+            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            rebin_factor=3 if int(dataset.run_number) == coarse_run else 1,
+        )
+
+    monkeypatch.setattr(global_fit_wizard_module, "build_fit_wizard_recommendation", _fake_build)
+    _force_serial_phase_one(monkeypatch)
+
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(datasets)
+
+    assert table.series_rebin_factor == 1
+    coarse_source = table.single_fit_recommendations_by_run[coarse_run]
+    coarse_completed = table.recommendations_by_run[coarse_run]
+    assert coarse_completed.rebin_factor == 1
+    # Re-fitted, not carried over.
+    assert coarse_completed.assessment_for_key(
+        "exp_constant"
+    ) is not coarse_source.assessment_for_key("exp_constant")
+    # The run whose factor already matched keeps its own assessment object.
+    fresh_run = int(datasets[1].run_number)
+    assert table.recommendations_by_run[fresh_run].assessment_for_key(
+        "exp_constant"
+    ) is table.single_fit_recommendations_by_run[fresh_run].assessment_for_key("exp_constant")
+
+
+def test_completion_cells_seeded_from_the_run_itself_are_fitted_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cell's ladder depends on where its warm start came from.
+
+    Seeded from the run's *own* fit of the same template at another rebin factor
+    it is the same data and model at another binning — the same basin by
+    construction — so it is fitted once, from the answer (``variant_budget=0``).
+    Seeded from a *sibling* run it is a different record, so the base rung runs
+    alongside the warm attempt (``variant_budget=1``).
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    exp_constant = _template_named("exp_constant", model=model)
+    exp_only = _template_named("exp_only", model=CompositeModel(["Exponential"], operators=[]))
+    datasets = [
+        _dataset_for(
+            run_number=470 + idx,
+            field=0.0,
+            temperature=5.0 + idx,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.3 + 0.1 * idx, "A_bg": 0.01},
+        )
+        for idx in range(2)
+    ]
+    coarse, fine = datasets
+    source_by_run = {
+        # Analysed coarser than the series factor: both of its cells are re-fitted
+        # from its own values.
+        int(coarse.run_number): replace(
+            build_fit_wizard_recommendation_for_templates(coarse, (exp_constant, exp_only)),
+            rebin_factor=3,
+        ),
+        # Already at the series factor, but it never assessed ``exp_only``.
+        int(fine.run_number): build_fit_wizard_recommendation_for_templates(fine, (exp_constant,)),
+    }
+
+    recorded: list[object] = []
+    real_execute = fit_wizard_module._execute_assessment_task
+
+    def _record(task, cancel_callback=None):
+        recorded.append(task)
+        return real_execute(task, cancel_callback)
+
+    monkeypatch.setattr(global_fit_wizard_module, "_execute_assessment_task", _record)
+
+    completed, completion_fits = global_fit_wizard_module._complete_single_fit_table(
+        datasets,
+        (exp_constant, exp_only),
+        source_by_run,
+        rebin_factor=1,
+        metric=SelectionMetric.AICC,
+        executor=None,
+        progress_callback=None,
+        cancel_callback=None,
+        instrumentation=None,
+        stage_callback=None,
+    )
+
+    budgets = {
+        (int(task.dataset.run_number), task.template.key): task.variant_budget for task in recorded
+    }
+    assert budgets == {
+        # The coarse run's own values, at another binning: no ladder.
+        (int(coarse.run_number), "exp_constant"): 0,
+        (int(coarse.run_number), "exp_only"): 0,
+        # The fine run never fitted ``exp_only``: warm from a sibling, plus base.
+        (int(fine.run_number), "exp_only"): 1,
+    }
+    assert all(task.warm_start is not None for task in recorded)
+    # ``exp_constant`` on the fine run was already at this factor: kept, not fitted.
+    assert completion_fits == 3
+    assert set(completed) == {int(dataset.run_number) for dataset in datasets}
+    for recommendation in completed.values():
+        assert [t.key for t in recommendation.templates] == ["exp_constant", "exp_only"]
+
+
+def test_completion_cells_carry_curves_only_where_a_row_is_displayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A score-table cell is scored, not drawn.
+
+    Every cell of a completed row carries a dense fitted curve and its component
+    curves — megabytes each, and they cross a process boundary on the way back
+    from the pool — while the table itself is read for criteria and fitted
+    values. So the completion pass fits without them and the row's *displayed*
+    rows (its recommendation and any comparable alternative) get them back once
+    the rank is known.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    exp_constant = _template_named("exp_constant", model=model)
+    exp_only = _template_named("exp_only", model=CompositeModel(["Exponential"], operators=[]))
+    datasets = [
+        _dataset_for(
+            run_number=480 + idx,
+            field=0.0,
+            temperature=5.0 + idx,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.3 + 0.1 * idx, "A_bg": 0.01},
+        )
+        for idx in range(2)
+    ]
+    coarse, fine = datasets
+    source_by_run = {
+        # Analysed coarser than the series factor: both of its cells are refitted.
+        int(coarse.run_number): replace(
+            build_fit_wizard_recommendation_for_templates(coarse, (exp_constant, exp_only)),
+            rebin_factor=3,
+        ),
+        # At the series factor already, but it never assessed ``exp_only``.
+        int(fine.run_number): build_fit_wizard_recommendation_for_templates(fine, (exp_constant,)),
+    }
+
+    recorded: list[object] = []
+    real_execute = fit_wizard_module._execute_assessment_task
+
+    def _record(task, cancel_callback=None):
+        recorded.append(task)
+        return real_execute(task, cancel_callback)
+
+    monkeypatch.setattr(global_fit_wizard_module, "_execute_assessment_task", _record)
+
+    completed, _completion_fits = global_fit_wizard_module._complete_single_fit_table(
+        datasets,
+        (exp_constant, exp_only),
+        source_by_run,
+        rebin_factor=1,
+        metric=SelectionMetric.AICC,
+        executor=None,
+        progress_callback=None,
+        cancel_callback=None,
+        instrumentation=None,
+        stage_callback=None,
+    )
+
+    assert recorded
+    assert all(task.dense_curves is False for task in recorded)
+    fitted_cells = {(int(task.dataset.run_number), task.template.key) for task in recorded}
+
+    for run_number, recommendation in completed.items():
+        displayed = {
+            key for key in (recommendation.recommended_key, *recommendation.comparable_keys) if key
+        }
+        assert displayed
+        for assessment in recommendation.assessments:
+            key = assessment.template.key
+            has_curve = bool(np.size(assessment.fitted_curve))
+            if key in displayed:
+                assert has_curve
+                assert np.size(assessment.fitted_time) == np.size(assessment.fitted_curve)
+            elif (int(run_number), key) in fitted_cells:
+                assert not has_curve
+                assert assessment.component_curves == ()
+
+
+def test_completion_reports_one_progress_message_per_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per-run progress survives the move to per-cell tasks.
+
+    Rows no longer finish as whole tasks, so a run is reported when its *last*
+    cell lands — and at once for a run whose own table already covers the
+    alphabet at the series factor and so has no cell to fit at all.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = [
+        _dataset_for(
+            run_number=480 + idx,
+            field=0.0,
+            temperature=5.0 + idx,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.3 + 0.1 * idx, "A_bg": 0.01},
+        )
+        for idx in range(3)
+    ]
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+    # Two runs need a cell, one does not.
+    coarse_runs = {int(datasets[0].run_number), int(datasets[1].run_number)}
+
+    def _fake_build(dataset, current_model=None, **kwargs):
+        return replace(
+            build_fit_wizard_recommendation_for_templates(dataset, (template,)),
+            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            rebin_factor=3 if int(dataset.run_number) in coarse_runs else 1,
+        )
+
+    monkeypatch.setattr(global_fit_wizard_module, "build_fit_wizard_recommendation", _fake_build)
+    pool = _ImmediatePool()
+    monkeypatch.setattr(global_fit_wizard_module, "_try_open_process_pool", lambda **_kwargs: pool)
+    messages: list[str] = []
+    instrumentation: dict[str, object] = {}
+
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        progress_callback=messages.append,
+        instrumentation=instrumentation,
+    )
+
+    scored = [text for text in messages if text.startswith("Score table")]
+    assert len(scored) == len(datasets)
+    assert [text.rsplit("(", 1)[1] for text in scored] == ["1/3).", "2/3).", "3/3)."]
+    assert int(instrumentation["completion_fits"]) == len(coarse_runs)
+    assert set(table.recommendations_by_run) == {int(d.run_number) for d in datasets}
 
 
 def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The completion fits — one task per *cell* — go over phase 1's one pool.
+
+    The pool is opened once for the whole phase, at the host's width, and the
+    tasks that reach it are assessment tasks carrying one rebinned record and one
+    template, not the run's whole source recommendation.
+    """
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     datasets = [
         _dataset_for(
@@ -366,17 +844,26 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
         )
         for idx in range(1, 4)
     ]
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+    # One run analysed at a coarser factor, so the completion pass has real cells
+    # to fit rather than a table it can keep verbatim.
+    coarse_run = int(datasets[0].run_number)
 
-    created_with: dict[str, object] = {}
+    def _fake_build(dataset, current_model=None, **kwargs):
+        return replace(
+            build_fit_wizard_recommendation_for_templates(dataset, (template,)),
+            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            rebin_factor=3 if int(dataset.run_number) == coarse_run else 1,
+        )
+
+    monkeypatch.setattr(global_fit_wizard_module, "build_fit_wizard_recommendation", _fake_build)
+
+    created_with: list[int] = []
+    submitted: list[object] = []
 
     class _FakeExecutor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
         def submit(self, fn, *args):
+            submitted.append(args[0])
             # A real, already-resolved Future: the drain waits on these through
             # ``concurrent.futures.wait``, which reaches into Future internals.
             future: Future = Future()
@@ -387,24 +874,472 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
             return None
 
     def _fake_open(max_workers):
-        created_with["max_workers"] = max_workers
+        created_with.append(max_workers)
         return _FakeExecutor()
 
     # Pool creation is delegated to the shared spawn-safe helper; intercept it there.
     monkeypatch.setattr(global_fit_wizard_module, "open_spawn_pool", _fake_open)
-    # Pin the host width so this asserts the template cap, not the runner's cores.
+    # Pin the host width so this asserts the sizing rule, not the runner's cores.
     monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 8)
 
-    _portfolio, recommendations_by_run, generated_runs = (
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+    )
+
+    assert created_with == [8]
+    assert submitted
+    assert all(isinstance(task, fit_wizard_module._AssessmentTask) for task in submitted)
+    # Only the coarse run lacked a cell at the series factor.
+    assert {task.template.key for task in submitted} == {"exp_constant"}
+    assert len(submitted) == 1
+    assert set(table.recommendations_by_run) == {int(dataset.run_number) for dataset in datasets}
+    assert set(table.generated_run_numbers) == {int(dataset.run_number) for dataset in datasets}
+
+
+def _with_detector_histograms(dataset: MuonDataset, *, n_histograms: int = 15) -> MuonDataset:
+    """Back a synthetic record with a run whose raw counts dominate its size."""
+    dataset.run = Run(
+        run_number=int(dataset.run_number),
+        histograms=[
+            Histogram(counts=np.full(4096, 120.0), bin_width=0.016, t0_bin=10)
+            for _ in range(n_histograms)
+        ],
+        metadata={"title": "Synthetic", "temperature": 8.0, "field": 100.0},
+        grouping={"groups": {0: [0, 1], 1: [2, 3]}},
+    )
+    return dataset
+
+
+def test_completion_cells_carry_fit_records_not_raw_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completion cell ships arrays and provenance, never the run's histograms.
+
+    The completion pass is one task per cell, so on a real series it is hundreds
+    of payloads; each used to pickle the whole source run, whose detector counts
+    are two orders of magnitude larger than the rebinned arrays being fitted.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = [
+        _with_detector_histograms(
+            _dataset_for(
+                run_number=380 + idx,
+                field=20.0 * idx,
+                temperature=8.0,
+                model=model,
+                params={"A_1": 0.2, "Lambda": 0.2 + (0.05 * idx), "A_bg": 0.01},
+            )
+        )
+        for idx in range(1, 4)
+    ]
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+    coarse_run = int(datasets[0].run_number)
+
+    def _fake_build(dataset, current_model=None, **kwargs):
+        return replace(
+            build_fit_wizard_recommendation_for_templates(dataset, (template,)),
+            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            rebin_factor=3 if int(dataset.run_number) == coarse_run else 1,
+        )
+
+    monkeypatch.setattr(global_fit_wizard_module, "build_fit_wizard_recommendation", _fake_build)
+
+    submitted: list[object] = []
+
+    class _FakeExecutor:
+        def submit(self, fn, *args):
+            submitted.append(args[0])
+            future: Future = Future()
+            future.set_result(fn(*args))
+            return future
+
+        def shutdown(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(
+        global_fit_wizard_module, "open_spawn_pool", lambda workers: _FakeExecutor()
+    )
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 8)
+
+    build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+    )
+
+    assert submitted
+    for task in submitted:
+        assert task.dataset.run is not None
+        assert task.dataset.run.histograms == []
+        # The cell is still keyed and labelled by the run it came from.
+        assert task.dataset.run_number in {int(dataset.run_number) for dataset in datasets}
+        assert task.dataset.run_label == str(task.dataset.run_number)
+    # The records the caller handed in keep their counts.
+    assert all(len(dataset.run.histograms) == 15 for dataset in datasets)
+
+
+class _Phase1Recorder:
+    """What stage 1 asked of the single-run wizard, and when it asked it."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.started: list[int] = []
+        self.finished: list[int] = []
+        self.executors: list[object] = []
+        self.warm_starts: dict[int, dict[str, ParameterSet]] = {}
+
+
+def _install_recording_single_run_wizard(
+    monkeypatch: pytest.MonkeyPatch,
+    datasets: list[MuonDataset],
+    template: CandidateTemplate,
+    recorder: _Phase1Recorder,
+    *,
+    delays: dict[int, float],
+    on_start: Callable[[_Phase1Recorder], None] | None = None,
+) -> dict[int, FitWizardRecommendation]:
+    """Replace the per-run analysis with a timed stand-in of known duration.
+
+    Every run's recommendation is fitted once up front and simply handed back
+    after the run's ``delays`` sleep, so the stage's timing is the sleep and
+    nothing else — which is what lets a test assert *completion* order.
+    """
+    from asymmetry.core.fitting.fit_wizard import single_fit_build_signature
+
+    prepared = {
+        int(dataset.run_number): replace(
+            build_fit_wizard_recommendation_for_templates(dataset, (template,)),
+            build_signature=single_fit_build_signature(None, None),
+        )
+        for dataset in datasets
+    }
+
+    def _fake_build(dataset, current_model=None, **kwargs):
+        run_number = int(dataset.run_number)
+        with recorder.lock:
+            recorder.started.append(run_number)
+            recorder.in_flight += 1
+            recorder.max_in_flight = max(recorder.max_in_flight, recorder.in_flight)
+            recorder.executors.append(kwargs.get("executor"))
+            recorder.warm_starts[run_number] = dict(kwargs.get("warm_start_by_template") or {})
+        if on_start is not None:
+            on_start(recorder)
+        time.sleep(delays[run_number])
+        with recorder.lock:
+            recorder.in_flight -= 1
+            recorder.finished.append(run_number)
+        return prepared[run_number]
+
+    monkeypatch.setattr(global_fit_wizard_module, "build_fit_wizard_recommendation", _fake_build)
+    return prepared
+
+
+def _phase1_datasets(model: CompositeModel, count: int, *, first_run: int) -> list[MuonDataset]:
+    return [
+        _dataset_for(
+            run_number=first_run + idx,
+            field=0.0,
+            temperature=5.0 + idx,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.2 + 0.05 * idx, "A_bg": 0.01},
+        )
+        for idx in range(count)
+    ]
+
+
+def test_phase_one_analyses_several_runs_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stage 1 overlaps per-run analyses and reports them as they finish.
+
+    Each analysis leaves most of a machine idle through its serial stages
+    (detection, pattern search, tier gating), so a few run side by side — and
+    they are handed phase 1's *one* pool rather than a private slice each, so the
+    workers go to whichever analysis has fits to run. Progress stays per
+    completed run.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = _phase1_datasets(model, 4, first_run=900)
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+    recorder = _Phase1Recorder()
+    # The first-submitted run is the slowest, so completion order is not
+    # submission order; the gaps are wide against the drain's poll interval.
+    delays = {900: 0.6, 901: 0.4, 902: 0.2, 903: 0.3}
+    _install_recording_single_run_wizard(monkeypatch, datasets, template, recorder, delays=delays)
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 8)
+    monkeypatch.setattr(global_fit_wizard_module, "_PHASE_ONE_CANCEL_POLL_SECONDS", 0.01)
+    pool = _ImmediatePool()
+    monkeypatch.setattr(global_fit_wizard_module, "_try_open_process_pool", lambda **_kwargs: pool)
+    progress: list[str] = []
+    instrumentation: dict[str, object] = {}
+
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+        phase1_concurrency=3,
+        progress_callback=progress.append,
+        instrumentation=instrumentation,
+    )
+
+    assert recorder.max_in_flight > 1
+    # One pool for the whole phase: every analysis got that same object, and it
+    # is shut down once, normally, at the end.
+    assert set(recorder.executors) == {pool}
+    assert pool.shutdown_calls == [{"wait": True, "cancel_futures": False}]
+    assert instrumentation["phase1_concurrency"] == 3
+    # Every run but the first-started gets a finished neighbour's values.
+    assert 1 <= int(instrumentation["phase1_warm_seeded"]) <= 3
+    # Reported per completed run, in completion order.
+    assert recorder.finished == [902, 901, 903, 900]
+    assert table.generated_run_numbers == tuple(recorder.finished)
+    reported = [
+        message.split()[2].rstrip(":")
+        for message in progress
+        if message.startswith("Single-fit analysis") and ": done" in message
+    ]
+    assert reported == [str(run_number) for run_number in recorder.finished]
+
+
+def test_phase_one_cancel_during_stage_one_raises_promptly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel while the per-run analyses are running comes back at once."""
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = _phase1_datasets(model, 6, first_run=910)
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+    recorder = _Phase1Recorder()
+    cancelled = threading.Event()
+    _install_recording_single_run_wizard(
+        monkeypatch,
+        datasets,
+        template,
+        recorder,
+        delays={int(dataset.run_number): 0.2 for dataset in datasets},
+        on_start=lambda _recorder: cancelled.set(),
+    )
+    monkeypatch.setattr(global_fit_wizard_module, "_PHASE_ONE_CANCEL_POLL_SECONDS", 0.01)
+
+    started_at = time.monotonic()
+    with pytest.raises(FitCancelledError):
         build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
             datasets,
             current_model=model,
+            phase1_concurrency=2,
+            cancel_callback=cancelled.is_set,
+        )
+
+    assert time.monotonic() - started_at < 5.0
+    # The queued analyses were dropped rather than run to completion.
+    assert len(recorder.started) < len(datasets)
+
+
+def test_phase_one_warm_seeds_each_run_from_the_nearest_finished_neighbour(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run's analysis starts from the values of the run beside it on the axis.
+
+    Serial here so "nearest finished neighbour" is exactly the previous run and
+    the assertion can name the values; with concurrency the same rule picks
+    whichever neighbour has finished.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = _phase1_datasets(model, 4, first_run=920)
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+    recorder = _Phase1Recorder()
+    prepared = _install_recording_single_run_wizard(
+        monkeypatch,
+        datasets,
+        template,
+        recorder,
+        delays={int(dataset.run_number): 0.0 for dataset in datasets},
+    )
+    _force_serial_phase_one(monkeypatch)
+    instrumentation: dict[str, object] = {}
+
+    build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+        phase1_concurrency=1,
+        instrumentation=instrumentation,
+    )
+
+    order = [int(dataset.run_number) for dataset in datasets]
+    assert recorder.started == order
+    assert recorder.warm_starts[order[0]] == {}
+    for previous, current in zip(order, order[1:]):
+        neighbour = {
+            assessment.template.key: {
+                parameter.name: parameter.value for parameter in assessment.fit_result.parameters
+            }
+            for assessment in prepared[previous].assessments
+            if assessment.is_successful
+        }
+        seeded = {
+            key: {parameter.name: parameter.value for parameter in parameters}
+            for key, parameters in recorder.warm_starts[current].items()
+        }
+        assert seeded == neighbour
+        assert seeded
+    assert int(instrumentation["phase1_warm_seeded"]) == len(datasets) - 1
+
+
+def test_phase_one_concurrency_scales_with_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """How many analyses overlap: half the cores, capped, never more than tasks.
+
+    The analyses now share phase 1's one pool rather than each carving out a
+    private slice of it, so this width is about how many runs are in flight in
+    the parent, not about keeping a product of worker counts off the host. A
+    two-core host still gets the serial path.
+    """
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 8)
+    assert global_fit_wizard_module._phase_one_concurrency(12) == 4
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 2)
+    assert global_fit_wizard_module._phase_one_concurrency(12) == 1
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 16)
+    assert global_fit_wizard_module._phase_one_concurrency(3) == 3
+    assert global_fit_wizard_module._phase_one_concurrency(0) == 1
+
+
+def _template_named(key: str, *, model: CompositeModel | None = None) -> CandidateTemplate:
+    return CandidateTemplate(
+        key=key,
+        title=key,
+        category="General",
+        rationale="test",
+        model=model if model is not None else CompositeModel(["Exponential"], operators=[]),
+    )
+
+
+@lru_cache(maxsize=1)
+def _synthetic_fingerprint() -> SpectrumFingerprint:
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    return fingerprint_spectrum(
+        _dataset_for(
+            run_number=1,
+            field=0.0,
+            temperature=5.0,
+            model=model,
+            params={"A_1": 0.2, "Lambda": 0.3, "A_bg": 0.01},
         )
     )
 
-    assert created_with["max_workers"] == 3
-    assert set(recommendations_by_run) == {int(dataset.run_number) for dataset in datasets}
-    assert set(generated_runs) == {int(dataset.run_number) for dataset in datasets}
+
+def _scored_assessment(
+    template: CandidateTemplate, *, chi_squared: float, criterion: float
+) -> CandidateAssessment:
+    return CandidateAssessment(
+        template=template,
+        fit_result=FitResult(
+            success=True,
+            chi_squared=chi_squared,
+            reduced_chi_squared=chi_squared / 10.0,
+            parameters=ParameterSet([Parameter("A_1", value=0.2)]),
+            message="ok",
+        ),
+        aic=criterion,
+        aicc=criterion,
+        bic=criterion,
+        selected_score=criterion,
+        residual_rms=0.001,
+        runs_z_score=0.1,
+        max_abs_autocorrelation=0.1,
+        residual_fft_peak_snr=1.0,
+        residual_gate_passed=True,
+        residual_gate_reasons=(),
+        bound_hits=(),
+        fitted_time=np.array([0.0, 1.0]),
+        fitted_curve=np.array([0.2, 0.1]),
+        component_curves=(),
+    )
+
+
+def _scored_recommendation(
+    scores: dict[CandidateTemplate, tuple[float, float]],
+    *,
+    recommended_key: str | None = None,
+    comparable_keys: tuple[str, ...] = (),
+) -> FitWizardRecommendation:
+    templates = tuple(scores)
+    return FitWizardRecommendation(
+        fingerprint=_synthetic_fingerprint(),
+        templates=templates,
+        assessments=tuple(
+            _scored_assessment(template, chi_squared=chi_squared, criterion=criterion)
+            for template, (chi_squared, criterion) in scores.items()
+        ),
+        metric=SelectionMetric.AICC,
+        recommended_key=recommended_key,
+        comparable_keys=comparable_keys,
+        summary="",
+    )
+
+
+def test_alphabet_bound_drops_only_templates_one_rival_beats_on_every_run() -> None:
+    """The exact bound: a fixed rival's IC below this template's bare χ² everywhere."""
+    winner = _template_named("winner")
+    loser = _template_named("loser")
+    single_win = _template_named("single_win")
+    comparable_once = _template_named("comparable_once")
+    borderline = _template_named("borderline")
+    scores = {
+        winner: (10.0, 20.0),
+        loser: (40.0, 60.0),
+        single_win: (40.0, 60.0),
+        comparable_once: (40.0, 60.0),
+        borderline: (25.0, 45.0),
+    }
+    recommendations = {
+        1: _scored_recommendation(scores, recommended_key="winner"),
+        2: _scored_recommendation(
+            scores, recommended_key="single_win", comparable_keys=("comparable_once",)
+        ),
+        3: _scored_recommendation({**scores, borderline: (15.0, 35.0)}, recommended_key="winner"),
+    }
+
+    dropped = global_fit_wizard_module.alphabet_bound_dropped_keys(recommendations)
+
+    # Beaten by ``winner`` on every run and chosen by none: it cannot win any
+    # segment, whatever the sharing pattern.
+    assert "loser" in dropped
+    # A run's own verdict is never bounded away, whether it won or merely tied.
+    assert "single_win" not in dropped
+    assert "comparable_once" not in dropped
+    # χ² below the best criterion on run 3, so no rival dominates it everywhere.
+    assert "borderline" not in dropped
+    assert "winner" not in dropped
+    # ...and the ranked alphabet keeps its order once the dropped key is out.
+    alphabet = [
+        template.key
+        for template in global_fit_wizard_module.series_template_alphabet(recommendations)
+        if template.key not in dropped
+    ]
+    assert set(alphabet) == {"winner", "single_win", "comparable_once", "borderline"}
+    assert alphabet[0] == "winner"
+
+
+def test_alphabet_bound_needs_one_rival_not_a_per_run_best() -> None:
+    """Comparing against each run's *best* criterion would not be exact.
+
+    Two runs where the leader swaps: ``rival_a`` at (10, 100) and ``rival_b`` at
+    (100, 10) both clear ``middling``'s χ² of 11 on one run and lose badly on
+    the other, so ``middling`` beats either of them over the two runs (24
+    against 110) despite exceeding the per-run minimum criterion on both.
+    """
+    rival_a = _template_named("rival_a")
+    rival_b = _template_named("rival_b")
+    middling = _template_named("middling")
+    recommendations = {
+        1: _scored_recommendation(
+            {rival_a: (5.0, 10.0), rival_b: (95.0, 100.0), middling: (11.0, 12.0)},
+            recommended_key="rival_a",
+        ),
+        2: _scored_recommendation(
+            {rival_a: (95.0, 100.0), rival_b: (5.0, 10.0), middling: (11.0, 12.0)},
+            recommended_key="rival_b",
+        ),
+    }
+
+    assert global_fit_wizard_module.alphabet_bound_dropped_keys(recommendations) == frozenset()
 
 
 def test_global_fit_wizard_uses_single_fit_prescreen_when_available(
@@ -829,9 +1764,15 @@ def test_selected_candidate_optimisation_skips_prescreen_repair(
     assert recommendation.assessment_for_key("exp_constant") is not None
 
 
-def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
+def test_global_fit_wizard_screening_completes_a_failed_cell_from_a_sibling(
     monkeypatch,
 ) -> None:
+    """A failed cell in a run's own analysis is retried by the completion pass.
+
+    The per-run analyses the fit tabs cache are what the global wizard receives;
+    phase 1 completes them into the series table, refitting a failed cell from
+    the best sibling run's values, so no separate serial repair pass is needed.
+    """
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     datasets = [
         _dataset_for(
@@ -844,106 +1785,79 @@ def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
         for idx, lambda_value in enumerate((0.18, 0.42, 0.55), start=1)
     ]
     portfolio = build_global_fit_wizard_candidate_portfolio(datasets, current_model=model)
-    single_fit_recommendations_by_run = {
+    own_analyses = {
         int(dataset.run_number): build_fit_wizard_recommendation_for_templates(
-            dataset,
-            portfolio.templates,
+            dataset, portfolio.templates
         )
         for dataset in datasets
     }
-
-    donor_run = int(datasets[0].run_number)
+    # Stand in for the per-run single-fit wizard: the derived tables above are
+    # every run's "own analysis" here, so stage 1 costs nothing and no pool
+    # nests under the test runner's.
+    monkeypatch.setattr(
+        global_fit_wizard_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, *_args, **_kwargs: own_analyses[int(dataset.run_number)],
+    )
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets, current_model=model
+    )
     failed_run = int(datasets[1].run_number)
-    donor_assessment = single_fit_recommendations_by_run[donor_run].assessment_for_key(
-        "exp_constant"
-    )
-    failed_assessment = single_fit_recommendations_by_run[failed_run].assessment_for_key(
-        "exp_constant"
-    )
-    assert donor_assessment is not None and donor_assessment.fit_result.success is True
-    assert failed_assessment is not None
 
-    single_fit_recommendations_by_run[failed_run] = replace(
-        single_fit_recommendations_by_run[failed_run],
-        assessments=tuple(
-            replace(
-                assessment,
-                fit_result=FitResult(
-                    success=False,
-                    chi_squared=float("inf"),
-                    reduced_chi_squared=float("inf"),
-                    parameters=assessment.fit_result.parameters,
-                    message="forced single-fit failure",
-                ),
-                aic=float("inf"),
-                aicc=None,
-                bic=float("inf"),
-                selected_score=float("inf"),
-                residual_rms=float("inf"),
-                runs_z_score=float("inf"),
-                max_abs_autocorrelation=float("inf"),
-                residual_fft_peak_snr=float("inf"),
-                residual_gate_passed=False,
-                residual_gate_reasons=("forced single-fit failure",),
-                bound_hits=(),
-            )
-            if assessment.template.key == "exp_constant"
-            else assessment
-            for assessment in single_fit_recommendations_by_run[failed_run].assessments
-        ),
-    )
-
-    donor_lambda = next(
-        parameter.value
-        for parameter in donor_assessment.fit_result.parameters
-        if parameter.name == "Lambda"
-    )
-    fit_calls: list[tuple[int, float, str]] = []
-
-    class FakeFitEngine:
-        def fit(self, dataset, _model_fn, parameters, t_min=None, t_max=None, method="migrad"):
-            del t_min, t_max
-            values = {parameter.name: float(parameter.value) for parameter in parameters}
-            fit_calls.append((int(dataset.run_number), values.get("Lambda", float("nan")), method))
-            cloned = ParameterSet(
-                [
-                    Parameter(
-                        parameter.name,
-                        parameter.value,
-                        min=parameter.min,
-                        max=parameter.max,
-                        fixed=parameter.fixed,
-                    )
-                    for parameter in parameters
-                ]
-            )
-            if (
-                int(dataset.run_number) == failed_run
-                and abs(values.get("Lambda", 0.0) - donor_lambda) < 0.2
-            ):
-                return FitResult(
-                    success=True,
-                    chi_squared=0.5,
-                    reduced_chi_squared=0.01,
-                    parameters=cloned,
-                    residuals=np.zeros_like(dataset.asymmetry),
-                    message="repaired",
+    def _with_failed_cell(recommendation):
+        return replace(
+            recommendation,
+            assessments=tuple(
+                replace(
+                    assessment,
+                    fit_result=FitResult(
+                        success=False,
+                        chi_squared=float("inf"),
+                        reduced_chi_squared=float("inf"),
+                        parameters=assessment.fit_result.parameters,
+                        message="forced single-fit failure",
+                    ),
+                    aic=float("inf"),
+                    aicc=None,
+                    bic=float("inf"),
+                    selected_score=float("inf"),
                 )
-            return FitResult(
-                success=False,
-                chi_squared=float("inf"),
-                reduced_chi_squared=float("inf"),
-                parameters=cloned,
-                message="not repaired",
-            )
+                if assessment.template.key == "exp_constant"
+                else assessment
+                for assessment in recommendation.assessments
+            ),
+        )
 
-    monkeypatch.setattr(global_fit_wizard_module, "FitEngine", FakeFitEngine)
+    forced = _with_failed_cell(table.recommendations_by_run[failed_run])
+    # The run's *own analysis* carries the failure: this is the fit tab's cache
+    # a user hands the global wizard, and phase 1's completion pass — not a
+    # separate repair — is what puts a converged fit back in that cell.
+    own_analyses[failed_run] = forced
+    instrumentation: dict[str, object] = {}
+    completed = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+        existing_recommendations_by_run=dict(own_analyses),
+        instrumentation=instrumentation,
+    )
+    assert int(instrumentation["completion_fits"]) >= 1
+    retried = completed.recommendations_by_run[failed_run].assessment_for_key("exp_constant")
+    assert retried is not None and retried.fit_result.success is True
+    # A completed table covers its portfolio even where a cell failed: the
+    # completion pass already retried it, so a failure there is the answer.
+    # The failure is stamped on *this* run's completed table, because the
+    # alphabet is derived from the analyses handed in and the two calls above
+    # were handed different ones.
+    supplied = dict(completed.recommendations_by_run)
+    supplied[failed_run] = _with_failed_cell(completed.recommendations_by_run[failed_run])
+    assert single_fit_table_covers_portfolio(datasets, completed.portfolio.templates, supplied)
+
     progress_messages: list[str] = []
-
     recommendation = build_global_fit_wizard_screening_recommendation(
         datasets,
         current_model=model,
-        single_fit_recommendations_by_run=single_fit_recommendations_by_run,
+        single_fit_recommendations_by_run=completed.recommendations_by_run,
+        portfolio=completed.portfolio,
         progress_callback=progress_messages.append,
     )
 
@@ -952,39 +1866,7 @@ def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
     assert assessment.fit_results_by_run[failed_run].success is True
     assert set(assessment.fit_results_by_run) == {int(dataset.run_number) for dataset in datasets}
     assert np.isfinite(assessment.aic)
-    assert not any(
-        "Single-fit pre-screen incomplete" in warning for warning in assessment.series_warnings
-    )
-    assert any(
-        "repairing partial single-fit screening results" in message for message in progress_messages
-    )
-    assert any(
-        run_number == failed_run and abs(lambda_value - donor_lambda) < 0.2
-        for run_number, lambda_value, method in fit_calls
-        if method == "migrad"
-    )
-    repaired_single_fit_assessment = single_fit_recommendations_by_run[
-        failed_run
-    ].assessment_for_key("exp_constant")
-    assert repaired_single_fit_assessment is not None
-    assert repaired_single_fit_assessment.fit_result.success is True
-
-    fit_calls_after_first_pass = len(fit_calls)
-    progress_messages.clear()
-    repeat_recommendation = build_global_fit_wizard_screening_recommendation(
-        datasets,
-        current_model=model,
-        single_fit_recommendations_by_run=single_fit_recommendations_by_run,
-        progress_callback=progress_messages.append,
-    )
-
-    repeat_assessment = repeat_recommendation.assessment_for_key("exp_constant")
-    assert repeat_assessment is not None
-    assert repeat_assessment.fit_results_by_run[failed_run].success is True
-    assert len(fit_calls) == fit_calls_after_first_pass
-    assert not any(
-        "repairing partial single-fit screening results" in message for message in progress_messages
-    )
+    assert not any("repairing partial" in message for message in progress_messages)
 
 
 def test_single_run_prefit_parameter_sets_reuses_cache() -> None:
@@ -2559,23 +3441,70 @@ def test_heuristic_engine_records_q_pretest_instrumentation(
     assert instrumentation.get("search_engine") == "balanced"
 
 
-def test_exhaustive_engine_default_is_unchanged(
+def test_separable_engine_is_the_default_and_agrees_with_the_referee(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The default engine is separable, and it reaches the referee's verdict.
+
+    ``search_engine="exhaustive"`` is the frozen-baseline wavefront and stays
+    reachable through the seam; the default no longer routes there, which the
+    instrumentation metric states outright.
+    """
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     _restrict_to_exp_constant_template(monkeypatch, model)
     datasets = _varying_lambda_series(model)
+    default_instrumentation: dict[str, object] = {}
 
-    default = build_global_fit_wizard_recommendation(datasets)
+    default = build_global_fit_wizard_recommendation(
+        datasets, instrumentation=default_instrumentation
+    )
     explicit = build_global_fit_wizard_recommendation(datasets, search_engine="exhaustive")
 
-    # The default engine is exhaustive; both reach the same verdict.
+    assert default_instrumentation.get("search_engine") == "separable"
     assert default.recommended_assessment is not None
     assert explicit.recommended_assessment is not None
     assert (
         default.recommended_assessment.local_param_names
         == explicit.recommended_assessment.local_param_names
     )
+
+
+def test_wavefront_assignment_tasks_carry_fit_records_not_raw_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every wavefront node ships the whole series; it ships it without counts.
+
+    An assignment task carries one copy of the series per node of the search, so
+    the run histograms would otherwise be pickled once for every assignment the
+    wavefront visits.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = [_with_detector_histograms(dataset) for dataset in _varying_lambda_series(model)]
+
+    submitted: list[object] = []
+    real_runner = global_fit_wizard_module._run_wavefront_assignment_task
+
+    def _recording_runner(task):
+        submitted.append(task)
+        return real_runner(task)
+
+    # One worker keeps the runner in this process, where the recorder sees the
+    # payloads the pool path would otherwise pickle.
+    monkeypatch.setattr(global_fit_wizard_module, "_wavefront_worker_count", lambda count: 1)
+    monkeypatch.setattr(
+        global_fit_wizard_module, "_run_wavefront_assignment_task", _recording_runner
+    )
+
+    build_global_fit_wizard_recommendation(datasets, search_engine="exhaustive")
+
+    assert submitted
+    for task in submitted:
+        assert [dataset.run.histograms for dataset in task.datasets] == [[]] * len(datasets)
+        assert [int(dataset.run_number) for dataset in task.datasets] == [
+            int(dataset.run_number) for dataset in datasets
+        ]
+    assert all(len(dataset.run.histograms) == 15 for dataset in datasets)
 
 
 def test_unknown_search_engine_raises_value_error(
@@ -2608,15 +3537,13 @@ def _restrict_to_templates(
 
 
 @pytest.mark.parametrize("tier_value", ["low", "balanced", "thorough", "exhaustive"])
-def test_effort_tier_always_resolves_to_the_exact_engine(
+def test_effort_tier_always_resolves_to_the_separable_engine(
     monkeypatch: pytest.MonkeyPatch, tier_value: str
 ) -> None:
-    """Every user-facing EffortTier now runs the exact bounded wavefront.
+    """Every user-facing EffortTier runs the separable role search.
 
-    The exact engines never set the ``search_engine`` instrumentation metric
-    (that metric is emitted only on the heuristic path), so its absence for
-    *every* tier is the observable signature that the slider collapsed to one
-    honest exact mode.
+    The engine name is recorded on the instrumentation, so a tier that silently
+    routed somewhere else would show it.
     """
     from asymmetry.core.fitting.wizard_scope import EffortTier
 
@@ -2629,18 +3556,20 @@ def test_effort_tier_always_resolves_to_the_exact_engine(
         datasets, instrumentation=instrumentation, effort_tier=EffortTier(tier_value)
     )
 
-    assert instrumentation.get("search_engine") is None
+    assert instrumentation.get("search_engine") == "separable"
 
 
-def test_effort_tier_search_engine_map_collapses_to_exhaustive() -> None:
+def test_effort_tier_search_engine_map_collapses_to_separable() -> None:
     from asymmetry.core.fitting.global_fit_wizard import (
+        _DEFAULT_SEARCH_ENGINE,
         _EFFORT_TIER_SEARCH_ENGINE,
-        SEARCH_ENGINE_EXHAUSTIVE,
+        SEARCH_ENGINE_SEPARABLE,
     )
     from asymmetry.core.fitting.wizard_scope import EffortTier
 
+    assert _DEFAULT_SEARCH_ENGINE == SEARCH_ENGINE_SEPARABLE
     assert set(_EFFORT_TIER_SEARCH_ENGINE) == set(EffortTier)
-    assert all(engine == SEARCH_ENGINE_EXHAUSTIVE for engine in _EFFORT_TIER_SEARCH_ENGINE.values())
+    assert all(engine == SEARCH_ENGINE_SEPARABLE for engine in _EFFORT_TIER_SEARCH_ENGINE.values())
 
 
 def test_explicit_search_engine_overrides_effort_tier_engine_selection(
@@ -2736,7 +3665,7 @@ def test_low_portfolio_cap_is_inert_via_effort_tier(
 ) -> None:
     """Passing ``effort_tier=LOW`` no longer applies the cap.
 
-    Every user-facing tier resolves to the exact engine, so an over-budget
+    Every user-facing tier resolves to the separable engine, so an over-budget
     template still reaches the coupled search — the I/J/K knobs are only reachable
     through the ``search_engine`` override now.
     """
@@ -2760,8 +3689,8 @@ def test_low_portfolio_cap_is_inert_via_effort_tier(
         selected_template_keys=(small_template.key, big_template.key),
     )
 
-    # Exact engine (what LOW now resolves to) applies no cap: both explicitly
-    # selected templates reach the coupled search.
+    # The separable engine (what LOW now resolves to) applies no cap: both
+    # explicitly selected templates reach the coupled search.
     assert _searched_role_split_count(recommendation, small_template.key) > 0
     assert _searched_role_split_count(recommendation, big_template.key) > 0
 
@@ -3123,11 +4052,27 @@ def test_phase_one_screening_cancel_does_not_block_on_the_pool(
         lambda **_kwargs: pool,
     )
     datasets = _exponential_decay_datasets(4)
+    template = _restrict_to_exp_constant_template(
+        monkeypatch, CompositeModel(["Exponential", "Constant"], operators=["+"])
+    )
+    # All but the first run analysed coarser than the series factor, so each of
+    # them contributes one completion *cell* to the pool.
+    fine_run = int(datasets[0].run_number)
+    expected_cells = len(datasets) - 1
+
+    def _fake_build(dataset, current_model=None, **kwargs):
+        return replace(
+            build_fit_wizard_recommendation_for_templates(dataset, (template,)),
+            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            rebin_factor=1 if int(dataset.run_number) == fine_run else 3,
+        )
+
+    monkeypatch.setattr(global_fit_wizard_module, "build_fit_wizard_recommendation", _fake_build)
 
     def _cancel_once_dispatched() -> bool:
         # Stays false through the guards that precede the fan-out, so only a
         # poll from *inside* the drain loop can see it fire.
-        return pool.submitted >= len(datasets)
+        return pool.submitted >= expected_cells
 
     started = time.monotonic()
     with pytest.raises(FitCancelledError):
@@ -3137,7 +4082,7 @@ def test_phase_one_screening_cancel_does_not_block_on_the_pool(
         )
     elapsed = time.monotonic() - started
 
-    assert pool.submitted == len(datasets)
+    assert pool.submitted == expected_cells
     assert elapsed < 30.0
     # Non-blocking teardown: queued work dropped, no wait on the in-flight fits.
     assert pool.shutdown_calls == [{"wait": False, "cancel_futures": True}]
@@ -3177,38 +4122,54 @@ def test_phase_one_screening_reports_progress_per_completed_table(
         lambda **_kwargs: pool,
     )
     datasets = _exponential_decay_datasets(2)
+    _stub_single_run_wizard(
+        monkeypatch,
+        (
+            _restrict_to_exp_constant_template(
+                monkeypatch, CompositeModel(["Exponential", "Constant"], operators=["+"])
+            ),
+        ),
+    )
     messages: list[str] = []
 
-    _portfolio, recommendations, generated = (
-        build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
-            datasets,
-            progress_callback=messages.append,
-        )
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        progress_callback=messages.append,
     )
 
-    assert sorted(generated) == [900, 901]
-    assert set(recommendations) == {900, 901}
-    completed = [text for text in messages if "single-fit table" in text.lower() and "/" in text]
-    assert len(completed) == len(datasets)
+    assert sorted(table.generated_run_numbers) == [900, 901]
+    assert set(table.recommendations_by_run) == {900, 901}
+    analysed = [text for text in messages if "single-fit analysis" in text.lower() and "/" in text]
+    assert len(analysed) == len(datasets)
+    scored = [text for text in messages if "score table" in text.lower() and "/" in text]
+    assert len(scored) == len(datasets)
     assert pool.shutdown_calls == [{"wait": True, "cancel_futures": False}]
 
 
-def test_single_fit_table_worker_count_never_oversubscribes_the_host(
+def test_phase_one_serial_fallback_when_no_pool_can_open(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Phase-1 width is the CPU count, bounded only by how many tables there are.
+    """A spawn-unsafe host still completes the table, in-parent and in order."""
+    opened: list[int] = []
 
-    A fixed width of four on a two-core host runs four minutes-long fits over
-    two cores, which is slower than two workers *and* looks stalled — and the
-    same fixed four on a large host left a 14-dataset series running at well
-    under one core while the stage looked hung from outside. Phase-1 tables are
-    independent whole-dataset jobs, so the host's core count is the right bound.
-    """
-    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 2)
-    assert global_fit_wizard_module._single_fit_table_worker_count(37) == 2
+    def _fake_open(max_workers: int) -> None:
+        opened.append(max_workers)
+        return None
 
-    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 16)
-    assert global_fit_wizard_module._single_fit_table_worker_count(37) == 16
-    assert global_fit_wizard_module._single_fit_table_worker_count(9) == 9
-    assert global_fit_wizard_module._single_fit_table_worker_count(1) == 1
-    assert global_fit_wizard_module._single_fit_table_worker_count(0) == 1
+    monkeypatch.setattr(global_fit_wizard_module, "open_spawn_pool", _fake_open)
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 6)
+    datasets = _exponential_decay_datasets(3)
+    _stub_single_run_wizard(
+        monkeypatch,
+        (
+            _restrict_to_exp_constant_template(
+                monkeypatch, CompositeModel(["Exponential", "Constant"], operators=["+"])
+            ),
+        ),
+    )
+
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(datasets)
+
+    # One attempt to open one pool for the whole phase, at the host's width.
+    assert opened == [6]
+    assert set(table.recommendations_by_run) == {int(d.run_number) for d in datasets}

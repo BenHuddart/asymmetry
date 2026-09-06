@@ -29,7 +29,7 @@ from asymmetry.core.representation.global_fit_study import (
     compute_group_input_digest,
     study_from_legacy_cross_group_payload,
 )
-from asymmetry.core.representation.group import DataGroup
+from asymmetry.core.representation.group import DataGroup, PhaseSpec
 from asymmetry.core.representation.naming import (
     composite_model_label,
     default_series_label,
@@ -65,6 +65,7 @@ __all__ = [
     "FrequencyFFT",
     "FrequencyMaxEnt",
     "GlobalFitStudy",
+    "PhaseSpec",
     "Representation",
     "RepresentationType",
     "TrendState",

@@ -70,6 +70,43 @@ PROFILE_COLORS: tuple[str, ...] = (
     "#4a6d8a",  # slate
 )
 
+# ── Phase identity (Global Fit Wizard transitions, D1) ───────────────────────
+# A series crossing one or more transitions is partitioned into ordinal
+# *phases*; each phase wears a stable colour on its Data Browser sub-header
+# stripe/swatch and its Fit Parameters panel series button and range shading.
+# Unlike PROFILE_COLORS (an arbitrary, order-independent identity — "which
+# profile"), a phase's colour must itself read as "which position along the
+# sweep", so the ramp is ordered cold-to-hot rather than merely distinct:
+# cobalt and aqua (cool) for the first phases, leaf and gold (transitional)
+# in the middle, brick (hot) for the last — a break always reads as "further
+# along", never as an arbitrary re-shuffle. Lightness alternates
+# dark/light/dark/light/dark across the five so two *adjacent* phases stay
+# separable even under greyscale conversion or the common red-green
+# deficiencies, where hue alone can collapse the cool and warm halves toward
+# each other. Cycles (by ordinal) past five phases, same as PROFILE_COLORS.
+# Reserves its own hues: it deliberately avoids the violet/teal/plum/ochre/
+# slate of PROFILE_COLORS (grouping-profile identity), the teal/violet/red/
+# steel-blue of the STAGE_* correction identities below, and the
+# ACCENT / ACCENT_RED / WARN semantic roles — a phase swatch must never be
+# mistaken for a profile, a correction stage, or a status colour.
+PHASE_COLORS: tuple[str, ...] = (
+    "#2F4DA0",  # cobalt   — phase I   (coldest)
+    "#2AA198",  # aqua     — phase II
+    "#4F7F1E",  # leaf     — phase III
+    "#D9A21B",  # gold     — phase IV
+    "#B8432B",  # brick    — phase V  (hottest)
+)
+# Dark-theme counterparts: the same cold->hot, alternating-lightness ramp
+# lifted to hold contrast against a dark surface (higher lightness throughout,
+# hue held roughly constant) rather than a literal per-colour inverse.
+PHASE_COLORS_DARK: tuple[str, ...] = (
+    "#8FA3E8",  # cobalt (dark surface)
+    "#5CCFC4",  # aqua (dark surface)
+    "#8BC34A",  # leaf (dark surface)
+    "#F2C94C",  # gold (dark surface)
+    "#E8826A",  # brick (dark surface)
+)
+
 # ── Correction-stage identity (grouping dialog) ──────────────────────────────
 # One muted hue per correction stage, shared by the pipeline chip's outline and
 # its card's stripe/comparing tint so chip ↔ card read as the same thing at a

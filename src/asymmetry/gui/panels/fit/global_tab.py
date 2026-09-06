@@ -266,6 +266,12 @@ class GlobalFitTab(FitTabBase):
     # Use object/object to avoid Qt container coercion (which can alter key types).
     global_fit_started = Signal()  # emitted just before the worker launches
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
+    # (recommendation, partition_k) — the Global Fit Wizard's Transitions card
+    # asked for its optimised partition to become phase data groups. The tab
+    # cannot answer this alone: minting/reusing the *series* group is the main
+    # window's policy (``_resolve_batch_group``), so the request travels up and
+    # the window drives the per-phase applies back through this tab.
+    apply_wizard_phases_requested = Signal(object, int)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
     # (run_number, model, physics_values_by_name) — a converged single grouped
     # fit's shared physics, so the batch grouped surface can chain-seed per run.
@@ -1762,6 +1768,9 @@ class GlobalFitTab(FitTabBase):
             self._fit_wizard_window = GlobalFitWizardWindow(self)
             self._fit_wizard_window.apply_assessment_requested.connect(
                 self._apply_fit_wizard_assessment
+            )
+            self._fit_wizard_window.apply_phases_requested.connect(
+                self._on_fit_wizard_apply_phases_requested
             )
             self._fit_wizard_window.analysis_cached.connect(self._on_fit_wizard_analysis_cached)
             self._fit_wizard_window.single_fit_recommendations_generated.connect(
@@ -3645,6 +3654,45 @@ class GlobalFitTab(FitTabBase):
             },
             assessment.global_parameters,
         )
+
+    def _on_fit_wizard_apply_phases_requested(
+        self,
+        recommendation: GlobalFitWizardRecommendation,
+        partition_k: int,
+    ) -> None:
+        """Pass the Transitions card's apply request up to the main window.
+
+        The tab cannot mint or reuse the *series* data group the phases nest
+        under — that is the main window's batch-group policy — so this only
+        forwards. The partitioned recommendation reaches the wizard cache through
+        the per-phase :meth:`_apply_fit_wizard_assessment` calls the window then
+        drives back through :meth:`apply_wizard_phase_assessments`.
+        """
+        self.apply_wizard_phases_requested.emit(recommendation, int(partition_k))
+
+    def apply_wizard_phase_assessments(
+        self,
+        recommendation: GlobalFitWizardRecommendation,
+        phases: Sequence[tuple[str, str, GlobalCandidateAssessment]],
+    ) -> None:
+        """Apply one assessment per phase, each bound to its own phase group.
+
+        *phases* is ``(group_id, group_name, assessment)`` in ordinal order. Each
+        application emits ``global_fit_completed``, which the main window records
+        as a :class:`FitSeries` owned by the bound phase group — so the series
+        recording seam needs no phase concept of its own. The tab is left bound
+        to the first phase with that phase's model loaded, which is what the user
+        sees when the wizard closes; on a multi-phase partition that means
+        re-applying phase 1 after the last one, which supersedes phase 1's own
+        series in place (same members, same model) rather than duplicating it.
+        """
+        for group_id, group_name, assessment in phases:
+            self.set_bound_group(group_id, group_name)
+            self._apply_fit_wizard_assessment(assessment, recommendation)
+        if len(phases) > 1:
+            first_group_id, first_group_name, first_assessment = phases[0]
+            self.set_bound_group(first_group_id, first_group_name)
+            self._apply_fit_wizard_assessment(first_assessment, recommendation)
 
     def _status_text_from_global_wizard(
         self,

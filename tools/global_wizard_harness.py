@@ -26,15 +26,18 @@ Design notes (see ``docs/porting/global-fit-wizard-efficiency/test-data.md``):
   shot (``os.killpg`` on POSIX, ``taskkill /F /T`` on Windows) — the grandchild
   pool workers die with it, no orphans.
 * **Effort tiers.** ``--tier {low,balanced,thorough,exhaustive}`` drives the
-  user-facing ``EffortTier`` enum. As of the PR 5 rework **every tier resolves to
-  the exact bounded wavefront** (byte-for-byte the frozen-baseline path): PR 2's
-  exact bounds already made the exhaustive path near-minimal and 12-way parallel,
-  so the heuristic Low/Balanced engines were empirically dominated (serial,
-  slower, no fit-count headroom) and were removed from the user-facing slider.
-  All four tiers should therefore report 100% agreement with identical fit counts
-  — that identity is the evidence the collapsed slider is honest. The heuristic
-  engines are retained behind the low-level ``search_engine`` string (exercised
-  by the core test-suite), not by this ``--tier`` sweep.
+  user-facing ``EffortTier`` enum. Every tier resolves to the same engine, so all
+  four report identical verdicts and fit counts — that identity is the evidence
+  the collapsed slider is honest.
+* **Engine.** ``--engine {separable,exhaustive}`` is the axis that actually
+  moves. ``separable`` (default) is the wizard's own role-search engine: the
+  all-local assignment comes straight from the per-run fits, a full-covariance
+  surrogate ranks every sharing pattern, and backward elimination fits the exact
+  path. ``exhaustive`` is the bounded wavefront the frozen baseline was generated
+  with — the referee. ``--freeze`` always uses the referee, so the baseline can
+  never be re-frozen against a candidate engine. Acceptance for a candidate is
+  >= 95% verdict agreement with the frozen baseline, with every disagreement
+  inside ``DEFAULT_IC_GAP_TOLERANCE``.
 
 macOS uses the ``spawn`` start method, which re-imports this module in every
 child, so everything heavy lives behind ``if __name__ == "__main__"`` and the
@@ -77,6 +80,16 @@ CORPUS_ENV_VAR = "ASYMMETRY_WIZARD_HARNESS_CORPUS"
 DEFAULT_IC_GAP_TOLERANCE = 2.0
 
 TIERS = ("low", "balanced", "thorough", "exhaustive")
+
+#: Role-search engines the harness can drive. ``separable`` is the wizard's
+#: default engine; ``exhaustive`` is the frozen baseline's referee. The two are
+#: independent of ``--tier``: every tier resolves to the *default* engine, so the
+#: engine axis is how a candidate engine is measured against the referee.
+ENGINES = ("separable", "exhaustive")
+DEFAULT_ENGINE = "separable"
+#: The engine the frozen baseline was generated with, and the only one
+#: ``--freeze`` may use — the referee cannot be re-frozen against a candidate.
+BASELINE_ENGINE = "exhaustive"
 
 
 # --------------------------------------------------------------------------- #
@@ -286,11 +299,11 @@ def _build_case_datasets(case: SyntheticCase) -> list[Any]:
 #
 # A tier maps to a callable that runs the wizard with a particular configuration
 # and returns the ``GlobalFitWizardRecommendation`` plus its instrumentation
-# dict. Each harness tier drives the user-facing ``EffortTier`` enum. As of the
-# PR 5 rework **every tier resolves to the exact bounded wavefront** (byte-for-
-# byte the frozen-baseline path): the heuristic Low/Balanced engines were
-# empirically dominated by bounded-exhaustive and removed from the user-facing
-# slider, so all four tiers now produce identical verdicts and fit counts. The
+# dict. Each harness tier drives the user-facing ``EffortTier`` enum. Every tier
+# now resolves to the **separable** role-search engine (see ``--engine``): the
+# heuristic Low/Balanced engines were empirically dominated by bounded-
+# exhaustive and removed from the user-facing slider, so all four tiers still
+# produce identical verdicts and fit counts under a given ``--engine``. The
 # retained heuristic engines (and the I/J/K knobs) live behind the low-level
 # ``search_engine`` string and are covered by the core test-suite, not this sweep.
 
@@ -300,6 +313,7 @@ def _run_wizard_with_tier(
     *,
     template_keys: tuple[str, ...],
     effort_tier_value: str,
+    engine: str = DEFAULT_ENGINE,
 ) -> tuple[Any, dict[str, object]]:
     from asymmetry.core.fitting.global_fit_wizard import (
         build_global_fit_wizard_recommendation,
@@ -312,6 +326,7 @@ def _run_wizard_with_tier(
         instrumentation=instrumentation,
         selected_template_keys=template_keys or None,
         effort_tier=EffortTier(effort_tier_value),
+        search_engine=engine,
     )
     return recommendation, instrumentation
 
@@ -320,9 +335,10 @@ def _run_wizard_exhaustive(
     datasets: list[Any],
     *,
     template_keys: tuple[str, ...],
+    engine: str = DEFAULT_ENGINE,
 ) -> tuple[Any, dict[str, object]]:
     return _run_wizard_with_tier(
-        datasets, template_keys=template_keys, effort_tier_value="exhaustive"
+        datasets, template_keys=template_keys, effort_tier_value="exhaustive", engine=engine
     )
 
 
@@ -330,9 +346,10 @@ def _run_wizard_thorough(
     datasets: list[Any],
     *,
     template_keys: tuple[str, ...],
+    engine: str = DEFAULT_ENGINE,
 ) -> tuple[Any, dict[str, object]]:
     return _run_wizard_with_tier(
-        datasets, template_keys=template_keys, effort_tier_value="thorough"
+        datasets, template_keys=template_keys, effort_tier_value="thorough", engine=engine
     )
 
 
@@ -340,17 +357,21 @@ def _run_wizard_low(
     datasets: list[Any],
     *,
     template_keys: tuple[str, ...],
+    engine: str = DEFAULT_ENGINE,
 ) -> tuple[Any, dict[str, object]]:
-    return _run_wizard_with_tier(datasets, template_keys=template_keys, effort_tier_value="low")
+    return _run_wizard_with_tier(
+        datasets, template_keys=template_keys, effort_tier_value="low", engine=engine
+    )
 
 
 def _run_wizard_balanced(
     datasets: list[Any],
     *,
     template_keys: tuple[str, ...],
+    engine: str = DEFAULT_ENGINE,
 ) -> tuple[Any, dict[str, object]]:
     return _run_wizard_with_tier(
-        datasets, template_keys=template_keys, effort_tier_value="balanced"
+        datasets, template_keys=template_keys, effort_tier_value="balanced", engine=engine
     )
 
 
@@ -358,6 +379,7 @@ def _run_wizard_sleeper(
     datasets: list[Any],
     *,
     template_keys: tuple[str, ...],
+    engine: str = DEFAULT_ENGINE,
 ) -> tuple[Any, dict[str, object]]:
     """Module-level config that overruns any sane per-case timeout.
 
@@ -448,7 +470,12 @@ def _finite_or_none(value: float | None) -> float | None:
 # --------------------------------------------------------------------------- #
 
 
-def _case_worker(case: SyntheticCase, tier: str, out_queue: mp.Queue[dict[str, object]]) -> None:
+def _case_worker(
+    case: SyntheticCase,
+    tier: str,
+    engine: str,
+    out_queue: mp.Queue[dict[str, object]],
+) -> None:
     """Run one case's wizard config and push a compact result over the queue.
 
     Runs in a *child* process so a hung fit can be killed without taking the
@@ -466,7 +493,9 @@ def _case_worker(case: SyntheticCase, tier: str, out_queue: mp.Queue[dict[str, o
         datasets = _build_case_datasets(case)
         config = TIER_CONFIGS[tier]
         start = time.perf_counter()
-        recommendation, instrumentation = config(datasets, template_keys=case.template_keys)
+        recommendation, instrumentation = config(
+            datasets, template_keys=case.template_keys, engine=engine
+        )
         wall_s = time.perf_counter() - start
         verdict = _extract_verdict(recommendation, case)
         counters = instrumentation.get("counters", {})
@@ -498,6 +527,7 @@ def run_case_isolated(
     case: SyntheticCase,
     tier: str,
     *,
+    engine: str = DEFAULT_ENGINE,
     timeout_s: float,
 ) -> dict[str, object]:
     """Run one case in its own session/process group; kill the group on timeout.
@@ -513,7 +543,7 @@ def run_case_isolated(
 
     ctx = mp.get_context("spawn")
     out_queue: mp.Queue[dict[str, object]] = ctx.Queue()
-    proc = ctx.Process(target=_case_worker, args=(case, tier, out_queue), daemon=False)
+    proc = ctx.Process(target=_case_worker, args=(case, tier, engine, out_queue), daemon=False)
     proc.start()
 
     proc.join(timeout_s)
@@ -581,19 +611,35 @@ def _kill_process_group(pid: int) -> None:
 
     import signal as signal_module
 
-    # The child called setsid(), so its pgid == its pid; signal the whole group.
+    # Once the child has run ``_become_group_leader`` its pgid is its own pid and
+    # the group holds exactly the child plus the pool workers it spawned. Until
+    # then — a spawn child re-imports this whole module before its first line
+    # runs, which on a loaded machine takes seconds — its pgid is still *ours*,
+    # and signalling that group would kill this process and everything beside it
+    # (under pytest-xdist, the entire test session). Read the group once and
+    # signal it only when it is genuinely the child's own; otherwise signal the
+    # single pid, which is complete anyway because the pool is opened after
+    # ``setsid``.
+    own_group = os.getpgrp()
+    try:
+        child_group = os.getpgid(pid)
+    except (OSError, ProcessLookupError):
+        child_group = own_group
+    signal_the_group = child_group != own_group
+
     for sig_name in ("SIGTERM", "SIGKILL"):
         sig = getattr(signal_module, sig_name, None)
         if sig is None:
             continue
         try:
-            os.killpg(os.getpgid(pid), sig)
-        except (OSError, ProcessLookupError):
-            # Fall back to signalling the single pid if the group is already gone.
-            try:
+            if signal_the_group:
+                os.killpg(child_group, sig)
+            else:
                 os.kill(pid, sig)
-            except (OSError, ProcessLookupError):
-                pass
+        except (OSError, ProcessLookupError):
+            # The group (or the process) is already gone; the other signal in
+            # this loop, or the caller's own ``proc.kill()``, finishes the job.
+            pass
         if sig_name == "SIGTERM":
             time.sleep(0.5)
 
@@ -641,7 +687,7 @@ def freeze_baseline(
 
     entries: dict[str, object] = {}
     for case in cases:
-        report = run_case_isolated(case, "exhaustive", timeout_s=timeout_s)
+        report = run_case_isolated(case, "exhaustive", engine=BASELINE_ENGINE, timeout_s=timeout_s)
         entries[case.case_id] = {
             "provenance": _case_provenance(case),
             "verdict": report.get("verdict"),
@@ -656,6 +702,7 @@ def freeze_baseline(
         "git_sha": _git_sha(),
         "generation_date": generation_date,
         "tier": "exhaustive",
+        "engine": BASELINE_ENGINE,
         "cases": entries,
     }
 
@@ -783,6 +830,7 @@ def run_harness(
     cases: Sequence[SyntheticCase],
     tier: str,
     *,
+    engine: str = DEFAULT_ENGINE,
     baseline: dict[str, object] | None,
     per_case_timeout_s: float,
     overall_wall_s: float,
@@ -825,7 +873,7 @@ def run_harness(
             continue
 
         case_timeout = min(per_case_timeout_s, remaining)
-        result = run_case_isolated(case, tier, timeout_s=case_timeout)
+        result = run_case_isolated(case, tier, engine=engine, timeout_s=case_timeout)
         status = str(result.get("status", "ERROR"))
         verdict = result.get("verdict") if status == "OK" else None
         base_entry = baseline_cases.get(case.case_id, {}) if baseline_cases else {}
@@ -861,10 +909,16 @@ def run_harness(
             )
         )
 
-    return _roll_up(reports, tier=tier, total_wall_s=time.perf_counter() - start)
+    return _roll_up(reports, tier=tier, engine=engine, total_wall_s=time.perf_counter() - start)
 
 
-def _roll_up(reports: Sequence[CaseReport], *, tier: str, total_wall_s: float) -> dict[str, object]:
+def _roll_up(
+    reports: Sequence[CaseReport],
+    *,
+    tier: str,
+    engine: str,
+    total_wall_s: float,
+) -> dict[str, object]:
     frozen = [r.agree_pct_vs_frozen for r in reports if r.agree_pct_vs_frozen is not None]
     planted = [
         r.agree_pct_vs_planted_truth for r in reports if r.agree_pct_vs_planted_truth is not None
@@ -873,6 +927,7 @@ def _roll_up(reports: Sequence[CaseReport], *, tier: str, total_wall_s: float) -
     total_fevals = sum(r.minuit_fevals or 0 for r in reports)
     return {
         "tier": tier,
+        "engine": engine,
         "cases": [r.to_dict() for r in reports],
         "rollup": {
             "n_cases": len(reports),
@@ -930,7 +985,7 @@ def corpus_enabled() -> bool:
 
 def _print_report(report: dict[str, object]) -> None:
     rollup = report.get("rollup", {})
-    print(f"\nGlobal-fit wizard harness — tier={report.get('tier')}")
+    print(f"\nGlobal-fit wizard harness — engine={report.get('engine')} tier={report.get('tier')}")
     print("-" * 72)
     header = (
         f"{'case_id':<28} {'status':<8} {'frozen%':>8} {'planted%':>9} "
@@ -1005,9 +1060,20 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=TIERS,
         default="exhaustive",
         help=(
-            "Effort tier. As of the PR 5 rework every tier resolves to the exact "
-            "bounded wavefront, so all four report identical verdicts and fit "
-            "counts (the evidence the collapsed slider is honest)."
+            "Effort tier. Every tier resolves to the same role-search engine "
+            "(the separable engine by default; see --engine), so all four "
+            "report identical verdicts and fit counts (the evidence the "
+            "collapsed slider is honest)."
+        ),
+    )
+    parser.add_argument(
+        "--engine",
+        choices=ENGINES,
+        default=DEFAULT_ENGINE,
+        help=(
+            "Role-search engine. 'separable' (default) is the wizard's own "
+            "engine; 'exhaustive' is the frozen baseline's referee, which is "
+            "what --freeze always uses."
         ),
     )
     parser.add_argument(
@@ -1108,6 +1174,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     report = run_harness(
         cases,
         args.tier,
+        engine=args.engine,
         baseline=baseline,
         per_case_timeout_s=args.per_case_timeout,
         overall_wall_s=args.overall_wall,

@@ -100,6 +100,10 @@ class FitPanel(QWidget):
     global_fit_started = Signal()  # forwarded from GlobalFitTab at worker launch
     global_fit_completed = Signal(object, object)  # (results_dict, global_params)
     grouped_fit_completed = Signal(object, object)  # (grouped_datasets, results_dict)
+    # (recommendation, partition_k) — forwarded from the Batch tab when the
+    # Global Fit Wizard's Transitions card asks for its optimised partition to
+    # become phase data groups (the main window owns the group policy).
+    apply_wizard_phases_requested = Signal(object, int)
     add_single_fit_to_series_requested = Signal()
     fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
     # Forwarded from the Batch tab's on-tab seeding selector so the main window's
@@ -183,6 +187,9 @@ class FitPanel(QWidget):
         self._global_tab = GlobalFitTab(member_kind="runs")
         self._global_tab.global_fit_started.connect(self.global_fit_started.emit)
         self._global_tab.global_fit_completed.connect(self.global_fit_completed.emit)
+        self._global_tab.apply_wizard_phases_requested.connect(
+            self.apply_wizard_phases_requested.emit
+        )
         self._global_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         self._global_tab.batch_seeding_mode_changed.connect(self.batch_seeding_mode_changed.emit)
@@ -640,6 +647,10 @@ class FitPanel(QWidget):
     def set_bound_group(self, group_id: str | None, name: str | None = None) -> None:
         """Bind the Batch tab to a data group ("Fit this group…", D1)."""
         self._global_tab.set_bound_group(group_id, name)
+
+    def apply_wizard_phase_assessments(self, recommendation, phases) -> None:
+        """Delegate the per-phase wizard apply to the Batch tab (D3)."""
+        self._global_tab.apply_wizard_phase_assessments(recommendation, phases)
 
     def clear_bound_group(self) -> None:
         """Clear the Batch tab's group binding (ad-hoc selection, D1)."""

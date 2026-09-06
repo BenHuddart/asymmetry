@@ -11,8 +11,20 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 18)
+Current schema (version 19)
 ---------------------------
+
+Version 19 adds nested *phase* data groups (Global Fit Wizard transitions,
+D1): a phase is a ``data_groups`` entry whose ``parent_group_id`` names the
+series group it partitions — the run-membered temperature/field scan a
+transition splits into contiguous segments, each with its own fit template
+and global/local assignment. Every existing ``data_groups`` entry gains the
+additive phase fields, all defaulting to "not a phase group": ``parent_group_id``
+(``null``), ``phase_ordinal`` (``null``), ``phase_range`` (``null``),
+``phase_boundaries`` (``{"lower": null, "upper": null}``), ``phase_color``
+(``null``), and ``phase_provenance`` (``{}``). Additive and tolerant like the
+v14->v15 migration below: a project with no ``data_groups`` block or junk
+entries migrates cleanly. See :func:`_migrate_v18_to_v19`.
 
 Version 18 replaces the plot panels' scattered view-limit state — ``x_min``,
 ``x_max``, ``y_min``, ``y_max``, ``auto_x_enabled``, ``auto_y_enabled``,
@@ -198,10 +210,10 @@ import json
 import math
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 18
+CURRENT_SCHEMA_VERSION: int = 19
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -318,6 +330,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 17
     if version == 17:
         migrated = _migrate_v17_to_v18(migrated)
+        version = 18
+    if version == 18:
+        migrated = _migrate_v18_to_v19(migrated)
     return migrated
 
 
@@ -1151,6 +1166,43 @@ def _migrate_v17_to_v18(data: dict) -> dict:
             freq_state if isinstance(freq_state, dict) else {}
         )
         migrated["plot_state"] = plot_state
+
+    return migrated
+
+
+def _migrate_v18_to_v19(data: dict) -> dict:
+    """Migrate schema v18 project state to v19.
+
+    v19 adds nested *phase* data groups (Global Fit Wizard transitions, D1).
+    The migration is additive and tolerant of every legacy shape (no
+    ``data_groups`` block, junk entries), mirroring :func:`_migrate_v14_to_v15`:
+
+    * Each ``data_groups`` entry gains ``parent_group_id`` (default ``None``)
+      — a group is a phase iff this is set, so every pre-v19 group migrates
+      to "not a phase".
+    * ``phase_ordinal``, ``phase_range``, ``phase_color`` default ``None``.
+    * ``phase_boundaries`` defaults to ``{"lower": None, "upper": None}``.
+    * ``phase_provenance`` defaults to ``{}``.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 19
+
+    groups = migrated.get("data_groups")
+    if isinstance(groups, list):
+        updated_groups: list = []
+        for group in groups:
+            if isinstance(group, dict):
+                entry = dict(group)
+                entry.setdefault("parent_group_id", None)
+                entry.setdefault("phase_ordinal", None)
+                entry.setdefault("phase_range", None)
+                entry.setdefault("phase_boundaries", {"lower": None, "upper": None})
+                entry.setdefault("phase_color", None)
+                entry.setdefault("phase_provenance", {})
+                updated_groups.append(entry)
+            else:
+                updated_groups.append(group)
+        migrated["data_groups"] = updated_groups
 
     return migrated
 

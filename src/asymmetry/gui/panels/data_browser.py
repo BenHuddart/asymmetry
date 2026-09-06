@@ -86,7 +86,16 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QFontMetrics, QPalette
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QCursor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QPalette,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -113,18 +122,26 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.io.periods import period_count, period_labels
 from asymmetry.core.project.profiles import profile_fingerprint_for_run
+from asymmetry.core.representation.group import DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform.grouping import good_event_count, good_frames
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.palette import is_dark_surface
 from asymmetry.gui.styles.typography import header_font
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.phase_colors import (
+    EXCLUDED_PHASE_HATCH_COLOR,
+    format_phase_range,
+    resolve_phase_color,
+)
 from asymmetry.gui.utils.profile_colors import display_profile_color
 from asymmetry.gui.utils.series_scoring import score_series_path
+from asymmetry.gui.widgets.phase_info_popover import PhaseInfoPopover
 
 _GROUP_TEMP_ABS_TOL_K = 5e-3
 _GROUP_TEMP_REL_TOL = 2e-3
@@ -159,11 +176,54 @@ _PERIOD_ROLE = Qt.ItemDataRole.UserRole + 3
 #: group's ``kind`` ("user"/"auto"), so the row-highlight delegate can pick the
 #: blue or red-grey selected/focused header tint without a panel lookup.
 _GROUP_KIND_ROLE = Qt.ItemDataRole.UserRole + 4
+#: Item-data role on a col-0 item carrying the left-edge stripe colour that
+#: marks the row's phase (transitions plan, D2), or ``None`` for no stripe. The
+#: stripe is a decoration painted by the row delegate rather than a background
+#: tint, so the user/auto member tints and the profile-identity colour on the
+#: run number keep their existing meanings on a phase member's row.
+_PHASE_STRIPE_ROLE = Qt.ItemDataRole.UserRole + 5
+#: Item-data role flagging that the stripe carried by :data:`_PHASE_STRIPE_ROLE`
+#: is drawn hatched instead of solid — the marker for a series member claimed by
+#: no phase ("excluded"), which has no ordinal colour to wear.
+_PHASE_STRIPE_HATCHED_ROLE = Qt.ItemDataRole.UserRole + 6
+#: Item-data role carrying a Title-cell badge (e.g. the excluded-run note),
+#: rendered as the muted second line ahead of any comment or period cue.
+_BADGE_ROLE = Qt.ItemDataRole.UserRole + 7
+#: Item-data role on a header's col-0 item carrying its nesting level: 0 for a
+#: top-level group header, 1 for a phase sub-header. The chevron hit-test reads
+#: it so a click on a phase header's chevron lands where the chevron is drawn.
+_INDENT_LEVEL_ROLE = Qt.ItemDataRole.UserRole + 8
 #: Column index of the two-line Title cell.
 _TITLE_COLUMN = 1
+#: Width of the phase stripe drawn at the left edge of a member row's Run cell.
+_PHASE_STRIPE_WIDTH = 4
+#: One nesting step in the Run column, spelled as leading spaces on the label:
+#: group members sit one step in, phase members two.
+_INDENT = "    "
+#: Indicator appended to a header's right-aligned count cell; clicking it opens
+#: the phase provenance popover.
+_INFO_INDICATOR = " ⓘ"
+#: Badge on a series member that the partition search left out of every phase.
+_EXCLUDED_BADGE = "excluded · looks like a different phase"
+#: Side of the square phase swatch drawn on a "Move to phase" menu entry. Not
+#: widget geometry (no ``setFixed*``) — the pixmap a QIcon is built from.
+_SWATCH_PX = 12
+#: Column carrying a header row's right-aligned run count and ⓘ indicator.
+_COUNT_COLUMN = 3
+#: Width of a header row's chevron hit zone, measured from where the chevron is
+#: drawn (the row's indent), and of the ⓘ zone at the count column's right edge.
+_CHEVRON_ZONE_PX = 20
+_INFO_ZONE_PX = 20
 # Soft red tint used to mark runs that belong to the active fit series in
 # the trend panel.  Red is the FitSeries brand colour (ACCENT_RED_SOFT).
 _SERIES_HIGHLIGHT_BACKGROUND = QColor(tokens.ACCENT_RED_SOFT)
+
+
+def _swatch_icon(color: str) -> QIcon:
+    """A small filled square in *color*, for a menu entry's phase swatch."""
+    pixmap = QPixmap(_SWATCH_PX, _SWATCH_PX)
+    pixmap.fill(QColor(color))
+    return QIcon(pixmap)
 
 
 def _is_effectively_constant(values: list[float], *, abs_tol: float, rel_tol: float) -> bool:
@@ -452,10 +512,30 @@ class _RowHighlightDelegate(QStyledItemDelegate):
         note = index.data(_PERIOD_ROLE)
         return str(note).strip() if isinstance(note, str) else ""
 
+    @staticmethod
+    def _cell_badge(index) -> str:
+        """Return the state badge carried by a Title cell ('' elsewhere)."""
+        if index.column() != _TITLE_COLUMN:
+            return ""
+        badge = index.data(_BADGE_ROLE)
+        return str(badge).strip() if isinstance(badge, str) else ""
+
     @classmethod
     def _cell_second_line(cls, index) -> str:
-        """Return the Title cell's muted second line: comment plus period cue."""
-        parts = [part for part in (cls._cell_comment(index), cls._cell_period_note(index)) if part]
+        """Return the Title cell's muted second line: badge, comment, period cue.
+
+        The badge leads: it states what the row *is* (an excluded run, D2),
+        which outranks the run's own comment when the cell has to elide.
+        """
+        parts = [
+            part
+            for part in (
+                cls._cell_badge(index),
+                cls._cell_comment(index),
+                cls._cell_period_note(index),
+            )
+            if part
+        ]
         return " · ".join(parts)
 
     @staticmethod
@@ -525,6 +605,26 @@ class _RowHighlightDelegate(QStyledItemDelegate):
             comment_fm.elidedText(comment, Qt.TextElideMode.ElideRight, rect.width()),
         )
         painter.restore()
+
+    def _draw_phase_stripe(self, painter, option, index) -> None:
+        """Draw the 4 px phase marker at the left edge of a Run cell (D2).
+
+        Solid in the phase's identity colour for a phase member, hatched grey
+        for a member the partition excluded from every phase. Only ever called
+        for column 0 of an unselected row — while the row is selected the
+        accent selection bar owns that edge, exactly as the series-highlight
+        tint yields the row background to the selection.
+        """
+        color = index.data(_PHASE_STRIPE_ROLE)
+        if not isinstance(color, str):
+            return
+        rect = QRect(
+            option.rect.left(), option.rect.top(), _PHASE_STRIPE_WIDTH, option.rect.height()
+        )
+        if index.data(_PHASE_STRIPE_HATCHED_ROLE):
+            painter.fillRect(rect, QBrush(QColor(color), Qt.BrushStyle.BDiagPattern))
+        else:
+            painter.fillRect(rect, QColor(color))
 
     def sizeHint(self, option, index):  # noqa: N802 — Qt override
         hint = super().sizeHint(option, index)
@@ -597,6 +697,9 @@ class _RowHighlightDelegate(QStyledItemDelegate):
         else:
             super().paint(painter, option, index)
 
+        if not is_selected and index.column() == 0:
+            self._draw_phase_stripe(painter, option, index)
+
 
 class DataBrowserPanel(QWidget):
     """Logbook-style run table with grouping, sorting, filtering and co-add."""
@@ -637,6 +740,11 @@ class DataBrowserPanel(QWidget):
     # host so it can prompt (delete vs keep the group's owned series) before the
     # dissolve actually runs.
     ungroup_requested = Signal(str)  # group_id
+    # "Ungroup" from a *phase* sub-header (transitions plan, D2): dissolves every
+    # phase of the named parent series group, leaving the series itself intact.
+    # Deferred to the host for the same keep-fits / delete-fits prompt the plain
+    # Ungroup uses — a phase owns its global-fit series just as a group does.
+    remove_phases_requested = Signal(str)  # parent group_id
     # A membership edit on an *existing* group (Send to Group, Remove from Group,
     # Ungroup): the host refreshes series staleness (a group-bound series is stale
     # when its live membership no longer matches what was last fit). Distinct from
@@ -680,6 +788,12 @@ class DataBrowserPanel(QWidget):
     #: membership has a distinct table key while primary/ungrouped rows keep the
     #: bare integer run key. Selection APIs collapse copies back to the run.
     _COPY_SENTINEL_PREFIX = "copy:"
+    #: Display key prefix for a member row rendered under a *phase* sub-header
+    #: (transitions plan, D2). Encodes ``phase:<phase_id>:<run>``. A phase
+    #: membership refines the parent series membership rather than adding a
+    #: second one, so such a row is the run's only row under that series — it
+    #: is never a ``copy:`` row and never wears a multi-membership marker.
+    _PHASE_SENTINEL_PREFIX = "phase:"
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -722,6 +836,13 @@ class DataBrowserPanel(QWidget):
         #: restore, kept until the registry is (re)synced so a pre-registry
         #: project still shows its groups (see :meth:`sync_groups_from_project_model`).
         self._legacy_group_seed: list[dict] = []
+        #: The one ⓘ provenance frame (transitions plan, D2), reused for every
+        #: header. A ``Qt.Popup`` closes itself on the next outside click, so a
+        #: single long-lived instance never leaves a second frame on screen.
+        self._phase_popover = PhaseInfoPopover(self)
+        self._phase_popover.fit_requested.connect(self.fit_group_requested)
+        self._phase_popover.show_series_requested.connect(self.show_group_series_requested)
+        self._phase_popover.rename_requested.connect(self._rename_group)
         #: Provider returning the project's live grouping-profile list
         #: (injected by MainWindow via :meth:`set_grouping_profile_provider`).
         #: Drives the per-run profile marker and the Assign-Grouping-Profile
@@ -1004,6 +1125,13 @@ class DataBrowserPanel(QWidget):
         the registry, then integrates the registry's groups into the display
         order, re-derives multi-membership, and repaints. Idempotent — safe to
         call after a load rebinds a fresh model or after a browser-only restore.
+
+        A seed entry carrying ``parent_group_id`` (D1/D2) is re-materialised as
+        a *phase* — ordinal, range, boundaries, colour and provenance included —
+        so a standalone panel restore rebuilds the nested rows, not a flat
+        group that happens to name a parent. A phase can legitimately hold a
+        single run (the manual "Move to phase" override can leave one there),
+        so it is admitted at one member where an ordinary group needs two.
         """
         for entry in self._legacy_group_seed:
             gid = str(entry.get("group_id") or "")
@@ -1012,6 +1140,15 @@ class DataBrowserPanel(QWidget):
             members = [
                 int(v) for v in entry.get("member_run_numbers", []) if int(v) in self._datasets
             ]
+            parent_group_id = entry.get("parent_group_id")
+            if parent_group_id is not None:
+                if not members:
+                    continue
+                self._project_model.add_data_group(
+                    DataGroup.from_dict({**entry, "member_run_numbers": members})
+                )
+                self._collapsed.setdefault(gid, bool(entry.get("collapsed", False)))
+                continue
             if len(members) < 2:
                 continue
             self._project_model.create_data_group(
@@ -1038,15 +1175,22 @@ class DataBrowserPanel(QWidget):
         Drops headers for groups gone from the registry, appends any registry
         group not yet displayed (in registry order), and pulls every grouped run
         out of the ungrouped rows (its rows now render under its group headers).
+
+        Phase groups never appear in :attr:`_display_order` (transitions plan,
+        D2): a phase renders as a sub-header under its parent series' header,
+        so listing it at the top level would draw it twice. A group that
+        *became* a phase since the last integration is dropped from the order
+        for the same reason.
         """
         live = self._project_model.data_groups
+        top_level = {gid for gid, group in live.items() if not group.is_phase}
         self._display_order = [
             entry
             for entry in self._display_order
-            if not (isinstance(entry, str) and entry not in live)
+            if not (isinstance(entry, str) and entry not in top_level)
         ]
         for gid in live:
-            if gid not in self._display_order:
+            if gid in top_level and gid not in self._display_order:
                 self._display_order.append(gid)
         grouped_runs = {int(rn) for group in live.values() for rn in group.member_run_numbers}
         self._display_order = [
@@ -1084,10 +1228,21 @@ class DataBrowserPanel(QWidget):
         stable across an add) while dropping memberships whose group or member
         entry is gone, and appending any registry memberships not yet mapped (in
         registry / creation order, so a newly-added membership is non-primary).
+        Phase groups are deliberately absent from the map (transitions plan,
+        D2): a phase's members are by construction a subset of its parent
+        series group's, so a phase membership *refines* the parent's rather
+        than being a second, independent one. Counting it here would mint a
+        marked copy row and a ① marker for every run of a partitioned series —
+        the exact opposite of what the nesting says.
+
         O(total memberships); called after every group mutation, never per row.
         """
         existing = self._run_to_groups
-        live_groups = self._project_model.data_groups
+        live_groups = {
+            gid: group
+            for gid, group in self._project_model.data_groups.items()
+            if not group.is_phase
+        }
         member_runs = {int(rn) for group in live_groups.values() for rn in group.member_run_numbers}
         mapping: dict[int, list[str]] = {}
         for rn in member_runs:
@@ -1109,16 +1264,67 @@ class DataBrowserPanel(QWidget):
         return f"{self._COPY_SENTINEL_PREFIX}{group_id}:{int(run_number)}"
 
     def _member_row_group(self, key: object) -> str | None:
-        """Return the group a member row belongs to, from its table *key*.
+        """Return the group a member row renders under, from its table *key*.
 
         An int key resolves to the run's primary group (``None`` when ungrouped);
-        a ``copy:`` key names the group it renders under; anything else (a group
-        header key) returns ``None``.
+        a ``copy:`` key names the group it renders under; a ``phase:`` key names
+        the *phase* it renders under (so collapsing that phase hides it);
+        anything else (a group header key) returns ``None``.
         """
         if isinstance(key, int):
             return self._primary_group_id(key)
+        phase_parts = self._phase_key_parts(key)
+        if phase_parts is not None:
+            return phase_parts[0]
         copy_parts = self._copy_key_parts(key)
         return copy_parts[0] if copy_parts is not None else None
+
+    def _is_phase_key(self, key: object) -> bool:
+        return isinstance(key, str) and key.startswith(self._PHASE_SENTINEL_PREFIX)
+
+    def _phase_member_key(self, phase_id: str, run_number: int) -> str:
+        return f"{self._PHASE_SENTINEL_PREFIX}{phase_id}:{int(run_number)}"
+
+    def _phase_key_parts(self, key: object) -> tuple[str, int] | None:
+        """Decode a ``phase:<phase_id>:<run>`` key into ``(phase_id, run)``.
+
+        ``None`` for any other key. Phase keys are only ever minted by
+        :meth:`_phase_member_key` from a live group id and a run number, so a
+        key that passes the prefix test always splits cleanly.
+        """
+        if not self._is_phase_key(key):
+            return None
+        body = str(key)[len(self._PHASE_SENTINEL_PREFIX) :]
+        phase_id, _, run_text = body.rpartition(":")
+        return phase_id, int(run_text)
+
+    def _phases_for(self, group_id: str) -> list[DataGroup]:
+        """Return the phase sub-groups of *group_id*, in ordinal order."""
+        return self._project_model.phase_groups_for(group_id)
+
+    def _phase_of_run(self, run_number: int, parent_id: str) -> str | None:
+        """Return the phase of *parent_id* holding *run_number*, or ``None``.
+
+        ``None`` means the run is one of the parent's *excluded* members — the
+        partition search left it out of every phase.
+        """
+        for phase in self._phases_for(parent_id):
+            if run_number in phase.member_run_numbers:
+                return phase.group_id
+        return None
+
+    def _stripe_color_for_phase(self, phase: DataGroup) -> str:
+        """The phase's stripe/swatch colour, resolved against the live theme."""
+        return resolve_phase_color(phase, dark=is_dark_surface(self.palette()))
+
+    def _runs_by_number(self) -> dict[int, Run]:
+        """The loaded runs keyed by number, as ``move_run_to_phase`` wants them.
+
+        Only datasets that carry a ``Run`` contribute; a run without one falls
+        back to its run number as the sweep-axis value inside the model, which
+        is the same fallback ``FitSeries.sort_members`` makes.
+        """
+        return {rn: ds.run for rn, ds in self._datasets.items() if ds.run is not None}
 
     def _copy_key_parts(self, key: object) -> tuple[str, int] | None:
         """Decode a ``copy:<group_id>:<run>`` key into ``(group_id, run)``."""
@@ -1317,6 +1523,29 @@ class DataBrowserPanel(QWidget):
         self.group_membership_changed.emit()
         return removed
 
+    def remove_phases(self, parent_id: str, *, orphan_series: bool = True) -> list[str]:
+        """Dissolve every phase of *parent_id*, keeping the series group (D2).
+
+        The counterpart of applying a partition: the members all come back as
+        plain members of the series, in the series' own order. *orphan_series*
+        matches :meth:`ungroup` — ``True`` freezes each phase's owned series to
+        a standalone legacy analysis, ``False`` deletes them and returns their
+        ``batch_id``\\ s. The host prompts for the choice (see
+        ``remove_phases_requested``).
+        """
+        removed = self._project_model.remove_phase_groups(parent_id, orphan_series=orphan_series)
+        self._collapsed = {
+            gid: flag
+            for gid, flag in self._collapsed.items()
+            if gid in self._project_model.data_groups
+        }
+        self._rebuild_run_to_groups()
+        self._rebuild_table()
+        self._resize_columns_to_content()
+        self.datasets_changed.emit()
+        self.group_membership_changed.emit()
+        return removed
+
     def _move_groups_to_top(self) -> None:
         """Keep all group headers above non-grouped rows in display order."""
         groups = [
@@ -1330,12 +1559,21 @@ class DataBrowserPanel(QWidget):
     def _drop_membership(self, run_number: int, group_id: str) -> str | None:
         """Drop one (run, group) membership from the registry (no view refresh).
 
+        A run leaving a *partitioned* group is vacated from its phase first: a
+        phase's members are by construction a subset of its parent's, so a run
+        left behind in a phase of a group it no longer belongs to would be a
+        member of a partition of a scan it is not in (D2).
+
         Returns *group_id* when the group is left with no members (so the caller
         can dissolve it), else ``None``.
         """
         group = self._project_model.data_group(group_id)
         if group is None or run_number not in group.member_run_numbers:
             return None
+        if self._phase_of_run(run_number, group_id) is not None:
+            self._project_model.move_run_to_phase(
+                run_number, None, series_group_id=group_id, runs_by_number=self._runs_by_number()
+            )
         remaining = [rn for rn in group.member_run_numbers if rn != run_number]
         self._project_model.set_data_group_members(group_id, remaining)
         return group_id if not remaining else None
@@ -1494,11 +1732,7 @@ class DataBrowserPanel(QWidget):
                     if group is None:
                         continue
                     if not self._is_collapsed(entry):
-                        for rn in group.member_run_numbers:
-                            if rn in self._datasets:
-                                self._add_dataset_row(
-                                    self._datasets[rn], indent=True, group_id=entry
-                                )
+                        self._add_group_body_rows(group)
                 else:
                     dataset = self._datasets.get(entry)
                     if dataset is not None:
@@ -1510,6 +1744,38 @@ class DataBrowserPanel(QWidget):
         finally:
             self._updating_table = False
             self._table.setUpdatesEnabled(True)
+
+    def _add_group_body_rows(self, group: DataGroup) -> None:
+        """Render an expanded group's contents: phases, then plain members.
+
+        An unpartitioned group renders exactly as it always has — one member
+        row per member. A group the wizard partitioned renders a sub-header per
+        phase (in ordinal order, each collapsible on its own) followed by that
+        phase's members, and then the parent's *excluded* members — the runs no
+        phase claimed — last, so the phases read as a contiguous sweep and the
+        leftovers as an appendix (transitions plan, D2).
+        """
+        phases = self._phases_for(group.group_id)
+        if not phases:
+            for rn in group.member_run_numbers:
+                if rn in self._datasets:
+                    self._add_dataset_row(self._datasets[rn], indent=True, group_id=group.group_id)
+            return
+
+        for phase in phases:
+            self._add_phase_header_row(phase)
+            if self._is_collapsed(phase.group_id):
+                continue
+            for rn in phase.member_run_numbers:
+                if rn in self._datasets:
+                    self._add_dataset_row(
+                        self._datasets[rn], indent=True, group_id=group.group_id, phase=phase
+                    )
+        for rn in self._project_model.excluded_runs_for(group.group_id):
+            if rn in self._datasets:
+                self._add_dataset_row(
+                    self._datasets[rn], indent=True, group_id=group.group_id, excluded=True
+                )
 
     def _add_group_header_row(self, group_id: str) -> None:
         group = self._project_model.data_group(group_id)
@@ -1529,6 +1795,7 @@ class DataBrowserPanel(QWidget):
         run_item = QTableWidgetItem(f"{prefix} {group.name}")
         run_item.setData(self._GROUP_ROLE, f"{self._GROUP_SENTINEL_PREFIX}{group.group_id}")
         run_item.setData(_GROUP_KIND_ROLE, group.kind)
+        run_item.setData(_INDENT_LEVEL_ROLE, 0)
         run_item.setFlags(
             (run_item.flags() & ~Qt.ItemFlag.ItemIsEditable) | Qt.ItemFlag.ItemIsSelectable
         )
@@ -1545,10 +1812,14 @@ class DataBrowserPanel(QWidget):
             blank.setBackground(header_bg)
             self._table.setItem(row, col, blank)
 
-        # Last base column (B): right-aligned member count in muted mono
+        # Last base column (B): right-aligned member count in muted mono, plus
+        # the ⓘ provenance indicator once the series carries a partition (an
+        # unpartitioned group has no phase provenance to show).
         if self._table.columnCount() > 3:
             n = len(group.member_run_numbers)
             count_text = f"{n} run" if n == 1 else f"{n} runs"
+            if self._phases_for(group_id):
+                count_text = f"{count_text}{_INFO_INDICATOR}"
             count_item = QTableWidgetItem(count_text)
             count_item.setFlags(count_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             count_item.setFont(mono_font(10.0))
@@ -1562,6 +1833,72 @@ class DataBrowserPanel(QWidget):
             blank = QTableWidgetItem("")
             blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
             blank.setBackground(header_bg)
+            self._table.setItem(row, col, blank)
+
+    def _add_phase_header_row(self, phase: DataGroup) -> None:
+        """Render one phase sub-header: ``▾ Phase I   1.8 – 16.0 K   ⓘ``.
+
+        Indented one level under its parent's header and painted on the group
+        *member* tint, so the phase reads as part of the series rather than as a
+        second top-level group. The Title column carries the range and the count
+        cell the ⓘ indicator. Model and fit text deliberately stay out of the
+        header — that is what the popover is for.
+
+        The phase's swatch is the coloured left-edge stripe plus the label drawn
+        in the phase colour, rather than a ``■`` glyph in the text: the Run
+        column is capped at 150 px (``_resize_columns_to_content``) and the
+        glyph costs enough width there to elide the wizard's own default names
+        from "Phase II" on. The stripe runs down the header and every member of
+        the phase, so it reads as one band rather than a mark on one row.
+        """
+        member_bg = _GROUP_MEMBER_BACKGROUND
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+
+        prefix = "▸" if self._is_collapsed(phase.group_id) else "▾"
+        run_item = QTableWidgetItem(f"{_INDENT}{prefix} {phase.name}")
+        run_item.setData(self._GROUP_ROLE, f"{self._GROUP_SENTINEL_PREFIX}{phase.group_id}")
+        run_item.setData(_GROUP_KIND_ROLE, phase.kind)
+        run_item.setData(_INDENT_LEVEL_ROLE, 1)
+        run_item.setData(_PHASE_STRIPE_ROLE, self._stripe_color_for_phase(phase))
+        run_item.setFlags(
+            (run_item.flags() & ~Qt.ItemFlag.ItemIsEditable) | Qt.ItemFlag.ItemIsSelectable
+        )
+        font = QFont(self._table.font())
+        font.setBold(True)
+        run_item.setFont(font)
+        run_item.setForeground(QColor(self._stripe_color_for_phase(phase)))
+        run_item.setBackground(member_bg)
+        self._table.setItem(row, 0, run_item)
+
+        range_item = QTableWidgetItem(format_phase_range(phase))
+        range_item.setFlags(range_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        range_item.setForeground(QColor(tokens.TEXT_MUTED))
+        range_item.setBackground(member_bg)
+        self._table.setItem(row, 1, range_item)
+
+        # The T column is blank; the four base columns always exist
+        # (``_refresh_column_headers`` always sets at least ``_COLUMNS``), so
+        # there is nothing to check before writing them.
+        blank_temp = QTableWidgetItem("")
+        blank_temp.setFlags(blank_temp.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        blank_temp.setBackground(member_bg)
+        self._table.setItem(row, 2, blank_temp)
+
+        n = len(phase.member_run_numbers)
+        count_text = f"{n} run" if n == 1 else f"{n} runs"
+        count_item = QTableWidgetItem(f"{count_text}{_INFO_INDICATOR}")
+        count_item.setFlags(count_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        count_item.setFont(mono_font(10.0))
+        count_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        count_item.setForeground(QColor(tokens.TEXT_MUTED))
+        count_item.setBackground(member_bg)
+        self._table.setItem(row, _COUNT_COLUMN, count_item)
+
+        for col in range(len(self._COLUMNS), self._table.columnCount()):
+            blank = QTableWidgetItem("")
+            blank.setFlags(blank.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            blank.setBackground(member_bg)
             self._table.setItem(row, col, blank)
 
     @staticmethod
@@ -1659,19 +1996,34 @@ class DataBrowserPanel(QWidget):
         }
 
     def _add_dataset_row(
-        self, dataset: MuonDataset, *, indent: bool, group_id: str | None = None
+        self,
+        dataset: MuonDataset,
+        *,
+        indent: bool,
+        group_id: str | None = None,
+        phase: DataGroup | None = None,
+        excluded: bool = False,
     ) -> None:
+        """Render one run row.
+
+        *phase* renders the run under that phase sub-header of *group_id*, one
+        level deeper and striped in the phase colour; *excluded* renders it as a
+        member of *group_id* that the partition claimed for no phase — hatched
+        stripe, italic, and a Title-column badge saying so. The two are mutually
+        exclusive: a run is in a phase or it is excluded (transitions plan, D2).
+        """
         rn = int(dataset.run_number)
         meta = dataset.metadata
         # A *copy* row (D2): the run rendered under a non-primary group. Its
         # table key encodes the (run, group) membership so it is addressable
-        # distinctly, and its run label carries a circled-digit marker.
-        is_copy = group_id is not None and self._primary_group_id(rn) != group_id
+        # distinctly, and its run label carries a circled-digit marker. A phase
+        # member is never a copy: the phase refines its parent membership.
+        is_copy = phase is None and group_id is not None and self._primary_group_id(rn) != group_id
         run_display = str(dataset.run_label)
         if rn in self._combined_datasets:
             run_display = self._combined_run_display(rn)
         if indent:
-            run_display = f"    {run_display}"
+            run_display = f"{_INDENT * (2 if phase is not None else 1)}{run_display}"
 
         row = self._table.rowCount()
         self._table.insertRow(row)
@@ -1680,7 +2032,18 @@ class DataBrowserPanel(QWidget):
             run_item = QTableWidgetItem(run_display)
         else:
             run_item = NumericTableWidgetItem(run_display)
-        run_item.setData(self._GROUP_ROLE, self._copy_key(group_id, rn) if is_copy else rn)
+        if phase is not None:
+            key: int | str = self._phase_member_key(phase.group_id, rn)
+        elif is_copy:
+            key = self._copy_key(group_id, rn)
+        else:
+            key = rn
+        run_item.setData(self._GROUP_ROLE, key)
+        if phase is not None:
+            run_item.setData(_PHASE_STRIPE_ROLE, self._stripe_color_for_phase(phase))
+        elif excluded:
+            run_item.setData(_PHASE_STRIPE_ROLE, EXCLUDED_PHASE_HATCH_COLOR)
+            run_item.setData(_PHASE_STRIPE_HATCHED_ROLE, True)
         run_item.setFlags(run_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self._table.setItem(row, 0, run_item)
 
@@ -1701,10 +2064,12 @@ class DataBrowserPanel(QWidget):
         tooltip_parts = [part for part in (title, comment, period_tip) if part]
         if period_note is not None:
             title_item.setData(_PERIOD_ROLE, period_note)
+        if excluded:
+            title_item.setData(_BADGE_ROLE, _EXCLUDED_BADGE)
         if tooltip_parts:
             title_item.setToolTip("\n".join(tooltip_parts))
         self._table.setItem(row, 1, title_item)
-        if comment.strip() or period_note is not None:
+        if comment.strip() or period_note is not None or excluded:
             self._table.setRowHeight(row, self._two_line_row_height())
 
         provenance_tip = self._derived_run_tooltip(meta)
@@ -1829,6 +2194,17 @@ class DataBrowserPanel(QWidget):
                 item = self._table.item(row, col)
                 if item is not None:
                     item.setBackground(bg)
+
+        # An excluded run reads as set aside, not as a broken row: italic across
+        # the row, on the same member tint as its siblings. The hatched stripe
+        # and the Title badge carry the reason.
+        if excluded:
+            for col in range(self._table.columnCount()):
+                item = self._table.item(row, col)
+                if item is not None:
+                    italic = QFont(item.font())
+                    italic.setItalic(True)
+                    item.setFont(italic)
 
     def _selected_keys(self, *, visible_only: bool = False) -> list[int | str]:
         selected: list[int | str] = []
@@ -2869,6 +3245,11 @@ class DataBrowserPanel(QWidget):
         group-header key that expands to it. This is the single dedupe choke
         point that keeps a run selected via two group copies from double-counting
         into co-add / subtract / batch fits.
+
+        A series header expands to its own members, which by construction
+        already include every phase's runs *and* the runs no phase claimed, so
+        selecting a partitioned series still means "every run in this scan"; a
+        phase header expands to that phase's members alone (D2).
         """
         out: list[int] = []
         seen: set[int] = set()
@@ -2881,6 +3262,10 @@ class DataBrowserPanel(QWidget):
         for key in keys:
             if isinstance(key, int):
                 _add(key)
+                continue
+            phase_parts = self._phase_key_parts(key)
+            if phase_parts is not None:
+                _add(phase_parts[1])
                 continue
             copy_parts = self._copy_key_parts(key)
             if copy_parts is not None:
@@ -3019,9 +3404,12 @@ class DataBrowserPanel(QWidget):
     def _apply_series_highlights(self) -> None:
         """Walk the table and apply/remove the series-highlight tint.
 
-        Handles both primary run rows (int key) and copy rows (``copy:`` key,
-        D2); the member tint under each falls back to the owning group's kind
-        (auto vs user) so a re-tint after a highlight change keeps the ramp.
+        Handles primary run rows (int key), copy rows (``copy:`` key, D2) and
+        phase member rows (``phase:`` key, D2); the member tint under each falls
+        back to the owning group's kind (auto vs user) so a re-tint after a
+        highlight change keeps the ramp. A phase member takes its parent series
+        group's tint — the phase's own identity rides on the stripe, not the
+        background.
         """
         for row in range(self._table.rowCount()):
             item = self._table.item(row, 0)
@@ -3031,6 +3419,9 @@ class DataBrowserPanel(QWidget):
             if isinstance(key, int):
                 rn = key
                 tint_group = self._primary_group_id(rn)
+            elif (phase_parts := self._phase_key_parts(key)) is not None:
+                phase = self._project_model.data_group(phase_parts[0])
+                tint_group, rn = phase.parent_group_id, phase_parts[1]
             else:
                 copy_parts = self._copy_key_parts(key)
                 if copy_parts is None:
@@ -3675,10 +4066,17 @@ class DataBrowserPanel(QWidget):
             label = "Remove from Group" if len(selected_memberships) == 1 else "Remove from Groups"
             menu.addAction(label, self._remove_selected_from_group)
 
+        # "Move to phase ▸" on a single member row of a partitioned series: the
+        # manual override of the wizard's boundary choice (D2).
+        if len(keys) == 1 and not selected_group_ids:
+            self._append_move_to_phase_menu(menu, keys[0])
+
         if len(selected_group_ids) == 1 and len(keys) == 1:
             gid = selected_group_ids[0]
             group = self._project_model.data_group(gid)
-            if group is not None:
+            if group is not None and group.is_phase:
+                self._append_phase_header_menu(menu, group)
+            elif group is not None:
                 collapse_text = "Expand Group" if self._is_collapsed(gid) else "Collapse Group"
                 menu.addAction(collapse_text, lambda gid=gid: self._toggle_group_collapsed(gid))
                 menu.addAction("Rename Group", lambda gid=gid: self._rename_group(gid))
@@ -3733,6 +4131,118 @@ class DataBrowserPanel(QWidget):
                 )
             )
 
+    def _append_phase_header_menu(self, menu: QMenu, phase: DataGroup) -> None:
+        """Add the actions a phase sub-header offers (D2).
+
+        The same four verbs a group header offers, worded for a phase, plus an
+        Ungroup that dissolves the *whole* partition rather than this one phase:
+        phases are a partition of one series, and a series with a hole in it is
+        not a state the wizard or the trend panel can describe.
+        """
+        phase_id = phase.group_id
+        collapse_text = "Expand Phase" if self._is_collapsed(phase_id) else "Collapse Phase"
+        menu.addAction(collapse_text, lambda pid=phase_id: self._toggle_group_collapsed(pid))
+        menu.addAction("Rename Phase", lambda pid=phase_id: self._rename_group(pid))
+        menu.addAction(
+            "Ungroup",
+            lambda pid=phase.parent_group_id: self.remove_phases_requested.emit(pid),
+        )
+        menu.addSeparator()
+        menu.addAction("Fit this phase…", lambda pid=phase_id: self.fit_group_requested.emit(pid))
+        menu.addAction(
+            "Show series from this phase",
+            lambda pid=phase_id: self.show_group_series_requested.emit(pid),
+        )
+        menu.addSeparator()
+
+    def _append_move_to_phase_menu(self, menu: QMenu, key: int | str) -> None:
+        """Add "Move to phase ▸" for a member row of a partitioned series (D2).
+
+        The submenu lists every phase of the row's series with its swatch and
+        range, ticks the one currently holding the run, and ends with
+        "Exclude from phases" — the manual override for a boundary the wizard
+        placed one run off. Nothing is added for a row whose series carries no
+        partition, or for an ungrouped run.
+        """
+        phase_parts = self._phase_key_parts(key)
+        if phase_parts is not None:
+            run_number, parent_id = phase_parts[1], self._member_parent_id(phase_parts[0])
+        elif isinstance(key, int):
+            run_number, parent_id = key, self._primary_group_id(key)
+        else:
+            copy_parts = self._copy_key_parts(key)
+            if copy_parts is None:
+                return
+            run_number, parent_id = copy_parts[1], copy_parts[0]
+        if parent_id is None:
+            return
+        phases = self._phases_for(parent_id)
+        if not phases:
+            return
+
+        current = self._phase_of_run(run_number, parent_id)
+        # Constructed with an explicit parent rather than via ``addMenu(title)``:
+        # the parented QMenu is owned by *menu* in C++, so the submenu outlives
+        # this call. ``addMenu(title)`` hands back a menu PySide considers
+        # Python-owned, which is destroyed when this frame returns.
+        submenu = QMenu("Move to phase", menu)
+        menu.addMenu(submenu)
+        dark = is_dark_surface(self.palette())
+        for phase in phases:
+            span = format_phase_range(phase)
+            label = f"{phase.name} · {span}" if span else phase.name
+            action = submenu.addAction(label)
+            action.setIcon(_swatch_icon(resolve_phase_color(phase, dark=dark)))
+            action.setCheckable(True)
+            action.setChecked(phase.group_id == current)
+            action.triggered.connect(
+                lambda _checked=False, rn=run_number, pid=phase.group_id: self.move_run_to_phase(
+                    rn, pid, series_group_id=parent_id
+                )
+            )
+        submenu.addSeparator()
+        excluded_action = submenu.addAction("Exclude from phases")
+        excluded_action.setCheckable(True)
+        excluded_action.setChecked(current is None)
+        excluded_action.triggered.connect(
+            lambda _checked=False, rn=run_number: self.move_run_to_phase(
+                rn, None, series_group_id=parent_id
+            )
+        )
+
+    def _member_parent_id(self, phase_id: str) -> str | None:
+        """Return the series group a phase belongs to."""
+        return self._project_model.data_group(phase_id).parent_group_id
+
+    def move_run_to_phase(
+        self, run_number: int, phase_id: str | None, *, series_group_id: str
+    ) -> None:
+        """Move *run_number* into *phase_id* (``None`` excludes it) within one series, then repaint.
+
+        *series_group_id* is the partitioned series the move belongs to: a run
+        may sit in several data groups, so the phase it leaves is looked up in
+        that series alone. The registry mutation is the core model's
+        (``ProjectModel.move_run_to_phase`` re-orders both affected phases along
+        the sweep axis and recomputes their ranges); the panel rebuilds and
+        reports the edit so the host re-derives series staleness — a
+        phase-bound global-fit series whose membership just changed no longer
+        matches what was last fit. One report per affected phase, so a move
+        between two phases marks both.
+        """
+        vacated = self._phase_of_run(run_number, series_group_id)
+        self._project_model.move_run_to_phase(
+            run_number,
+            phase_id,
+            series_group_id=series_group_id,
+            runs_by_number=self._runs_by_number(),
+        )
+        self._rebuild_table()
+        self._resize_columns_to_content()
+        self.datasets_changed.emit()
+        for affected in (vacated, phase_id):
+            if affected is not None:
+                self.group_membership_changed.emit()
+
     def _populate_send_to_group_menu(self, send_menu: QMenu, selected_runs: list[int]) -> None:
         """Populate Send-to-Group submenu with current groups."""
         groups = sorted(self._project_model.data_groups.values(), key=lambda g: g.name.lower())
@@ -3753,14 +4263,22 @@ class DataBrowserPanel(QWidget):
         """Return the ``(run, group)`` memberships implied by *keys* (D2).
 
         A ``copy:`` key targets its own membership; a bare run key targets the
-        run's primary membership (ungrouped runs contribute nothing). De-duplicated
-        so the same membership selected twice removes once.
+        run's primary membership (ungrouped runs contribute nothing). A
+        ``phase:`` key targets the *parent series* membership, not the phase:
+        the phase is a refinement of that membership, so "Remove from Group" on
+        a phase member means leaving the scan (and :meth:`_drop_membership`
+        vacates its phase as part of that). De-duplicated so the same
+        membership selected twice removes once.
         """
         memberships: list[tuple[int, str]] = []
         seen: set[tuple[int, str]] = set()
         for key in keys:
             copy_parts = self._copy_key_parts(key)
-            if copy_parts is not None:
+            phase_parts = self._phase_key_parts(key)
+            if phase_parts is not None:
+                phase = self._project_model.data_group(phase_parts[0])
+                pair = (phase_parts[1], phase.parent_group_id)
+            elif copy_parts is not None:
                 pair = (copy_parts[1], copy_parts[0])
             elif isinstance(key, int):
                 gid = self._primary_group_id(key)
@@ -3875,6 +4393,48 @@ class DataBrowserPanel(QWidget):
     # Event filter, selection, sorting, filtering
     # ------------------------------------------------------------------
 
+    def _chevron_right_edge(self, row: int) -> int:
+        """Viewport x below which a click on header *row* hits its chevron.
+
+        Indent-aware: a phase sub-header's chevron is drawn one nesting step in
+        (D2), so the zone shifts with the row's level rather than sitting at a
+        fixed offset that would put a phase's chevron outside its own hit area.
+        Only ever asked about a header row, which always stamps its level.
+        """
+        item = self._table.item(row, 0)
+        level = int(item.data(_INDENT_LEVEL_ROLE))
+        indent_px = QFontMetrics(self._table.font()).horizontalAdvance(_INDENT)
+        return self._table.columnViewportPosition(0) + level * indent_px + _CHEVRON_ZONE_PX
+
+    def _hit_info_indicator(self, row: int, x: int) -> bool:
+        """Whether *x* lands on the ⓘ indicator of header *row*.
+
+        The indicator is the tail of the right-aligned count cell in the last
+        base column, so its hit zone is that column's right edge. A header
+        without a partition carries no indicator and therefore no zone.
+        """
+        count_item = self._table.item(row, _COUNT_COLUMN)
+        if not count_item.text().endswith(_INFO_INDICATOR.strip()):
+            return False
+        right = self._table.columnViewportPosition(_COUNT_COLUMN) + self._table.columnWidth(
+            _COUNT_COLUMN
+        )
+        return right - _INFO_ZONE_PX <= x <= right
+
+    def _open_phase_popover(self, group_id: str, row: int) -> None:
+        """Show the ⓘ provenance frame for the header *group_id* beside its row."""
+        group = self._project_model.data_group(group_id)
+        if group.is_phase:
+            self._phase_popover.show_phase(group, run_count=len(group.member_run_numbers))
+        else:
+            self._phase_popover.show_series(group, self._phases_for(group_id))
+        anchor = self._table.visualItemRect(self._table.item(row, _COUNT_COLUMN))
+        self._phase_popover.move(
+            self._table.viewport().mapToGlobal(anchor.bottomRight())
+            - QPoint(self._phase_popover.width(), 0)
+        )
+        self._phase_popover.show()
+
     def eventFilter(self, watched, event):  # noqa: N802
         header = self._table.horizontalHeader()
 
@@ -3920,8 +4480,11 @@ class DataBrowserPanel(QWidget):
                 if item is not None:
                     gid = self._group_id_from_key(item.data(self._GROUP_ROLE))
                     if gid is not None:
-                        _chevron_right = self._table.columnViewportPosition(0) + 20
-                        if event.position().toPoint().x() <= _chevron_right:
+                        # Only a col-0 item carries the group role, so this
+                        # branch is reached for the label cell alone — the ⓘ
+                        # indicator lives in the count column and is handled by
+                        # the single-click path below.
+                        if event.position().toPoint().x() <= self._chevron_right_edge(item.row()):
                             return True  # single-click already toggled; absorb silently
                         self._toggle_group_collapsed(gid)
                         return True
@@ -3936,14 +4499,19 @@ class DataBrowserPanel(QWidget):
                     index = self._table.model().index(row, 0)
                     selection_model = self._table.selectionModel()
 
-                    # Chevron single-click: toggle collapse without changing selection
+                    # Chevron single-click: toggle collapse without changing
+                    # selection. ⓘ single-click: open the provenance popover,
+                    # likewise without disturbing the selection.
                     _item = self._table.item(row, 0)
                     if _item is not None:
                         _gid = self._group_id_from_key(_item.data(self._GROUP_ROLE))
                         if _gid is not None:
-                            _chevron_right = self._table.columnViewportPosition(0) + 20
-                            if event.position().toPoint().x() <= _chevron_right:
+                            _x = event.position().toPoint().x()
+                            if _x <= self._chevron_right_edge(row):
                                 self._toggle_group_collapsed(_gid)
+                                return True
+                            if self._hit_info_indicator(row, _x):
+                                self._open_phase_popover(_gid, row)
                                 return True
 
                     if bool(modifiers & Qt.KeyboardModifier.ShiftModifier):
@@ -4156,6 +4724,15 @@ class DataBrowserPanel(QWidget):
                 self._project_model.set_data_group_members(
                     gid, sorted(group.member_run_numbers, key=_sort_key, reverse=reverse)
                 )
+                # Phases keep their ordinal order (that is the sweep, not a
+                # sort key the user chose); only the runs *within* each phase
+                # re-sort, so a column sort reorders a partitioned series
+                # exactly as it reorders a plain one (D2).
+                for phase in self._phases_for(gid):
+                    self._project_model.set_data_group_members(
+                        phase.group_id,
+                        sorted(phase.member_run_numbers, key=_sort_key, reverse=reverse),
+                    )
             self._display_order = groups + sorted_runs
         else:
             self._display_order = sorted_runs
@@ -4236,7 +4813,13 @@ class DataBrowserPanel(QWidget):
             if gid is not None and self._is_collapsed(gid):
                 visible = False
             if gid is not None and visible:
+                # A visible run keeps its own header *and* every header above
+                # it: a phase member's row makes both its phase sub-header and
+                # the parent series header worth showing (D2).
                 group_has_visible[gid] = True
+                parent_id = self._project_model.data_group(gid).parent_group_id
+                if parent_id is not None:
+                    group_has_visible[parent_id] = True
             self._table.setRowHidden(row, not visible)
 
         # Second pass: hide group rows when all children filtered out.
@@ -4933,15 +5516,34 @@ class DataBrowserPanel(QWidget):
             group = self._project_model.data_group(entry)
             if group is None:
                 continue
-            data_groups.append(
-                {
-                    "group_id": group.group_id,
-                    "name": group.name,
-                    "member_run_numbers": [int(rn) for rn in group.member_run_numbers],
-                    "collapsed": self._is_collapsed(group.group_id),
-                    "kind": group.kind,
-                }
-            )
+            # A group is followed by its phase sub-groups (D2), so the block
+            # carries the whole rendered tree — including each phase's own
+            # ``collapsed`` flag, which is per-phase view state exactly as a
+            # group's is.
+            for entity in (group, *self._phases_for(entry)):
+                data_groups.append(
+                    {
+                        "group_id": entity.group_id,
+                        "name": entity.name,
+                        "member_run_numbers": [int(rn) for rn in entity.member_run_numbers],
+                        "collapsed": self._is_collapsed(entity.group_id),
+                        "kind": entity.kind,
+                        # Echoed so a legacy seed (a pre-registry project, or a
+                        # standalone panel restore/tests) can recreate a phase
+                        # under its parent (D1). ``None`` for an ordinary group.
+                        "parent_group_id": entity.parent_group_id,
+                        "phase_ordinal": entity.phase_ordinal,
+                        "phase_range": (
+                            list(entity.phase_range) if entity.phase_range is not None else None
+                        ),
+                        "phase_boundaries": {
+                            side: (list(pair) if pair is not None else None)
+                            for side, pair in entity.phase_boundaries.items()
+                        },
+                        "phase_color": entity.phase_color,
+                        "phase_provenance": dict(entity.phase_provenance),
+                    }
+                )
         selected_group_ids = self._get_selected_group_ids()
         return {
             # Version 2: the Comment column was removed (comments ride on the

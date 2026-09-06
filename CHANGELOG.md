@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The Global Fit Wizard can now split a series at a transition into
+  independently-fitted phases, instead of forcing one model across a break it
+  cannot describe.** A screening pass looks for the smallest total penalty
+  (BIC per segment plus a per-break cost, in the style of Killick, Fearnhead &
+  Eckley, J. Am. Stat. Assoc. **107**, 1590 (2012), scored with the modified-BIC
+  penalty floor of Zhang & Siegmund, Biometrics **63**, 22 (2007)) over every
+  way of partitioning the series into contiguous phases of at least three runs,
+  and shows the whole penalty path — not just its own pick — in a new
+  **Transitions** card on the Result page, with the largest admissible break
+  count pre-selected. Selecting a row and pressing **Optimize phases** runs the
+  coupled search on each phase independently (plus the neighbouring solutions
+  the wizard checks to confirm its pick); **Apply phases** then nests one data
+  group per phase under the series group and records one global-fit series per
+  phase. Phase data groups render in the Data Browser as coloured sub-headers
+  beneath their series, with a 4 px stripe on every member row, a "Move to
+  phase ▸" override on any run, and an ⓘ popover naming the phase's model, fit
+  state, shared parameters, and boundary estimates; a run the partition leaves
+  out renders as an excluded, hatched member of the series instead. The Fit
+  Parameters trending panel colours a phase-owned series by its phase, and for
+  the active series shades its run range and draws its boundary estimates
+  (with an uncertainty band) directly on the plot — mirrored in the GLE
+  export. Project files gain six additive `data_groups` fields for this
+  (`parent_group_id`, `phase_ordinal`, `phase_range`, `phase_boundaries`,
+  `phase_color`, `phase_provenance` — schema v19). An oscillation that dies out
+  along the series counts as a transition in its own right: a damped-cosine
+  template is treated as oscillatory on a run only while at least one of its
+  line amplitudes exceeds twice its own fitted uncertainty. Where every line has
+  collapsed into the envelope the template is describing relaxation rather than
+  oscillation, so it is no longer offered as an oscillatory phase there and the
+  break is placed where the lines stopped instead of being carried across them
+  by a template that merely still scores well.
+
 - **The fit wizard now measures a heavily damped line's envelope instead of
   guessing at it.** The early-window crop ladder added in 0.17.0 could see such
   a line but could not describe one: it inferred an envelope from whichever
@@ -67,6 +99,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the blind scan declined can still be measured by naming it.
 
 ### Changed
+
+- **The Global Fit Wizard's candidate list for a series is now the union of what
+  its runs actually show.** The series portfolio used to be built from the
+  *median* fingerprint of the runs plus a half-of-the-runs vote on plain peak
+  detection, so a model describing a minority phase of a temperature series —
+  the two heavily damped lines below a transition, say — never entered it, and
+  the wizard could only recommend a model that fits half the data badly. Phase 1
+  now runs the **single-run Fit Wizard** on every run (tiered family screening,
+  peak analysis, damped-line scan, peak-seeded multiplet candidates), and the
+  series' candidate alphabet is the union of the templates those analyses
+  assessed, ordered by what each run chose and capped at 24. A cached single-run
+  analysis is reused when it answers the same question — same scope, same
+  user-declared frequencies — instead of the old exact-template-list match,
+  which no genuine single-run analysis ever satisfied, so every run was
+  re-analysed every time. Every run is then scored against every alphabet
+  candidate at one **series search resolution** (the smallest rebinning factor
+  any run's own analysis chose), warm-started from that run's or a sibling run's
+  fitted values, so the information criteria on the series table are mutually
+  comparable. That first pass no longer takes the runs one at a time: a few
+  analyses run side by side with the host's cores divided between them (each
+  one leaves most of a machine idle through its serial detection, pattern and
+  gating stages), every analysis after the first starts from the fitted values
+  of the nearest run that has already finished, and a candidate whose bare χ²
+  on every run already loses to one other candidate's information criterion is
+  dropped before the scoring pass — it cannot win a segment under any sharing,
+  so the bound costs nothing in answers. Every completion cell starts from a
+  fitted answer (its own run's at another binning, or the best sibling run's),
+  so it is one attempt, not a ladder. Measured on a synthetic twelve-run series of 8 000-point
+  records with three families present, phase 1 went from ~115–139 s to ~73–82 s
+  on an eight-core laptop. Phase 1 now also opens **one** worker pool for the
+  whole of it — the per-run analyses (refinement included, which used to open a
+  second pool inside every analysis) and the completion fits all share it, so
+  the per-worker import of the fitting package is paid once for the series
+  rather than four times per run, and a run's fan-out can use workers another
+  run's serial stages leave idle. A candidate fitted from a neighbour run's
+  values now runs that warm start and the plain seed first and climbs the rest
+  of the seed ladder only when the two fail to converge or land in different
+  minima; a ladder capped at warm plus base reproduced the recommendation at
+  roughly a third to a half of the build time, and the top candidates are
+  re-fitted from the full ladder regardless. Completion is one task per **cell**
+  rather than per run, and a cell re-fitted from the run's *own* values for the
+  same model at another binning — the same minimum by construction — is fitted
+  once, with no ladder at all. Every task a wizard sends to a worker now carries
+  a **fit record** — the fitted arrays and the run's provenance, without the raw
+  detector histograms no fit reads — instead of the whole run. On a synthetic
+  twelve-run series of fifteen-detector records a completion cell's payload fell
+  from ~11 MB to ~0.4 MB and a separable search task from ~130 MB to under
+  0.1 MB, halving the wall time of the completion stage. Inside a phase the answer is the best
+  partition score among the converged candidates — the same per-run BIC
+  convention the partition path is totalled with, so a phase cannot pick a
+  template by a laxer criterion than the one that then judges the break beside
+  it; a gate-clean candidate is preferred only within the search's own
+  comparability margin. The gates
+  (per-run residual tests and the series-consistency caveats such as a
+  parameter changing abruptly along the series) still outrank the criterion
+  for the series-wide verdict, where they say the series is not one thing —
+  but a phase is homogeneous by construction, and ranking on them first threw
+  away a model a thousand criterion units better on a real series because two
+  phase angles wrapped between runs. The single-run wizard's pattern-match stage is
+  also an order of magnitude cheaper: the envelope banks (F–μ–F, μ–F and
+  Kubo–Toyabe templates) were each detrended with a three-parameter curve fit,
+  and that model is linear in two of its three parameters, so the detrend is
+  now a variable-projection solve over the rate, vectorised across the whole
+  bank — and it reaches a minimum the old fit stalled short of on most
+  templates. `instrumentation` records `alphabet_size`,
+  `series_rebin_factor`, `completion_fits`, `phase1_concurrency`,
+  `phase1_warm_seeded` and `alphabet_bound_dropped`. The effort tier now
+  narrows that alphabet rather than a
+  guessed portfolio; multiplet and pattern-matched candidates are never trimmed.
+  The coupled optimisation that follows is now **separable** by default too:
+  every effort tier runs the same engine, which takes the all-local assignment
+  straight from the per-run fits, ranks every Global/Local sharing pattern with
+  a full-covariance surrogate, and walks backward elimination with one warm fit
+  per step instead of re-fitting all `2^P` role assignments — `O(P)` coupled
+  fits per template where the previous exhaustive wavefront cost `O(2^P)`, with
+  no change in the winning assignment (100% verdict agreement against the
+  frozen baseline on the harness's case set). The exhaustive wavefront is
+  retained behind `search_engine="exhaustive"` as that baseline's referee;
+  `tools/global_wizard_harness.py` gains `--engine {separable,exhaustive}`.
+  Once a template's elimination walk stops, the flips that justify each
+  parameter's role — on a wide template the larger half of the search's coupled
+  fits — are no longer fitted one after another inside that template's task.
+  Each flip warm-starts from the same winner and reads none of the others, so
+  every one of them is now submitted to the worker pool as a task of its own
+  and the whole neighbourhood is fitted at once instead of a template at a
+  time: with only a handful of templates racing, the pool was otherwise left
+  mostly idle through the most expensive stage of the search. The nodes and
+  numbers are unchanged (100% agreement with the frozen baseline, on the same
+  fit and function-evaluation counts).
+  Each of those coupled fits is now solved by a sparse-Jacobian least-squares
+  minimiser — `scipy.optimize.least_squares` in bounded trust-region-reflective
+  mode, reachable directly as `FitEngine.global_fit(strategy="least_squares")`
+  — rather than by Minuit. A coupled fit's Jacobian is arrow-shaped: every
+  residual depends on the shared parameters and on exactly one run's local
+  ones, so declaring that sparsity lets one finite-difference evaluation
+  perturb the same local in every run at once, and the Jacobian costs about a
+  run's worth of parameters instead of the whole series'. On a wide node — a
+  twelve-run phase, nine free parameters per run, a couple of hundred thousand
+  points — this is two orders of magnitude off the previous per-node cost, and
+  the equivalent ninety-odd-parameter Minuit problem did not converge at all.
+  Fitted values, χ² and uncertainties are the same quantities as before (the
+  uncertainties are the Gauss–Newton curvature at the solution, which for a χ²
+  cost is Minuit's own `errordef = 1` convention), so no verdict or reported
+  number changes.
+  A search node no longer carries what only a *drawn* fit needs. The dense
+  fitted and component curves and the per-run residual series are the whole
+  size of an assessment — tens of megabytes for a twelve-run phase against
+  kilobytes for its scores, diagnostics and parameters — and the search visits
+  hundreds of nodes per phase and caches every one, which on a long series grew
+  the analysis process until the machine swapped and the fit workers spent their
+  time waiting on paging rather than fitting. Every node is now scored without
+  them (its residual diagnostics, gates and information criteria are computed
+  exactly as before, from residuals read during assembly), and the curves are
+  built once, on the way out, for the assessments a recommendation actually
+  exposes; the same rule applies to the per-run score table's cells. No fitted
+  number, verdict or drawn curve changes (100% agreement with the frozen
+  baseline).
 
 - **Every fit parameter's starting value now comes from one place, and the
   table remembers which values are still starting guesses.** Start values used
@@ -224,6 +373,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still there.
 
 ### Fixed
+
+- **The Global Fit Wizard's role search no longer re-solves the all-local
+  answer as one joint problem and no longer times out on a real multi-run
+  segment.** The exhaustive wavefront spent most of its 180 s budget
+  re-fitting the all-local assignment as a single joint Minuit problem even
+  though the per-run pre-screen already held every one of those fits; on an
+  11- or 14-run segment it exhausted the budget before finishing even one
+  shared-parameter candidate and fell back to reporting no sharing at all. The
+  new separable engine assembles the all-local anchor from the pre-screen
+  directly and never re-fits it (see the Changed entry above).
+- **A sub-threshold or unsamplable residual-FFT peak near Nyquist no longer
+  pins a run's analysis — and, through the series minimum, the whole series —
+  at full resolution.** The rebin-bandwidth cap that protects a seeded line
+  from aliasing used to protect every detected peak, not just the ones
+  eligible to seed an oscillatory component; a peak too weak to ever be seeded,
+  or with a period under eight native bins that no factor could resolve
+  anyway, still forced full resolution for a line no fit could use. The cap
+  now follows the same eligibility rule multiplet seeding already uses.
+- **A detected line above the analysed record's Nyquist is no longer seeded.**
+  Peak detection runs at full bandwidth but a fit runs on the rebinned copy;
+  a residual-FFT spike above the *rebinned* record's Nyquist was seeded into a
+  multiplet template whose frequency bounds then inverted on the Nyquist
+  clamp, and Minuit refused the limit. Lines above the analysed record's own
+  Nyquist are now dropped where that record is decided.
 
 - **A parenthesis next to a fraction group made the model refuse to build.**
   `(Oscillatory * (Exponential + Gaussian){frac})`,
