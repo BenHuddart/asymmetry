@@ -70,6 +70,9 @@ from asymmetry.core.fitting.global_search.homogeneity import (
     classify_parameter_homogeneity,
     wald_subset_delta_chi2,
 )
+from asymmetry.core.fitting.global_search.surrogate import (
+    metric_penalty as surrogate_metric_penalty,
+)
 from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_names,
     fold_legacy_product_amplitude_set,
@@ -6588,21 +6591,12 @@ def _metric_penalty(parameter_count: int, *, sample_count: int, metric: Selectio
     the same penalty the winning-assessment IC does. All three penalties are
     monotone non-decreasing in ``k`` (hence in the layer index), so the bound
     ``chi2_floor + penalty(k(m))`` lower-bounds every assignment at layer ``>= m``.
+
+    The one implementation lives in :mod:`global_search.surrogate` so the tier-2
+    surrogate's IC and the exact path's IC can never drift apart.
     """
 
-    k = max(int(parameter_count), 0)
-    n = max(int(sample_count), 1)
-    if metric == SelectionMetric.AIC:
-        return 2.0 * k
-    if metric == SelectionMetric.BIC:
-        return k * math.log(n)
-    # AICc — fall back to AIC's penalty when the small-sample correction is
-    # undefined (n <= k + 1), matching compute_information_criteria which then
-    # reports aicc = None and metric_value() falls back to AIC.
-    aic_penalty = 2.0 * k
-    if n > k + 1:
-        return aic_penalty + 2.0 * k * (k + 1) / max(n - k - 1, 1)
-    return aic_penalty
+    return surrogate_metric_penalty(parameter_count, sample_count=sample_count, metric=metric)
 
 
 @dataclass
