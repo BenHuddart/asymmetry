@@ -697,7 +697,7 @@ def _gated_assessment(
             rationale="test",
             model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
         ),
-        fit_results_by_run={1: FitResult(success=True, chi_squared=1.0, parameters=parameters)},
+        fit_results_by_run={1: FitResult(success=True, chi_squared=aicc, parameters=parameters)},
         global_parameters=parameters,
         global_param_names=("A_1",),
         local_param_names=(),
@@ -719,9 +719,7 @@ def test_a_phase_keeps_the_far_better_model_over_a_gate_clean_one():
     # criterion gap the search itself treats as decisive.
     better = _gated_assessment(key="damped", aicc=100.0, gate_passed=False)
     clean = _gated_assessment(key="stretched", aicc=1100.0, gate_passed=True)
-    chosen = global_fit_wizard_module._recommended_segment_assessment(
-        [clean, better], SelectionMetric.AICC
-    )
+    chosen = global_fit_wizard_module._recommended_segment_assessment([clean, better], {1: 1000})
     assert chosen is better
 
 
@@ -732,9 +730,7 @@ def test_a_phase_prefers_the_gate_clean_model_only_within_the_margin():
         aicc=100.0 + global_fit_wizard_module._LAYER_BOUND_MARGIN,
         gate_passed=True,
     )
-    chosen = global_fit_wizard_module._recommended_segment_assessment(
-        [better, clean], SelectionMetric.AICC
-    )
+    chosen = global_fit_wizard_module._recommended_segment_assessment([better, clean], {1: 1000})
     assert chosen is clean
 
 
@@ -748,10 +744,7 @@ def test_a_phase_with_no_converged_fit_has_no_answer():
         failed,
         fit_results_by_run={1: FitResult(success=False, parameters=failed.global_parameters)},
     )
-    assert (
-        global_fit_wizard_module._recommended_segment_assessment([failed], SelectionMetric.AICC)
-        is None
-    )
+    assert global_fit_wizard_module._recommended_segment_assessment([failed], {1: 1000}) is None
 
 
 def test_series_fingerprints_are_computed_once_per_record(monkeypatch, planted_series):
@@ -769,3 +762,20 @@ def test_series_fingerprints_are_computed_once_per_record(monkeypatch, planted_s
     second = global_fit_wizard_module._fingerprint_jump_warnings(datasets)
     assert first == second
     assert calls["n"] == len(datasets)
+
+
+def test_a_phase_is_ranked_by_the_partition_score_not_the_search_metric():
+    # A richer template can lead on AICc while the partition's per-run BIC —
+    # the convention the path is totalled with — prefers the leaner one.
+    from dataclasses import replace as dc_replace
+
+    lean = _gated_assessment(key="one_line", aicc=100.0, gate_passed=True)
+    rich = _gated_assessment(key="two_line", aicc=90.0, gate_passed=True)
+    rich = dc_replace(rich, local_param_names=("A_1", "A_2", "A_3", "A_4"), global_param_names=())
+    lean = dc_replace(lean, local_param_names=("A_1",), global_param_names=())
+    points = {1: 20000}
+    assert global_fit_wizard_module._partition_bic(rich, points) > (
+        global_fit_wizard_module._partition_bic(lean, points)
+    )
+    chosen = global_fit_wizard_module._recommended_segment_assessment([rich, lean], points)
+    assert chosen is lean

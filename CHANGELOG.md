@@ -140,8 +140,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   twelve-run series of fifteen-detector records a completion cell's payload fell
   from ~11 MB to ~0.4 MB and a separable search task from ~130 MB to under
   0.1 MB, halving the wall time of the completion stage. Inside a phase the answer is the best
-  information criterion among the converged candidates; a gate-clean candidate
-  is preferred only within the search's own comparability margin. The gates
+  partition score among the converged candidates — the same per-run BIC
+  convention the partition path is totalled with, so a phase cannot pick a
+  template by a laxer criterion than the one that then judges the break beside
+  it; a gate-clean candidate is preferred only within the search's own
+  comparability margin. The gates
   (per-run residual tests and the series-consistency caveats such as a
   parameter changing abruptly along the series) still outrank the criterion
   for the series-wide verdict, where they say the series is not one thing —

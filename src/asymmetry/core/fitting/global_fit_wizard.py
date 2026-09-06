@@ -10698,42 +10698,56 @@ def _partition_bic(
 
 def _recommended_segment_assessment(
     assessments: Sequence[GlobalCandidateAssessment],
-    metric: SelectionMetric,
+    points_by_run: Mapping[int, int],
 ) -> GlobalCandidateAssessment | None:
-    """The phase's answer: the best information criterion among converged fits.
+    """The phase's answer: the best partition score among converged fits.
 
-    The series-wide verdict (:func:`rerank_global_fit_wizard_recommendation`)
-    lets the residual and series-consistency gates outrank the criterion, and
-    that is right for a whole series: a candidate whose parameters jump
-    between runs, or whose residuals fail in a cluster of runs, is telling the
-    user the series is not one thing. A *phase* is different by construction —
-    the partition already placed the breaks — and inside it those same gates
-    are caveats on a fit, not evidence for a different model. Ranking on them
-    first threw away, on a real series, a model 1 000 criterion units better
-    than the one it kept, because two local phases wrapped and one boundary
-    run tripped a runs test. So the criterion decides, and a gate-clean
-    candidate is preferred only when it is within ``_LAYER_BOUND_MARGIN`` of
-    the best — the margin the search already treats as "not distinguishable".
-    ``None`` means nothing converged on this phase, which makes the candidate
-    partition containing it infeasible: a real answer rather than a failure.
+    Ranked by :func:`_partition_bic` — the same per-run convention the
+    partition path totals are scored with — and not by the search's own
+    selection metric. The two must agree, or a phase can pick a template by
+    a laxer criterion than the one that then judges the break beside it: on a
+    real series the highest oscillatory phase chose a two-line template that
+    won by 19 AICc, the path scored its twenty extra per-run parameters at
+    ~170 under the BIC convention, and the transition above it looked
+    unsupported by 63 — while the one-line template that the partition
+    convention prefers has fewer parameters than the merged alternative and
+    supports the break by ~75. Ranking on the partition score removes that
+    seam; the search metric still breaks exact ties through
+    :func:`_assessment_sort_key`'s secondary keys.
+
+    The residual and series-consistency gates are caveats on a fit here, not
+    evidence for a different model — the partition already placed the breaks,
+    and ranking on the gates first threw away a model a thousand criterion
+    units better on a real series when two phase angles wrapped between runs.
+    A gate-clean candidate is preferred only within ``_LAYER_BOUND_MARGIN``,
+    the margin the search treats as "not distinguishable". ``None`` means
+    nothing converged on this phase, which makes the candidate partition
+    containing it infeasible: a real answer rather than a failure.
     """
 
     converged = [assessment for assessment in assessments if assessment.is_successful]
     if not converged:
         return None
-    best = min(converged, key=lambda assessment: _assessment_sort_key(assessment, metric))
+
+    def _key(assessment: GlobalCandidateAssessment) -> tuple[float, int, int, int, int, int, str]:
+        return (
+            _partition_bic(assessment, points_by_run),
+            *_assessment_sort_key(assessment, SelectionMetric.BIC)[1:],
+        )
+
+    best = min(converged, key=_key)
     if best.residual_gate_passed:
         return best
-    best_score = float(best.metric_value(metric))
+    best_score = _partition_bic(best, points_by_run)
     clean = [
         assessment
         for assessment in converged
         if assessment.residual_gate_passed
-        and float(assessment.metric_value(metric)) <= best_score + _LAYER_BOUND_MARGIN
+        and _partition_bic(assessment, points_by_run) <= best_score + _LAYER_BOUND_MARGIN
     ]
     if not clean:
         return best
-    return min(clean, key=lambda assessment: _assessment_sort_key(assessment, metric))
+    return min(clean, key=_key)
 
 
 def _optimise_partition_phases(
@@ -10906,7 +10920,7 @@ def _optimise_partition_phases(
                 chosen.append(None)
                 continue
             assessment = _recommended_segment_assessment(
-                searched_by_window[(window.start, window.stop)], metric
+                searched_by_window[(window.start, window.stop)], scored_points_by_run
             )
             if assessment is None:
                 return math.inf, ()
