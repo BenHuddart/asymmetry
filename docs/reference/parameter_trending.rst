@@ -251,6 +251,43 @@ model-fit controls.
 *series flagged), and the 200 G plateau sitting below the 400 G one is the*
 *pancake-vortex field dependence of the London second moment.*
 
+.. _trend-phase-owned-series:
+
+Phase-owned series
+-------------------
+
+.. image:: /_generated/screenshots/parameter_trending_phase.png
+   :alt: Trending panel showing a phase series with its range shaded and a dashed boundary line
+   :width: 100%
+
+*A phase-owned series: the swatch on the series pill matches the plotted*
+*curve's colour, the phase's own run range is shaded beneath the points, and*
+*its upper boundary is drawn as a dashed line with a fainter uncertainty band.*
+
+A series recorded for one phase of a Global Fit Wizard partition (see
+:ref:`global-fit-wizard-transitions` in :doc:`global_fit_wizard` and
+:ref:`phases-within-a-group` in :doc:`gui_usage`) carries its phase's identity
+into the trending panel. Its series button carries a small colour swatch, and
+when it is the active series its plotted curve uses the phase's own colour
+instead of the ordinary series cycle — the same colour the Data Browser's
+phase stripe and the wizard's per-phase strip use, so a phase reads
+identically everywhere it appears.
+
+When the active series belongs to a phase **and** the plotted X axis is that
+phase's own sweep axis, in its raw (untransformed, linear) form, the plot adds
+two further decorations: the phase's run range is shaded beneath the data
+(a soft tint of the phase colour), and each boundary the wizard estimated for
+it is drawn as a dashed vertical line at the estimate with a fainter shaded
+band spanning its ``± half_gap`` uncertainty — a series end with no boundary
+on that side simply draws none. Switching to a log X axis, or applying an
+:ref:`axis transform <trend-axis-transforms>` (Redfield, Arrhenius, a custom
+expression), moves the axis away from the coordinates the range and boundaries
+were computed in, so the shading and lines are withheld until you switch back
+— the swatch stays either way, since it is only an identity marker.
+``Export to GLE`` mirrors both the range shading and the boundary lines and
+bands on the exported plot; the plain TSV export is unaffected, since the
+decoration is a plot annotation rather than a data column.
+
 Representation-aware trending
 ------------------------------
 

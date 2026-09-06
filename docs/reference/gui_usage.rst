@@ -214,6 +214,66 @@ fit, so every recorded batch series always has an owning group. These
 groups you name yourself, so the two are easy to tell apart at a glance;
 renaming an auto-created group promotes it to an ordinary (blue) group.
 
+.. _phases-within-a-group:
+
+Phases within a group
+~~~~~~~~~~~~~~~~~~~~~~
+
+.. image:: /_generated/screenshots/data_browser_phases.png
+   :alt: Data browser showing a temperature-scan group split into two coloured phases with one excluded run
+   :width: 100%
+
+*A temperature-scan group the Global Fit Wizard has partitioned into two*
+*phases, plus one run at the top end the partition left out of both.*
+
+When you **Apply phases** from the Global Fit Wizard's Transitions card (see
+:ref:`global-fit-wizard-transitions` in :doc:`global_fit_wizard`), the series
+group gains one nested sub-group per phase — a contiguous run of the series
+sharing one template and one Global/Local assignment. A phase renders as a
+sub-header beneath its parent group, indented one level deeper than an
+ordinary group header: a collapse chevron, the phase's colour swatch, a name
+and range (``▾ Phase I``, with ``1.8 – 16.0 K`` in the Title column), and a
+run count carrying an ⓘ indicator (``3 runs ⓘ``). Phase names are Roman
+numerals in sweep order — Phase I is the coldest (or lowest-field) phase —
+and each phase keeps a stable identity colour from a five-colour, cold-to-hot
+palette that cycles for a sixth phase and beyond.
+
+A phase's member rows sit beneath its sub-header, each carrying a 4 px stripe
+in the phase's colour down its left edge (never a background tint, which
+would fight with row selection and filtering). Phase membership is a
+*refinement* of the parent group's membership, not a second, independent one
+— a run in a phase never renders twice and never carries the ①-style
+"also in" marker a genuine multi-group membership does. A run the partition
+did not assign to any phase renders after the phases, as a direct member of
+the series group again: italic, with a hatched grey stripe in place of a
+phase colour, and a Title-column badge reading "excluded · looks like a
+different phase". Selecting the series header's row selects every run,
+phases and excluded members alike; selecting a phase header selects just that
+phase's runs.
+
+Right-click a phase header for **Collapse Phase** / **Expand Phase**,
+**Rename Phase**, **Fit this phase…** (bind the fit dock's Batch tab to this
+phase), **Show series from this phase** (filter the Fit Parameters panel to
+its series), and **Ungroup**, which dissolves every phase of the partition at
+once (the same keep-fits/delete-fits choice as an ordinary group). Right-click
+a run inside a partitioned series for **Move to phase ▸** — a submenu listing
+every phase (with its swatch and a check mark on the run's current phase) plus
+**Exclude from phases** — the manual override for a boundary the wizard placed
+one run off; moving a run marks both the losing and gaining phases' series
+stale (see :ref:`group-bound-series-staleness` in :doc:`parameter_trending`).
+
+Click a phase header's ⓘ for what its compact header leaves out: the
+template it was fitted with (**Model**), how that fit went (**Global fit**,
+e.g. ``converged · 1.04 · high``), which parameters are shared across the
+phase (**Shared**), the estimated break at each end of the phase
+(**Boundaries**), and when and how the partition found it (**Found by**, e.g.
+``2026-09-06T09:00:00 · 1 breaks · gains 12.4``) — plus the same **Fit this
+phase…** / **Show series** / **Rename** actions as the context menu. The
+series header's own ⓘ instead summarises the whole partition — how many
+phases and transitions it has (``2 phases · 1 transition``) and when each
+phase was found — since "how is this scan split?" is a different question
+from "what happened in this phase?".
+
 Co-adding datasets
 ~~~~~~~~~~~~~~~~~~
 
