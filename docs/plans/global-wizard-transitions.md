@@ -538,3 +538,12 @@ the feature branch. Phase F runs the full validation once.
   factor and no longer constrains it, and a detected line above the analysed
   record's Nyquist is never seeded (its frequency bounds inverted on the
   Nyquist clamp and Minuit refused the limit).
+- 2026-09-07 (integration, private gate): **the partition is scored under a
+  per-run penalty convention** — a local parameter pays `ln n_run`, a shared one
+  `ln N_segment` — so an unshared segment costs exactly the sum of its runs'
+  own BICs and tier 1 bounds tier 2 on one scale. The joint convention
+  (`k·ln N_segment`) charged every local parameter an extra `ln G` for the
+  company it kept, ~270 BIC units against a nine-parameter template over a
+  16-run segment, and pushed the path towards short segments of simple
+  templates (a "relaxation" description of the ordered phase). The exactly
+  refitted rows are scored the same way (`_partition_bic`).
