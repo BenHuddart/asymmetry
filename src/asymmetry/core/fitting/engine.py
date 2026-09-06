@@ -972,19 +972,20 @@ def _gauss_newton_covariance(
     return covariance, unconstrained
 
 
-#: Least-squares convergence tolerances, two orders tighter than scipy's 1e-8
-#: defaults. The wizard compares information criteria at the ±6 scale, so a
-#: solve that stopped on the relative-cost test several χ² units short of the
-#: Minuit optimum would change a verdict; at 1e-10 the sparse path reproduces
-#: the joint Minuit χ² to ~1e-5 on the synthetic parity cases, far inside the
-#: 0.1 gate. Tighter still is counter-productive: at ftol = 1e-12 a
-#: near-degenerate node chases round-off until it exhausts the caller's
-#: ``max_calls`` budget, reports no convergence, and sends the wizard into its
-#: escalation ladder — measured on the golden-verdict harness, the same
-#: verdicts for twice the wall clock and nearly twice the fits.
-_LEAST_SQUARES_FTOL = 1e-10
-_LEAST_SQUARES_XTOL = 1e-10
-_LEAST_SQUARES_GTOL = 1e-10
+#: Least-squares convergence tolerances: scipy's own 1e-8 defaults. The
+#: temptation is to tighten them because the wizard compares information
+#: criteria at the ±6 scale, and on small synthetic cases 1e-10 reproduces the
+#: joint Minuit χ² to ~1e-5. On a real coupled node it is the opposite: the
+#: Jacobian is finite-differenced, so below ~1e-8 the trust-region steps chase
+#: round-off. Measured on a 12-run, 217 k-point node with one shared parameter,
+#: 1e-8 converged in 28 residual evaluations (8 s); 1e-9 took 660 evaluations
+#: (93 s) for 0.8 χ² units; 1e-10 ran to the caller's ``max_calls`` cap, at
+#: which point the node reports no convergence and the wizard escalates. The
+#: 0.1-χ² parity gate against the joint path in the tests is what pins the
+#: accuracy side; this pins the cost side.
+_LEAST_SQUARES_FTOL = 1e-8
+_LEAST_SQUARES_XTOL = 1e-8
+_LEAST_SQUARES_GTOL = 1e-8
 
 
 class FitEngine:
