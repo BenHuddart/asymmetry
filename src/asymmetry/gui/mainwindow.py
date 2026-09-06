@@ -1880,6 +1880,8 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._data_browser, "ungroup_requested"):
             self._data_browser.ungroup_requested.connect(self._on_ungroup_requested)
+        if hasattr(self._data_browser, "remove_phases_requested"):
+            self._data_browser.remove_phases_requested.connect(self._on_remove_phases_requested)
         if hasattr(self._data_browser, "group_membership_changed"):
             self._data_browser.group_membership_changed.connect(self._on_group_membership_changed)
         if hasattr(self._data_browser, "extra_columns_changed"):
@@ -12212,7 +12214,8 @@ class MainWindow(QMainWindow):
         fit-panel / plot state (the FitSlot pointers are already cleared by
         ``remove_data_group``).
         """
-        owned = self._project_model.series_for_group(group_id)
+        phases = self._project_model.phase_groups_for(group_id)
+        owned = self._series_owned_through_cascade(group_id)
         if not owned:
             self._data_browser.ungroup(group_id)
             return
@@ -12221,7 +12224,13 @@ class MainWindow(QMainWindow):
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("Ungroup")
-        box.setText(f"Group '{group_name}' has {len(owned)} recorded fit series.")
+        text = f"Group '{group_name}' has {len(owned)} recorded fit series."
+        if phases:
+            # Dissolving a partitioned series takes its phases with it (D1's
+            # cascade), so the phases' own fits are part of this decision — say
+            # so before the user picks keep-or-delete.
+            text = f"{text} Its {len(phases)} phases and their fits are dissolved with it."
+        box.setText(text)
         box.setInformativeText(
             "Keep the fits as standalone (frozen) series, or delete them along with the group?"
         )
@@ -12234,20 +12243,82 @@ class MainWindow(QMainWindow):
         if clicked is cancel_btn:
             return
         if clicked is delete_btn:
-            # Capture each series' cleanup payload before deletion clears it.
-            cleanup: list[tuple[str, list[int]]] = []
-            for series in owned:
-                if series.member_kind == "groups":
-                    runs = list(series.member_source_run.values())
-                else:
-                    runs = list(series.member_run_numbers)
-                cleanup.append((series.batch_id, runs))
+            cleanup = self._series_cleanup_payloads(owned)
             self._data_browser.ungroup(group_id, orphan_series=False)
             for batch_id, runs in cleanup:
                 self._on_fit_parameters_group_fits_deleted(batch_id, runs)
             self._refresh_trend_panel()
         else:  # Keep fits
             self._data_browser.ungroup(group_id, orphan_series=True)
+
+    def _series_owned_through_cascade(self, group_id: str) -> list:
+        """Series disposed of when *group_id* is removed: its own plus its phases'.
+
+        ``ProjectModel.remove_data_group`` cascades into the group's phases with
+        the same keep/delete choice (D1), so the prompt has to account for every
+        series that choice reaches — not just the ones bound to the group itself.
+        """
+        owned = list(self._project_model.series_for_group(group_id))
+        for phase in self._project_model.phase_groups_for(group_id):
+            owned.extend(self._project_model.series_for_group(phase.group_id))
+        return owned
+
+    @staticmethod
+    def _series_cleanup_payloads(owned: list) -> list[tuple[str, list[int]]]:
+        """Capture each series' ``(batch_id, runs)`` before deletion clears it."""
+        cleanup: list[tuple[str, list[int]]] = []
+        for series in owned:
+            if series.member_kind == "groups":
+                runs = list(series.member_source_run.values())
+            else:
+                runs = list(series.member_run_numbers)
+            cleanup.append((series.batch_id, runs))
+        return cleanup
+
+    def _on_remove_phases_requested(self, parent_id: str) -> None:
+        """Prompt for the disposition of the phases' fits, then un-partition (D2).
+
+        "Ungroup" on a phase sub-header dissolves the whole partition, leaving
+        the series group itself intact — so the choice here is only about the
+        per-phase global-fit series, and it is the same keep-or-delete decision
+        the plain Ungroup offers.
+        """
+        phases = self._project_model.phase_groups_for(parent_id)
+        owned = [
+            series
+            for phase in phases
+            for series in self._project_model.series_for_group(phase.group_id)
+        ]
+        if not owned:
+            self._data_browser.remove_phases(parent_id)
+            return
+
+        group_name = self._data_group_name(parent_id) or parent_id
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Ungroup phases")
+        box.setText(
+            f"The {len(phases)} phases of '{group_name}' have {len(owned)} recorded fit series."
+        )
+        box.setInformativeText(
+            "Keep the fits as standalone (frozen) series, or delete them along with the phases?"
+        )
+        keep_btn = box.addButton("Keep fits", QMessageBox.ButtonRole.AcceptRole)
+        delete_btn = box.addButton("Delete fits", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(keep_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel_btn:
+            return
+        if clicked is delete_btn:
+            cleanup = self._series_cleanup_payloads(owned)
+            self._data_browser.remove_phases(parent_id, orphan_series=False)
+            for batch_id, runs in cleanup:
+                self._on_fit_parameters_group_fits_deleted(batch_id, runs)
+            self._refresh_trend_panel()
+        else:  # Keep fits
+            self._data_browser.remove_phases(parent_id, orphan_series=True)
 
     def _series_fallback_name(self, series) -> str:
         """Default display label for a series the user hasn't renamed.

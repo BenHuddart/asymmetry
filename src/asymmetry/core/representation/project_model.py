@@ -417,6 +417,26 @@ class ProjectModel:
             new_ids.append(group.group_id)
         return new_ids
 
+    def remove_phase_groups(self, parent_id: str, *, orphan_series: bool) -> list[str]:
+        """Dissolve every phase of *parent_id*, leaving the parent group intact.
+
+        The un-partitioning counterpart of :meth:`create_phase_groups`: the
+        parent keeps all of its members (a phase's members were always a subset
+        of the parent's, so nothing is lost), and each phase's own series is
+        disposed of per *orphan_series* exactly as :meth:`remove_data_group`
+        defines it — ``True`` freezes them into standalone legacy analyses,
+        ``False`` deletes them and returns the removed ``batch_id``\\ s.
+
+        Distinct from :meth:`create_phase_groups`'s internal re-partition
+        cascade, which always deletes: that path is replacing the phases with
+        fresh ones, whereas this one is the user's explicit "Ungroup phases",
+        where keeping the fits is a legitimate choice.
+        """
+        removed: list[str] = []
+        for phase in self.phase_groups_for(parent_id):
+            removed.extend(self.remove_data_group(phase.group_id, orphan_series=orphan_series))
+        return removed
+
     def move_run_to_phase(
         self,
         run_number: int,
