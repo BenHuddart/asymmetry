@@ -42,10 +42,11 @@ Two segment-cost tiers are provided, each an admissible bound for the next:
   (:func:`~asymmetry.core.fitting.global_search.surrogate.greedy_assignment`), so
   a segment is priced with the sharing it can support.
 
-Tier 1 sums per-run ICs (each penalised against that run's own point count);
-tier 2 scores the segment as one problem (one penalty against the segment's
-total point count). The two are therefore on deliberately different scales —
-tier 1 is the cheaper lower bound, tier 2 the number the search runs on.
+Both tiers score under the *partition convention*: a local parameter is
+penalised against its own run's point count and a shared parameter against
+the segment's, so tier 2 with nothing shared equals tier 1 exactly, and tier
+1 is an admissible lower bound of tier 2 on one scale. The partition is
+scored with BIC whatever ranking metric the user chose for roles.
 """
 
 from __future__ import annotations
@@ -286,10 +287,12 @@ def tier2_segment_cost(
 
     Feasibility still comes from ``table`` (a missing/non-finite cell rules the
     template out for that segment); the *cost* comes from
-    :func:`~asymmetry.core.fitting.global_search.surrogate.greedy_assignment` over
-    that template's :class:`RunEstimate`\\ s restricted to the segment. When a
-    template has no estimates for every run of the segment its tier-1 all-local
-    sum is used instead, which is the lower bound tier 1 already provides.
+    :meth:`~asymmetry.core.fitting.global_search.surrogate.OrderedCollapse.greedy_partition`
+    over that template's :class:`RunEstimate`\\ s restricted to the segment —
+    BIC under the partition convention, so with nothing shared it is tier 1's
+    sum. When a template has no estimates for every run of the segment its
+    tier-1 all-local sum is used instead. ``metric`` is kept for the signature
+    and must be ``BIC``: the partition is scored with BIC.
 
     The structure key is the winning template's family under ``family_of`` (the
     template key when none is given). The sharing pattern the collapse chose is
@@ -343,7 +346,7 @@ def tier2_segment_cost(
                 continue
             collapse = collapse_by_template.get(template)
             scoreable = collapse is not None and collapse.covers(start, stop)
-            floor = collapse.lower_bound_ic(start, stop, metric) if scoreable else tier1_total
+            floor = collapse.lower_bound_partition_ic(start, stop) if scoreable else tier1_total
             candidates.append((floor, tier1_total, template))
         candidates.sort()
 
@@ -353,7 +356,7 @@ def tier2_segment_cost(
                 break
             collapse = collapse_by_template.get(template)
             if collapse is not None and collapse.covers(start, stop):
-                shared, value = collapse.greedy(start, stop, collapse.names, metric)
+                shared, value = collapse.greedy_partition(start, stop, collapse.names)
             else:
                 shared, value = (), tier1_total
             if value < best[0]:

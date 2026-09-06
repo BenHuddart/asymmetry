@@ -529,3 +529,20 @@ def test_greedy_segment_costs_agree_with_exhaustive_enumeration():
             value, structure = cost(start, stop)
             assert value == pytest.approx(reference[0]), (start, stop)
             assert structure == reference[1], (start, stop)
+
+
+def test_tier2_with_nothing_shareable_equals_tier1():
+    """One scale for both tiers: unshared, tier 2 is tier 1's per-run sum."""
+    order = list(range(6))
+    names = ("a",)
+    # Values far apart with tight errors: sharing ``a`` costs far more χ² than
+    # the penalty it saves, so the greedy walk shares nothing.
+    estimates = {run: _estimate(run, names, [10.0 * run], [0.01]) for run in order}
+    table = {run: {"T": estimates[run].chi_squared + math.log(estimates[run].n_points)} for run in order}
+
+    tier1 = tier1_segment_cost(table, order)
+    tier2 = tier2_segment_cost(table, order, {"T": estimates}, METRIC)
+
+    for start in range(6):
+        for stop in range(start + 1, 7):
+            assert tier2(start, stop)[0] == pytest.approx(tier1(start, stop)[0])

@@ -1274,14 +1274,16 @@ def single_fit_table_covers_portfolio(
     """True when ``recommendations_by_run`` is a usable series score table.
 
     Two conditions, and both are what the series arithmetic needs rather than
-    bookkeeping: every run carries a *converged* score for every template (a
-    missing or failed cell makes that template's series sum meaningless — and a
-    failed cell is exactly what the completion pass exists to retry from a
-    sibling run's values), and every run was scored at the *same* rebin factor
-    (an information criterion computed on a coarser record is not comparable
-    with one computed on a finer one). Coverage is not identity: a run's table
-    may hold more templates than the series ranks, which is exactly what a
-    genuine single-run analysis does.
+    bookkeeping: every run carries a score for every template (a missing cell
+    makes that template's series sum meaningless), and every run was scored at
+    the *same* rebin factor (an information criterion computed on a coarser
+    record is not comparable with one computed on a finer one). A cell that
+    *failed* still covers: the completion pass already retried it from a
+    sibling run's values, so a failure in a completed table is the honest
+    answer that the template does not describe that run, not work left
+    undone. Coverage is not identity: a run's table may hold more templates
+    than the series ranks, which is exactly what a genuine single-run analysis
+    does.
     """
     if not recommendations_by_run or not templates:
         return False
@@ -1292,8 +1294,7 @@ def single_fit_table_covers_portfolio(
             return False
         factors.add(int(recommendation.rebin_factor))
         for template in templates:
-            assessment = recommendation.assessment_for_key(template.key)
-            if assessment is None or not assessment.is_successful:
+            if recommendation.assessment_for_key(template.key) is None:
                 return False
     return len(factors) == 1
 
@@ -9830,6 +9831,31 @@ def _restrict_prescreen_assessment(
     )
 
 
+def _partition_bic(
+    assessment: GlobalCandidateAssessment, points_by_run: Mapping[int, int]
+) -> float:
+    """BIC of one fitted phase under the partition convention.
+
+    ``Σ_r χ²_r + n_shared·ln N_phase + n_local·Σ_r ln n_r`` — the convention
+    :meth:`~asymmetry.core.fitting.global_search.surrogate.OrderedCollapse.partition_ic`
+    scores the surrogate path with, so an exactly refitted row and a surrogate
+    row sit on one scale. ``points_by_run`` is each run's fitted point count
+    at the resolution the assessment was fitted at.
+    """
+
+    chi_squared = math.fsum(
+        float(result.chi_squared) for result in assessment.fit_results_by_run.values()
+    )
+    points = [int(points_by_run[run]) for run in assessment.fit_results_by_run]
+    shared = len(assessment.global_param_names)
+    local = len(assessment.local_param_names)
+    return (
+        chi_squared
+        + shared * math.log(max(sum(points), 1))
+        + local * math.fsum(math.log(max(count, 1)) for count in points)
+    )
+
+
 def _recommended_segment_assessment(
     assessments: Sequence[GlobalCandidateAssessment],
     metric: SelectionMetric,
@@ -10009,6 +10035,12 @@ def _optimise_partition_phases(
         if executor is not None:
             _shutdown_process_pool(executor)
 
+    # The exact rows are refitted at full resolution, so they are scored with
+    # each run's full point count.
+    full_points_by_run = {
+        int(dataset.run_number): int(dataset.n_points) for dataset in ordered_datasets
+    }
+
     def _score(
         windows: tuple[_PhaseWindow, ...],
     ) -> tuple[float, tuple[GlobalCandidateAssessment | None, ...]]:
@@ -10024,7 +10056,7 @@ def _optimise_partition_phases(
             )
             if assessment is None:
                 return math.inf, ()
-            total += float(assessment.bic)
+            total += _partition_bic(assessment, full_points_by_run)
             chosen.append(assessment)
         return total, tuple(chosen)
 
@@ -10059,7 +10091,7 @@ def _optimise_partition_phases(
                     stop=window.stop,
                     run_numbers=run_numbers,
                     structure=assessment.selection_key,
-                    ic=float(assessment.bic),
+                    ic=_partition_bic(assessment, full_points_by_run),
                     excluded=False,
                 )
             )

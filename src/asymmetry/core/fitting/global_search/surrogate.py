@@ -549,6 +549,7 @@ class OrderedCollapse:
         self._present = np.zeros(count + 1, dtype=int)
         self._chi_squared = np.zeros(count + 1, dtype=float)
         self._sample_count = np.zeros(count + 1, dtype=int)
+        self._log_points = np.zeros(count + 1, dtype=float)
         for index, estimate in enumerate(self._estimates):
             present = estimate is not None
             self._present[index + 1] = self._present[index] + int(present)
@@ -557,6 +558,9 @@ class OrderedCollapse:
             )
             self._sample_count[index + 1] = self._sample_count[index] + (
                 int(estimate.n_points) if estimate is not None else 0
+            )
+            self._log_points[index + 1] = self._log_points[index] + (
+                math.log(max(int(estimate.n_points), 1)) if estimate is not None else 0.0
             )
 
     @property
@@ -678,6 +682,72 @@ class OrderedCollapse:
             candidate_ic, name = min(
                 (self.surrogate_ic(start, stop, (*shared, item), metric), item)
                 for item in remaining
+            )
+            if not candidate_ic < best_ic:
+                return shared, best_ic
+            shared = tuple(item for item in free_names if item in {*shared, name})
+            best_ic = candidate_ic
+            remaining.remove(name)
+
+        return shared, best_ic
+
+
+    # ------------------------------------------------------------------ #
+    # Partition convention: each local parameter is penalised against the
+    # points of *its own run*, each shared parameter against the segment's.
+    # ------------------------------------------------------------------ #
+
+    def partition_ic(self, start: int, stop: int, subset: Sequence[str]) -> float:
+        """The window's BIC under the partition convention.
+
+        ``Σ_r χ²_r + Δχ²(S) + |S|·ln N_window + (P − |S|)·Σ_r ln n_r``. A local
+        parameter is informed by its own run's ``n_r`` points and a shared one
+        by the whole window's, so with nothing shared the window costs exactly
+        the sum of its runs' own BICs — a segment does not get cheaper, or
+        dearer, merely by being scored *together*. Under the joint convention
+        (:meth:`surrogate_ic`, ``k·ln N_window``) every local parameter paid an
+        extra ``ln G`` for the company it kept, which on a real series charged a
+        nine-parameter template ~270 BIC units more than a four-parameter one
+        over a 16-run segment for no statistical reason, and pushed the
+        partition towards short segments of low-parameter templates.
+        """
+
+        canonical = self._canonical(subset)
+        shared = len(canonical)
+        local = len(self._names) - shared
+        sample_count = int(self._sample_count[stop] - self._sample_count[start])
+        return (
+            float(self._chi_squared[stop] - self._chi_squared[start])
+            + self.delta_chi2(start, stop, canonical)
+            + shared * math.log(max(sample_count, 1))
+            + local * float(self._log_points[stop] - self._log_points[start])
+        )
+
+    def lower_bound_partition_ic(self, start: int, stop: int) -> float:
+        """The cheapest partition-convention BIC any assignment could reach here.
+
+        ``Δχ²(S) ≥ 0`` and sharing everything is the smallest penalty
+        (``Π_r n_r ≥ Σ_r n_r`` for records of two or more points), so
+        ``Σ_r χ²_r + P·ln N_window`` is a floor.
+        """
+
+        sample_count = int(self._sample_count[stop] - self._sample_count[start])
+        return float(self._chi_squared[stop] - self._chi_squared[start]) + len(
+            self._names
+        ) * math.log(max(sample_count, 1))
+
+    def greedy_partition(
+        self, start: int, stop: int, free_names: Sequence[str]
+    ) -> tuple[tuple[str, ...], float]:
+        """Forward selection over ``[start, stop)`` under :meth:`partition_ic`."""
+
+        remaining = _eligible_names(self._window(start, stop), free_names)
+        shared: tuple[str, ...] = ()
+        best_ic = self.partition_ic(start, stop, shared)
+
+        while remaining:
+            candidate_ic, name = min(
+                (self.partition_ic(start, stop, (*shared, item)), item) for item in remaining
             )
             if not candidate_ic < best_ic:
                 return shared, best_ic

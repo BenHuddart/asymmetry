@@ -1090,11 +1090,11 @@ def test_selected_candidate_optimisation_skips_prescreen_repair(
 def test_global_fit_wizard_screening_completes_a_failed_cell_from_a_sibling(
     monkeypatch,
 ) -> None:
-    """A failed cell in a supplied table is retried by the completion pass.
+    """A failed cell in a run's own analysis is retried by the completion pass.
 
-    Coverage requires *converged* cells, so a table carrying a failed fit for
-    one run is completed — that cell refitted, warm-started from the best
-    sibling run's values — rather than repaired by a separate serial pass.
+    The per-run analyses the fit tabs cache are what the global wizard receives;
+    phase 1 completes them into the series table, refitting a failed cell from
+    the best sibling run's values, so no separate serial repair pass is needed.
     """
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     datasets = [
@@ -1149,22 +1149,33 @@ def test_global_fit_wizard_screening_completes_a_failed_cell_from_a_sibling(
             for assessment in failed_recommendation.assessments
         ),
     )
-    supplied = dict(table.recommendations_by_run)
-    supplied[failed_run] = forced
-    # The run's "own analysis" now carries the failure too, so only the
-    # completion pass can put a converged fit back in that cell.
+    # The run's *own analysis* carries the failure: this is the fit tab's cache
+    # a user hands the global wizard, and phase 1's completion pass — not a
+    # separate repair — is what puts a converged fit back in that cell.
     own_analyses[failed_run] = forced
-    assert not single_fit_table_covers_portfolio(datasets, table.portfolio.templates, supplied)
+    instrumentation: dict[str, object] = {}
+    completed = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+        existing_recommendations_by_run=dict(own_analyses),
+        instrumentation=instrumentation,
+    )
+    assert int(instrumentation["completion_fits"]) >= 1
+    retried = completed.recommendations_by_run[failed_run].assessment_for_key("exp_constant")
+    assert retried is not None and retried.fit_result.success is True
+    # A completed table covers its portfolio even where a cell failed: the
+    # completion pass already retried it, so a failure there is the answer.
+    supplied = dict(completed.recommendations_by_run)
+    supplied[failed_run] = forced
+    assert single_fit_table_covers_portfolio(datasets, completed.portfolio.templates, supplied)
 
     progress_messages: list[str] = []
-    instrumentation: dict[str, object] = {}
     recommendation = build_global_fit_wizard_screening_recommendation(
         datasets,
         current_model=model,
-        single_fit_recommendations_by_run=supplied,
-        portfolio=table.portfolio,
+        single_fit_recommendations_by_run=completed.recommendations_by_run,
+        portfolio=completed.portfolio,
         progress_callback=progress_messages.append,
-        instrumentation=instrumentation,
     )
 
     assessment = recommendation.assessment_for_key("exp_constant")
@@ -1172,7 +1183,6 @@ def test_global_fit_wizard_screening_completes_a_failed_cell_from_a_sibling(
     assert assessment.fit_results_by_run[failed_run].success is True
     assert set(assessment.fit_results_by_run) == {int(dataset.run_number) for dataset in datasets}
     assert np.isfinite(assessment.aic)
-    assert int(instrumentation["completion_fits"]) >= 1
     assert not any("repairing partial" in message for message in progress_messages)
 
 

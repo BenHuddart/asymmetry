@@ -627,3 +627,39 @@ def test_lower_bound_ic_never_exceeds_any_assignment_it_bounds():
         floor = ordered.lower_bound_ic(start, stop, SelectionMetric.BIC)
         for subset, ic in rank_assignments(estimates[start:stop], NAMES, SelectionMetric.BIC):
             assert floor <= ic + 1e-9, subset
+
+
+def test_partition_ic_with_nothing_shared_is_the_sum_of_per_run_bics():
+    """The partition convention: a local parameter pays against its own run."""
+    from asymmetry.core.fitting.global_search.surrogate import OrderedCollapse
+
+    names = ("a", "b")
+    estimates = []
+    for run in range(4):
+        estimates.append(
+            RunEstimate(
+                run_number=run,
+                names=names,
+                values=np.array([1.0 + run, 2.0]),
+                covariance=None,
+                uncertainties=np.array([0.1, 0.1]),
+                at_bound=frozenset(),
+                chi_squared=100.0 + run,
+                n_points=500 * (run + 1),
+            )
+        )
+    collapse = OrderedCollapse(estimates, names)
+
+    per_run = sum(
+        estimate.chi_squared + len(names) * math.log(estimate.n_points) for estimate in estimates
+    )
+    assert collapse.partition_ic(0, 4, ()) == pytest.approx(per_run)
+    # Sharing ``b`` (identical everywhere) trades four local penalties against
+    # one shared penalty on the pooled points, with no χ² cost.
+    shared = collapse.partition_ic(0, 4, ("b",))
+    expected = per_run - sum(math.log(e.n_points) for e in estimates) + math.log(
+        sum(e.n_points for e in estimates)
+    )
+    assert shared == pytest.approx(expected)
+    assert collapse.lower_bound_partition_ic(0, 4) <= collapse.partition_ic(0, 4, ("a", "b"))
+    assert collapse.greedy_partition(0, 4, names) == (("b",), pytest.approx(expected))
