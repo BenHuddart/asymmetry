@@ -74,6 +74,14 @@ from asymmetry.core.fitting.global_search.homogeneity import (
     classify_parameter_homogeneity,
     wald_subset_delta_chi2,
 )
+from asymmetry.core.fitting.global_search.partition import (
+    PartitionConfig,
+    PartitionPath,
+    PartitionSolution,
+    Segment,
+    partition_series,
+    tier2_segment_cost,
+)
 from asymmetry.core.fitting.global_search.surrogate import (
     CollapseResult,
     RunEstimate,
@@ -492,7 +500,23 @@ class GlobalCandidateAssessment:
 
 @dataclass(frozen=True)
 class GlobalFitWizardRecommendation:
-    """Global-fit analysis payload plus the current recommendation."""
+    """Global-fit analysis payload plus the current recommendation.
+
+    Two answers live here, and they do not compete. ``recommended_key``,
+    ``comparable_keys`` and ``assessments`` are the **series-wide** answer: one
+    template, one role assignment, every run. ``partition_path`` and
+    ``phase_assessments`` are the **partitioned** answer: the series split into
+    contiguous phases at structural breaks, each phase with its own template and
+    assignment. A screening pass always computes the path (it is closed-form and
+    cheap); the per-phase coupled fits happen only when
+    :func:`build_global_fit_wizard_recommendation` is asked for a ``partition_k``.
+
+    ``partition_path`` is ``None`` when the series cannot be partitioned at all —
+    fewer than ``2 × min_segment`` runs, or no template scoreable on every run.
+    ``phase_assessments`` is keyed ``(k, segment_index)`` so the assessments of
+    the neighbouring solutions tier 3 verified stay addressable next to the
+    selected one; ``recommended_partition_k`` names which ``k`` was optimised.
+    """
 
     series_axis_key: str
     series_axis_label: str
@@ -505,10 +529,33 @@ class GlobalFitWizardRecommendation:
     recommended_key: str | None
     comparable_keys: tuple[str, ...]
     summary: str
+    partition_path: PartitionPath | None = None
+    phase_assessments: dict[tuple[int, int], GlobalCandidateAssessment] = field(
+        default_factory=dict
+    )
+    recommended_partition_k: int | None = None
 
     @property
     def recommended_assessment(self) -> GlobalCandidateAssessment | None:
         return self.assessment_for_key(self.recommended_key)
+
+    @property
+    def recommended_partition(self) -> PartitionSolution | None:
+        """The optimised partition solution, when one was optimised."""
+
+        if self.partition_path is None or self.recommended_partition_k is None:
+            return None
+        return self.partition_path.solutions[self.recommended_partition_k]
+
+    def phase_assessment(self, segment_index: int) -> GlobalCandidateAssessment | None:
+        """The recommended assessment of one phase of the optimised partition.
+
+        ``None`` for an excluded end stub, which never receives a coupled fit.
+        """
+
+        if self.recommended_partition_k is None:
+            return None
+        return self.phase_assessments.get((self.recommended_partition_k, segment_index))
 
     def assessment_for_key(self, key: str | None) -> GlobalCandidateAssessment | None:
         if not isinstance(key, str):
@@ -1851,6 +1898,37 @@ def build_global_fit_wizard_screening_recommendation(
             fit_engine=FitEngine(),
             progress_callback=progress_callback,
         )
+
+    partition_started = time.monotonic()
+    with stage_timer(
+        instrumentation,
+        "screening.partition_path",
+        stage_callback=stage_callback,
+        message="Looking for structural transitions along the series.",
+    ):
+        partition_path = build_series_partition_path(
+            portfolio.ordered_datasets,
+            assessments_by_key,
+            axis_key=portfolio.series_axis_key,
+            analysed_points_by_run={
+                int(run_number): int(recommendation.analysed_points)
+                for run_number, recommendation in recommendations_by_run.items()
+            },
+        )
+    _set_metric(instrumentation, "partition_seconds", time.monotonic() - partition_started)
+    if partition_path is not None:
+        _set_metric(instrumentation, "partition_selected_k", partition_path.selected_k)
+        _set_metric(
+            instrumentation,
+            "partition_gains",
+            [float(solution.gain) for solution in partition_path.solutions],
+        )
+        selected = partition_path.solutions[partition_path.selected_k]
+        _progress_log(
+            progress_callback,
+            transitions_summary(selected, portfolio.series_axis_label),
+        )
+
     return rerank_global_fit_wizard_recommendation(
         GlobalFitWizardRecommendation(
             series_axis_key=portfolio.series_axis_key,
@@ -1864,6 +1942,7 @@ def build_global_fit_wizard_screening_recommendation(
             recommended_key=None,
             comparable_keys=(),
             summary="",
+            partition_path=partition_path,
         ),
         metric,
     )
@@ -2122,6 +2201,124 @@ def _build_single_fit_prescreen_assessments(
     return assessments_by_key, template_contexts
 
 
+#: Structural breaks are scored with BIC whatever ranking metric the user chose.
+#:
+#: A transition is a claim about *structure*, and BIC is the consistent structure
+#: selector. Measured on a real 29-run zero-field scan: two heavily damped lines
+#: plus a relaxation nests plain relaxation, so under AIC the extra parameters
+#: cost 2 apiece per run and a genuine structural change was worth almost nothing
+#: at tier 1 — the elbow never appeared. Under BIC the same change scored ~100 per
+#: break (``ln n ≈ 10`` per parameter there) and the path had a clean elbow. The
+#: user's metric still decides which candidate wins *within* a phase; it does not
+#: decide where the phases are.
+_PARTITION_METRIC = SelectionMetric.BIC
+
+
+def _partition_inputs_from_prescreen(
+    ordered_datasets: Sequence[MuonDataset],
+    prescreen_assessments: Mapping[str, GlobalCandidateAssessment],
+    *,
+    analysed_points_by_run: Mapping[int, int],
+) -> tuple[dict[int, dict[str, float]], dict[str, dict[int, RunEstimate]], int]:
+    """The per-run BIC table and per-run estimates the partition search runs on.
+
+    **A cell is feasible when the fit converged** — ``FitResult.success`` — and
+    nothing more. The single-run wizard's own disqualifiers ("amplitude consistent
+    with zero", "rate unresolved") are deliberately *not* consulted: treating a
+    disqualified cell as infeasible makes the template infeasible on every segment
+    containing that run, which on a real series forced breaks around single weak
+    runs *inside* a phase. Handing the IC the run's real χ² instead lets the
+    partition cost decide, which is what it is for.
+
+    Per-run costs are ``χ² + k·ln(n_run)`` at the series search resolution, with
+    ``n_run`` the points that run was actually fitted over
+    (:attr:`FitWizardRecommendation.analysed_points`), so tier 1's sums and tier
+    2's segment scores are on one scale.
+    """
+
+    table: dict[int, dict[str, float]] = {
+        int(dataset.run_number): {} for dataset in ordered_datasets
+    }
+    estimates_by_template: dict[str, dict[int, RunEstimate]] = {}
+
+    for template_key, assessment in prescreen_assessments.items():
+        free_names = tuple(
+            name
+            for name in assessment.template.model.param_names
+            if name not in assessment.fixed_param_names
+        )
+        if not free_names:
+            continue
+        per_run: dict[int, RunEstimate] = {}
+        for dataset in ordered_datasets:
+            run_number = int(dataset.run_number)
+            result = assessment.fit_results_by_run.get(run_number)
+            if result is None or not result.success:
+                continue
+            sample_count = int(analysed_points_by_run[run_number])
+            table[run_number][template_key] = float(result.chi_squared) + surrogate_metric_penalty(
+                len(free_names), sample_count=sample_count, metric=_PARTITION_METRIC
+            )
+            per_run[run_number] = run_estimate_from_fit_result(
+                result,
+                free_names,
+                run_number=run_number,
+                n_points=sample_count,
+                at_bound=_bound_hit_names(result.parameters),
+            )
+        if per_run:
+            estimates_by_template[template_key] = per_run
+
+    n_total_points = sum(
+        int(analysed_points_by_run[int(dataset.run_number)]) for dataset in ordered_datasets
+    )
+    return table, estimates_by_template, n_total_points
+
+
+def build_series_partition_path(
+    ordered_datasets: Sequence[MuonDataset],
+    prescreen_assessments: Mapping[str, GlobalCandidateAssessment],
+    *,
+    axis_key: str,
+    analysed_points_by_run: Mapping[int, int],
+    config: PartitionConfig = PartitionConfig(),
+) -> PartitionPath | None:
+    """Where the series breaks, read off the completed phase-1 table.
+
+    Closed form and cheap — no fit happens here — so a screening pass always
+    computes it. ``None`` when the series cannot be partitioned at all: a series
+    shorter than two minimum segments has no admissible break to look for, and an
+    empty candidate alphabet has nothing to score.
+
+    ``analysed_points_by_run`` gives every ordered run's fitted point count at the
+    series search resolution. A non-empty ``prescreen_assessments`` implies a
+    completed per-run table, which is exactly when that mapping is total.
+    """
+
+    order = [int(dataset.run_number) for dataset in ordered_datasets]
+    if len(order) < 2 * config.min_segment or not prescreen_assessments:
+        return None
+
+    table, estimates_by_template, n_total_points = _partition_inputs_from_prescreen(
+        ordered_datasets,
+        prescreen_assessments,
+        analysed_points_by_run=analysed_points_by_run,
+    )
+    if not any(table[run] for run in order):
+        return None
+
+    axis_values = {
+        int(dataset.run_number): _axis_value(dataset, axis_key) for dataset in ordered_datasets
+    }
+    return partition_series(
+        order,
+        axis_values,
+        tier2_segment_cost(table, order, estimates_by_template, _PARTITION_METRIC),
+        config,
+        n_total_points=n_total_points,
+    )
+
+
 def _record_counter(
     instrumentation: dict[str, object] | None,
     name: str,
@@ -2301,6 +2498,8 @@ def build_global_fit_wizard_recommendation(
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
     portfolio: GlobalFitWizardCandidatePortfolio | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    partition_path: PartitionPath | None = None,
+    partition_k: int | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Analyze one ordered dataset series and recommend a global-fit candidate.
 
@@ -2330,7 +2529,26 @@ def build_global_fit_wizard_recommendation(
     retained non-exhaustive heuristic engines (techniques E/F/G/H and the I/J/K
     knobs), reachable only through this seam for large-P use and regression
     coverage — never through ``effort_tier``.
+
+    ``partition_k`` switches the whole run from **one series-wide answer** to
+    **one answer per phase**: solution ``k`` of ``partition_path`` (the path a
+    screening pass computed and stored on its recommendation) is optimised
+    segment by segment, together with the neighbours tier 3 verifies, and the
+    result carries ``phase_assessments`` and a re-scored path instead of a
+    ``recommended_key``. The two arrive together — a ``k`` names a row of a
+    specific path — so passing one without the other is a programming error and
+    is refused. With ``partition_k=None`` nothing about this function changes.
     """
+    if (partition_k is None) != (partition_path is None):
+        raise ValueError(
+            "partition_k and partition_path go together: a partition index names a "
+            "row of a particular path."
+        )
+    if partition_path is not None and not 0 <= partition_k < len(partition_path.solutions):
+        raise ValueError(
+            f"partition_k={partition_k} is outside the path's "
+            f"{len(partition_path.solutions)} solution(s)."
+        )
     _set_metric(instrumentation, "strategy", "consolidated")
     if instrumentation is not None:
         instrumentation.setdefault("counters", {})
@@ -2357,6 +2575,8 @@ def build_global_fit_wizard_recommendation(
         search_engine=resolved_engine,
         portfolio=portfolio,
         cancel_callback=cancel_callback,
+        partition_path=partition_path,
+        partition_k=partition_k,
     )
 
 
@@ -2377,6 +2597,8 @@ def _build_global_fit_wizard_recommendation_staged(
     search_engine: str = _DEFAULT_SEARCH_ENGINE,
     portfolio: GlobalFitWizardCandidatePortfolio | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    partition_path: PartitionPath | None = None,
+    partition_k: int | None = None,
 ) -> GlobalFitWizardRecommendation:
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
@@ -2576,6 +2798,59 @@ def _build_global_fit_wizard_recommendation_staged(
                     key, base_by_run, fixed_param_names, assessment = future.result()
                     template_contexts[key] = (base_by_run, fixed_param_names)
                     initial_assessments[key] = assessment
+    if partition_k is not None:
+        # One answer per phase, not one for the series. The pre-screen table is
+        # what the path was computed from, so it is also what each segment's
+        # search starts from — at the series search resolution, where those
+        # per-run fits *are* the segment's all-local anchor and cost no fit.
+        search_rebin_factor = series_rebin_factor(
+            ordered_datasets, available_single_fit_recommendations
+        )
+        analysed_points_by_run = {
+            int(run_number): int(recommendation.analysed_points)
+            for run_number, recommendation in available_single_fit_recommendations.items()
+        }
+        updated_path, phase_assessments, recommended_partition_k = _optimise_partition_phases(
+            ordered_datasets,
+            path=partition_path,
+            partition_k=partition_k,
+            templates=templates,
+            template_contexts=template_contexts,
+            prescreen_assessments=initial_assessments,
+            analysed_points_by_run=analysed_points_by_run,
+            axis_key=axis_key,
+            metric=metric,
+            search_rebin_factor=search_rebin_factor,
+            progress_callback=progress_callback,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+            single_run_prefit_cache_for=_single_run_prefit_cache_for,
+            cancel_callback=cancel_callback,
+        )
+        return rerank_global_fit_wizard_recommendation(
+            GlobalFitWizardRecommendation(
+                series_axis_key=axis_key,
+                series_axis_label=axis_label,
+                mixed_axes_warning=mixed_axes_warning,
+                fingerprints_by_run=fingerprints_by_run,
+                dataset_order=tuple(int(dataset.run_number) for dataset in ordered_datasets),
+                templates=tuple(templates),
+                assessments=tuple(
+                    initial_assessments[template.key]
+                    for template in prescreen_templates
+                    if template.key in initial_assessments
+                ),
+                metric=metric,
+                recommended_key=None,
+                comparable_keys=(),
+                summary="",
+                partition_path=updated_path,
+                phase_assessments=phase_assessments,
+                recommended_partition_k=recommended_partition_k,
+            ),
+            metric,
+        )
+
     if normalized_selected_template_keys:
         if search_engine == SEARCH_ENGINE_LOW:
             # Technique I/J still apply within an explicit user selection on the
@@ -2761,11 +3036,87 @@ def _screening_no_recommendation_summary(
     )
 
 
+def _axis_unit(axis_label: str) -> str:
+    """The unit out of an axis label — ``"Temperature (K)"`` → ``"K"``.
+
+    ``"Run"`` carries no unit and yields ``""``, so a boundary on a run-ordered
+    series reads as a bare number rather than inventing one.
+    """
+
+    opening = axis_label.find("(")
+    closing = axis_label.rfind(")")
+    if opening < 0 or closing < opening:
+        return ""
+    return axis_label[opening + 1 : closing].strip()
+
+
+def _format_boundary(estimate: float, half_gap: float, unit: str) -> str:
+    """``"16.5 ± 0.5 K"`` — the boundary estimate as the card states it."""
+
+    text = f"{estimate:.4g} ± {half_gap:.2g}"
+    return f"{text} {unit}" if unit else text
+
+
+def transitions_summary(
+    solution: PartitionSolution,
+    axis_label: str,
+) -> str:
+    """Plain-language summary of a partition solution's transitions.
+
+    ``"2 transitions found: 16.5 ± 0.5 K and 28.5 ± 0.5 K"``. A solution with no
+    breaks says so; an excluded end stub is named separately, because "excluded
+    from the global fit" is the one part of the answer a reader must not miss.
+    """
+
+    unit = _axis_unit(axis_label)
+    excluded = [segment for segment in solution.segments if segment.excluded]
+    excluded_note = ""
+    if excluded:
+        runs = [run for segment in excluded for run in segment.run_numbers]
+        labels = ", ".join(str(run) for run in runs)
+        excluded_note = (
+            f" Run {labels} is excluded from the global fit: it looks like a different phase."
+            if len(runs) == 1
+            else f" Runs {labels} are excluded from the global fit: they look like a"
+            " different phase."
+        )
+
+    if not solution.boundaries:
+        return f"No transitions found: one phase describes the whole series.{excluded_note}"
+
+    formatted = [
+        _format_boundary(estimate, half_gap, unit) for estimate, half_gap in solution.boundaries
+    ]
+    if len(formatted) == 1:
+        listed = formatted[0]
+    else:
+        listed = ", ".join(formatted[:-1]) + f" and {formatted[-1]}"
+    noun = "transition" if len(formatted) == 1 else "transitions"
+    return f"{len(formatted)} {noun} found: {listed}.{excluded_note}"
+
+
 def rerank_global_fit_wizard_recommendation(
     recommendation: GlobalFitWizardRecommendation,
     metric: SelectionMetric,
 ) -> GlobalFitWizardRecommendation:
-    """Reuse existing global-fit assessments and recompute the recommendation."""
+    """Reuse existing global-fit assessments and recompute the recommendation.
+
+    A **partitioned** recommendation — one whose ``recommended_partition_k`` names
+    an optimised solution — keeps that partition and summarises its transitions
+    instead of the series-wide winner. The partition itself is not re-selected:
+    breaks are scored with BIC whatever ranking metric the user picked (see
+    :func:`build_global_fit_wizard_screening_recommendation`), so changing the
+    metric changes which candidate wins *within* a phase, never where the phases
+    are.
+    """
+    if recommendation.recommended_partition is not None:
+        return replace(
+            recommendation,
+            metric=metric,
+            summary=transitions_summary(
+                recommendation.recommended_partition, recommendation.series_axis_label
+            ),
+        )
     if recommendation.mixed_axes_warning:
         return replace(
             recommendation,
@@ -2884,7 +3235,15 @@ def merge_global_fit_wizard_recommendations(
     base: GlobalFitWizardRecommendation,
     updates: GlobalFitWizardRecommendation,
 ) -> GlobalFitWizardRecommendation:
-    """Merge optimized assessments from one run back into an existing workflow snapshot."""
+    """Merge optimized assessments from one run back into an existing workflow snapshot.
+
+    Phase assessments merge by ``(k, segment_index)`` — a later optimisation of a
+    different ``k`` adds its phases beside the ones already there rather than
+    replacing them. The **path** is not merged: it is replaced whole whenever the
+    update carries one, because an optimisation pass re-scores its rows with exact
+    per-segment ICs and a half-exact, half-surrogate path is not a path anybody can
+    read a gain off.
+    """
     updated_template_keys = {
         assessment.template.key
         for assessment in updates.assessments
@@ -2898,10 +3257,21 @@ def merge_global_fit_wizard_recommendations(
     merged_assessments.extend(
         assessment for assessment in updates.assessments if not assessment.prescreen_only
     )
+    merged_phase_assessments = dict(base.phase_assessments)
+    merged_phase_assessments.update(updates.phase_assessments)
     merged = replace(
         base,
         metric=updates.metric,
         assessments=tuple(merged_assessments),
+        partition_path=(
+            updates.partition_path if updates.partition_path is not None else base.partition_path
+        ),
+        phase_assessments=merged_phase_assessments,
+        recommended_partition_k=(
+            updates.recommended_partition_k
+            if updates.recommended_partition_k is not None
+            else base.recommended_partition_k
+        ),
     )
     return rerank_global_fit_wizard_recommendation(merged, updates.metric)
 
@@ -2961,6 +3331,22 @@ def serialize_global_fit_wizard_recommendation(
         "recommended_key": recommendation.recommended_key,
         "comparable_keys": list(recommendation.comparable_keys),
         "summary": recommendation.summary,
+        "partition_path": (
+            None
+            if recommendation.partition_path is None
+            else recommendation.partition_path.to_payload()
+        ),
+        # A list of entries rather than a mapping: the key is the pair
+        # ``(k, segment_index)``, and JSON object keys are strings.
+        "phase_assessments": [
+            {
+                "k": int(k),
+                "segment_index": int(segment_index),
+                "assessment": _serialize_global_candidate_assessment(assessment, compact=compact),
+            }
+            for (k, segment_index), assessment in sorted(recommendation.phase_assessments.items())
+        ],
+        "recommended_partition_k": recommendation.recommended_partition_k,
         # Marks the payload as curve-decimated (read by nothing —
         # deserialisation tolerates both shapes).
         "compact": bool(compact),
@@ -2997,6 +3383,18 @@ def deserialize_global_fit_wizard_recommendation(
     comparable_keys = tuple(
         key for key in payload.get("comparable_keys", []) if isinstance(key, str)
     )
+    partition_payload = payload.get("partition_path")
+    partition_path = (
+        PartitionPath.from_payload(partition_payload)
+        if isinstance(partition_payload, dict)
+        else None
+    )
+    phase_assessments = {
+        (int(entry["k"]), int(entry["segment_index"])): assessment
+        for entry in payload.get("phase_assessments", [])
+        if (assessment := _deserialize_global_candidate_assessment(entry["assessment"])) is not None
+    }
+    recommended_partition_k = payload.get("recommended_partition_k")
 
     return GlobalFitWizardRecommendation(
         series_axis_key=str(payload.get("series_axis_key", "run")),
@@ -3016,6 +3414,11 @@ def deserialize_global_fit_wizard_recommendation(
         ),
         comparable_keys=comparable_keys,
         summary=str(payload.get("summary", "")),
+        partition_path=partition_path,
+        phase_assessments=phase_assessments,
+        recommended_partition_k=(
+            int(recommended_partition_k) if recommended_partition_k is not None else None
+        ),
     )
 
 
@@ -8869,6 +9272,7 @@ def _drain_separable_tasks(
     instrumentation: dict[str, object] | None,
     cancel_callback: Callable[[], bool] | None,
     deadline: float | None,
+    shared_executor: ProcessPoolExecutor | None = None,
 ) -> list[_SeparableTemplateResult]:
     """Run per-template tasks on the spawn pool, polling cancel and the deadline.
 
@@ -8876,6 +9280,13 @@ def _drain_separable_tasks(
     before it. On expiry the pool is torn down *without* waiting, so the wall we
     were bounding is not simply relocated into ``shutdown``, and whatever
     completed is kept.
+
+    ``shared_executor`` is a pool somebody else owns and will close. Opening one
+    costs a spawn per worker, which is nothing beside a template's coupled fits
+    but everything beside a *series* of short searches: per-phase optimisation
+    calls this twice per segment, so on the eight segments of a verified
+    two-break path it is sixteen pools. Borrowing one is measurably the whole
+    difference there (8.3 s to 1.4 s on the two-phase synthetic).
     """
 
     def _check_cancelled() -> None:
@@ -8886,14 +9297,15 @@ def _drain_separable_tasks(
         return deadline is not None and time.monotonic() >= deadline
 
     results: list[_SeparableTemplateResult] = []
-    worker_count = _template_worker_count(len(tasks))
-    executor: ProcessPoolExecutor | None = None
-    if worker_count > 1 and len(tasks) > 1:
-        executor = _try_open_process_pool(
-            max_workers=worker_count,
-            progress_callback=progress_callback,
-            activity=activity,
-        )
+    executor = shared_executor
+    if executor is None:
+        worker_count = _template_worker_count(len(tasks))
+        if worker_count > 1 and len(tasks) > 1:
+            executor = _try_open_process_pool(
+                max_workers=worker_count,
+                progress_callback=progress_callback,
+                activity=activity,
+            )
 
     truncated = False
     try:
@@ -8919,7 +9331,8 @@ def _drain_separable_tasks(
                 for future in done:
                     results.append(future.result())
     finally:
-        if executor is not None:
+        # A borrowed pool outlives this call and is its owner's to close.
+        if executor is not None and executor is not shared_executor:
             _shutdown_process_pool(executor, wait=not truncated, cancel_futures=truncated)
 
     if truncated:
@@ -9016,6 +9429,7 @@ def _run_separable_search(
     search_rebin_factor: int | None = None,
     prescreen_rebin_factor: int = 1,
     time_budget_seconds: float | None = _WAVEFRONT_TIME_BUDGET_SECONDS,
+    shared_executor: ProcessPoolExecutor | None = None,
 ) -> tuple[GlobalCandidateAssessment, ...]:
     """Separable global/local role search — the default engine.
 
@@ -9028,6 +9442,10 @@ def _run_separable_search(
     minimum bandwidth-aware factor across runs. ``prescreen_rebin_factor`` says
     what resolution the pre-screen table sits at — when the two agree its per-run
     fits *are* the all-local node and no fit is spent on it at all.
+
+    ``shared_executor`` lets a caller that runs several searches back to back —
+    per-phase optimisation does, once per segment — pay for one spawn pool rather
+    than two per call.
     """
 
     if not shortlisted_templates:
@@ -9087,6 +9505,7 @@ def _run_separable_search(
         instrumentation=instrumentation,
         cancel_callback=cancel_callback,
         deadline=deadline,
+        shared_executor=shared_executor,
     )
     result_by_key = {result.template_key: result for result in anchor_results}
     # A screening fit is a node of *this* search's lattice only when it was
@@ -9204,6 +9623,7 @@ def _run_separable_search(
             instrumentation=instrumentation,
             cancel_callback=cancel_callback,
             deadline=deadline,
+            shared_executor=shared_executor,
         )
         searched_by_key = {result.template_key: result.state for result in elimination_results}
         states = [searched_by_key.get(state.template.key, state) for state in states]
@@ -9224,6 +9644,434 @@ def _run_separable_search(
     return _finalise_heuristic_assessments(
         datasets, states, metric=metric, progress_callback=progress_callback
     )
+
+
+# --------------------------------------------------------------------------- #
+# Per-phase optimisation (tier 3)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class _PhaseWindow:
+    """One segment of a *candidate* partition, as positions into the series order.
+
+    Deliberately not a :class:`Segment`: a shifted-break candidate has no cost or
+    structure until its segments have been fitted, and a placeholder ``inf`` on a
+    ``Segment`` would be indistinguishable from a segment nothing could describe.
+    """
+
+    start: int
+    stop: int
+    excluded: bool
+
+
+def _windows_of(solution: PartitionSolution) -> tuple[_PhaseWindow, ...]:
+    return tuple(
+        _PhaseWindow(segment.start, segment.stop, segment.excluded) for segment in solution.segments
+    )
+
+
+def _shifted_break_variants(
+    windows: tuple[_PhaseWindow, ...], min_segment: int
+) -> list[tuple[_PhaseWindow, ...]]:
+    """Every one-run shift of a single break that keeps each phase legal.
+
+    The elbow is a claim about *where* the series changes as much as about how
+    many times, and the DP found the break from a closed-form surrogate. Fitting
+    the two neighbouring positions is what turns "the surrogate liked run 16" into
+    "the exact fit prefers run 16 to runs 15 and 17".
+
+    Only breaks between two ordinary phases move. An end stub is short *because*
+    it is excluded, so a shift into it would have to redefine what it is; it is
+    left where the DP put it.
+    """
+
+    variants: list[tuple[_PhaseWindow, ...]] = []
+    for index in range(len(windows) - 1):
+        left, right = windows[index], windows[index + 1]
+        if left.excluded or right.excluded:
+            continue
+        for delta in (-1, 1):
+            boundary = left.stop + delta
+            if boundary - left.start < min_segment or right.stop - boundary < min_segment:
+                continue
+            variants.append(
+                (
+                    *windows[:index],
+                    _PhaseWindow(left.start, boundary, False),
+                    _PhaseWindow(boundary, right.stop, False),
+                    *windows[index + 2 :],
+                )
+            )
+    return variants
+
+
+def _restrict_prescreen_assessment(
+    assessment: GlobalCandidateAssessment,
+    datasets: Sequence[MuonDataset],
+    *,
+    metric: SelectionMetric,
+    analysed_points_by_run: Mapping[int, int],
+) -> GlobalCandidateAssessment:
+    """One phase-1 pre-screen row, restricted to a segment of the series.
+
+    The per-run fits carry over verbatim — they are independent fits, so a
+    segment's rows really are its own — but the information criteria are
+    recomputed over the segment's runs and point count. A series-wide IC says
+    nothing about how a template does on one phase, and it is what the separable
+    search's template racing reads.
+    """
+
+    run_numbers = [int(dataset.run_number) for dataset in datasets]
+    wanted = set(run_numbers)
+    free_names = tuple(
+        name
+        for name in assessment.template.model.param_names
+        if name not in assessment.fixed_param_names
+    )
+    results = {
+        run_number: assessment.fit_results_by_run[run_number]
+        for run_number in run_numbers
+        if run_number in assessment.fit_results_by_run
+    }
+    complete = len(results) == len(run_numbers) and all(
+        result.success for result in results.values()
+    )
+    if complete:
+        aic, aicc, bic = compute_information_criteria(
+            math.fsum(float(result.chi_squared) for result in results.values()),
+            len(free_names) * len(run_numbers),
+            sum(int(analysed_points_by_run[run_number]) for run_number in run_numbers),
+        )
+    else:
+        aic, aicc, bic = float("inf"), None, float("inf")
+
+    return replace(
+        assessment,
+        fit_results_by_run=results,
+        run_diagnostics=tuple(
+            diagnostic
+            for diagnostic in assessment.run_diagnostics
+            if diagnostic.run_number in wanted
+        ),
+        aic=float(aic),
+        aicc=None if aicc is None else float(aicc),
+        bic=float(bic),
+        selected_score=_metric_value(metric, aic, aicc, bic),
+        fitted_curves_by_run={
+            run_number: curves
+            for run_number, curves in assessment.fitted_curves_by_run.items()
+            if run_number in wanted
+        },
+        component_curves_by_run={
+            run_number: curves
+            for run_number, curves in assessment.component_curves_by_run.items()
+            if run_number in wanted
+        },
+    )
+
+
+def _recommended_segment_assessment(
+    assessments: Sequence[GlobalCandidateAssessment],
+    metric: SelectionMetric,
+) -> GlobalCandidateAssessment | None:
+    """The phase's answer, chosen exactly as the series-wide verdict is chosen.
+
+    Same two tiers as :func:`rerank_global_fit_wizard_recommendation`: candidates
+    that converged and cleared every gate, else candidates that converged and
+    cleared every *per-run* gate with only a series-consistency caveat. ``None``
+    means nothing describes this phase — which makes the candidate partition
+    containing it infeasible, and is a real answer rather than a failure.
+    """
+
+    passing = [
+        assessment
+        for assessment in assessments
+        if assessment.is_successful and assessment.residual_gate_passed
+    ]
+    if not passing:
+        passing = [
+            assessment
+            for assessment in assessments
+            if assessment.is_successful
+            and assessment.run_diagnostics
+            and all(diagnostic.gate_passed for diagnostic in assessment.run_diagnostics)
+        ]
+    if not passing:
+        return None
+    return min(passing, key=lambda assessment: _assessment_sort_key(assessment, metric))
+
+
+def _optimise_partition_phases(
+    ordered_datasets: list[MuonDataset],
+    *,
+    path: PartitionPath,
+    partition_k: int,
+    templates: list[CandidateTemplate],
+    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]],
+    prescreen_assessments: dict[str, GlobalCandidateAssessment],
+    analysed_points_by_run: Mapping[int, int],
+    axis_key: str,
+    metric: SelectionMetric,
+    search_rebin_factor: int,
+    progress_callback: Callable[[str], None] | None,
+    search_strategy: str,
+    instrumentation: dict[str, object] | None,
+    single_run_prefit_cache_for: Callable[
+        [CandidateTemplate], dict[object, dict[int, ParameterSet]]
+    ],
+    cancel_callback: Callable[[], bool] | None,
+    config: PartitionConfig = PartitionConfig(),
+) -> tuple[PartitionPath, dict[tuple[int, int], GlobalCandidateAssessment], int]:
+    """Tier 3: fit each phase of the selected partition, and verify the elbow.
+
+    Verification covers the elbow's neighbours in **both** senses — ``k*−1``,
+    ``k*`` and ``k*+1`` where they exist, and each break of ``k*`` shifted one run
+    either way — because a partition can be wrong about how many transitions there
+    are or about where one of them is, and the closed-form path cannot tell those
+    apart. Every distinct segment across all of those is fitted **once**
+    (neighbouring solutions share most of their segments), and the path rows they
+    touch are re-scored with the exact per-segment BIC, still on the BIC scale
+    (:data:`_PARTITION_METRIC`) whatever ranking metric the user chose. ``selected_k``
+    is then re-derived from the exact gains.
+
+    An excluded end stub never receives a coupled fit and keeps its per-run cost
+    from the closed-form path, which is precisely what "not part of any phase"
+    means. Rows outside the verified window keep their surrogate totals; a gain
+    that straddles the edge therefore compares an exact total against a surrogate
+    one, which is honest — the search measured what it could afford to measure.
+
+    Segments run serially here and each one's templates fan out over the existing
+    spawn pool. Pools must not nest, so the choice is which level gets the
+    workers, and the alphabet is always larger than the number of phases: two
+    segment-level tasks would leave most of ``_MAX_TEMPLATE_WORKERS`` idle where
+    the per-template fan-out fills them.
+    """
+
+    solutions = path.solutions
+    candidates: dict[int, list[tuple[_PhaseWindow, ...]]] = {}
+    for k in (partition_k - 1, partition_k, partition_k + 1):
+        if 0 <= k < len(solutions):
+            candidates[k] = [_windows_of(solutions[k])]
+    candidates[partition_k].extend(
+        _shifted_break_variants(candidates[partition_k][0], config.min_segment)
+    )
+
+    stub_ic: dict[tuple[int, int], float] = {
+        (segment.start, segment.stop): float(segment.ic)
+        for solution in solutions
+        for segment in solution.segments
+        if segment.excluded
+    }
+    stub_structure: dict[tuple[int, int], str] = {
+        (segment.start, segment.stop): segment.structure
+        for solution in solutions
+        for segment in solution.segments
+        if segment.excluded
+    }
+
+    targets = sorted(
+        {
+            (window.start, window.stop)
+            for windows_list in candidates.values()
+            for windows in windows_list
+            for window in windows
+            if not window.excluded
+        }
+    )
+    _set_metric(instrumentation, "partition_segments_fitted", len(targets))
+    _progress_log(
+        progress_callback,
+        f"Optimising {len(targets)} distinct phase(s) across the {partition_k}-break "
+        "solution and its verified neighbours.",
+    )
+
+    searched_by_window: dict[tuple[int, int], tuple[GlobalCandidateAssessment, ...]] = {}
+    worker_count = _template_worker_count(len(templates))
+    executor = (
+        _try_open_process_pool(
+            max_workers=worker_count,
+            progress_callback=progress_callback,
+            activity="Per-phase separable role search",
+        )
+        if worker_count > 1 and len(templates) > 1
+        else None
+    )
+    try:
+        for start, stop in targets:
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            segment_datasets = ordered_datasets[start:stop]
+            segment_runs = {int(dataset.run_number) for dataset in segment_datasets}
+            _progress_log(
+                progress_callback,
+                f"Phase {segment_datasets[0].run_label}–{segment_datasets[-1].run_label}: "
+                f"separable role search over {len(templates)} candidate(s).",
+            )
+            searched_by_window[(start, stop)] = _run_separable_search(
+                segment_datasets,
+                shortlisted_templates=list(templates),
+                template_contexts={
+                    key: (
+                        {
+                            run_number: parameters
+                            for run_number, parameters in base_by_run.items()
+                            if run_number in segment_runs
+                        },
+                        fixed_param_names,
+                    )
+                    for key, (base_by_run, fixed_param_names) in template_contexts.items()
+                },
+                prescreen_assessments={
+                    key: _restrict_prescreen_assessment(
+                        assessment,
+                        segment_datasets,
+                        metric=metric,
+                        analysed_points_by_run=analysed_points_by_run,
+                    )
+                    for key, assessment in prescreen_assessments.items()
+                },
+                axis_key=axis_key,
+                metric=metric,
+                progress_callback=progress_callback,
+                search_strategy=search_strategy,
+                instrumentation=instrumentation,
+                single_run_prefit_cache_for=single_run_prefit_cache_for,
+                cancel_callback=cancel_callback,
+                search_rebin_factor=search_rebin_factor,
+                prescreen_rebin_factor=search_rebin_factor,
+                shared_executor=executor,
+            )
+    except BaseException:
+        if executor is not None:
+            terminate_spawn_pool(executor)
+        raise
+    else:
+        if executor is not None:
+            _shutdown_process_pool(executor)
+
+    def _score(
+        windows: tuple[_PhaseWindow, ...],
+    ) -> tuple[float, tuple[GlobalCandidateAssessment | None, ...]]:
+        total = 0.0
+        chosen: list[GlobalCandidateAssessment | None] = []
+        for window in windows:
+            if window.excluded:
+                total += stub_ic[(window.start, window.stop)]
+                chosen.append(None)
+                continue
+            assessment = _recommended_segment_assessment(
+                searched_by_window[(window.start, window.stop)], metric
+            )
+            if assessment is None:
+                return math.inf, ()
+            total += float(assessment.bic)
+            chosen.append(assessment)
+        return total, tuple(chosen)
+
+    phase_assessments: dict[tuple[int, int], GlobalCandidateAssessment] = {}
+    rescored: dict[int, PartitionSolution] = {}
+    for k, windows_list in candidates.items():
+        scored = [(_score(windows), windows) for windows in windows_list]
+        (total, chosen), windows = min(scored, key=lambda item: item[0][0])
+        if not math.isfinite(total):
+            continue
+        segments: list[Segment] = []
+        for index, (window, assessment) in enumerate(zip(windows, chosen, strict=True)):
+            run_numbers = tuple(
+                int(dataset.run_number) for dataset in ordered_datasets[window.start : window.stop]
+            )
+            if assessment is None:
+                segments.append(
+                    Segment(
+                        start=window.start,
+                        stop=window.stop,
+                        run_numbers=run_numbers,
+                        structure=stub_structure[(window.start, window.stop)],
+                        ic=stub_ic[(window.start, window.stop)],
+                        excluded=True,
+                    )
+                )
+                continue
+            phase_assessments[(k, index)] = assessment
+            segments.append(
+                Segment(
+                    start=window.start,
+                    stop=window.stop,
+                    run_numbers=run_numbers,
+                    structure=assessment.selection_key,
+                    ic=float(assessment.bic),
+                    excluded=False,
+                )
+            )
+        rescored[k] = replace(
+            solutions[k],
+            breaks=len(segments) - 1,
+            segments=tuple(segments),
+            total_ic=total,
+            boundaries=_partition_boundaries(ordered_datasets, segments, axis_key),
+        )
+
+    updated = _rescored_partition_path(path, rescored)
+    # The elbow may move onto a neighbour tier 3 measured — that is what verifying
+    # the neighbours is for. It is never followed outside the verified window,
+    # where the gains are still the surrogate's.
+    recommended_k = updated.selected_k if updated.selected_k in rescored else partition_k
+    return updated, phase_assessments, recommended_k
+
+
+def _partition_boundaries(
+    ordered_datasets: Sequence[MuonDataset],
+    segments: Sequence[Segment],
+    axis_key: str,
+) -> tuple[tuple[float, float], ...]:
+    """``((x_a + x_b)/2, (x_b − x_a)/2)`` for each adjacent pair, as tier 1 does."""
+
+    axis_values = {
+        int(dataset.run_number): _axis_value(dataset, axis_key) for dataset in ordered_datasets
+    }
+    return tuple(
+        (
+            0.5 * (axis_values[left.run_numbers[-1]] + axis_values[right.run_numbers[0]]),
+            0.5 * (axis_values[right.run_numbers[0]] - axis_values[left.run_numbers[-1]]),
+        )
+        for left, right in zip(segments, segments[1:], strict=False)
+    )
+
+
+def _rescored_partition_path(
+    path: PartitionPath,
+    rescored: Mapping[int, PartitionSolution],
+) -> PartitionPath:
+    """Replace the rows tier 3 measured, then re-read the elbow off the new gains.
+
+    The gains are recomputed for the whole path so the exact rows and the
+    surrogate rows around them stay one sequence, and ``selected_k`` is re-derived
+    by the same rule the closed-form path uses: the largest ``k`` whose gains are
+    *all* admissible, so a rejected break still ends the path.
+    """
+
+    solutions: list[PartitionSolution] = []
+    previous_total = math.inf
+    for index, solution in enumerate(path.solutions):
+        current = rescored.get(index, solution)
+        gain = 0.0 if index == 0 else previous_total - current.total_ic
+        solutions.append(
+            replace(
+                current,
+                gain=gain,
+                admissible=True if index == 0 else gain >= path.beta_floor,
+            )
+        )
+        previous_total = current.total_ic
+
+    selected_k = 0
+    for index in range(1, len(solutions)):
+        if not solutions[index].admissible:
+            break
+        selected_k = index
+
+    return replace(path, solutions=tuple(solutions), selected_k=selected_k)
 
 
 def _run_exhaustive_wavefront_search(

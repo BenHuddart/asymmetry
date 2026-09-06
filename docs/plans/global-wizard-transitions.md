@@ -467,3 +467,52 @@ the feature branch. Phase F runs the full validation once.
   5-parameter, 3-run cases: several times the joint cost for the same verdict).
   The full-resolution refit of the winner and its flip-neighbourhood stays
   joint, as specified.
+- 2026-09-06 (Phase C2): **the partition is scored with BIC**, whatever ranking
+  metric the user chose. Per-run costs in the table are `chi2 + k·ln(n_run)` at
+  the series search resolution and tier-2 segment costs use
+  `SelectionMetric.BIC`. Reason, measured on the real 29-run scan: two damped
+  lines plus a relaxation *nests* plain relaxation, so under AIC a structural
+  change between them costs only 2 per extra parameter per run and tier 1 saw
+  almost nothing; under BIC (`ln n ≈ 10` per parameter there) the same change
+  scored ~100 per break and the path had a clean elbow. The ranking metric still
+  decides which candidate wins *within* a phase.
+- 2026-09-06 (Phase C2): **cell feasibility is "the fit converged"**
+  (`FitResult.success`), not the single-run wizard's per-run disqualifiers
+  ("amplitude consistent with zero", "rate unresolved"). Treating a disqualified
+  cell as infeasible makes its template infeasible on every segment containing
+  that run, which forced breaks around single weak runs *inside* a phase; handing
+  the IC the run's real χ² let the partition cost decide, and gave the right
+  answer.
+- 2026-09-06 (Phase C2): **tier 2 walks greedily, not exhaustively**. On G = 29,
+  24 templates, P ≤ 9 the `rank_assignments` enumeration took ~57 s, because the
+  DP scores O(G²) windows for every template. Three changes bring a realistic
+  table to ~0.4–1.5 s: `greedy_assignment` forward selection (`P(P+1)/2`
+  collapses, provably the same subset when the parameters score separably);
+  `OrderedCollapse`, which holds each subset's prefix sums so a *window* costs
+  one small solve rather than a pass over its runs; and an exact per-window
+  bound across templates (`Σχ² + penalty(P, n)` is a floor, so a template whose
+  floor already loses is skipped). A degenerate table — every template
+  statistically identical, parameters i.i.d. per run — still costs ~10 s; a real
+  alphabet is not that.
+- 2026-09-06 (Phase C2): **tier-3 verification covers the elbow's neighbours in
+  `k` and in position** — solutions `k*−1, k*, k*+1` where they exist, plus each
+  break of `k*` shifted one run either way where every phase stays ≥ L. Every
+  distinct segment across those is fitted once, the rows they touch are re-scored
+  with exact per-segment BICs, and `selected_k` is re-derived from the exact
+  gains. `recommended_partition_k` follows the re-evaluated elbow only inside the
+  verified window. A segment shorter than L never receives a coupled fit and an
+  excluded stub keeps its per-run cost.
+- 2026-09-06 (Phase C2): **segments run serially in the parent, templates fan out
+  over one hoisted spawn pool**. Pools must not nest, so the only question is
+  which level gets the workers, and the alphabet is always larger than the number
+  of phases. Measured on the two-phase synthetic (8 verified segments): a pool
+  opened per `_drain_separable_tasks` call cost 8.3 s in pool startup alone;
+  hoisting one pool across every segment (`shared_executor`) brought it to 1.9 s;
+  no pool at all — which is what a segment-level task would experience internally
+  — was 1.0 s, because that synthetic has two templates and millisecond fits. The
+  pool's cost is one fixed spawn while its benefit scales with alphabet size and
+  fit cost, so the hoisted pool is the shipped arrangement.
+- 2026-09-06 (Phase C2): the **series search resolution** is threaded into the
+  per-phase searches as both `search_rebin_factor` and `prescreen_rebin_factor`,
+  so each segment's all-local anchor is the phase-1 pre-screen's own per-run fits
+  and costs no fit at all.

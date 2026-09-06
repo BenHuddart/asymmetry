@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import time
 
 import numpy as np
 import pytest
@@ -16,7 +17,7 @@ from asymmetry.core.fitting.global_search.partition import (
     tier1_segment_cost,
     tier2_segment_cost,
 )
-from asymmetry.core.fitting.global_search.surrogate import RunEstimate
+from asymmetry.core.fitting.global_search.surrogate import RunEstimate, rank_assignments
 
 METRIC = SelectionMetric.BIC
 
@@ -385,3 +386,104 @@ def test_partition_path_round_trips_through_a_json_payload():
     restored = PartitionPath.from_payload(json.loads(json.dumps(path.to_payload())))
 
     assert restored == path
+
+
+# --------------------------------------------------------------------------- #
+# Tier 2 must stay cheap enough to run on every window
+# --------------------------------------------------------------------------- #
+
+
+def _series_table(n_runs, n_templates, n_params, *, seed=20260906):
+    """A per-run table shaped like a real series alphabet.
+
+    Templates differ in fit quality — one describes the data, the rest describe it
+    progressively worse, which is what an alphabet built from a union of per-run
+    recommendations looks like — and every template's parameters drift smoothly
+    along the sweep rather than jumping about at random.
+    """
+
+    rng = np.random.default_rng(seed)
+    order = list(range(n_runs))
+    names = tuple(f"p{index}" for index in range(n_params))
+    templates = [f"t{index}" for index in range(n_templates)]
+
+    table = {run: {} for run in order}
+    estimates_by_template = {}
+    for index, template in enumerate(templates):
+        level = 900.0 * (1.0 + 0.15 * index)
+        base = rng.normal(size=n_params)
+        slope = rng.normal(size=n_params) * 0.02
+        per_run = {}
+        for run in order:
+            values = base + slope * run + rng.normal(scale=0.01, size=n_params)
+            sigma = np.abs(rng.normal(loc=0.2, scale=0.05, size=n_params)) + 0.05
+            root = rng.normal(size=(n_params, n_params)) * 0.05
+            chi_squared = level + rng.normal(scale=10.0)
+            table[run][template] = chi_squared + n_params * math.log(1000)
+            per_run[run] = RunEstimate(
+                run_number=run,
+                names=names,
+                values=values,
+                covariance=np.diag(sigma**2) + root @ root.T,
+                uncertainties=sigma,
+                at_bound=frozenset(),
+                chi_squared=chi_squared,
+                n_points=1000,
+            )
+        estimates_by_template[template] = per_run
+    return order, table, estimates_by_template
+
+
+def test_a_full_tier2_partition_of_a_long_series_stays_affordable():
+    """The bound that made tier 2 usable at all.
+
+    The dynamic program scores every one of ``O(G²)`` windows for every template.
+    Enumerating ``2^P`` sharing patterns per window took the best part of a minute
+    on a real 29-run series, which is not a cost that can sit in front of a user
+    on every screening pass. Forward selection, the prefix-sum windowed collapse
+    and the per-window template bound bring it to ~0.4 s here — inside the
+    standard tier's budget, which is where a guard against that regression is
+    worth having. The assertion is deliberately loose by an order of magnitude,
+    so it fails on a regression of *kind* rather than on a slow afternoon.
+    """
+
+    order, table, estimates = _series_table(30, 20, 8)
+    cost = tier2_segment_cost(table, order, estimates, METRIC)
+
+    started = time.perf_counter()
+    path = partition_series(order, _axis(order), cost, PartitionConfig(), n_total_points=30 * 1000)
+    elapsed = time.perf_counter() - started
+
+    assert path.solutions
+    assert elapsed < 5.0, f"tier-2 partition of a 30-run, 20-template series took {elapsed:.1f}s"
+
+
+def test_greedy_segment_costs_agree_with_exhaustive_enumeration():
+    """Speed, not a different answer.
+
+    Tier 2 used to score each (template, window) by enumerating every sharing
+    pattern. This reproduces that reference directly and requires the shipped
+    cost — greedy walk, prefix sums, and the template bound that skips a template
+    whose floor already loses — to return the same value and the same structure.
+    """
+
+    order, table, estimates = _series_table(9, 4, 3, seed=5)
+    cost = tier2_segment_cost(table, order, estimates, METRIC)
+
+    for start in range(len(order)):
+        for stop in range(start + 1, len(order) + 1):
+            window = order[start:stop]
+            reference = (math.inf, "")
+            for template, per_run in estimates.items():
+                subsets = rank_assignments(
+                    [per_run[run] for run in window], estimates[template][window[0]].names, METRIC
+                )
+                best_subset, best_ic = subsets[0]
+                if best_ic < reference[0]:
+                    reference = (
+                        best_ic,
+                        f"{template}|g={','.join(best_subset) or 'none'}",
+                    )
+            value, structure = cost(start, stop)
+            assert value == pytest.approx(reference[0]), (start, stop)
+            assert structure == reference[1], (start, stop)

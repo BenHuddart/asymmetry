@@ -52,11 +52,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from asymmetry.core.fitting.fit_wizard import SelectionMetric
-from asymmetry.core.fitting.global_search.surrogate import (
-    RunEstimate,
-    rank_assignments,
-    surrogate_ic,
-)
+from asymmetry.core.fitting.global_search.surrogate import OrderedCollapse, RunEstimate
 
 __all__ = [
     "PartitionConfig",
@@ -277,7 +273,7 @@ def tier2_segment_cost(
 
     Feasibility still comes from ``table`` (a missing/non-finite cell rules the
     template out for that segment); the *cost* comes from
-    :func:`~asymmetry.core.fitting.global_search.surrogate.rank_assignments` over
+    :func:`~asymmetry.core.fitting.global_search.surrogate.greedy_assignment` over
     that template's :class:`RunEstimate`\\ s restricted to the segment. When a
     template has no estimates for every run of the segment its tier-1 all-local
     sum is used instead, which is the lower bound tier 1 already provides.
@@ -285,38 +281,67 @@ def tier2_segment_cost(
     The structure key is ``f"{template}|g={','.join(shared) or 'none'}"``, so a
     role change at a fixed template is a different structure and therefore a
     break.
+
+    **The cost had to come down to be usable.** The dynamic program asks for every
+    ``O(G²)`` window and scores every window for every template: on a 29-run series
+    with 24 templates and ``P = 9`` that is ~9 000 rankings, and enumerating
+    ``2^P`` subsets per ranking took the best part of a minute. Three things carry
+    it instead:
+
+    * :func:`~asymmetry.core.fitting.global_search.surrogate.greedy_assignment`'s
+      forward selection — ``P(P+1)/2`` collapses, not ``2^P``, and the same subset
+      whenever the parameters score separably;
+    * :class:`~asymmetry.core.fitting.global_search.surrogate.OrderedCollapse`, one
+      per template, which holds each subset's prefix sums so a *window* costs one
+      small solve rather than a pass over its runs;
+    * an exact per-window bound across templates. ``Σ_r χ²_r + penalty(P, n)`` is
+      the cheapest IC any assignment of a template could reach
+      (:meth:`~asymmetry.core.fitting.global_search.surrogate.OrderedCollapse.lower_bound_ic`),
+      so templates are walked cheapest-floor-first and one whose floor already
+      loses to the best scored value is skipped. It cannot win, so the answer is
+      unchanged.
     """
 
     runs = tuple(order)
     cache: dict[tuple[int, int], tuple[float, str]] = {}
+    collapse_by_template: dict[str, OrderedCollapse] = {}
+    for template, per_run in estimates_by_template.items():
+        positional = tuple(per_run.get(run) for run in runs)
+        present = [estimate for estimate in positional if estimate is not None]
+        if present:
+            collapse_by_template[template] = OrderedCollapse(positional, present[0].names)
 
     def cost(start: int, stop: int) -> tuple[float, str]:
         key = (start, stop)
         if key in cache:
             return cache[key]
         window = runs[start:stop]
-        best = (math.inf, "")
+
+        # (floor, tier-1 sum, template): the floor orders the walk and prunes it;
+        # a template with no usable estimates here has no floor below its tier-1
+        # sum, which is the value it will be scored at anyway.
+        candidates: list[tuple[float, float, str]] = []
         for template in _template_keys(table, window):
             tier1_total = _template_total(table, window, template)
             if not math.isfinite(tier1_total):
                 continue
-            per_run = estimates_by_template.get(template, {})
-            estimates = [per_run[run] for run in window if run in per_run]
-            if len(estimates) == len(window) and estimates:
-                # All-local is scored explicitly: above ``max_enumerated``
-                # candidates ``rank_assignments`` returns only the singletons.
-                shared: tuple[str, ...] = ()
-                value = surrogate_ic(estimates, (), metric)
-                for candidate, candidate_ic in rank_assignments(
-                    estimates, estimates[0].names, metric
-                ):
-                    if candidate_ic < value:
-                        shared, value = candidate, candidate_ic
+            collapse = collapse_by_template.get(template)
+            scoreable = collapse is not None and collapse.covers(start, stop)
+            floor = collapse.lower_bound_ic(start, stop, metric) if scoreable else tier1_total
+            candidates.append((floor, tier1_total, template))
+        candidates.sort()
+
+        best = (math.inf, "")
+        for floor, tier1_total, template in candidates:
+            if floor >= best[0]:
+                break
+            collapse = collapse_by_template.get(template)
+            if collapse is not None and collapse.covers(start, stop):
+                shared, value = collapse.greedy(start, stop, collapse.names, metric)
             else:
                 shared, value = (), tier1_total
-            structure = f"{template}|g={','.join(shared) or 'none'}"
             if value < best[0]:
-                best = (value, structure)
+                best = (value, f"{template}|g={','.join(shared) or 'none'}")
         cache[key] = best
         return best
 

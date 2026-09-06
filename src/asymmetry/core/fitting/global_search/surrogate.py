@@ -59,8 +59,10 @@ from asymmetry.core.fitting.fit_wizard import SelectionMetric
 __all__ = [
     "CONDITION_LIMIT",
     "CollapseResult",
+    "OrderedCollapse",
     "RunEstimate",
     "collapse_cost",
+    "greedy_assignment",
     "metric_penalty",
     "rank_assignments",
     "run_estimate_from_fit_result",
@@ -187,12 +189,21 @@ class CollapseResult:
 
 
 def _well_conditioned(matrix: NDArray[np.float64]) -> bool:
-    """True when ``matrix`` is finite and invertible to working precision."""
+    """True when ``matrix`` is finite and invertible to working precision.
+
+    Every matrix reaching here is symmetric — a covariance block, or a sum of
+    precision matrices — and a symmetric matrix's 2-norm condition number is
+    ``max|λ| / min|λ|``, so the eigenvalues answer the same question
+    ``numpy.linalg.cond`` answers by SVD, at rather less than half the cost. This
+    runs once per run per subset and again per pooled window, which on a partition
+    search is hundreds of thousands of times.
+    """
 
     if matrix.size == 0 or not np.all(np.isfinite(matrix)):
         return False
+    magnitudes = np.abs(np.linalg.eigvalsh(matrix))
     with np.errstate(divide="ignore", invalid="ignore"):
-        condition = float(np.linalg.cond(matrix))
+        condition = float(np.max(magnitudes) / np.min(magnitudes))
     return condition <= CONDITION_LIMIT
 
 
@@ -202,6 +213,110 @@ def _diagonal_weight(sigma: NDArray[np.float64]) -> NDArray[np.float64]:
     usable = np.isfinite(sigma) & (sigma > 0.0)
     safe = np.where(usable, sigma, 1.0)
     return np.diag(np.where(usable, 1.0 / (safe * safe), 0.0))
+
+
+@dataclass(frozen=True)
+class _RunWeight:
+    """One run's precision block for one subset — the only per-run inversion.
+
+    ``subset_index``/``rest_index`` index into :attr:`RunEstimate.names`;
+    ``weight`` is :math:`W_r = (C_r[S,S])^{-1}`, or the diagonal fallback when the
+    covariance block is missing or ill-conditioned (``full_covariance`` false).
+    ``weighted_value`` is ``W_r θ_{r,S}``, precomputed because every pooled sum
+    needs it.
+
+    Nothing here depends on which *window* of the series is being scored, only on
+    ``(run, subset)`` — which is why one of these can be memoised and reused
+    across every overlapping segment a partition search asks about.
+    """
+
+    subset_index: tuple[int, ...]
+    rest_index: tuple[int, ...]
+    weight: NDArray[np.float64]
+    weighted_value: NDArray[np.float64]
+    full_covariance: bool
+
+
+def _run_weight(estimate: RunEstimate, canonical: tuple[str, ...]) -> _RunWeight:
+    position = {name: index for index, name in enumerate(estimate.names)}
+    shared_names = set(canonical)
+    subset_index = tuple(position[name] for name in canonical)
+    rest_index = tuple(
+        index for index, name in enumerate(estimate.names) if name not in shared_names
+    )
+    block = (
+        None
+        if estimate.covariance is None
+        else estimate.covariance[np.ix_(subset_index, subset_index)]
+    )
+    if block is not None and _well_conditioned(block):
+        weight = np.linalg.inv(block)
+        full_covariance = True
+    else:
+        weight = _diagonal_weight(estimate.uncertainties[list(subset_index)])
+        full_covariance = False
+    return _RunWeight(
+        subset_index=subset_index,
+        rest_index=rest_index,
+        weight=weight,
+        weighted_value=weight @ estimate.values[list(subset_index)],
+        full_covariance=full_covariance,
+    )
+
+
+def _prepare(
+    estimates: Sequence[RunEstimate],
+    canonical: tuple[str, ...],
+) -> tuple[list[_RunWeight], NDArray[np.float64], NDArray[np.float64], frozenset[int]]:
+    """Per-run weights plus their pooled sums."""
+
+    size = len(canonical)
+    pooled_weight = np.zeros((size, size), dtype=float)
+    pooled_weighted_value = np.zeros(size, dtype=float)
+    prepared: list[_RunWeight] = []
+    fallback_runs: set[int] = set()
+    for estimate in estimates:
+        weight = _run_weight(estimate, canonical)
+        pooled_weight += weight.weight
+        pooled_weighted_value += weight.weighted_value
+        if not weight.full_covariance:
+            fallback_runs.add(estimate.run_number)
+        prepared.append(weight)
+    return prepared, pooled_weight, pooled_weighted_value, frozenset(fallback_runs)
+
+
+def _shared_values(
+    pooled_weight: NDArray[np.float64], pooled_weighted_value: NDArray[np.float64]
+) -> NDArray[np.float64] | None:
+    """The pooled estimate :math:`\\bar\\theta_S`, or ``None`` when unconstrained."""
+
+    if not _well_conditioned(pooled_weight):
+        return None
+    return np.linalg.solve(pooled_weight, pooled_weighted_value)
+
+
+def _delta_chi2(
+    estimates: Sequence[RunEstimate],
+    canonical: tuple[str, ...],
+) -> float:
+    """``Δχ²(S)`` alone — the collapse without its warm start.
+
+    Scoring a subset needs only this number, and skipping the conditional shift
+    skips one linear solve per run. :func:`collapse_cost` remains the entry point
+    when the warm start itself is wanted.
+    """
+
+    if not canonical:
+        return 0.0
+    prepared, pooled_weight, pooled_weighted_value, _ = _prepare(estimates, canonical)
+    shared = _shared_values(pooled_weight, pooled_weighted_value)
+    if shared is None:
+        return math.inf
+    total = 0.0
+    for estimate, weight in zip(estimates, prepared, strict=True):
+        offset = estimate.values[list(weight.subset_index)] - shared
+        total += float(offset @ weight.weight @ offset)
+    return total
 
 
 def collapse_cost(estimates: Sequence[RunEstimate], subset: Sequence[str]) -> CollapseResult:
@@ -234,35 +349,10 @@ def collapse_cost(estimates: Sequence[RunEstimate], subset: Sequence[str]) -> Co
             diagonal_fallback_runs=frozenset(),
         )
 
-    size = len(canonical)
-    pooled_weight = np.zeros((size, size), dtype=float)
-    pooled_weighted_value = np.zeros(size, dtype=float)
-    prepared: list[tuple[RunEstimate, list[int], list[int], NDArray[np.float64], bool]] = []
-    fallback_runs: set[int] = set()
+    prepared, pooled_weight, pooled_weighted_value, fallback_runs = _prepare(runs, canonical)
+    shared = _shared_values(pooled_weight, pooled_weighted_value)
 
-    for estimate in runs:
-        position = {name: index for index, name in enumerate(estimate.names)}
-        subset_index = [position[name] for name in canonical]
-        rest_index = [
-            index for index, name in enumerate(estimate.names) if name not in shared_names
-        ]
-        block = (
-            None
-            if estimate.covariance is None
-            else estimate.covariance[np.ix_(subset_index, subset_index)]
-        )
-        if block is not None and _well_conditioned(block):
-            weight = np.linalg.inv(block)
-            full_covariance = True
-        else:
-            weight = _diagonal_weight(estimate.uncertainties[subset_index])
-            full_covariance = False
-            fallback_runs.add(estimate.run_number)
-        pooled_weight += weight
-        pooled_weighted_value += weight @ estimate.values[subset_index]
-        prepared.append((estimate, subset_index, rest_index, weight, full_covariance))
-
-    if not _well_conditioned(pooled_weight):
+    if shared is None:
         return CollapseResult(
             subset=canonical,
             delta_chi2=math.inf,
@@ -270,18 +360,18 @@ def collapse_cost(estimates: Sequence[RunEstimate], subset: Sequence[str]) -> Co
             conditional_locals_by_run={
                 estimate.run_number: unshifted_locals(estimate) for estimate in runs
             },
-            diagonal_fallback_runs=frozenset(fallback_runs),
+            diagonal_fallback_runs=fallback_runs,
         )
-
-    shared = np.linalg.solve(pooled_weight, pooled_weighted_value)
 
     delta_chi2 = 0.0
     conditional_locals: dict[int, dict[str, float]] = {}
-    for estimate, subset_index, rest_index, weight, full_covariance in prepared:
+    for estimate, weight in zip(runs, prepared, strict=True):
+        subset_index = list(weight.subset_index)
+        rest_index = list(weight.rest_index)
         offset = estimate.values[subset_index] - shared
-        delta_chi2 += float(offset @ weight @ offset)
+        delta_chi2 += float(offset @ weight.weight @ offset)
         rest_values = estimate.values[rest_index]
-        if full_covariance and rest_index:
+        if weight.full_covariance and rest_index:
             covariance = estimate.covariance
             cross = covariance[np.ix_(rest_index, subset_index)]
             block = covariance[np.ix_(subset_index, subset_index)]
@@ -296,7 +386,7 @@ def collapse_cost(estimates: Sequence[RunEstimate], subset: Sequence[str]) -> Co
         delta_chi2=float(delta_chi2),
         shared_values={name: float(value) for name, value in zip(canonical, shared, strict=True)},
         conditional_locals_by_run=conditional_locals,
-        diagonal_fallback_runs=frozenset(fallback_runs),
+        diagonal_fallback_runs=fallback_runs,
     )
 
 
@@ -340,16 +430,28 @@ def surrogate_ic(
 
     runs = list(estimates)
     canonical = tuple(dict.fromkeys(subset))
-    collapse = collapse_cost(runs, canonical)
     chi_squared = math.fsum(float(estimate.chi_squared) for estimate in runs)
     sample_count = sum(int(estimate.n_points) for estimate in runs)
     free_count = len(runs[0].names)
     parameter_count = len(canonical) + (free_count - len(canonical)) * len(runs)
     return (
         chi_squared
-        + collapse.delta_chi2
+        + _delta_chi2(runs, canonical)
         + metric_penalty(parameter_count, sample_count=sample_count, metric=metric)
     )
+
+
+def _eligible_names(estimates: Sequence[RunEstimate], free_names: Sequence[str]) -> list[str]:
+    """``free_names`` minus every parameter resting on a bound in any run.
+
+    A bounded parameter's curvature is not the curvature of an interior minimum,
+    so the collapse would be modelling numerical noise rather than its spread.
+    """
+
+    bound: set[str] = set()
+    for estimate in estimates:
+        bound |= estimate.at_bound
+    return [name for name in free_names if name not in bound]
 
 
 def rank_assignments(
@@ -369,13 +471,14 @@ def rank_assignments(
 
     Subsets are emitted in ``free_names`` order and ties broken by size then
     name, so the ranking is deterministic.
+
+    This is the *exhaustive* ranking: ``2^P`` collapses. A caller that only wants
+    the winner should use :func:`greedy_assignment`, which reaches the same answer
+    in ``O(P²)`` collapses whenever the subsets score separably.
     """
 
     runs = list(estimates)
-    bound: set[str] = set()
-    for estimate in runs:
-        bound |= estimate.at_bound
-    eligible = [name for name in free_names if name not in bound]
+    eligible = _eligible_names(runs, free_names)
 
     if len(eligible) <= max_enumerated:
         subsets = [
@@ -389,3 +492,228 @@ def rank_assignments(
     scored = [(subset, surrogate_ic(runs, subset, metric)) for subset in subsets]
     scored.sort(key=lambda item: (item[1], len(item[0]), item[0]))
     return scored
+
+
+# --------------------------------------------------------------------------- #
+# Windowed surrogate over an ordered series
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class _SubsetPrefix:
+    """Running sums of one subset's GLS pieces, indexed by run position.
+
+    Entry ``i`` holds the sum over positions ``0 … i-1``, so a window ``[start,
+    stop)`` is one subtraction.
+    """
+
+    weight: NDArray[np.float64]
+    weighted_value: NDArray[np.float64]
+    quadratic: NDArray[np.float64]
+
+
+class OrderedCollapse:
+    """Surrogate scores for every contiguous window of an ordered run series.
+
+    :func:`~asymmetry.core.fitting.global_search.partition.tier2_segment_cost`
+    asks one question ``O(G²)`` times — "what does globalising ``S`` cost over
+    runs ``[start, stop)``?" — and the answer is built from three sums over the
+    window,
+
+    .. math::
+
+        A = \\sum_r W_r, \\quad b = \\sum_r W_r \\theta_{r,S}, \\quad
+        Q = \\sum_r \\theta_{r,S}^\\mathsf{T} W_r \\theta_{r,S},
+
+    from which :math:`\\Delta\\chi^2(S) = Q - b^\\mathsf{T} A^{-1} b`. That is the
+    same number :func:`collapse_cost` reaches as
+    :math:`\\sum_r (\\theta_r - \\bar\\theta)^\\mathsf{T} W_r (\\theta_r -
+    \\bar\\theta)`, since :math:`\\bar\\theta = A^{-1}b` is what minimises it — but
+    written this way each of the three pieces is a *prefix difference*. A subset's
+    prefixes are built once and every window then costs a single small solve
+    instead of a pass over its runs, which is the difference between a partition
+    search over a 29-run series taking a second and taking a minute.
+
+    ``estimates`` is positional: entry ``i`` is the estimate for the ``i``-th run
+    of the series order, or ``None`` where this template has none. A window
+    containing a gap is not scoreable — :meth:`covers` says so — because the
+    surrogate would otherwise silently price a segment it has not seen.
+    """
+
+    def __init__(self, estimates: Sequence[RunEstimate | None], names: Sequence[str]) -> None:
+        self._estimates = tuple(estimates)
+        self._names = tuple(names)
+        self._prefix: dict[tuple[str, ...], _SubsetPrefix] = {}
+
+        count = len(self._estimates)
+        self._present = np.zeros(count + 1, dtype=int)
+        self._chi_squared = np.zeros(count + 1, dtype=float)
+        self._sample_count = np.zeros(count + 1, dtype=int)
+        for index, estimate in enumerate(self._estimates):
+            present = estimate is not None
+            self._present[index + 1] = self._present[index] + int(present)
+            self._chi_squared[index + 1] = self._chi_squared[index] + (
+                float(estimate.chi_squared) if estimate is not None else 0.0
+            )
+            self._sample_count[index + 1] = self._sample_count[index] + (
+                int(estimate.n_points) if estimate is not None else 0
+            )
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return self._names
+
+    def covers(self, start: int, stop: int) -> bool:
+        """True when every run of ``[start, stop)`` has an estimate."""
+
+        return int(self._present[stop] - self._present[start]) == stop - start
+
+    def _window(self, start: int, stop: int) -> tuple[RunEstimate, ...]:
+        return tuple(estimate for estimate in self._estimates[start:stop] if estimate is not None)
+
+    def _canonical(self, subset: Sequence[str]) -> tuple[str, ...]:
+        """``subset`` as a set, ordered by :attr:`names`.
+
+        Δχ² does not depend on the order the subset is written in, so normalising
+        here is what makes the prefix cache keyed by the *set*: without it a walk
+        that appends its newest parameter last stores ``(a, c, b)`` and ``(a, b,
+        c)`` as two entries and rebuilds the same prefixes twice.
+        """
+
+        wanted = set(subset)
+        return tuple(name for name in self._names if name in wanted)
+
+    def _subset_prefix(self, canonical: tuple[str, ...]) -> _SubsetPrefix:
+        cached = self._prefix.get(canonical)
+        if cached is not None:
+            return cached
+
+        size = len(canonical)
+        count = len(self._estimates)
+        weight = np.zeros((count + 1, size, size), dtype=float)
+        weighted_value = np.zeros((count + 1, size), dtype=float)
+        quadratic = np.zeros(count + 1, dtype=float)
+        for index, estimate in enumerate(self._estimates):
+            weight[index + 1] = weight[index]
+            weighted_value[index + 1] = weighted_value[index]
+            quadratic[index + 1] = quadratic[index]
+            if estimate is None:
+                continue
+            prepared = _run_weight(estimate, canonical)
+            values = estimate.values[list(prepared.subset_index)]
+            weight[index + 1] += prepared.weight
+            weighted_value[index + 1] += prepared.weighted_value
+            quadratic[index + 1] += float(values @ prepared.weighted_value)
+
+        prefix = _SubsetPrefix(weight=weight, weighted_value=weighted_value, quadratic=quadratic)
+        self._prefix[canonical] = prefix
+        return prefix
+
+    def delta_chi2(self, start: int, stop: int, subset: Sequence[str]) -> float:
+        """``Δχ²(S)`` over ``[start, stop)``; ``inf`` when nothing constrains ``S``."""
+
+        canonical = self._canonical(subset)
+        if not canonical:
+            return 0.0
+        prefix = self._subset_prefix(canonical)
+        pooled = prefix.weight[stop] - prefix.weight[start]
+        if not _well_conditioned(pooled):
+            return math.inf
+        pooled_value = prefix.weighted_value[stop] - prefix.weighted_value[start]
+        quadratic = float(prefix.quadratic[stop] - prefix.quadratic[start])
+        return quadratic - float(pooled_value @ np.linalg.solve(pooled, pooled_value))
+
+    def surrogate_ic(
+        self, start: int, stop: int, subset: Sequence[str], metric: SelectionMetric
+    ) -> float:
+        """The window's surrogate IC of globalising ``subset``.
+
+        Identical in definition to :func:`surrogate_ic` restricted to the window's
+        estimates.
+        """
+
+        canonical = self._canonical(subset)
+        run_count = stop - start
+        parameter_count = len(canonical) + (len(self._names) - len(canonical)) * run_count
+        return (
+            float(self._chi_squared[stop] - self._chi_squared[start])
+            + self.delta_chi2(start, stop, canonical)
+            + metric_penalty(
+                parameter_count,
+                sample_count=int(self._sample_count[stop] - self._sample_count[start]),
+                metric=metric,
+            )
+        )
+
+    def lower_bound_ic(self, start: int, stop: int, metric: SelectionMetric) -> float:
+        """The cheapest IC *any* assignment of this template could reach here.
+
+        ``Δχ²(S) ≥ 0`` and the parameter count is smallest when every free
+        parameter is shared, so ``Σ_r χ²_r + penalty(P, n)`` is a floor. A template
+        whose floor already loses to another template's scored value cannot win the
+        window, and its walk is skipped — the same incumbent bound the role search
+        uses across templates, and exact for the same reason.
+        """
+
+        return float(self._chi_squared[stop] - self._chi_squared[start]) + metric_penalty(
+            len(self._names),
+            sample_count=int(self._sample_count[stop] - self._sample_count[start]),
+            metric=metric,
+        )
+
+    def greedy(
+        self,
+        start: int,
+        stop: int,
+        free_names: Sequence[str],
+        metric: SelectionMetric,
+    ) -> tuple[tuple[str, ...], float]:
+        """Forward selection over ``[start, stop)`` — see :func:`greedy_assignment`."""
+
+        remaining = _eligible_names(self._window(start, stop), free_names)
+        shared: tuple[str, ...] = ()
+        best_ic = self.surrogate_ic(start, stop, shared, metric)
+
+        while remaining:
+            candidate_ic, name = min(
+                (self.surrogate_ic(start, stop, (*shared, item), metric), item)
+                for item in remaining
+            )
+            if not candidate_ic < best_ic:
+                return shared, best_ic
+            shared = tuple(item for item in free_names if item in {*shared, name})
+            best_ic = candidate_ic
+            remaining.remove(name)
+
+        return shared, best_ic
+
+
+def greedy_assignment(
+    estimates: Sequence[RunEstimate],
+    free_names: Sequence[str],
+    metric: SelectionMetric,
+) -> tuple[tuple[str, ...], float]:
+    """The best globalisation subset by forward selection, and its surrogate IC.
+
+    Starting from all-local, each round globalises the single remaining parameter
+    that lowers the surrogate IC most and stops when none lowers it. That costs
+    ``P(P+1)/2`` collapses against :func:`rank_assignments`' ``2^P``, which is the
+    difference between a partition search over an ordered series being seconds or
+    minutes: the dynamic program asks for ``O(G²)`` overlapping windows, and every
+    window is scored for every template.
+
+    The two agree exactly whenever the subsets score **separably** — diagonal
+    per-run covariance and a penalty linear in ``|S|`` (AIC or BIC), where
+    ``Δχ²(S) = Σ_{p∈S} Δχ²({p})`` makes each parameter's contribution independent
+    of the rest. Correlated blocks can in principle hide a pair that only pays off
+    together; the partition search accepts that, because a segment cost is a
+    *bound* whose winner tier 3 refits exactly anyway.
+
+    Ties break on the name, so the walk is deterministic. The subset comes back in
+    ``free_names`` order, matching :func:`rank_assignments`. A caller scoring many
+    windows of one ordered series should hold an :class:`OrderedCollapse` instead,
+    which shares each subset's prefix sums across them.
+    """
+
+    runs = tuple(estimates)
+    return OrderedCollapse(runs, runs[0].names).greedy(0, len(runs), free_names, metric)

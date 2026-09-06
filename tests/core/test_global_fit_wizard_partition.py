@@ -1,0 +1,576 @@
+"""Tests for the partitioned global-fit recommendation.
+
+A temperature series that crosses a transition is not described by one model.
+This file pins the whole answer to that, end to end on a planted two-phase
+series: screening reads a partition path off the completed per-run table with
+the elbow at the planted break, and asking for that ``partition_k`` fits each
+phase on its own and verifies the elbow against its neighbours in ``k`` *and* in
+position.
+
+The end-to-end tests carry real fits and are marked ``integration``; everything
+that is pure bookkeeping — the transitions summary, serialisation, merge, rerank,
+argument validation — runs in the standard tier.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+
+import numpy as np
+import pytest
+
+import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
+from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.fit_wizard import (
+    CandidateTemplate,
+    SelectionMetric,
+    build_fit_wizard_recommendation_for_templates,
+)
+from asymmetry.core.fitting.global_fit_wizard import (
+    GlobalFitWizardRecommendation,
+    build_global_fit_wizard_recommendation,
+    build_global_fit_wizard_screening_recommendation,
+    deserialize_global_fit_wizard_recommendation,
+    merge_global_fit_wizard_recommendations,
+    rerank_global_fit_wizard_recommendation,
+    serialize_global_fit_wizard_recommendation,
+    transitions_summary,
+)
+from asymmetry.core.fitting.global_search.partition import (
+    PartitionPath,
+    PartitionSolution,
+    Segment,
+)
+
+# --------------------------------------------------------------------------- #
+# The planted two-phase series
+# --------------------------------------------------------------------------- #
+
+EXPONENTIAL = CompositeModel(["Exponential", "Constant"], operators=["+"])
+GAUSSIAN = CompositeModel(["Gaussian", "Constant"], operators=["+"])
+
+EXPONENTIAL_TEMPLATE = CandidateTemplate(
+    key="exp_constant",
+    title="Exponential + Constant",
+    category="General",
+    rationale="test",
+    model=EXPONENTIAL,
+)
+GAUSSIAN_TEMPLATE = CandidateTemplate(
+    key="gauss_constant",
+    title="Gaussian + Constant",
+    category="General",
+    rationale="test",
+    model=GAUSSIAN,
+)
+TEMPLATES = (EXPONENTIAL_TEMPLATE, GAUSSIAN_TEMPLATE)
+
+#: The break is planted between the fifth and sixth run, i.e. between 5 K and
+#: 10 K, so the boundary estimate is 7.5 ± 2.5 K.
+PLANTED_BREAK = 5
+PLANTED_BOUNDARY = (7.5, 2.5)
+
+
+def _dataset(
+    run_number: int,
+    model: CompositeModel,
+    params: dict[str, float],
+    *,
+    temperature: float,
+    n_points: int = 300,
+) -> MuonDataset:
+    time = np.linspace(0.0, 8.0, n_points)
+    rng = np.random.default_rng(run_number)
+    return MuonDataset(
+        time=time,
+        asymmetry=model.function(time, **params) + rng.normal(scale=0.002, size=n_points),
+        error=np.full_like(time, 0.002),
+        metadata={
+            "run_number": run_number,
+            "field": 0.0,
+            "temperature": float(temperature),
+            "run_label": str(run_number),
+        },
+    )
+
+
+def _two_phase_series() -> list[MuonDataset]:
+    """Five exponential runs below the transition, five gaussian runs above it.
+
+    Within each phase the amplitude and background are shared and the relaxation
+    parameter scans, which is the role structure the search has to recover.
+    """
+    low = [
+        _dataset(
+            800 + index,
+            EXPONENTIAL,
+            {"A_1": 0.2, "Lambda": 0.4 + 0.02 * index, "A_bg": 0.01},
+            temperature=1.0 + index,
+        )
+        for index in range(PLANTED_BREAK)
+    ]
+    high = [
+        _dataset(
+            900 + index,
+            GAUSSIAN,
+            {"A_1": 0.2, "sigma": 0.5 + 0.02 * index, "A_bg": 0.01},
+            temperature=10.0 + index,
+        )
+        for index in range(PLANTED_BREAK)
+    ]
+    return low + high
+
+
+def _single_fit_table(datasets):
+    """A completed per-run × per-template table, without running phase 1.
+
+    Phase 1's job is to *find* the alphabet; here the alphabet is planted, so the
+    two templates are scored on every run directly. The rebin factor and analysed
+    point count are what make the table a series table rather than ten unrelated
+    ones.
+    """
+    return {
+        int(dataset.run_number): replace(
+            build_fit_wizard_recommendation_for_templates(dataset, TEMPLATES),
+            rebin_factor=1,
+            analysed_points=int(dataset.n_points),
+        )
+        for dataset in datasets
+    }
+
+
+@pytest.fixture(scope="module")
+def planted_series():
+    """Screening and per-phase optimisation of the planted series, computed once.
+
+    The end-to-end tests all interrogate the same answer, and the coupled fits
+    behind it are the expensive part of this file.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            global_fit_wizard_module,
+            "build_candidate_templates",
+            lambda fingerprint, current_model=None: TEMPLATES,
+        )
+        datasets = _two_phase_series()
+        table = _single_fit_table(datasets)
+        screening = build_global_fit_wizard_screening_recommendation(
+            datasets, single_fit_recommendations_by_run=table
+        )
+        optimised = build_global_fit_wizard_recommendation(
+            datasets,
+            single_fit_recommendations_by_run=table,
+            partition_path=screening.partition_path,
+            partition_k=1,
+        )
+    return datasets, table, screening, optimised
+
+
+# --------------------------------------------------------------------------- #
+# Screening computes the path
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.integration
+def test_screening_puts_the_elbow_at_the_planted_break(planted_series):
+    _datasets, _table, screening, _optimised = planted_series
+    path = screening.partition_path
+
+    assert path is not None
+    assert path.selected_k == 1
+    selected = path.solutions[1]
+    assert [(segment.start, segment.stop) for segment in selected.segments] == [
+        (0, PLANTED_BREAK),
+        (PLANTED_BREAK, 10),
+    ]
+    assert len(selected.boundaries) == 1
+    assert selected.boundaries[0] == pytest.approx(PLANTED_BOUNDARY)
+    # Each phase's cheapest structure is the model that generated it.
+    assert selected.segments[0].structure.startswith("exp_constant")
+    assert selected.segments[1].structure.startswith("gauss_constant")
+
+
+@pytest.mark.integration
+def test_the_break_clears_the_floor_by_a_wide_margin(planted_series):
+    """A structural change is worth far more than the modified-BIC floor."""
+    _datasets, _table, screening, _optimised = planted_series
+    path = screening.partition_path
+
+    assert path.solutions[1].gain > path.beta_floor
+    assert path.solutions[1].admissible
+    # ...and a second break buys nothing, so the path stops at one.
+    assert not path.solutions[2].admissible
+
+
+@pytest.mark.integration
+def test_screening_records_what_the_partition_cost(planted_series):
+    datasets, table, _screening, _optimised = planted_series
+    instrumentation: dict[str, object] = {}
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            global_fit_wizard_module,
+            "build_candidate_templates",
+            lambda fingerprint, current_model=None: TEMPLATES,
+        )
+        build_global_fit_wizard_screening_recommendation(
+            datasets,
+            single_fit_recommendations_by_run=table,
+            instrumentation=instrumentation,
+        )
+
+    assert instrumentation["partition_selected_k"] == 1
+    assert float(instrumentation["partition_seconds"]) >= 0.0
+    assert len(instrumentation["partition_gains"]) == len(_screening.partition_path.solutions)
+
+
+def test_a_series_shorter_than_two_phases_has_no_partition_path():
+    """Four runs cannot hold two segments of three, so there is nothing to find."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            global_fit_wizard_module,
+            "build_candidate_templates",
+            lambda fingerprint, current_model=None: (EXPONENTIAL_TEMPLATE,),
+        )
+        datasets = [
+            _dataset(
+                700 + index,
+                EXPONENTIAL,
+                {"A_1": 0.2, "Lambda": 0.4, "A_bg": 0.01},
+                temperature=1.0 + index,
+                n_points=120,
+            )
+            for index in range(4)
+        ]
+        screening = build_global_fit_wizard_screening_recommendation(
+            datasets,
+            single_fit_recommendations_by_run=_single_fit_table(datasets),
+        )
+
+    assert screening.partition_path is None
+
+
+# --------------------------------------------------------------------------- #
+# Per-phase optimisation
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.integration
+def test_each_phase_is_optimised_to_the_model_that_generated_it(planted_series):
+    _datasets, _table, _screening, optimised = planted_series
+
+    assert optimised.recommended_partition_k == 1
+    low = optimised.phase_assessment(0)
+    high = optimised.phase_assessment(1)
+    assert low is not None and high is not None
+    assert low.template.key == "exp_constant"
+    assert high.template.key == "gauss_constant"
+    # The planted role structure: the relaxation parameter scans within a phase,
+    # the amplitude does not.
+    assert "Lambda" in low.local_param_names
+    assert "A_1" in low.global_param_names
+    assert "sigma" in high.local_param_names
+    assert "A_1" in high.global_param_names
+
+
+@pytest.mark.integration
+def test_the_optimised_recommendation_names_its_transition(planted_series):
+    _datasets, _table, _screening, optimised = planted_series
+
+    assert optimised.summary == "1 transition found: 7.5 ± 2.5 K."
+
+
+@pytest.mark.integration
+def test_verification_covers_the_neighbours_in_k_and_in_position(planted_series):
+    """Both senses of "neighbour", and the elbow survives both."""
+    _datasets, _table, _screening, optimised = planted_series
+    path = optimised.partition_path
+
+    # Neighbours in k: 0, 1 and 2 all carry exactly re-scored totals.
+    assert path.selected_k == 1
+    assert optimised.recommended_partition_k == 1
+    # Neighbours in position: the one-run-shifted breaks were fitted and lost, so
+    # the winning solution still sits on the planted boundary.
+    assert [(segment.start, segment.stop) for segment in path.solutions[1].segments] == [
+        (0, PLANTED_BREAK),
+        (PLANTED_BREAK, 10),
+    ]
+    assert path.solutions[1].total_ic < path.solutions[0].total_ic
+
+
+@pytest.mark.integration
+def test_every_distinct_verified_segment_is_fitted_exactly_once(planted_series):
+    """Neighbouring solutions share segments; a shared segment costs one search."""
+    datasets, table, screening, _optimised = planted_series
+    instrumentation: dict[str, object] = {}
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            global_fit_wizard_module,
+            "build_candidate_templates",
+            lambda fingerprint, current_model=None: TEMPLATES,
+        )
+        build_global_fit_wizard_recommendation(
+            datasets,
+            single_fit_recommendations_by_run=table,
+            partition_path=screening.partition_path,
+            partition_k=1,
+            instrumentation=instrumentation,
+        )
+
+    # k = 0 → (0, 10); k = 1 → (0, 5), (5, 10); k = 2 → (0, 5), (5, 9) plus an
+    # excluded stub; the shifted breaks → (0, 4), (4, 10), (0, 6), (6, 10).
+    assert instrumentation["partition_segments_fitted"] == 8
+
+
+@pytest.mark.integration
+def test_an_excluded_end_stub_carries_no_phase_assessment(planted_series):
+    """A stub is excluded from the global fit, so nothing fits it."""
+    _datasets, _table, _screening, optimised = planted_series
+    path = optimised.partition_path
+
+    stubs = [
+        (k, index)
+        for k, solution in enumerate(path.solutions)
+        for index, segment in enumerate(solution.segments)
+        if segment.excluded
+    ]
+    assert stubs, "the planted series' k = 2 solution splits an end stub off"
+    for key in stubs:
+        assert key not in optimised.phase_assessments
+
+
+@pytest.mark.integration
+def test_partition_k_none_runs_the_series_wide_search_and_carries_no_partition(
+    planted_series,
+):
+    """The existing contract: without a ``partition_k`` nothing here applies.
+
+    On *this* series the series-wide answer is that there isn't one — no single
+    template describes runs on both sides of the transition well enough to pass
+    the residual gate, which is exactly the failure the partitioned path exists to
+    replace. What matters here is that the coupled search still ran and that none
+    of the partition fields were touched.
+    """
+    datasets, table, _screening, _optimised = planted_series
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            global_fit_wizard_module,
+            "build_candidate_templates",
+            lambda fingerprint, current_model=None: TEMPLATES,
+        )
+        plain = build_global_fit_wizard_recommendation(
+            datasets, single_fit_recommendations_by_run=table
+        )
+
+    assert plain.partition_path is None
+    assert plain.phase_assessments == {}
+    assert plain.recommended_partition_k is None
+    assert plain.recommended_partition is None
+    assert plain.phase_assessment(0) is None
+    assert plain.optimized_assessments(), "the series-wide coupled search still ran"
+    assert plain.recommended_key is None
+    assert "did not pass" in plain.summary or "No globally optimized candidate" in plain.summary
+
+
+# --------------------------------------------------------------------------- #
+# Argument contract
+# --------------------------------------------------------------------------- #
+
+
+def test_a_partition_index_without_a_path_is_refused():
+    datasets = _two_phase_series()[:4]
+    with pytest.raises(ValueError, match="go together"):
+        build_global_fit_wizard_recommendation(datasets, partition_k=1)
+
+
+def test_a_partition_index_outside_the_path_is_refused():
+    datasets = _two_phase_series()[:4]
+    path = _fake_path()
+    with pytest.raises(ValueError, match="outside the path"):
+        build_global_fit_wizard_recommendation(datasets, partition_path=path, partition_k=7)
+
+
+# --------------------------------------------------------------------------- #
+# Transitions summary
+# --------------------------------------------------------------------------- #
+
+
+def _solution(boundaries, segments=None, *, breaks=None) -> PartitionSolution:
+    segments = segments or (
+        Segment(
+            start=index,
+            stop=index + 1,
+            run_numbers=(index,),
+            structure="t",
+            ic=1.0,
+            excluded=False,
+        )
+        for index in range(len(boundaries) + 1)
+    )
+    segments = tuple(segments)
+    return PartitionSolution(
+        breaks=len(segments) - 1 if breaks is None else breaks,
+        segments=segments,
+        total_ic=1.0,
+        gain=0.0,
+        admissible=True,
+        boundaries=tuple(boundaries),
+    )
+
+
+def _fake_path() -> PartitionPath:
+    return PartitionPath(
+        solutions=(_solution(()), _solution(((7.5, 2.5),))),
+        selected_k=1,
+        beta_floor=16.0,
+    )
+
+
+def test_the_summary_names_each_transition_with_the_axis_unit():
+    solution = _solution(((16.5, 0.5), (28.5, 0.5)))
+    assert (
+        transitions_summary(solution, "Temperature (K)")
+        == "2 transitions found: 16.5 ± 0.5 K and 28.5 ± 0.5 K."
+    )
+    assert (
+        transitions_summary(_solution(((120.0, 5.0),)), "Field (G)")
+        == "1 transition found: 120 ± 5 G."
+    )
+
+
+def test_a_run_ordered_series_gets_no_invented_unit():
+    assert transitions_summary(_solution(((3.5, 0.5),)), "Run") == "1 transition found: 3.5 ± 0.5."
+
+
+def test_no_breaks_says_so_rather_than_listing_nothing():
+    assert transitions_summary(_solution(()), "Temperature (K)") == (
+        "No transitions found: one phase describes the whole series."
+    )
+
+
+def test_an_excluded_stub_is_named_in_the_summary():
+    segments = (
+        Segment(start=0, stop=3, run_numbers=(1, 2, 3), structure="t", ic=1.0, excluded=False),
+        Segment(start=3, stop=4, run_numbers=(4,), structure="t", ic=1.0, excluded=True),
+    )
+    summary = transitions_summary(_solution(((3.5, 0.5),), segments), "Temperature (K)")
+    assert "Run 4 is excluded from the global fit" in summary
+    assert "looks like a different phase" in summary
+
+
+# --------------------------------------------------------------------------- #
+# Serialisation, merge, rerank
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.integration
+def test_a_partitioned_recommendation_round_trips_through_serialisation(planted_series):
+    _datasets, _table, _screening, optimised = planted_series
+
+    payload = serialize_global_fit_wizard_recommendation(optimised, compact=True)
+    # Persisted form, so it has to survive a real JSON round trip.
+    restored = deserialize_global_fit_wizard_recommendation(json.loads(json.dumps(payload)))
+
+    assert restored is not None
+    assert restored.recommended_partition_k == optimised.recommended_partition_k
+    assert restored.partition_path.selected_k == optimised.partition_path.selected_k
+    assert restored.partition_path.to_payload() == optimised.partition_path.to_payload()
+    assert set(restored.phase_assessments) == set(optimised.phase_assessments)
+    for key, assessment in optimised.phase_assessments.items():
+        restored_assessment = restored.phase_assessments[key]
+        assert restored_assessment.template.key == assessment.template.key
+        assert restored_assessment.global_param_names == assessment.global_param_names
+        assert restored_assessment.local_param_names == assessment.local_param_names
+        assert restored_assessment.bic == pytest.approx(assessment.bic)
+
+
+def test_a_recommendation_without_a_partition_serialises_as_before():
+    recommendation = _bare_recommendation()
+    payload = serialize_global_fit_wizard_recommendation(recommendation)
+
+    assert payload["partition_path"] is None
+    assert payload["phase_assessments"] == []
+    assert payload["recommended_partition_k"] is None
+
+    restored = deserialize_global_fit_wizard_recommendation(payload)
+    assert restored.partition_path is None
+    assert restored.phase_assessments == {}
+    assert restored.recommended_partition_k is None
+
+
+def _bare_recommendation(**overrides) -> GlobalFitWizardRecommendation:
+    defaults = {
+        "series_axis_key": "temperature",
+        "series_axis_label": "Temperature (K)",
+        "mixed_axes_warning": None,
+        "fingerprints_by_run": {},
+        "dataset_order": (1, 2),
+        "templates": (),
+        "assessments": (),
+        "metric": SelectionMetric.AICC,
+        "recommended_key": None,
+        "comparable_keys": (),
+        "summary": "",
+    }
+    return GlobalFitWizardRecommendation(**{**defaults, **overrides})
+
+
+def test_merge_adds_phase_assessments_and_takes_the_newer_path(planted_series=None):
+    sentinel = object()
+    base = _bare_recommendation(
+        partition_path=_fake_path(),
+        phase_assessments={(1, 0): sentinel},
+        recommended_partition_k=1,
+    )
+    newer_path = replace(_fake_path(), beta_floor=99.0)
+    updates = _bare_recommendation(
+        partition_path=newer_path,
+        phase_assessments={(1, 1): sentinel},
+        recommended_partition_k=1,
+        metric=SelectionMetric.BIC,
+    )
+
+    merged = merge_global_fit_wizard_recommendations(base, updates)
+
+    assert set(merged.phase_assessments) == {(1, 0), (1, 1)}
+    assert merged.partition_path.beta_floor == 99.0
+    assert merged.recommended_partition_k == 1
+
+
+def test_merge_keeps_the_existing_path_when_the_update_carries_none():
+    base = _bare_recommendation(partition_path=_fake_path(), recommended_partition_k=1)
+    merged = merge_global_fit_wizard_recommendations(base, _bare_recommendation())
+
+    assert merged.partition_path is not None
+    assert merged.recommended_partition_k == 1
+
+
+def test_rerank_keeps_the_partition_and_restates_the_transitions():
+    """The partition is BIC's answer; the ranking metric does not move it."""
+    recommendation = _bare_recommendation(
+        partition_path=_fake_path(),
+        recommended_partition_k=1,
+        summary="stale",
+    )
+
+    reranked = rerank_global_fit_wizard_recommendation(recommendation, SelectionMetric.AIC)
+
+    assert reranked.metric == SelectionMetric.AIC
+    assert reranked.partition_path is recommendation.partition_path
+    assert reranked.recommended_partition_k == 1
+    assert reranked.summary == "1 transition found: 7.5 ± 2.5 K."
+
+
+def test_rerank_of_an_unoptimised_path_still_reports_the_screening_summary():
+    """A path alone is not an answer — the user has still to pick a ``k``."""
+    recommendation = _bare_recommendation(partition_path=_fake_path())
+
+    reranked = rerank_global_fit_wizard_recommendation(recommendation, SelectionMetric.AIC)
+
+    assert reranked.partition_path is not None
+    assert reranked.recommended_partition_k is None
+    assert "transition" not in reranked.summary

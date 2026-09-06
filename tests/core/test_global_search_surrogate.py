@@ -18,8 +18,10 @@ from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import SelectionMetric, compute_information_criteria
 from asymmetry.core.fitting.global_search.surrogate import (
     CONDITION_LIMIT,
+    OrderedCollapse,
     RunEstimate,
     collapse_cost,
+    greedy_assignment,
     metric_penalty,
     rank_assignments,
     run_estimate_from_fit_result,
@@ -451,3 +453,177 @@ def test_above_max_enumerated_only_single_parameter_subsets_are_ranked():
         for run in range(3)
     ]
     assert len(rank_assignments(bounded, names, SelectionMetric.BIC)) == 2**3
+
+
+# --------------------------------------------------------------------------- #
+# Greedy forward selection
+# --------------------------------------------------------------------------- #
+
+
+def test_greedy_matches_full_enumeration_when_the_subsets_score_separably():
+    """Diagonal covariance and a penalty linear in |S| make greedy exact.
+
+    With ``W_r`` diagonal, ``Δχ²(S) = Σ_{p∈S} Δχ²({p})``, and BIC's penalty is
+    linear in ``|S|``; the objective is then a sum of independent per-parameter
+    terms, so picking the best one at a time is picking the best subset. This is
+    the case the partition search actually runs in whenever a fit reports no
+    covariance and the diagonal fallback fires.
+    """
+    covariance = np.diag([0.01, 0.02, 0.04])
+    estimates = [
+        _estimate(0, [1.0, 1.0, 0.0], covariance, chi_squared=500.0, n_points=400),
+        _estimate(1, [1.0, 5.0, 0.1], covariance, chi_squared=500.0, n_points=400),
+        _estimate(2, [1.0, 9.0, 0.2], covariance, chi_squared=500.0, n_points=400),
+    ]
+
+    best_subset, best_ic = rank_assignments(estimates, NAMES, SelectionMetric.BIC)[0]
+    greedy_subset, greedy_ic = greedy_assignment(estimates, NAMES, SelectionMetric.BIC)
+
+    assert greedy_subset == best_subset
+    assert greedy_ic == pytest.approx(best_ic)
+
+
+@pytest.mark.parametrize("seed", [3, 17, 41, 99, 2026])
+def test_greedy_matches_full_enumeration_on_correlated_blocks_too(seed):
+    rng = np.random.default_rng(seed)
+    estimates = [
+        _estimate(
+            run,
+            rng.normal(size=3) * 0.1,
+            _random_covariance(rng, 3) * 0.01,
+            chi_squared=400.0 + run,
+            n_points=300,
+        )
+        for run in range(5)
+    ]
+
+    best_subset, best_ic = rank_assignments(estimates, NAMES, SelectionMetric.BIC)[0]
+    greedy_subset, greedy_ic = greedy_assignment(estimates, NAMES, SelectionMetric.BIC)
+
+    assert greedy_subset == best_subset
+    assert greedy_ic == pytest.approx(best_ic)
+
+
+def test_greedy_never_claims_to_beat_the_exhaustive_optimum():
+    """Forward selection is a bound, not an oracle: it may stop early, never low."""
+    rng = np.random.default_rng(5)
+    for _ in range(25):
+        estimates = [
+            _estimate(
+                run,
+                rng.normal(size=3),
+                _random_covariance(rng, 3) * 0.05,
+                chi_squared=250.0,
+                n_points=200,
+            )
+            for run in range(4)
+        ]
+        _best, best_ic = rank_assignments(estimates, NAMES, SelectionMetric.BIC)[0]
+        _greedy, greedy_ic = greedy_assignment(estimates, NAMES, SelectionMetric.BIC)
+        assert greedy_ic >= best_ic - 1e-9
+
+
+def test_greedy_never_proposes_a_parameter_at_a_bound():
+    covariance = np.diag([0.01, 0.01, 0.01])
+    estimates = [
+        _estimate(0, [1.0, 1.0, 0.0], covariance, at_bound=("a",), n_points=400),
+        _estimate(1, [1.0, 1.0, 0.0], covariance, n_points=400),
+        _estimate(2, [1.0, 1.0, 0.0], covariance, n_points=400),
+    ]
+
+    subset, _ic = greedy_assignment(estimates, NAMES, SelectionMetric.BIC)
+
+    assert "a" not in subset
+
+
+def test_greedy_returns_all_local_when_nothing_is_worth_sharing():
+    """Three wildly disagreeing runs: sharing any parameter costs more than it saves."""
+    covariance = np.diag([1e-6, 1e-6, 1e-6])
+    estimates = [
+        _estimate(run, [run * 10.0, run * 20.0, run * 30.0], covariance, n_points=50)
+        for run in range(3)
+    ]
+
+    subset, ic = greedy_assignment(estimates, NAMES, SelectionMetric.BIC)
+
+    assert subset == ()
+    assert ic == pytest.approx(surrogate_ic(estimates, (), SelectionMetric.BIC))
+
+
+# --------------------------------------------------------------------------- #
+# Windowed collapse over an ordered series
+# --------------------------------------------------------------------------- #
+
+
+def test_ordered_collapse_windows_agree_with_scoring_the_window_directly():
+    rng = np.random.default_rng(23)
+    estimates = [
+        _estimate(
+            run,
+            rng.normal(size=3) * 0.1,
+            _random_covariance(rng, 3) * 0.02,
+            chi_squared=300.0 + run,
+            n_points=180,
+        )
+        for run in range(8)
+    ]
+    ordered = OrderedCollapse(estimates, NAMES)
+
+    for start, stop in ((0, 8), (0, 3), (2, 6), (5, 8)):
+        window = estimates[start:stop]
+        for subset in ((), ("a",), ("b", "c"), NAMES):
+            assert ordered.delta_chi2(start, stop, subset) == pytest.approx(
+                collapse_cost(window, subset).delta_chi2, rel=1e-9, abs=1e-9
+            )
+            assert ordered.surrogate_ic(start, stop, subset, SelectionMetric.BIC) == pytest.approx(
+                surrogate_ic(window, subset, SelectionMetric.BIC), rel=1e-9, abs=1e-9
+            )
+        assert (
+            ordered.greedy(start, stop, NAMES, SelectionMetric.BIC)[0]
+            == greedy_assignment(window, NAMES, SelectionMetric.BIC)[0]
+        )
+
+
+def test_ordered_collapse_scores_a_subset_the_same_whatever_order_it_is_written_in():
+    """The prefix cache is keyed by the *set*, so a walk's append order is free."""
+    rng = np.random.default_rng(29)
+    estimates = [
+        _estimate(run, rng.normal(size=3) * 0.1, _random_covariance(rng, 3) * 0.02)
+        for run in range(5)
+    ]
+    ordered = OrderedCollapse(estimates, NAMES)
+
+    first = ordered.delta_chi2(0, 5, ("a", "c", "b"))
+    assert ordered.delta_chi2(0, 5, ("b", "a", "c")) == first
+    assert len(ordered._prefix) == 1
+
+
+def test_a_window_with_a_gap_is_reported_as_uncovered():
+    rng = np.random.default_rng(31)
+    present = [_estimate(run, rng.normal(size=3), _random_covariance(rng, 3)) for run in range(4)]
+    ordered = OrderedCollapse((present[0], None, present[2], present[3]), NAMES)
+
+    assert not ordered.covers(0, 4)
+    assert not ordered.covers(0, 2)
+    assert ordered.covers(2, 4)
+
+
+def test_lower_bound_ic_never_exceeds_any_assignment_it_bounds():
+    """The bound that prunes templates per window has to be a bound."""
+    rng = np.random.default_rng(37)
+    estimates = [
+        _estimate(
+            run,
+            rng.normal(size=3) * 0.2,
+            _random_covariance(rng, 3) * 0.03,
+            chi_squared=280.0 + run,
+            n_points=220,
+        )
+        for run in range(6)
+    ]
+    ordered = OrderedCollapse(estimates, NAMES)
+
+    for start, stop in ((0, 6), (1, 4), (3, 6)):
+        floor = ordered.lower_bound_ic(start, stop, SelectionMetric.BIC)
+        for subset, ic in rank_assignments(estimates[start:stop], NAMES, SelectionMetric.BIC):
+            assert floor <= ic + 1e-9, subset
