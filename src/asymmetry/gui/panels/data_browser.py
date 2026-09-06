@@ -1572,7 +1572,7 @@ class DataBrowserPanel(QWidget):
             return None
         if self._phase_of_run(run_number, group_id) is not None:
             self._project_model.move_run_to_phase(
-                run_number, None, runs_by_number=self._runs_by_number()
+                run_number, None, series_group_id=group_id, runs_by_number=self._runs_by_number()
             )
         remaining = [rn for rn in group.member_run_numbers if rn != run_number]
         self._project_model.set_data_group_members(group_id, remaining)
@@ -4197,7 +4197,7 @@ class DataBrowserPanel(QWidget):
             action.setChecked(phase.group_id == current)
             action.triggered.connect(
                 lambda _checked=False, rn=run_number, pid=phase.group_id: self.move_run_to_phase(
-                    rn, pid
+                    rn, pid, series_group_id=parent_id
                 )
             )
         submenu.addSeparator()
@@ -4205,26 +4205,36 @@ class DataBrowserPanel(QWidget):
         excluded_action.setCheckable(True)
         excluded_action.setChecked(current is None)
         excluded_action.triggered.connect(
-            lambda _checked=False, rn=run_number: self.move_run_to_phase(rn, None)
+            lambda _checked=False, rn=run_number: self.move_run_to_phase(
+                rn, None, series_group_id=parent_id
+            )
         )
 
     def _member_parent_id(self, phase_id: str) -> str | None:
         """Return the series group a phase belongs to."""
         return self._project_model.data_group(phase_id).parent_group_id
 
-    def move_run_to_phase(self, run_number: int, phase_id: str | None) -> None:
-        """Move *run_number* into *phase_id* (``None`` excludes it), then repaint.
+    def move_run_to_phase(
+        self, run_number: int, phase_id: str | None, *, series_group_id: str
+    ) -> None:
+        """Move *run_number* into *phase_id* (``None`` excludes it) within one series, then repaint.
 
-        The registry mutation is the core model's (``ProjectModel.
-        move_run_to_phase`` re-orders both affected phases along the sweep axis
-        and recomputes their ranges); the panel rebuilds and reports the edit so
-        the host re-derives series staleness — a phase-bound global-fit series
-        whose membership just changed no longer matches what was last fit. One
-        report per affected phase, so a move between two phases marks both.
+        *series_group_id* is the partitioned series the move belongs to: a run
+        may sit in several data groups, so the phase it leaves is looked up in
+        that series alone. The registry mutation is the core model's
+        (``ProjectModel.move_run_to_phase`` re-orders both affected phases along
+        the sweep axis and recomputes their ranges); the panel rebuilds and
+        reports the edit so the host re-derives series staleness — a
+        phase-bound global-fit series whose membership just changed no longer
+        matches what was last fit. One report per affected phase, so a move
+        between two phases marks both.
         """
-        vacated = self._vacated_phase_of(run_number)
+        vacated = self._phase_of_run(run_number, series_group_id)
         self._project_model.move_run_to_phase(
-            run_number, phase_id, runs_by_number=self._runs_by_number()
+            run_number,
+            phase_id,
+            series_group_id=series_group_id,
+            runs_by_number=self._runs_by_number(),
         )
         self._rebuild_table()
         self._resize_columns_to_content()
@@ -4232,13 +4242,6 @@ class DataBrowserPanel(QWidget):
         for affected in (vacated, phase_id):
             if affected is not None:
                 self.group_membership_changed.emit()
-
-    def _vacated_phase_of(self, run_number: int) -> str | None:
-        """Return the phase currently holding *run_number*, across all series."""
-        for group in self._project_model.data_groups.values():
-            if group.is_phase and run_number in group.member_run_numbers:
-                return group.group_id
-        return None
 
     def _populate_send_to_group_menu(self, send_menu: QMenu, selected_runs: list[int]) -> None:
         """Populate Send-to-Group submenu with current groups."""

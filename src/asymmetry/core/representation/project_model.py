@@ -400,10 +400,14 @@ class ProjectModel:
 
         new_ids: list[str] = []
         for phase in sorted(phases, key=lambda p: p.ordinal):
+            # Members keep the parent's order — the sweep-axis order the series
+            # was built in — not numeric run order, which need not follow the
+            # axis at all.
+            members = {int(r) for r in phase.member_run_numbers}
             group = DataGroup(
                 group_id=str(uuid.uuid4()),
                 name=phase.name,
-                member_run_numbers=sorted(int(r) for r in phase.member_run_numbers),
+                member_run_numbers=[r for r in parent.member_run_numbers if r in members],
                 order_key=parent.order_key,
                 kind="user",
                 parent_group_id=str(parent_id),
@@ -442,24 +446,29 @@ class ProjectModel:
         run_number: int,
         phase_id: str | None,
         *,
+        series_group_id: str,
         runs_by_number: dict[int, Run],
     ) -> None:
-        """Move *run_number* to the phase *phase_id* (``None`` = excluded).
+        """Move *run_number* to the phase *phase_id* (``None`` = excluded) within one series.
 
-        Removes the run from whichever phase currently holds it (a no-op if it
-        was already excluded), then adds it to the target phase. Parent
-        membership is untouched — a phase's members are always a subset of the
-        parent's, never a separate list to keep in sync. Both the vacated and
-        the target phase (whichever of the two exist) have their members
-        re-ordered along the sweep axis and their :attr:`DataGroup.phase_range`
-        recomputed from *runs_by_number*, the same metadata
-        :meth:`FitSeries.sort_members` uses.
+        *series_group_id* names the partitioned series the move belongs to. A
+        run may be a member of several data groups, and two of them may both
+        be partitioned; only the phases of *this* series are touched, so
+        excluding a run from one series' partition never edits another's.
+        Removes the run from whichever phase of that series currently holds it
+        (a no-op if it was already excluded), then adds it to the target phase.
+        Parent membership is untouched — a phase's members are always a subset
+        of the parent's, never a separate list to keep in sync. Both the
+        vacated and the target phase (whichever of the two exist) have their
+        members re-ordered along the sweep axis and their
+        :attr:`DataGroup.phase_range` recomputed from *runs_by_number*, the
+        same metadata :meth:`FitSeries.sort_members` uses.
 
         Raises ``ValueError`` when *phase_id* names something other than a
-        live phase group, or when *run_number* is not a member of that phase's
-        parent group — moving a run into a phase whose parent never had it
-        would silently violate the subset invariant :meth:`create_phase_groups`
-        enforces at creation time.
+        live phase group of *series_group_id*, or when *run_number* is not a
+        member of that series — moving a run into a phase whose parent never
+        had it would silently violate the subset invariant
+        :meth:`create_phase_groups` enforces at creation time.
 
         Any phase series bound to an affected phase group reads stale
         afterwards through the existing membership-snapshot mechanism
@@ -468,22 +477,21 @@ class ProjectModel:
         series state directly.
         """
         run_number = int(run_number)
+        series_id = str(series_group_id)
+        parent = self.data_groups.get(series_id)
+        if parent is None or run_number not in parent.member_run_numbers:
+            raise ValueError(f"Run {run_number} is not a member of series group {series_id!r}")
         affected: list[DataGroup] = []
 
-        for phase in self.data_groups.values():
-            if phase.parent_group_id is not None and run_number in phase.member_run_numbers:
+        for phase in self.phase_groups_for(series_id):
+            if run_number in phase.member_run_numbers:
                 phase.member_run_numbers = [r for r in phase.member_run_numbers if r != run_number]
                 affected.append(phase)
 
         if phase_id is not None:
             target = self.data_groups.get(str(phase_id))
-            if target is None or not target.is_phase:
-                raise ValueError(f"Unknown phase group id: {phase_id!r}")
-            parent = self.data_groups.get(target.parent_group_id)
-            if parent is None or run_number not in parent.member_run_numbers:
-                raise ValueError(
-                    f"Run {run_number} is not a member of phase {phase_id!r}'s parent group"
-                )
+            if target is None or target.parent_group_id != series_id:
+                raise ValueError(f"{phase_id!r} is not a phase of series group {series_id!r}")
             if run_number not in target.member_run_numbers:
                 target.member_run_numbers = [*target.member_run_numbers, run_number]
             if target not in affected:

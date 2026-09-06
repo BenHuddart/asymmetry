@@ -147,6 +147,24 @@ def _row_of_key(panel: DataBrowserPanel, key: object) -> int:
     return _row_keys(panel).index(key)
 
 
+def _select_key(panel: DataBrowserPanel, key: object) -> None:
+    """Select the row carrying *key* through the selection model and check it took.
+
+    Whole-row selection is asserted through the panel's own visible-selection
+    read, so a context menu built afterwards is built for exactly this row.
+    """
+    from PySide6.QtCore import QItemSelectionModel
+
+    table = panel._table
+    index = table.model().index(_row_of_key(panel, key), 0)
+    table.selectionModel().select(
+        index,
+        QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows,
+    )
+    table.setCurrentIndex(index)
+    assert panel._selected_keys(visible_only=True) == [key]
+
+
 # ── rendering ────────────────────────────────────────────────────────────────
 
 
@@ -163,7 +181,7 @@ def test_phases_render_between_series_header_and_its_runs() -> None:
 
 
 def test_phase_header_shows_name_range_and_indicator() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     row = _row_of_key(panel, f"group:{phase_ids[0]}")
     assert panel._table.item(row, 0).text().strip() == "▾ Phase I"
     assert panel._table.item(row, 1).text() == "1.8 – 16.0 K"
@@ -177,7 +195,7 @@ def test_series_header_gains_the_info_indicator_once_partitioned() -> None:
 
 
 def test_phase_members_are_indented_one_level_deeper_than_the_phase_header() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     labels = _row_labels(panel)
     header = labels[_row_of_key(panel, f"group:{phase_ids[0]}")]
     member = labels[_row_of_key(panel, f"phase:{phase_ids[0]}:1")]
@@ -185,7 +203,7 @@ def test_phase_members_are_indented_one_level_deeper_than_the_phase_header() -> 
 
 
 def test_phase_members_carry_the_phase_stripe_colour() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     for ordinal, (phase_id, runs) in enumerate(
         zip(phase_ids, (_PHASE_I_RUNS, _PHASE_II_RUNS), strict=True), start=1
     ):
@@ -196,7 +214,7 @@ def test_phase_members_carry_the_phase_stripe_colour() -> None:
 
 
 def test_excluded_run_is_hatched_italic_and_badged() -> None:
-    panel, _model, _parent_id, _phase_ids = _panel_with_partition()
+    panel, _model, parent_id, _phase_ids = _panel_with_partition()
     row = _row_of_key(panel, _EXCLUDED_RUN)
     run_item = panel._table.item(row, 0)
     assert run_item.data(_PHASE_STRIPE_ROLE) == EXCLUDED_PHASE_HATCH_COLOR
@@ -206,7 +224,7 @@ def test_excluded_run_is_hatched_italic_and_badged() -> None:
 
 
 def test_plain_runs_carry_no_stripe() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     header_row = _row_of_key(panel, f"group:{phase_ids[0]}")
     assert panel._table.item(header_row, 0).data(_PHASE_STRIPE_ROLE) == phase_color(1)
     panel.add_dataset(_dataset(9, temperature=3.0))
@@ -221,7 +239,7 @@ def test_phase_membership_creates_no_copy_row_or_marker() -> None:
 
 
 def test_an_unrelated_group_still_makes_a_copy_row() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     other_id = panel.create_data_group([1, 2], name="Recheck")
     assert f"copy:{other_id}:1" in _row_keys(panel)
     # …and the run keeps its single row under its phase.
@@ -234,7 +252,7 @@ def test_phase_groups_never_reach_the_top_level_display_order() -> None:
 
 
 def test_collapsing_one_phase_hides_only_its_runs() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     panel._toggle_group_collapsed(phase_ids[0])
     keys = _row_keys(panel)
     assert f"group:{phase_ids[0]}" in keys
@@ -246,7 +264,7 @@ def test_collapsing_one_phase_hides_only_its_runs() -> None:
 
 
 def test_sorting_reorders_within_a_phase_and_keeps_the_ordinals() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     panel._current_sort_column = 2  # T (K)
     panel._current_sort_order = Qt.SortOrder.AscendingOrder
     panel._sort_table()
@@ -267,7 +285,7 @@ def test_series_header_selects_every_phase_run_plus_the_excluded_one() -> None:
 
 
 def test_phase_header_selects_only_its_members() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     assert panel._dataset_run_numbers_from_keys([f"group:{phase_ids[1]}"]) == list(_PHASE_II_RUNS)
 
 
@@ -278,15 +296,15 @@ def test_selecting_both_headers_deduplicates_the_runs() -> None:
 
 
 def test_selecting_a_phase_header_emits_group_selected_with_the_phase_id() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     seen: list[str] = []
     panel.group_selected.connect(seen.append)
-    panel._table.selectRow(_row_of_key(panel, f"group:{phase_ids[1]}"))
+    _select_key(panel, f"group:{phase_ids[1]}")
     assert seen == [phase_ids[1]]
 
 
 def test_phase_member_row_resolves_to_its_run() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     assert panel._dataset_run_numbers_from_keys([f"phase:{phase_ids[0]}:2"]) == [2]
 
 
@@ -298,8 +316,8 @@ def _menu_texts(menu) -> list[str]:
 
 
 def test_phase_header_menu_offers_the_phase_verbs() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
-    panel._table.selectRow(_row_of_key(panel, f"group:{phase_ids[0]}"))
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
+    _select_key(panel, f"group:{phase_ids[0]}")
     texts = _menu_texts(panel._create_table_context_menu())
     assert "Collapse Phase" in texts
     assert "Rename Phase" in texts
@@ -311,7 +329,7 @@ def test_phase_header_menu_offers_the_phase_verbs() -> None:
 
 def test_phase_header_ungroup_asks_the_host_to_dissolve_the_partition() -> None:
     panel, _model, parent_id, phase_ids = _panel_with_partition()
-    panel._table.selectRow(_row_of_key(panel, f"group:{phase_ids[0]}"))
+    _select_key(panel, f"group:{phase_ids[0]}")
     menu = panel._create_table_context_menu()
     seen: list[str] = []
     panel.remove_phases_requested.connect(seen.append)
@@ -320,8 +338,8 @@ def test_phase_header_ungroup_asks_the_host_to_dissolve_the_partition() -> None:
 
 
 def test_phase_header_fit_emits_the_phase_id() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
-    panel._table.selectRow(_row_of_key(panel, f"group:{phase_ids[1]}"))
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
+    _select_key(panel, f"group:{phase_ids[1]}")
     menu = panel._create_table_context_menu()
     seen: list[str] = []
     panel.fit_group_requested.connect(seen.append)
@@ -330,8 +348,8 @@ def test_phase_header_fit_emits_the_phase_id() -> None:
 
 
 def test_member_row_menu_offers_move_to_phase_with_the_current_one_ticked() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
-    panel._table.selectRow(_row_of_key(panel, f"phase:{phase_ids[0]}:2"))
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
+    _select_key(panel, f"phase:{phase_ids[0]}:2")
     menu = panel._create_table_context_menu()
     submenu = next(a for a in menu.actions() if a.text() == "Move to phase").menu()
     entries = [(a.text(), a.isChecked()) for a in submenu.actions() if a.text()]
@@ -343,8 +361,8 @@ def test_member_row_menu_offers_move_to_phase_with_the_current_one_ticked() -> N
 
 
 def test_excluded_row_menu_ticks_exclude_from_phases() -> None:
-    panel, _model, _parent_id, _phase_ids = _panel_with_partition()
-    panel._table.selectRow(_row_of_key(panel, _EXCLUDED_RUN))
+    panel, _model, parent_id, _phase_ids = _panel_with_partition()
+    _select_key(panel, _EXCLUDED_RUN)
     menu = panel._create_table_context_menu()
     submenu = next(a for a in menu.actions() if a.text() == "Move to phase").menu()
     assert next(a for a in submenu.actions() if a.text() == "Exclude from phases").isChecked()
@@ -356,7 +374,7 @@ def test_unpartitioned_group_member_gets_no_move_to_phase_menu() -> None:
     panel.add_dataset(_dataset(1, temperature=2.0))
     panel.add_dataset(_dataset(2, temperature=3.0))
     panel.create_data_group([1, 2], name="Plain")
-    panel._table.selectRow(_row_of_key(panel, 1))
+    _select_key(panel, 1)
     assert "Move to phase" not in _menu_texts(panel._create_table_context_menu())
 
 
@@ -378,7 +396,7 @@ def _phase_series(panel: DataBrowserPanel, model: ProjectModel, phase_id: str) -
 
 
 def test_move_to_phase_moves_the_run_and_marks_both_phase_series_stale() -> None:
-    panel, model, _parent_id, phase_ids = _panel_with_partition()
+    panel, model, parent_id, phase_ids = _panel_with_partition()
     series_i = _phase_series(panel, model, phase_ids[0])
     series_ii = _phase_series(panel, model, phase_ids[1])
     assert not series_i.is_stale(model.data_group(phase_ids[0]))
@@ -386,7 +404,7 @@ def test_move_to_phase_moves_the_run_and_marks_both_phase_series_stale() -> None
 
     seen: list[int] = []
     panel.group_membership_changed.connect(lambda: seen.append(1))
-    panel.move_run_to_phase(3, phase_ids[1])
+    panel.move_run_to_phase(3, phase_ids[1], series_group_id=parent_id)
 
     assert model.data_group(phase_ids[0]).member_run_numbers == [1, 2]
     assert model.data_group(phase_ids[1]).member_run_numbers == [3, 4, 5]
@@ -397,8 +415,8 @@ def test_move_to_phase_moves_the_run_and_marks_both_phase_series_stale() -> None
 
 
 def test_move_to_phase_reorders_along_the_axis_and_updates_the_range() -> None:
-    panel, model, _parent_id, phase_ids = _panel_with_partition()
-    panel.move_run_to_phase(_EXCLUDED_RUN, phase_ids[1])
+    panel, model, parent_id, phase_ids = _panel_with_partition()
+    panel.move_run_to_phase(_EXCLUDED_RUN, phase_ids[1], series_group_id=parent_id)
     phase_ii = model.data_group(phase_ids[1])
     assert phase_ii.member_run_numbers == [4, 5, 6]
     assert phase_ii.phase_range == (22.0, 40.0)
@@ -409,15 +427,15 @@ def test_excluding_a_run_reports_only_the_vacated_phase() -> None:
     panel, model, parent_id, phase_ids = _panel_with_partition()
     seen: list[int] = []
     panel.group_membership_changed.connect(lambda: seen.append(1))
-    panel.move_run_to_phase(1, None)
+    panel.move_run_to_phase(1, None, series_group_id=parent_id)
     assert model.data_group(phase_ids[0]).member_run_numbers == [2, 3]
     assert model.excluded_runs_for(parent_id) == [1, _EXCLUDED_RUN]
     assert len(seen) == 1
 
 
 def test_move_to_phase_rerenders_the_run_under_its_new_phase() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
-    panel.move_run_to_phase(3, phase_ids[1])
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
+    panel.move_run_to_phase(3, phase_ids[1], series_group_id=parent_id)
     keys = _row_keys(panel)
     assert f"phase:{phase_ids[0]}:3" not in keys
     assert f"phase:{phase_ids[1]}:3" in keys
@@ -450,7 +468,7 @@ def _popover_text(panel: DataBrowserPanel) -> str:
 
 
 def test_phase_popover_shows_range_boundaries_and_provenance() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     panel._open_phase_popover(phase_ids[0], _row_of_key(panel, f"group:{phase_ids[0]}"))
     text = _popover_text(panel)
     assert "Phase I" in text
@@ -503,7 +521,7 @@ def test_popover_is_wide_enough_for_its_widest_row() -> None:
     width truncates the model title and the boundary estimates rather than
     eliding them, which reads as a wrong value rather than a shortened one.
     """
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     panel._open_phase_popover(phase_ids[0], _row_of_key(panel, f"group:{phase_ids[0]}"))
     popover = panel._phase_popover
     widest = max(label.sizeHint().width() for label in popover.findChildren(type(popover._title)))
@@ -523,7 +541,7 @@ def test_popover_elides_a_pathological_model_title_at_the_cap() -> None:
 
 
 def test_popover_actions_reach_the_panel_signals() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     panel._open_phase_popover(phase_ids[1], _row_of_key(panel, f"group:{phase_ids[1]}"))
     seen: list[str] = []
     panel.fit_group_requested.connect(seen.append)
@@ -581,7 +599,7 @@ def test_phase_chevron_zone_sits_one_indent_right_of_a_group_chevron() -> None:
 
 
 def test_info_indicator_zone_is_the_right_edge_of_the_count_column() -> None:
-    panel, _model, _parent_id, phase_ids = _panel_with_partition()
+    panel, _model, parent_id, phase_ids = _panel_with_partition()
     row = _row_of_key(panel, f"group:{phase_ids[0]}")
     right = panel._table.columnViewportPosition(3) + panel._table.columnWidth(3)
     assert panel._hit_info_indicator(row, right - 1)

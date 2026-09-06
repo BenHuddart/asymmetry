@@ -64,8 +64,18 @@ class PhaseSpec:
     phase_provenance: dict[str, Any] = field(default_factory=dict)
 
 
-#: Roman numerals for :func:`phase_group_name`, high value first.
+#: Roman numerals for :func:`phase_group_name`, high value first — the full
+#: subtractive table, so a long series with many phases still reads
+#: conventionally ("Phase XL", not "Phase XXXX").
 _ROMAN_NUMERALS: tuple[tuple[int, str], ...] = (
+    (1000, "M"),
+    (900, "CM"),
+    (500, "D"),
+    (400, "CD"),
+    (100, "C"),
+    (90, "XC"),
+    (50, "L"),
+    (40, "XL"),
     (10, "X"),
     (9, "IX"),
     (5, "V"),
