@@ -350,10 +350,22 @@ def _fit_runs_parallel(
     executor = open_spawn_pool(workers)
     if executor is None:
         return None
+    # Every payload is pickled to a worker, so it ships whatever the dataset still
+    # references — including the source run's raw detector histograms, which dominate
+    # its size: a 15-detector, 9e4-bin run is of the order of 11 MB against fitted
+    # arrays a fraction of a megabyte, so a 29-run batch pushes ~320 MB across the
+    # process boundary before a single fit starts. A time-domain cost reads only the
+    # time/asymmetry/error arrays, so those payloads ship a fit record instead
+    # (:meth:`MuonDataset.fit_record` — the same arrays and the same run provenance,
+    # with an empty ``histograms``). The count-domain (Poisson) cost genuinely does
+    # read ``run.histograms``, so a payload built under it keeps the full record. The
+    # cost factory declares which it is via ``needs_histograms``; no cost factory means
+    # the default Gaussian objective, which reads no counts.
+    ships_counts = cost_factory is not None and cost_factory.needs_histograms
     payloads = [
         (
             run,
-            dataset_by_run[run],
+            dataset_by_run[run] if ships_counts else dataset_by_run[run].fit_record(),
             model_fn,
             initial_params[run],
             t_min,
