@@ -134,7 +134,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-fitted from the full ladder regardless. Completion is one task per **cell**
   rather than per run, and a cell re-fitted from the run's *own* values for the
   same model at another binning — the same minimum by construction — is fitted
-  once, with no ladder at all. `instrumentation` records `alphabet_size`,
+  once, with no ladder at all. The single-run wizard's pattern-match stage is
+  also an order of magnitude cheaper: the envelope banks (F–μ–F, μ–F and
+  Kubo–Toyabe templates) were each detrended with a three-parameter curve fit,
+  and that model is linear in two of its three parameters, so the detrend is
+  now a variable-projection solve over the rate, vectorised across the whole
+  bank — and it reaches a minimum the old fit stalled short of on most
+  templates. `instrumentation` records `alphabet_size`,
   `series_rebin_factor`, `completion_fits`, `phase1_concurrency`,
   `phase1_warm_seeded` and `alphabet_bound_dropped`. The effort tier now
   narrows that alphabet rather than a
