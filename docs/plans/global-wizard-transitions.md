@@ -774,3 +774,9 @@ the feature branch. Phase F runs the full validation once.
   — and no worker reads histograms (only the simulator and the GUI do). A fit
   record is a copy whose `Run` keeps its scalars and metadata and drops the
   histograms; every task payload is built from fit records at construction.
+  Landed as `MuonDataset.fit_record()`; measured on synthetic 15-detector
+  records: a rebinned assessment task 11.2 MB → 0.44 MB, a 12-record flip
+  task 130 MB → 0.09 MB, the phase-1 completion stage on a four-worker pool
+  halved. The batch-fit parallel path (`series.py`) still ships full records
+  and needs the same treatment for the time-domain cost only (the
+  count-domain cost reads the histograms); flagged as a follow-up task.
