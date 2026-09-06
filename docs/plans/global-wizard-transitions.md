@@ -651,6 +651,16 @@ the feature branch. Phase F runs the full validation once.
     (A, c): a variable-projection solve over λ (weighted linear least squares
     for every template at once on a λ grid, then a bracketed scalar polish per
     template) gives the same minimum in one vectorised pass. The cache stays.
+  - Measured after landing (same series, same host, alphabet, rebin factor and
+    608 completion cells identical): phase 1 500 s → 269 s on a quiet machine
+    (analyses 340 → 167 s, completion 155 → 95 s; the slowest run's
+    pattern-match stage 3.9 → 0.2 s). Two later repeats under heavy background
+    load (photo analysis, cloud file provider, endpoint scanning; load average
+    35–60 on eight cores) took 387–411 s, so timings need a quiet host.
+    Recommendations changed on two mid-series relaxation runs whose top
+    candidates sit within ~2 AICc, and one run gained an oscillatory winner
+    by a wide margin from a neighbour's warm start — the warm-seed order
+    (non-deterministic since A2) decides those, not the shortened ladder.
   - Not done, with reasons: kernel micro-optimisations (the clip is ~13 µs of
     an 89 µs `exp` component, and a scalar pre-check needs reductions that cost
     as much); dropping refinement in phase 1 (it is the contenders' safeguard
