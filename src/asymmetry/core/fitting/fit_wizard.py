@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import re
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Executor, ThreadPoolExecutor
 from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass, replace
@@ -24,7 +25,10 @@ from asymmetry.core.fitting.component_tags import (
 from asymmetry.core.fitting.composite import (
     COMPONENTS,
     CompositeModel,
+    ExprProduct,
     _legacy_fraction_rename_map,
+    iter_nodes,
+    leaf_indices,
     migrate_legacy_fraction_parameter_set,
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
@@ -268,7 +272,16 @@ class CandidateTemplate:
 
 @dataclass(frozen=True)
 class CandidateAssessment:
-    """Fit and comparison data for one candidate model."""
+    """Fit and comparison data for one candidate model.
+
+    **Dense-curve contract.** ``fitted_time`` / ``fitted_curve`` /
+    ``component_curves`` exist to be *drawn* — the wizard answer card's fit line
+    — and are far the largest thing an assessment carries. An assessment fitted
+    only to fill a cell of a score table (see ``_AssessmentTask.dense_curves``)
+    carries them empty; every assessment a :class:`FitWizardRecommendation`
+    points at as its recommendation or a comparable alternative carries them.
+    :func:`_with_dense_curves` is the crossing between the two.
+    """
 
     template: CandidateTemplate
     fit_result: FitResult
@@ -413,6 +426,14 @@ class FitWizardRecommendation:
     #: between recommendations with the same value. Additive — old payloads
     #: default to ``0`` (unknown).
     analysed_points: int = 0
+    #: The question this recommendation answers: the scope and the user-declared
+    #: frequencies :func:`build_fit_wizard_recommendation` was asked for, encoded
+    #: by :func:`single_fit_build_signature`. Empty on every payload that did not
+    #: come from that full single-run path (an explicit-template table, a
+    #: completed global-wizard screening row, an old persisted payload), so a
+    #: caller can tell a reusable single-run analysis from a derived table
+    #: without inspecting its contents.
+    build_signature: str = ""
 
     @property
     def recommended_assessment(self) -> CandidateAssessment | None:
@@ -1396,6 +1417,15 @@ _FIT_SAMPLES_PER_CYCLE = 8.0
 #: reordered the table.
 _UNDER_CONVERGENCE_CHI2_TOLERANCE = 1.0
 
+#: χ² within which a warm attempt and the base seed count as the *same* minimum,
+#: so the rest of the seed ladder buys nothing and is skipped (see
+#: :func:`_assess_candidate_template`). Two converged fits of one basin agree to
+#: far better than a χ² unit — the same scale as
+#: ``_UNDER_CONVERGENCE_CHI2_TOLERANCE`` — while two different basins of the same
+#: model differ by tens to thousands, so the test separates cleanly and the
+#: threshold's exact value is not delicate.
+_WARM_LADDER_AGREEMENT = 1.0
+
 #: Fast-edge tolerance the wizard applies. Deliberately the library default; an
 #: analysis with a specific binning argument should call
 #: :func:`~asymmetry.core.fitting.resolution.assess_component_resolution`
@@ -1587,6 +1617,12 @@ def _damped_envelope_rate(peak: DetectedPeak | None) -> float | None:
     return _EARLY_ENVELOPE_LIFETIMES_PER_CROP / float(peak.crop_us)
 
 
+#: The component that makes a multiplet term a *line*. :func:`_multiplet_model`
+#: writes it and :func:`oscillatory_line_amplitude_names` reads it back, so the
+#: two cannot drift apart.
+_MULTIPLET_LINE_COMPONENT = "Oscillatory"
+
+
 def _multiplet_model(n: int, envelope: str, *, relax: bool) -> CompositeModel:
     """``Σ_k (Osc × Env) [+ Exp] + Const`` for ``n`` damped cosines."""
     names: list[str] = []
@@ -1594,7 +1630,7 @@ def _multiplet_model(n: int, envelope: str, *, relax: bool) -> CompositeModel:
     opens: list[int] = []
     closes: list[int] = []
     for _k in range(n):
-        names.extend(["Oscillatory", envelope])
+        names.extend([_MULTIPLET_LINE_COMPONENT, envelope])
         opens.extend([1, 0])
         closes.extend([0, 1])
         operators.extend(["*", "+"])
@@ -1761,6 +1797,100 @@ def build_null_baseline_templates() -> tuple[CandidateTemplate, ...]:
 #: Multiplet template keys, in both shapes: ``oscillatory{n}_{env}_constant``
 #: and the relaxing twin ``oscillatory{n}_{env}_relax_constant`` (group 3).
 _MULTIPLET_TEMPLATE_KEY_RE = re.compile(r"^oscillatory(\d+)_(exp|gaussian)(_relax)?_constant$")
+
+
+def is_multiplet_template_key(key: str) -> bool:
+    """True for a peak-seeded multiplet template key (``oscillatory{n}_...``).
+
+    The key shape is stable across runs (only the seeds carry the measured
+    frequencies), so it is how a series-level caller recognises the templates a
+    per-run peak search built.
+    """
+    return _MULTIPLET_TEMPLATE_KEY_RE.match(key) is not None
+
+
+#: How many of its own standard deviations a fitted line amplitude must clear to
+#: count as measured: ``|A| > 2·σ_A``.
+#:
+#: Two sigma is the conventional bar for "not consistent with zero", and that is
+#: the whole of its job here. This threshold is *structural*, not a score: it
+#: decides whether an oscillatory template still describes a run as oscillatory
+#: at all, in the same way the family map decides which templates are the same
+#: kind of physics. It never enters an information criterion, never trades off
+#: against χ², and is not tunable from the GUI — a template that has decayed to
+#: its envelope on a run is a relaxation there whatever its AICc says, and one
+#: whose lines are measured is oscillatory whatever margin it wins by.
+OSCILLATORY_LINE_SIGMA = 2.0
+
+
+def oscillatory_line_amplitude_names(template: CandidateTemplate) -> tuple[str, ...]:
+    """The fitted parameter names of a multiplet template's line amplitudes.
+
+    Read off the model's own expression tree rather than off parameter spellings:
+    a multiplet is ``Σ_k (Osc × Env) [+ Exp] + Const`` (:func:`_multiplet_model`),
+    so a *line* amplitude is the single scale of a product that contains an
+    Oscillatory component. The optional relaxation term is a bare leaf, not a
+    product, so its own amplitude is never mistaken for a line — which is the
+    whole point of deriving these structurally.
+
+    Order follows the tree, so the names come out in component order (``A_1``,
+    ``A_3``, … for the built multiplets). Every product that contains a line
+    carries exactly one scale under the amplitude policy, and the unpacking below
+    says so: a shape that broke that invariant would raise here rather than
+    quietly report the wrong parameter as an amplitude.
+    """
+    model = template.model
+    names: list[str] = []
+    for node in iter_nodes(model.expression_tree()):
+        if not isinstance(node, ExprProduct):
+            continue
+        indices = leaf_indices(node)
+        if not any(model.component_names[index] == _MULTIPLET_LINE_COMPONENT for index in indices):
+            continue
+        (amplitude_name,) = [
+            name for index in indices if (name := model.scale_parameter_name(index)) is not None
+        ]
+        names.append(amplitude_name)
+    return tuple(names)
+
+
+def is_oscillatory_admissible(
+    template: CandidateTemplate,
+    values: Mapping[str, float],
+    uncertainties: Mapping[str, float],
+) -> bool:
+    """Does this fit of ``template`` still describe its run as *oscillatory*?
+
+    Yes when at least one line amplitude is significant — ``|A| > 2·σ_A``
+    (:data:`OSCILLATORY_LINE_SIGMA`) against the fit's own uncertainty. A line
+    the fit could not put an uncertainty on is not a measured line and does not
+    count, so a fit that constrained none of its amplitudes is inadmissible.
+
+    An oscillatory template whose amplitudes are all consistent with zero has
+    degenerated to its envelope on that run: it is describing relaxation, and the
+    partition treats it as the relaxation family there rather than as a phase of
+    oscillation. Only multiplet templates have lines, so anything else is
+    admissible by construction and callers gate on
+    :func:`is_multiplet_template_key` before asking.
+    """
+    for name in oscillatory_line_amplitude_names(template):
+        sigma = float(uncertainties.get(name, 0.0))
+        if not math.isfinite(sigma) or sigma <= 0.0:
+            continue
+        amplitude = float(values[name])
+        if abs(amplitude) > OSCILLATORY_LINE_SIGMA * sigma:
+            return True
+    return False
+
+
+def fit_result_is_oscillatory_admissible(template: CandidateTemplate, result: FitResult) -> bool:
+    """:func:`is_oscillatory_admissible` for one run's :class:`FitResult`."""
+    return is_oscillatory_admissible(
+        template,
+        {name: result.parameters[name].value for name in result.parameters.names},
+        result.uncertainties,
+    )
+
 
 #: Muonium TF templates whose ``field``/``A_hf`` seeding shares one rule.
 _MUONIUM_TF_TEMPLATE_KEYS = frozenset(
@@ -2060,6 +2190,11 @@ class _AssessmentTask:
     parameter fits already).
     """
 
+    #: The record to fit, as a **fit record** — the fitted arrays and the run's
+    #: scalar provenance, without the run's raw detector histograms (see
+    #: :meth:`~asymmetry.core.data.dataset.MuonDataset.fit_record`). Every
+    #: construction site converts; the counts are the bulk of a run's pickled
+    #: size and no assessment reads one.
     dataset: MuonDataset
     fingerprint: SpectrumFingerprint
     template: CandidateTemplate
@@ -2068,6 +2203,18 @@ class _AssessmentTask:
     variant_budget: int
     stage: int
     screening_cap: bool = False
+    #: Already-fitted values for this template — the same model fitted on a
+    #: sibling run, or on this run at a different rebin factor. Tried first,
+    #: ahead of the seed ladder, so a completion fit starts from an answer
+    #: rather than from a guess.
+    warm_start: ParameterSet | None = None
+    #: Whether the assessment keeps its dense fitted/component curves. A cell of
+    #: a *score table* — fitted only so its information criterion can be summed
+    #: and compared — passes ``False``: the curves are megabytes each, they cross
+    #: a process boundary on the way back, and the table's consumers read scores
+    #: and parameters. :func:`_with_dense_curves` builds them for the rows that
+    #: are actually displayed.
+    dense_curves: bool = True
 
 
 def _execute_assessment_task(
@@ -2092,6 +2239,8 @@ def _execute_assessment_task(
         stage=task.stage,
         cancel_callback=cancel_callback,
         migrad_ncall=migrad_ncall,
+        warm_start=task.warm_start,
+        dense_curves=task.dense_curves,
     )
 
 
@@ -2116,10 +2265,11 @@ def _run_template_assessments(
     deterministic test path and it is also the only path that can honour an
     *in-fit* cancellation (a cancel_callback cannot cross a process boundary).
 
-    Process path: reuses ``executor`` if given (a caller-managed shared pool);
-    otherwise opens one via :func:`open_spawn_pool` and closes it in a
-    ``finally`` — but only the pool this call opened; a caller-supplied
-    ``executor`` remains the caller's to shut down. ``cancel_callback`` cannot
+    Process path: reuses ``executor`` if given (a shared pool managed by the
+    build, or by the series analysis that owns the build); otherwise opens one
+    via :func:`open_spawn_pool` and closes it in a ``finally`` — but only the
+    pool this call opened. A supplied ``executor`` is never shut down or
+    terminated here, at any depth: it remains its owner's. ``cancel_callback`` cannot
     be forwarded across the process boundary, so cancellation is instead polled
     *while waiting*: the driver loops on :func:`concurrent.futures.wait` with a
     ``_CANCEL_POLL_SECONDS`` timeout and re-checks ``cancel_callback`` each
@@ -2236,6 +2386,8 @@ def build_fit_wizard_recommendation(
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
     max_workers: int | None = None,
+    executor: Executor | None = None,
+    warm_start_by_template: Mapping[str, ParameterSet] | None = None,
     progress_callback: Callable[[str], None] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
     refine_top_candidates: int = _REFINEMENT_CANDIDATES,
@@ -2265,6 +2417,26 @@ def build_fit_wizard_recommendation(
     pool, cancellation instead takes effect only between fits (a
     cancel_callback cannot cross a process boundary) — either way,
     cancellation raises :class:`FitCancelledError`.
+
+    ``executor`` supplies a **caller-owned** process pool. Given one, this build
+    opens no pool of its own and every fan-out — Stage 1, Stage 2, the null
+    baselines and refinement — submits to it; the pool is never shut down or
+    terminated here, not even on cancellation, because its lifetime belongs to
+    the caller. That is how a series analysis gives one pool to many builds, so
+    one run's fan-out can use workers another run's serial stage leaves idle and
+    the per-worker import of the fitting package is paid once for the series
+    rather than twice per run. Without an ``executor`` the build opens **one**
+    pool and shares it across the same four fan-outs, shutting it down on the way
+    out (terminating it on cancellation).
+
+    ``warm_start_by_template`` supplies already-fitted values per template key —
+    the same models fitted on a *neighbouring run* of a series, which a series
+    analysis has by the time it reaches this run. They are handed to the Stage-1
+    and Stage-2 assessments as an **additional first variant**, ahead of the seed
+    ladder and never in place of it (see :func:`_assess_candidate_template`), so
+    the answer for a template can only improve or stay the same: the assessment
+    keeps the best attempt, and one more starting point cannot make that worse.
+    A key naming no screened template is simply unused.
 
     ``refine_top_candidates`` re-fits that many top-ranked candidates with the
     full seed ladder and records the χ² gained
@@ -2308,6 +2480,7 @@ def build_fit_wizard_recommendation(
     # (see ``wizard_scope.infer_auto_query``); a scope of ``None`` means no
     # resolution ran at all, so the note stays empty rather than guessing.
     scope_note = resolution.inference_note if resolution is not None else ""
+    build_signature = single_fit_build_signature(scope, user_frequencies_mhz)
     families = build_wizard_families(fingerprint, current_model, scope_resolution=resolution)
 
     def _progress(message: str) -> None:
@@ -2331,6 +2504,7 @@ def build_fit_wizard_recommendation(
                 "to run the analysis."
             ),
             scope_note=scope_note,
+            build_signature=build_signature,
         )
 
     field_gauss = dataset.field
@@ -2365,16 +2539,27 @@ def build_fit_wizard_recommendation(
             f"Fitting a ×{rebin_factor} rebinned copy "
             f"({analysis_dataset.n_points} of {dataset.n_points} points)"
         )
+        peak_analysis = _peaks_within_analysis_band(peak_analysis, analysis_dataset)
+
+    # What the fan-outs below actually ship to a worker: the analysed record
+    # without the run's raw detector histograms (see
+    # :meth:`MuonDataset.fit_record`). No fit here reads a count — the assessment
+    # path is time-domain throughout — and the counts are two orders of magnitude
+    # larger than the fitted arrays, so leaving them in would make every one of
+    # the two or three dozen task payloads of this build a copy of the whole run.
+    # Built once, here, rather than per task.
+    analysis_fit_record = analysis_dataset.fit_record()
 
     stage1_context = TemplateSeedContext(
         peak_analysis=peak_analysis, field_gauss=field_gauss, geometry=geometry
     )
+    warm_starts = dict(warm_start_by_template or {})
 
     _progress(f"Stage 1: screening {len(families)} candidate families")
 
     def _stage1_task(template: CandidateTemplate) -> _AssessmentTask:
         return _AssessmentTask(
-            dataset=analysis_dataset,
+            dataset=analysis_fit_record,
             fingerprint=fingerprint,
             template=template,
             metric=metric,
@@ -2382,24 +2567,31 @@ def build_fit_wizard_recommendation(
             variant_budget=_STAGE1_VARIANT_BUDGET,
             stage=1,
             screening_cap=True,
+            warm_start=warm_starts.get(template.key),
         )
 
     stage1_groups = [(family, [family.stage1_rep, *family.stage1_extras]) for family in families]
     flat_stage1_templates = [template for _family, group in stage1_groups for template in group]
 
-    # One process pool for the whole build, shared across the three fan-outs
-    # below (Stage 1, Stage 2, null baselines) — opening a spawn pool per call
-    # would pay the process-startup cost three times over for no benefit, since
-    # the pool is idle between fan-outs anyway.
-    resolved_workers = (
-        int(max_workers)
-        if max_workers is not None
-        else min(
-            max(len(flat_stage1_templates), 1),
-            max(1, (os.cpu_count() or 4) - 2),
+    # One process pool for the whole build, shared across all four fan-outs
+    # below (Stage 1, Stage 2, null baselines, refinement) — opening a spawn pool
+    # per call would pay the process-startup cost four times over for no benefit,
+    # since the pool is idle between fan-outs anyway, and every worker re-imports
+    # the fitting package on the way up. A caller-supplied ``executor`` replaces
+    # it outright and is never torn down here.
+    caller_owns_pool = executor is not None
+    if caller_owns_pool:
+        shared_pool: Executor | None = executor
+    else:
+        resolved_workers = (
+            int(max_workers)
+            if max_workers is not None
+            else min(
+                max(len(flat_stage1_templates), 1),
+                max(1, (os.cpu_count() or 4) - 2),
+            )
         )
-    )
-    shared_pool = open_spawn_pool(resolved_workers) if resolved_workers > 1 else None
+        shared_pool = open_spawn_pool(resolved_workers) if resolved_workers > 1 else None
 
     pool_terminated = False
     try:
@@ -2475,6 +2667,9 @@ def build_fit_wizard_recommendation(
                     detrended_analysis = merge_user_peaks(
                         detrended_analysis, tuple(user_frequencies_mhz), record=user_record
                     )
+                detrended_analysis = _peaks_within_analysis_band(
+                    detrended_analysis, analysis_dataset
+                )
                 if detrended_analysis.peaks or not peak_analysis.peaks:
                     peak_analysis = detrended_analysis
 
@@ -2642,7 +2837,7 @@ def build_fit_wizard_recommendation(
                 rate_dimension=_rate_dimension(template),
             )
             return _AssessmentTask(
-                dataset=analysis_dataset,
+                dataset=analysis_fit_record,
                 fingerprint=fingerprint,
                 template=template,
                 metric=metric,
@@ -2650,6 +2845,7 @@ def build_fit_wizard_recommendation(
                 variant_budget=budget,
                 stage=2,
                 screening_cap=False,
+                warm_start=warm_starts.get(template.key),
             )
 
         with stage_timer(
@@ -2676,7 +2872,7 @@ def build_fit_wizard_recommendation(
         null_assessments = _run_template_assessments(
             [
                 _AssessmentTask(
-                    dataset=analysis_dataset,
+                    dataset=analysis_fit_record,
                     fingerprint=fingerprint,
                     template=template,
                     metric=metric,
@@ -2691,75 +2887,81 @@ def build_fit_wizard_recommendation(
             cancel_callback=cancel_callback,
             executor=shared_pool,
         )
+
+        family_reports = tuple(
+            FamilyScreeningReport(
+                family_key=family.key,
+                title=family.title,
+                stage1_template_key=assessment.template.key,
+                stage1_metric_value=(
+                    assessment.metric_value(metric) if assessment.is_successful else math.inf
+                ),
+                stage1_gate_passed=assessment.residual_gate_passed,
+                promoted=promoted,
+                reason=reason,
+                stage2_template_keys=tuple(stage2_keys_by_family.get(family.key, ())),
+            )
+            for family, assessment, promoted, reason in decisions
+        )
+
+        all_templates = (
+            tuple(flat_stage1_templates) + tuple(stage2_templates) + tuple(null_templates)
+        )
+        all_assessments = _apply_frequency_support_disqualifiers(
+            # The FULL-RESOLUTION record, deliberately — not ``analysis_dataset``.
+            # Every effective-window quantity in the wizard's verdict (this
+            # disqualifier's cycle floor and 1/T_eff tolerance, the edge-window
+            # caveat's cycle count via ``peak_analysis.resolution_mhz``, the
+            # fingerprint's window) has to be measured on the record peak detection
+            # ran on, or the verdict changes when the *cost* heuristic decides to
+            # rebin. ``effective_analysis_window`` truncates at the first bin whose
+            # σ exceeds 5× the early σ, and rebinning averages away the per-bin
+            # scatter in σ, so a rebinned copy of a real record keeps a visibly
+            # longer informative window (4.93 µs against 3.85 µs on one measured
+            # 50 G transverse-field record). That moved a 0.69 MHz line from 2.7
+            # cycles — exempt from the hard floor, caveated — to 3.4 cycles, and
+            # disqualified the whole precession family on a textbook TF record.
+            # The fits themselves stay on ``analysis_dataset``; only the window
+            # arithmetic is anchored here.
+            dataset,
+            tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments),
+            peak_analysis,
+        )
+
+        with stage_timer(
+            instrumentation,
+            "single_fit.refinement",
+            items_total=refine_top_candidates if refine_top_candidates > 0 else 0,
+            stage_callback=stage_callback,
+            message="Refinement: re-fitting top candidates with the full seed ladder",
+        ):
+            all_assessments = _refine_top_candidates(
+                dataset=analysis_dataset,
+                fingerprint=fingerprint,
+                assessments=all_assessments,
+                metric=metric,
+                seed_context=stage2_context,
+                max_workers=max_workers,
+                cancel_callback=cancel_callback,
+                refine_top_candidates=refine_top_candidates,
+                progress=_progress,
+                executor=shared_pool,
+            )
+
     except FitCancelledError:
-        # Cancellation of a *shared* pool is ours to tear down here (the fan-out
-        # helper only terminates a pool it opened itself). Kill-and-reap instead
-        # of a blocking ``shutdown(wait=True)``, which would stall the Cancel
-        # click for one in-flight fit's duration and could orphan spawn workers.
-        if shared_pool is not None:
+        # Cancellation of a pool *this build opened* is ours to tear down here
+        # (the fan-out helper only terminates a pool it opened itself).
+        # Kill-and-reap instead of a blocking ``shutdown(wait=True)``, which
+        # would stall the Cancel click for one in-flight fit's duration and could
+        # orphan spawn workers. A caller-supplied pool is left alone: the caller
+        # is still using it for the other builds it owns.
+        if shared_pool is not None and not caller_owns_pool:
             terminate_spawn_pool(shared_pool)
             pool_terminated = True
         raise
     finally:
-        if shared_pool is not None and not pool_terminated:
+        if shared_pool is not None and not caller_owns_pool and not pool_terminated:
             shared_pool.shutdown()
-
-    family_reports = tuple(
-        FamilyScreeningReport(
-            family_key=family.key,
-            title=family.title,
-            stage1_template_key=assessment.template.key,
-            stage1_metric_value=(
-                assessment.metric_value(metric) if assessment.is_successful else math.inf
-            ),
-            stage1_gate_passed=assessment.residual_gate_passed,
-            promoted=promoted,
-            reason=reason,
-            stage2_template_keys=tuple(stage2_keys_by_family.get(family.key, ())),
-        )
-        for family, assessment, promoted, reason in decisions
-    )
-
-    all_templates = tuple(flat_stage1_templates) + tuple(stage2_templates) + tuple(null_templates)
-    all_assessments = _apply_frequency_support_disqualifiers(
-        # The FULL-RESOLUTION record, deliberately — not ``analysis_dataset``.
-        # Every effective-window quantity in the wizard's verdict (this
-        # disqualifier's cycle floor and 1/T_eff tolerance, the edge-window
-        # caveat's cycle count via ``peak_analysis.resolution_mhz``, the
-        # fingerprint's window) has to be measured on the record peak detection
-        # ran on, or the verdict changes when the *cost* heuristic decides to
-        # rebin. ``effective_analysis_window`` truncates at the first bin whose
-        # σ exceeds 5× the early σ, and rebinning averages away the per-bin
-        # scatter in σ, so a rebinned copy of a real record keeps a visibly
-        # longer informative window (4.93 µs against 3.85 µs on one measured
-        # 50 G transverse-field record). That moved a 0.69 MHz line from 2.7
-        # cycles — exempt from the hard floor, caveated — to 3.4 cycles, and
-        # disqualified the whole precession family on a textbook TF record.
-        # The fits themselves stay on ``analysis_dataset``; only the window
-        # arithmetic is anchored here.
-        dataset,
-        tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments),
-        peak_analysis,
-    )
-
-    with stage_timer(
-        instrumentation,
-        "single_fit.refinement",
-        items_total=refine_top_candidates if refine_top_candidates > 0 else 0,
-        stage_callback=stage_callback,
-        message="Refinement: re-fitting top candidates with the full seed ladder",
-    ):
-        all_assessments = _refine_top_candidates(
-            dataset=analysis_dataset,
-            fingerprint=fingerprint,
-            assessments=all_assessments,
-            metric=metric,
-            seed_context=stage2_context,
-            max_workers=max_workers,
-            cancel_callback=cancel_callback,
-            refine_top_candidates=refine_top_candidates,
-            progress=_progress,
-        )
 
     return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
@@ -2776,6 +2978,7 @@ def build_fit_wizard_recommendation(
             scope_note=scope_note,
             rebin_factor=rebin_factor,
             analysed_points=int(analysis_dataset.n_points),
+            build_signature=build_signature,
         ),
         metric,
     )
@@ -2787,13 +2990,31 @@ def build_fit_wizard_recommendation_for_templates(
     *,
     fingerprint: SpectrumFingerprint | None = None,
     metric: SelectionMetric = SelectionMetric.AICC,
+    seed_context: TemplateSeedContext | None = None,
+    warm_start_by_template: Mapping[str, ParameterSet] | None = None,
+    variant_budget: int = 5,
 ) -> FitWizardRecommendation:
-    """Evaluate one dataset against an explicit candidate-template list."""
+    """Evaluate one dataset against an explicit candidate-template list.
+
+    This path runs no peak detection of its own, so ``seed_context`` is how a
+    caller hands it the measurement one was made elsewhere — the run's own
+    :class:`PeakAnalysis` and multiplet matches from a full single-run build.
+    Without it a multiplet template seeds every one of its lines at the same
+    guessed frequency, which is not a fit of that template at all.
+    ``warm_start_by_template`` supplies already-fitted values per template key
+    (the same model fitted on a sibling run, or on this run at another rebin
+    factor); they are tried ahead of the seed ladder, whose depth is
+    ``variant_budget``.
+    """
     active_fingerprint = fingerprint or fingerprint_spectrum(dataset)
     active_templates = tuple(templates)
+    warm_starts = dict(warm_start_by_template or {})
     # No peak detection on this path, but the applied field is metadata rather
     # than a measurement — so the field/B_L policy still applies.
-    seed_context = _field_seed_context(dataset)
+    active_seed_context = seed_context or _field_seed_context(dataset)
+    # The tasks carry the fit record, not the record: a task payload is built to
+    # cross a process boundary, and no assessment reads a raw count.
+    fit_record = dataset.fit_record()
     # max_workers=1 preserves this function's historical serial semantics (one
     # fit engine's worth of work at a time, in list order); the previous single
     # shared FitEngine() is replaced by one-per-task, which is equivalent since
@@ -2802,14 +3023,15 @@ def build_fit_wizard_recommendation_for_templates(
         _run_template_assessments(
             [
                 _AssessmentTask(
-                    dataset=dataset,
+                    dataset=fit_record,
                     fingerprint=active_fingerprint,
                     template=template,
                     metric=metric,
-                    seed_context=seed_context,
-                    variant_budget=5,
+                    seed_context=active_seed_context,
+                    variant_budget=variant_budget,
                     stage=2,
                     screening_cap=False,
+                    warm_start=warm_starts.get(template.key),
                 )
                 for template in active_templates
             ],
@@ -3218,6 +3440,7 @@ def serialize_fit_wizard_recommendation(
         "scope_note": recommendation.scope_note,
         "rebin_factor": int(recommendation.rebin_factor),
         "analysed_points": int(recommendation.analysed_points),
+        "build_signature": recommendation.build_signature,
         # Marks the payload as curve-decimated / residual-free, so a file can be
         # told apart from a pre-this-change full-resolution one at a glance.
         # Read by nothing — deserialisation tolerates both shapes.
@@ -3283,6 +3506,9 @@ def deserialize_fit_wizard_recommendation(
         # not rebinned is exactly what factor 1 means.
         rebin_factor=max(1, int(payload.get("rebin_factor", 1) or 1)),
         analysed_points=max(0, int(payload.get("analysed_points", 0) or 0)),
+        # Additive: old payloads carry no signature, which is exactly what an
+        # empty one means — "not known to come from the full single-run path".
+        build_signature=str(payload.get("build_signature", "")),
     )
 
 
@@ -3298,6 +3524,28 @@ def recommendation_template_keys(
 ) -> tuple[str, ...]:
     """Return the ordered template-key sequence embedded in one recommendation."""
     return candidate_template_keys(recommendation.templates)
+
+
+def single_fit_build_signature(
+    scope: WizardScope | None,
+    user_frequencies_mhz: Sequence[float] | None = None,
+) -> str:
+    """Encode the question :func:`build_fit_wizard_recommendation` was asked.
+
+    Two calls with the same scope and the same user-declared frequencies screen
+    the same candidate families from the same seeds, so their recommendations
+    are interchangeable; anything else is a different analysis. The encoding is
+    a canonical JSON string so it survives persistence and dict ordering, and it
+    is never empty — an empty signature marks a payload that did not come from
+    the full single-run path at all.
+    """
+    return json.dumps(
+        {
+            "scope": scope.to_payload() if scope is not None else None,
+            "user_frequencies_mhz": [float(value) for value in (user_frequencies_mhz or ())],
+        },
+        sort_keys=True,
+    )
 
 
 def _serialize_candidate_template(template: CandidateTemplate) -> dict[str, object]:
@@ -3844,6 +4092,25 @@ def _fit_with_call_limit_continuations(
     return result
 
 
+def _warm_ladder_is_settled(results: Sequence[FitResult]) -> bool:
+    """Whether a warm-aware opening batch makes the rest of the ladder pointless.
+
+    *results* are the warm attempt and the base rung, in that order. The batch is
+    settled when exactly one of them converged (that one is the answer; the other
+    had its chance) or when both converged to the same minimum, within
+    ``_WARM_LADDER_AGREEMENT``. Neither converging means the seed region is wrong
+    and the perturbed rungs are exactly what exists for that; both converging far
+    apart means there are at least two basins in play and the ladder should map
+    them.
+    """
+    converged = [result.chi_squared for result in results if result.success]
+    if not converged:
+        return False
+    if len(converged) < len(results):
+        return True
+    return (max(converged) - min(converged)) <= _WARM_LADDER_AGREEMENT
+
+
 def _assess_candidate_template(
     dataset: MuonDataset,
     fingerprint: SpectrumFingerprint,
@@ -3856,7 +4123,38 @@ def _assess_candidate_template(
     stage: int = 2,
     cancel_callback: Callable[[], bool] | None = None,
     migrad_ncall: int | None = None,
+    warm_start: ParameterSet | None = None,
+    dense_curves: bool = True,
 ) -> CandidateAssessment:
+    """Fit one candidate template from a seed ladder and score the best attempt.
+
+    Cold (``warm_start is None``) the whole ``variant_budget`` ladder of
+    :func:`_parameter_variants` runs and the best attempt wins.
+
+    With a ``warm_start`` — already-fitted values for this template, from a
+    neighbouring run of a series or from this run at another rebin factor — the
+    ladder becomes *warm-aware*. The warm attempt and the base rung (the
+    unmodified seed) run first; the perturbed rungs run only when those two do
+    not settle the basin between them, which is when **neither** converged or
+    when both converged to χ² more than ``_WARM_LADDER_AGREEMENT`` apart. A warm
+    start is an answer for this model on data like this, so agreeing with the
+    cold seed leaves the remaining rungs nothing to find; measured on a series of
+    10⁵-point records, capping the ladder there reproduced the recommendation at
+    roughly a third to a half of the build time. Refinement
+    (:func:`_refine_top_candidates`) re-fits the ranking's contenders with the
+    full cold ladder regardless, which is what makes the cap safe.
+
+    ``variant_budget=0`` means "no ladder at all" and only ever accompanies a
+    warm start (the sole caller that passes it is the completion of a cell from
+    the run's *own* fit of the same template at another binning — the same basin
+    by construction, so it is fitted once from the answer).
+
+    ``dense_curves=False`` scores the fit without building its dense fitted and
+    component curves — everything else, the residual diagnostics and the gates
+    included, is computed exactly as usual. It is for a cell of a score table,
+    whose readers want its criterion and its parameters; :func:`_with_dense_curves`
+    gives the curves back to the rows a caller displays.
+    """
     # Frequencies measured from spectral peaks are trusted seeds: the 0.5x/2x
     # variant scaling that rescues a blind FFT guess would only destroy them.
     frozen_scale_names: frozenset[str] = frozenset()
@@ -3866,12 +4164,33 @@ def _assess_candidate_template(
         and seed_context.peak_analysis.peaks
     ):
         frozen_scale_names = frozenset({"frequency"})
-    attempts = _parameter_variants(
-        _initial_parameters_for_template(dataset, fingerprint, template, seed_context=seed_context),
-        template=template,
-        variant_budget=variant_budget,
-        frozen_scale_names=frozen_scale_names,
+    seeded = _initial_parameters_for_template(
+        dataset, fingerprint, template, seed_context=seed_context
     )
+    # ``variant_budget=0`` means "no ladder at all", which only ever accompanies a
+    # warm start — a cell re-fitted from an already-fitted answer for the same
+    # model on the same data at another binning needs that answer tried, not a
+    # search around it. ``_parameter_variants`` keeps its own ``max(1, budget)``
+    # floor, so the emptiness is decided here.
+    ladder = (
+        _parameter_variants(
+            seeded,
+            template=template,
+            variant_budget=variant_budget,
+            frozen_scale_names=frozen_scale_names,
+        )
+        if variant_budget > 0
+        else ()
+    )
+    if warm_start is None:
+        attempts = ladder
+        deferred_rungs: tuple[ParameterSet, ...] = ()
+    else:
+        # Warm-aware ladder: the warm start and the base rung (the unmodified
+        # seed) run first, and the perturbed rungs only when those two fail to
+        # settle the basin between them — see ``_warm_ladder_is_settled``.
+        attempts = (_warm_started_parameters(seeded, warm_start), *ladder[:1])
+        deferred_rungs = ladder[1:]
 
     # Screening cap (Stage 1 only): forwarded to the engine's migrad drive, not
     # the scipy fallback below (scipy has no call-count knob).
@@ -3879,40 +4198,54 @@ def _assess_candidate_template(
 
     best_result: FitResult | None = None
     best_parameters: ParameterSet | None = None
-    for parameters in attempts:
-        if cancel_callback is not None and cancel_callback():
-            raise FitCancelledError("Fit wizard analysis cancelled.")
-        result = fit_engine.fit(
-            dataset,
-            template.model.function,
-            _clone_parameter_set(parameters),
-            cancel_callback=cancel_callback,
-            migrad_kwargs=migrad_kwargs,
-        )
-        if _needs_fit_backend_fallback(result):
-            result = _scipy_fit_fallback(dataset, template.model.function, parameters)
-        elif migrad_kwargs is None:
-            # Only the uncapped fits continue: a screening fit that hit the cap
-            # hit it *by design* (see ``_CALL_LIMIT_CONTINUATIONS``).
-            result = _fit_with_call_limit_continuations(
-                fit_engine,
+
+    def _run_attempts(parameter_sets: Sequence[ParameterSet]) -> list[FitResult]:
+        """Fit each attempt, keeping the best; return this batch's results."""
+        nonlocal best_result, best_parameters
+        batch: list[FitResult] = []
+        for parameters in parameter_sets:
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Fit wizard analysis cancelled.")
+            result = fit_engine.fit(
                 dataset,
-                template,
-                parameters,
-                result,
+                template.model.function,
+                _clone_parameter_set(parameters),
                 cancel_callback=cancel_callback,
+                migrad_kwargs=migrad_kwargs,
             )
-        if best_result is None:
-            best_result = result
-            best_parameters = _clone_parameter_set(parameters)
-            continue
-        if result.success and not best_result.success:
-            best_result = result
-            best_parameters = _clone_parameter_set(parameters)
-            continue
-        if result.success == best_result.success and result.chi_squared < best_result.chi_squared:
-            best_result = result
-            best_parameters = _clone_parameter_set(parameters)
+            if _needs_fit_backend_fallback(result):
+                result = _scipy_fit_fallback(dataset, template.model.function, parameters)
+            elif migrad_kwargs is None:
+                # Only the uncapped fits continue: a screening fit that hit the
+                # cap hit it *by design* (see ``_CALL_LIMIT_CONTINUATIONS``).
+                result = _fit_with_call_limit_continuations(
+                    fit_engine,
+                    dataset,
+                    template,
+                    parameters,
+                    result,
+                    cancel_callback=cancel_callback,
+                )
+            batch.append(result)
+            if best_result is None:
+                best_result = result
+                best_parameters = _clone_parameter_set(parameters)
+                continue
+            if result.success and not best_result.success:
+                best_result = result
+                best_parameters = _clone_parameter_set(parameters)
+                continue
+            if (
+                result.success == best_result.success
+                and result.chi_squared < best_result.chi_squared
+            ):
+                best_result = result
+                best_parameters = _clone_parameter_set(parameters)
+        return batch
+
+    opening = _run_attempts(attempts)
+    if deferred_rungs and not _warm_ladder_is_settled(opening):
+        _run_attempts(deferred_rungs)
 
     if best_result is None:
         best_result = FitResult(success=False, message="No fit attempt was created.")
@@ -3937,12 +4270,16 @@ def _assess_candidate_template(
     residual_gate_passed = not residual_gate_reasons
     disqualification_reasons = _disqualification_reasons(dataset, template, best_result, bound_hits)
 
-    fitted_time, fitted_curve, component_curves = _dense_fit_curves(
-        dataset,
-        template.model,
-        best_result.parameters,
-        fallback_parameters=best_parameters,
-    )
+    if dense_curves:
+        fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+            dataset,
+            template.model,
+            best_result.parameters,
+            fallback_parameters=best_parameters,
+        )
+    else:
+        empty = np.array([], dtype=float)
+        fitted_time, fitted_curve, component_curves = empty, empty, ()
 
     return CandidateAssessment(
         template=template,
@@ -3964,6 +4301,38 @@ def _assess_candidate_template(
         stage=stage,
         disqualification_reasons=tuple(disqualification_reasons),
         is_null_baseline=template.key in (_NULL_CONSTANT_KEY, _NULL_EXPONENTIAL_KEY),
+    )
+
+
+def _with_dense_curves(
+    assessment: CandidateAssessment,
+    dataset: MuonDataset,
+) -> CandidateAssessment:
+    """Give a score-table cell the curves a displayed assessment owes.
+
+    The counterpart of ``_AssessmentTask.dense_curves`` and the one crossing of
+    the contract on :class:`CandidateAssessment`. ``dataset`` must be the record
+    the assessment was *fitted* on — the rebinned one, at the table's factor —
+    because that is what :func:`_dense_fit_curves` samples between.
+
+    Assembly passes the winning attempt's *seed* as ``fallback_parameters``, to
+    name any parameter the fit itself did not return. A converged fit returns
+    every parameter of its model, so for the rows this is called on — a
+    recommendation's own and its comparable alternatives, which are converged by
+    :func:`rerank_fit_wizard_recommendation`'s construction — the fitted values
+    are the whole of it and the rebuilt arrays are identical.
+    """
+
+    fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+        dataset,
+        assessment.template.model,
+        assessment.fit_result.parameters,
+    )
+    return replace(
+        assessment,
+        fitted_time=fitted_time,
+        fitted_curve=fitted_curve,
+        component_curves=component_curves,
     )
 
 
@@ -5070,6 +5439,25 @@ def _mixture_component_variant(
     return _parameter_variant_by_name(parameters, scale_overrides)
 
 
+def _warm_started_parameters(base: ParameterSet, warm: ParameterSet) -> ParameterSet:
+    """``base`` with every value it shares with ``warm`` taken from ``warm``.
+
+    Only free values move. Bounds, fixed flags and expressions stay the
+    template's own, and a *constrained* parameter keeps its own value too: a
+    pinned ``B_L`` or applied field is this run's metadata, so importing the
+    sibling run's pin would silently move this fit onto another run's field. A
+    borrowed value outside this template's bounds is clamped into them — that is
+    the same parameter measured on different data, not a different parameter.
+    """
+    seeded = _clone_parameter_set(base)
+    for parameter in seeded:
+        if parameter.is_constrained or parameter.name not in warm:
+            continue
+        value = float(warm[parameter.name].value)
+        parameter.value = min(max(value, parameter.min), parameter.max)
+    return seeded
+
+
 def _clone_parameter_set(parameters: ParameterSet) -> ParameterSet:
     return ParameterSet(
         [
@@ -5279,6 +5667,30 @@ def _max_abs_autocorrelation(values: NDArray[np.float64]) -> float:
     return float(max(correlations, default=0.0))
 
 
+def _peaks_within_analysis_band(
+    analysis: PeakAnalysis, analysis_dataset: MuonDataset
+) -> PeakAnalysis:
+    """Drop every detected line the analysed record cannot represent.
+
+    Detection runs on the full record for its bandwidth, but every fit runs on
+    ``analysis_dataset`` — the value-rebinned copy — whose Nyquist frequency is
+    lower. A line above it (a residual-FFT noise spike a few percent below the
+    native Nyquist, say) would be seeded into a template whose frequency bounds
+    then straddle a limit the rebinned record cannot reach, so it is removed
+    here, once, where the analysed record is decided.
+    """
+
+    time = np.asarray(analysis_dataset.time, dtype=float)
+    if time.size < 2:
+        return analysis
+    dt = float(np.median(np.diff(time)))
+    nyquist_mhz = 0.5 / dt
+    kept = tuple(peak for peak in analysis.peaks if abs(float(peak.frequency_mhz)) < nyquist_mhz)
+    if len(kept) == len(analysis.peaks):
+        return analysis
+    return replace(analysis, peaks=kept)
+
+
 def analysis_rebin_factor(
     dataset: MuonDataset,
     peak_analysis: PeakAnalysis | None = None,
@@ -5294,10 +5706,16 @@ def analysis_rebin_factor(
       to the budget. Below the budget the factor is 1 and nothing is rebinned.
     * **Bandwidth.** ``⌊1 / (_FIT_SAMPLES_PER_CYCLE · f_max · dt)⌋``, where
       ``f_max`` is the highest frequency anything will be *seeded* at — the
-      detected peaks, or the Larmor frequency of the applied field when there
-      are none. Rebinning past this point aliases the very line the seeds name,
-      so the cost constraint is not allowed to override it. With no peaks and no
-      field there is nothing to protect and only the cost constraint applies.
+      peaks eligible to seed an oscillatory component
+      (:func:`_multiplet_seed_peaks`: a user, early-window or damped-scan line,
+      or a Hann/residual peak above ``_MULTIPLET_MIN_SNR``), or the Larmor
+      frequency of the applied field when there are none. Rebinning past this
+      point aliases the very line the seeds name, so the cost constraint is not
+      allowed to override it. A sub-threshold residual-FFT peak is *not*
+      protected: nothing will be seeded at it, and one such peak near the
+      Nyquist frequency would otherwise pin the whole record at full resolution.
+      With no eligible peaks and no field there is nothing to protect and only
+      the cost constraint applies.
 
     Never returns less than 1. Peak detection and the fingerprint are NOT
     rebinned: they are cheap relative to a Stage-2 fit set and they need the
@@ -5318,8 +5736,22 @@ def analysis_rebin_factor(
     factor = n // budget
 
     f_max = 0.0
-    if peak_analysis is not None and peak_analysis.peaks:
-        f_max = max(abs(float(peak.frequency_mhz)) for peak in peak_analysis.peaks)
+    seeded = _multiplet_seed_peaks(
+        peak_analysis, len(peak_analysis.peaks) if peak_analysis is not None else 0
+    )
+    # A line that cannot be sampled at ``_FIT_SAMPLES_PER_CYCLE`` even at full
+    # resolution (its period is shorter than that many native bins) cannot be
+    # protected by any factor, so it constrains nothing: a spectral-edge noise
+    # peak reported a few percent below Nyquist would otherwise pin the whole
+    # record at full resolution for a line no fit could ever resolve.
+    protectable_mhz = 1.0 / (_FIT_SAMPLES_PER_CYCLE * dt)
+    frequencies = [
+        abs(float(peak.frequency_mhz))
+        for peak in seeded
+        if abs(float(peak.frequency_mhz)) <= protectable_mhz
+    ]
+    if frequencies:
+        f_max = max(frequencies)
     elif field_gauss:
         larmor = field_gauss_to_frequency_mhz(float(field_gauss))
         if np.isfinite(larmor):
@@ -5490,6 +5922,7 @@ def _refine_top_candidates(
     cancel_callback: Callable[[], bool] | None,
     refine_top_candidates: int,
     progress: Callable[[str], None],
+    executor: Executor | None = None,
 ) -> tuple[CandidateAssessment, ...]:
     """Re-fit the top-ranked candidates deeper and record what that bought.
 
@@ -5512,6 +5945,16 @@ def _refine_top_candidates(
     the leader the deeper ladder that would settle whether its score is real.
     A refined fit that *does* converge replaces the failed assessment below; one
     that does not leaves it untouched, still unsuccessful.
+
+    The cold ladder here is also what makes the warm-aware cap in
+    :func:`_assess_candidate_template` safe: a warm-started screening fit that
+    stopped at warm + base is re-fitted from the full ladder if it is one of the
+    candidates the recommendation rests on.
+
+    ``executor`` is the build's pool, shared with the earlier fan-outs. This pass
+    used to open a second pool of its own per analysis — a whole extra round of
+    worker start-ups, each re-importing the fitting package, and a pool-start
+    latency in front of every refinement.
     """
     if refine_top_candidates <= 0 or not assessments:
         return assessments
@@ -5533,10 +5976,11 @@ def _refine_top_candidates(
         return assessments
 
     progress(f"Refinement: re-fitting {len(targets)} top candidates with the full seed ladder")
+    fit_record = dataset.fit_record()
     refined = _run_template_assessments(
         [
             _AssessmentTask(
-                dataset=dataset,
+                dataset=fit_record,
                 fingerprint=fingerprint,
                 template=assessment.template,
                 metric=metric,
@@ -5549,6 +5993,7 @@ def _refine_top_candidates(
         ],
         max_workers=max_workers,
         cancel_callback=cancel_callback,
+        executor=executor,
     )
 
     refined_by_key = {assessment.template.key: assessment for assessment in refined}

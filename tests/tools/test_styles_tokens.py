@@ -100,9 +100,41 @@ def test_tokens_module_exports_expected_constants() -> None:
         "WHITE",
         "CAVEAT_BANNER_BG",
         "CAVEAT_BANNER_TEXT",
+        # Global Fit Wizard transitions (D1): phase identity colours.
+        "PHASE_COLORS",
+        "PHASE_COLORS_DARK",
     ]
     missing = [name for name in required if not hasattr(tokens, name)]
     assert not missing, f"Missing token constants: {missing}"
+
+
+def test_phase_colors_are_five_distinct_hex_strings_with_a_dark_counterpart() -> None:
+    """PHASE_COLORS / PHASE_COLORS_DARK: five hex strings each, no accidental dup."""
+    from asymmetry.gui.styles import tokens
+
+    for palette in (tokens.PHASE_COLORS, tokens.PHASE_COLORS_DARK):
+        assert len(palette) == 5
+        assert len(set(palette)) == 5
+        for color in palette:
+            assert isinstance(color, str) and color.startswith("#")
+    # Dark variants are a distinct set from the light ramp (lifted for contrast
+    # against a dark surface, not a re-use of the same six-digit values).
+    assert set(tokens.PHASE_COLORS).isdisjoint(tokens.PHASE_COLORS_DARK)
+    # Reserves its own hues: never collides with the other identity/semantic
+    # palettes it explicitly avoids (grouping-profile identity, correction
+    # stages, the core semantic accents).
+    reserved = {
+        tokens.ACCENT,
+        tokens.ACCENT_RED,
+        tokens.WARN,
+        *tokens.PROFILE_COLORS,
+        tokens.STAGE_DEADTIME,
+        tokens.STAGE_BACKGROUND,
+        tokens.STAGE_ALPHA,
+        tokens.STAGE_BETA,
+    }
+    assert reserved.isdisjoint(tokens.PHASE_COLORS)
+    assert reserved.isdisjoint(tokens.PHASE_COLORS_DARK)
 
 
 def test_widgets_helpers_exist() -> None:

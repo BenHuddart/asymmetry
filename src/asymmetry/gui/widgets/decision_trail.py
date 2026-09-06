@@ -396,6 +396,18 @@ class DecisionTrail(QWidget):
             else:
                 row.set_state("done")
 
+    def set_step_headline(self, key: str, text: str) -> None:
+        """Rewrite one step's headline in place.
+
+        For a streaming step whose headline sharpens as work arrives — "Optimising
+        each phase…" becoming "Optimising phase 2 of 5…". No-op for an unknown
+        key, so a host that reports progress for a step this trail does not
+        render never raises.
+        """
+        row = self._rows.get(key)
+        if row is not None:
+            row.set_headline(text)
+
     def active_step_key(self) -> str | None:
         """Return the key of the step currently marked active (streaming), if any."""
         return self._active_key

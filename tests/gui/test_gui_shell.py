@@ -39,6 +39,9 @@ class _StubDataBrowser(QWidget):
         super().__init__()
         self.dataset_selected = _DummySignal()
         self.selection_changed = _DummySignal()
+        # MainWindow connects this one unguarded (transitions plan, D2), so the
+        # stub declares it rather than the window asking whether it exists.
+        self.remove_phases_requested = _DummySignal()
         self._datasets = {}
 
     def add_dataset(self, dataset):
@@ -72,6 +75,7 @@ class _StubFitPanel(QWidget):
         self.fit_completed = _DummySignal()
         self.global_fit_started = _DummySignal()
         self.global_fit_completed = _DummySignal()
+        self.apply_wizard_phases_requested = _DummySignal()
         self.grouped_fit_completed = _DummySignal()
         self.grouped_time_domain_mode_changed = _DummySignal()
         self.last_dataset = None

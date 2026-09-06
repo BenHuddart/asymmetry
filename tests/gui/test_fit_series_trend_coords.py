@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.representation.base import RepresentationType
+from asymmetry.core.representation.group import PhaseSpec
 from asymmetry.core.representation.series import FitSeries
 from asymmetry.gui.mainwindow import MainWindow
 
@@ -587,11 +588,17 @@ def test_detector_group_series_recording_mints_no_group(win: MainWindow) -> None
     assert len(win._project_model.data_groups) == n_groups
 
 
-def _patch_ungroup_choice(monkeypatch, choice: str) -> None:
-    """Patch the ungroup dialog in mainwindow to auto-select *choice* (keep/delete/cancel)."""
+def _patch_ungroup_choice(monkeypatch, choice: str) -> list[str]:
+    """Patch the ungroup dialog in mainwindow to auto-select *choice*.
+
+    *choice* is ``keep``/``delete``/``cancel``. Returns the (initially empty)
+    list the stub appends each box's main text to, so a caller can assert on
+    what the prompt actually said.
+    """
     from PySide6.QtWidgets import QMessageBox
 
     label = {"keep": "Keep fits", "delete": "Delete fits", "cancel": "Cancel"}[choice]
+    texts: list[str] = []
 
     class _Box:
         Icon = QMessageBox.Icon
@@ -604,7 +611,10 @@ def _patch_ungroup_choice(monkeypatch, choice: str) -> None:
 
         def setIcon(self, *a) -> None: ...  # noqa: N802 — Qt-style name
         def setWindowTitle(self, *a) -> None: ...  # noqa: N802 — Qt-style name
-        def setText(self, *a) -> None: ...  # noqa: N802 — Qt-style name
+
+        def setText(self, text) -> None:  # noqa: N802 — Qt-style name
+            texts.append(str(text))
+
         def setInformativeText(self, *a) -> None: ...  # noqa: N802 — Qt-style name
         def setDefaultButton(self, *a) -> None: ...  # noqa: N802 — Qt-style name
 
@@ -622,3 +632,106 @@ def _patch_ungroup_choice(monkeypatch, choice: str) -> None:
             return self._clicked
 
     monkeypatch.setattr("asymmetry.gui.mainwindow.QMessageBox", _Box)
+    return texts
+
+
+# ── phases: the host side of "Ungroup" (transitions plan, D2) ────────────────
+
+
+def _two_phase_scan(win: MainWindow) -> tuple[str, list[str], list[str]]:
+    """A four-run temperature scan split into two phases, one series per phase.
+
+    Returns ``(parent_id, phase_ids, batch_ids)``. The per-phase series are
+    bound to their phase group the way the wizard's apply step (D3) binds them.
+    """
+    coords = {1277: 10.0, 1280: 20.0, 1281: 30.0, 1282: 40.0}
+    for run, temperature in coords.items():
+        _add_dataset(win, run, temperature, 400.0)
+    parent_id = win._data_browser.create_data_group(
+        list(coords), name="T scan", order_key="temperature"
+    )
+    phase_runs = ([1277, 1280], [1281, 1282])
+    phase_ids = win._project_model.create_phase_groups(
+        parent_id,
+        [
+            PhaseSpec(
+                ordinal=1,
+                name="Phase I",
+                member_run_numbers=(1277, 1280),
+                phase_range=(10.0, 20.0),
+                phase_boundaries={"lower": None, "upper": (25.0, 5.0)},
+                phase_color=None,
+                phase_provenance={},
+            ),
+            PhaseSpec(
+                ordinal=2,
+                name="Phase II",
+                member_run_numbers=(1281, 1282),
+                phase_range=(30.0, 40.0),
+                phase_boundaries={"lower": (25.0, 5.0), "upper": None},
+                phase_color=None,
+                phase_provenance={},
+            ),
+        ],
+    )
+    win._data_browser.sync_groups_from_project_model()
+    _stub_fit_panel(win)
+    batch_ids = []
+    for phase_id, runs in zip(phase_ids, phase_runs, strict=True):
+        batch_id = _record_over(win, runs)
+        win._project_model.batch(batch_id).group_id = phase_id
+        batch_ids.append(batch_id)
+    return parent_id, phase_ids, batch_ids
+
+
+def test_remove_phases_keep_fits_leaves_the_series_group_intact(
+    win: MainWindow, monkeypatch
+) -> None:
+    """Ungroup on a phase header dissolves the partition, not the scan."""
+    parent_id, phase_ids, batch_ids = _two_phase_scan(win)
+
+    _patch_ungroup_choice(monkeypatch, "keep")
+    win._on_remove_phases_requested(parent_id)
+
+    assert win._project_model.phase_groups_for(parent_id) == []
+    assert all(win._project_model.data_group(pid) is None for pid in phase_ids)
+    parent = win._project_model.data_group(parent_id)
+    assert set(parent.member_run_numbers) == {1277, 1280, 1281, 1282}
+    for batch_id in batch_ids:
+        series = win._project_model.batch(batch_id)
+        assert series is not None  # frozen, not deleted
+        assert series.group_id is None
+
+
+def test_remove_phases_delete_fits_removes_the_per_phase_series(
+    win: MainWindow, monkeypatch
+) -> None:
+    parent_id, _phase_ids, batch_ids = _two_phase_scan(win)
+
+    _patch_ungroup_choice(monkeypatch, "delete")
+    win._on_remove_phases_requested(parent_id)
+
+    assert win._project_model.phase_groups_for(parent_id) == []
+    assert win._project_model.data_group(parent_id) is not None
+    assert all(win._project_model.batch(batch_id) is None for batch_id in batch_ids)
+
+
+def test_ungrouping_a_partitioned_series_disposes_of_the_phases_fits(
+    win: MainWindow, monkeypatch
+) -> None:
+    """The parent's Ungroup cascades into its phases, so their fits are in the prompt.
+
+    Without accounting for the cascade the host sees no owned series, skips the
+    prompt entirely, and the "Delete fits" the user asked for silently becomes
+    "keep" for every per-phase series.
+    """
+    parent_id, _phase_ids, batch_ids = _two_phase_scan(win)
+
+    texts = _patch_ungroup_choice(monkeypatch, "delete")
+    win._on_ungroup_requested(parent_id)
+
+    assert texts and "2 phases" in texts[0]
+    assert "2 recorded fit series" in texts[0]
+    assert win._project_model.data_group(parent_id) is None
+    assert win._project_model.phase_groups_for(parent_id) == []
+    assert all(win._project_model.batch(batch_id) is None for batch_id in batch_ids)

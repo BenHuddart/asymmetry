@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from asymmetry.core.data.dataset import Histogram, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -10,6 +11,7 @@ from asymmetry.core.representation import (
     DataGroup,
     FitSeries,
     FitSlot,
+    PhaseSpec,
     RepresentationType,
     make_representation,
 )
@@ -556,6 +558,245 @@ def test_remove_data_group_unknown_id_returns_empty():
     assert ProjectModel().remove_data_group("missing", orphan_series=True) == []
 
 
+# ── phase groups (Global Fit Wizard transitions, D1) ──────────────────────────
+
+
+def _run_with_temperature(run_number: int, temperature: float) -> Run:
+    return Run(run_number=run_number, metadata={"temperature": temperature})
+
+
+def _phase(ordinal, name, members, *, lower=None, upper=None, color=None):
+    return PhaseSpec(
+        ordinal=ordinal,
+        name=name,
+        member_run_numbers=tuple(members),
+        phase_range=None,
+        phase_boundaries={"lower": lower, "upper": upper},
+        phase_color=color,
+        phase_provenance={},
+    )
+
+
+def test_create_phase_groups_creates_nested_groups_in_ordinal_order():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3, 4, 5, 6], order_key="temperature")
+    ids = model.create_phase_groups(
+        parent.group_id,
+        [
+            _phase(2, "Phase II", [4, 5, 6], lower=(3.5, 0.5)),
+            _phase(1, "Phase I", [1, 2, 3], upper=(3.5, 0.5)),
+        ],
+    )
+    phases = model.phase_groups_for(parent.group_id)
+    assert [p.name for p in phases] == ["Phase I", "Phase II"]
+    assert [p.group_id for p in phases] == ids
+    assert phases[0].parent_group_id == parent.group_id
+    assert phases[0].member_run_numbers == [1, 2, 3]
+    assert phases[0].is_phase
+    assert phases[0].order_key == "temperature"  # inherited from the parent
+    assert phases[0].phase_boundaries == {"lower": None, "upper": (3.5, 0.5)}
+    assert phases[1].phase_boundaries == {"lower": (3.5, 0.5), "upper": None}
+    assert model.excluded_runs_for(parent.group_id) == []
+
+
+def test_create_phase_groups_rejects_members_outside_parent():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3])
+    with pytest.raises(ValueError):
+        model.create_phase_groups(parent.group_id, [_phase(1, "Phase I", [1, 2, 99])])
+    assert model.phase_groups_for(parent.group_id) == []
+
+
+def test_create_phase_groups_rejects_overlapping_phases():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3, 4])
+    with pytest.raises(ValueError):
+        model.create_phase_groups(
+            parent.group_id,
+            [_phase(1, "Phase I", [1, 2, 3]), _phase(2, "Phase II", [3, 4])],
+        )
+    assert model.phase_groups_for(parent.group_id) == []
+
+
+def test_create_phase_groups_unknown_parent_raises():
+    with pytest.raises(ValueError):
+        ProjectModel().create_phase_groups("missing", [])
+
+
+def test_create_phase_groups_excludes_unclaimed_members():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3, 4, 5])
+    model.create_phase_groups(parent.group_id, [_phase(1, "Phase I", [1, 2, 3])])
+    assert model.excluded_runs_for(parent.group_id) == [4, 5]
+
+
+def test_create_phase_groups_replaces_existing_partition_and_deletes_old_series():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3, 4, 5, 6])
+    model.create_phase_groups(
+        parent.group_id,
+        [_phase(1, "Phase I", [1, 2, 3]), _phase(2, "Phase II", [4, 5, 6])],
+    )
+    old_phase_1 = model.phase_groups_for(parent.group_id)[0]
+    series = _batch("b1", runs=(1, 2, 3))
+    series.group_id = old_phase_1.group_id
+    model.add_batch(series)
+
+    model.create_phase_groups(
+        parent.group_id,
+        [_phase(1, "New Phase I", [1, 2]), _phase(2, "New Phase II", [3, 4, 5, 6])],
+    )
+    # A re-partition deletes the previous phases' series (not freeze) — the
+    # fits belonged to a partition that no longer exists.
+    assert model.data_group(old_phase_1.group_id) is None
+    assert model.batch("b1") is None
+    new_phases = model.phase_groups_for(parent.group_id)
+    assert [p.name for p in new_phases] == ["New Phase I", "New Phase II"]
+
+
+def test_phase_groups_for_unknown_parent_returns_empty():
+    assert ProjectModel().phase_groups_for("missing") == []
+
+
+def test_find_auto_group_never_returns_a_phase_group():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3])
+    (phase_id,) = model.create_phase_groups(parent.group_id, [_phase(1, "Phase I", [1, 2, 3])])
+    # Even though the phase's member set matches exactly, it is never
+    # returned — a phase is always kind="user", never "auto".
+    assert model.find_auto_group([1, 2, 3]) is None
+    assert model.data_group(phase_id).kind == "user"
+
+
+def test_rename_data_group_on_a_phase_keeps_phase_fields():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3])
+    (phase_id,) = model.create_phase_groups(
+        parent.group_id, [_phase(1, "Phase I", [1, 2, 3], lower=(0.5, 0.1))]
+    )
+    assert model.rename_data_group(phase_id, "Low-T phase")
+    phase = model.data_group(phase_id)
+    assert phase.name == "Low-T phase"
+    assert phase.is_phase
+    assert phase.parent_group_id == parent.group_id
+    assert phase.phase_ordinal == 1
+    assert phase.phase_boundaries == {"lower": (0.5, 0.1), "upper": None}
+
+
+def test_remove_data_group_cascades_to_phase_groups_delete_branch():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3, 4])
+    ids = model.create_phase_groups(
+        parent.group_id, [_phase(1, "Phase I", [1, 2]), _phase(2, "Phase II", [3, 4])]
+    )
+    for i, gid in enumerate(ids):
+        series = _batch(f"b{i}", runs=tuple(model.data_group(gid).member_run_numbers))
+        series.group_id = gid
+        model.add_batch(series)
+
+    removed = model.remove_data_group(parent.group_id, orphan_series=False)
+    assert set(removed) == {"b0", "b1"}
+    assert model.data_group(parent.group_id) is None
+    for gid in ids:
+        assert model.data_group(gid) is None
+    assert model.batch("b0") is None
+    assert model.batch("b1") is None
+
+
+def test_remove_data_group_cascades_to_phase_groups_freeze_branch():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3])
+    (phase_id,) = model.create_phase_groups(parent.group_id, [_phase(1, "Phase I", [1, 2, 3])])
+    series = _batch("b1", runs=(1, 2, 3))
+    series.group_id = phase_id
+    series.last_fitted_members = [1, 2, 3]
+    model.add_batch(series)
+
+    removed = model.remove_data_group(parent.group_id, orphan_series=True)
+    assert removed == []
+    assert model.data_group(parent.group_id) is None
+    assert model.data_group(phase_id) is None
+    assert model.batch("b1") is series
+    assert series.group_id is None
+    assert series.member_run_numbers == [1, 2, 3]
+
+
+def test_move_run_to_phase_updates_membership_and_range():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3, 4], order_key="temperature")
+    ids = model.create_phase_groups(
+        parent.group_id, [_phase(1, "Phase I", [1, 2]), _phase(2, "Phase II", [3, 4])]
+    )
+    runs_by_number = {r: _run_with_temperature(r, float(r)) for r in (1, 2, 3, 4)}
+
+    model.move_run_to_phase(
+        2, ids[1], series_group_id=parent.group_id, runs_by_number=runs_by_number
+    )
+
+    phase1 = model.data_group(ids[0])
+    phase2 = model.data_group(ids[1])
+    assert phase1.member_run_numbers == [1]
+    assert phase2.member_run_numbers == [2, 3, 4]  # re-ordered along the axis
+    assert phase1.phase_range == (1.0, 1.0)
+    assert phase2.phase_range == (2.0, 4.0)
+    # Parent membership is untouched — a phase's members are a live subset.
+    assert parent.member_run_numbers == [1, 2, 3, 4]
+
+
+def test_move_run_to_phase_to_excluded():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3], order_key="run")
+    ids = model.create_phase_groups(parent.group_id, [_phase(1, "Phase I", [1, 2, 3])])
+
+    model.move_run_to_phase(2, None, series_group_id=parent.group_id, runs_by_number={})
+
+    phase = model.data_group(ids[0])
+    assert phase.member_run_numbers == [1, 3]
+    assert model.excluded_runs_for(parent.group_id) == [2]
+
+
+def test_move_run_to_phase_marks_both_affected_series_stale():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3, 4], order_key="run")
+    ids = model.create_phase_groups(
+        parent.group_id, [_phase(1, "Phase I", [1, 2]), _phase(2, "Phase II", [3, 4])]
+    )
+    series1 = _batch("b1", runs=(1, 2))
+    series1.group_id = ids[0]
+    series1.last_fitted_members = [1, 2]
+    series2 = _batch("b2", runs=(3, 4))
+    series2.group_id = ids[1]
+    series2.last_fitted_members = [3, 4]
+    model.add_batch(series1)
+    model.add_batch(series2)
+    phase1 = model.data_group(ids[0])
+    phase2 = model.data_group(ids[1])
+    assert not series1.is_stale(phase1)
+    assert not series2.is_stale(phase2)
+
+    model.move_run_to_phase(2, ids[1], series_group_id=parent.group_id, runs_by_number={})
+
+    assert series1.is_stale(phase1)
+    assert series2.is_stale(phase2)
+
+
+def test_move_run_to_phase_unknown_phase_raises():
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [1, 2, 3])
+    model.create_phase_groups(parent.group_id, [_phase(1, "Phase I", [1, 2, 3])])
+    with pytest.raises(ValueError):
+        model.move_run_to_phase(1, "missing", series_group_id=parent.group_id, runs_by_number={})
+
+
+def test_move_run_to_phase_run_not_in_targets_parent_raises():
+    model = ProjectModel()
+    model.create_data_group("scan a", [1, 2, 3])
+    parent_b = model.create_data_group("scan b", [10, 11, 12])
+    (phase_b,) = model.create_phase_groups(parent_b.group_id, [_phase(1, "Phase I", [10, 11, 12])])
+    with pytest.raises(ValueError, match="not a member of series group"):
+        model.move_run_to_phase(1, phase_b, series_group_id=parent_b.group_id, runs_by_number={})
+
+
 # ── series signature: group-bound vs frozen keying (D7) ───────────────────────
 
 
@@ -634,3 +875,52 @@ def test_dedupe_relinks_member_slot_that_pointed_at_dropped_twin():
     assert rep10.fit.batch_id == "new"
     assert rep10.fit.provenance == "batch"
     assert rep11.fit.batch_id == "new"
+
+
+def test_move_run_to_phase_touches_only_the_named_series():
+    # A run in two partitioned series: excluding it from one leaves the
+    # other's phase untouched.
+    model = ProjectModel()
+    first = model.create_data_group("scan A", [1, 2, 3], order_key="run")
+    second = model.create_data_group("scan B", [2, 3, 4], order_key="run")
+    first_ids = model.create_phase_groups(first.group_id, [_phase(1, "Phase I", [1, 2, 3])])
+    second_ids = model.create_phase_groups(second.group_id, [_phase(1, "Phase I", [2, 3, 4])])
+
+    model.move_run_to_phase(2, None, series_group_id=first.group_id, runs_by_number={})
+
+    assert model.data_group(first_ids[0]).member_run_numbers == [1, 3]
+    assert model.data_group(second_ids[0]).member_run_numbers == [2, 3, 4]
+
+
+def test_move_run_to_phase_rejects_a_phase_of_another_series():
+    model = ProjectModel()
+    first = model.create_data_group("scan A", [1, 2], order_key="run")
+    second = model.create_data_group("scan B", [1, 2], order_key="run")
+    model.create_phase_groups(first.group_id, [_phase(1, "Phase I", [1, 2])])
+    second_ids = model.create_phase_groups(second.group_id, [_phase(1, "Phase I", [1, 2])])
+    with pytest.raises(ValueError, match="not a phase of series group"):
+        model.move_run_to_phase(1, second_ids[0], series_group_id=first.group_id, runs_by_number={})
+
+
+def test_phase_members_follow_the_parent_order_not_run_number():
+    # The parent lists its members in sweep order; a phase inherits that order.
+    model = ProjectModel()
+    parent = model.create_data_group("scan", [30, 10, 20], order_key="temperature")
+    ids = model.create_phase_groups(parent.group_id, [_phase(1, "Phase I", [20, 10, 30])])
+    assert model.data_group(ids[0]).member_run_numbers == [30, 10, 20]
+
+
+def test_phase_group_names_use_conventional_numerals():
+    from asymmetry.core.representation.group import phase_group_name
+
+    assert [phase_group_name(n) for n in (1, 4, 9, 14, 40, 49, 90, 400, 1994)] == [
+        "Phase I",
+        "Phase IV",
+        "Phase IX",
+        "Phase XIV",
+        "Phase XL",
+        "Phase XLIX",
+        "Phase XC",
+        "Phase CD",
+        "Phase MCMXCIV",
+    ]

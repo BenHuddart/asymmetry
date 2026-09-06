@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 import asymmetry.core.fitting.fit_wizard as fit_wizard_module
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.component_tags import ComputationalCost
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.damped_line_scan import DampedLineAnalysis
@@ -46,11 +46,13 @@ from asymmetry.core.fitting.fit_wizard import (
     _has_significant_damped_line,
     _initial_parameters_for_template,
     _parameter_variants,
+    _peaks_within_analysis_band,
     _persisted_curve_stride,
     _run_template_assessments,
     _stage2_variant_budget,
     analysis_rebin_factor,
     build_fit_wizard_recommendation,
+    build_fit_wizard_recommendation_for_templates,
     build_null_baseline_templates,
     build_wizard_families,
     deserialize_family_screening_report,
@@ -1027,6 +1029,57 @@ def test_tiered_flow_screens_all_families_and_reports() -> None:
     # Every family fitted at least its representative in Stage 1.
     assert len(stage1) >= len(report_keys)
     assert recommendation.recommended_key == "exp_constant"
+
+
+@pytest.mark.integration
+@pytest.mark.timeout(300)
+def test_warm_start_by_template_is_an_extra_first_variant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A neighbour run's values are tried ahead of the seed ladder, not instead of it.
+
+    This is how a series analysis hands one run the answer found on the run
+    beside it (see the global wizard's phase 1): the ladder still runs, so the
+    extra start can only find a better minimum or leave the fit where it was.
+    """
+    rng = np.random.default_rng(23)
+    t = np.linspace(0.02, 10.0, 220)
+    y = 0.22 * np.exp(-0.8 * t) + 0.03 + rng.normal(0.0, 0.004, t.size)
+    dataset = _tiered_dataset(t, y, error=0.004)
+    neighbour_values = ParameterSet(
+        [
+            Parameter("A_1", value=0.22, min=0.0, max=1.0),
+            Parameter("Lambda", value=0.8, min=0.0, max=100.0),
+            Parameter("A_bg", value=0.03, min=-1.0, max=1.0),
+        ]
+    )
+    seen: dict[str, object] = {}
+    original = fit_wizard_module._run_template_assessments
+
+    def _capture(tasks, **kwargs):
+        for task in tasks:
+            if task.warm_start is not None:
+                seen[task.template.key] = task.warm_start
+        return original(tasks, **kwargs)
+
+    monkeypatch.setattr(fit_wizard_module, "_run_template_assessments", _capture)
+
+    recommendation = build_fit_wizard_recommendation(
+        dataset,
+        max_workers=1,
+        warm_start_by_template={"exp_constant": neighbour_values},
+    )
+
+    assert list(seen) == ["exp_constant"]
+    assert {parameter.name: parameter.value for parameter in seen["exp_constant"]} == {
+        "A_1": 0.22,
+        "Lambda": 0.8,
+        "A_bg": 0.03,
+    }
+    warmed = recommendation.assessment_for_key("exp_constant")
+    assert warmed is not None and warmed.fit_result.success
+    # The ladder still ran: every other candidate was fitted as usual.
+    assert len(recommendation.assessments) > 1
 
 
 def _strip_expensive_members(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2613,6 +2666,53 @@ def test_rebin_factor_is_capped_so_the_fastest_seeded_line_stays_sampled() -> No
     assert period_us / float(np.median(np.diff(rebinned.time))) >= 8.0
 
 
+def test_rebin_factor_ignores_a_sub_threshold_residual_peak_near_nyquist() -> None:
+    # A residual-FFT peak at 4.9 GHz that no template would ever be seeded at
+    # must not pin the record at full resolution: only seed-eligible peaks
+    # (scan/early/user lines, or Hann peaks above the multiplet SNR) set f_max.
+    dataset = _rebin_dataset(90_000)
+    noise = DetectedPeak(
+        frequency_mhz=4907.0,
+        amplitude=0.1,
+        snr=2.5,
+        width_mhz=1.0,
+        prominence=0.0,
+        source="residual_fft",
+    )
+    analysis = _scan_peak_analysis([_damped_scan_peak(240.0), noise], threshold=34.0)
+
+    assert analysis_rebin_factor(dataset, analysis) == 5
+
+    # Above the multiplet SNR the same peak would be seeded — but at 4.9 GHz its
+    # period is under 8 native bins, so no factor can protect it and it still
+    # constrains nothing.
+    strong_noise = DetectedPeak(
+        frequency_mhz=4907.0,
+        amplitude=1.0,
+        snr=6.0,
+        width_mhz=1.0,
+        prominence=0.0,
+        source="residual_fft",
+    )
+    unprotectable = _scan_peak_analysis([_damped_scan_peak(240.0), strong_noise], threshold=34.0)
+
+    assert analysis_rebin_factor(dataset, unprotectable) == 5
+
+    # A seed-eligible Hann peak that *can* be sampled does bind: 1000 MHz needs
+    # 8 samples per 1 ns period, which only the native 0.1 ns binning gives.
+    fast_line = DetectedPeak(
+        frequency_mhz=1000.0,
+        amplitude=1.0,
+        snr=6.0,
+        width_mhz=1.0,
+        prominence=0.0,
+        source="residual_fft",
+    )
+    binding = _scan_peak_analysis([_damped_scan_peak(240.0), fast_line], threshold=34.0)
+
+    assert analysis_rebin_factor(dataset, binding) == 1
+
+
 def test_rebin_factor_falls_back_to_the_larmor_frequency_then_to_cost_alone() -> None:
     dataset = _rebin_dataset(90_000)
     empty = _scan_peak_analysis([], threshold=None)
@@ -2748,3 +2848,362 @@ def test_recommendation_payloads_predating_rebinned_fitting_still_load() -> None
     # the analysed point count is genuinely unknown and says so.
     assert restored.rebin_factor == 1
     assert restored.analysed_points == 0
+
+
+def test_peaks_above_the_analysed_record_nyquist_are_dropped() -> None:
+    # A ×11 rebin of 0.1 ns bins has a Nyquist frequency of ~455 MHz; a
+    # residual-FFT spike at 4.9 GHz cannot be represented on that record and
+    # must never be seeded (its frequency bounds would invert on the clamp).
+    dataset = _rebin_dataset(90_000)
+    analysed = dataset.rebin(11)
+    spike = DetectedPeak(
+        frequency_mhz=4907.0,
+        amplitude=1.0,
+        snr=6.0,
+        width_mhz=1.0,
+        prominence=0.0,
+        source="residual_fft",
+    )
+    analysis = _scan_peak_analysis([_damped_scan_peak(240.0), spike], threshold=34.0)
+
+    kept = _peaks_within_analysis_band(analysis, analysed)
+
+    assert [peak.frequency_mhz for peak in kept.peaks] == [240.0]
+    assert _peaks_within_analysis_band(analysis, dataset) is analysis
+
+
+class _LadderRecordingEngine:
+    """A ``FitEngine`` stand-in that records every attempt and scripts results.
+
+    The queued results are consumed in order and the last one repeats, so a test
+    can say what the warm attempt and the base rung came back with and let the
+    rest of the ladder — if it runs at all — return something harmless.
+    """
+
+    def __init__(self, results: list[FitResult]) -> None:
+        self._results = list(results)
+        self.attempts: list[ParameterSet] = []
+
+    def fit(self, _dataset, _model_fn, parameters, **_kwargs) -> FitResult:
+        self.attempts.append(parameters)
+        return self._results.pop(0) if len(self._results) > 1 else self._results[0]
+
+
+def _ladder_dataset() -> MuonDataset:
+    t = np.linspace(0.02, 10.0, 160)
+    return _tiered_dataset(t, 0.22 * np.exp(-0.8 * t) + 0.03, error=0.004)
+
+
+def _ladder_template() -> CandidateTemplate:
+    return CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="warm-ladder test",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+
+
+def _ladder_fit_result(*, success: bool, chi_squared: float) -> FitResult:
+    return FitResult(
+        success=success,
+        chi_squared=chi_squared,
+        parameters=ParameterSet(
+            [
+                Parameter("A_1", value=0.22, min=0.0, max=1.0),
+                Parameter("Lambda", value=0.8, min=0.0, max=100.0),
+                Parameter("A_bg", value=0.03, min=-1.0, max=1.0),
+            ]
+        ),
+        message="scripted",
+    )
+
+
+def _warm_values() -> ParameterSet:
+    return ParameterSet(
+        [
+            Parameter("A_1", value=0.21, min=0.0, max=1.0),
+            Parameter("Lambda", value=0.79, min=0.0, max=100.0),
+            Parameter("A_bg", value=0.031, min=-1.0, max=1.0),
+        ]
+    )
+
+
+def _assess_with_ladder(
+    results: list[FitResult],
+    *,
+    warm_start: ParameterSet | None,
+    variant_budget: int = 5,
+) -> _LadderRecordingEngine:
+    """Run one assessment against a scripted engine; return the engine."""
+    dataset = _ladder_dataset()
+    engine = _LadderRecordingEngine(results)
+    fit_wizard_module._assess_candidate_template(
+        dataset,
+        fingerprint_spectrum(dataset),
+        _ladder_template(),
+        fit_engine=engine,
+        metric=SelectionMetric.AICC,
+        seed_context=None,
+        variant_budget=variant_budget,
+        stage=2,
+        warm_start=warm_start,
+    )
+    return engine
+
+
+def test_cold_ladder_length_is_unchanged_without_a_warm_start() -> None:
+    """No warm start, no change: the whole ``variant_budget`` ladder runs."""
+    engine = _assess_with_ladder(
+        [_ladder_fit_result(success=True, chi_squared=100.0)], warm_start=None
+    )
+
+    assert len(engine.attempts) == 5
+
+
+def test_warm_and_base_agreeing_stops_the_ladder() -> None:
+    """Two converged fits of one basin agree, so the perturbed rungs buy nothing."""
+    engine = _assess_with_ladder(
+        [
+            _ladder_fit_result(success=True, chi_squared=100.0),
+            _ladder_fit_result(success=True, chi_squared=100.4),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+        ],
+        warm_start=_warm_values(),
+    )
+
+    assert len(engine.attempts) == 2
+
+
+def test_one_converged_opening_attempt_stops_the_ladder() -> None:
+    """A warm start that fails where the base seed converges is already answered.
+
+    The rule for climbing is that *neither* opening attempt converged — one of
+    them landing in a minimum is the answer the cell needed.
+    """
+    engine = _assess_with_ladder(
+        [
+            _ladder_fit_result(success=False, chi_squared=math.inf),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+        ],
+        warm_start=_warm_values(),
+    )
+
+    assert len(engine.attempts) == 2
+
+
+def test_neither_opening_attempt_converging_runs_the_rest_of_the_ladder() -> None:
+    """A wrong seed region is exactly what the perturbed rungs exist for."""
+    engine = _assess_with_ladder(
+        [
+            _ladder_fit_result(success=False, chi_squared=5000.0),
+            _ladder_fit_result(success=False, chi_squared=4000.0),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+        ],
+        warm_start=_warm_values(),
+    )
+
+    # Warm + base, then the four remaining rungs.
+    assert len(engine.attempts) == 6
+
+
+def test_opening_attempts_in_different_basins_run_the_rest_of_the_ladder() -> None:
+    """Two converged fits more than a χ² unit apart mean more than one minimum."""
+    engine = _assess_with_ladder(
+        [
+            _ladder_fit_result(success=True, chi_squared=100.0),
+            _ladder_fit_result(success=True, chi_squared=140.0),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+        ],
+        warm_start=_warm_values(),
+    )
+
+    assert len(engine.attempts) == 6
+
+
+def test_zero_variant_budget_with_a_warm_start_fits_once() -> None:
+    """``variant_budget=0`` plus a warm start means no ladder at all.
+
+    That is the completion pass re-fitting a cell from the run's own values for
+    the same template at another rebin factor — the same basin by construction.
+    """
+    engine = _assess_with_ladder(
+        [_ladder_fit_result(success=True, chi_squared=100.0)],
+        warm_start=_warm_values(),
+        variant_budget=0,
+    )
+
+    assert len(engine.attempts) == 1
+    warm = engine.attempts[0]
+    assert warm["Lambda"].value == pytest.approx(0.79)
+
+
+def _cheap_single_family(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One tiny family, so a whole build is a handful of fast fits."""
+    template = _ladder_template()
+    family = WizardFamily(
+        key="general",
+        title="General",
+        priority=1.0,
+        stage1_rep=template,
+        stage2_members=(template,),
+    )
+    monkeypatch.setattr(
+        fit_wizard_module,
+        "build_wizard_families",
+        lambda fingerprint, current_model=None, scope_resolution=None: (family,),
+    )
+
+
+def test_a_caller_supplied_executor_replaces_the_builds_own_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a pool, the build opens none of its own and submits to that one.
+
+    This is how a series analysis gives one pool to many builds: the per-worker
+    import of the fitting package is paid once for the series rather than twice
+    per run, and one run's fan-out can use workers another run's serial stage
+    leaves idle.
+    """
+    _cheap_single_family(monkeypatch)
+    _monkeypatch_dummy_worker(monkeypatch)
+    pool = _FakeProcessPool()
+    opened: list[int] = []
+
+    def _must_not_open(workers: int):
+        opened.append(workers)
+        raise AssertionError("the build opened a pool despite being given an executor")
+
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", _must_not_open)
+
+    build_fit_wizard_recommendation(_ladder_dataset(), max_workers=4, executor=pool)
+
+    assert opened == []
+    # Submitted to the caller's pool, and left for the caller to shut down.
+    assert pool.shutdown_calls == []
+
+
+def test_refinement_reuses_the_builds_pool_instead_of_opening_another(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One pool per build, refinement included.
+
+    Refinement used to open a second spawn pool of its own inside every
+    analysis — a whole extra round of worker start-ups per run, each re-importing
+    the fitting package, plus a pool-start latency in front of the pass.
+    """
+    _cheap_single_family(monkeypatch)
+    _monkeypatch_dummy_worker(monkeypatch)
+    pool = _FakeProcessPool()
+    opened: list[int] = []
+    fanned_out: list[object] = []
+    original = fit_wizard_module._run_template_assessments
+
+    def _fake_open(workers: int) -> _FakeProcessPool:
+        opened.append(workers)
+        return pool
+
+    def _record(tasks, **kwargs):
+        fanned_out.append(kwargs.get("executor"))
+        return original(tasks, **kwargs)
+
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", _fake_open)
+    monkeypatch.setattr(fit_wizard_module, "_run_template_assessments", _record)
+
+    build_fit_wizard_recommendation(_ladder_dataset(), max_workers=4, refine_top_candidates=3)
+
+    # Stage 1, Stage 2, the null baselines and refinement — one pool, opened once.
+    assert opened == [4]
+    assert len(fanned_out) == 4
+    assert set(fanned_out) == {pool}
+
+    opened.clear()
+    fanned_out.clear()
+    caller_pool = _FakeProcessPool()
+    build_fit_wizard_recommendation(
+        _ladder_dataset(), max_workers=4, refine_top_candidates=3, executor=caller_pool
+    )
+
+    assert opened == []
+    assert len(fanned_out) == 4
+    assert set(fanned_out) == {caller_pool}
+    assert caller_pool.shutdown_calls == []
+
+
+class _RecordingProcessPool(_FakeProcessPool):
+    """A fake pool that keeps every payload it was handed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tasks: list[_AssessmentTask] = []
+
+    def submit(self, fn, *args):
+        self.tasks.append(args[0])
+        return super().submit(fn, *args)
+
+
+def _histogram_backed_dataset() -> MuonDataset:
+    """The ladder record, backed by a run whose detector counts are the bulk of it."""
+    dataset = _ladder_dataset()
+    dataset.metadata["run_label"] = "1"
+    dataset.run = Run(
+        run_number=1,
+        histograms=[
+            Histogram(counts=np.full(4096, 120.0), bin_width=0.016, t0_bin=10) for _ in range(15)
+        ],
+        metadata={"title": "Synthetic", "temperature": 5.0, "field": 100.0},
+        grouping={"groups": {0: [0, 1], 1: [2, 3]}},
+    )
+    return dataset
+
+
+def test_every_task_the_build_submits_carries_a_fit_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No worker payload carries the run's raw counts — none of them fits counts.
+
+    A build submits two or three dozen tasks (Stage 1, Stage 2, the null
+    baselines, refinement) and each one used to pickle the whole run: the
+    detector histograms are two orders of magnitude larger than the fitted
+    arrays they are attached to.
+    """
+    _cheap_single_family(monkeypatch)
+    _monkeypatch_dummy_worker(monkeypatch)
+    pool = _RecordingProcessPool()
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", lambda workers: pool)
+    dataset = _histogram_backed_dataset()
+
+    build_fit_wizard_recommendation(dataset, max_workers=4, refine_top_candidates=3)
+
+    assert pool.tasks
+    for task in pool.tasks:
+        assert task.dataset.run is not None
+        assert task.dataset.run.histograms == []
+        # Provenance is what the result is keyed and labelled by, so it stays.
+        assert task.dataset.run_number == dataset.run_number
+        assert task.dataset.run_label == dataset.run_label
+    # The record the caller handed in is untouched — it still has its counts.
+    assert len(dataset.run.histograms) == 15
+
+
+def test_explicit_template_evaluation_also_submits_fit_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The templates-only path builds the same payloads, serial fan-out or not."""
+    _monkeypatch_dummy_worker(monkeypatch)
+    dataset = _histogram_backed_dataset()
+    submitted: list[_AssessmentTask] = []
+    original = fit_wizard_module._run_template_assessments
+
+    def _record(tasks, **kwargs):
+        submitted.extend(tasks)
+        return original(tasks, **kwargs)
+
+    monkeypatch.setattr(fit_wizard_module, "_run_template_assessments", _record)
+
+    build_fit_wizard_recommendation_for_templates(dataset, (_ladder_template(),))
+
+    assert submitted
+    assert all(task.dataset.run.histograms == [] for task in submitted)
+    assert all(task.dataset.run_number == dataset.run_number for task in submitted)

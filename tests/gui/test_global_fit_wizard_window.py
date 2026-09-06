@@ -32,6 +32,7 @@ from asymmetry.core.fitting.fit_wizard import (
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalCandidateAssessment,
     GlobalFitWizardRecommendation,
+    GlobalFitWizardScreeningTable,
     GlobalParameterRecommendation,
     RunResidualDiagnostic,
 )
@@ -363,6 +364,32 @@ def _analysis_complete(window: GlobalFitWizardWindow) -> bool:
     return window._recommendation is not None and window._tasks.active_count == 0
 
 
+def _fake_screening_table(
+    datasets_arg: list[MuonDataset],
+    completed_by_run: dict[int, object],
+    *,
+    sources_by_run: dict[int, object] | None = None,
+    store: dict[int, object] | None = None,
+    generated: tuple[int, ...] = (),
+) -> GlobalFitWizardScreeningTable:
+    """Stand in for phase 1: a portfolio plus a completed per-run score table.
+
+    ``store`` is the caller's cache, which the real helper replaces in place with
+    the runs' own single-run analyses; the window emits what changed there.
+    """
+    sources = sources_by_run if sources_by_run is not None else completed_by_run
+    if store is not None:
+        store.clear()
+        store.update(sources)
+    return GlobalFitWizardScreeningTable(
+        portfolio=wizard_window_module.build_global_fit_wizard_candidate_portfolio(datasets_arg),
+        recommendations_by_run=completed_by_run,
+        single_fit_recommendations_by_run=sources,
+        generated_run_numbers=generated,
+        series_rebin_factor=1,
+    )
+
+
 def test_global_fit_wizard_window_populates_tables(
     qapp: QApplication,
     datasets: list[MuonDataset],
@@ -498,36 +525,44 @@ def test_global_fit_wizard_window_optimizes_selected_candidates(
     assert "Completed coupled optimisation for Exponential + Constant." in log_text
 
 
-def test_global_fit_wizard_window_emits_generated_single_fit_tables(
+def test_global_fit_wizard_window_emits_generated_single_fit_analyses(
     qapp: QApplication,
     datasets: list[MuonDataset],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    generated_run = int(datasets[0].run_number)
-    phase_one_recommendations = {
+    """The fit tabs get the runs' own analyses; the screen gets the derived table.
+
+    Phase 1 produces both, and they are not interchangeable: the per-run
+    single-run Fit Wizard analysis is what a fit tab shows and what a later
+    series analysis can reuse, while the completed score table is one resolution
+    and one alphabet, derived. Only the former is written back.
+    """
+    sources = {
         int(dataset.run_number): _fake_single_fit_recommendation(dataset) for dataset in datasets
     }
-    original_generated_recommendation = phase_one_recommendations[generated_run]
+    completed = {
+        int(dataset.run_number): replace(
+            _fake_single_fit_recommendation(dataset), summary="Completed score table."
+        )
+        for dataset in datasets
+    }
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
         wizard_window_module,
         "build_or_complete_single_fit_wizard_recommendations_for_global_portfolio",
-        lambda datasets_arg, **_kwargs: (
-            wizard_window_module.build_global_fit_wizard_candidate_portfolio(datasets_arg),
-            phase_one_recommendations,
-            (generated_run,),
+        lambda datasets_arg, **kwargs: _fake_screening_table(
+            datasets_arg,
+            completed,
+            sources_by_run=sources,
+            store=kwargs.get("existing_recommendations_by_run"),
+            generated=tuple(sources),
         ),
     )
 
     def _fake_build(datasets_arg, **kwargs):
         captured["single_fit"] = kwargs.get("single_fit_recommendations_by_run")
-        single_fit = kwargs.get("single_fit_recommendations_by_run")
-        if isinstance(single_fit, dict):
-            single_fit[generated_run] = replace(
-                single_fit[generated_run],
-                summary="Repaired by screening.",
-            )
+        captured["portfolio"] = kwargs.get("portfolio")
         return _fake_screening_recommendation(datasets_arg)
 
     monkeypatch.setattr(
@@ -545,9 +580,12 @@ def test_global_fit_wizard_window_emits_generated_single_fit_tables(
     wait_for(lambda: _analysis_complete(window), qapp)
 
     assert set(emitted) == {int(dataset.run_number) for dataset in datasets}
-    assert emitted[generated_run] is not original_generated_recommendation
-    assert emitted[generated_run].summary == "Repaired by screening."
-    assert captured["single_fit"] == phase_one_recommendations
+    for run_number, recommendation in emitted.items():
+        assert recommendation is sources[run_number]
+    # The screening builder is handed the completed table and the portfolio it
+    # was completed against, so it never re-runs phase 1.
+    assert captured["single_fit"] == completed
+    assert captured["portfolio"] is not None
 
 
 def test_global_fit_wizard_window_warning_info_dialog_contains_expected_text(
@@ -1027,7 +1065,7 @@ def test_cancel_current_analysis_cancels_worker_and_hides_button(
     def _phase_one(datasets_arg, **kwargs):
         # Block on the worker thread until the GUI thread has clicked Cancel.
         released.wait(timeout=5.0)
-        return (None, {}, ())
+        return _fake_screening_table(datasets_arg, {})
 
     monkeypatch.setattr(
         wizard_window_module,
@@ -1135,10 +1173,11 @@ def test_global_fit_wizard_window_overview_shows_confidence_and_caveat(
     monkeypatch.setattr(
         wizard_window_module,
         "build_or_complete_single_fit_wizard_recommendations_for_global_portfolio",
-        lambda datasets_arg, **_kwargs: (
-            wizard_window_module.build_global_fit_wizard_candidate_portfolio(datasets_arg),
+        lambda datasets_arg, **kwargs: _fake_screening_table(
+            datasets_arg,
             per_run,
-            tuple(int(dataset.run_number) for dataset in datasets_arg),
+            store=kwargs.get("existing_recommendations_by_run"),
+            generated=tuple(int(dataset.run_number) for dataset in datasets_arg),
         ),
     )
     monkeypatch.setattr(
@@ -1186,10 +1225,11 @@ def test_global_fit_wizard_window_marks_no_significant_structure_run(
     monkeypatch.setattr(
         wizard_window_module,
         "build_or_complete_single_fit_wizard_recommendations_for_global_portfolio",
-        lambda datasets_arg, **_kwargs: (
-            wizard_window_module.build_global_fit_wizard_candidate_portfolio(datasets_arg),
+        lambda datasets_arg, **kwargs: _fake_screening_table(
+            datasets_arg,
             per_run,
-            tuple(int(dataset.run_number) for dataset in datasets_arg),
+            store=kwargs.get("existing_recommendations_by_run"),
+            generated=tuple(int(dataset.run_number) for dataset in datasets_arg),
         ),
     )
     monkeypatch.setattr(

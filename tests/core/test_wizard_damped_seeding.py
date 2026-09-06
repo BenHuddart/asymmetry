@@ -43,11 +43,15 @@ from asymmetry.core.fitting.fit_wizard import (
     _damped_envelope_rate,
     _fit_with_call_limit_continuations,
     _initial_parameters_for_template,
+    _multiplet_model,
     _multiplet_seed_peaks,
     build_fit_wizard_recommendation,
     build_null_baseline_templates,
     build_oscillatory_multiplet_templates,
     fingerprint_spectrum,
+    fit_result_is_oscillatory_admissible,
+    is_oscillatory_admissible,
+    oscillatory_line_amplitude_names,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet, split_parameter_name
 from asymmetry.core.fitting.peak_detection import (
@@ -1295,3 +1299,121 @@ def test_a_prefix_template_is_seeded_from_the_same_prefix() -> None:
     )
 
     assert seeded["frequency"].value == pytest.approx(240.0)
+
+
+# --------------------------------------------------------------------------- #
+# Which parameters are the lines, and when a line has vanished
+# --------------------------------------------------------------------------- #
+
+
+def _multiplet_template(n: int, envelope: str, *, relax: bool) -> CandidateTemplate:
+    """A multiplet template of exactly one shape, built the way the wizard does."""
+    return CandidateTemplate(
+        key=f"oscillatory{n}_{'exp' if envelope == 'Exponential' else 'gaussian'}"
+        f"{'_relax' if relax else ''}_constant",
+        title="test multiplet",
+        category="Oscillatory",
+        rationale="test",
+        model=_multiplet_model(n, envelope, relax=relax),
+    )
+
+
+@pytest.mark.parametrize("envelope", ["Exponential", "Gaussian"])
+@pytest.mark.parametrize("relax", [False, True])
+@pytest.mark.parametrize(
+    ("n", "expected"),
+    [(1, ("A_1",)), (2, ("A_1", "A_3")), (3, ("A_1", "A_3", "A_5"))],
+)
+def test_the_line_amplitudes_are_the_products_that_hold_an_oscillation(
+    n: int, expected: tuple[str, ...], envelope: str, relax: bool
+) -> None:
+    """One amplitude per ``Osc × Env`` product, whatever the envelope or order.
+
+    The relaxation term is a bare leaf rather than a product, so its own
+    amplitude must never be reported as a line: that is the case the structural
+    derivation exists for, since by name alone it is indistinguishable.
+    """
+    template = _multiplet_template(n, envelope, relax=relax)
+
+    assert oscillatory_line_amplitude_names(template) == expected
+
+
+def test_the_relaxation_amplitude_is_a_parameter_but_not_a_line() -> None:
+    """Pins the trap: the relaxing shape's extra ``A`` is real, and is not a line."""
+    template = _multiplet_template(2, "Exponential", relax=True)
+
+    assert "A_5" in template.model.param_names
+    assert "A_5" not in oscillatory_line_amplitude_names(template)
+
+
+def _amplitude_fit_result(values: dict[str, float], uncertainties: dict[str, float]) -> FitResult:
+    parameters = ParameterSet([Parameter(name=name, value=value) for name, value in values.items()])
+    return FitResult(success=True, parameters=parameters, uncertainties=uncertainties)
+
+
+def test_one_significant_line_is_enough_to_stay_oscillatory() -> None:
+    """A two-line template keeps its family while either line is measured."""
+    template = _multiplet_template(2, "Exponential", relax=False)
+
+    assert is_oscillatory_admissible(
+        template,
+        {"A_1": 0.001, "A_3": 0.2},
+        {"A_1": 0.05, "A_3": 0.01},
+    )
+
+
+def test_lines_all_consistent_with_zero_are_no_longer_an_oscillation() -> None:
+    """Every amplitude inside 2 sigma: the template has decayed to its envelope."""
+    template = _multiplet_template(2, "Exponential", relax=False)
+
+    assert not is_oscillatory_admissible(
+        template,
+        {"A_1": 0.01, "A_3": -0.02},
+        {"A_1": 0.05, "A_3": 0.05},
+    )
+
+
+def test_the_bar_is_exactly_two_sigma() -> None:
+    """``|A| > 2 sigma``, strictly — the boundary itself is not significant."""
+    template = _multiplet_template(1, "Exponential", relax=False)
+
+    assert not is_oscillatory_admissible(template, {"A_1": 0.10}, {"A_1": 0.05})
+    assert is_oscillatory_admissible(template, {"A_1": 0.1001}, {"A_1": 0.05})
+
+
+def test_a_line_the_fit_could_not_constrain_is_not_significant() -> None:
+    """No uncertainty is not a small one: it is no measurement of the line at all."""
+    template = _multiplet_template(1, "Exponential", relax=False)
+
+    assert not is_oscillatory_admissible(template, {"A_1": 0.2}, {})
+    assert not is_oscillatory_admissible(template, {"A_1": 0.2}, {"A_1": float("nan")})
+    assert not is_oscillatory_admissible(template, {"A_1": 0.2}, {"A_1": 0.0})
+
+
+def test_a_significant_relaxation_cannot_rescue_a_vanished_oscillation() -> None:
+    """The relaxing shape survives on its ``Exp`` term while its line is gone.
+
+    Exactly the degeneracy the rule is about: the fit is perfectly good, and it
+    is a description of relaxation, so it must not count as oscillatory.
+    """
+    template = _multiplet_template(1, "Exponential", relax=True)
+
+    assert not is_oscillatory_admissible(
+        template,
+        {"A_1": 0.001, "A_3": 0.25},
+        {"A_1": 0.05, "A_3": 0.002},
+    )
+
+
+def test_the_rule_reads_a_fit_result_the_same_way() -> None:
+    """The :class:`FitResult` wrapper and the mapping form agree."""
+    template = _multiplet_template(2, "Exponential", relax=False)
+    vanished = _amplitude_fit_result(
+        {"A_1": 0.01, "A_3": 0.01, "A_bg": 0.0}, {"A_1": 0.05, "A_3": 0.05, "A_bg": 0.001}
+    )
+    alive = _amplitude_fit_result(
+        {"A_1": 0.2, "A_3": 0.01, "A_bg": 0.0}, {"A_1": 0.01, "A_3": 0.05, "A_bg": 0.001}
+    )
+
+    assert not fit_result_is_oscillatory_admissible(template, vanished)
+    assert fit_result_is_oscillatory_admissible(template, alive)

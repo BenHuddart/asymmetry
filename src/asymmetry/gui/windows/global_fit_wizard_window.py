@@ -28,6 +28,7 @@ needs no edits.
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass
 
 import numpy as np
@@ -67,14 +68,17 @@ from asymmetry.core.fitting.global_fit_wizard import (
     build_global_fit_wizard_recommendation,
     build_global_fit_wizard_screening_recommendation,
     build_or_complete_single_fit_wizard_recommendations_for_global_portfolio,
+    format_transition_boundaries,
     merge_global_fit_wizard_recommendations,
     rerank_global_fit_wizard_recommendation,
+    transitions_summary,
 )
 from asymmetry.core.fitting.global_search.heuristics import (
     is_amplitude_parameter,
     is_background_parameter,
     is_rate_like_parameter,
 )
+from asymmetry.core.fitting.global_search.partition import PartitionPath
 from asymmetry.core.fitting.parameters import get_param_info
 from asymmetry.core.fitting.wizard_narrative import TrailStep
 from asymmetry.core.fitting.wizard_scope import (
@@ -94,9 +98,19 @@ from asymmetry.gui.styles.widgets import (
     make_section_header,
     make_warning_banner,
 )
+from asymmetry.gui.utils.phase_colors import (
+    EXCLUDED_PHASE_HATCH_COLOR,
+    format_axis_range,
+    phase_color,
+)
 from asymmetry.gui.widgets.decision_trail import DecisionTrail
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.widgets.transitions_card import (
+    PhaseSummary,
+    TransitionRow,
+    TransitionsCard,
+)
 from asymmetry.gui.widgets.wizard_scope_selector import WizardScopeSelector
 from asymmetry.gui.widgets.wizard_series_card import (
     SeriesRunTrace,
@@ -115,6 +129,10 @@ _DEFAULT_GLOBAL_FIT_BUILDER = build_global_fit_wizard_recommendation
 _PAGE_SETUP = 0
 _PAGE_RUNNING = 1
 _PAGE_RESULT = 2
+
+#: Analysis modes whose result *adds to* the standing screening recommendation
+#: rather than replacing it (so the shortlist and the path survive the run).
+_MERGING_MODES = ("optimize", "optimize_phases")
 
 #: Progress-message prefix → running-trail step key, per analysis mode. Matched
 #: case-insensitively by prefix so the core's coarse phase messages light the
@@ -144,6 +162,34 @@ _OPTIMIZE_PROGRESS_PREFIXES: tuple[tuple[str, str], ...] = (
     ("completed heuristic coupled optimisation", "roles"),
     ("completed coupled optimisation", "roles"),
 )
+
+_OPTIMIZE_PHASES_PROGRESS_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("preparing consolidated", "prepare"),
+    ("preparing per-dataset single-fit", "prepare"),
+    ("preparing missing single-fit", "prepare"),
+    ("running phase-1 single-fit", "prepare"),
+    ("single-fit table", "prepare"),
+    ("using completed per-run single-fit", "prepare"),
+    ("series alphabet", "prepare"),
+    ("optimising", "phases"),
+    ("phase ", "phases"),
+    ("separable role search", "phases"),
+)
+
+#: The core announces the per-phase run as "Optimising N distinct phase(s) …"
+#: before it reports any individual phase, so the window can count "phase i of
+#: N" off the two messages without knowing how the core chose its N (it fits the
+#: selected solution's phases *and* the neighbours it verifies).
+_PHASE_TOTAL_ANNOUNCEMENT = re.compile(r"^optimising (\d+) distinct phase")
+_PHASE_STEP_PREFIX = "phase "
+
+
+#: Which prefix table lights the running trail, per analysis mode.
+_PROGRESS_PREFIXES_BY_MODE: dict[str, tuple[tuple[str, str], ...]] = {
+    "screening": _SCREENING_PROGRESS_PREFIXES,
+    "optimize": _OPTIMIZE_PROGRESS_PREFIXES,
+    "optimize_phases": _OPTIMIZE_PHASES_PROGRESS_PREFIXES,
+}
 
 
 @dataclass
@@ -175,6 +221,8 @@ def _run_global_fit_wizard_analysis(
     selected_template_keys: tuple[str, ...] = (),
     scope: dict | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    partition_path: PartitionPath | None = None,
+    partition_k: int | None = None,
 ) -> _GlobalAnalysisResult:
     """Run the global-fit wizard analysis off the GUI thread.
 
@@ -189,6 +237,13 @@ def _run_global_fit_wizard_analysis(
     ``effort_tier`` is the user-facing effort slider (PR 5); it only affects the
     coupled-optimisation builder (``mode == "optimize"``) — the independent
     per-run screening pass has no tier concept.
+
+    ``partition_path``/``partition_k`` carry the *Transitions* pick of the
+    ``"optimize_phases"`` mode: the same coupled-optimisation builder then runs
+    the separable role search **per phase** of that path solution (and of the
+    neighbours it verifies) instead of once across the whole series. They travel
+    together — the core refuses one without the other — and both stay ``None``
+    for every other mode.
     """
     resolved_scope = WizardScope.from_payload(scope) if scope is not None else None
 
@@ -209,26 +264,31 @@ def _run_global_fit_wizard_analysis(
     skip_implicit_phase_one = (
         (
             (mode == "screening" and screening_builder_is_custom)
-            or (mode == "optimize" and optimization_builder_is_custom)
+            or (mode in _MERGING_MODES and optimization_builder_is_custom)
         )
         and build_or_complete_single_fit_wizard_recommendations_for_global_portfolio
         is _DEFAULT_PHASE_ONE_SINGLE_FIT_HELPER
         and not existing
     )
     _raise_if_cancelled()
+    portfolio = None
     if skip_implicit_phase_one:
         single_fit_recommendations_by_run = dict(existing)
     else:
-        _portfolio, single_fit_recommendations_by_run, _generated_runs = (
-            build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
-                datasets,
-                current_model=current_model,
-                existing_recommendations_by_run=existing,
-                progress_callback=lambda message: worker.progress.emit(0, 0, message),
-                scope=resolved_scope,
-                cancel_callback=worker.is_cancelled,
-            )
+        screening_table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+            datasets,
+            current_model=current_model,
+            existing_recommendations_by_run=existing,
+            progress_callback=lambda message: worker.progress.emit(0, 0, message),
+            scope=resolved_scope,
+            cancel_callback=worker.is_cancelled,
         )
+        # ``existing`` now holds the runs' own single-run Fit Wizard analyses
+        # (what the fit tabs cache and what a later series analysis reuses); the
+        # completed table is the rectangular per-run score table the builders
+        # consume, and it travels with the portfolio it was completed against.
+        portfolio = screening_table.portfolio
+        single_fit_recommendations_by_run = screening_table.recommendations_by_run
 
     def progress_callback(message):
         return worker.progress.emit(0, 0, message)
@@ -245,6 +305,7 @@ def _run_global_fit_wizard_analysis(
             metric=metric,
             progress_callback=progress_callback,
             scope=resolved_scope,
+            portfolio=portfolio,
             cancel_callback=worker.is_cancelled,
         )
     else:
@@ -260,11 +321,14 @@ def _run_global_fit_wizard_analysis(
             selected_template_keys=selected_template_keys,
             scope=resolved_scope,
             effort_tier=effort_tier,
+            portfolio=portfolio,
             cancel_callback=worker.is_cancelled,
+            partition_path=partition_path,
+            partition_k=partition_k,
         )
     updated_single_fit_recommendations = {
         int(run_number): rec
-        for run_number, rec in single_fit_recommendations_by_run.items()
+        for run_number, rec in existing.items()
         if single_fit_recommendations_before_analysis.get(int(run_number)) is not rec
     }
     return _GlobalAnalysisResult(
@@ -278,6 +342,9 @@ class GlobalFitWizardWindow(WizardWindowBase):
     """Present a guided workflow for global-fit model recommendation."""
 
     apply_assessment_requested = Signal(object, object)
+    #: ``(recommendation, partition_k)`` — apply the optimised partition as
+    #: phase data groups, one global-fit series per phase.
+    apply_phases_requested = Signal(object, int)
     analysis_cached = Signal(object, str, object)
     parameter_setup_applied = Signal(object)
     single_fit_recommendations_generated = Signal(object)
@@ -328,6 +395,16 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._running_template_keys: set[str] = set()
         self._analysis_mode = "screening"
         self._single_fit_recommendations_by_run: dict[int, object] = {}
+        # Transitions state. ``_partition_k`` indexes the recommendation's
+        # penalty path; ``None`` is the honest answer for a series that has no
+        # path at all (fewer than two minimum-length phases fit in it), which is
+        # exactly when the Transitions card stays hidden.
+        self._partition_k: int | None = None
+        # A phase picked in the per-phase strip; ``None`` means the detail
+        # tables show the series-wide selection instead.
+        self._selected_phase_segment: int | None = None
+        self._phase_progress_seen = 0
+        self._phase_progress_total = 0
         # A Scope edit invalidates the shown results; screening must be re-run.
         self._analysis_stale = False
         # Row order of the embedded expectations table; empty when the table
@@ -551,6 +628,16 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._series_card.apply_requested.connect(self._apply_recommended_fit)
         self._series_card.selection_changed.connect(self._on_card_selection_changed)
         layout.addWidget(self._series_card)
+
+        # Transitions: the penalty path, hidden until a series long enough to
+        # partition produces one.
+        self._transitions_card = TransitionsCard()
+        self._transitions_card.setVisible(False)
+        self._transitions_card.selection_changed.connect(self._on_transition_row_changed)
+        self._transitions_card.optimize_requested.connect(self._start_phase_optimisation)
+        self._transitions_card.apply_requested.connect(self._apply_phases)
+        self._transitions_card.phase_selected.connect(self._on_phase_selected)
+        layout.addWidget(self._transitions_card)
 
         # Screening shortlist: pick candidates for coupled optimisation.
         layout.addWidget(make_section_header("Screening shortlist"))
@@ -869,7 +956,11 @@ class GlobalFitWizardWindow(WizardWindowBase):
 
     def _show_running(self) -> None:
         """Enter the Running state: stream trail placeholders for the mode."""
-        if self._analysis_mode == "optimize":
+        if self._analysis_mode == "optimize_phases":
+            self._running_header_label.setText("Optimizing each phase…")
+            self._running_trail.stream_placeholders(_optimize_phases_placeholder_steps())
+            self._running_trail.set_status("Preparing the series screening table…")
+        elif self._analysis_mode == "optimize":
             self._running_header_label.setText("Optimizing selected candidates…")
             self._running_trail.stream_placeholders(_optimize_placeholder_steps())
             self._running_trail.set_status("Preparing selected candidates…")
@@ -896,6 +987,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
             and not busy
             and not self._analysis_stale
         )
+        self._transitions_card.set_actions_enabled(not busy and not self._analysis_stale)
         # A run that ends without a populate transition (cancel, stale-orphan,
         # failure) must not leave the window parked on the Running page: land on
         # Result when a recommendation is still shown, else back on Setup.
@@ -933,6 +1025,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._running_template_keys = set()
         self._series_card.clear()
         self._series_card.set_apply_enabled(False)
+        self._transitions_card.clear()
+        self._transitions_card.setVisible(False)
+        self._partition_k = None
+        self._selected_phase_segment = None
         self._result_trail.set_steps(())
         self._apply_recommended_btn.setEnabled(False)
         self._apply_selected_btn.setEnabled(False)
@@ -1019,6 +1115,35 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._show_running()
         self._run_analysis()
 
+    def _start_phase_optimisation(self, partition_k: int) -> None:
+        """Run the coupled role search per phase of path solution *partition_k*."""
+        if self._recommendation is None or self._analysis_in_progress:
+            return
+        self._analysis_mode = "optimize_phases"
+        self._partition_k = partition_k
+        self._phase_progress_seen = 0
+        self._phase_progress_total = 0
+        solution = self._recommendation.partition_path.solutions[partition_k]
+        self._reset_log()
+        self._status_label.setText(
+            "Running the coupled global optimisation once per phase. "
+            "Progress is streamed to the live log."
+        )
+        self._append_log(
+            f"Starting per-phase coupled optimisation for the {solution.breaks}-break partition."
+        )
+        self._show_running()
+        self._run_analysis()
+
+    def _apply_phases(self, partition_k: int) -> None:
+        """Hand the optimised partition to the fit panel as phase data groups."""
+        if self._recommendation is None:
+            return
+        self.apply_phases_requested.emit(self._recommendation, int(partition_k))
+        solution = self._recommendation.partition_path.solutions[partition_k]
+        phases = sum(1 for segment in solution.segments if not segment.excluded)
+        self.statusBar().showMessage(f"Applied {phases} phases from the transitions search")
+
     def _create_worker_task(self, request_id: int):
         # Capture inputs at submit time; the closure runs on the worker thread
         # and must touch no widgets — it returns a plain _GlobalAnalysisResult.
@@ -1033,6 +1158,14 @@ class GlobalFitWizardWindow(WizardWindowBase):
         selected_keys = tuple(sorted(self._screening_selected_keys)) if mode == "optimize" else ()
         scope_payload = copy.deepcopy(self._scope_selector.current_scope())
         effort_tier = self.current_effort_tier()
+        # The path and the row index travel together — the core refuses one
+        # without the other — and only the per-phase mode has either.
+        if mode == "optimize_phases":
+            partition_path = self._recommendation.partition_path
+            partition_k = self._partition_k
+        else:
+            partition_path = None
+            partition_k = None
 
         def task(worker):
             return _run_global_fit_wizard_analysis(
@@ -1048,6 +1181,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
                 selected_template_keys=selected_keys,
                 scope=scope_payload,
                 effort_tier=effort_tier,
+                partition_path=partition_path,
+                partition_k=partition_k,
             )
 
         return task
@@ -1064,7 +1199,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self.single_fit_recommendations_generated.emit(typed_payload)
 
         recommendation = result.recommendation
-        if result.mode == "optimize" and self._recommendation is not None:
+        if result.mode in _MERGING_MODES and self._recommendation is not None:
             self._recommendation = merge_global_fit_wizard_recommendations(
                 self._recommendation,
                 recommendation,
@@ -1073,6 +1208,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
             self._recommendation = recommendation
         self._running_template_keys = set()
         self._selected_key = self._recommended_or_first_optimized_key(self._recommendation)
+        self._selected_phase_segment = None
+        self._partition_k = self._default_partition_k(self._recommendation)
         self._status_label.setText(self._recommendation.summary)
         self._metric_combo.blockSignals(True)
         self._metric_combo.setCurrentText(self._recommendation.metric.value)
@@ -1089,10 +1226,10 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._populate_from_recommendation()
 
     def _reset_result_state(self) -> None:
-        # Screening starts from a clean slate; optimize merges into the existing
-        # screening recommendation, so it keeps the current result and the
-        # running-template highlight rather than clearing them.
-        if self._analysis_mode == "optimize":
+        # Screening starts from a clean slate; both optimise modes merge into the
+        # existing screening recommendation, so they keep the current result and
+        # the running-template highlight rather than clearing them.
+        if self._analysis_mode in _MERGING_MODES:
             return
         self._set_empty_state()
 
@@ -1128,19 +1265,32 @@ class GlobalFitWizardWindow(WizardWindowBase):
         if text:
             self._append_log(text)
         lowered = text.lower()
-        prefixes = (
-            _OPTIMIZE_PROGRESS_PREFIXES
-            if self._analysis_mode == "optimize"
-            else _SCREENING_PROGRESS_PREFIXES
-        )
+        prefixes = _PROGRESS_PREFIXES_BY_MODE[self._analysis_mode]
         matched = next(
             (key for prefix, key in prefixes if lowered.startswith(prefix)),
             None,
         )
         if matched is not None:
             self._running_trail.activate_step(matched)
+        if self._analysis_mode == "optimize_phases":
+            self._update_phase_progress(lowered)
         if text:
             self._running_trail.set_status(text)
+
+    def _update_phase_progress(self, lowered: str) -> None:
+        """Count the core's per-phase messages into the "phases" step headline."""
+        announcement = _PHASE_TOTAL_ANNOUNCEMENT.match(lowered)
+        if announcement is not None:
+            self._phase_progress_total = int(announcement.group(1))
+            self._phase_progress_seen = 0
+            return
+        if not lowered.startswith(_PHASE_STEP_PREFIX):
+            return
+        self._phase_progress_seen += 1
+        self._running_trail.set_step_headline(
+            "phases",
+            f"Optimising phase {self._phase_progress_seen} of {self._phase_progress_total}…",
+        )
 
     # ------------------------------------------------------------------
     # Inline log (formerly a separate log window)
@@ -1171,6 +1321,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._recommendation = recommendation
         self._cached_signature = copy.deepcopy(signature) if isinstance(signature, dict) else None
         self._selected_key = self._recommended_or_first_optimized_key(recommendation)
+        self._selected_phase_segment = None
+        self._partition_k = self._default_partition_k(recommendation)
         self._cached_log_text = str(log_text or "")
         # Restore scope from the signature. Legacy signatures without a scope key
         # restore as Auto. Cached state is never stale. set_scope is a no-op on
@@ -1414,12 +1566,176 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._update_roles_table()
         self._update_apply_page()
         self._populate_series_card()
+        self._populate_transitions_card()
         self._populate_result_trail()
         self._stack.setCurrentIndex(_PAGE_RESULT)
         # Land at the top of the result page: a prior scroll position (or focus
         # handoff from the shortlist's Optimize button) would otherwise open the
         # page mid-card, cutting the verdict off above the viewport.
         self._result_page.verticalScrollBar().setValue(0)
+
+    # --- Transitions card adapter -------------------------------------
+
+    @staticmethod
+    def _default_partition_k(
+        recommendation: GlobalFitWizardRecommendation,
+    ) -> int | None:
+        """Which path row to select for *recommendation*, or ``None`` for no path.
+
+        An optimised recommendation names the row its per-phase verification
+        settled on (the elbow can move onto a neighbour the exact fits measured);
+        a screening-only one names the closed-form elbow.
+        """
+        path = recommendation.partition_path
+        if path is None:
+            return None
+        if recommendation.recommended_partition_k is not None:
+            return recommendation.recommended_partition_k
+        return path.selected_k
+
+    @staticmethod
+    def _excluded_note(solution) -> str:
+        """``"excluded: runs 28, 29"`` for a solution carrying end stubs."""
+        runs = [
+            int(run)
+            for segment in solution.segments
+            if segment.excluded
+            for run in segment.run_numbers
+        ]
+        if not runs:
+            return ""
+        listed = ", ".join(str(run) for run in runs)
+        return f"excluded: run {listed}" if len(runs) == 1 else f"excluded: runs {listed}"
+
+    def _transition_rows(
+        self,
+        recommendation: GlobalFitWizardRecommendation,
+    ) -> list[TransitionRow]:
+        """One card row per penalty-path solution."""
+        path = recommendation.partition_path
+        verified = {k for k, _segment_index in recommendation.phase_assessments}
+        axis_label = recommendation.series_axis_label
+        return [
+            TransitionRow(
+                breaks=solution.breaks,
+                boundaries_text=format_transition_boundaries(solution, axis_label),
+                # The top of the path has nothing to improve on, so its gain is
+                # a placeholder rather than a measured zero.
+                gain_text="" if index == 0 else f"{solution.gain:.1f}",
+                is_elbow=index == path.selected_k,
+                is_verified=index in verified,
+                excluded_note=self._excluded_note(solution),
+                summary=transitions_summary(solution, axis_label),
+            )
+            for index, solution in enumerate(path.solutions)
+        ]
+
+    def _phase_summaries(
+        self,
+        recommendation: GlobalFitWizardRecommendation,
+        partition_k: int,
+    ) -> list[PhaseSummary]:
+        """One strip entry per optimised phase of solution *partition_k*.
+
+        Empty until that solution has been optimised: tier 3 writes an assessment
+        for *every* non-excluded segment of a solution it scored, so a solution
+        either has all of them or none.
+        """
+        solution = recommendation.partition_path.solutions[partition_k]
+        by_run = {int(dataset.run_number): dataset for dataset in self._datasets}
+        summaries: list[PhaseSummary] = []
+        ordinal = 0
+        for segment_index, segment in enumerate(solution.segments):
+            if segment.excluded:
+                continue
+            assessment = recommendation.phase_assessments[(partition_k, segment_index)]
+            ordinal += 1
+            values = [
+                self._series_axis_value(by_run.get(int(run)), recommendation.series_axis_key)
+                for run in segment.run_numbers
+            ]
+            spans = [value for value in values if value is not None]
+            summaries.append(
+                PhaseSummary(
+                    segment_index=segment_index,
+                    ordinal=ordinal,
+                    color=phase_color(ordinal),
+                    range_text=(
+                        format_axis_range(min(spans), max(spans), recommendation.series_axis_key)
+                        if spans
+                        # No dataset in hand for these runs (a recommendation
+                        # restored from cache before a context arrives), so name
+                        # the runs rather than invent an axis span.
+                        else f"runs {segment.run_numbers[0]}–{segment.run_numbers[-1]}"
+                    ),
+                    template_title=assessment.template.title,
+                    roles_text=(
+                        f"Global: {', '.join(assessment.global_param_names) or 'none'} · "
+                        f"Local: {', '.join(assessment.local_param_names) or 'none'}"
+                    ),
+                    confidence_text=_phase_confidence_text(assessment),
+                )
+            )
+        return summaries
+
+    def _populate_transitions_card(self) -> None:
+        """Render the path, the selected row's phases, and the actions."""
+        recommendation = self._recommendation
+        if recommendation is None or recommendation.partition_path is None:
+            self._transitions_card.clear()
+            self._transitions_card.setVisible(False)
+            return
+        self._transitions_card.setVisible(True)
+        self._transitions_card.set_rows(self._transition_rows(recommendation), self._partition_k)
+        verified = any(k == self._partition_k for k, _ in recommendation.phase_assessments)
+        self._transitions_card.set_phases(
+            self._phase_summaries(recommendation, self._partition_k) if verified else ()
+        )
+        self._transitions_card.set_actions_enabled(
+            not self._analysis_in_progress and not self._analysis_stale
+        )
+
+    def _phase_colour_by_run(self) -> dict[int, str]:
+        """Phase colour per run for the selected path row; empty when none applies.
+
+        A break-free row is the whole series in one phase, which the card's axis
+        gradient already says better than a single flat colour would.
+        """
+        recommendation = self._recommendation
+        if recommendation is None or self._partition_k is None:
+            return {}
+        solution = recommendation.partition_path.solutions[self._partition_k]
+        if solution.breaks < 1:
+            return {}
+        colours: dict[int, str] = {}
+        ordinal = 0
+        for segment in solution.segments:
+            if segment.excluded:
+                # An excluded stub belongs to no phase, so it wears the "no
+                # phase" grey the Data Browser hatches its rows with.
+                colours.update(
+                    {int(run): EXCLUDED_PHASE_HATCH_COLOR for run in segment.run_numbers}
+                )
+                continue
+            ordinal += 1
+            colours.update({int(run): phase_color(ordinal) for run in segment.run_numbers})
+        return colours
+
+    def _on_transition_row_changed(self, index: int) -> None:
+        """A path row was picked: recolour the overlay and re-offer the actions."""
+        self._partition_k = index
+        self._selected_phase_segment = None
+        self._populate_transitions_card()
+        self._populate_series_card()
+        self._update_roles_table()
+        self._update_apply_page()
+
+    def _on_phase_selected(self, segment_index: int) -> None:
+        """Show one phase's assessment in the detail tables and the hero figure."""
+        self._selected_phase_segment = segment_index
+        self._populate_series_card()
+        self._update_roles_table()
+        self._update_apply_page()
 
     def _populate_result_trail(self) -> None:
         """Re-derive the finished trail's headlines from the recommendation.
@@ -1456,9 +1772,16 @@ class GlobalFitWizardWindow(WizardWindowBase):
 
     @staticmethod
     def _series_axis_value(dataset: MuonDataset | None, axis_key: str | None) -> float | None:
-        """The run's position along the series axis, or None when unavailable."""
+        """The run's position along the series axis, or None when unavailable.
+
+        A run-ordered series is positioned by run number, exactly as the core
+        orders it (``_axis_value``): the axis is "Run", and the run number is not
+        a metadata field to look up.
+        """
         if dataset is None or not axis_key:
             return None
+        if axis_key == "run":
+            return float(dataset.run_number)
         try:
             value = float(dataset.metadata.get(axis_key))
         except (TypeError, ValueError):
@@ -1478,6 +1801,9 @@ class GlobalFitWizardWindow(WizardWindowBase):
         """
         by_run = {int(dataset.run_number): dataset for dataset in self._datasets}
         curves = assessment.fitted_curves_by_run if assessment is not None else {}
+        # A selected partition row with at least one break replaces the axis
+        # gradient with phase identity colours (grey for an excluded stub).
+        phase_colours = self._phase_colour_by_run()
         traces: list[SeriesRunTrace] = []
         for run_number in recommendation.dataset_order:
             run_number = int(run_number)
@@ -1498,6 +1824,7 @@ class GlobalFitWizardWindow(WizardWindowBase):
                     error=np.asarray(dataset.error, dtype=float),
                     fitted_time=fitted_time,
                     fitted_curve=fitted_curve,
+                    colour=phase_colours.get(run_number),
                 )
             )
         return traces
@@ -1614,6 +1941,8 @@ class GlobalFitWizardWindow(WizardWindowBase):
         """Route a card alternative pick through the optimized-selection path."""
         if not isinstance(key, str):
             return
+        # A series-wide pick and a phase pick are alternatives, not layers.
+        self._selected_phase_segment = None
         self._selected_key = key
         self._select_row_for_key(self._optimized_table, key)
         self._update_compare_warning_text()
@@ -1875,6 +2204,12 @@ class GlobalFitWizardWindow(WizardWindowBase):
     def _selected_assessment(self) -> GlobalCandidateAssessment | None:
         if self._recommendation is None:
             return None
+        if self._selected_phase_segment is not None:
+            # A phase pick addresses a per-phase assessment, which never appears
+            # in the series-wide leaderboard the selection key indexes.
+            return self._recommendation.phase_assessments[
+                (self._partition_k, self._selected_phase_segment)
+            ]
         assessment = self._recommendation.assessment_for_key(self._selected_key)
         if assessment is not None and not assessment.prescreen_only:
             return assessment
@@ -2139,6 +2474,18 @@ class GlobalFitWizardWindow(WizardWindowBase):
         self._compare_table.blockSignals(False)
 
 
+def _phase_confidence_text(assessment: GlobalCandidateAssessment) -> str:
+    """How much to trust one phase's coupled fit, in one short phrase.
+
+    A phase whose per-run residual gates all pass and which raised no
+    ordered-series warning is the wizard's "high" tier; anything else is
+    "medium" and the reader is told to look at the warnings.
+    """
+    if assessment.residual_gate_passed:
+        return "High confidence"
+    return "Medium confidence — check the warnings"
+
+
 def _screening_placeholder_steps() -> tuple[TrailStep, ...]:
     """Pending trail headlines for a screening run (before results are known)."""
     return (
@@ -2156,6 +2503,18 @@ def _optimize_placeholder_steps() -> tuple[TrailStep, ...]:
         TrailStep("optimize", "Running coupled global optimisation…", "optimize", ()),
         TrailStep("roles", "Scoring Global/Local parameter roles…", "roles", ()),
         TrailStep("ranking", "Ranking optimized fits…", "ranking", ()),
+    )
+
+
+def _optimize_phases_placeholder_steps() -> tuple[TrailStep, ...]:
+    """Pending trail headlines for a per-phase coupled-optimisation run.
+
+    The second step's headline is rewritten to "Optimising phase i of N…" as the
+    core reports each phase, so a long run says how far through it is.
+    """
+    return (
+        TrailStep("prepare", "Preparing the series screening table…", "prepare", ()),
+        TrailStep("phases", "Optimising each phase…", "phases", ()),
     )
 
 

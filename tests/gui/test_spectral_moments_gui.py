@@ -244,11 +244,10 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 18 for the per-axis Auto/Hold ``axis_limits``
-    # block, which replaces the plot panels' x/y limit pairs, Auto flags and
-    # per-projection y cache (v17->v18). A future accidental bump must
-    # consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 18
+    # Baseline guard: bumped to 19 for nested *phase* data groups (Global Fit
+    # Wizard transitions, v18->v19). A future accidental bump must consciously
+    # update this literal.
+    assert CURRENT_SCHEMA_VERSION == 19
 
 
 def test_restore_state_tolerates_absent_moments():

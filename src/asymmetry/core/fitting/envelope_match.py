@@ -24,7 +24,10 @@ normalised over the SNR-truncated effective window; the score is the normalized
 cross-correlation at zero lag, maximised over the grid.  The monotonic detrend is
 the crux of the discrimination: a *plain* (or stretched) exponential decay — the
 dangerous smooth false-positive for the KT bank — is annihilated by it, while the
-non-monotonic KT dip and the F-mu-F oscillation survive.
+non-monotonic KT dip and the F-mu-F oscillation survive.  It is also the bank's
+whole cost — one detrend per template — so it is solved by **variable
+projection** over the single nonlinear parameter, for the whole bank at once
+(:func:`_monotonic_detrend_rows`), rather than by a nonlinear fit per template.
 
 **Significance.**  A match must clear a null threshold so that pure noise, flat
 data, and smooth relaxations never match.  The null is the distribution of the
@@ -46,6 +49,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.optimize import minimize_scalar
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.models import longitudinal_field_kubo_toyabe
@@ -69,8 +73,23 @@ _R_GRID: NDArray[np.float64] = np.round(np.arange(1.00, 1.351, 0.01), 4)
 #: Static Gaussian KT width grid (us^-1), covering typical nuclear dipolar widths.
 _DELTA_GRID: NDArray[np.float64] = np.round(np.arange(0.05, 1.501, 0.02), 4)
 
-#: Fixed decay rate for the monotonic-detrend seed (us^-1); the fit refines it.
+#: Fixed decay rate for the monotonic-veto fit's seed (us^-1); the fit refines it.
 _DETREND_LAMBDA_SEED = 0.2
+
+#: Grid points for the detrend's variable-projection sweep over ``lambda``.  The
+#: grid spans ~7-8 decades (see :func:`_detrend_lambda_grid`); 150 points is a
+#: ~13 % step, fine enough that the bracketed polish starts inside the SSE
+#: minimum's own basin.  Grid cost is shared by every row of the bank, so this
+#: is far cheaper per template than widening the per-row polish.
+_DETREND_LAMBDA_STEPS = 150
+
+#: Fastest resolvable decay, as a ``1/e`` time in sample intervals; sets the
+#: grid's upper bound (see :func:`_detrend_lambda_grid`).
+_DETREND_MIN_DECAY_SAMPLES = 4.0
+
+#: Relative tolerance for the per-row ``lambda`` polish.  The bracket's own lower
+#: end sets the scale, so this is a relative tolerance on a positive rate.
+_DETREND_LAMBDA_XATOL = 1e-6
 
 #: Templates whose in-window variance (before normalisation) is below this share
 #: of the bank's peak variance are degenerate (near-flat over the window) and are
@@ -102,10 +121,72 @@ class _Bank:
     matrix: NDArray[np.float64]  # (n_rows, n_win) normalised templates
 
 
-def _monotonic_detrend(
-    t: NDArray[np.float64], y: NDArray[np.float64], weights: NDArray[np.float64]
+def _detrend_lambda_grid(tau: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Geometric ``lambda`` grid spanning everything the window can distinguish.
+
+    Both ends are set by the window ``tau = t - t[0]`` — its span ``T`` at the
+    slow end, its sample spacing at the fast end — so the grid covers every rate
+    the data can tell apart and nothing beyond:
+
+    * **Slow end**, ``lambda_min = 2e-5 / T``.  Over the window
+      ``e^{-lambda tau}`` then departs from the straight line ``1 - lambda tau``
+      by under ``lambda T / 2 = 1e-5`` of the linear term.  That straight line is
+      the model's own ``lambda -> 0`` limit (``A -> inf`` at fixed ``A lambda``),
+      which an unbounded amplitude reaches, so a smaller ``lambda`` buys no
+      residual the grid cannot already represent.
+    * **Fast end**, ``lambda_max = (n - 1) / (4 T)``, i.e. a ``1/e`` time of four
+      sample intervals.  A faster exponential is gone before the record has
+      sampled it and its rate is no longer identifiable — only how much of the
+      first bin it removes, which every larger ``lambda`` does equally.
+
+    The spacing is geometric because the weighted SSE varies slowly in
+    ``log lambda``; the per-row bracketed polish resolves within a step.
+    ``lambda`` stays strictly positive by construction: a *growing* exponential
+    is not a monotonic-relaxation detrend, and admitting one would let the
+    detrend absorb the rising side of a KT recovery.
+    """
+    span = max(float(tau[-1] - tau[0]), _EPS)
+    fastest = float(tau.size - 1) / (_DETREND_MIN_DECAY_SAMPLES * span)
+    return np.geomspace(2e-5 / span, fastest, _DETREND_LAMBDA_STEPS)
+
+
+def _detrend_explained(
+    tau: NDArray[np.float64],
+    weights: NDArray[np.float64],
+    weight_sum: float,
+    rows: NDArray[np.float64],
+    lam: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], float]:
+    """Variable-projection quantities for one ``lambda``, for every row at once.
+
+    For fixed ``lambda`` the model ``A e^{-lambda tau} + c`` is *linear* in
+    ``(A, c)``, so the inner solve is weighted linear least squares.  Writing
+    ``e = e^{-lambda tau}`` and ``f = e - <e>_w`` (the weighted mean removed)
+    makes the two design columns ``f`` and ``1`` weight-orthogonal, which turns
+    the 2x2 normal equations into two independent scalars and — unlike the raw
+    ``[e, 1]`` normal equations, whose determinant vanishes as ``lambda -> 0`` —
+    stays well conditioned at the flat end of the grid.  The constant column
+    then contributes the row's own weighted mean, and the amplitude is
+    ``A = (f . w y) / (f . w f)``.
+
+    Returns ``(amplitude, explained, f)`` where ``explained`` is the weighted
+    sum of squares the exponential removes *beyond* the weighted mean; the
+    weighted SSE is ``sum_w (y - <y>_w)^2 - explained``, and that first term does
+    not depend on ``lambda``, so maximising ``explained`` minimises the SSE.
+    """
+    e = np.exp(-lam * tau)
+    f = e - float(np.dot(weights, e) / weight_sum)
+    wf = weights * f
+    f_norm = float(np.dot(f, wf))
+    projection = rows @ wf
+    amplitude = projection / f_norm
+    return amplitude, projection * amplitude, f
+
+
+def _monotonic_detrend_rows(
+    t: NDArray[np.float64], rows: NDArray[np.float64], weights: NDArray[np.float64]
 ) -> NDArray[np.float64]:
-    """Return ``y`` minus its best weighted ``A e^{-lambda t} + c`` fit.
+    """Return each row of ``rows`` minus its best weighted ``A e^{-lambda t} + c``.
 
     A single monotonic exponential (plus constant) is removed so that a plain
     relaxation collapses to ~zero residual, while the non-monotonic KT
@@ -114,31 +195,62 @@ def _monotonic_detrend(
     Gaussian, so a beta -> 2 detrend absorbs genuine KT signal and kills the
     true positive.  Stretched/compressed relaxations that survive this fixed
     exponential are instead rejected by the monotonic veto in
-    :func:`match_envelope_banks` (see ``_monotonic_model_sse``).  The fit is
-    nonlinear but runs once per signal and once per template (templates are
-    cached), so it is off the per-call hot path.  A failed/ill-conditioned fit
-    falls back to weighted-mean subtraction.
+    :func:`match_envelope_banks` (see ``_monotonic_model_sse``).
+
+    Only ``lambda`` is nonlinear, so this is solved by **variable projection**
+    rather than by a general nonlinear fit per row: sweep the
+    :func:`_detrend_lambda_grid`, solving all ``m`` rows at once per grid point
+    (the exponential, its weighted mean and its norm are shared by the whole
+    bank — only one matrix-vector product depends on the rows), take each row's
+    best grid point, then polish that row's ``lambda`` inside its grid-neighbour
+    bracket.  Every step is a closed-form linear solve
+    with a strictly positive normalisation, so there is no search to fail: a
+    degenerate row simply yields a degenerate detrend, which the template
+    variance floor in :func:`_build_bank` drops.
+
+    The exponential is evaluated on elapsed time ``t - t[0]`` rather than ``t``.
+    That is the same two-dimensional model space (the shift is absorbed by
+    ``A``) but keeps ``e^{-lambda tau}`` in ``(0, 1]`` for conditioning.
     """
-    import warnings
+    tau = t - t[0]
+    weight_sum = float(np.sum(weights))
+    row_means = (rows @ weights) / weight_sum
+    centred = rows - row_means[:, None]
 
-    from scipy.optimize import OptimizeWarning, curve_fit
+    grid = _detrend_lambda_grid(tau)
+    explained_by_lambda = np.empty((grid.size, rows.shape[0]), dtype=float)
+    for index, lam in enumerate(grid):
+        _amplitude, explained, _f = _detrend_explained(tau, weights, weight_sum, centred, lam)
+        explained_by_lambda[index] = explained
+    best = np.argmax(explained_by_lambda, axis=0)
 
-    def _model(tt: NDArray[np.float64], amp: float, lam: float, base: float) -> NDArray[np.float64]:
-        # Clip the exponent so the least-squares search never overflows exploring
-        # large negative lambda (a growing exponential); the fit stays bounded.
-        return amp * np.exp(np.clip(-lam * tt, -700.0, 700.0)) + base
+    # Polish each row's lambda inside the bracket its grid neighbours define.
+    # The objective is smooth and unimodal there (the grid step is fine compared
+    # with the width of the SSE minimum), so a handful of cheap 2x2 solves lands
+    # on the same optimum a nonlinear fit would reach.
+    lower = grid[np.maximum(best - 1, 0)]
+    upper = grid[np.minimum(best + 1, grid.size - 1)]
+    detrended = np.empty_like(centred)
+    for row_index in range(centred.shape[0]):
+        row = centred[row_index : row_index + 1]
 
-    sigma = 1.0 / np.sqrt(np.clip(weights, _EPS, None))
-    p0 = [float(y[0] - y[-1]), _DETREND_LAMBDA_SEED, float(y[-1])]
-    try:
-        with warnings.catch_warnings():
-            # Near-flat data (a genuine null) leaves the covariance unestimable;
-            # the fit still yields the best monotonic curve, which is all we need.
-            warnings.simplefilter("ignore", OptimizeWarning)
-            popt, _ = curve_fit(_model, t, y, p0=p0, sigma=sigma, maxfev=2000)
-        return y - _model(t, *popt)
-    except Exception:
-        return y - float(np.average(y, weights=weights))
+        def _negative_explained(lam: float, row: NDArray[np.float64] = row) -> float:
+            _amplitude, explained, _f = _detrend_explained(
+                tau, weights, weight_sum, row, float(lam)
+            )
+            return -float(explained[0])
+
+        result = minimize_scalar(
+            _negative_explained,
+            bounds=(float(lower[row_index]), float(upper[row_index])),
+            method="bounded",
+            options={"xatol": _DETREND_LAMBDA_XATOL * float(lower[row_index])},
+        )
+        amplitude, _explained, f = _detrend_explained(
+            tau, weights, weight_sum, row, float(result.x)
+        )
+        detrended[row_index] = row[0] - amplitude[0] * f
+    return detrended
 
 
 def _monotonic_model_sse(
@@ -245,15 +357,11 @@ def _build_bank(
     weights: NDArray[np.float64],
 ) -> _Bank:
     """Detrend + normalise every grid template, dropping degenerate ones."""
-    detrended: list[NDArray[np.float64]] = []
-    variances: list[float] = []
-    for param in grid:
-        raw = _template_values(kind, t, float(param))
-        dt = _monotonic_detrend(t, raw, weights)
-        detrended.append(dt)
-        variances.append(float(np.var(dt)))
+    raw = np.asarray([_template_values(kind, t, float(param)) for param in grid], dtype=float)
+    detrended = _monotonic_detrend_rows(t, raw, weights)
+    variances = np.var(detrended, axis=1)
 
-    peak_var = max(variances) if variances else 0.0
+    peak_var = float(np.max(variances)) if variances.size else 0.0
     floor = _TEMPLATE_VARIANCE_FLOOR * peak_var
     rows: list[NDArray[np.float64]] = []
     params: list[float] = []
@@ -421,7 +529,7 @@ def match_envelope_banks(
     signal = y - tail
     weights = 1.0 / np.clip(err, _EPS, None) ** 2
 
-    signal_detrended = _monotonic_detrend(t, signal, weights)
+    signal_detrended = _monotonic_detrend_rows(t, signal[None, :], weights)[0]
     signal_normed = _normalise(signal_detrended, weights)
     if signal_normed is None:
         return ()

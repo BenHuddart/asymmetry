@@ -215,6 +215,7 @@ from asymmetry.core.representation.global_fit_study import (
     compute_group_input_digest,
     study_from_legacy_cross_group_payload,
 )
+from asymmetry.core.representation.group import PhaseSpec, phase_group_name
 from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.core.transform import (
     ASYMMETRY_PERCENT,
@@ -263,7 +264,7 @@ from asymmetry.gui.panels.fit_panel import (
     BATCH_SEEDING_TOOLTIP,
     FitPanel,
 )
-from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
+from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, PhaseDecoration
 from asymmetry.gui.panels.fourier_panel import FourierPanel
 from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.maxent_panel import MaxEntPanel
@@ -285,6 +286,7 @@ from asymmetry.gui.ui_manager import (
 )
 from asymmetry.gui.utils.gle_editor import close_all_gle_editors, launch_gle_editor
 from asymmetry.gui.utils.memory import settle_memory
+from asymmetry.gui.utils.phase_colors import phase_color
 from asymmetry.gui.utils.profile_colors import next_profile_color, used_profile_colors
 from asymmetry.gui.utils.reduction_cache import ReductionCache
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
@@ -348,6 +350,20 @@ def _safe_float(value: object) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if np.isfinite(result) else None
+
+
+def _phase_reduced_chi_squared_text(assessment) -> str:
+    """``"χ²ᵣ 1.03"`` for one phase's coupled fit, pooled over its runs.
+
+    A coupled fit is one problem across the phase's datasets, so the honest
+    single number is the pooled Σχ² / Σdof rather than a mean of per-run ratios.
+    """
+    results = list(assessment.fit_results_by_run.values())
+    total_chi2 = sum(float(result.chi_squared) for result in results)
+    total_dof = sum(int(result.dof) for result in results)
+    if total_dof <= 0:
+        return "χ²ᵣ n/a"
+    return f"χ²ᵣ {total_chi2 / total_dof:.2f}"
 
 
 def _normalise_source_path(path: str) -> str:
@@ -1880,6 +1896,7 @@ class MainWindow(QMainWindow):
             )
         if hasattr(self._data_browser, "ungroup_requested"):
             self._data_browser.ungroup_requested.connect(self._on_ungroup_requested)
+        self._data_browser.remove_phases_requested.connect(self._on_remove_phases_requested)
         if hasattr(self._data_browser, "group_membership_changed"):
             self._data_browser.group_membership_changed.connect(self._on_group_membership_changed)
         if hasattr(self._data_browser, "extra_columns_changed"):
@@ -1984,6 +2001,7 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_panel, "global_fit_started"):
             self._fit_panel.global_fit_started.connect(self._on_global_fit_started)
         self._fit_panel.global_fit_completed.connect(self._on_global_fit_completed)
+        self._fit_panel.apply_wizard_phases_requested.connect(self._on_apply_wizard_phases)
         if hasattr(self._fit_panel, "batch_seeding_mode_changed"):
             self._fit_panel.batch_seeding_mode_changed.connect(self._sync_batch_seeding_menu)
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
@@ -10765,15 +10783,35 @@ class MainWindow(QMainWindow):
         # Group-bound series whose live membership diverged from the last fit (D1):
         # surfaced on the series pill, cleared automatically on the next re-run.
         stale_ids: set[str] = set()
+        # Series bound to a phase group (Global Fit Wizard transitions, D1/D4):
+        # the panel's swatch/plot-colour/range-band decoration. A series whose
+        # group is not a phase — including one with no group at all — is
+        # simply absent from the map, which the panel reads as "plain series"
+        # (``phase=None``); there is no separate "not a phase" sentinel to guard.
+        phase_by_id: dict[str, PhaseDecoration] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
                 continue
             batch_id = series.batch_id
-            if series.group_id is not None and series.is_stale(
+            group = (
                 self._project_model.data_group(series.group_id)
-            ):
+                if series.group_id is not None
+                else None
+            )
+            if series.group_id is not None and series.is_stale(group):
                 stale_ids.add(batch_id)
+            if group is not None and group.is_phase and group.phase_range is not None:
+                phase_by_id[batch_id] = PhaseDecoration(
+                    color=group.phase_color or phase_color(group.phase_ordinal),
+                    color_dark=phase_color(group.phase_ordinal, dark=True),
+                    ordinal=group.phase_ordinal,
+                    name=group.name,
+                    axis_key=group.order_key,
+                    range=group.phase_range,
+                    lower=group.phase_boundaries["lower"],
+                    upper=group.phase_boundaries["upper"],
+                )
             # `label or fallback` (not display_name(fallback)) so the fallback —
             # a source-run walk + browser group lookup — is skipped for the common
             # renamed-chip case on this per-refresh loop.
@@ -10805,6 +10843,7 @@ class MainWindow(QMainWindow):
                 knight_observables_by_id=knight_observables_by_id,
                 fraction_weights_by_id=fraction_weights_by_id,
                 stale_ids=stale_ids,
+                phase_by_id=phase_by_id,
             )
             refreshed = True
 
@@ -12075,6 +12114,136 @@ class MainWindow(QMainWindow):
                 return gid
         return None
 
+    # ── Global Fit Wizard: transitions → phase groups (D3) ───────────────────
+
+    def _on_apply_wizard_phases(self, recommendation, partition_k: int) -> None:
+        """Turn the wizard's optimised partition into phase groups and their series.
+
+        The series group comes from the ordinary batch-group policy
+        (:meth:`_resolve_batch_group`: the bound group, else the group every run
+        already shares, else an auto-group), the phases nest under it
+        (:meth:`ProjectModel.create_phase_groups`), and each phase's global fit
+        is then applied through the Batch tab with that phase's group bound — so
+        the existing ``global_fit_completed`` seam records one
+        :class:`FitSeries` per phase with no phase concept of its own. Runs no
+        phase claimed stay members of the parent alone.
+
+        The Batch tab's dataset list is snapshotted first and restored after the
+        group work: minting an auto-group and re-rendering the browser both
+        rebuild its table, and a rebuilt table publishes an empty selection,
+        which would otherwise leave the per-phase applies with no datasets to
+        read the fitted values from.
+        """
+        series_datasets = self._fit_panel.batch_datasets()
+        solution = recommendation.partition_path.solutions[int(partition_k)]
+        axis_key = recommendation.series_axis_key
+        series_runs = sorted(
+            int(run) for segment in solution.segments for run in segment.run_numbers
+        )
+        parent_id = self._series_group_for_phases(series_runs)
+        if parent_id is None:
+            # _resolve_batch_group refuses when the browser cannot mint a group
+            # (fewer than two fittable runs). Nothing to nest phases under.
+            self.statusBar().showMessage(
+                "No data group could be created for the series — phases were not applied."
+            )
+            return
+        parent = self._project_model.data_group(parent_id)
+        # The phase ranges and boundaries are read on the wizard's own sweep
+        # axis, so the owning group must trend along it too (an auto-group is
+        # minted "field" by default, which would mislabel a temperature scan).
+        parent.order_key = axis_key
+
+        provenance_base = {
+            "found_at": self._fit_record_timestamp(),
+            "selected_breaks": int(solution.breaks),
+            "gains": [
+                float(recommendation.partition_path.solutions[index].gain)
+                for index in range(1, int(partition_k) + 1)
+            ],
+            "axis_key": axis_key,
+        }
+        specs: list[PhaseSpec] = []
+        assessments = []
+        ordinal = 0
+        last_index = len(solution.segments) - 1
+        for segment_index, segment in enumerate(solution.segments):
+            if segment.excluded:
+                continue
+            assessment = recommendation.phase_assessments[(int(partition_k), segment_index)]
+            ordinal += 1
+            members = tuple(int(run) for run in segment.run_numbers)
+            axis_values = [self._series_axis_position(run, axis_key) for run in members]
+            spans = [value for value in axis_values if value is not None]
+            specs.append(
+                PhaseSpec(
+                    ordinal=ordinal,
+                    name=phase_group_name(ordinal),
+                    member_run_numbers=members,
+                    phase_range=(min(spans), max(spans)) if spans else None,
+                    phase_boundaries={
+                        "lower": (
+                            solution.boundaries[segment_index - 1] if segment_index > 0 else None
+                        ),
+                        "upper": (
+                            solution.boundaries[segment_index]
+                            if segment_index < last_index
+                            else None
+                        ),
+                    },
+                    phase_color=phase_color(ordinal),
+                    phase_provenance={
+                        **provenance_base,
+                        "model_title": assessment.template.title,
+                        "confidence": ("high" if assessment.residual_gate_passed else "medium"),
+                        "shared_parameters": list(assessment.global_param_names),
+                        "fit_state": "converged",
+                        "reduced_chi_squared": _phase_reduced_chi_squared_text(assessment),
+                    },
+                )
+            )
+            assessments.append(assessment)
+
+        phase_ids = self._project_model.create_phase_groups(parent_id, specs)
+        self._data_browser.sync_groups_from_project_model()
+        self._fit_panel.set_datasets(series_datasets)
+        self._fit_panel.apply_wizard_phase_assessments(
+            recommendation,
+            [
+                (group_id, spec.name, assessment)
+                for group_id, spec, assessment in zip(phase_ids, specs, assessments, strict=True)
+            ],
+        )
+        self._mark_dirty()
+        self.statusBar().showMessage(
+            f"Applied {len(specs)} phases under {parent.name} ({solution.breaks} transition(s))."
+        )
+
+    def _series_group_for_phases(self, series_runs) -> str | None:
+        """The group a partition's phases nest under.
+
+        A phase can never be its own parent, so a Batch tab left bound to a phase
+        by an earlier apply resolves to that phase's *parent* — re-applying a
+        partition re-partitions the same series rather than nesting phases inside
+        Phase I. With no phase binding this is the ordinary batch-group policy.
+        """
+        bound_id = self._fit_panel.bound_group_id()
+        bound = self._project_model.data_group(bound_id) if bound_id else None
+        if bound is not None and bound.is_phase:
+            return bound.parent_group_id
+        return self._resolve_batch_group(series_runs)
+
+    def _series_axis_position(self, run_number: int, axis_key: str) -> float | None:
+        """A run's position on the wizard's sweep axis, or ``None`` when unknown.
+
+        Mirrors the core's ordering rule: a run-ordered series is positioned by
+        run number, a field/temperature one by the coordinate the browser
+        displays (so a logged-temperature series lands on its true abscissa).
+        """
+        if axis_key == "run":
+            return float(run_number)
+        return self._dataset_trend_coords(int(run_number)).get(axis_key)
+
     def _series_exclusions_for_group(self, group_id: str | None, fitted_runs) -> list[int]:
         """Return the runs a group-bound series excludes: group members − fitted (D1).
 
@@ -12212,7 +12381,8 @@ class MainWindow(QMainWindow):
         fit-panel / plot state (the FitSlot pointers are already cleared by
         ``remove_data_group``).
         """
-        owned = self._project_model.series_for_group(group_id)
+        phases = self._project_model.phase_groups_for(group_id)
+        owned = self._series_owned_through_cascade(group_id)
         if not owned:
             self._data_browser.ungroup(group_id)
             return
@@ -12221,7 +12391,13 @@ class MainWindow(QMainWindow):
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Question)
         box.setWindowTitle("Ungroup")
-        box.setText(f"Group '{group_name}' has {len(owned)} recorded fit series.")
+        text = f"Group '{group_name}' has {len(owned)} recorded fit series."
+        if phases:
+            # Dissolving a partitioned series takes its phases with it (D1's
+            # cascade), so the phases' own fits are part of this decision — say
+            # so before the user picks keep-or-delete.
+            text = f"{text} Its {len(phases)} phases and their fits are dissolved with it."
+        box.setText(text)
         box.setInformativeText(
             "Keep the fits as standalone (frozen) series, or delete them along with the group?"
         )
@@ -12234,20 +12410,82 @@ class MainWindow(QMainWindow):
         if clicked is cancel_btn:
             return
         if clicked is delete_btn:
-            # Capture each series' cleanup payload before deletion clears it.
-            cleanup: list[tuple[str, list[int]]] = []
-            for series in owned:
-                if series.member_kind == "groups":
-                    runs = list(series.member_source_run.values())
-                else:
-                    runs = list(series.member_run_numbers)
-                cleanup.append((series.batch_id, runs))
+            cleanup = self._series_cleanup_payloads(owned)
             self._data_browser.ungroup(group_id, orphan_series=False)
             for batch_id, runs in cleanup:
                 self._on_fit_parameters_group_fits_deleted(batch_id, runs)
             self._refresh_trend_panel()
         else:  # Keep fits
             self._data_browser.ungroup(group_id, orphan_series=True)
+
+    def _series_owned_through_cascade(self, group_id: str) -> list:
+        """Series disposed of when *group_id* is removed: its own plus its phases'.
+
+        ``ProjectModel.remove_data_group`` cascades into the group's phases with
+        the same keep/delete choice (D1), so the prompt has to account for every
+        series that choice reaches — not just the ones bound to the group itself.
+        """
+        owned = list(self._project_model.series_for_group(group_id))
+        for phase in self._project_model.phase_groups_for(group_id):
+            owned.extend(self._project_model.series_for_group(phase.group_id))
+        return owned
+
+    @staticmethod
+    def _series_cleanup_payloads(owned: list) -> list[tuple[str, list[int]]]:
+        """Capture each series' ``(batch_id, runs)`` before deletion clears it."""
+        cleanup: list[tuple[str, list[int]]] = []
+        for series in owned:
+            if series.member_kind == "groups":
+                runs = list(series.member_source_run.values())
+            else:
+                runs = list(series.member_run_numbers)
+            cleanup.append((series.batch_id, runs))
+        return cleanup
+
+    def _on_remove_phases_requested(self, parent_id: str) -> None:
+        """Prompt for the disposition of the phases' fits, then un-partition (D2).
+
+        "Ungroup" on a phase sub-header dissolves the whole partition, leaving
+        the series group itself intact — so the choice here is only about the
+        per-phase global-fit series, and it is the same keep-or-delete decision
+        the plain Ungroup offers.
+        """
+        phases = self._project_model.phase_groups_for(parent_id)
+        owned = [
+            series
+            for phase in phases
+            for series in self._project_model.series_for_group(phase.group_id)
+        ]
+        if not owned:
+            self._data_browser.remove_phases(parent_id)
+            return
+
+        group_name = self._data_group_name(parent_id) or parent_id
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Ungroup phases")
+        box.setText(
+            f"The {len(phases)} phases of '{group_name}' have {len(owned)} recorded fit series."
+        )
+        box.setInformativeText(
+            "Keep the fits as standalone (frozen) series, or delete them along with the phases?"
+        )
+        keep_btn = box.addButton("Keep fits", QMessageBox.ButtonRole.AcceptRole)
+        delete_btn = box.addButton("Delete fits", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(keep_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel_btn:
+            return
+        if clicked is delete_btn:
+            cleanup = self._series_cleanup_payloads(owned)
+            self._data_browser.remove_phases(parent_id, orphan_series=False)
+            for batch_id, runs in cleanup:
+                self._on_fit_parameters_group_fits_deleted(batch_id, runs)
+            self._refresh_trend_panel()
+        else:  # Keep fits
+            self._data_browser.remove_phases(parent_id, orphan_series=True)
 
     def _series_fallback_name(self, series) -> str:
         """Default display label for a series the user hasn't renamed.

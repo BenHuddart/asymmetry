@@ -15,14 +15,30 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Sequence
 
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.container import DatasetRepresentations
-from asymmetry.core.representation.group import DataGroup
+from asymmetry.core.representation.group import DataGroup, PhaseSpec
 from asymmetry.core.representation.naming import default_series_label
 from asymmetry.core.representation.series import FitSeries, canonical_model_matches
+
+
+def _axis_value(run_number: int, order_key: str, runs_by_number: dict[int, Run]) -> float:
+    """The sweep-axis value of *run_number* under *order_key* (mirrors ``FitSeries.sort_members``).
+
+    Falls back to the run number itself for ``order_key == "run"`` or when the
+    run's metadata is not supplied — the same fallback ``FitSeries.sort_members``
+    uses, so a phase's axis ordering agrees with its owning series'.
+    """
+    if order_key == "run":
+        return float(run_number)
+    run = runs_by_number.get(run_number)
+    if run is None:
+        return float(run_number)
+    return float(run.field if order_key == "field" else run.temperature)
 
 
 def _series_signature(series: FitSeries) -> tuple:
@@ -160,6 +176,7 @@ class ProjectModel:
         kind: str = "user",
         group_id: str | None = None,
         order_key: str = "run",
+        parent_group_id: str | None = None,
     ) -> DataGroup:
         """Create, register, and return a new :class:`DataGroup`.
 
@@ -167,6 +184,13 @@ class ProjectModel:
         ``"user"`` (default) or ``"auto"`` (an auto-group minted for an ad-hoc
         batch selection). Multi-group membership is permitted, so this does
         **not** strip *member_run_numbers* from any other group.
+
+        *parent_group_id* recreates a group that was already a phase — the
+        Data Browser's ``sync_groups_from_project_model`` legacy-seed
+        reconstruction is the only caller that passes it; a fresh partition
+        goes through :meth:`create_phase_groups` instead, which also fills in
+        the ordinal/range/boundaries/colour/provenance this generic
+        constructor leaves at their "not yet known" defaults.
         """
         gid = str(group_id) if group_id else str(uuid.uuid4())
         group = DataGroup(
@@ -175,6 +199,7 @@ class ProjectModel:
             member_run_numbers=member_run_numbers,
             order_key=order_key,
             kind=kind,
+            parent_group_id=parent_group_id,
         )
         self.data_groups[gid] = group
         return group
@@ -215,11 +240,18 @@ class ProjectModel:
         selection (D3) rather than proliferating near-duplicate auto-groups. The
         comparison is set-based (order-insensitive); only ``"auto"`` groups are
         candidates — a user group with the same members is never silently
-        reused.
+        reused. A phase group is never returned: it is always ``kind="user"``
+        (:meth:`create_phase_groups`), so this exclusion is redundant in
+        practice, but it documents the invariant an ad-hoc batch selection must
+        never resolve to a structural phase.
         """
         target = {int(r) for r in (member_run_numbers or [])}
         for group in self.data_groups.values():
-            if group.kind == "auto" and set(group.member_run_numbers) == target:
+            if (
+                group.kind == "auto"
+                and not group.is_phase
+                and set(group.member_run_numbers) == target
+            ):
                 return group
         return None
 
@@ -241,12 +273,21 @@ class ProjectModel:
           ``FitSlot`` pointers) and return the removed ``batch_id``\\ s so a GUI
           caller can clean up any further pointers it holds.
 
+        Any phase groups nested under *group_id* (:meth:`phase_groups_for`) are
+        removed first, recursively, with the *same* ``orphan_series`` choice —
+        a series group's disposal must not leave its phases dangling, and the
+        choice of "keep the fits" vs. "delete the fits" is one decision for the
+        whole series, not one the caller re-makes per phase.
+
         Groups with no series behave identically under either flag (nothing to
         dispose). Unknown *group_id* removes nothing and returns ``[]``.
         """
         group = self.data_groups.pop(str(group_id), None)
         if group is None:
             return []
+        removed: list[str] = []
+        for phase in self.phase_groups_for(group_id):
+            removed.extend(self.remove_data_group(phase.group_id, orphan_series=orphan_series))
         owned = self.series_for_group(group_id)
         if orphan_series:
             for series in owned:
@@ -261,8 +302,7 @@ class ProjectModel:
                     if series.last_fitted_members:
                         series.member_run_numbers = list(series.last_fitted_members)
                     series.group_id = None
-            return []
-        removed: list[str] = []
+            return removed
         for series in owned:
             if self.remove_batch(series.batch_id, refresh=False) is not None:
                 removed.append(series.batch_id)
@@ -286,6 +326,189 @@ class ProjectModel:
             if batch.group_id == group_id
             or (batch.group_id is None and batch.source_group_id == group_id)
         ]
+
+    # ── phase groups (Global Fit Wizard transitions, D1) ────────────────────
+
+    def phase_groups_for(self, parent_id: str) -> list[DataGroup]:
+        """Return the phase groups nested under *parent_id*, in ordinal order."""
+        parent_id = str(parent_id)
+        return sorted(
+            (g for g in self.data_groups.values() if g.parent_group_id == parent_id),
+            key=lambda g: g.phase_ordinal if g.phase_ordinal is not None else 0,
+        )
+
+    def excluded_runs_for(self, parent_id: str) -> list[int]:
+        """Return the parent's members claimed by none of its phases.
+
+        Preserves the parent's own member order. Unknown *parent_id* has no
+        members to exclude and returns ``[]``.
+        """
+        parent = self.data_groups.get(str(parent_id))
+        if parent is None:
+            return []
+        claimed: set[int] = set()
+        for phase in self.phase_groups_for(parent_id):
+            claimed.update(phase.member_run_numbers)
+        return [r for r in parent.member_run_numbers if r not in claimed]
+
+    def create_phase_groups(self, parent_id: str, phases: Sequence[PhaseSpec]) -> list[str]:
+        """Partition the group *parent_id* into phase groups, replacing any existing ones.
+
+        Each :class:`~asymmetry.core.representation.group.PhaseSpec` becomes a
+        new :class:`DataGroup` nested under *parent_id*
+        (``parent_group_id=parent_id``). *phases* must together describe a
+        genuine partition of a *subset* of the parent's members: every run a
+        phase names must also be a member of the parent, and no run number may
+        appear in more than one phase (a run in no phase is allowed — it reads
+        back from :meth:`excluded_runs_for`). Both violations raise
+        ``ValueError`` before any group is created or removed.
+
+        Any phase groups the parent already owns are removed first, cascading
+        their series with ``orphan_series=False`` — i.e. **deleted**, not
+        frozen. A re-partition replaces the previous phases outright: freezing
+        the old phases' fits as standalone legacy analyses named after phases
+        that no longer exist (e.g. a stale "Phase II" group once the break
+        count changes) would only confuse the project, and the wizard that
+        calls this always re-fits the new phases from scratch.
+
+        Returns the new phase groups' ids, in ordinal order.
+        """
+        parent = self.data_groups.get(str(parent_id))
+        if parent is None:
+            raise ValueError(f"Unknown parent group id: {parent_id!r}")
+
+        parent_members = set(parent.member_run_numbers)
+        claimed: set[int] = set()
+        for phase in phases:
+            members = {int(r) for r in phase.member_run_numbers}
+            outside = members - parent_members
+            if outside:
+                raise ValueError(
+                    f"Phase {phase.ordinal} ({phase.name!r}) names members outside "
+                    f"parent group {parent_id!r}: {sorted(outside)}"
+                )
+            overlap = members & claimed
+            if overlap:
+                raise ValueError(
+                    f"Phase {phase.ordinal} ({phase.name!r}) overlaps an earlier "
+                    f"phase: {sorted(overlap)}"
+                )
+            claimed |= members
+
+        for existing in self.phase_groups_for(parent_id):
+            self.remove_data_group(existing.group_id, orphan_series=False)
+
+        new_ids: list[str] = []
+        for phase in sorted(phases, key=lambda p: p.ordinal):
+            # Members keep the parent's order — the sweep-axis order the series
+            # was built in — not numeric run order, which need not follow the
+            # axis at all.
+            members = {int(r) for r in phase.member_run_numbers}
+            group = DataGroup(
+                group_id=str(uuid.uuid4()),
+                name=phase.name,
+                member_run_numbers=[r for r in parent.member_run_numbers if r in members],
+                order_key=parent.order_key,
+                kind="user",
+                parent_group_id=str(parent_id),
+                phase_ordinal=phase.ordinal,
+                phase_range=phase.phase_range,
+                phase_boundaries=phase.phase_boundaries,
+                phase_color=phase.phase_color,
+                phase_provenance=phase.phase_provenance,
+            )
+            self.add_data_group(group)
+            new_ids.append(group.group_id)
+        return new_ids
+
+    def remove_phase_groups(self, parent_id: str, *, orphan_series: bool) -> list[str]:
+        """Dissolve every phase of *parent_id*, leaving the parent group intact.
+
+        The un-partitioning counterpart of :meth:`create_phase_groups`: the
+        parent keeps all of its members (a phase's members were always a subset
+        of the parent's, so nothing is lost), and each phase's own series is
+        disposed of per *orphan_series* exactly as :meth:`remove_data_group`
+        defines it — ``True`` freezes them into standalone legacy analyses,
+        ``False`` deletes them and returns the removed ``batch_id``\\ s.
+
+        Distinct from :meth:`create_phase_groups`'s internal re-partition
+        cascade, which always deletes: that path is replacing the phases with
+        fresh ones, whereas this one is the user's explicit "Ungroup phases",
+        where keeping the fits is a legitimate choice.
+        """
+        removed: list[str] = []
+        for phase in self.phase_groups_for(parent_id):
+            removed.extend(self.remove_data_group(phase.group_id, orphan_series=orphan_series))
+        return removed
+
+    def move_run_to_phase(
+        self,
+        run_number: int,
+        phase_id: str | None,
+        *,
+        series_group_id: str,
+        runs_by_number: dict[int, Run],
+    ) -> None:
+        """Move *run_number* to the phase *phase_id* (``None`` = excluded) within one series.
+
+        *series_group_id* names the partitioned series the move belongs to. A
+        run may be a member of several data groups, and two of them may both
+        be partitioned; only the phases of *this* series are touched, so
+        excluding a run from one series' partition never edits another's.
+        Removes the run from whichever phase of that series currently holds it
+        (a no-op if it was already excluded), then adds it to the target phase.
+        Parent membership is untouched — a phase's members are always a subset
+        of the parent's, never a separate list to keep in sync. Both the
+        vacated and the target phase (whichever of the two exist) have their
+        members re-ordered along the sweep axis and their
+        :attr:`DataGroup.phase_range` recomputed from *runs_by_number*, the
+        same metadata :meth:`FitSeries.sort_members` uses.
+
+        Raises ``ValueError`` when *phase_id* names something other than a
+        live phase group of *series_group_id*, or when *run_number* is not a
+        member of that series — moving a run into a phase whose parent never
+        had it would silently violate the subset invariant
+        :meth:`create_phase_groups` enforces at creation time.
+
+        Any phase series bound to an affected phase group reads stale
+        afterwards through the existing membership-snapshot mechanism
+        (:attr:`FitSeries.group_id` / :meth:`FitSeries.is_stale` against
+        :meth:`FitSeries.effective_members`) — this method does not touch
+        series state directly.
+        """
+        run_number = int(run_number)
+        series_id = str(series_group_id)
+        parent = self.data_groups.get(series_id)
+        if parent is None or run_number not in parent.member_run_numbers:
+            raise ValueError(f"Run {run_number} is not a member of series group {series_id!r}")
+        affected: list[DataGroup] = []
+
+        for phase in self.phase_groups_for(series_id):
+            if run_number in phase.member_run_numbers:
+                phase.member_run_numbers = [r for r in phase.member_run_numbers if r != run_number]
+                affected.append(phase)
+
+        if phase_id is not None:
+            target = self.data_groups.get(str(phase_id))
+            if target is None or target.parent_group_id != series_id:
+                raise ValueError(f"{phase_id!r} is not a phase of series group {series_id!r}")
+            if run_number not in target.member_run_numbers:
+                target.member_run_numbers = [*target.member_run_numbers, run_number]
+            if target not in affected:
+                affected.append(target)
+
+        for phase in affected:
+            phase.member_run_numbers.sort(
+                key=lambda r: _axis_value(r, phase.order_key, runs_by_number)
+            )
+            if phase.member_run_numbers:
+                values = [
+                    _axis_value(r, phase.order_key, runs_by_number)
+                    for r in phase.member_run_numbers
+                ]
+                phase.phase_range = (values[0], values[-1])
+            else:
+                phase.phase_range = None
 
     def superseded_batch_ids(self, series: FitSeries) -> list[str]:
         """Return ids of existing batches that *series* makes redundant.

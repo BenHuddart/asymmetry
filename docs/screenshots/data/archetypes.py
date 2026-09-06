@@ -12,19 +12,21 @@ byte-stable across CI runs.
 Material legend
 ---------------
 
-==========  =================================  ==========================
-Material    Used by                            Textbook reference
-==========  =================================  ==========================
-**EuO**     gui_usage, composite_models,        Ch 6, Fig 6.6 (Tc=69 K
-            logbook                             ferromagnet)
-**Ag**      fitting, fit_wizard, lf_kubo,       Ch 5.2 (canonical nuclear
-            global_fit_wizard                   dipolar host, Δ≈0.4 μs⁻¹)
-**MgB₂**    parameter_trending,                 Ch 8 (two-gap SC,
-            sc_penetration_depth                Tc=36 K)
-**YBCO**    grouped_time_domain_fitting,        Ch 8/9 (Knight shift &
-            fourier_analysis                    vortex lattice, Tc=90 K)
-**PbF₂**    muon_fluorine                       Ch 4.6 (F-μ-F entanglement)
-==========  =================================  ==========================
+============  =================================  ==========================
+Material      Used by                            Textbook reference
+============  =================================  ==========================
+**EuO**       gui_usage, composite_models,        Ch 6, Fig 6.6 (Tc=69 K
+              logbook                             ferromagnet)
+**Ag**        fitting, fit_wizard, lf_kubo,       Ch 5.2 (canonical nuclear
+              global_fit_wizard                   dipolar host, Δ≈0.4 μs⁻¹)
+**MgB₂**      parameter_trending,                 Ch 8 (two-gap SC,
+              sc_penetration_depth                Tc=36 K)
+**YBCO**      grouped_time_domain_fitting,        Ch 8/9 (Knight shift &
+              fourier_analysis                    vortex lattice, Tc=90 K)
+**PbF₂**      muon_fluorine                       Ch 4.6 (F-μ-F entanglement)
+**Synthetic** global_fit_wizard,                  n/a — planted transition,
+              data_browser, parameter_trending    no real material
+============  =================================  ==========================
 """
 
 from __future__ import annotations
@@ -252,6 +254,68 @@ def make_euo_composite(seed: int = 71) -> MuonDataset:
             "field": 0.0,
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Synthetic thread: a two-phase ZF scan for the Global Fit Wizard transitions
+# screenshots (no real material or run data — see docs/plans/
+# global-wizard-transitions.md).
+# ---------------------------------------------------------------------------
+
+
+def make_two_phase_zf_tscan(seed: int = 133) -> list[MuonDataset]:
+    """Synthetic ZF temperature scan with a planted structural transition.
+
+    Nine runs split by a planted transition at 20 K: below it, a damped
+    oscillation (``Oscillatory`` — ``A0 cos(2*pi*f*t + phi) exp(-Lambda*t) +
+    baseline``, the ``Oscillatory * Exponential + Constant`` shape) with the
+    frequency tracking a toy order parameter; at and above it, plain
+    exponential relaxation (``ExponentialRelaxation``) with no oscillation at
+    all — the qualitative, structural change in model family the Global Fit
+    Wizard's transitions feature partitions a series on. Entirely synthetic:
+    round numbers, no sample name, no real run metadata.
+    """
+    rng = np.random.default_rng(seed)
+    osc = MODELS["Oscillatory"].function
+    exp_fn = MODELS["ExponentialRelaxation"].function
+    time = _time_axis(n_points=400, t_max=6.0)
+
+    tc_planted_k = 20.0
+    nu_0_mhz = 6.0
+    beta = 0.35
+    temps_k = [4.0, 8.0, 12.0, 16.0, 18.0, 24.0, 30.0, 38.0, 48.0]
+
+    datasets: list[MuonDataset] = []
+    for index, t in enumerate(temps_k):
+        if t < tc_planted_k:
+            order = (1.0 - t / tc_planted_k) ** beta
+            clean = osc(
+                time,
+                A0=18.0,
+                frequency=nu_0_mhz * order,
+                phase=0.0,
+                Lambda=0.35,
+                baseline=0.3,
+            )
+        else:
+            clean = exp_fn(time, A0=18.0, Lambda=0.15 + 0.01 * (t - tc_planted_k), baseline=0.3)
+
+        error = _poisson_errors(clean, counts_per_bin=1.0e5)
+        asymmetry = clean + rng.normal(0.0, error)
+        datasets.append(
+            MuonDataset(
+                time=time,
+                asymmetry=asymmetry,
+                error=error,
+                metadata={
+                    "run_number": 9001 + index,
+                    "title": f"Synthetic two-phase ZF scan {t:g}K",
+                    "temperature": t,
+                    "field": 0.0,
+                },
+            )
+        )
+    return datasets
 
 
 # ---------------------------------------------------------------------------

@@ -58,8 +58,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor
+from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QCursor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -221,7 +221,16 @@ def _format_x_label_gle(x_key: str, custom_labels: dict[str, str] | None = None)
     return "Run Number"
 
 
-def _gle_series_color(index: int) -> str:
+def _gle_series_color(index: int, override: str | None = None) -> str:
+    """Named GLE colour for exported curve *index*, or *override* when given.
+
+    *override* is the active series' phase colour (D4) when the curve being
+    coloured is that whole series' identity colour (a lone y-parameter, or one
+    subplot per parameter) — mirroring the on-screen substitution in
+    :meth:`FitParametersPanel._single_series_color`.
+    """
+    if override is not None:
+        return override
     primary = ["black", "blue", "red"]
     fallback = ["green", "orange", "purple", "brown", "magenta", "cyan", "olive"]
     if index < len(primary):
@@ -365,6 +374,39 @@ class _YParamControls:
     log: QCheckBox
 
 
+@dataclass(frozen=True)
+class PhaseDecoration:
+    """Identity of the phase (Global Fit Wizard transitions, D1) a series belongs to.
+
+    Built by :meth:`MainWindow._refresh_trend_panel` from the owning
+    ``DataGroup`` (``asymmetry.core.representation.group``) for every series
+    whose ``FitSeries.group_id`` names a phase group (``DataGroup.is_phase``);
+    ``None`` on a plain (non-phase) series — a series belonging to no phase is
+    a real, first-class case, not sniffed from an optional field.
+
+    ``color``/``color_dark`` are the light/dark swatch colours
+    (:func:`asymmetry.gui.utils.phase_colors.phase_color`); the app currently
+    forces a single light palette everywhere (see
+    ``gui/styles/palette.py::apply_bench_style`` — Fusion + the BENCH palette,
+    specifically so an OS dark mode never shows through), so every consumer
+    here resolves ``color`` and leaves ``color_dark`` unused until a real
+    dark-theme toggle exists.
+    """
+
+    color: str
+    color_dark: str
+    ordinal: int
+    name: str
+    #: The order axis this phase is defined along (``"temperature"``,
+    #: ``"field"``, or ``"run"`` — ``DataGroup.order_key``, inherited from the
+    #: parent series group). The range/boundary shading only ever applies when
+    #: the plot's *effective* x-axis matches this key.
+    axis_key: str
+    range: tuple[float, float]
+    lower: tuple[float, float] | None
+    upper: tuple[float, float] | None
+
+
 @dataclass
 class _PlotSeries:
     """One series to render on the trend plot (overlay = many of these)."""
@@ -374,6 +416,9 @@ class _PlotSeries:
     color: str
     rows: list[_FitRow]
     is_active: bool
+    #: The phase this series belongs to, or ``None`` for a plain series — see
+    #: :class:`PhaseDecoration`.
+    phase: PhaseDecoration | None = None
 
 
 @dataclass
@@ -391,6 +436,13 @@ class _GroupFitData:
     #: Fitted-param → Knight-shift kind for this series' convertible components,
     #: derived from its model (empty for computed/model-less series).
     knight_observables: dict[str, str] = field(default_factory=dict)
+    #: The phase this series belongs to, or ``None`` for a plain series — see
+    #: :class:`PhaseDecoration`. Purely derived display state (like
+    #: ``knight_observables``): not round-tripped through
+    #: ``_serialize_group_fit_results``/``_deserialize_group_fit_results``,
+    #: since ``MainWindow._refresh_trend_panel`` always re-supplies it via
+    #: ``load_representation_series`` immediately after a project restore.
+    phase: PhaseDecoration | None = None
 
 
 class FitParametersPanel(QWidget):
@@ -1392,6 +1444,7 @@ class FitParametersPanel(QWidget):
         knight_observables_by_id: dict[str, dict[str, str]] | None = None,
         fraction_weights_by_id: dict[str, dict[str, float]] | None = None,
         stale_ids: set[str] | None = None,
+        phase_by_id: dict[str, PhaseDecoration] | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -1416,6 +1469,10 @@ class FitParametersPanel(QWidget):
             just-computed batch series). When present and still in the reloaded
             set it overrides the "keep prior selection / fall back to newest"
             default, so a freshly-recorded series is surfaced immediately.
+        phase_by_id:
+            Optional ``batch_id → PhaseDecoration`` map for series bound to a
+            phase group (Global Fit Wizard transitions, D1/D4); a series absent
+            from the map gets ``phase=None`` (plain series).
         """
         # This is the host's pull entry point after a series is recorded, updated
         # or deleted, after a representation change, and after a membership toggle
@@ -1498,6 +1555,7 @@ class FitParametersPanel(QWidget):
                 global_param_uncertainties=global_uncert,
                 composite_parameters=composite_params,
                 knight_observables=observables,
+                phase=(phase_by_id or {}).get(batch_id),
             )
 
         # Update per-series run-number map for browser highlighting.
@@ -1584,6 +1642,7 @@ class FitParametersPanel(QWidget):
             global_param_uncertainties=dict(self._global_param_uncertainties),
             composite_parameters=list(self._composite_parameters),
             knight_observables=dict(self._knight_observables),
+            phase=current.phase,
         )
 
     def _selected_group_ids_from_buttons(self) -> list[str]:
@@ -1627,6 +1686,9 @@ class FitParametersPanel(QWidget):
             # rename/sort/delete still read the user-facing label.
             is_stale = group.group_id in self._stale_series_ids
             button = QPushButton(f"{group.group_name} ⚠" if is_stale else group.group_name)
+            if group.phase is not None:
+                button.setIcon(self._phase_swatch_icon(group.phase.color))
+                button.setIconSize(QSize(10, 10))
             # Every pill teaches the overlay gesture; a stale one prepends its
             # own warning to the same tooltip.
             gesture = (
@@ -2082,6 +2144,7 @@ class FitParametersPanel(QWidget):
                 plot_annotations=list(existing.plot_annotations),
                 global_param_uncertainties=dict(existing.global_param_uncertainties),
                 composite_parameters=list(existing.composite_parameters),
+                phase=existing.phase,
             )
 
         self._refresh_model_fit_button_labels()
@@ -5320,7 +5383,10 @@ class FitParametersPanel(QWidget):
     def _series_to_plot(self) -> list[_PlotSeries]:
         """The series to render: every checked group pill (overlay), else the one
         active/legacy series. Colours are assigned by pill order, stable across
-        redraws."""
+        redraws — except a phase-owned series (D4), whose colour is always its
+        phase's colour rather than the pill-order slot, so a phase reads the
+        same swatch colour on its pill, its plotted trace, and any other phase
+        of the same series shown alongside it."""
         selected_ids = self._selected_group_ids_from_buttons()
         if selected_ids and self._group_fit_results:
             ordered = [
@@ -5335,28 +5401,109 @@ class FitParametersPanel(QWidget):
                 # The active series' rows carry live composites; others use their
                 # stored rows (real fitted params are present regardless).
                 rows = self._rows if is_active else list(group.rows)
+                color = group.phase.color if group.phase is not None else f"C{idx % 10}"
                 series.append(
                     _PlotSeries(
                         group_id=gid,
                         name=group.group_name,
-                        color=f"C{idx % 10}",
+                        color=color,
                         rows=rows,
                         is_active=is_active,
+                        phase=group.phase,
                     )
                 )
             if series:
                 return series
         if self._rows:
+            active_group = (
+                self._group_fit_results.get(self._active_group_id)
+                if self._active_group_id is not None
+                else None
+            )
+            phase = active_group.phase if active_group is not None else None
             return [
                 _PlotSeries(
                     group_id=self._active_group_id,
                     name="",
-                    color="C0",
+                    color=phase.color if phase is not None else "C0",
                     rows=self._rows,
                     is_active=True,
+                    phase=phase,
                 )
             ]
         return []
+
+    def _active_series_phase(self) -> PhaseDecoration | None:
+        """The active series' :class:`PhaseDecoration`, or ``None`` for a plain series."""
+        if self._active_group_id is None:
+            return None
+        group = self._group_fit_results.get(self._active_group_id)
+        return group.phase if group is not None else None
+
+    def _single_series_color(self, fallback: str = "C0") -> str:
+        """The colour for a curve that represents one whole series (not one of
+        several parameters sharing an axis) — the active series' phase colour
+        when it has one, else *fallback* (the usual matplotlib cycle slot)."""
+        phase = self._active_series_phase()
+        return phase.color if phase is not None else fallback
+
+    def _gated_phase_decoration(
+        self, phase: PhaseDecoration | None, x_key: str
+    ) -> PhaseDecoration | None:
+        """*phase* if its range/boundaries are meaningful to draw right now, else ``None``.
+
+        The band and boundary lines (D4) only make sense when the plotted
+        x-axis *is* the phase's own sweep axis, in its raw (untransformed,
+        linear) form — a log-x or a custom/physics axis transform (Redfield,
+        Arrhenius, …) moves the axis away from the temperature/field values
+        the phase's range and boundary estimates were computed in.
+        """
+        if phase is None:
+            return None
+        if x_key != phase.axis_key:
+            return None
+        if self._log_x_check.isChecked():
+            return None
+        if not self._x_transform.is_identity:
+            return None
+        return phase
+
+    def _active_phase_decoration_for_axis(self, x_key: str) -> PhaseDecoration | None:
+        """The active series' phase, gated for the current axis/transform state."""
+        return self._gated_phase_decoration(self._active_series_phase(), x_key)
+
+    def _draw_phase_band(self, ax, phase: PhaseDecoration) -> None:
+        """Shade *phase*'s range and draw its boundary estimates on *ax*.
+
+        The range span sits below the plotted data (``zorder=0``); each
+        boundary is a dashed vertical line at its estimate plus a fainter span
+        for its ``± half_gap`` uncertainty. A series end (no boundary on that
+        side) is simply absent from ``phase.lower``/``phase.upper`` — nothing
+        to skip defensively.
+        """
+        lo, hi = phase.range
+        ax.axvspan(lo, hi, color=phase.color, alpha=0.12, zorder=0, linewidth=0)
+        for boundary in (phase.lower, phase.upper):
+            if boundary is None:
+                continue
+            estimate, half_gap = boundary
+            ax.axvline(
+                estimate, color=phase.color, linestyle="--", linewidth=1.2, alpha=0.6, zorder=1
+            )
+            ax.axvspan(
+                estimate - half_gap,
+                estimate + half_gap,
+                color=phase.color,
+                alpha=0.08,
+                zorder=0,
+                linewidth=0,
+            )
+
+    def _phase_swatch_icon(self, color: str) -> QIcon:
+        """A 10 px filled square icon in *color*, for a phase-owned series pill."""
+        swatch = QPixmap(10, 10)
+        swatch.fill(QColor(color))
+        return QIcon(swatch)
 
     def _draw_single_series(
         self, y_params: list[str], x_key: str, plot_mode: str, axes_by_tag: dict[str, object]
@@ -5372,6 +5519,7 @@ class FitParametersPanel(QWidget):
         self._update_trend_provenance(
             rows, transform_dropped=self._transform_dropped_count(rows, x_key, y_params)
         )
+        phase = self._active_phase_decoration_for_axis(x_key)
 
         if plot_mode == "Subplots" and len(y_params) > 1:
             num_params = len(y_params)
@@ -5386,7 +5534,11 @@ class FitParametersPanel(QWidget):
 
                 self._draw_model_overlay_mpl(ax, y_name)
 
-                ax.scatter(x_vals, y_vals, s=16, zorder=6, color="C0")
+                # One subplot per parameter, one series drawn on each — the
+                # colour here is pure series identity, so a phase-owned series
+                # takes its phase colour.
+                series_color = self._single_series_color()
+                ax.scatter(x_vals, y_vals, s=16, zorder=6, color=series_color)
                 self._overlay_member_markers(ax, x_vals, y_vals, rows)
                 ye = y_err if np.any(np.isfinite(y_err) & (y_err > 0)) else None
                 if ye is not None or x_err is not None:
@@ -5412,6 +5564,8 @@ class FitParametersPanel(QWidget):
                 else:
                     ax.set_yscale("log" if self._is_log_y_for(y_name) else "linear")
                 ax.grid(True, alpha=0.3)
+                if phase is not None:
+                    self._draw_phase_band(ax, phase)
         else:
             ax = self._figure.add_subplot(111)
             ax.set_xlabel(x_label)
@@ -5480,11 +5634,18 @@ class FitParametersPanel(QWidget):
                     ax2.set_yscale("log" if self._is_log_y_for(right_name) else "linear")
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
                 ax.grid(True, alpha=0.3)
+                if phase is not None:
+                    # Shared x-axis (twinx): one band on the primary axis suffices.
+                    self._draw_phase_band(ax, phase)
             else:
                 axes_by_tag["main"] = ax
+                # A single parameter on this axis is the whole series' curve
+                # (series identity); several share the axis to distinguish
+                # *parameters*, so only the single-parameter case takes the
+                # phase colour.
                 for idx, y_name in enumerate(y_params):
                     y_vals, y_err = self._series_y_arrays(rows, y_name)
-                    color = f"C{idx % 10}"
+                    color = self._single_series_color() if len(y_params) == 1 else f"C{idx % 10}"
                     label = _format_plot_legend_label(y_name) if len(y_params) > 1 else None
 
                     self._draw_model_overlay_mpl(ax, y_name, color=color)
@@ -5528,6 +5689,8 @@ class FitParametersPanel(QWidget):
 
                 ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
                 ax.grid(True, alpha=0.3)
+                if phase is not None:
+                    self._draw_phase_band(ax, phase)
 
     def _draw_multi_series(
         self,
@@ -5551,6 +5714,12 @@ class FitParametersPanel(QWidget):
             transform_dropped=self._transform_dropped_count(self._rows, x_key, y_params),
         )
         log_x = self._log_x_check.isChecked()
+        # Only the *active* series' phase decorates the overlay — the others'
+        # ranges/boundaries would compete visually and are already implied by
+        # each series' own colour-coded swatch/pill.
+        active_phase = self._gated_phase_decoration(
+            next((s.phase for s in series if s.is_active), None), x_key
+        )
 
         if plot_mode == "Subplots" and multi_param:
             num_cols = 2
@@ -5574,6 +5743,8 @@ class FitParametersPanel(QWidget):
                 ax.set_xscale("log" if log_x else "linear")
                 ax.set_yscale("log" if self._is_log_y_for(y_name) else "linear")
                 ax.grid(True, alpha=0.3)
+                if active_phase is not None:
+                    self._draw_phase_band(ax, active_phase)
             handles, labels = self._figure.axes[0].get_legend_handles_labels()
             if handles:
                 self._figure.legend(handles, labels, loc="upper right", fontsize="small")
@@ -5598,6 +5769,8 @@ class FitParametersPanel(QWidget):
             ax.set_yscale("log" if self._is_log_y_for(y_params[0]) else "linear")
         ax.legend(loc="best", fontsize="small")
         ax.grid(True, alpha=0.3)
+        if active_phase is not None:
+            self._draw_phase_band(ax, active_phase)
 
     def _series_legend_name(self, series: _PlotSeries) -> str:
         """Series legend label, flagging the active series (which owns the table,
@@ -6854,6 +7027,66 @@ class FitParametersPanel(QWidget):
                 continue
             ax.text(x, y, text, color="black", ha="left")
 
+    @staticmethod
+    def _gle_phase_y_extent(*value_arrays: np.ndarray) -> tuple[float, float] | None:
+        """A (padded) vertical extent spanning every finite value in *value_arrays*.
+
+        gleplot has no ``axvspan``/``axvline`` (unlike matplotlib, whose blended
+        transform spans the full axes height regardless of the y-limits) — the
+        band and boundary lines are drawn as an ordinary ``fill_between``/``plot``
+        rectangle instead, so it needs an explicit y-range. A 5% margin on the
+        combined data extent mirrors matplotlib's own default autoscale margin.
+        Returns ``None`` when no finite value is present (nothing to anchor to).
+        """
+        finite = np.concatenate(
+            [np.asarray(values, dtype=float)[np.isfinite(values)] for values in value_arrays]
+        )
+        if finite.size == 0:
+            return None
+        lo, hi = float(np.min(finite)), float(np.max(finite))
+        if lo == hi:
+            pad = abs(lo) * 0.05 or 0.5
+        else:
+            pad = (hi - lo) * 0.05
+        return lo - pad, hi + pad
+
+    def _add_gle_phase_band(self, ax, phase: PhaseDecoration, *value_arrays: np.ndarray) -> None:
+        """Draw *phase*'s range shading and boundary lines on an exported GLE axis.
+
+        Mirrors :meth:`_draw_phase_band`'s matplotlib picture with gleplot's
+        ``fill_between``/``plot`` primitives (see :meth:`_add_gle_model_overlay`
+        for the same primitives used for the component-stack fill): the range is
+        a filled rectangle spanning ``_gle_phase_y_extent(*value_arrays)``, each
+        boundary a dashed vertical line plus a fainter ``± half_gap`` rectangle.
+        Always drawn on the primary (``"y"``) axis — the one caller that shares
+        an axis with a second y-parameter (the two-parameter export) draws the
+        band once there, since both parameters share the same x-range.
+        """
+        extent = self._gle_phase_y_extent(*value_arrays)
+        if extent is None:
+            return
+        y_lo, y_hi = extent
+        lo, hi = phase.range
+        ax.fill_between([lo, hi], [y_lo, y_lo], [y_hi, y_hi], color=phase.color, alpha=0.12)
+        for boundary in (phase.lower, phase.upper):
+            if boundary is None:
+                continue
+            estimate, half_gap = boundary
+            ax.plot(
+                [estimate, estimate],
+                [y_lo, y_hi],
+                linestyle="--",
+                color=phase.color,
+                linewidth=1.2,
+            )
+            ax.fill_between(
+                [estimate - half_gap, estimate + half_gap],
+                [y_lo, y_lo],
+                [y_hi, y_hi],
+                color=phase.color,
+                alpha=0.08,
+            )
+
     def _export_gle(self) -> None:
         if not self._rows:
             return
@@ -6893,6 +7126,9 @@ class FitParametersPanel(QWidget):
         data_path = gle_path.with_suffix(".dat")
         self._write_gle_data_file(data_path)
         x_key = self._effective_x_key()
+        # GLE export always writes the active series only (see _export_gle) —
+        # this is that series' phase, gated for the current axis/transform.
+        phase = self._active_phase_decoration_for_axis(x_key)
 
         # Export fit sidecars for all active fits on this x-axis, regardless of
         # current y-selection, so restored projects always emit .fit files.
@@ -6931,6 +7167,7 @@ class FitParametersPanel(QWidget):
                 if cols is None:
                     continue
                 y_col, yerr_col = cols
+                y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
                 y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
                 has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
                 ax = subplot_axes[idx]
@@ -6943,12 +7180,15 @@ class FitParametersPanel(QWidget):
                     include_labels=show_subplot_fit_legend,
                     fit_file_map=fit_file_map,
                 )
+                # One subplot per parameter — series identity, so a phase-owned
+                # active series takes its phase colour (mirrors the on-screen
+                # single-series Subplots substitution).
                 ax.errorbar_from_file(
                     data_file_ref,
                     x_col=x_col,
                     y_col=y_col,
                     yerr_col=yerr_col if has_err else None,
-                    color="black",
+                    color=_gle_series_color(0, override=phase.color if phase else None),
                     marker="o",
                     markersize=5,
                     capsize=2,
@@ -6962,6 +7202,8 @@ class FitParametersPanel(QWidget):
                 if self._show_components_check.isChecked():
                     ax.set_ylim(0.0, None)
                 self._add_gle_annotations(ax, y_name)
+                if phase is not None:
+                    self._add_gle_phase_band(ax, phase, y_vals)
                 if show_subplot_fit_legend:
                     ax.legend(loc="best")
         else:
@@ -6977,6 +7219,8 @@ class FitParametersPanel(QWidget):
                 left_y_col, left_err_col = left_cols
                 right_y_col, right_err_col = right_cols
 
+                left_vals = np.array([r.values.get(left_name, np.nan) for r in rows], dtype=float)
+                right_vals = np.array([r.values.get(right_name, np.nan) for r in rows], dtype=float)
                 left_err = np.array([r.errors.get(left_name, np.nan) for r in rows], dtype=float)
                 right_err = np.array([r.errors.get(right_name, np.nan) for r in rows], dtype=float)
                 has_left_err = bool(np.any(np.isfinite(left_err) & (left_err > 0)))
@@ -7027,14 +7271,24 @@ class FitParametersPanel(QWidget):
                     ax.set_ylim(0.0, None, axis="y2")
                 self._add_gle_annotations(ax, left_name)
                 self._add_gle_annotations(ax, right_name)
+                if phase is not None:
+                    # Shared x-axis: one band spanning both parameters' extents.
+                    self._add_gle_phase_band(ax, phase, left_vals, right_vals)
                 if show_fit_legend:
                     ax.legend(loc="best")
             else:
+                # A single parameter on this shared axis is the whole series'
+                # curve (series identity, phase colour applies); several share
+                # it to distinguish *parameters* (their own identity colours).
+                single_param = len(y_params) == 1
+                all_y_vals: list[np.ndarray] = []
                 for idx, y_name in enumerate(y_params):
                     cols = self._gle_effective_columns_for_param(y_name)
                     if cols is None:
                         continue
                     y_col, yerr_col = cols
+                    y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
+                    all_y_vals.append(y_vals)
                     y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
                     has_err = bool(np.any(np.isfinite(y_err) & (y_err > 0)))
                     self._add_gle_model_overlay(
@@ -7045,12 +7299,13 @@ class FitParametersPanel(QWidget):
                         include_labels=show_fit_legend,
                         fit_file_map=fit_file_map,
                     )
+                    override = phase.color if (single_param and phase is not None) else None
                     ax.errorbar_from_file(
                         data_file_ref,
                         x_col=x_col,
                         y_col=y_col,
                         yerr_col=yerr_col if has_err else None,
-                        color=_gle_series_color(idx),
+                        color=_gle_series_color(idx, override=override),
                         marker="o",
                         markersize=5,
                         capsize=2,
@@ -7071,6 +7326,8 @@ class FitParametersPanel(QWidget):
                     ax.set_yscale("log")
 
                 self._add_gle_annotations(ax, "main")
+                if phase is not None and all_y_vals:
+                    self._add_gle_phase_band(ax, phase, *all_y_vals)
 
             ax.set_xlabel(x_label)
             if self._log_x_check.isChecked():

@@ -10,7 +10,7 @@ The data model mirrors the structure of a typical μSR experiment:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -223,6 +223,32 @@ class MuonDataset:
                 return text
         return str(self.run_number)
 
+    def fit_record(self) -> MuonDataset:
+        """Return this dataset as a **fit record**: fitted arrays plus provenance, no counts.
+
+        A fit record is what crosses a *process* boundary to be fitted. It
+        carries the time/asymmetry/error arrays a fit reads and the run's
+        scalar provenance — run number and label, temperature, field, geometry,
+        ``metadata`` and ``grouping`` — but not the run's raw detector
+        histograms, which no time-domain fit touches and which dominate the
+        pickled size of a task payload: a run's counts are of the order of a
+        detector count times a bin count, so a record whose fitted arrays are a
+        fraction of a megabyte pickles to tens of megabytes while it still
+        holds them.
+
+        The copy shares the arrays, ``metadata`` and ``grouping`` with this
+        dataset (nothing is duplicated in the parent process) and differs only
+        in carrying a :class:`Run` with an empty ``histograms`` list. A dataset
+        with no source run already carries no counts and is returned unchanged.
+
+        Count-domain fitting, β/α calibration and grouped time-domain fitting
+        *do* read ``run.histograms``; they must be handed the full record, not
+        a fit record.
+        """
+        if self.run is None:
+            return self
+        return replace(self, run=replace(self.run, histograms=[]))
+
     def rebin(self, factor: int) -> MuonDataset:
         r"""Return a copy with every ``factor`` consecutive bins merged.
 
@@ -230,6 +256,12 @@ class MuonDataset:
         :func:`asymmetry.core.transform.rebin.rebin`: the time/asymmetry/error
         arrays are rebinned by that primitive and a *new* dataset is returned
         with the same metadata and run (this dataset is left unchanged).
+
+        The returned copy **shares this dataset's** :class:`Run`, raw
+        histograms and all — which is what an in-process caller wants (the
+        GUI's rebinned views still reach for the counts behind them), and which
+        also means a rebinned copy pickles no smaller than the record it came
+        from. Use :meth:`fit_record` on anything bound for a worker process.
 
         Combining ``factor`` adjacent bins trades time resolution for
         statistics — the per-point error shrinks as :math:`1/\sqrt{factor}` on
@@ -252,7 +284,13 @@ class MuonDataset:
         )
 
     def time_range(self, t_min: float | None = None, t_max: float | None = None) -> MuonDataset:
-        """Return a copy restricted to [t_min, t_max]."""
+        """Return a copy restricted to [t_min, t_max].
+
+        Like :meth:`rebin`, the copy shares this dataset's :class:`Run` and so
+        keeps its raw histograms: correct in-process, but it means a windowed
+        copy pickles no smaller than the record it came from. Use
+        :meth:`fit_record` for anything bound for a worker process.
+        """
         mask = np.ones(self.n_points, dtype=bool)
         if t_min is not None:
             mask &= self.time >= t_min

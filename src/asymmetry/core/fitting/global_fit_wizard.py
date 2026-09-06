@@ -6,9 +6,10 @@ import math
 import os
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
+    Executor,
     ProcessPoolExecutor,
     ThreadPoolExecutor,
     as_completed,
@@ -16,6 +17,7 @@ from concurrent.futures import (
 )
 from dataclasses import dataclass, field, replace
 from itertools import combinations
+from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -33,9 +35,13 @@ from asymmetry.core.fitting.fit_wizard import (
     FitWizardRecommendation,
     SelectionMetric,
     SpectrumFingerprint,
+    TemplateSeedContext,
+    _AssessmentTask,
     _bound_hit_names,
     _clone_parameter_set,
+    _curve_parameter_values,
     _dense_fit_curves,
+    _execute_assessment_task,
     _field_seed_context,
     _initial_parameters_for_template,
     _is_additive_relaxation_mixture_template,
@@ -48,15 +54,21 @@ from asymmetry.core.fitting.fit_wizard import (
     _residual_gate_reasons,
     _scipy_fit_fallback,
     _template_cost_rank,
+    _template_family_map,
+    analysis_rebin_factor,
     build_candidate_templates,
-    build_fit_wizard_recommendation_for_templates,
+    build_fit_wizard_recommendation,
     build_wizard_families,
-    candidate_template_keys,
     compute_information_criteria,
     dataset_field_geometry,
     fingerprint_spectrum,
-    recommendation_template_keys,
+    fit_result_is_oscillatory_admissible,
+    is_multiplet_template_key,
     rerank_fit_wizard_recommendation,
+    single_fit_build_signature,
+)
+from asymmetry.core.fitting.fit_wizard import (
+    _with_dense_curves as _single_fit_with_dense_curves,
 )
 from asymmetry.core.fitting.global_search import (
     GlobalSearchConfig,
@@ -70,16 +82,30 @@ from asymmetry.core.fitting.global_search.homogeneity import (
     classify_parameter_homogeneity,
     wald_subset_delta_chi2,
 )
+from asymmetry.core.fitting.global_search.partition import (
+    PartitionConfig,
+    PartitionPath,
+    PartitionSolution,
+    Segment,
+    partition_series,
+    tier2_segment_cost,
+)
+from asymmetry.core.fitting.global_search.surrogate import (
+    CollapseResult,
+    RunEstimate,
+    collapse_cost,
+    rank_assignments,
+    run_estimate_from_fit_result,
+    surrogate_ic,
+)
+from asymmetry.core.fitting.global_search.surrogate import (
+    metric_penalty as surrogate_metric_penalty,
+)
 from asymmetry.core.fitting.legacy_product_amplitudes import (
     fold_legacy_product_amplitude_names,
     fold_legacy_product_amplitude_set,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.fitting.peak_detection import (
-    analyze_dataset_peaks,
-    match_multiplets,
-    merge_user_peaks,
-)
 from asymmetry.core.fitting.process_pool import open_spawn_pool, terminate_spawn_pool
 from asymmetry.core.fitting.wizard_scope import (
     DEFAULT_EFFORT_TIER,
@@ -92,6 +118,22 @@ from asymmetry.core.fitting.wizard_timing import (
     WizardStageProgress,
     stage_timer,
 )
+
+#: Hard cap on the series template alphabet. The alphabet is a union over runs,
+#: so on a long series it grows with the number of distinct phases the runs show
+#: rather than with the number of runs — but the completion table is
+#: (runs x alphabet) fits, so the union needs a ceiling. 24 is comfortably above
+#: any single run's assessed set and keeps the table affordable on a 30-run scan.
+_SERIES_ALPHABET_CAP = 24
+
+#: How many per-run single-run analyses phase 1 runs at once, at most. Each one
+#: opens its own worker pool, so the parent's concurrency multiplies the total
+#: worker count; four concurrent analyses on an eight-core host is two workers
+#: each, which is already past the point where the analyses' serial stages (peak
+#: detection, damped-line scan, fingerprint, tier gating) stop overlapping
+#: usefully with each other's fan-outs.
+_MAX_PHASE_ONE_ANALYSES = 4
+
 
 _ROLE_DELTA_THRESHOLD = 2.0
 _COMPARABLE_SCORE_DELTA = 2.0
@@ -115,6 +157,16 @@ _LAYER_BOUND_MARGIN = 6.0
 #: disables the budget (unlimited). Kept high so it never trips on the small
 #: golden-verdict harness cases.
 _WAVEFRONT_TIME_BUDGET_SECONDS: float | None = 180.0
+#: Wall-clock budget (seconds) for ONE phase's separable search inside the
+#: per-phase optimisation. The 180 s series-wide backstop was sized for the
+#: harness cases; on a real 12-run phase of 90 k-point records a single
+#: elimination step is a 30–60 s coupled fit, so that backstop tripped on the
+#: first phase and — because abandoned tasks keep running in the shared pool —
+#: starved every later phase's anchor tasks into timing out with nothing done.
+#: Thirty minutes per phase is a backstop again — a 12-run phase of two raced
+#: nine-parameter templates measured ~40 s per coupled fit and up to 18 fits
+#: per template — and the GUI's own cancel remains the way to stop early.
+_PHASE_SEARCH_TIME_BUDGET_SECONDS: float | None = 1800.0
 #: Interval (seconds) at which the pooled wavefront loop wakes to re-check the
 #: cancel callback and the wall-clock deadline while futures are in flight.
 _WAVEFRONT_POLL_INTERVAL_SECONDS = 0.25
@@ -181,13 +233,20 @@ SEARCH_ENGINE_EXHAUSTIVE = "exhaustive"
 SEARCH_ENGINE_THOROUGH = "thorough"
 SEARCH_ENGINE_LOW = "low"
 SEARCH_ENGINE_BALANCED = "balanced"
-_DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_EXHAUSTIVE
+#: The separable role search: all-local straight from the per-run fits, a
+#: full-covariance GLS surrogate over every sharing pattern, backward
+#: elimination as the exact path, then the winner's flip-neighbourhood. It is
+#: the default engine for every effort tier; ``"exhaustive"`` stays reachable
+#: through the ``search_engine`` seam as the harness referee.
+SEARCH_ENGINE_SEPARABLE = "separable"
+_DEFAULT_SEARCH_ENGINE = SEARCH_ENGINE_SEPARABLE
 #: Engines that resolve to the exact wavefront (no heuristic pre-fixing/skipping).
 _EXACT_SEARCH_ENGINES = frozenset({SEARCH_ENGINE_EXHAUSTIVE, SEARCH_ENGINE_THOROUGH})
 #: Every supported ``search_engine`` value. An unrecognised value must raise
 #: rather than silently fall through to the heuristic path (a typo would
 #: otherwise change behaviour without warning).
 SEARCH_ENGINES = (
+    SEARCH_ENGINE_SEPARABLE,
     SEARCH_ENGINE_EXHAUSTIVE,
     SEARCH_ENGINE_THOROUGH,
     SEARCH_ENGINE_BALANCED,
@@ -209,6 +268,11 @@ _SURROGATE_TOP_K = 3
 #: Template racing (technique H): how many templates advance past the shallow
 #: (layer 0–1) race into the deeper heuristic search.
 _RACING_ADVANCE_COUNT = 2
+#: How many templates advance from the separable engine's race into backward
+#: elimination. The others keep their all-local node, which costs no coupled fit
+#: at all, so a raced-out template still carries an honest score on the
+#: leaderboard rather than vanishing from it.
+_SEPARABLE_RACING_ADVANCE_COUNT = 3
 _HIGH_DIMENSION_FREE_COUNT = 40
 _EXTREME_DIMENSION_FREE_COUNT = 70
 _MAX_TEMPLATE_WORKERS = 4
@@ -260,10 +324,10 @@ _OSCILLATORY_RESCUE_MAX_SCOUTS = 3
 # existing caller's answer changes.
 # --------------------------------------------------------------------------- #
 _EFFORT_TIER_SEARCH_ENGINE: dict[EffortTier, str] = {
-    EffortTier.LOW: SEARCH_ENGINE_EXHAUSTIVE,
-    EffortTier.BALANCED: SEARCH_ENGINE_EXHAUSTIVE,
-    EffortTier.THOROUGH: SEARCH_ENGINE_EXHAUSTIVE,
-    EffortTier.EXHAUSTIVE: SEARCH_ENGINE_EXHAUSTIVE,
+    EffortTier.LOW: SEARCH_ENGINE_SEPARABLE,
+    EffortTier.BALANCED: SEARCH_ENGINE_SEPARABLE,
+    EffortTier.THOROUGH: SEARCH_ENGINE_SEPARABLE,
+    EffortTier.EXHAUSTIVE: SEARCH_ENGINE_SEPARABLE,
 }
 
 
@@ -396,7 +460,31 @@ class GlobalParameterRecommendation:
 
 @dataclass(frozen=True)
 class GlobalCandidateAssessment:
-    """Fit and comparison data for one global-fit candidate."""
+    """Fit and comparison data for one global-fit candidate.
+
+    **Dense-curve contract.** ``fitted_curves_by_run`` and
+    ``component_curves_by_run`` exist for the GUI, which draws them; nothing in
+    the role search reads them. They are also by far the largest thing an
+    assessment carries — a dozen runs of a native-resolution record come to tens
+    of megabytes per assessment, against kilobytes for everything else — and the
+    separable search visits hundreds of nodes and caches every one. So they are
+    built exactly once, at the search's exit, and the two states are explicit:
+
+    * An assessment **inside a search** (anything in a
+      :class:`_HeuristicTemplateState`'s ``exact_cache`` /
+      ``converged_assessments`` under the separable engine) has *no* curves —
+      both dicts empty — and its per-run :class:`FitResult`\\ s carry no
+      ``residuals`` either. Its diagnostics, information criteria, gates and
+      series warnings are complete: they were computed during assembly, from
+      the residuals, before they were dropped.
+    * Every assessment a :class:`GlobalFitWizardRecommendation` exposes — the
+      series-wide leaderboard rows, the per-phase answers, the pre-screen rows —
+      has curves for every run it was fitted on, and residuals to match.
+
+    :func:`_with_dense_curves` is the one crossing between the two, and
+    :func:`_assemble_assignment_assessment`'s ``dense_curves`` flag is what
+    decides which one an assembly produces.
+    """
 
     template: CandidateTemplate
     fit_results_by_run: dict[int, FitResult]
@@ -457,7 +545,23 @@ class GlobalCandidateAssessment:
 
 @dataclass(frozen=True)
 class GlobalFitWizardRecommendation:
-    """Global-fit analysis payload plus the current recommendation."""
+    """Global-fit analysis payload plus the current recommendation.
+
+    Two answers live here, and they do not compete. ``recommended_key``,
+    ``comparable_keys`` and ``assessments`` are the **series-wide** answer: one
+    template, one role assignment, every run. ``partition_path`` and
+    ``phase_assessments`` are the **partitioned** answer: the series split into
+    contiguous phases at structural breaks, each phase with its own template and
+    assignment. A screening pass always computes the path (it is closed-form and
+    cheap); the per-phase coupled fits happen only when
+    :func:`build_global_fit_wizard_recommendation` is asked for a ``partition_k``.
+
+    ``partition_path`` is ``None`` when the series cannot be partitioned at all —
+    fewer than ``2 × min_segment`` runs, or no template scoreable on every run.
+    ``phase_assessments`` is keyed ``(k, segment_index)`` so the assessments of
+    the neighbouring solutions tier 3 verified stay addressable next to the
+    selected one; ``recommended_partition_k`` names which ``k`` was optimised.
+    """
 
     series_axis_key: str
     series_axis_label: str
@@ -470,10 +574,33 @@ class GlobalFitWizardRecommendation:
     recommended_key: str | None
     comparable_keys: tuple[str, ...]
     summary: str
+    partition_path: PartitionPath | None = None
+    phase_assessments: dict[tuple[int, int], GlobalCandidateAssessment] = field(
+        default_factory=dict
+    )
+    recommended_partition_k: int | None = None
 
     @property
     def recommended_assessment(self) -> GlobalCandidateAssessment | None:
         return self.assessment_for_key(self.recommended_key)
+
+    @property
+    def recommended_partition(self) -> PartitionSolution | None:
+        """The optimised partition solution, when one was optimised."""
+
+        if self.partition_path is None or self.recommended_partition_k is None:
+            return None
+        return self.partition_path.solutions[self.recommended_partition_k]
+
+    def phase_assessment(self, segment_index: int) -> GlobalCandidateAssessment | None:
+        """The recommended assessment of one phase of the optimised partition.
+
+        ``None`` for an excluded end stub, which never receives a coupled fit.
+        """
+
+        if self.recommended_partition_k is None:
+            return None
+        return self.phase_assessments.get((self.recommended_partition_k, segment_index))
 
     def assessment_for_key(self, key: str | None) -> GlobalCandidateAssessment | None:
         if not isinstance(key, str):
@@ -593,6 +720,10 @@ class _WarmStartAssessment:
 class _WavefrontAssignmentTask:
     template_key: str
     template: CandidateTemplate
+    #: The series as **fit records** — fitted arrays and run provenance, no raw
+    #: detector counts (see :meth:`MuonDataset.fit_record`). Every assignment
+    #: task carries the whole series, so the counts would otherwise be pickled
+    #: once per node of the wavefront.
     datasets: list[MuonDataset]
     base_by_run: dict[int, ParameterSet]
     fixed_param_names: tuple[str, ...]
@@ -703,23 +834,26 @@ def _wavefront_worker_count(task_count: int) -> int:
     return max(1, min(task_count, cpu_count, _MAX_WAVEFRONT_WORKERS))
 
 
-def _single_fit_table_worker_count(task_count: int) -> int:
-    """Workers for phase-1 single-fit table generation — one task per *dataset*.
+def _phase_one_concurrency(task_count: int) -> int:
+    """How many per-run single-run analyses phase 1 runs at once.
 
-    Bounded by the host's CPU count: each table is minutes of CPU-bound fitting,
-    so running more of them than there are cores only lengthens the time to the
-    *first* completed table — which is the stage's only sign of life.
+    A single ``build_fit_wizard_recommendation`` never keeps a machine busy:
+    peak detection, the damped-line scan, the fingerprint, the residual pass and
+    the tier gating are serial, and its own pool sits idle through all of them.
+    Measured on a 29-run series of 90 000-point records, the serial stage cost
+    ~15 s per run with most cores idle for much of it. Running a few analyses
+    side by side fills those gaps with another run's fan-out.
 
-    It is deliberately **not** bounded by ``_MAX_TEMPLATE_WORKERS``. That cap
-    sizes template-level fan-out inside one series fit, where the tasks share
-    caches and the deeper stages fan out again; phase-1 tables are independent
-    whole-dataset jobs, and capping them at four left a 14-dataset series using
-    a fraction of a large host while taking 3.5 sequential rounds to finish.
+    The count is halved from the core count and capped at
+    ``_MAX_PHASE_ONE_ANALYSES``. The analyses now share phase 1's single spawn
+    pool rather than each opening one, so this no longer has to keep a *product*
+    of widths off the host; what it still bounds is how many runs' serial stages
+    and result objects are alive in the parent at once.
     """
     if task_count <= 0:
         return 1
     cpu_count = os.cpu_count() or 1
-    return max(1, min(task_count, cpu_count))
+    return max(1, min(task_count, _MAX_PHASE_ONE_ANALYSES, cpu_count // 2))
 
 
 def _try_open_process_pool(
@@ -896,18 +1030,163 @@ def _run_wavefront_assignment_task(
     )
 
 
-def _single_fit_recommendation_task(
+@dataclass(frozen=True)
+class _RunCompletionPlan:
+    """One run's share of the completion pass: what is kept, what must be fitted.
+
+    Built in the parent, so the source recommendation — tens of megabytes once
+    every cell carries its dense fitted curves — never crosses a process
+    boundary. Only the ``tasks`` do, and each of those carries the rebinned
+    record and one template.
+    """
+
+    dataset: MuonDataset
+    #: ``dataset`` at the series rebin factor: what every cell of this run's row
+    #: is fitted on, and so what a cell's curves must be rebuilt against.
+    analysis_dataset: MuonDataset
+    source: FitWizardRecommendation
+    analysed_points: int
+    #: Cells the run's own table already holds at the series rebin factor.
+    kept: dict[str, CandidateAssessment]
+    #: One task per cell this run lacks, in alphabet order.
+    tasks: tuple[_AssessmentTask, ...]
+
+
+def _plan_run_completion(
     dataset: MuonDataset,
     templates: tuple[CandidateTemplate, ...],
+    source: FitWizardRecommendation,
+    *,
+    rebin_factor: int,
     metric: SelectionMetric,
-) -> tuple[int, FitWizardRecommendation]:
-    run_number = int(dataset.run_number)
-    recommendation = build_fit_wizard_recommendation_for_templates(
-        dataset,
-        templates,
-        metric=metric,
+    sibling_values_by_template: Mapping[str, ParameterSet],
+) -> _RunCompletionPlan:
+    """Work out how to score one run against the whole series alphabet.
+
+    Cells the run's own single-fit table already holds *at this rebin factor* are
+    kept verbatim; everything else becomes an assessment task on the rebinned
+    record, seeded from the run's own peak analysis so a multiplet template's
+    lines start on the lines this run actually shows, and warm-started:
+
+    * from **this run's own** fitted values for that template, when it has them
+      at another rebin factor. That is the same data and the same model at
+      another binning — the same basin by construction — so the cell is fitted
+      once from the answer and no ladder runs (``variant_budget=0``).
+    * from the **best sibling run's** values otherwise. A sibling is a different
+      record, and a sibling-seeded cell measurably can converge into a far worse
+      basin than the base seed finds, so those keep the base rung as well
+      (``variant_budget=1``, which the warm-aware ladder in
+      :func:`~asymmetry.core.fitting.fit_wizard._assess_candidate_template` runs
+      alongside the warm attempt).
+
+    Every alphabet template was fitted successfully on some run (that is what
+    :func:`series_template_alphabet` admits), so ``sibling_values_by_template``
+    covers every cell this run lacks and no cell ever starts cold.
+    """
+    analysis_dataset = dataset.rebin(rebin_factor) if rebin_factor > 1 else dataset
+    # One task per cell means the rebinned record is pickled once per cell this
+    # run lacks, and a series-wide completion pass is hundreds of cells. The
+    # tasks therefore carry the *fit record* — arrays and provenance, no raw
+    # counts — while the plan keeps the full record for the in-parent curve
+    # rebuild in :func:`_assemble_completed_run`.
+    analysis_fit_record = analysis_dataset.fit_record()
+    same_resolution = int(source.rebin_factor) == int(rebin_factor)
+    seed_context = TemplateSeedContext(
+        peak_analysis=source.peak_analysis,
+        multiplet_matches=source.multiplet_matches,
+        field_gauss=dataset.field,
+        geometry=dataset_field_geometry(dataset),
     )
-    return run_number, recommendation
+
+    kept: dict[str, CandidateAssessment] = {}
+    tasks: list[_AssessmentTask] = []
+    for template in templates:
+        assessment = source.assessment_for_key(template.key)
+        own_values = (
+            assessment.fit_result.parameters
+            if assessment is not None and assessment.is_successful
+            else None
+        )
+        if own_values is not None and same_resolution:
+            kept[template.key] = assessment
+            continue
+        tasks.append(
+            _AssessmentTask(
+                dataset=analysis_fit_record,
+                fingerprint=source.fingerprint,
+                template=template,
+                metric=metric,
+                seed_context=seed_context,
+                variant_budget=0 if own_values is not None else 1,
+                stage=2,
+                screening_cap=False,
+                warm_start=(
+                    own_values
+                    if own_values is not None
+                    else sibling_values_by_template[template.key]
+                ),
+                # A completion cell is a score-table entry: the table is read for
+                # its criteria and its fitted values, and the row's displayed
+                # assessments get their curves back in _assemble_completed_run.
+                dense_curves=False,
+            )
+        )
+    return _RunCompletionPlan(
+        dataset=dataset,
+        analysis_dataset=analysis_dataset,
+        source=source,
+        analysed_points=int(analysis_dataset.n_points),
+        kept=kept,
+        tasks=tuple(tasks),
+    )
+
+
+def _assemble_completed_run(
+    plan: _RunCompletionPlan,
+    fitted: Mapping[str, CandidateAssessment],
+    templates: tuple[CandidateTemplate, ...],
+    *,
+    rebin_factor: int,
+    metric: SelectionMetric,
+) -> FitWizardRecommendation:
+    """One run's completed row: the kept cells plus the fitted ones, re-ranked.
+
+    The cells this pass fitted carry no dense curves (the contract on
+    :class:`~asymmetry.core.fitting.fit_wizard.CandidateAssessment`). Ranking
+    reads none of them, so they are rebuilt once the rank is known, for the rows
+    a caller displays: the recommendation and its comparable alternatives. Only
+    the fitted cells need it — a kept cell is the run's own assessment, curves
+    and all, and is carried through as the very same object.
+    """
+    assessments_by_key: dict[str, CandidateAssessment] = {**plan.kept, **fitted}
+    ranked = rerank_fit_wizard_recommendation(
+        FitWizardRecommendation(
+            fingerprint=plan.source.fingerprint,
+            templates=tuple(templates),
+            assessments=tuple(assessments_by_key[template.key] for template in templates),
+            metric=metric,
+            recommended_key=None,
+            comparable_keys=(),
+            summary="",
+            peak_analysis=plan.source.peak_analysis,
+            multiplet_matches=plan.source.multiplet_matches,
+            family_reports=plan.source.family_reports,
+            scope_note=plan.source.scope_note,
+            rebin_factor=int(rebin_factor),
+            analysed_points=plan.analysed_points,
+        ),
+        metric,
+    )
+    displayed = {key for key in (ranked.recommended_key, *ranked.comparable_keys) if key in fitted}
+    return replace(
+        ranked,
+        assessments=tuple(
+            _single_fit_with_dense_curves(assessment, plan.analysis_dataset)
+            if assessment.template.key in displayed
+            else assessment
+            for assessment in ranked.assessments
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -920,8 +1199,11 @@ class GlobalFitWizardCandidatePortfolio:
     mixed_axes_warning: str | None
     fingerprints_by_run: dict[int, SpectrumFingerprint]
     templates: tuple[CandidateTemplate, ...]
-    #: Template keys of families supported by the cross-run multiplet pattern
-    #: vote; the staged shortlist force-includes them.
+    #: Alphabet templates something in the data positively identified — a
+    #: multiplet built from a run's detected lines, or a template whose family a
+    #: run's multiplet pattern match named. The effort tier never trims them and
+    #: the staged shortlist force-includes them. Empty on a preview portfolio,
+    #: which has run no peak search of its own.
     pattern_template_keys: tuple[str, ...] = ()
 
     @property
@@ -929,56 +1211,28 @@ class GlobalFitWizardCandidatePortfolio:
         return tuple(int(dataset.run_number) for dataset in self.ordered_datasets)
 
 
-def _series_multiplet_pattern_family_keys(
-    ordered_datasets: Sequence[MuonDataset],
-    user_frequencies_mhz: Sequence[float] | None = None,
-) -> frozenset[str]:
-    """Cross-run majority vote on multiplet pattern matches.
-
-    Each run's detected (tail-subtracted) peak set is pattern-matched against
-    the known physical multiplets; a candidate family is pattern-supported for
-    the series when at least half of the runs (and no fewer than two) show a
-    match naming it.
-    """
-    votes: dict[str, int] = {}
-    for dataset in ordered_datasets:
-        analysis = analyze_dataset_peaks(dataset)
-        if user_frequencies_mhz:
-            analysis = merge_user_peaks(analysis, tuple(user_frequencies_mhz))
-        geometry = dataset_field_geometry(dataset)
-        matches = match_multiplets(
-            analysis,
-            field_gauss=dataset.field,
-            geometry=geometry.value if geometry is not None else None,
-        )
-        for family_key in {match.family_key for match in matches}:
-            votes[family_key] = votes.get(family_key, 0) + 1
-    quorum = max(2, math.ceil(len(ordered_datasets) / 2))
-    return frozenset(key for key, count in votes.items() if count >= quorum)
-
-
-def _scoped_series_templates(
+def _preview_series_templates(
     ordered_datasets: Sequence[MuonDataset],
     aggregate_fingerprint: SpectrumFingerprint,
     current_model: CompositeModel | None,
     *,
     scope: WizardScope | None = None,
-    user_frequencies_mhz: Sequence[float] | None = None,
-) -> tuple[tuple[CandidateTemplate, ...], tuple[str, ...]]:
-    """Return the series candidate templates and pattern-forced template keys.
+) -> tuple[CandidateTemplate, ...]:
+    """The candidate list to *quote* for a series before phase 1 has run.
 
-    With ``scope is None`` the legacy hint-gated portfolio is kept (plus the
-    templates of any pattern-supported family, appended additively). With a
-    scope, the portfolio is family-based: every in-scope family contributes its
-    Stage-1 shapes; full member sets are included for families the aggregate
-    fingerprint hints at, the cross-run pattern vote names, or the baseline.
-    The returned keys mark pattern-supported families' templates so the staged
-    shortlist can never drop them.
+    A preview, not the portfolio the screen will score: it is built from the
+    scope and the median fingerprint alone, so the Setup page can size the job
+    without paying for a single fit. The portfolio that is actually screened is
+    the series alphabet — the union of what the per-run single-fit wizard
+    assessed (:func:`series_template_alphabet`) — which no aggregate can
+    anticipate, because a template that describes a minority phase of the series
+    is invisible in the median.
+
+    With ``scope is None`` this is the legacy hint-gated candidate list. With a
+    scope it is family-based: every in-scope family contributes its Stage-1
+    shapes, and the hinted families and the baseline contribute their full
+    member sets.
     """
-    pattern_family_keys = _series_multiplet_pattern_family_keys(
-        ordered_datasets, user_frequencies_mhz
-    )
-
     resolution: ScopeResolution | None = None
     if scope is not None:
         resolution = resolve_scope_for_datasets(list(ordered_datasets), scope)
@@ -986,47 +1240,281 @@ def _scoped_series_templates(
         aggregate_fingerprint, current_model, scope_resolution=resolution
     )
 
-    def _family_templates(family: object, *, members: bool) -> list[CandidateTemplate]:
-        chosen = [family.stage1_rep, *family.stage1_extras]
-        if members:
-            chosen.extend(family.stage2_members)
-        return chosen
-
-    pattern_template_keys: list[str] = []
-    for family in families:
-        if family.key in pattern_family_keys:
-            pattern_template_keys.extend(
-                template.key for template in _family_templates(family, members=True)
-            )
-
     if scope is None:
-        templates = list(
-            build_candidate_templates(aggregate_fingerprint, current_model=current_model)
-        )
-        known_keys = {template.key for template in templates}
-        for family in families:
-            if family.key not in pattern_family_keys:
-                continue
-            for template in _family_templates(family, members=True):
-                if template.key not in known_keys:
-                    templates.append(template)
-                    known_keys.add(template.key)
-    else:
-        templates = []
-        known_keys = set()
-        for family in families:
-            expand = (
-                family.priority > 0.0
-                or family.key in pattern_family_keys
-                or family.key == "baseline"
-            )
-            for template in _family_templates(family, members=expand):
-                if template.key not in known_keys:
-                    templates.append(template)
-                    known_keys.add(template.key)
+        return tuple(build_candidate_templates(aggregate_fingerprint, current_model=current_model))
 
-    forced = tuple(key for key in dict.fromkeys(pattern_template_keys) if key in known_keys)
-    return tuple(templates), forced
+    templates: list[CandidateTemplate] = []
+    known_keys: set[str] = set()
+    for family in families:
+        chosen = [family.stage1_rep, *family.stage1_extras]
+        if family.priority > 0.0 or family.key == "baseline":
+            chosen.extend(family.stage2_members)
+        for template in chosen:
+            if template.key not in known_keys:
+                templates.append(template)
+                known_keys.add(template.key)
+    return tuple(templates)
+
+
+def alphabet_bound_dropped_keys(
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> frozenset[str]:
+    """Alphabet candidates that provably cannot win any segment of the series.
+
+    The completion pass costs one fit per (run, template) cell, so a template
+    that no partition of the series could ever select is pure expense. This is
+    the exact bound on that, and it is a *dominance* argument, run by run.
+
+    Write ``χ²_{t,r}`` for template ``t``'s χ² on run ``r`` and ``IC_{u,r}`` for
+    template ``u``'s information criterion there. A segment ``S`` is scored under
+    one template with one sharing pattern, and
+
+    * sharing only ever *raises* χ² (the all-local fit is the minimum over
+      assignments) and every penalty is non-negative, so the cost of ``t`` on
+      ``S`` is at least ``Σ_{r∈S} χ²_{t,r}``;
+    * the all-local cost of ``u`` on ``S`` is exactly ``Σ_{r∈S} IC_{u,r}``, an
+      upper bound on the cost of the best structure available on ``S``.
+
+    So if some **fixed** template ``u`` satisfies ``χ²_{t,r} ≥ IC_{u,r}`` on
+    *every* run, then ``u``'s all-local score beats ``t``'s best possible score
+    on every segment, and ``t`` can be dropped. The template must additionally
+    never have been chosen — recommended or comparable — by any run's own
+    analysis; that is not part of the arithmetic but keeps a run's own verdict
+    in the alphabet whatever the sums say.
+
+    Two things the argument needs, and does not assume away:
+
+    *The dominator has to be fixed.* Comparing ``χ²_{t,r}`` with that run's
+    *best* criterion, ``min_u IC_{u,r}``, is **not** exact, because the argmin
+    may move from run to run while a segment is scored under one template. Two
+    runs, ``IC_{u1} = (10, 100)``, ``IC_{u2} = (100, 10)``, ``χ²_t = (11, 11)``:
+    ``t`` clears the per-run minimum on both runs and still wins the segment at
+    24 against 110. Hence the search for a single ``u`` below.
+
+    *A cell we have no number for is worth nothing.* A template a run never
+    assessed contributes ``0`` to its own floor, so a template assessed on only
+    part of the series is effectively never dropped — which is the honest
+    answer, since the completion fit that would produce the missing χ² has not
+    been run. The dominator, conversely, must be successful on *every* run: it
+    has to be a structure the whole segment could actually use.
+
+    ``IC_{u,r}`` is taken as the largest of AIC, AICc and BIC, so the bound holds
+    whichever criterion the caller ranks with and whichever the partition search
+    later scores with (the plan scores partitions with BIC regardless of the
+    ranking metric). Dominators are not restricted to templates that survive the
+    bound themselves: dominance chains are sound, since ``IC ≥ χ²`` makes the
+    relation transitive, and their minimal elements are never dropped.
+
+    The caller applies the result to the *capped* alphabet
+    (:func:`series_template_alphabet`), so what the bound saves is completion
+    fits rather than slots handed to the next-ranked candidate.
+    """
+    run_numbers = sorted(recommendations_by_run)
+    chosen_keys: set[str] = set()
+    chi_squared_by_key: dict[str, dict[int, float]] = {}
+    criterion_by_key: dict[str, dict[int, float]] = {}
+    for run_number in run_numbers:
+        recommendation = recommendations_by_run[run_number]
+        for assessment in recommendation.assessments:
+            if assessment.is_null_baseline or not assessment.is_successful:
+                continue
+            chi_squared = float(assessment.fit_result.chi_squared)
+            criterion = max(
+                float(assessment.metric_value(criterion_metric))
+                for criterion_metric in SelectionMetric
+            )
+            if not (np.isfinite(chi_squared) and np.isfinite(criterion)):
+                continue
+            key = assessment.template.key
+            chi_squared_by_key.setdefault(key, {})[run_number] = chi_squared
+            criterion_by_key.setdefault(key, {})[run_number] = criterion
+        if recommendation.recommended_key is not None:
+            chosen_keys.add(recommendation.recommended_key)
+        chosen_keys.update(recommendation.comparable_keys)
+
+    dominators = [
+        key for key in sorted(criterion_by_key) if len(criterion_by_key[key]) == len(run_numbers)
+    ]
+    dropped: set[str] = set()
+    for key in sorted(chi_squared_by_key):
+        if key in chosen_keys:
+            continue
+        floors = chi_squared_by_key[key]
+        for other in dominators:
+            if other == key:
+                continue
+            beaten = criterion_by_key[other]
+            if all(floors.get(run, 0.0) >= beaten[run] for run in run_numbers):
+                dropped.add(key)
+                break
+    return frozenset(dropped)
+
+
+def series_template_alphabet(
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+    *,
+    cap: int = _SERIES_ALPHABET_CAP,
+) -> tuple[CandidateTemplate, ...]:
+    """The series' candidate alphabet: the union of what its runs assessed.
+
+    Every template any run's single-fit wizard successfully fitted is a
+    candidate for the series — including a multiplet template only a couple of
+    runs produced, which is exactly the shape a median-fingerprint portfolio
+    loses. Null baselines are excluded: they are a per-run reference for "no
+    significant structure", never a model for a coupled series fit.
+
+    Order is the order to spend a bounded budget in: templates a run *chose*
+    (recommended, or scored comparable to the recommendation) first, then by the
+    best rank any single run gave them, then by first appearance in run order.
+    The first ``cap`` survive.
+    """
+    templates_by_key: dict[str, CandidateTemplate] = {}
+    best_rank: dict[str, int] = {}
+    first_seen: dict[str, tuple[int, int]] = {}
+    chosen_keys: set[str] = set()
+    for run_index, run_number in enumerate(sorted(recommendations_by_run)):
+        recommendation = recommendations_by_run[run_number]
+        ranked = [
+            assessment
+            for assessment in recommendation.sorted_assessments()
+            if not assessment.is_null_baseline and assessment.is_successful
+        ]
+        for rank, assessment in enumerate(ranked):
+            key = assessment.template.key
+            templates_by_key.setdefault(key, assessment.template)
+            first_seen.setdefault(key, (run_index, rank))
+            best_rank[key] = min(best_rank.get(key, rank), rank)
+        if recommendation.recommended_key is not None:
+            chosen_keys.add(recommendation.recommended_key)
+        chosen_keys.update(recommendation.comparable_keys)
+
+    ordered = sorted(
+        templates_by_key,
+        key=lambda key: (0 if key in chosen_keys else 1, best_rank[key], first_seen[key]),
+    )
+    return tuple(templates_by_key[key] for key in ordered[: int(cap)])
+
+
+def series_rebin_factor(
+    datasets: Sequence[MuonDataset],
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> int:
+    """One value-rebinning factor for the whole series: the smallest per run.
+
+    Every run's own factor already respects that run's bandwidth (see
+    :func:`~asymmetry.core.fitting.fit_wizard.analysis_rebin_factor`), so the
+    minimum respects all of them. The series needs a single factor because the
+    information criteria of two runs are only summable when both refer to
+    records of the same construction.
+    """
+    return max(
+        1,
+        min(
+            int(recommendations_by_run[int(dataset.run_number)].rebin_factor)
+            for dataset in datasets
+        ),
+    )
+
+
+def _series_pattern_template_keys(
+    templates: Sequence[CandidateTemplate],
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> tuple[str, ...]:
+    """Alphabet templates something in the data positively identified.
+
+    Two kinds: a multiplet template (its lines came from a run's detected peak
+    set) and a template whose family a run's multiplet pattern match named.
+    These are never trimmed by an effort tier — dropping them would change the
+    answer rather than coarsen it.
+    """
+    protected: set[str] = set()
+    for recommendation in recommendations_by_run.values():
+        family_by_template = _template_family_map(recommendation.family_reports)
+        matched_families = {match.family_key for match in recommendation.multiplet_matches}
+        for template in templates:
+            if is_multiplet_template_key(template.key):
+                protected.add(template.key)
+            elif family_by_template.get(template.key) in matched_families:
+                protected.add(template.key)
+    return tuple(template.key for template in templates if template.key in protected)
+
+
+def _sibling_warm_starts(
+    templates: Sequence[CandidateTemplate],
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+    metric: SelectionMetric,
+) -> dict[str, ParameterSet]:
+    """Best per-template fitted values across the series, for completion seeds.
+
+    A run that never fitted a template has no values of its own to start from;
+    the same model fitted on the sibling run it scored best on is the closest
+    thing the series has to an answer. Chosen deterministically (best metric
+    value, ties broken by run order) so a completion table does not depend on
+    which worker finished first.
+    """
+    best: dict[str, tuple[float, ParameterSet]] = {}
+    for run_number in sorted(recommendations_by_run):
+        recommendation = recommendations_by_run[run_number]
+        for template in templates:
+            assessment = recommendation.assessment_for_key(template.key)
+            if assessment is None or not assessment.is_successful:
+                continue
+            score = float(assessment.metric_value(metric))
+            if not np.isfinite(score):
+                continue
+            incumbent = best.get(template.key)
+            if incumbent is None or score < incumbent[0]:
+                best[template.key] = (score, assessment.fit_result.parameters)
+    return {key: parameters for key, (_score, parameters) in best.items()}
+
+
+def _scope_filtered_templates(
+    templates: Sequence[CandidateTemplate],
+    ordered_datasets: Sequence[MuonDataset],
+    scope: WizardScope | None,
+) -> tuple[CandidateTemplate, ...]:
+    """Drop templates whose components are out of scope for *every* run."""
+    if scope is None:
+        return tuple(templates)
+    resolution = resolve_scope_for_datasets(list(ordered_datasets), scope)
+    return tuple(
+        template
+        for template in templates
+        if all(name in resolution.included_set for name in template.model.component_names)
+    )
+
+
+def single_fit_table_covers_portfolio(
+    datasets: Sequence[MuonDataset],
+    templates: Sequence[CandidateTemplate],
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> bool:
+    """True when ``recommendations_by_run`` is a usable series score table.
+
+    Two conditions, and both are what the series arithmetic needs rather than
+    bookkeeping: every run carries a score for every template (a missing cell
+    makes that template's series sum meaningless), and every run was scored at
+    the *same* rebin factor (an information criterion computed on a coarser
+    record is not comparable with one computed on a finer one). A cell that
+    *failed* still covers: the completion pass already retried it from a
+    sibling run's values, so a failure in a completed table is the honest
+    answer that the template does not describe that run, not work left
+    undone. Coverage is not identity: a run's table may hold more templates
+    than the series ranks, which is exactly what a genuine single-run analysis
+    does.
+    """
+    if not recommendations_by_run or not templates:
+        return False
+    factors: set[int] = set()
+    for dataset in datasets:
+        recommendation = recommendations_by_run.get(int(dataset.run_number))
+        if recommendation is None:
+            return False
+        factors.add(int(recommendation.rebin_factor))
+        for template in templates:
+            if recommendation.assessment_for_key(template.key) is None:
+                return False
+    return len(factors) == 1
 
 
 def build_global_fit_wizard_candidate_portfolio(
@@ -1034,9 +1522,18 @@ def build_global_fit_wizard_candidate_portfolio(
     current_model: CompositeModel | None = None,
     *,
     scope: WizardScope | None = None,
-    user_frequencies_mhz: Sequence[float] | None = None,
+    single_fit_recommendations_by_run: Mapping[int, FitWizardRecommendation] | None = None,
 ) -> GlobalFitWizardCandidatePortfolio:
-    """Return the ordered datasets, fingerprints, and candidate families for one series."""
+    """Return the ordered datasets, fingerprints, and candidate portfolio for one series.
+
+    With ``single_fit_recommendations_by_run`` the portfolio is the **series
+    alphabet**: the union of the templates those per-run single-fit wizard
+    recommendations assessed, scope-filtered and capped
+    (:func:`series_template_alphabet`). Without them it is the cheap
+    **preview** list the Setup page quotes before phase 1 has run — the scope's
+    families around the median fingerprint, no fits, and no claim to be the set
+    that will actually be screened.
+    """
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
 
@@ -1046,16 +1543,26 @@ def build_global_fit_wizard_candidate_portfolio(
     fingerprints_by_run = {
         int(dataset.run_number): fingerprint_spectrum(dataset) for dataset in ordered_datasets
     }
-    aggregate_fingerprint = _aggregate_fingerprints(
-        [fingerprints_by_run[int(dataset.run_number)] for dataset in ordered_datasets]
-    )
-    templates, pattern_template_keys = _scoped_series_templates(
-        ordered_datasets,
-        aggregate_fingerprint,
-        current_model,
-        scope=scope,
-        user_frequencies_mhz=user_frequencies_mhz,
-    )
+    if single_fit_recommendations_by_run:
+        templates = _scope_filtered_templates(
+            series_template_alphabet(single_fit_recommendations_by_run),
+            ordered_datasets,
+            scope,
+        )
+        pattern_template_keys = _series_pattern_template_keys(
+            templates, single_fit_recommendations_by_run
+        )
+    else:
+        aggregate_fingerprint = _aggregate_fingerprints(
+            [fingerprints_by_run[int(dataset.run_number)] for dataset in ordered_datasets]
+        )
+        templates = _preview_series_templates(
+            ordered_datasets,
+            aggregate_fingerprint,
+            current_model,
+            scope=scope,
+        )
+        pattern_template_keys = ()
     return GlobalFitWizardCandidatePortfolio(
         ordered_datasets=tuple(ordered_datasets),
         series_axis_key=axis_key,
@@ -1162,6 +1669,167 @@ def _apply_screening_effort_tier(
     return replace(portfolio, templates=screened)
 
 
+def _fitted_values_by_template(
+    recommendation: FitWizardRecommendation,
+) -> dict[str, ParameterSet]:
+    """One run's fitted values per template key, for a neighbour's warm start."""
+    return {
+        assessment.template.key: assessment.fit_result.parameters
+        for assessment in recommendation.assessments
+        if assessment.is_successful
+    }
+
+
+@dataclass(frozen=True)
+class _SingleRunAnalysisOutcome:
+    """What stage 1 produced for one run, in the order the runs finished."""
+
+    dataset: MuonDataset
+    recommendation: FitWizardRecommendation
+
+
+def _run_single_run_analyses(
+    datasets: Sequence[MuonDataset],
+    *,
+    current_model: CompositeModel | None,
+    metric: SelectionMetric,
+    scope: WizardScope | None,
+    user_frequencies_mhz: Sequence[float] | None,
+    cancel_callback: Callable[[], bool] | None,
+    concurrency: int,
+    executor: Executor | None,
+    progress_callback: Callable[[str], None] | None,
+    on_completed: Callable[[_SingleRunAnalysisOutcome], None],
+) -> int:
+    """Analyse every dataset with the single-run Fit Wizard; return warm-seed count.
+
+    ``datasets`` arrive in sweep-axis order and are *started* in that order, so
+    by the time a run begins the neighbour that finished nearest to it along the
+    axis is usually the run right beside it. That neighbour's fitted values are
+    handed to the analysis as an extra first variant per template
+    (``warm_start_by_template``); the seed ladder still runs, so the extra start
+    can only improve a template's fit or leave it alone.
+
+    ``concurrency`` analyses run at once on a thread pool in this process. That
+    is not a way to dodge the GIL — each analysis spends its time in the shared
+    *spawn* pool and in NumPy — it is a way to overlap one run's serial stages
+    (detection, pattern search, gating) with another run's fan-out.
+
+    ``executor`` is phase 1's single spawn pool, handed to every analysis so they
+    share one set of workers sized to the host. Sharing is what makes the overlap
+    pay: an analysis in its serial stages leaves the pool idle, and the workers
+    go to whichever analysis has fits to run rather than sitting in that
+    analysis's own private slice of the machine. ``None`` (the serial fallback,
+    where a spawn pool could not be opened at all) leaves each analysis to its
+    own devices, exactly as an unaccompanied single-run analysis behaves.
+
+    Each analysis logs its start through ``progress_callback`` from its own
+    thread (the caller's callback is already serialised by
+    :func:`_threadsafe_progress_callback`), so a long stage shows which runs are
+    under way rather than nothing at all until the first one lands.
+    ``on_completed`` is called once per finished run, in completion order, on
+    this thread. ``cancel_callback`` is checked before each submission and while
+    waiting; on cancel the pool is dropped without waiting for the analyses in
+    flight — they poll the same callback and raise
+    :class:`~asymmetry.core.fitting.engine.FitCancelledError` themselves, which
+    tears down their own worker pools.
+    """
+    completed_by_index: dict[int, FitWizardRecommendation] = {}
+    state_lock = threading.Lock()
+    warm_seeded = 0
+
+    def _warm_start_for(index: int) -> dict[str, ParameterSet]:
+        """The nearest finished run's values — empty while none has finished."""
+        with state_lock:
+            if not completed_by_index:
+                return {}
+            nearest = min(completed_by_index, key=lambda other: (abs(other - index), other))
+            return _fitted_values_by_template(completed_by_index[nearest])
+
+    def _analyse(index: int) -> _SingleRunAnalysisOutcome:
+        nonlocal warm_seeded
+        warm_start = _warm_start_for(index)
+        if warm_start:
+            with state_lock:
+                warm_seeded += 1
+        _progress_log(
+            progress_callback,
+            f"Single-fit analysis {datasets[index].run_label}: screening candidate families.",
+        )
+        recommendation = build_fit_wizard_recommendation(
+            datasets[index],
+            current_model,
+            metric=metric,
+            scope=scope,
+            user_frequencies_mhz=user_frequencies_mhz,
+            cancel_callback=cancel_callback,
+            executor=executor,
+            warm_start_by_template=warm_start,
+        )
+        with state_lock:
+            completed_by_index[index] = recommendation
+        return _SingleRunAnalysisOutcome(dataset=datasets[index], recommendation=recommendation)
+
+    if concurrency <= 1:
+        for index in range(len(datasets)):
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            on_completed(_analyse(index))
+        return warm_seeded
+
+    analysis_threads = ThreadPoolExecutor(max_workers=concurrency)
+    try:
+        pending = set()
+        for index in range(len(datasets)):
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            pending.add(analysis_threads.submit(_analyse, index))
+        while pending:
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            done, pending = wait(
+                pending,
+                timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                on_completed(future.result())
+    except BaseException:
+        # Cancel, a worker failure or a Ctrl-C: drop the queued analyses and
+        # return control now. The analyses already running poll the same
+        # cancel_callback and raise out of their own pools.
+        analysis_threads.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        analysis_threads.shutdown(wait=True)
+    return warm_seeded
+
+
+@dataclass(frozen=True)
+class GlobalFitWizardScreeningTable:
+    """Phase 1's product: a series alphabet and a complete score table for it.
+
+    Two per-run mappings, deliberately distinct:
+
+    ``single_fit_recommendations_by_run``
+        the runs' own **single-run Fit Wizard** analyses — full family screening,
+        peak analysis, damped-line scan, each at that run's own rebin factor.
+        This is what a caller caches (and what the fit tabs show), and what a
+        later series analysis reuses.
+    ``recommendations_by_run``
+        the **completed table**: every run scored against every alphabet
+        template at one common ``series_rebin_factor``, so the information
+        criteria of two runs, or of two templates, may be summed and compared.
+        Derived, never a substitute for a run's own analysis.
+    """
+
+    portfolio: GlobalFitWizardCandidatePortfolio
+    recommendations_by_run: dict[int, FitWizardRecommendation]
+    single_fit_recommendations_by_run: dict[int, FitWizardRecommendation]
+    generated_run_numbers: tuple[int, ...]
+    series_rebin_factor: int
+
+
 def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     datasets: list[MuonDataset],
     current_model: CompositeModel | None = None,
@@ -1172,205 +1840,353 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
     user_frequencies_mhz: Sequence[float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    metric: SelectionMetric = SelectionMetric.AICC,
     instrumentation: dict[str, object] | None = None,
     stage_callback: Callable[[WizardStageProgress], None] | None = None,
-) -> tuple[GlobalFitWizardCandidatePortfolio, dict[int, FitWizardRecommendation], tuple[int, ...]]:
-    """Return a complete per-run single-fit table set for one global-wizard portfolio.
+    phase1_concurrency: int | None = None,
+    apply_alphabet_bound: bool = True,
+) -> GlobalFitWizardScreeningTable:
+    """Run phase 1 of the global fit wizard: per-run analysis, then completion.
 
-    ``effort_tier`` sizes the screened portfolio (see
-    :func:`screening_templates_for_effort_tier`): Low and Balanced trade candidate
-    coverage for a table that finishes, Thorough and Exhaustive screen everything.
-    ``instrumentation`` and ``stage_callback`` carry the standard timing block and
-    per-stage progress events described in
-    :mod:`asymmetry.core.fitting.wizard_timing`.
+    Two stages, and the first is the whole point:
 
-    ``cancel_callback`` is polled cooperatively between per-run single-fit tasks
-    on the serial path and, on the process-pool path, *while draining* the
-    submitted futures: a ``wait`` with a ``_PHASE_ONE_CANCEL_POLL_SECONDS``
-    timeout re-checks the callback each iteration, so a cancel is honoured
-    within one poll interval instead of one in-flight table's duration (a fit
-    already running in a worker still cannot be interrupted). A truthy callback
-    raises :class:`FitCancelledError` and tears the pool down with
-    :func:`terminate_spawn_pool` — non-blocking, and force-killing the workers
-    so nothing is orphaned. This matters because a phase-1 single-fit table is a
+    1. **Every run goes through the single-run Fit Wizard**
+       (:func:`~asymmetry.core.fitting.fit_wizard.build_fit_wizard_recommendation`)
+       — tiered family screening, peak analysis including the matched-apodisation
+       damped-line scan, peak-seeded multiplet templates, null baselines and
+       refinement. That is what finds the heavily damped pair describing only the
+       low-temperature half of a series; a portfolio built from the *median*
+       fingerprint cannot. A few runs are analysed at once
+       (:func:`_phase_one_concurrency`, overridable with ``phase1_concurrency``),
+       all submitting to phase 1's single shared pool, and each warm-started from
+       the nearest already-finished run along the sweep axis
+       (:func:`_run_single_run_analyses`). An existing
+       recommendation is reused when it answers the same question — same scope,
+       same user-declared frequencies, encoded by
+       :func:`~asymmetry.core.fitting.fit_wizard.single_fit_build_signature` —
+       which is the whole of the reuse rule; a table derived from some other
+       portfolio carries no signature and is never reused.
+
+    2. **Completion.** The series alphabet is the union of what those runs
+       assessed (:func:`series_template_alphabet`), minus the candidates
+       :func:`alphabet_bound_dropped_keys` proves cannot win any segment
+       (``apply_alphabet_bound=False`` keeps them, which is what the benchmark
+       harness compares against), narrowed by the effort tier;
+       the series search resolution is the smallest per-run rebin factor
+       (:func:`series_rebin_factor`). Every (run, template) cell the run's own
+       table does not already hold *at that factor* is fitted, warm-started and
+       peak-seeded — one task per **cell** (:func:`_plan_run_completion`), not
+       one per run. The result is a rectangular table whose information criteria
+       are mutually comparable.
+
+    Both stages share **one** spawn pool, opened here at the host's core count
+    and handed down: to each per-run analysis as its ``executor``, and to the
+    completion cells. It is shut down on the way out and terminated on the way
+    out of a cancel. When it cannot open at all (no spawn-safe environment) both
+    stages run serially, as they did before.
+
+    ``cancel_callback`` is polled between submissions and while draining in both
+    stages: a ``wait`` with a
+    ``_PHASE_ONE_CANCEL_POLL_SECONDS`` timeout re-checks it each iteration, so a
+    cancel is honoured within one poll interval instead of one in-flight table's
+    duration (a fit already running in a worker still cannot be interrupted). A
+    truthy callback raises :class:`FitCancelledError` and tears the pool down
+    with :func:`terminate_spawn_pool` — non-blocking, and force-killing the
+    workers so nothing is orphaned. This matters because phase 1 is a
     *minutes*-long job: a drain that only blocks on completion, followed by a
     ``shutdown(wait=True)``, is indistinguishable from a deadlock from the
-    caller's side, and a caller that gives up and kills the parent leaves the
-    spawn workers alive (blocked forever writing their results into a pipe
-    nobody reads). Each completed table is logged so the stage visibly advances.
+    caller's side.
+
+    ``existing_recommendations_by_run`` is *replaced in place* with the run's own
+    single-run analyses (stage 1's product), never with the completed table, so a
+    caller's cache keeps answers that stay reusable.
     """
     if cancel_callback is not None and cancel_callback():
         raise FitCancelledError("Global fit wizard analysis cancelled.")
     progress_callback = _threadsafe_progress_callback(progress_callback)
-    portfolio = build_global_fit_wizard_candidate_portfolio(
+    preview = build_global_fit_wizard_candidate_portfolio(
         datasets,
         current_model=current_model,
         scope=scope,
-        user_frequencies_mhz=user_frequencies_mhz,
     )
-    portfolio = _apply_screening_effort_tier(
-        portfolio,
-        effort_tier,
-        progress_callback=progress_callback,
-        instrumentation=instrumentation,
-    )
-    expected_template_keys = candidate_template_keys(portfolio.templates)
     existing = (
         existing_recommendations_by_run if existing_recommendations_by_run is not None else {}
     )
 
-    complete_by_run: dict[int, FitWizardRecommendation] = {}
-    for dataset in portfolio.ordered_datasets:
-        run_number = int(dataset.run_number)
-        recommendation = existing.get(run_number)
-        if recommendation is None:
-            continue
-        if recommendation_template_keys(recommendation) != expected_template_keys:
-            continue
-        complete_by_run[run_number] = recommendation
-
-    if portfolio.mixed_axes_warning or not portfolio.templates:
-        complete_by_run = _sync_single_fit_recommendation_store(
-            existing_recommendations_by_run,
-            complete_by_run,
+    if preview.mixed_axes_warning:
+        return GlobalFitWizardScreeningTable(
+            portfolio=preview,
+            recommendations_by_run=_sync_single_fit_recommendation_store(
+                existing_recommendations_by_run, {}
+            ),
+            single_fit_recommendations_by_run={},
+            generated_run_numbers=(),
+            series_rebin_factor=1,
         )
-        return portfolio, complete_by_run, ()
 
+    expected_signature = single_fit_build_signature(scope, user_frequencies_mhz)
+    source_by_run: dict[int, FitWizardRecommendation] = {
+        int(dataset.run_number): existing[int(dataset.run_number)]
+        for dataset in preview.ordered_datasets
+        if int(dataset.run_number) in existing
+        and existing[int(dataset.run_number)].build_signature == expected_signature
+    }
     missing_datasets = [
         dataset
-        for dataset in portfolio.ordered_datasets
-        if int(dataset.run_number) not in complete_by_run
+        for dataset in preview.ordered_datasets
+        if int(dataset.run_number) not in source_by_run
     ]
-    if not missing_datasets:
-        complete_by_run = _sync_single_fit_recommendation_store(
-            existing_recommendations_by_run,
-            complete_by_run,
-        )
-        return portfolio, complete_by_run, ()
-
-    _progress_log(
-        progress_callback,
-        "Preparing per-dataset single-fit comparison tables for "
-        f"{len(missing_datasets)} dataset(s) using the shared candidate portfolio.",
-    )
-
     generated_run_numbers: list[int] = []
+
+    if missing_datasets:
+        _progress_log(
+            progress_callback,
+            f"Running the single-run Fit Wizard on {len(missing_datasets)} dataset(s) "
+            "to build the series candidate alphabet.",
+        )
+    concurrency = (
+        _phase_one_concurrency(len(missing_datasets))
+        if phase1_concurrency is None
+        else max(1, min(int(phase1_concurrency), max(len(missing_datasets), 1)))
+    )
+    _set_metric(instrumentation, "phase1_concurrency", concurrency)
+    # ONE spawn pool for the whole of phase 1: the per-run analyses and the
+    # completion cells all submit to it. Every worker re-imports the fitting
+    # package on the way up (~2.5 s), and the previous arrangement — a pool per
+    # analysis plus a second one inside its refinement, then another for the
+    # completion pass — paid that start-up four times per run for pools that sat
+    # idle through each analysis's serial stages.
+    pool = _try_open_process_pool(
+        max_workers=os.cpu_count() or 1,
+        progress_callback=progress_callback,
+        activity="Phase 1",
+    )
+    pool_terminated = False
+    try:
+        with stage_timer(
+            instrumentation,
+            "screening.single_fit_tables",
+            items_total=len(missing_datasets),
+            stage_callback=stage_callback,
+            message=f"Analysing {len(missing_datasets)} dataset(s) with the single-run Fit Wizard.",
+        ) as advance:
+
+            def _record(outcome: _SingleRunAnalysisOutcome) -> None:
+                run_number = int(outcome.dataset.run_number)
+                source_by_run[run_number] = outcome.recommendation
+                generated_run_numbers.append(run_number)
+                message = (
+                    f"Single-fit analysis {outcome.dataset.run_label}: done "
+                    f"({len(generated_run_numbers)}/{len(missing_datasets)})."
+                )
+                _progress_log(progress_callback, message)
+                advance(len(generated_run_numbers), message)
+
+            warm_seeded = _run_single_run_analyses(
+                missing_datasets,
+                current_model=current_model,
+                metric=metric,
+                scope=scope,
+                user_frequencies_mhz=user_frequencies_mhz,
+                cancel_callback=cancel_callback,
+                concurrency=concurrency,
+                executor=pool,
+                progress_callback=progress_callback,
+                on_completed=_record,
+            )
+        _set_metric(instrumentation, "phase1_warm_seeded", warm_seeded)
+
+        _sync_single_fit_recommendation_store(existing_recommendations_by_run, source_by_run)
+
+        bound_dropped_keys = (
+            alphabet_bound_dropped_keys(source_by_run) if apply_alphabet_bound else frozenset()
+        )
+        ranked_alphabet = series_template_alphabet(source_by_run)
+        bounded_alphabet = tuple(
+            template for template in ranked_alphabet if template.key not in bound_dropped_keys
+        )
+        dropped_from_alphabet = tuple(
+            template.key for template in ranked_alphabet if template.key in bound_dropped_keys
+        )
+        _set_metric(instrumentation, "alphabet_bound_dropped", len(dropped_from_alphabet))
+        if dropped_from_alphabet:
+            _progress_log(
+                progress_callback,
+                f"Alphabet bound: dropping {len(dropped_from_alphabet)} candidate(s) beaten on "
+                "every run by one other template — " + ", ".join(dropped_from_alphabet) + ".",
+            )
+        alphabet = _scope_filtered_templates(
+            bounded_alphabet,
+            preview.ordered_datasets,
+            scope,
+        )
+        portfolio = replace(
+            preview,
+            templates=alphabet,
+            pattern_template_keys=_series_pattern_template_keys(alphabet, source_by_run),
+        )
+        portfolio = _apply_screening_effort_tier(
+            portfolio,
+            effort_tier,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+        )
+        rebin_factor = series_rebin_factor(preview.ordered_datasets, source_by_run)
+        _set_metric(instrumentation, "alphabet_size", len(portfolio.templates))
+        _set_metric(instrumentation, "series_rebin_factor", rebin_factor)
+
+        if not portfolio.templates:
+            _set_metric(instrumentation, "completion_fits", 0)
+            return GlobalFitWizardScreeningTable(
+                portfolio=portfolio,
+                recommendations_by_run={},
+                single_fit_recommendations_by_run=source_by_run,
+                generated_run_numbers=tuple(generated_run_numbers),
+                series_rebin_factor=rebin_factor,
+            )
+
+        _progress_log(
+            progress_callback,
+            f"Series alphabet: {len(portfolio.templates)} candidate(s) at rebin factor "
+            f"x{rebin_factor}; completing the per-run score table.",
+        )
+        completed_by_run, completion_fits = _complete_single_fit_table(
+            preview.ordered_datasets,
+            portfolio.templates,
+            source_by_run,
+            rebin_factor=rebin_factor,
+            metric=metric,
+            executor=pool,
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+            instrumentation=instrumentation,
+            stage_callback=stage_callback,
+        )
+        _set_metric(instrumentation, "completion_fits", completion_fits)
+        return GlobalFitWizardScreeningTable(
+            portfolio=portfolio,
+            recommendations_by_run=completed_by_run,
+            single_fit_recommendations_by_run=source_by_run,
+            generated_run_numbers=tuple(generated_run_numbers),
+            series_rebin_factor=rebin_factor,
+        )
+    except BaseException:
+        # Cancel, a worker crash, or a Ctrl-C: never wait on the fits still in
+        # flight. Drop queued work and force-kill the workers, so the caller gets
+        # control back at once and nothing is orphaned.
+        if pool is not None:
+            terminate_spawn_pool(pool)
+            pool_terminated = True
+        raise
+    finally:
+        if pool is not None and not pool_terminated:
+            _shutdown_process_pool(pool)
+
+
+def _complete_single_fit_table(
+    ordered_datasets: Sequence[MuonDataset],
+    templates: tuple[CandidateTemplate, ...],
+    source_by_run: dict[int, FitWizardRecommendation],
+    *,
+    rebin_factor: int,
+    metric: SelectionMetric,
+    executor: Executor | None,
+    progress_callback: Callable[[str], None] | None,
+    cancel_callback: Callable[[], bool] | None,
+    instrumentation: dict[str, object] | None,
+    stage_callback: Callable[[WizardStageProgress], None] | None,
+) -> tuple[dict[int, FitWizardRecommendation], int]:
+    """Score every run against every alphabet template at one rebin factor.
+
+    One task per **cell** — one run, one template — submitted to phase 1's pool
+    (``executor``), which this function borrows and never shuts down. Cells are
+    the unit for two reasons: a task then carries the rebinned record and one
+    template instead of the run's whole source recommendation, and a series of
+    unequal rows no longer finishes in rounds of run-sized tasks with most
+    workers idle in the last one. A run's row is assembled here, in the parent,
+    as its last cell lands — and immediately, before any fitting, for a run whose
+    own table already covers the alphabet at this factor and so has no cell to
+    fit at all. Progress is still reported once per completed run.
+    """
+    sibling_values = _sibling_warm_starts(templates, source_by_run, metric)
+    plans = [
+        _plan_run_completion(
+            dataset,
+            templates,
+            source_by_run[int(dataset.run_number)],
+            rebin_factor=rebin_factor,
+            metric=metric,
+            sibling_values_by_template=sibling_values,
+        )
+        for dataset in ordered_datasets
+    ]
+    completed_by_run: dict[int, FitWizardRecommendation] = {}
+    completion_fits = sum(len(plan.tasks) for plan in plans)
+    total = len(plans)
 
     with stage_timer(
         instrumentation,
-        "screening.single_fit_tables",
-        items_total=len(missing_datasets),
+        "screening.completion_fits",
+        items_total=total,
         stage_callback=stage_callback,
-        message=(f"Preparing single-fit comparison tables for {len(missing_datasets)} dataset(s)."),
+        message=(
+            f"Completing the per-run score table for {len(ordered_datasets)} dataset(s) "
+            f"against {len(templates)} candidate(s)."
+        ),
     ) as advance:
-        worker_count = _single_fit_table_worker_count(len(missing_datasets))
-        if worker_count <= 1:
-            for dataset in missing_datasets:
+
+        def _finish(plan: _RunCompletionPlan, fitted: dict[str, CandidateAssessment]) -> None:
+            completed_by_run[int(plan.dataset.run_number)] = _assemble_completed_run(
+                plan, fitted, templates, rebin_factor=rebin_factor, metric=metric
+            )
+            message = (
+                f"Score table {plan.dataset.run_label}: done ({len(completed_by_run)}/{total})."
+            )
+            _progress_log(progress_callback, message)
+            advance(len(completed_by_run), message)
+
+        if executor is None:
+            for plan in plans:
                 if cancel_callback is not None and cancel_callback():
                     raise FitCancelledError("Global fit wizard analysis cancelled.")
-                _progress_log(
-                    progress_callback,
-                    f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
+                _finish(
+                    plan,
+                    {
+                        task.template.key: _execute_assessment_task(task, cancel_callback)
+                        for task in plan.tasks
+                    },
                 )
-                run_number, recommendation = _single_fit_recommendation_task(
-                    dataset,
-                    portfolio.templates,
-                    SelectionMetric.AICC,
-                )
-                complete_by_run[run_number] = recommendation
-                generated_run_numbers.append(run_number)
-                advance(
-                    len(generated_run_numbers),
-                    f"Single-fit table {dataset.run_label}: done "
-                    f"({len(generated_run_numbers)}/{len(missing_datasets)}).",
-                )
-        else:
-            _progress_log(
-                progress_callback,
-                f"Running phase-1 single-fit table generation with {worker_count} spawn-safe workers.",
-            )
-            executor = _try_open_process_pool(
-                max_workers=worker_count,
-                progress_callback=progress_callback,
-                activity="Phase-1 single-fit table generation",
-            )
-            if executor is None:
-                for dataset in missing_datasets:
-                    if cancel_callback is not None and cancel_callback():
-                        raise FitCancelledError("Global fit wizard analysis cancelled.")
-                    _progress_log(
-                        progress_callback,
-                        f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
-                    )
-                    run_number, recommendation = _single_fit_recommendation_task(
-                        dataset,
-                        portfolio.templates,
-                        SelectionMetric.AICC,
-                    )
-                    complete_by_run[run_number] = recommendation
-                    generated_run_numbers.append(run_number)
-                    advance(
-                        len(generated_run_numbers),
-                        f"Single-fit table {dataset.run_label}: done "
-                        f"({len(generated_run_numbers)}/{len(missing_datasets)}).",
-                    )
-            else:
-                try:
-                    future_to_dataset = {}
-                    for dataset in missing_datasets:
-                        _progress_log(
-                            progress_callback,
-                            f"Single-fit table {dataset.run_label}: evaluating shared candidate portfolio.",
-                        )
-                        future_to_dataset[
-                            executor.submit(
-                                _single_fit_recommendation_task,
-                                dataset,
-                                portfolio.templates,
-                                SelectionMetric.AICC,
-                            )
-                        ] = dataset
+            return completed_by_run, completion_fits
 
-                    # Poll cancel *while waiting* rather than blocking on the next
-                    # completion: each ``wait`` returns after a completion or after
-                    # one poll interval, so a cancel is noticed in well under a
-                    # second instead of after the remaining minutes of fits.
-                    pending = set(future_to_dataset)
-                    total = len(pending)
-                    while pending:
-                        if cancel_callback is not None and cancel_callback():
-                            raise FitCancelledError("Global fit wizard analysis cancelled.")
-                        done, pending = wait(
-                            pending,
-                            timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
-                            return_when=FIRST_COMPLETED,
-                        )
-                        for future in done:
-                            run_number, recommendation = future.result()
-                            complete_by_run[run_number] = recommendation
-                            generated_run_numbers.append(run_number)
-                            message = (
-                                f"Single-fit table {future_to_dataset[future].run_label}: "
-                                f"done ({len(generated_run_numbers)}/{total})."
-                            )
-                            _progress_log(progress_callback, message)
-                            advance(len(generated_run_numbers), message)
-                except BaseException:
-                    # Cancel, a worker crash, or a Ctrl-C: never wait on the fits
-                    # still in flight (that is the minutes-long block this stage is
-                    # trying to escape). Drop queued work and force-kill the
-                    # workers, so the caller gets control back at once and no spawn
-                    # worker is left orphaned.
-                    terminate_spawn_pool(executor)
-                    raise
-                else:
-                    _shutdown_process_pool(executor)
+        fitted_by_index: list[dict[str, CandidateAssessment]] = [{} for _plan in plans]
+        outstanding = [len(plan.tasks) for plan in plans]
+        for plan in plans:
+            if not plan.tasks:
+                _finish(plan, {})
 
-    complete_by_run = _sync_single_fit_recommendation_store(
-        existing_recommendations_by_run,
-        complete_by_run,
-    )
-    return portfolio, complete_by_run, tuple(generated_run_numbers)
+        future_to_cell = {
+            executor.submit(_execute_assessment_task, task): (index, task.template.key)
+            for index, plan in enumerate(plans)
+            for task in plan.tasks
+        }
+        pending = set(future_to_cell)
+        while pending:
+            if cancel_callback is not None and cancel_callback():
+                # The pool belongs to phase 1, which tears it down; raising here
+                # is what tells it to.
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            done, pending = wait(
+                pending,
+                timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                index, template_key = future_to_cell[future]
+                fitted_by_index[index][template_key] = future.result()
+                outstanding[index] -= 1
+                if outstanding[index] == 0:
+                    _finish(plans[index], fitted_by_index[index])
+    return completed_by_run, completion_fits
 
 
 def build_global_fit_wizard_screening_recommendation(
@@ -1387,20 +2203,27 @@ def build_global_fit_wizard_screening_recommendation(
     user_frequencies_mhz: Sequence[float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    portfolio: GlobalFitWizardCandidatePortfolio | None = None,
     instrumentation: dict[str, object] | None = None,
     stage_callback: Callable[[WizardStageProgress], None] | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Build the ranking table from per-run single-fit wizard results only.
 
-    This stage fits every portfolio candidate to every dataset independently, so
-    its cost is (candidates x datasets x per-fit cost) and it dominates the
-    wizard's runtime on a real temperature or field series.
+    Phase 1 comes first and the portfolio comes out of it: every run is analysed
+    by the single-run Fit Wizard, the series alphabet is the union of what those
+    runs assessed, and every run is then scored against every alphabet template
+    at one series rebin factor
+    (:func:`build_or_complete_single_fit_wizard_recommendations_for_global_portfolio`).
+    Pass ``portfolio`` together with a ``single_fit_recommendations_by_run`` that
+    already covers it — the pair a previous phase-1 call returned — to skip that
+    work; anything less and phase 1 runs here.
 
-    ``effort_tier`` is the lever for that cost: Low and Balanced screen a trimmed
-    portfolio (see :func:`screening_templates_for_effort_tier`) and return a
-    coarser ranking that finishes, while Thorough and Exhaustive — the default —
-    screen the full portfolio exactly as before. The skipped candidates are
-    announced through ``progress_callback`` and recorded in ``instrumentation``.
+    ``effort_tier`` narrows the alphabet before the completion fits (see
+    :func:`screening_templates_for_effort_tier`): Low and Balanced score a
+    trimmed candidate set, while Thorough and Exhaustive — the default — score
+    all of it. Templates a run's peak search positively identified are never
+    trimmed. The skipped candidates are announced through ``progress_callback``
+    and recorded in ``instrumentation``.
 
     ``instrumentation`` additionally receives the standard timing block
     (:mod:`asymmetry.core.fitting.wizard_timing`): wall-clock, CPU seconds
@@ -1419,19 +2242,19 @@ def build_global_fit_wizard_screening_recommendation(
     current_values = current_values or {}
     parameter_bounds = parameter_bounds or {}
 
-    portfolio = build_global_fit_wizard_candidate_portfolio(
-        datasets,
-        current_model=current_model,
-        scope=scope,
-        user_frequencies_mhz=user_frequencies_mhz,
-    )
-    portfolio = _apply_screening_effort_tier(
-        portfolio,
-        effort_tier,
-        progress_callback=progress_callback,
-        instrumentation=instrumentation,
-    )
-    templates = list(portfolio.templates)
+    if portfolio is None:
+        portfolio = build_global_fit_wizard_candidate_portfolio(
+            datasets,
+            current_model=current_model,
+            scope=scope,
+            single_fit_recommendations_by_run=single_fit_recommendations_by_run,
+        )
+        portfolio = _apply_screening_effort_tier(
+            portfolio,
+            effort_tier,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+        )
     if portfolio.mixed_axes_warning:
         return rerank_global_fit_wizard_recommendation(
             GlobalFitWizardRecommendation(
@@ -1453,31 +2276,29 @@ def build_global_fit_wizard_screening_recommendation(
     recommendations_by_run = (
         single_fit_recommendations_by_run if single_fit_recommendations_by_run is not None else {}
     )
-    expected_template_keys = candidate_template_keys(templates)
-    if not recommendations_by_run or not all(
-        int(dataset.run_number) in recommendations_by_run
-        and recommendation_template_keys(recommendations_by_run[int(dataset.run_number)])
-        == expected_template_keys
-        for dataset in portfolio.ordered_datasets
+    if not single_fit_table_covers_portfolio(
+        portfolio.ordered_datasets, portfolio.templates, recommendations_by_run
     ):
         _progress_log(
             progress_callback,
             "Preparing missing single-fit wizard tables for global screening.",
         )
-        _portfolio, recommendations_by_run, _generated_runs = (
-            build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
-                list(portfolio.ordered_datasets),
-                current_model=current_model,
-                existing_recommendations_by_run=recommendations_by_run,
-                progress_callback=progress_callback,
-                scope=scope,
-                user_frequencies_mhz=user_frequencies_mhz,
-                cancel_callback=cancel_callback,
-                effort_tier=effort_tier,
-                instrumentation=instrumentation,
-                stage_callback=stage_callback,
-            )
+        table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+            list(portfolio.ordered_datasets),
+            current_model=current_model,
+            existing_recommendations_by_run=recommendations_by_run,
+            progress_callback=progress_callback,
+            scope=scope,
+            user_frequencies_mhz=user_frequencies_mhz,
+            cancel_callback=cancel_callback,
+            effort_tier=effort_tier,
+            metric=metric,
+            instrumentation=instrumentation,
+            stage_callback=stage_callback,
         )
+        portfolio = table.portfolio
+        recommendations_by_run = table.recommendations_by_run
+    templates = list(portfolio.templates)
 
     with stage_timer(
         instrumentation,
@@ -1498,7 +2319,43 @@ def build_global_fit_wizard_screening_recommendation(
             metric=metric,
             fit_engine=FitEngine(),
             progress_callback=progress_callback,
+            # The completed table already tried every cell with sibling warm
+            # starts (phase 1); the serial repair pass would only repeat that.
+            repair_partial_incomplete=False,
         )
+
+    partition_started = time.monotonic()
+    with stage_timer(
+        instrumentation,
+        "screening.partition_path",
+        stage_callback=stage_callback,
+        message="Looking for structural transitions along the series.",
+    ):
+        partition_path = build_series_partition_path(
+            portfolio.ordered_datasets,
+            assessments_by_key,
+            axis_key=portfolio.series_axis_key,
+            analysed_points_by_run={
+                int(run_number): int(recommendation.analysed_points)
+                for run_number, recommendation in recommendations_by_run.items()
+            },
+            family_by_template=series_template_families(recommendations_by_run),
+            instrumentation=instrumentation,
+        )
+    _set_metric(instrumentation, "partition_seconds", time.monotonic() - partition_started)
+    if partition_path is not None:
+        _set_metric(instrumentation, "partition_selected_k", partition_path.selected_k)
+        _set_metric(
+            instrumentation,
+            "partition_gains",
+            [float(solution.gain) for solution in partition_path.solutions],
+        )
+        selected = partition_path.solutions[partition_path.selected_k]
+        _progress_log(
+            progress_callback,
+            transitions_summary(selected, portfolio.series_axis_label),
+        )
+
     return rerank_global_fit_wizard_recommendation(
         GlobalFitWizardRecommendation(
             series_axis_key=portfolio.series_axis_key,
@@ -1512,6 +2369,7 @@ def build_global_fit_wizard_screening_recommendation(
             recommended_key=None,
             comparable_keys=(),
             summary="",
+            partition_path=partition_path,
         ),
         metric,
     )
@@ -1606,6 +2464,23 @@ def _build_single_fit_prescreen_assessments(
         )
         for template in templates
     }
+    # The record each run's row was scored on. A completed score table is one
+    # rebin factor across the whole series, and it is what the per-run cells were
+    # fitted at, so it is what this row's dense curves are sampled between.
+    analysis_dataset_by_run = {
+        int(dataset.run_number): (
+            dataset.rebin(factor)
+            if (
+                factor := int(
+                    single_fit_recommendations_by_run[int(dataset.run_number)].rebin_factor
+                )
+            )
+            > 1
+            else dataset
+        )
+        for dataset in datasets
+        if int(dataset.run_number) in single_fit_recommendations_by_run
+    }
     if repair_partial_incomplete:
         # NOTE (measured, deliberately still serial): repair is a *fit* per failed
         # (template, run) pair and is the largest remaining serial section of the
@@ -1689,17 +2564,18 @@ def _build_single_fit_prescreen_assessments(
                 continue
 
             fit_results_by_run[run_number] = assessment.fit_result
-            fitted_curves_by_run[run_number] = (
-                np.asarray(assessment.fitted_time, dtype=float).copy(),
-                np.asarray(assessment.fitted_curve, dtype=float).copy(),
+            # Built here rather than copied off the cell: a score-table cell
+            # carries no curves (the contract on ``CandidateAssessment``), and a
+            # pre-screen row *is* displayed, so it owes them. Rebuilding also puts
+            # the whole row on one grid — a run repaired at native resolution
+            # would otherwise contribute a denser curve than its neighbours.
+            fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+                analysis_dataset_by_run[run_number],
+                template.model,
+                assessment.fit_result.parameters,
             )
-            component_curves_by_run[run_number] = tuple(
-                (
-                    name,
-                    np.asarray(values, dtype=float).copy(),
-                )
-                for name, values in assessment.component_curves
-            )
+            fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
+            component_curves_by_run[run_number] = component_curves
             run_diagnostics.append(
                 RunResidualDiagnostic(
                     run_number=run_number,
@@ -1768,6 +2644,187 @@ def _build_single_fit_prescreen_assessments(
         )
 
     return assessments_by_key, template_contexts
+
+
+#: Structural breaks are scored with BIC whatever ranking metric the user chose.
+#:
+#: A transition is a claim about *structure*, and BIC is the consistent structure
+#: selector. Measured on a real 29-run zero-field scan: two heavily damped lines
+#: plus a relaxation nests plain relaxation, so under AIC the extra parameters
+#: cost 2 apiece per run and a genuine structural change was worth almost nothing
+#: at tier 1 — the elbow never appeared. Under BIC the same change scored ~100 per
+#: break (``ln n ≈ 10`` per parameter there) and the path had a clean elbow. The
+#: user's metric still decides which candidate wins *within* a phase; it does not
+#: decide where the phases are.
+_PARTITION_METRIC = SelectionMetric.BIC
+
+
+def _partition_inputs_from_prescreen(
+    ordered_datasets: Sequence[MuonDataset],
+    prescreen_assessments: Mapping[str, GlobalCandidateAssessment],
+    *,
+    analysed_points_by_run: Mapping[int, int],
+    instrumentation: dict[str, object] | None = None,
+) -> tuple[dict[int, dict[str, float]], dict[str, dict[int, RunEstimate]], int]:
+    """The per-run BIC table and per-run estimates the partition search runs on.
+
+    **A cell is feasible when the fit converged** — ``FitResult.success`` — and
+    nothing more. The single-run wizard's own disqualifiers ("amplitude consistent
+    with zero", "rate unresolved") are deliberately *not* consulted: treating a
+    disqualified cell as infeasible makes the template infeasible on every segment
+    containing that run, which on a real series forced breaks around single weak
+    runs *inside* a phase. Handing the IC the run's real χ² instead lets the
+    partition cost decide, which is what it is for.
+
+    **One exception, and it is not a quality judgement.** A multiplet template
+    whose fitted line amplitudes are *all* consistent with zero on a run has
+    degenerated to its envelope there: it is describing that run as relaxation,
+    not as oscillation, so it is not a candidate for the oscillatory family on
+    that run and its cell is dropped
+    (:func:`~asymmetry.core.fitting.fit_wizard.is_oscillatory_admissible`). The
+    difference from a disqualifier is that this one is about *which family the
+    fit belongs to*, not about how good it is — the partition's whole alphabet is
+    families, so a cell in the wrong one would let a phase of oscillation run
+    straight through the runs where the oscillation stopped. Every other template
+    on the run is untouched, so the relaxation the run really is stays available
+    and the path breaks where the lines vanish.
+
+    Per-run costs are ``χ² + k·ln(n_run)`` at the series search resolution, with
+    ``n_run`` the points that run was actually fitted over
+    (:attr:`FitWizardRecommendation.analysed_points`), so tier 1's sums and tier
+    2's segment scores are on one scale.
+    """
+
+    table: dict[int, dict[str, float]] = {
+        int(dataset.run_number): {} for dataset in ordered_datasets
+    }
+    estimates_by_template: dict[str, dict[int, RunEstimate]] = {}
+
+    for template_key, assessment in prescreen_assessments.items():
+        free_names = tuple(
+            name
+            for name in assessment.template.model.param_names
+            if name not in assessment.fixed_param_names
+        )
+        if not free_names:
+            continue
+        lines_required = is_multiplet_template_key(template_key)
+        per_run: dict[int, RunEstimate] = {}
+        for dataset in ordered_datasets:
+            run_number = int(dataset.run_number)
+            result = assessment.fit_results_by_run.get(run_number)
+            if result is None or not result.success:
+                continue
+            if lines_required and not fit_result_is_oscillatory_admissible(
+                assessment.template, result
+            ):
+                _record_counter(instrumentation, "oscillation_vanished_cells")
+                continue
+            sample_count = int(analysed_points_by_run[run_number])
+            table[run_number][template_key] = float(result.chi_squared) + surrogate_metric_penalty(
+                len(free_names), sample_count=sample_count, metric=_PARTITION_METRIC
+            )
+            per_run[run_number] = run_estimate_from_fit_result(
+                result,
+                free_names,
+                run_number=run_number,
+                n_points=sample_count,
+                at_bound=_bound_hit_names(result.parameters),
+            )
+        if per_run:
+            estimates_by_template[template_key] = per_run
+
+    n_total_points = sum(
+        int(analysed_points_by_run[int(dataset.run_number)]) for dataset in ordered_datasets
+    )
+    return table, estimates_by_template, n_total_points
+
+
+def series_template_families(
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> dict[str, str]:
+    """Map every template key the series knows to its family key.
+
+    The union of the per-run family reports, plus every multiplet template
+    (built from a run's detected lines rather than listed in a family report)
+    under ``"oscillatory"``. A key absent from the result belongs to no known
+    family and stands as its own structure.
+    """
+
+    families: dict[str, str] = {}
+    for recommendation in recommendations_by_run.values():
+        families.update(_template_family_map(recommendation.family_reports))
+        for template in recommendation.templates:
+            if is_multiplet_template_key(template.key):
+                families[template.key] = "oscillatory"
+    return families
+
+
+def build_series_partition_path(
+    ordered_datasets: Sequence[MuonDataset],
+    prescreen_assessments: Mapping[str, GlobalCandidateAssessment],
+    *,
+    axis_key: str,
+    analysed_points_by_run: Mapping[int, int],
+    family_by_template: Mapping[str, str],
+    config: PartitionConfig = PartitionConfig(),
+    instrumentation: dict[str, object] | None = None,
+) -> PartitionPath | None:
+    """Where the series breaks, read off the completed phase-1 table.
+
+    Closed form and cheap — no fit happens here — so a screening pass always
+    computes it. ``None`` when the series cannot be partitioned at all: a series
+    shorter than two minimum segments has no admissible break to look for, and an
+    empty candidate alphabet has nothing to score.
+
+    ``analysed_points_by_run`` gives every ordered run's fitted point count at the
+    series search resolution. A non-empty ``prescreen_assessments`` implies a
+    completed per-run table, which is exactly when that mapping is total.
+
+    ``family_by_template`` names each template's family
+    (:func:`series_template_families`); a break is a change of *family*
+    between adjacent phases. Which template within the family, and which
+    parameters it shares, are priced into the segment cost but are not breaks
+    — a two-line and a one-line damped oscillation are the same ordered phase,
+    and a background that becomes shareable is not a transition. A template
+    absent from the map is its own family.
+
+    A multiplet template is only a candidate for the oscillatory family on runs
+    where its lines are actually measured; where they have all collapsed into the
+    envelope its cells are dropped before the search sees them (see
+    :func:`_partition_inputs_from_prescreen`), which is what makes a vanishing
+    oscillation a break rather than a slow drift within one phase.
+    """
+
+    order = [int(dataset.run_number) for dataset in ordered_datasets]
+    if len(order) < 2 * config.min_segment or not prescreen_assessments:
+        return None
+
+    table, estimates_by_template, n_total_points = _partition_inputs_from_prescreen(
+        ordered_datasets,
+        prescreen_assessments,
+        analysed_points_by_run=analysed_points_by_run,
+        instrumentation=instrumentation,
+    )
+    if not any(table[run] for run in order):
+        return None
+
+    axis_values = {
+        int(dataset.run_number): _axis_value(dataset, axis_key) for dataset in ordered_datasets
+    }
+
+    def family_of(template_key: str) -> str:
+        return family_by_template.get(template_key, template_key)
+
+    return partition_series(
+        order,
+        axis_values,
+        tier2_segment_cost(
+            table, order, estimates_by_template, _PARTITION_METRIC, family_of=family_of
+        ),
+        config,
+        n_total_points=n_total_points,
+    )
 
 
 def _record_counter(
@@ -1947,28 +3004,59 @@ def build_global_fit_wizard_recommendation(
     user_frequencies_mhz: Sequence[float] | None = None,
     search_engine: str | None = None,
     effort_tier: EffortTier = DEFAULT_EFFORT_TIER,
+    portfolio: GlobalFitWizardCandidatePortfolio | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    partition_path: PartitionPath | None = None,
+    partition_k: int | None = None,
 ) -> GlobalFitWizardRecommendation:
     """Analyze one ordered dataset series and recommend a global-fit candidate.
 
-    ``effort_tier`` is the user-facing effort slider (PR 5): ``LOW``,
-    ``BALANCED``, ``THOROUGH``, ``EXHAUSTIVE`` (default ``EXHAUSTIVE``). As of the
-    PR 5 rework, **every tier resolves to the exact bounded-wavefront engine**
-    (see ``_EFFORT_TIER_SEARCH_ENGINE``): PR 2's exact bounds already made the
-    exhaustive path near-minimal and 12-way parallel, so the heuristic Low/
-    Balanced engines were empirically slower with no fit-count headroom, and the
-    user-facing slider now collapses to one honest mode. The enum and payload are
-    retained so a future scope-based quick-look tier can be added without a
+    ``portfolio`` is the candidate set to search, normally the series alphabet a
+    phase-1 call returned together with the ``single_fit_recommendations_by_run``
+    table that covers it; without it the cheap preview portfolio is used and the
+    per-run pre-screen is only taken up when the supplied table happens to cover
+    that.
+
+    ``effort_tier`` is the user-facing effort slider: ``LOW``, ``BALANCED``,
+    ``THOROUGH``, ``EXHAUSTIVE`` (default ``EXHAUSTIVE``). **Every tier resolves
+    to the separable role-search engine** (see ``_EFFORT_TIER_SEARCH_ENGINE``):
+    the separable search takes the all-local assignment straight from the per-run
+    fits, ranks every sharing pattern with a full-covariance GLS surrogate, and
+    walks backward elimination with one warm coupled fit per step, so it costs
+    O(P) coupled fits per template where the wavefront costs O(2^P) — and it is
+    the honest answer at every tier, not a coarser one. The enum and its payload
+    are retained so a future scope-based quick-look tier can be added without a
     schema/UI change.
 
     ``search_engine`` remains available as a lower-level override for existing
     callers/tests — when given explicitly it takes precedence over
-    ``effort_tier`` for engine selection. ``"exhaustive"`` and ``"thorough"`` run
-    the exact bounded wavefront (byte-for-byte the current call); ``"low"`` and
-    ``"balanced"`` run the retained non-exhaustive heuristic engines (techniques
-    E/F/G/H and the I/J/K knobs), reachable only through this seam for future
-    large-P use and regression coverage — never through ``effort_tier``.
+    ``effort_tier`` for engine selection. ``"separable"`` is the default engine;
+    ``"exhaustive"`` and ``"thorough"`` run the exact bounded wavefront
+    (byte-for-byte the frozen-baseline path, and the harness referee the
+    separable engine is measured against); ``"low"`` and ``"balanced"`` run the
+    retained non-exhaustive heuristic engines (techniques E/F/G/H and the I/J/K
+    knobs), reachable only through this seam for large-P use and regression
+    coverage — never through ``effort_tier``.
+
+    ``partition_k`` switches the whole run from **one series-wide answer** to
+    **one answer per phase**: solution ``k`` of ``partition_path`` (the path a
+    screening pass computed and stored on its recommendation) is optimised
+    segment by segment, together with the neighbours tier 3 verifies, and the
+    result carries ``phase_assessments`` and a re-scored path instead of a
+    ``recommended_key``. The two arrive together — a ``k`` names a row of a
+    specific path — so passing one without the other is a programming error and
+    is refused. With ``partition_k=None`` nothing about this function changes.
     """
+    if (partition_k is None) != (partition_path is None):
+        raise ValueError(
+            "partition_k and partition_path go together: a partition index names a "
+            "row of a particular path."
+        )
+    if partition_path is not None and not 0 <= partition_k < len(partition_path.solutions):
+        raise ValueError(
+            f"partition_k={partition_k} is outside the path's "
+            f"{len(partition_path.solutions)} solution(s)."
+        )
     _set_metric(instrumentation, "strategy", "consolidated")
     if instrumentation is not None:
         instrumentation.setdefault("counters", {})
@@ -1993,7 +3081,10 @@ def build_global_fit_wizard_recommendation(
         scope=scope,
         user_frequencies_mhz=user_frequencies_mhz,
         search_engine=resolved_engine,
+        portfolio=portfolio,
         cancel_callback=cancel_callback,
+        partition_path=partition_path,
+        partition_k=partition_k,
     )
 
 
@@ -2012,7 +3103,10 @@ def _build_global_fit_wizard_recommendation_staged(
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
     search_engine: str = _DEFAULT_SEARCH_ENGINE,
+    portfolio: GlobalFitWizardCandidatePortfolio | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    partition_path: PartitionPath | None = None,
+    partition_k: int | None = None,
 ) -> GlobalFitWizardRecommendation:
     if len(datasets) < 2:
         raise ValueError("Global fit wizard requires at least two datasets.")
@@ -2038,26 +3132,23 @@ def _build_global_fit_wizard_recommendation_staged(
         progress_callback,
         f"Preparing consolidated global fit wizard analysis for {len(datasets)} datasets.",
     )
-    (
-        ordered_datasets,
-        axis_key,
-        axis_label,
-        mixed_axes_warning,
-    ) = _ordered_datasets_with_axis(datasets)
-    fingerprints_by_run = {
-        int(dataset.run_number): fingerprint_spectrum(dataset) for dataset in ordered_datasets
-    }
+    if portfolio is None:
+        portfolio = build_global_fit_wizard_candidate_portfolio(
+            datasets,
+            current_model=current_model,
+            scope=scope,
+            single_fit_recommendations_by_run=available_single_fit_recommendations,
+        )
+    ordered_datasets = list(portfolio.ordered_datasets)
+    axis_key = portfolio.series_axis_key
+    axis_label = portfolio.series_axis_label
+    mixed_axes_warning = portfolio.mixed_axes_warning
+    fingerprints_by_run = portfolio.fingerprints_by_run
     aggregate_fingerprint = _aggregate_fingerprints(
         [fingerprints_by_run[int(dataset.run_number)] for dataset in ordered_datasets]
     )
-    scoped_templates, pattern_template_keys = _scoped_series_templates(
-        ordered_datasets,
-        aggregate_fingerprint,
-        current_model,
-        scope=scope,
-        user_frequencies_mhz=user_frequencies_mhz,
-    )
-    templates = list(scoped_templates)
+    pattern_template_keys = portfolio.pattern_template_keys
+    templates = list(portfolio.templates)
     template_by_key = {template.key: template for template in templates}
     if mixed_axes_warning:
         return replace(
@@ -2157,21 +3248,12 @@ def _build_global_fit_wizard_recommendation_staged(
         else templates
     )
 
-    expected_single_fit_template_keys = candidate_template_keys(templates)
-    use_single_fit_prescreen = (
-        bool(available_single_fit_recommendations)
-        and all(
-            recommendation_template_keys(
-                available_single_fit_recommendations.get(int(dataset.run_number))
-            )
-            == expected_single_fit_template_keys
-            for dataset in ordered_datasets
-            if int(dataset.run_number) in available_single_fit_recommendations
-        )
-        and all(
-            int(dataset.run_number) in available_single_fit_recommendations
-            for dataset in ordered_datasets
-        )
+    # Coverage, not identity: the per-run table has to *hold a score for* every
+    # candidate this search will rank, and nothing more. Demanding that its
+    # template list match the portfolio's exactly rejected every genuine
+    # single-run analysis, which carries the run's own fuller candidate set.
+    use_single_fit_prescreen = single_fit_table_covers_portfolio(
+        ordered_datasets, templates, available_single_fit_recommendations
     )
 
     if use_single_fit_prescreen:
@@ -2191,7 +3273,10 @@ def _build_global_fit_wizard_recommendation_staged(
             metric=metric,
             fit_engine=FitEngine(),
             progress_callback=progress_callback,
-            repair_partial_incomplete=not normalized_selected_template_keys,
+            # A supplied completed table (``portfolio`` given) already retried
+            # every failed cell from a sibling in phase 1; the serial repair pass
+            # is only for a bare per-run table handed in without one.
+            repair_partial_incomplete=portfolio is None and not normalized_selected_template_keys,
         )
     else:
         template_workers = _template_worker_count(len(prescreen_templates))
@@ -2224,6 +3309,59 @@ def _build_global_fit_wizard_recommendation_staged(
                     key, base_by_run, fixed_param_names, assessment = future.result()
                     template_contexts[key] = (base_by_run, fixed_param_names)
                     initial_assessments[key] = assessment
+    if partition_k is not None:
+        # One answer per phase, not one for the series. The pre-screen table is
+        # what the path was computed from, so it is also what each segment's
+        # search starts from — at the series search resolution, where those
+        # per-run fits *are* the segment's all-local anchor and cost no fit.
+        search_rebin_factor = series_rebin_factor(
+            ordered_datasets, available_single_fit_recommendations
+        )
+        analysed_points_by_run = {
+            int(run_number): int(recommendation.analysed_points)
+            for run_number, recommendation in available_single_fit_recommendations.items()
+        }
+        updated_path, phase_assessments, recommended_partition_k = _optimise_partition_phases(
+            ordered_datasets,
+            path=partition_path,
+            partition_k=partition_k,
+            templates=templates,
+            template_contexts=template_contexts,
+            prescreen_assessments=initial_assessments,
+            analysed_points_by_run=analysed_points_by_run,
+            axis_key=axis_key,
+            metric=metric,
+            search_rebin_factor=search_rebin_factor,
+            progress_callback=progress_callback,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+            single_run_prefit_cache_for=_single_run_prefit_cache_for,
+            cancel_callback=cancel_callback,
+        )
+        return rerank_global_fit_wizard_recommendation(
+            GlobalFitWizardRecommendation(
+                series_axis_key=axis_key,
+                series_axis_label=axis_label,
+                mixed_axes_warning=mixed_axes_warning,
+                fingerprints_by_run=fingerprints_by_run,
+                dataset_order=tuple(int(dataset.run_number) for dataset in ordered_datasets),
+                templates=tuple(templates),
+                assessments=tuple(
+                    initial_assessments[template.key]
+                    for template in prescreen_templates
+                    if template.key in initial_assessments
+                ),
+                metric=metric,
+                recommended_key=None,
+                comparable_keys=(),
+                summary="",
+                partition_path=updated_path,
+                phase_assessments=phase_assessments,
+                recommended_partition_k=recommended_partition_k,
+            ),
+            metric,
+        )
+
     if normalized_selected_template_keys:
         if search_engine == SEARCH_ENGINE_LOW:
             # Technique I/J still apply within an explicit user selection on the
@@ -2282,9 +3420,24 @@ def _build_global_fit_wizard_recommendation_staged(
             progress_callback,
             "Coupled global optimisation will evaluate "
             f"{len(shortlisted_templates)} candidate(s) "
-            "via exhaustive global/local enumeration.",
+            f"via the {search_engine} global/local role search.",
         )
-    if search_engine in _EXACT_SEARCH_ENGINES:
+    _set_metric(instrumentation, "search_engine", search_engine)
+    if search_engine == SEARCH_ENGINE_SEPARABLE:
+        optimized_assessments = _run_separable_search(
+            ordered_datasets,
+            shortlisted_templates=shortlisted_templates,
+            template_contexts=template_contexts,
+            prescreen_assessments=initial_assessments,
+            axis_key=axis_key,
+            metric=metric,
+            progress_callback=progress_callback,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+            single_run_prefit_cache_for=_single_run_prefit_cache_for,
+            cancel_callback=cancel_callback,
+        )
+    elif search_engine in _EXACT_SEARCH_ENGINES:
         optimized_assessments = _run_exhaustive_wavefront_search(
             ordered_datasets,
             shortlisted_templates=shortlisted_templates,
@@ -2298,7 +3451,6 @@ def _build_global_fit_wizard_recommendation_staged(
             cancel_callback=cancel_callback,
         )
     else:
-        _set_metric(instrumentation, "search_engine", search_engine)
         optimized_assessments = _run_heuristic_search(
             ordered_datasets,
             shortlisted_templates=shortlisted_templates,
@@ -2395,11 +3547,104 @@ def _screening_no_recommendation_summary(
     )
 
 
+def _axis_unit(axis_label: str) -> str:
+    """The unit out of an axis label — ``"Temperature (K)"`` → ``"K"``.
+
+    ``"Run"`` carries no unit and yields ``""``, so a boundary on a run-ordered
+    series reads as a bare number rather than inventing one.
+    """
+
+    opening = axis_label.find("(")
+    closing = axis_label.rfind(")")
+    if opening < 0 or closing < opening:
+        return ""
+    return axis_label[opening + 1 : closing].strip()
+
+
+def _format_boundary(estimate: float, half_gap: float, unit: str) -> str:
+    """``"16.5 ± 0.5 K"`` — the boundary estimate as the card states it."""
+
+    text = f"{estimate:.4g} ± {half_gap:.2g}"
+    return f"{text} {unit}" if unit else text
+
+
+def format_transition_boundaries(
+    solution: PartitionSolution,
+    axis_label: str,
+) -> str:
+    """The solution's boundary estimates as one phrase, or ``""`` for no break.
+
+    ``"16.5 ± 0.5 K and 28.5 ± 0.5 K"`` — the same phrase
+    :func:`transitions_summary` embeds in its sentence, so the wizard's
+    Transitions table can tabulate the boundaries without re-deriving the
+    formatting (or the unit) from the axis label itself.
+    """
+
+    unit = _axis_unit(axis_label)
+    formatted = [
+        _format_boundary(estimate, half_gap, unit) for estimate, half_gap in solution.boundaries
+    ]
+    if not formatted:
+        return ""
+    if len(formatted) == 1:
+        return formatted[0]
+    return ", ".join(formatted[:-1]) + f" and {formatted[-1]}"
+
+
+def transitions_summary(
+    solution: PartitionSolution,
+    axis_label: str,
+) -> str:
+    """Plain-language summary of a partition solution's transitions.
+
+    ``"2 transitions found: 16.5 ± 0.5 K and 28.5 ± 0.5 K"``. A solution with no
+    breaks says so; an excluded end stub is named separately, because "excluded
+    from the global fit" is the one part of the answer a reader must not miss.
+    """
+
+    excluded = [segment for segment in solution.segments if segment.excluded]
+    excluded_note = ""
+    if excluded:
+        runs = [run for segment in excluded for run in segment.run_numbers]
+        labels = ", ".join(str(run) for run in runs)
+        excluded_note = (
+            f" Run {labels} is excluded from the global fit: it looks like a different phase."
+            if len(runs) == 1
+            else f" Runs {labels} are excluded from the global fit: they look like a"
+            " different phase."
+        )
+
+    if not solution.boundaries:
+        return f"No transitions found: one phase describes the whole series.{excluded_note}"
+
+    listed = format_transition_boundaries(solution, axis_label)
+    count = len(solution.boundaries)
+    noun = "transition" if count == 1 else "transitions"
+    return f"{count} {noun} found: {listed}.{excluded_note}"
+
+
 def rerank_global_fit_wizard_recommendation(
     recommendation: GlobalFitWizardRecommendation,
     metric: SelectionMetric,
 ) -> GlobalFitWizardRecommendation:
-    """Reuse existing global-fit assessments and recompute the recommendation."""
+    """Reuse existing global-fit assessments and recompute the recommendation.
+
+    A **partitioned** recommendation — one whose ``recommended_partition_k`` names
+    an optimised solution — keeps that partition and summarises its transitions
+    instead of the series-wide winner. The partition itself is not re-selected:
+    breaks are scored with BIC whatever ranking metric the user picked (see
+    :func:`build_global_fit_wizard_screening_recommendation`), so changing the
+    metric changes which candidate wins *within* a phase, never where the phases
+    are.
+    """
+    if recommendation.recommended_partition is not None:
+        return replace(
+            recommendation,
+            metric=metric,
+            summary=transitions_summary(
+                recommendation.recommended_partition, recommendation.series_axis_label
+            ),
+        )
     if recommendation.mixed_axes_warning:
         return replace(
             recommendation,
@@ -2454,9 +3699,19 @@ def rerank_global_fit_wizard_recommendation(
             ),
         )
 
+    # At an exact tie the searched assignment wins over the screening row that
+    # found the same minimum. They are the same fit with the same score, but only
+    # the searched one carries ``parameter_recommendations`` — the per-parameter
+    # role justification read from its flip-neighbourhood — so preferring it costs
+    # the reader nothing and hands them the reasoning. Which of the two landed
+    # first in ``assessments`` is an accident of engine ordering, and a
+    # last-float-bit coin flip is not a basis for dropping the justification.
     passing_sorted = sorted(
         passing,
-        key=lambda assessment: _assessment_sort_key(assessment, metric),
+        key=lambda assessment: (
+            _assessment_sort_key(assessment, metric),
+            0 if assessment.assessment_key else 1,
+        ),
     )
     primary = passing_sorted[0]
     comparable_keys: tuple[str, ...] = ()
@@ -2508,7 +3763,15 @@ def merge_global_fit_wizard_recommendations(
     base: GlobalFitWizardRecommendation,
     updates: GlobalFitWizardRecommendation,
 ) -> GlobalFitWizardRecommendation:
-    """Merge optimized assessments from one run back into an existing workflow snapshot."""
+    """Merge optimized assessments from one run back into an existing workflow snapshot.
+
+    Phase assessments merge by ``(k, segment_index)`` — a later optimisation of a
+    different ``k`` adds its phases beside the ones already there rather than
+    replacing them. The **path** is not merged: it is replaced whole whenever the
+    update carries one, because an optimisation pass re-scores its rows with exact
+    per-segment ICs and a half-exact, half-surrogate path is not a path anybody can
+    read a gain off.
+    """
     updated_template_keys = {
         assessment.template.key
         for assessment in updates.assessments
@@ -2522,10 +3785,21 @@ def merge_global_fit_wizard_recommendations(
     merged_assessments.extend(
         assessment for assessment in updates.assessments if not assessment.prescreen_only
     )
+    merged_phase_assessments = dict(base.phase_assessments)
+    merged_phase_assessments.update(updates.phase_assessments)
     merged = replace(
         base,
         metric=updates.metric,
         assessments=tuple(merged_assessments),
+        partition_path=(
+            updates.partition_path if updates.partition_path is not None else base.partition_path
+        ),
+        phase_assessments=merged_phase_assessments,
+        recommended_partition_k=(
+            updates.recommended_partition_k
+            if updates.recommended_partition_k is not None
+            else base.recommended_partition_k
+        ),
     )
     return rerank_global_fit_wizard_recommendation(merged, updates.metric)
 
@@ -2585,6 +3859,22 @@ def serialize_global_fit_wizard_recommendation(
         "recommended_key": recommendation.recommended_key,
         "comparable_keys": list(recommendation.comparable_keys),
         "summary": recommendation.summary,
+        "partition_path": (
+            None
+            if recommendation.partition_path is None
+            else recommendation.partition_path.to_payload()
+        ),
+        # A list of entries rather than a mapping: the key is the pair
+        # ``(k, segment_index)``, and JSON object keys are strings.
+        "phase_assessments": [
+            {
+                "k": int(k),
+                "segment_index": int(segment_index),
+                "assessment": _serialize_global_candidate_assessment(assessment, compact=compact),
+            }
+            for (k, segment_index), assessment in sorted(recommendation.phase_assessments.items())
+        ],
+        "recommended_partition_k": recommendation.recommended_partition_k,
         # Marks the payload as curve-decimated (read by nothing —
         # deserialisation tolerates both shapes).
         "compact": bool(compact),
@@ -2621,6 +3911,18 @@ def deserialize_global_fit_wizard_recommendation(
     comparable_keys = tuple(
         key for key in payload.get("comparable_keys", []) if isinstance(key, str)
     )
+    partition_payload = payload.get("partition_path")
+    partition_path = (
+        PartitionPath.from_payload(partition_payload)
+        if isinstance(partition_payload, dict)
+        else None
+    )
+    phase_assessments = {
+        (int(entry["k"]), int(entry["segment_index"])): assessment
+        for entry in payload.get("phase_assessments", [])
+        if (assessment := _deserialize_global_candidate_assessment(entry["assessment"])) is not None
+    }
+    recommended_partition_k = payload.get("recommended_partition_k")
 
     return GlobalFitWizardRecommendation(
         series_axis_key=str(payload.get("series_axis_key", "run")),
@@ -2640,6 +3942,11 @@ def deserialize_global_fit_wizard_recommendation(
         ),
         comparable_keys=comparable_keys,
         summary=str(payload.get("summary", "")),
+        partition_path=partition_path,
+        phase_assessments=phase_assessments,
+        recommended_partition_k=(
+            int(recommended_partition_k) if recommended_partition_k is not None else None
+        ),
     )
 
 
@@ -4340,6 +5647,8 @@ def _warm_certificate_fit(
     warm_start_by_run: dict[int, ParameterSet],
     initial_step_sizes: dict[str, float],
     difficult_assignment: bool,
+    screening: bool,
+    strategy: str,
     instrumentation: dict[str, object] | None,
 ) -> tuple[dict[int, FitResult] | None, ParameterSet, float, dict[str, float]]:
     """One warm single-cycle global fit for technique D's monotonicity certificate.
@@ -4349,6 +5658,11 @@ def _warm_certificate_fit(
     caller decides whether the result clears the certificate; on failure the
     caller escalates to the full battery. Returns
     ``(results_by_run | None, fitted_global, total_chi2, step_hints)``.
+
+    ``screening`` is passed separately from ``difficult_assignment`` because the
+    separable engine's warm-only nodes are *deliberately* screened (Minuit
+    strategy 0) even when the assignment is wide: the GLS collapse has already
+    placed the seed in the right basin, so a strategy-2 hunt buys nothing.
     """
 
     warm_seed = _clone_parameter_sets(warm_start_by_run)
@@ -4364,6 +5678,7 @@ def _warm_certificate_fit(
     if initial_step_sizes:
         _record_counter(instrumentation, "curvature_hint_applications")
         _append_metric(instrumentation, "curvature_hint_sizes", len(initial_step_sizes))
+    solve_started_at = time.perf_counter()
     results_by_run, fitted_global = fit_engine.global_fit(
         datasets,
         template.model.function,
@@ -4376,7 +5691,13 @@ def _warm_certificate_fit(
         minuit_strategy=2 if difficult_assignment else None,
         minuit_tol=0.05 if difficult_assignment else None,
         initial_step_sizes=initial_step_sizes or None,
-        screening=not difficult_assignment,
+        screening=screening,
+        strategy=strategy,
+    )
+    _record_counter(
+        instrumentation,
+        "certificate_solve_ms",
+        int(1000.0 * (time.perf_counter() - solve_started_at)),
     )
     _record_global_fit_diagnostics(instrumentation, results_by_run)
     results_by_run = _canonicalize_fit_results_by_run(
@@ -4398,6 +5719,193 @@ def _warm_certificate_fit(
     return results_by_run, fitted_global, total_chi2, step_hints
 
 
+def _assemble_assignment_assessment(
+    datasets: list[MuonDataset],
+    template: CandidateTemplate,
+    *,
+    base_by_run: dict[int, ParameterSet],
+    results_by_run: dict[int, FitResult],
+    fitted_global: ParameterSet,
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+    fixed_param_names: tuple[str, ...],
+    axis_key: str,
+    metric: SelectionMetric,
+    fit_success: bool,
+    dense_curves: bool,
+) -> GlobalCandidateAssessment:
+    """Score one role assignment's per-run results into a candidate assessment.
+
+    Information criteria, residual diagnostics, dense curves and series warnings
+    — everything that turns ``results_by_run`` into a leaderboard row. Split out
+    of :func:`_fit_exact_assignment` so the separable engine's all-local node,
+    which is assembled from the phase-1 per-run fits and is never refitted
+    jointly, is scored by *exactly* the same code as a coupled node rather than a
+    parallel reimplementation that could drift on ``k``, ``n`` or the gates.
+
+    ``dense_curves=False`` is a node of a search (see the dense-curve contract on
+    :class:`GlobalCandidateAssessment`): everything above is computed exactly as
+    it would be otherwise — the residuals are read here, for the diagnostics —
+    and then the two curve dicts are left empty and the per-run ``residuals``
+    dropped, because past this point nothing inside the search reads either.
+    :func:`_with_dense_curves` puts both back on the assessments that leave.
+    """
+
+    sample_count = int(sum(dataset.n_points for dataset in datasets))
+    parameter_count = len(global_param_names) + len(local_param_names) * len(datasets)
+    if fit_success:
+        total_chi2 = float(sum(result.chi_squared for result in results_by_run.values()))
+        aic, aicc, bic = compute_information_criteria(
+            total_chi2,
+            parameter_count,
+            sample_count,
+        )
+    else:
+        aic = float("inf")
+        aicc = float("inf")
+        bic = float("inf")
+
+    run_diagnostics: list[RunResidualDiagnostic] = []
+    fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
+    component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
+
+    for dataset in datasets:
+        run_number = int(dataset.run_number)
+        result = results_by_run.get(
+            run_number,
+            FitResult(success=False, message="Missing global fit result"),
+        )
+        (
+            residual_rms,
+            runs_z_score,
+            max_abs_autocorrelation,
+            residual_fft_peak_snr,
+        ) = _residual_diagnostics(dataset, result)
+        bound_hits = _bound_hit_names(result.parameters)
+        gate_reasons = _filtered_gate_reasons(
+            fit_result=result,
+            residual_rms=residual_rms,
+            runs_z_score=runs_z_score,
+            max_abs_autocorrelation=max_abs_autocorrelation,
+            residual_fft_peak_snr=residual_fft_peak_snr,
+            bound_hits=bound_hits,
+        )
+        run_diagnostics.append(
+            RunResidualDiagnostic(
+                run_number=run_number,
+                run_label=dataset.run_label,
+                axis_value=_axis_value(dataset, axis_key),
+                residual_rms=residual_rms,
+                runs_z_score=runs_z_score,
+                max_abs_autocorrelation=max_abs_autocorrelation,
+                residual_fft_peak_snr=residual_fft_peak_snr,
+                gate_passed=not gate_reasons,
+                gate_reasons=tuple(gate_reasons),
+            )
+        )
+
+        if dense_curves:
+            fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+                dataset,
+                template.model,
+                result.parameters,
+                fallback_parameters=base_by_run.get(run_number),
+            )
+            fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
+            component_curves_by_run[run_number] = component_curves
+
+    series_warnings = tuple(
+        _series_warnings(
+            datasets,
+            run_diagnostics,
+            results_by_run=results_by_run,
+            local_param_names=local_param_names,
+        )
+    )
+    if not dense_curves:
+        # The diagnostics above are the last read of the residual series; a
+        # search node keeps only what the search itself ranks on.
+        results_by_run = {
+            run_number: replace(result, residuals=None)
+            for run_number, result in results_by_run.items()
+        }
+    return GlobalCandidateAssessment(
+        template=template,
+        fit_results_by_run=results_by_run,
+        global_parameters=fitted_global,
+        global_param_names=tuple(global_param_names),
+        local_param_names=tuple(local_param_names),
+        fixed_param_names=tuple(fixed_param_names),
+        parameter_recommendations=(),
+        run_diagnostics=tuple(run_diagnostics),
+        series_warnings=series_warnings,
+        aic=float(aic),
+        aicc=None if aicc is None else float(aicc),
+        bic=float(bic),
+        selected_score=_metric_value(metric, aic, aicc, bic),
+        fitted_curves_by_run=fitted_curves_by_run,
+        component_curves_by_run=component_curves_by_run,
+    )
+
+
+def _with_dense_curves(
+    assessment: GlobalCandidateAssessment,
+    datasets: Sequence[MuonDataset],
+    *,
+    base_by_run: Mapping[int, ParameterSet],
+) -> GlobalCandidateAssessment:
+    """Give a search node the curves and residuals a displayed assessment owes.
+
+    The one crossing of the dense-curve contract on
+    :class:`GlobalCandidateAssessment`: call it on every assessment that leaves a
+    search for a :class:`GlobalFitWizardRecommendation`, and on nothing else.
+
+    ``datasets`` must be the records the assessment was *fitted* on — the same
+    ones :func:`_assemble_assignment_assessment` saw — and ``base_by_run`` the
+    same seed sets, because both feed :func:`_dense_fit_curves` verbatim here.
+    Give it the search-resolution records for a node fitted at a coarser binning
+    and the arrays are bit-for-bit what assembly would have produced. The
+    residual series is likewise the engine's own definition (``asymmetry −
+    model`` on the fitted record), so a restored assessment is indistinguishable
+    from one assembled with ``dense_curves=True``.
+    """
+
+    fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
+    component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
+    results_by_run: dict[int, FitResult] = dict(assessment.fit_results_by_run)
+    model = assessment.template.model
+    for dataset in datasets:
+        run_number = int(dataset.run_number)
+        result = results_by_run.get(
+            run_number,
+            FitResult(success=False, message="Missing global fit result"),
+        )
+        fallback_parameters = base_by_run.get(run_number)
+        fitted_time, fitted_curve, component_curves = _dense_fit_curves(
+            dataset,
+            model,
+            result.parameters,
+            fallback_parameters=fallback_parameters,
+        )
+        fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
+        component_curves_by_run[run_number] = component_curves
+        if run_number in results_by_run:
+            values = _curve_parameter_values(
+                model, result.parameters, fallback_parameters=fallback_parameters
+            )
+            model_values = np.asarray(model.function(dataset.time, **values), dtype=float)
+            results_by_run[run_number] = replace(
+                result,
+                residuals=np.asarray(dataset.asymmetry, dtype=float) - model_values,
+            )
+    return replace(
+        assessment,
+        fit_results_by_run=results_by_run,
+        fitted_curves_by_run=fitted_curves_by_run,
+        component_curves_by_run=component_curves_by_run,
+    )
+
+
 def _fit_exact_assignment(
     datasets: list[MuonDataset],
     template: CandidateTemplate,
@@ -4414,10 +5922,37 @@ def _fit_exact_assignment(
     warm_start_chi2: float | None = None,
     progress_callback: Callable[[str], None] | None = None,
     search_strategy: str = "legacy",
+    strategy: str = "joint",
+    warm_start_only: bool = False,
     instrumentation: dict[str, object] | None = None,
     initial_step_sizes: dict[str, float] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
+    dense_curves: bool = True,
 ) -> GlobalCandidateAssessment:
+    """Fit one global/local role assignment and score it.
+
+    ``strategy`` selects the engine's minimiser architecture (``"joint"`` — the
+    historical path — ``"profiled"``, or ``"least_squares"``) and reaches *every*
+    ``global_fit`` call this function makes, staged seeding and simplex rescue
+    included, so a node is never half-profiled or half-sparse. Under
+    ``"least_squares"`` the simplex rescue is a second trust-region solve from
+    the rescue seed: the engine ignores ``method="simplex"`` there (a Nelder–Mead
+    fallback has no trust-region counterpart), and what makes the rescue a real
+    second attempt is the staged seed it starts from, not the algorithm name.
+
+    ``warm_start_only`` is the separable engine's cheap node: the caller has
+    already placed the seed in the right basin with the GLS collapse, so a single
+    screened warm migrad is the whole fit. The multi-start battery runs only when
+    that one fit fails to converge (counted as ``warm_only_escalations``). It
+    requires ``warm_start_by_run`` — without a warm start there is nothing to
+    start only from.
+
+    ``dense_curves`` defaults to ``True`` — a node fitted for its own sake keeps
+    the curves a caller can display. The separable engine passes ``False`` for
+    every node it visits and materialises curves once at its exit; see the
+    dense-curve contract on :class:`GlobalCandidateAssessment`.
+    """
+
     if cancel_callback is not None and cancel_callback():
         raise FitCancelledError("Global fit wizard analysis cancelled.")
     cache_key = (tuple(global_param_names), tuple(local_param_names))
@@ -4460,6 +5995,15 @@ def _fit_exact_assignment(
     )
     difficult_assignment = free_count >= 20 or len(local_param_names) >= 2
 
+    # The separable engine's cheap node escalates to a *capped* battery when its
+    # one warm fit fails: the first seed only, one staged cycle, no prefit-only
+    # fallback. The full ladder exists for anchor nodes without a warm start; a
+    # node that already sits in the collapse's basin needs a second try, not a
+    # dozen, and the winner is refitted at full resolution afterwards anyway.
+    staged_cycles = 1 if warm_start_only else (4 if search_strategy == "staged_v2" else 2)
+    if warm_start_only:
+        attempt_variants = attempt_variants[:1]
+
     def _evaluate_attempt_variants(
         variants: tuple[dict[int, ParameterSet], ...],
         *,
@@ -4491,8 +6035,9 @@ def _fit_exact_assignment(
                 local_param_names=local_param_names,
                 initial_params=initial_params,
                 progress_callback=progress_callback,
-                max_cycles=4 if search_strategy == "staged_v2" else 2,
-                include_mixed_polish=search_strategy == "staged_v2",
+                max_cycles=staged_cycles,
+                include_mixed_polish=search_strategy == "staged_v2" and not warm_start_only,
+                strategy=strategy,
                 instrumentation=instrumentation,
             )
             call_budget = _global_fit_call_budget(
@@ -4519,6 +6064,7 @@ def _fit_exact_assignment(
                 minuit_tol=0.05 if difficult_assignment else None,
                 initial_step_sizes=local_step_hints or None,
                 screening=not difficult_assignment,
+                strategy=strategy,
                 cancel_callback=cancel_callback,
             )
             _record_global_fit_diagnostics(instrumentation, results_by_run)
@@ -4572,7 +6118,41 @@ def _fit_exact_assignment(
     best_failure_message = "No fit attempts were created."
     step_hints = dict(initial_step_sizes or {})
     certificate_passed = False
-    if (
+    if warm_start_only:
+        # Separable engine: the GLS collapse already placed globals and
+        # conditional locals at the second-order optimum, so one screened warm
+        # migrad IS the fit. No certificate is checked here — backward
+        # elimination owns the (opposite-direction) monotonicity certificate,
+        # comparing the child's χ² against its *parent*'s from the outside.
+        (
+            warm_results,
+            warm_global,
+            warm_score,
+            warm_step_hints,
+        ) = _warm_certificate_fit(
+            datasets,
+            template,
+            fit_engine=fit_engine,
+            global_param_names=global_param_names,
+            local_param_names=local_param_names,
+            fixed_param_names=fixed_param_names,
+            warm_start_by_run=warm_start_by_run,
+            initial_step_sizes=step_hints,
+            difficult_assignment=False,
+            screening=True,
+            strategy=strategy,
+            instrumentation=instrumentation,
+        )
+        if warm_results is not None and all(r.success for r in warm_results.values()):
+            best_results = warm_results
+            best_global = warm_global
+            best_score = warm_score
+            step_hints = warm_step_hints
+            certificate_passed = True
+            _record_counter(instrumentation, "warm_only_accepts")
+        else:
+            _record_counter(instrumentation, "warm_only_escalations")
+    elif (
         warm_start_by_run is not None
         and warm_start_chi2 is not None
         and math.isfinite(warm_start_chi2)
@@ -4593,6 +6173,8 @@ def _fit_exact_assignment(
             warm_start_by_run=warm_start_by_run,
             initial_step_sizes=step_hints,
             difficult_assignment=difficult_assignment,
+            screening=not difficult_assignment,
+            strategy=strategy,
             instrumentation=instrumentation,
         )
         if warm_results is not None and all(r.success for r in warm_results.values()):
@@ -4627,7 +6209,7 @@ def _fit_exact_assignment(
     fit_success = best_results is not None and all(
         result.success for result in best_results.values()
     )
-    if not fit_success and warm_start_by_run is not None:
+    if not fit_success and warm_start_by_run is not None and not warm_start_only:
         fallback_attempt_variants = _assignment_attempt_variants(
             base_by_run,
             template,
@@ -4705,6 +6287,7 @@ def _fit_exact_assignment(
             progress_callback=progress_callback,
             max_cycles=4 if difficult_assignment else 2,
             include_mixed_polish=difficult_assignment,
+            strategy=strategy,
             instrumentation=instrumentation,
         )
         rescue_budget = _global_fit_call_budget(
@@ -4734,6 +6317,7 @@ def _fit_exact_assignment(
             minuit_strategy=2 if free_count >= 20 else None,
             minuit_tol=0.05 if free_count >= 20 else None,
             initial_step_sizes=rescue_step_hints or None,
+            strategy=strategy,
             cancel_callback=cancel_callback,
         )
         _record_global_fit_diagnostics(instrumentation, rescue_results)
@@ -4757,92 +6341,25 @@ def _fit_exact_assignment(
             if rescue_message:
                 best_failure_message = rescue_message
 
-    sample_count = int(sum(dataset.n_points for dataset in datasets))
-    parameter_count = len(global_param_names) + len(local_param_names) * len(datasets)
-    if fit_success:
-        total_chi2 = float(sum(result.chi_squared for result in best_results.values()))
-        aic, aicc, bic = compute_information_criteria(
-            total_chi2,
-            parameter_count,
-            sample_count,
-        )
-    else:
-        aic = float("inf")
-        aicc = float("inf")
-        bic = float("inf")
-
-    run_diagnostics: list[RunResidualDiagnostic] = []
-    fitted_curves_by_run: dict[int, tuple[NDArray[np.float64], NDArray[np.float64]]] = {}
-    component_curves_by_run: dict[int, tuple[tuple[str, NDArray[np.float64]], ...]] = {}
-
-    for dataset in datasets:
-        run_number = int(dataset.run_number)
-        result = best_results.get(
-            run_number,
-            FitResult(success=False, message="Missing global fit result"),
-        )
-        (
-            residual_rms,
-            runs_z_score,
-            max_abs_autocorrelation,
-            residual_fft_peak_snr,
-        ) = _residual_diagnostics(dataset, result)
-        bound_hits = _bound_hit_names(result.parameters)
-        gate_reasons = _filtered_gate_reasons(
-            fit_result=result,
-            residual_rms=residual_rms,
-            runs_z_score=runs_z_score,
-            max_abs_autocorrelation=max_abs_autocorrelation,
-            residual_fft_peak_snr=residual_fft_peak_snr,
-            bound_hits=bound_hits,
-        )
-        run_diagnostics.append(
-            RunResidualDiagnostic(
-                run_number=run_number,
-                run_label=dataset.run_label,
-                axis_value=_axis_value(dataset, axis_key),
-                residual_rms=residual_rms,
-                runs_z_score=runs_z_score,
-                max_abs_autocorrelation=max_abs_autocorrelation,
-                residual_fft_peak_snr=residual_fft_peak_snr,
-                gate_passed=not gate_reasons,
-                gate_reasons=tuple(gate_reasons),
-            )
-        )
-
-        fitted_time, fitted_curve, component_curves = _dense_fit_curves(
-            dataset,
-            template.model,
-            result.parameters,
-            fallback_parameters=base_by_run.get(run_number),
-        )
-        fitted_curves_by_run[run_number] = (fitted_time, fitted_curve)
-        component_curves_by_run[run_number] = component_curves
-
-    series_warnings = tuple(
-        _series_warnings(
-            datasets,
-            run_diagnostics,
-            results_by_run=best_results,
-            local_param_names=local_param_names,
-        )
+    assemble_started_at = time.perf_counter()
+    assessment = _assemble_assignment_assessment(
+        datasets,
+        template,
+        base_by_run=base_by_run,
+        results_by_run=best_results,
+        fitted_global=best_global,
+        global_param_names=global_param_names,
+        local_param_names=local_param_names,
+        fixed_param_names=fixed_param_names,
+        axis_key=axis_key,
+        metric=metric,
+        fit_success=fit_success,
+        dense_curves=dense_curves,
     )
-    assessment = GlobalCandidateAssessment(
-        template=template,
-        fit_results_by_run=best_results,
-        global_parameters=best_global,
-        global_param_names=tuple(global_param_names),
-        local_param_names=tuple(local_param_names),
-        fixed_param_names=tuple(fixed_param_names),
-        parameter_recommendations=(),
-        run_diagnostics=tuple(run_diagnostics),
-        series_warnings=series_warnings,
-        aic=float(aic),
-        aicc=None if aicc is None else float(aicc),
-        bic=float(bic),
-        selected_score=_metric_value(metric, aic, aicc, bic),
-        fitted_curves_by_run=fitted_curves_by_run,
-        component_curves_by_run=component_curves_by_run,
+    _record_counter(
+        instrumentation,
+        "exact_assemble_ms",
+        int(1000.0 * (time.perf_counter() - assemble_started_at)),
     )
     if assessment.is_successful:
         _progress_log(
@@ -5331,6 +6848,105 @@ def _initial_param_variants(
     return tuple(combined)
 
 
+def _best_single_run_fit_result(
+    dataset: MuonDataset,
+    template: CandidateTemplate,
+    *,
+    fit_engine: FitEngine,
+    seed_params: ParameterSet,
+    base_params: ParameterSet,
+    global_names: tuple[str, ...],
+    fixed_param_names: tuple[str, ...],
+    previous_success: ParameterSet | None,
+) -> FitResult | None:
+    """Best of up to three independent single-run fits of ``template``.
+
+    The per-run half of :func:`_single_run_prefit_parameter_sets`, lifted out so
+    the separable engine's all-local node — which needs the ``FitResult``s
+    themselves (χ², covariance, bound hits), not just the fitted values — is
+    produced by the same attempt ladder rather than a second, subtly different
+    one. Attempts are, in order: the previous run's converged values mapped onto
+    this run's seed (the series is ordered, so the neighbour is the best guess),
+    the caller's seed, then the template's initial-parameter variants;
+    duplicates are dropped and each attempt falls back to simplex on a failed
+    migrad. ``None`` when no attempt produced a fit at all.
+    """
+
+    run_number = int(dataset.run_number)
+    attempt_params: list[ParameterSet] = []
+    if previous_success is not None:
+        neighbor_seed = _clone_parameter_set(seed_params)
+        for parameter in neighbor_seed:
+            if parameter.name in previous_success:
+                parameter.value = float(
+                    np.clip(
+                        previous_success[parameter.name].value,
+                        parameter.min,
+                        parameter.max,
+                    )
+                )
+        attempt_params.append(neighbor_seed)
+
+    attempt_params.append(_clone_parameter_set(seed_params))
+    for variant_map in _initial_param_variants({run_number: base_params}, template):
+        attempt_params.append(_clone_parameter_set(variant_map[run_number]))
+
+    unique_attempts: list[ParameterSet] = []
+    seen_signatures: set[tuple[tuple[str, float], ...]] = set()
+    for attempt in attempt_params:
+        canonical_attempt = _canonicalize_parameter_sets(
+            {run_number: attempt},
+            template=template,
+            global_param_names=global_names,
+            local_param_names=(),
+            fixed_param_names=fixed_param_names,
+        )[run_number]
+        signature = tuple(
+            (parameter.name, float(parameter.value)) for parameter in canonical_attempt
+        )
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        unique_attempts.append(canonical_attempt)
+
+    best_result: FitResult | None = None
+    for attempt in unique_attempts[:3]:
+        try:
+            result = fit_engine.fit(
+                dataset,
+                template.model.function,
+                _clone_parameter_set(attempt),
+                method="migrad",
+            )
+        except Exception:
+            continue
+
+        if not result.success:
+            try:
+                simplex_result = fit_engine.fit(
+                    dataset,
+                    template.model.function,
+                    _clone_parameter_set(attempt),
+                    method="simplex",
+                )
+            except Exception:
+                simplex_result = FitResult(success=False, message="Single-run simplex failed")
+            if simplex_result.success and (
+                best_result is None or simplex_result.chi_squared < best_result.chi_squared
+            ):
+                best_result = simplex_result
+            elif result.success and (
+                best_result is None or result.chi_squared < best_result.chi_squared
+            ):
+                best_result = result
+            continue
+
+        if best_result is None or result.chi_squared < best_result.chi_squared:
+            best_result = result
+
+    return best_result
+
+
 def _single_run_prefit_parameter_sets(
     datasets: list[MuonDataset],
     template: CandidateTemplate,
@@ -5374,77 +6990,16 @@ def _single_run_prefit_parameter_sets(
     )
     for dataset in datasets:
         run_number = int(dataset.run_number)
-        attempt_params: list[ParameterSet] = []
-        if previous_success is not None:
-            neighbor_seed = _clone_parameter_set(seeded[run_number])
-            for parameter in neighbor_seed:
-                if parameter.name in previous_success:
-                    parameter.value = float(
-                        np.clip(
-                            previous_success[parameter.name].value,
-                            parameter.min,
-                            parameter.max,
-                        )
-                    )
-            attempt_params.append(neighbor_seed)
-
-        attempt_params.append(_clone_parameter_set(seeded[run_number]))
-        for variant_map in _initial_param_variants({run_number: base_by_run[run_number]}, template):
-            attempt_params.append(_clone_parameter_set(variant_map[run_number]))
-
-        unique_attempts: list[ParameterSet] = []
-        seen_signatures: set[tuple[tuple[str, float], ...]] = set()
-        for attempt in attempt_params:
-            canonical_attempt = _canonicalize_parameter_sets(
-                {run_number: attempt},
-                template=template,
-                global_param_names=global_names,
-                local_param_names=(),
-                fixed_param_names=fixed_param_names,
-            )[run_number]
-            signature = tuple(
-                (parameter.name, float(parameter.value)) for parameter in canonical_attempt
-            )
-            if signature in seen_signatures:
-                continue
-            seen_signatures.add(signature)
-            unique_attempts.append(canonical_attempt)
-
-        best_result: FitResult | None = None
-        for attempt in unique_attempts[:3]:
-            try:
-                result = fit_engine.fit(
-                    dataset,
-                    template.model.function,
-                    _clone_parameter_set(attempt),
-                    method="migrad",
-                )
-            except Exception:
-                continue
-
-            if not result.success:
-                try:
-                    simplex_result = fit_engine.fit(
-                        dataset,
-                        template.model.function,
-                        _clone_parameter_set(attempt),
-                        method="simplex",
-                    )
-                except Exception:
-                    simplex_result = FitResult(success=False, message="Single-run simplex failed")
-                if simplex_result.success and (
-                    best_result is None or simplex_result.chi_squared < best_result.chi_squared
-                ):
-                    best_result = simplex_result
-                elif result.success and (
-                    best_result is None or result.chi_squared < best_result.chi_squared
-                ):
-                    best_result = result
-                continue
-
-            if best_result is None or result.chi_squared < best_result.chi_squared:
-                best_result = result
-
+        best_result = _best_single_run_fit_result(
+            dataset,
+            template,
+            fit_engine=fit_engine,
+            seed_params=seeded[run_number],
+            base_params=base_by_run[run_number],
+            global_names=global_names,
+            fixed_param_names=fixed_param_names,
+            previous_success=previous_success,
+        )
         if best_result is None or not best_result.success:
             continue
 
@@ -5561,6 +7116,7 @@ def _staged_assignment_seed(
     progress_callback: Callable[[str], None] | None = None,
     max_cycles: int = 2,
     include_mixed_polish: bool = False,
+    strategy: str = "joint",
     instrumentation: dict[str, object] | None = None,
 ) -> dict[int, ParameterSet]:
     initial_params = _canonicalize_parameter_sets(
@@ -5620,6 +7176,7 @@ def _staged_assignment_seed(
             minuit_tol=0.05 if len(free_local_names) >= 2 else None,
             screening=len(free_local_names) < 2,
             initial_step_sizes=step_hints or None,
+            strategy=strategy,
         )
         _record_global_fit_diagnostics(instrumentation, local_results)
         local_results = _canonicalize_fit_results_by_run(
@@ -5670,6 +7227,7 @@ def _staged_assignment_seed(
             minuit_tol=0.05 if len(free_global_names) >= 4 else None,
             initial_step_sizes=step_hints or None,
             screening=len(free_global_names) < 4,
+            strategy=strategy,
         )
         _record_global_fit_diagnostics(instrumentation, global_results)
         global_results = _canonicalize_fit_results_by_run(
@@ -5722,6 +7280,7 @@ def _staged_assignment_seed(
                 use_simplex_rescue=False,
                 initial_step_sizes=step_hints or None,
                 screening=True,
+                strategy=strategy,
             )
             _record_global_fit_diagnostics(instrumentation, mixed_results)
             mixed_results = _canonicalize_fit_results_by_run(
@@ -6416,12 +7975,54 @@ def _filtered_gate_reasons(
     return reasons
 
 
+def _series_fingerprint_key(dataset: MuonDataset) -> tuple[int, int, float, float, float, float]:
+    """A cheap content key for one record's fingerprint.
+
+    The fingerprint depends only on the record's arrays. Run number, point
+    count, the time span and two asymmetry moments identify a record for the
+    lifetime of a search without hashing 10⁵ points per call.
+    """
+    asymmetry = np.asarray(dataset.asymmetry, dtype=float)
+    time = np.asarray(dataset.time, dtype=float)
+    return (
+        int(dataset.run_number),
+        int(dataset.n_points),
+        float(time[0]),
+        float(time[-1]),
+        float(asymmetry.sum()),
+        float(asymmetry[asymmetry.size // 2]),
+    )
+
+
+#: Fingerprints of the records a coupled search scores, by content key. The
+#: series-consistency caveat recomputes every run's fingerprint for every node
+#: it assembles — a peak pass, a damped-line scan and a residual pass per run —
+#: which on a 12-run phase was 2.4 s of the ~8 s a node costs, for an answer
+#: that never changes within the search. Bounded so a long session does not
+#: accumulate one entry per record ever fitted.
+_SERIES_FINGERPRINT_CACHE: dict[
+    tuple[int, int, float, float, float, float], SpectrumFingerprint
+] = {}
+_SERIES_FINGERPRINT_CACHE_MAX = 256
+
+
+def _cached_series_fingerprint(dataset: MuonDataset) -> SpectrumFingerprint:
+    key = _series_fingerprint_key(dataset)
+    cached = _SERIES_FINGERPRINT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    fingerprint = fingerprint_spectrum(dataset)
+    if len(_SERIES_FINGERPRINT_CACHE) >= _SERIES_FINGERPRINT_CACHE_MAX:
+        _SERIES_FINGERPRINT_CACHE.pop(next(iter(_SERIES_FINGERPRINT_CACHE)))
+    _SERIES_FINGERPRINT_CACHE[key] = fingerprint
+    return fingerprint
+
+
 def _fingerprint_jump_warnings(datasets: list[MuonDataset]) -> list[str]:
     warnings: list[str] = []
     if len(datasets) < 4:
         return warnings
-
-    fingerprints = [fingerprint_spectrum(dataset) for dataset in datasets]
+    fingerprints = [_cached_series_fingerprint(dataset) for dataset in datasets]
     features = np.array(
         [
             [
@@ -6588,21 +8189,12 @@ def _metric_penalty(parameter_count: int, *, sample_count: int, metric: Selectio
     the same penalty the winning-assessment IC does. All three penalties are
     monotone non-decreasing in ``k`` (hence in the layer index), so the bound
     ``chi2_floor + penalty(k(m))`` lower-bounds every assignment at layer ``>= m``.
+
+    The one implementation lives in :mod:`global_search.surrogate` so the tier-2
+    surrogate's IC and the exact path's IC can never drift apart.
     """
 
-    k = max(int(parameter_count), 0)
-    n = max(int(sample_count), 1)
-    if metric == SelectionMetric.AIC:
-        return 2.0 * k
-    if metric == SelectionMetric.BIC:
-        return k * math.log(n)
-    # AICc — fall back to AIC's penalty when the small-sample correction is
-    # undefined (n <= k + 1), matching compute_information_criteria which then
-    # reports aicc = None and metric_value() falls back to AIC.
-    aic_penalty = 2.0 * k
-    if n > k + 1:
-        return aic_penalty + 2.0 * k * (k + 1) / max(n - k - 1, 1)
-    return aic_penalty
+    return surrogate_metric_penalty(parameter_count, sample_count=sample_count, metric=metric)
 
 
 @dataclass
@@ -6666,13 +8258,18 @@ def _fit_heuristic_assignment(
     progress_callback: Callable[[str], None] | None,
     instrumentation: dict[str, object] | None,
     warm_start_source: GlobalCandidateAssessment | None = None,
+    warm_start_only: bool = False,
+    dense_curves: bool = True,
 ) -> GlobalCandidateAssessment:
     """Fit one role assignment for a heuristic template and cache it.
 
     Reuses :func:`_fit_exact_assignment` verbatim (same fidelity, same
     instrumentation counters the harness reads) so every heuristic-fit IC is on
     the same footing as the exhaustive baseline. Warm-starts from a neighbour
-    assessment when one is supplied.
+    assessment when one is supplied; with ``warm_start_only`` that warm fit is
+    the whole attempt (escalating once to the capped battery if it fails),
+    which is what a node already placed in its basin — a flip of the winner,
+    or the winner itself refitted at full resolution — needs.
     """
 
     global_names = _global_names_for(state.free_param_names, local_names)
@@ -6724,6 +8321,8 @@ def _fit_heuristic_assignment(
         search_strategy=search_strategy,
         instrumentation=instrumentation,
         initial_step_sizes=initial_step_sizes,
+        warm_start_only=warm_start_only and warm_start_by_run is not None,
+        dense_curves=dense_curves,
     )
     key = (global_names, local_names)
     state.exact_cache[key] = assessment
@@ -7052,6 +8651,7 @@ def _fill_winner_flip_neighbourhood(
     search_strategy: str,
     progress_callback: Callable[[str], None] | None,
     instrumentation: dict[str, object] | None,
+    dense_curves: bool,
 ) -> None:
     """Fit every single-flip neighbour of ``winner`` over the FULL free set.
 
@@ -7084,6 +8684,8 @@ def _fill_winner_flip_neighbourhood(
             progress_callback=progress_callback,
             instrumentation=instrumentation,
             warm_start_source=winner,
+            warm_start_only=True,
+            dense_curves=dense_curves,
         )
 
 
@@ -7225,6 +8827,7 @@ def _refit_states_at_full_resolution(
     search_strategy: str,
     progress_callback: Callable[[str], None] | None,
     instrumentation: dict[str, object] | None,
+    dense_curves: bool,
 ) -> list[_HeuristicTemplateState]:
     """Technique K's correctness step: redo the winner at native resolution.
 
@@ -7268,9 +8871,13 @@ def _refit_states_at_full_resolution(
                     search_strategy=search_strategy,
                     progress_callback=progress_callback,
                     instrumentation=instrumentation,
+                    dense_curves=dense_curves,
                 )
             continue
         _record_counter(instrumentation, "decimation_full_res_refits")
+        # The decimated winner's fitted values are the seed: a parameter's value
+        # does not depend on the binning it was fitted at, so one warm fit at
+        # full resolution is the whole refit, not a fresh multi-start ladder.
         full_winner = _fit_heuristic_assignment(
             datasets,
             full_state,
@@ -7280,6 +8887,9 @@ def _refit_states_at_full_resolution(
             search_strategy=search_strategy,
             progress_callback=progress_callback,
             instrumentation=instrumentation,
+            warm_start_source=winner,
+            warm_start_only=True,
+            dense_curves=dense_curves,
         )
         if full_winner.is_successful:
             _fill_winner_flip_neighbourhood(
@@ -7291,6 +8901,7 @@ def _refit_states_at_full_resolution(
                 search_strategy=search_strategy,
                 progress_callback=progress_callback,
                 instrumentation=instrumentation,
+                dense_curves=dense_curves,
             )
         else:
             # The decimated winner failed to reproduce at full resolution — fall
@@ -7307,6 +8918,7 @@ def _refit_states_at_full_resolution(
                 search_strategy=search_strategy,
                 progress_callback=progress_callback,
                 instrumentation=instrumentation,
+                dense_curves=dense_curves,
             )
             if anchor.is_successful:
                 _fill_winner_flip_neighbourhood(
@@ -7318,6 +8930,7 @@ def _refit_states_at_full_resolution(
                     search_strategy=search_strategy,
                     progress_callback=progress_callback,
                     instrumentation=instrumentation,
+                    dense_curves=dense_curves,
                 )
     return refit_states
 
@@ -7510,6 +9123,7 @@ def _run_heuristic_search(
                 search_strategy=search_strategy,
                 progress_callback=progress_callback,
                 instrumentation=instrumentation,
+                dense_curves=True,
             )
 
     if decimation_factor > 1:
@@ -7523,10 +9137,15 @@ def _run_heuristic_search(
             search_strategy=search_strategy,
             progress_callback=progress_callback,
             instrumentation=instrumentation,
+            dense_curves=True,
         )
 
     return _finalise_heuristic_assessments(
-        datasets, states, metric=metric, progress_callback=progress_callback
+        datasets,
+        states,
+        metric=metric,
+        progress_callback=progress_callback,
+        materialise_curves=False,
     )
 
 
@@ -7536,12 +9155,20 @@ def _finalise_heuristic_assessments(
     *,
     metric: SelectionMetric,
     progress_callback: Callable[[str], None] | None,
+    materialise_curves: bool,
 ) -> tuple[GlobalCandidateAssessment, ...]:
     """Build the returned assessments exactly like the exhaustive wavefront.
 
     Each template contributes its converged assignments with per-parameter role
     recommendations resolved from the (now flip-complete) exact cache, so the
     verdict layer treats a heuristic winner identically to an exhaustive one.
+
+    This is a search's exit, so it is also where the dense-curve contract on
+    :class:`GlobalCandidateAssessment` is honoured: ``materialise_curves=True``
+    rebuilds the curves and residuals of everything it returns, which is what a
+    caller whose nodes were fitted with ``dense_curves=False`` must pass. The Low
+    engine fitted its nodes with curves and passes ``False`` — its assessments
+    already carry them, and rebuilding would only redo the work.
     """
 
     optimized_assessments: list[GlobalCandidateAssessment] = []
@@ -7558,25 +9185,28 @@ def _finalise_heuristic_assessments(
 
         if successful:
             for assessment in successful:
-                optimized_assessments.append(
-                    replace(
+                finalised = replace(
+                    assessment,
+                    fixed_param_names=state.fixed_param_names,
+                    parameter_recommendations=_build_parameter_recommendations_from_exact_cache(
+                        datasets,
                         assessment,
+                        template=state.template,
                         fixed_param_names=state.fixed_param_names,
-                        parameter_recommendations=_build_parameter_recommendations_from_exact_cache(
-                            datasets,
-                            assessment,
-                            template=state.template,
-                            fixed_param_names=state.fixed_param_names,
-                            metric=metric,
-                            cache=exact_cache,
-                            names_to_test=set(state.free_param_names),
-                        ),
-                        assessment_key=_global_candidate_assessment_key(
-                            state.template.key,
-                            global_param_names=assessment.global_param_names,
-                            local_param_names=assessment.local_param_names,
-                        ),
-                    )
+                        metric=metric,
+                        cache=exact_cache,
+                        names_to_test=set(state.free_param_names),
+                    ),
+                    assessment_key=_global_candidate_assessment_key(
+                        state.template.key,
+                        global_param_names=assessment.global_param_names,
+                        local_param_names=assessment.local_param_names,
+                    ),
+                )
+                optimized_assessments.append(
+                    _with_dense_curves(finalised, datasets, base_by_run=state.prefit_base_by_run)
+                    if materialise_curves
+                    else finalised
                 )
             best = successful[0]
             _progress_log(
@@ -7592,20 +9222,1915 @@ def _finalise_heuristic_assessments(
         failed = state.best_assessment
         if failed is None:
             continue
+        finalised_failure = replace(
+            failed,
+            fixed_param_names=state.fixed_param_names,
+            parameter_recommendations=(),
+            assessment_key=_global_candidate_assessment_key(
+                state.template.key,
+                global_param_names=failed.global_param_names,
+                local_param_names=failed.local_param_names,
+            ),
+        )
         optimized_assessments.append(
-            replace(
-                failed,
-                fixed_param_names=state.fixed_param_names,
-                parameter_recommendations=(),
-                assessment_key=_global_candidate_assessment_key(
-                    state.template.key,
-                    global_param_names=failed.global_param_names,
-                    local_param_names=failed.local_param_names,
+            _with_dense_curves(finalised_failure, datasets, base_by_run=state.prefit_base_by_run)
+            if materialise_curves
+            else finalised_failure
+        )
+
+    return tuple(optimized_assessments)
+
+
+# --------------------------------------------------------------------------- #
+# Separable role search (the default engine).
+#
+# The exhaustive wavefront enumerates 2^P role assignments per template and
+# refits the all-local anchor as one joint (n_global + n_local*G)-parameter
+# Minuit problem although phase 1 already holds every per-run fit. On a real
+# ordered series that is where the search's whole budget goes.
+#
+# The separable engine replaces enumeration with a statistical model of it:
+#
+#   1. **All-local comes for free.** Independent per-run fits *are* the
+#      all-local assignment, so it is assembled from the phase-1 results and
+#      never fitted jointly.
+#   2. **A full-covariance surrogate scores every assignment at once.** The GLS
+#      collapse (``global_search.surrogate``) predicts the IC of globalising any
+#      subset from the per-run estimates and covariances, and hands back the
+#      warm start (shared values + conditional locals) the exact fit needs.
+#   3. **Backward elimination is the exact path.** One parameter is globalised
+#      at a time, cheapest-by-surrogate first, each step fitted exactly
+#      (one warm variant, sparse least squares) and accepted only when the
+#      *exact* IC improves. At most P coupled fits, not 2^P.
+#   4. **The winner's single-flip neighbourhood is fitted** so the per-parameter
+#      role recommendations are exact, then winner + neighbourhood are refitted
+#      jointly at full resolution — the leaderboard never mixes resolutions.
+#
+# The exhaustive wavefront stays reachable behind ``search_engine`` as the
+# harness referee.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class _SeparableAnchorTask:
+    """Build one template's all-local node (no coupled fit) plus its estimates."""
+
+    template_key: str
+    template: CandidateTemplate
+    #: The series as **fit records** — fitted arrays and run provenance, no raw
+    #: detector counts (see :meth:`MuonDataset.fit_record`). Every task carries
+    #: the whole series, so the counts would otherwise be pickled once per task.
+    datasets: list[MuonDataset]
+    base_by_run: dict[int, ParameterSet]
+    fixed_param_names: tuple[str, ...]
+    axis_key: str
+    metric: SelectionMetric
+    search_strategy: str
+    #: Per-run all-local ``FitResult``s reusable verbatim from the phase-1
+    #: pre-screen, or ``None`` when they must be fitted here (either the
+    #: pre-screen holds coupled fits rather than independent per-run ones, or it
+    #: sits at a different resolution than the search).
+    prescreen_results_by_run: dict[int, FitResult] | None
+
+
+@dataclass(frozen=True)
+class _SeparableTemplateResult:
+    template_key: str
+    state: _HeuristicTemplateState
+    estimates: tuple[RunEstimate, ...]
+    instrumentation: dict[str, object]
+
+
+@dataclass(frozen=True)
+class _SeparableEliminationTask:
+    """Run one template's backward elimination.
+
+    The walk is a chain — each step warm-starts from the step before — so it is
+    irreducibly serial and one template is one task. The winner's flip
+    neighbourhood is *not* part of it: those fits are independent of each other
+    and go back to the pool as tasks of their own (see
+    :func:`_fit_separable_flip_neighbourhoods`).
+    """
+
+    template_key: str
+    state: _HeuristicTemplateState
+    estimates: tuple[RunEstimate, ...]
+    #: The series as fit records — see :class:`_SeparableAnchorTask`.
+    datasets: list[MuonDataset]
+    axis_key: str
+    metric: SelectionMetric
+    search_strategy: str
+
+
+@dataclass(frozen=True)
+class _SeparableFlipTask:
+    """Fit one single-role flip of one template's winner."""
+
+    template_key: str
+    state: _HeuristicTemplateState
+    estimates: tuple[RunEstimate, ...]
+    #: The series as fit records — see :class:`_SeparableAnchorTask`.
+    datasets: list[MuonDataset]
+    #: The node every flip of this template warm-starts from.
+    winner: GlobalCandidateAssessment
+    #: The flipped assignment's local names; the globals follow from them.
+    local_names: tuple[str, ...]
+    axis_key: str
+    metric: SelectionMetric
+    search_strategy: str
+
+
+@dataclass(frozen=True)
+class _SeparableFlipResult:
+    template_key: str
+    local_names: tuple[str, ...]
+    assessment: GlobalCandidateAssessment
+    instrumentation: dict[str, object]
+
+
+#: What :func:`_drain_separable_tasks` hands back — one result per task, whatever
+#: kind of task the caller submitted.
+_SeparableTaskResultT = TypeVar(
+    "_SeparableTaskResultT", _SeparableTemplateResult, _SeparableFlipResult
+)
+
+
+def _fresh_task_instrumentation() -> dict[str, object]:
+    return {
+        "counters": {},
+        "curvature_hint_sizes": [],
+        "minuit_edm": [],
+        "relaxed_penalties": [],
+        "staged_frontier_widths": [],
+    }
+
+
+def _counter_value(instrumentation: dict[str, object], name: str) -> int:
+    """Read one counter out of a task's instrumentation dict.
+
+    Callers hold a :func:`_fresh_task_instrumentation` dict, which seeds
+    ``counters`` before anything can read it, so the lookup is total. A counter
+    nobody has recorded yet is honestly zero.
+    """
+
+    counters: dict[str, int] = instrumentation["counters"]  # type: ignore[assignment]
+    return int(counters.get(name, 0))
+
+
+def _separable_search_rebin_factor(datasets: list[MuonDataset]) -> int:
+    """One rebin factor for the whole series: the *smallest* run's factor.
+
+    Every search fit runs at this resolution so the ICs on one leaderboard share
+    an ``n``. Taking the minimum over runs means the series is never rebinned
+    past what the most bandwidth-hungry run can afford — going past a run's own
+    factor would alias the very line its seeds name.
+    """
+
+    return max(
+        1,
+        min(
+            int(analysis_rebin_factor(dataset, field_gauss=_field_value(dataset)))
+            for dataset in datasets
+        ),
+    )
+
+
+def _separable_search_datasets(
+    datasets: list[MuonDataset],
+    *,
+    search_rebin_factor: int,
+    instrumentation: dict[str, object] | None,
+) -> list[MuonDataset]:
+    if search_rebin_factor <= 1:
+        return datasets
+    _record_counter(instrumentation, "separable_search_rebin_applied")
+    return [dataset.rebin(search_rebin_factor) for dataset in datasets]
+
+
+def _all_local_run_fit_results(
+    datasets: list[MuonDataset],
+    template: CandidateTemplate,
+    *,
+    fit_engine: FitEngine,
+    base_by_run: dict[int, ParameterSet],
+    fixed_param_names: tuple[str, ...],
+    instrumentation: dict[str, object] | None,
+) -> dict[int, FitResult]:
+    """Fit ``template`` to each run independently — the all-local assignment.
+
+    Runs are walked in series order and each converged run seeds the next
+    (``_best_single_run_fit_result``'s first attempt), which is why this stays
+    serial: along an ordered series the neighbour is the best available start,
+    and the process pool is already saturated one level up, across templates.
+    """
+
+    free_names = tuple(name for name in template.model.param_names if name not in fixed_param_names)
+    seeded = _canonicalize_parameter_sets(
+        base_by_run,
+        template=template,
+        global_param_names=free_names,
+        local_param_names=(),
+        fixed_param_names=fixed_param_names,
+    )
+    results: dict[int, FitResult] = {}
+    previous_success: ParameterSet | None = None
+    for dataset in datasets:
+        run_number = int(dataset.run_number)
+        _record_counter(instrumentation, "separable_all_local_fits")
+        best_result = _best_single_run_fit_result(
+            dataset,
+            template,
+            fit_engine=fit_engine,
+            seed_params=seeded[run_number],
+            base_params=base_by_run[run_number],
+            global_names=free_names,
+            fixed_param_names=fixed_param_names,
+            previous_success=previous_success,
+        )
+        if best_result is None:
+            results[run_number] = FitResult(
+                success=False,
+                message="No single-run fit attempt produced a result.",
+            )
+            continue
+        canonical = _canonicalize_fit_results_by_run(
+            {run_number: best_result},
+            template=template,
+            global_param_names=free_names,
+            local_param_names=(),
+            fixed_param_names=fixed_param_names,
+        )[run_number]
+        results[run_number] = canonical
+        if canonical.success:
+            previous_success = canonical.parameters
+    return results
+
+
+def _run_estimates_from_results(
+    datasets: list[MuonDataset],
+    results_by_run: dict[int, FitResult],
+    free_param_names: tuple[str, ...],
+) -> tuple[RunEstimate, ...]:
+    return tuple(
+        run_estimate_from_fit_result(
+            results_by_run[int(dataset.run_number)],
+            free_param_names,
+            run_number=int(dataset.run_number),
+            n_points=int(dataset.n_points),
+            at_bound=_bound_hit_names(results_by_run[int(dataset.run_number)].parameters),
+        )
+        for dataset in datasets
+    )
+
+
+def _run_separable_anchor_task(task: _SeparableAnchorTask) -> _SeparableTemplateResult:
+    """Assemble one template's all-local node — the search's starting point.
+
+    No coupled fit happens here: G independent per-run fits *are* the all-local
+    assignment, and scoring them through :func:`_assemble_assignment_assessment`
+    puts that node on exactly the same IC footing as every coupled node.
+    """
+
+    instrumentation = _fresh_task_instrumentation()
+    template = task.template
+    fixed_param_names = task.fixed_param_names
+    free_param_names = tuple(
+        name for name in template.model.param_names if name not in fixed_param_names
+    )
+    state = _HeuristicTemplateState(
+        template=template,
+        fixed_param_names=fixed_param_names,
+        prefit_base_by_run=_clone_parameter_sets(task.base_by_run),
+        free_param_names=free_param_names,
+        exact_cache={},
+        converged_assessments={},
+    )
+
+    if not free_param_names:
+        # Nothing is promotable: the single all-fixed assignment is the verdict.
+        _fit_heuristic_assignment(
+            task.datasets,
+            state,
+            (),
+            axis_key=task.axis_key,
+            metric=task.metric,
+            search_strategy=task.search_strategy,
+            progress_callback=None,
+            instrumentation=instrumentation,
+            dense_curves=False,
+        )
+        return _SeparableTemplateResult(
+            template_key=task.template_key,
+            state=state,
+            estimates=(),
+            instrumentation=instrumentation,
+        )
+
+    if task.prescreen_results_by_run is None:
+        results_by_run = _all_local_run_fit_results(
+            task.datasets,
+            template,
+            fit_engine=FitEngine(),
+            base_by_run=task.base_by_run,
+            fixed_param_names=fixed_param_names,
+            instrumentation=instrumentation,
+        )
+    else:
+        _record_counter(instrumentation, "separable_all_local_from_prescreen")
+        results_by_run = _canonicalize_fit_results_by_run(
+            dict(task.prescreen_results_by_run),
+            template=template,
+            global_param_names=free_param_names,
+            local_param_names=(),
+            fixed_param_names=fixed_param_names,
+        )
+
+    local_param_names = _local_names_for(free_param_names, set(free_param_names))
+    fit_success = len(results_by_run) == len(task.datasets) and all(
+        result.success for result in results_by_run.values()
+    )
+    state.prefit_base_by_run = _merge_result_values_into_parameter_sets(
+        task.base_by_run,
+        results_by_run,
+    )
+    assessment = _assemble_assignment_assessment(
+        task.datasets,
+        template,
+        base_by_run=state.prefit_base_by_run,
+        results_by_run=results_by_run,
+        fitted_global=ParameterSet(),
+        global_param_names=(),
+        local_param_names=local_param_names,
+        fixed_param_names=fixed_param_names,
+        axis_key=task.axis_key,
+        metric=task.metric,
+        fit_success=fit_success,
+        dense_curves=False,
+    )
+    anchor_key = ((), local_param_names)
+    state.exact_cache[anchor_key] = assessment
+    state.anchor_assessment = assessment
+    if assessment.is_successful:
+        state.converged_assessments[anchor_key] = assessment
+        state.best_assessment = assessment
+        estimates = _run_estimates_from_results(task.datasets, results_by_run, free_param_names)
+    else:
+        # With no usable all-local node there is no surrogate and no warm start.
+        # The template still deserves one real coupled row on the leaderboard, so
+        # fit the cheapest assignment (all-global) from the base seeds.
+        _record_counter(instrumentation, "separable_all_local_failed")
+        _fit_heuristic_assignment(
+            task.datasets,
+            state,
+            (),
+            axis_key=task.axis_key,
+            metric=task.metric,
+            search_strategy=task.search_strategy,
+            progress_callback=None,
+            instrumentation=instrumentation,
+            dense_curves=False,
+        )
+        estimates = ()
+
+    return _SeparableTemplateResult(
+        template_key=task.template_key,
+        state=state,
+        estimates=estimates,
+        instrumentation=instrumentation,
+    )
+
+
+def _collapse_warm_start_parameter_sets(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    collapse: CollapseResult,
+    *,
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+) -> dict[int, ParameterSet]:
+    """Turn a GLS collapse into per-run start values for the coupled fit.
+
+    Shared parameters start at the pooled value; every other free parameter
+    starts at its run's *conditional* value — the shift the collapse says it
+    takes once the shared ones move. That is the second-order optimum of the
+    coupled problem, which is why one screened migrad from here is enough.
+    """
+
+    seeded: dict[int, ParameterSet] = {}
+    for dataset in datasets:
+        run_number = int(dataset.run_number)
+        parameters = _clone_parameter_set(state.prefit_base_by_run[run_number])
+        conditional = collapse.conditional_locals_by_run[run_number]
+        for parameter in parameters:
+            value = collapse.shared_values.get(parameter.name, conditional.get(parameter.name))
+            if value is None:
+                continue
+            parameter.value = float(np.clip(value, parameter.min, parameter.max))
+        seeded[run_number] = parameters
+    return _canonicalize_parameter_sets(
+        seeded,
+        template=state.template,
+        global_param_names=global_param_names,
+        local_param_names=local_param_names,
+        fixed_param_names=state.fixed_param_names,
+    )
+
+
+def _separable_warm_start(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    estimates: tuple[RunEstimate, ...],
+    incumbent: GlobalCandidateAssessment,
+    *,
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+) -> dict[int, ParameterSet]:
+    """The warm start for one candidate assignment.
+
+    Globalising a parameter — the elimination's forward move, and the
+    flip-neighbourhood's "share this one too" — is exactly what the collapse
+    models, so it supplies the seed. Freeing a global back to per-run values is
+    the reverse move, which the collapse says nothing about; there the
+    incumbent's own fitted values, spread per run, are the honest start. A
+    collapse whose pooled weight is unusable reports ``inf`` and hands back no
+    shared values, so it falls to the same reverse-move seed.
+    """
+
+    collapse = collapse_cost(estimates, global_param_names)
+    globalising = bool(set(global_param_names) - set(incumbent.global_param_names))
+    if globalising and math.isfinite(collapse.delta_chi2):
+        return _collapse_warm_start_parameter_sets(
+            datasets,
+            state,
+            collapse,
+            global_param_names=global_param_names,
+            local_param_names=local_param_names,
+        )
+    return _warm_start_parameter_sets(
+        datasets,
+        assessment=incumbent,
+        base_by_run=state.prefit_base_by_run,
+        target_global_names=global_param_names,
+        target_local_names=local_param_names,
+        fit_engine=FitEngine(),
+        template=state.template,
+        progress_callback=None,
+    )
+
+
+def _separable_coupled_strategy(
+    datasets: list[MuonDataset],
+    global_param_names: tuple[str, ...],
+    local_param_names: tuple[str, ...],
+) -> str:
+    """Which minimiser architecture solves this node: always ``"least_squares"``.
+
+    A coupled node — any free global, or a grouped local tie — has an
+    arrow-shaped Jacobian: every residual depends on the shared globals and on
+    exactly one run's locals. The sparse trust-region least-squares solver is
+    built for that shape, and the two Minuit architectures are not. The joint
+    solver carries one dense ``(n_global + n_local*G)²`` Hessian; the profiled
+    solver trades it for a small outer Hessian but re-solves *every* run on each
+    outer iteration. Measured on a 12-run phase with a two-line damped template
+    (9 free parameters per run, ~217 k points): the profiled strategy took ~800 s
+    for one node — thousands of inner Minuit fits — and the 97-parameter joint
+    problem failed to converge at all, while the sparse solver reached the same
+    minimum in seconds from under twenty residual evaluations. Elimination visits
+    of order one node plus one flip per free parameter per raced template, so
+    that gap is the difference between a search that finishes inside its budget
+    and one that keeps nothing.
+
+    The strategy names what a *coupled* node uses. A node with nothing actually
+    shared (no free global, no grouped tie) is block-separable and the engine's
+    own fast path fits its runs independently whatever is passed here.
+    """
+
+    return "least_squares"
+
+
+def _fit_separable_assignment(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    local_names: tuple[str, ...],
+    *,
+    estimates: tuple[RunEstimate, ...],
+    warm_start_source: GlobalCandidateAssessment,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    instrumentation: dict[str, object],
+    cancel_callback: Callable[[], bool] | None = None,
+) -> GlobalCandidateAssessment:
+    """One exact, warm-started, sparse coupled fit; cached on ``state``.
+
+    Goes through :func:`_fit_exact_assignment` so its IC, diagnostics and
+    instrumentation counters are identical to an exhaustive node's — only the
+    seed and the minimiser architecture differ. The warm start is built here,
+    *after* the cache lookup, because building one can itself cost a per-run
+    prefit and an already-fitted node needs neither.
+    """
+
+    global_names = _global_names_for(state.free_param_names, local_names)
+    cached = state.exact_cache.get((global_names, local_names))
+    if cached is not None and cached.is_successful:
+        _record_counter(instrumentation, "exact_fit_cache_hits")
+        return cached
+    strategy = _separable_coupled_strategy(datasets, global_names, local_names)
+    _record_counter(instrumentation, f"separable_{strategy}_fits")
+    warm_started_at = time.perf_counter()
+    warm_start_by_run = _separable_warm_start(
+        datasets,
+        state,
+        estimates,
+        warm_start_source,
+        global_param_names=global_names,
+        local_param_names=local_names,
+    )
+    _record_counter(
+        instrumentation,
+        "separable_warm_start_ms",
+        int(1000.0 * (time.perf_counter() - warm_started_at)),
+    )
+    node_started_at = time.perf_counter()
+    assessment = _fit_exact_assignment(
+        datasets,
+        state.template,
+        fit_engine=FitEngine(),
+        base_by_run=state.prefit_base_by_run,
+        global_param_names=global_names,
+        local_param_names=local_names,
+        fixed_param_names=state.fixed_param_names,
+        axis_key=axis_key,
+        metric=metric,
+        cache=state.exact_cache,
+        warm_start_by_run=warm_start_by_run,
+        progress_callback=None,
+        search_strategy=search_strategy,
+        strategy=strategy,
+        warm_start_only=True,
+        instrumentation=instrumentation,
+        initial_step_sizes=_step_hints_from_assessment(
+            datasets,
+            warm_start_source,
+            target_global_names=global_names,
+            target_local_names=local_names,
+        ),
+        cancel_callback=cancel_callback,
+        dense_curves=False,
+    )
+    _record_counter(
+        instrumentation,
+        "separable_node_ms",
+        int(1000.0 * (time.perf_counter() - node_started_at)),
+    )
+    key = (global_names, local_names)
+    state.exact_cache[key] = assessment
+    if assessment.is_successful:
+        state.converged_assessments[key] = assessment
+        if state.best_assessment is None or _assessment_sort_key(
+            assessment, metric
+        ) < _assessment_sort_key(state.best_assessment, metric):
+            state.best_assessment = assessment
+    return assessment
+
+
+def _assessment_chi2(assessment: GlobalCandidateAssessment) -> float:
+    return float(sum(result.chi_squared for result in assessment.fit_results_by_run.values()))
+
+
+def _refit_certificate_violating_parent(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    parent: GlobalCandidateAssessment,
+    child: GlobalCandidateAssessment,
+    *,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    instrumentation: dict[str, object],
+) -> GlobalCandidateAssessment:
+    """Redo a parent the child proved mis-converged, from the child's values.
+
+    The child shares one more parameter than its parent and so has *fewer* free
+    parameters; an honest pair therefore satisfies
+    ``chi2(child) >= chi2(parent) - eps``. A violation is not evidence about the
+    child — it says the parent settled in a worse minimum. The child's fitted
+    values, spread back to per-run locals, are a start the parent cannot do worse
+    from. Returns whichever of the two parent fits is better.
+    """
+
+    _record_counter(instrumentation, "separable_certificate_refits")
+    parent_local = parent.local_param_names
+    parent_global = parent.global_param_names
+    warm_start_by_run = _warm_start_parameter_sets(
+        datasets,
+        assessment=child,
+        base_by_run=state.prefit_base_by_run,
+        target_global_names=parent_global,
+        target_local_names=parent_local,
+        fit_engine=FitEngine(),
+        template=state.template,
+        progress_callback=None,
+    )
+    refit = _fit_exact_assignment(
+        datasets,
+        state.template,
+        fit_engine=FitEngine(),
+        base_by_run=state.prefit_base_by_run,
+        global_param_names=parent_global,
+        local_param_names=parent_local,
+        fixed_param_names=state.fixed_param_names,
+        axis_key=axis_key,
+        metric=metric,
+        # A fresh cache: the mis-converged parent already sits in ``state``'s
+        # cache and would otherwise be handed back instead of refitted.
+        cache={},
+        warm_start_by_run=warm_start_by_run,
+        progress_callback=None,
+        search_strategy=search_strategy,
+        strategy=_separable_coupled_strategy(datasets, parent_global, parent_local),
+        warm_start_only=True,
+        instrumentation=instrumentation,
+        initial_step_sizes=_step_hints_from_assessment(
+            datasets,
+            child,
+            target_global_names=parent_global,
+            target_local_names=parent_local,
+        ),
+        dense_curves=False,
+    )
+    if not refit.is_successful or _assessment_sort_key(parent, metric) <= _assessment_sort_key(
+        refit, metric
+    ):
+        return parent
+    key = (parent_global, parent_local)
+    state.exact_cache[key] = refit
+    state.converged_assessments[key] = refit
+    if state.best_assessment is None or _assessment_sort_key(refit, metric) < _assessment_sort_key(
+        state.best_assessment, metric
+    ):
+        state.best_assessment = refit
+    return refit
+
+
+def _separable_backward_elimination(
+    datasets: list[MuonDataset],
+    state: _HeuristicTemplateState,
+    estimates: tuple[RunEstimate, ...],
+    *,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    instrumentation: dict[str, object],
+) -> GlobalCandidateAssessment:
+    """Globalise one parameter at a time, cheapest first, while the IC improves.
+
+    The incumbent starts at all-local. Each round asks the surrogate which single
+    remaining parameter is cheapest to share, fits *that* assignment exactly, and
+    keeps it only when the exact IC beats the incumbent. The first rejection ends
+    the walk.
+
+    A parameter resting on a bound in any run is never proposed: its curvature is
+    not the curvature of an interior minimum, so the collapse would be modelling
+    numerical noise rather than the parameter's spread.
+    """
+
+    # The walk's incumbent is the current node of the *chain*, which starts at
+    # all-local — not ``state.best_assessment``, which may already hold phase 1's
+    # adopted screening node from somewhere else in the assignment lattice.
+    incumbent = state.anchor_assessment
+    shared: tuple[str, ...] = ()
+    at_bound: set[str] = set()
+    for estimate in estimates:
+        at_bound |= estimate.at_bound
+
+    while True:
+        candidates = [
+            name for name in state.free_param_names if name not in shared and name not in at_bound
+        ]
+        if not candidates:
+            return incumbent
+
+        scored = sorted(
+            (surrogate_ic(estimates, (*shared, name), metric), name) for name in candidates
+        )
+        predicted_ic, best_name = scored[0]
+        if not math.isfinite(predicted_ic):
+            # Every remaining single addition has an unusable pooled weight, so
+            # the surrogate can no longer say which parameter to share next.
+            _record_counter(instrumentation, "separable_surrogate_exhausted")
+            return incumbent
+
+        candidate_shared = tuple(
+            name for name in state.free_param_names if name in {*shared, best_name}
+        )
+        local_names = _local_names_for(
+            state.free_param_names,
+            set(state.free_param_names) - set(candidate_shared),
+        )
+        _record_counter(instrumentation, "separable_steps")
+        escalations_before = _counter_value(instrumentation, "warm_only_escalations")
+        candidate = _fit_separable_assignment(
+            datasets,
+            state,
+            local_names,
+            estimates=estimates,
+            warm_start_source=incumbent,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            instrumentation=instrumentation,
+        )
+        if _counter_value(instrumentation, "warm_only_escalations") > escalations_before:
+            _record_counter(instrumentation, "separable_escalations")
+        if not candidate.is_successful:
+            # The warm fit failed and the multi-start battery behind it failed
+            # too. Sharing yet more parameters would only start from a worse
+            # seed, so the walk ends at the incumbent.
+            return incumbent
+
+        if _assessment_chi2(candidate) < _assessment_chi2(incumbent) - _WARM_CERTIFICATE_EPSILON:
+            incumbent = _refit_certificate_violating_parent(
+                datasets,
+                state,
+                incumbent,
+                candidate,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                instrumentation=instrumentation,
+            )
+
+        if _assessment_sort_key(candidate, metric) >= _assessment_sort_key(incumbent, metric):
+            return incumbent
+        incumbent = candidate
+        shared = candidate_shared
+
+
+def _separable_flip_targets(
+    state: _HeuristicTemplateState,
+    winner: GlobalCandidateAssessment,
+) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
+    """Every single-role flip of ``winner`` this template has not fitted yet.
+
+    ``_build_parameter_recommendations_from_exact_cache`` justifies each
+    parameter's role by comparing the winner against exactly these neighbours, so
+    without them the verdict layer is starved. Elimination visits only the
+    accepted chain plus its one rejected step, so most flips land here.
+
+    Yields ``(local_names, global_names)`` pairs, in free-parameter order.
+    """
+
+    winner_local = set(winner.local_param_names)
+    targets: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    for name in state.free_param_names:
+        if name in winner_local:
+            flipped = _local_names_for(state.free_param_names, winner_local - {name})
+        else:
+            flipped = _local_names_for(state.free_param_names, winner_local | {name})
+        global_names = _global_names_for(state.free_param_names, flipped)
+        if (global_names, flipped) in state.exact_cache:
+            continue
+        targets.append((flipped, global_names))
+    return targets
+
+
+def _separable_flip_worker_state(state: _HeuristicTemplateState) -> _HeuristicTemplateState:
+    """The slice of a template's state one flip fit needs, and nothing more.
+
+    A flip reads the template, its prefit base and its free-parameter names, and
+    writes exactly one node. The walk's ``exact_cache`` holds a per-run residual
+    array and a per-run curve set for every node it visited — tens of megabytes
+    that would otherwise be pickled once per flip task, to serve a lookup that
+    cannot hit: the parent only submits flips the cache does not already hold.
+    """
+
+    return replace(
+        state,
+        exact_cache={},
+        converged_assessments={},
+        anchor_assessment=None,
+        best_assessment=None,
+    )
+
+
+def _run_separable_flip_task(task: _SeparableFlipTask) -> _SeparableFlipResult:
+    """One flip of one template's winner: a single warm-started coupled fit."""
+
+    instrumentation = _fresh_task_instrumentation()
+    _record_counter(instrumentation, "flip_neighbourhood_fits")
+    _record_counter(instrumentation, "separable_flip_fits")
+    assessment = _fit_separable_assignment(
+        task.datasets,
+        task.state,
+        task.local_names,
+        estimates=task.estimates,
+        warm_start_source=task.winner,
+        axis_key=task.axis_key,
+        metric=task.metric,
+        search_strategy=task.search_strategy,
+        instrumentation=instrumentation,
+    )
+    return _SeparableFlipResult(
+        template_key=task.template_key,
+        local_names=task.local_names,
+        assessment=assessment,
+        instrumentation=instrumentation,
+    )
+
+
+def _record_separable_flip(
+    state: _HeuristicTemplateState,
+    result: _SeparableFlipResult,
+    *,
+    metric: SelectionMetric,
+) -> None:
+    """Book a pool-fitted flip onto its template exactly as the worker booked it.
+
+    The worker mutated a *copy* of the state, so the bookkeeping at the tail of
+    :func:`_fit_separable_assignment` — the node under its
+    ``(global_names, local_names)`` key, the converged mirror of it, and the
+    best-so-far — has to happen again here on the parent's own state. Without it
+    ``_build_parameter_recommendations_from_exact_cache`` would read a cache
+    missing the very neighbours these fits were spent on.
+    """
+
+    global_names = _global_names_for(state.free_param_names, result.local_names)
+    key = (global_names, result.local_names)
+    assessment = result.assessment
+    state.exact_cache[key] = assessment
+    if assessment.is_successful:
+        state.converged_assessments[key] = assessment
+        # Every template reaching the flip stage converged its all-local anchor,
+        # which is what set ``best_assessment``, so there is always a node here.
+        if _assessment_sort_key(assessment, metric) < _assessment_sort_key(
+            state.best_assessment, metric
+        ):
+            state.best_assessment = assessment
+
+
+def _run_separable_elimination_task(
+    task: _SeparableEliminationTask,
+) -> _SeparableTemplateResult:
+    instrumentation = _fresh_task_instrumentation()
+    state = task.state
+    _separable_backward_elimination(
+        task.datasets,
+        state,
+        task.estimates,
+        axis_key=task.axis_key,
+        metric=task.metric,
+        search_strategy=task.search_strategy,
+        instrumentation=instrumentation,
+    )
+    return _SeparableTemplateResult(
+        template_key=task.template_key,
+        state=state,
+        estimates=task.estimates,
+        instrumentation=instrumentation,
+    )
+
+
+def _drain_separable_tasks(
+    tasks: Sequence[_SeparableAnchorTask]
+    | Sequence[_SeparableEliminationTask]
+    | Sequence[_SeparableFlipTask],
+    runner: Callable[..., _SeparableTaskResultT],
+    *,
+    activity: str,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+    cancel_callback: Callable[[], bool] | None,
+    deadline: float | None,
+    shared_executor: ProcessPoolExecutor | None = None,
+    unit: str = "template",
+) -> list[_SeparableTaskResultT]:
+    """Run independent search tasks on the spawn pool, polling cancel and the deadline.
+
+    The wall budget is a backstop: a healthy search finishes on its merits long
+    before it. On expiry the pool is torn down *without* waiting, so the wall we
+    were bounding is not simply relocated into ``shutdown``, and whatever
+    completed is kept.
+
+    ``shared_executor`` is a pool somebody else owns and will close. Opening one
+    costs a spawn per worker, which is nothing beside a template's coupled fits
+    but everything beside a *series* of short searches: per-phase optimisation
+    calls this twice per segment, so on the eight segments of a verified
+    two-break path it is sixteen pools. Borrowing one is measurably the whole
+    difference there (8.3 s to 1.4 s on the two-phase synthetic).
+    """
+
+    def _check_cancelled() -> None:
+        if cancel_callback is not None and cancel_callback():
+            raise FitCancelledError("Global fit wizard analysis cancelled.")
+
+    def _budget_exceeded() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
+    results: list[_SeparableTaskResultT] = []
+    executor = shared_executor
+    if executor is None:
+        worker_count = _template_worker_count(len(tasks))
+        if worker_count > 1 and len(tasks) > 1:
+            executor = _try_open_process_pool(
+                max_workers=worker_count,
+                progress_callback=progress_callback,
+                activity=activity,
+            )
+
+    truncated = False
+    try:
+        if executor is None:
+            for task in tasks:
+                _check_cancelled()
+                if _budget_exceeded():
+                    truncated = True
+                    break
+                results.append(runner(task))
+        else:
+            pending = {executor.submit(runner, task) for task in tasks}
+            while pending:
+                _check_cancelled()
+                if _budget_exceeded():
+                    truncated = True
+                    break
+                done, pending = wait(
+                    pending,
+                    timeout=_WAVEFRONT_POLL_INTERVAL_SECONDS,
+                    return_when=FIRST_COMPLETED,
+                )
+                for future in done:
+                    results.append(future.result())
+    finally:
+        # A borrowed pool outlives this call and is its owner's to close.
+        if executor is not None and executor is not shared_executor:
+            if truncated:
+                # A tripped budget must actually stop the work: shutting the pool
+                # down without waiting leaves the in-flight fits running on the
+                # workers, which then starve whatever the caller runs next.
+                terminate_spawn_pool(executor)
+            else:
+                _shutdown_process_pool(executor)
+
+    if truncated:
+        _progress_log(
+            progress_callback,
+            f"{activity} hit its wall-clock budget; keeping "
+            f"{len(results)}/{len(tasks)} completed {unit}(s).",
+        )
+        _record_counter(instrumentation, "separable_budget_truncations")
+    for result in results:
+        _merge_instrumentation(instrumentation, result.instrumentation)
+    return results
+
+
+def _fit_separable_flip_neighbourhoods(
+    elimination_results: Sequence[_SeparableTemplateResult],
+    datasets: list[MuonDataset],
+    *,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+    cancel_callback: Callable[[], bool] | None,
+    deadline: float | None,
+    shared_executor: ProcessPoolExecutor | None = None,
+) -> None:
+    """Fit every raced template's winner flip-neighbourhood across the pool.
+
+    Backward elimination is a chain and holds one worker per template, so with a
+    handful of templates raced the pool sits mostly idle through the stage that
+    costs the most — and on a wide template the flips are the larger half of a
+    phase's coupled fits. They are also the half that parallelises perfectly:
+    every flip warm-starts from the same winner and none of them reads another's
+    result, so each is a task of its own and the pool runs them all at once.
+
+    The flips are centred on the template's best converged node, not on the
+    elimination's last incumbent: the walk stops at the first rejection, and a
+    node it rejected (or an adopted screening fit) may still be the best one in
+    the cache. A template only reaches elimination once its all-local anchor
+    converged, and that anchor is what sets ``best_assessment`` in the first
+    place, so there is always a node here.
+
+    Tasks are ordered template-major, so a tripped budget costs the later
+    templates their flips rather than leaving every template half-justified.
+
+    ``datasets`` are the search-resolution **fit records** the caller already
+    built (see :class:`_SeparableAnchorTask`), not the source records: they go
+    straight into the task payloads.
+    """
+
+    state_by_key = {result.template_key: result.state for result in elimination_results}
+    tasks: list[_SeparableFlipTask] = []
+    for result in elimination_results:
+        state = result.state
+        winner = state.best_assessment
+        worker_state = _separable_flip_worker_state(state)
+        for local_names, _global_names in _separable_flip_targets(state, winner):
+            tasks.append(
+                _SeparableFlipTask(
+                    template_key=result.template_key,
+                    state=worker_state,
+                    estimates=result.estimates,
+                    datasets=datasets,
+                    winner=winner,
+                    local_names=local_names,
+                    axis_key=axis_key,
+                    metric=metric,
+                    search_strategy=search_strategy,
+                )
+            )
+    if not tasks:
+        return
+
+    template_count = len({task.template_key for task in tasks})
+    _progress_log(
+        progress_callback,
+        f"Separable role search: {len(tasks)} flip(s) across {template_count} template(s).",
+    )
+    flip_results = _drain_separable_tasks(
+        tasks,
+        _run_separable_flip_task,
+        activity="Separable role search (flip neighbourhood)",
+        progress_callback=progress_callback,
+        instrumentation=instrumentation,
+        cancel_callback=cancel_callback,
+        deadline=deadline,
+        shared_executor=shared_executor,
+        unit="flip",
+    )
+    for flip in flip_results:
+        _record_separable_flip(state_by_key[flip.template_key], flip, metric=metric)
+
+
+def _separable_prescreen_results_for_template(
+    datasets: list[MuonDataset],
+    assessment: GlobalCandidateAssessment | None,
+    *,
+    resolution_matches: bool,
+) -> dict[int, FitResult] | None:
+    """The pre-screen's per-run fits, when they really *are* the all-local node.
+
+    They qualify only when the pre-screen ran the independent per-run single-fit
+    path (``prescreen_only``), every run converged, and the table sits at the
+    search resolution — a full-resolution chi-squared inside an IC computed over
+    a rebinned ``n`` is meaningless. Otherwise the caller fits the node itself.
+    """
+
+    if assessment is None or not assessment.prescreen_only or not resolution_matches:
+        return None
+    results: dict[int, FitResult] = {}
+    for dataset in datasets:
+        result = assessment.fit_results_by_run.get(int(dataset.run_number))
+        if result is None or not result.success:
+            return None
+        results[int(dataset.run_number)] = result
+    return results
+
+
+def _adopt_screening_assessment(
+    state: _HeuristicTemplateState,
+    assessment: GlobalCandidateAssessment | None,
+    *,
+    metric: SelectionMetric,
+) -> None:
+    """Adopt phase 1's coupled screening fit as a node of the search's cache.
+
+    Screening already fitted one role assignment of this template exactly.
+    Re-fitting it during the search would spend a coupled fit rediscovering the
+    same minimum and then land, a last-float-bit apart, next to the screening row
+    on the leaderboard — so the two would compete over convergence noise. Adopting
+    it instead makes the searched node and the screening row *the same fit*, gives
+    the walk a better starting incumbent for the cross-template bound, and lets
+    the finaliser attach the flip-neighbourhood role justification to it.
+
+    A pre-screen row is independent per-run fits, not a coupled fit, and is never
+    adopted; nor is a screening fit that did not converge.
+    """
+
+    if assessment is None or assessment.prescreen_only or not assessment.is_successful:
+        return
+    local_names = _local_names_for(state.free_param_names, set(assessment.local_param_names))
+    global_names = _global_names_for(state.free_param_names, local_names)
+    adopted = replace(
+        assessment,
+        global_param_names=global_names,
+        local_param_names=local_names,
+        fixed_param_names=state.fixed_param_names,
+        # It becomes a node of this search, so it lives under the search's terms:
+        # no curves (:class:`GlobalCandidateAssessment`'s contract). The exit
+        # rebuilds them if this node is one of the ones that leaves.
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+    )
+    key = (global_names, local_names)
+    state.exact_cache[key] = adopted
+    state.converged_assessments[key] = adopted
+    if state.best_assessment is None or _assessment_sort_key(
+        adopted, metric
+    ) < _assessment_sort_key(state.best_assessment, metric):
+        state.best_assessment = adopted
+
+
+def _run_separable_search(
+    datasets: list[MuonDataset],
+    *,
+    shortlisted_templates: list[CandidateTemplate],
+    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]],
+    prescreen_assessments: dict[str, GlobalCandidateAssessment],
+    axis_key: str,
+    metric: SelectionMetric,
+    progress_callback: Callable[[str], None] | None,
+    search_strategy: str,
+    instrumentation: dict[str, object] | None,
+    single_run_prefit_cache_for: Callable[
+        [CandidateTemplate], dict[object, dict[int, ParameterSet]]
+    ],
+    cancel_callback: Callable[[], bool] | None = None,
+    search_rebin_factor: int | None = None,
+    prescreen_rebin_factor: int = 1,
+    time_budget_seconds: float | None = _WAVEFRONT_TIME_BUDGET_SECONDS,
+    shared_executor: ProcessPoolExecutor | None = None,
+    full_resolution_refit: bool = True,
+    materialise_curves: bool = True,
+) -> tuple[GlobalCandidateAssessment, ...]:
+    """Separable global/local role search — the default engine.
+
+    Returns the same ``tuple[GlobalCandidateAssessment, ...]`` contract as the
+    exhaustive wavefront (each template's converged assignments, carrying the
+    per-parameter role recommendations resolved from that template's exact
+    cache), so the verdict layer is engine-agnostic.
+
+    ``search_rebin_factor`` is the series search resolution; by default the
+    minimum bandwidth-aware factor across runs. ``prescreen_rebin_factor`` says
+    what resolution the pre-screen table sits at — when the two agree its per-run
+    fits *are* the all-local node and no fit is spent on it at all.
+
+    ``shared_executor`` lets a caller that runs several searches back to back —
+    per-phase optimisation does, once per segment — pay for one spawn pool rather
+    than two per call.
+
+    ``full_resolution_refit`` refits the winner and its flip neighbourhood on the
+    native record before anything reaches the leaderboard. Per-phase
+    optimisation turns it off: every phase is then reported at the series
+    search resolution, on the same points the closed-form path was scored on,
+    so exact and surrogate rows never mix scales — and the fit a user applies
+    from a phase seeds the Batch tab's own global fit, which runs on the native
+    record anyway. On a real 29-run series the full-resolution refit alone cost
+    minutes per node (a joint fit over 12 runs × 90 k points).
+
+    Every node this search fits carries no dense curves and no residual series
+    (the contract on :class:`GlobalCandidateAssessment`), which is what keeps a
+    search of hundreds of nodes to kilobytes each. ``materialise_curves`` rebuilds
+    them on the way out, against ``datasets``. A caller that turns
+    ``full_resolution_refit`` off must turn ``materialise_curves`` off with it and
+    materialise the assessments it keeps against the *search-resolution* records —
+    ``datasets`` is not what those nodes were fitted on. Per-phase optimisation
+    does exactly that, and keeps one assessment per phase rather than every
+    converged node of every template.
+    """
+
+    if not shortlisted_templates:
+        return ()
+
+    if search_rebin_factor is None:
+        search_rebin_factor = _separable_search_rebin_factor(datasets)
+    _set_metric(instrumentation, "separable_search_rebin_factor", int(search_rebin_factor))
+    search_datasets = _separable_search_datasets(
+        datasets,
+        search_rebin_factor=search_rebin_factor,
+        instrumentation=instrumentation,
+    )
+    # What the anchor, elimination and flip tasks carry: every task holds the
+    # whole series, so the series crosses the process boundary once per task —
+    # as fit records, arrays and provenance without the runs' raw counts, which
+    # no fit in this search reads. Rebinning shares the source ``Run``
+    # (see :meth:`MuonDataset.rebin`), so a search-resolution record still holds
+    # the full-resolution counts until this strips them. Built once, here.
+    search_fit_records = [dataset.fit_record() for dataset in search_datasets]
+    if search_rebin_factor > 1:
+        _progress_log(
+            progress_callback,
+            f"Separable role search: searching at {search_rebin_factor}x coarser binning; "
+            "the winner and its flip-neighbourhood are refitted at full resolution.",
+        )
+
+    deadline: float | None = None
+    if time_budget_seconds is not None and time_budget_seconds > 0.0:
+        deadline = time.monotonic() + float(time_budget_seconds)
+
+    resolution_matches = int(prescreen_rebin_factor) == int(search_rebin_factor)
+    anchor_tasks: list[_SeparableAnchorTask] = []
+    for template in shortlisted_templates:
+        base_by_run, fixed_param_names = template_contexts[template.key]
+        anchor_tasks.append(
+            _SeparableAnchorTask(
+                template_key=template.key,
+                template=template,
+                datasets=search_fit_records,
+                base_by_run=base_by_run,
+                fixed_param_names=fixed_param_names,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+                prescreen_results_by_run=_separable_prescreen_results_for_template(
+                    search_datasets,
+                    prescreen_assessments.get(template.key),
+                    resolution_matches=resolution_matches,
                 ),
             )
         )
 
-    return tuple(optimized_assessments)
+    _progress_log(
+        progress_callback,
+        f"Separable role search: assembling all-local anchors for {len(anchor_tasks)} "
+        "shortlisted template(s) without a joint fit.",
+    )
+    anchor_results = _drain_separable_tasks(
+        anchor_tasks,
+        _run_separable_anchor_task,
+        activity="Separable role search (all-local anchors)",
+        progress_callback=progress_callback,
+        instrumentation=instrumentation,
+        cancel_callback=cancel_callback,
+        deadline=deadline,
+        shared_executor=shared_executor,
+    )
+    result_by_key = {result.template_key: result for result in anchor_results}
+    # A screening fit is a node of *this* search's lattice only when it was
+    # measured over the same points the search measures. At a coarser search
+    # resolution its chi-squared is computed over a different ``n``, so adopting
+    # it would put a full-resolution IC next to search-resolution ones inside the
+    # same state — the very mixing the resolution rule forbids.
+    if resolution_matches:
+        for result in anchor_results:
+            _adopt_screening_assessment(
+                result.state,
+                prescreen_assessments.get(result.template_key),
+                metric=metric,
+            )
+    states = [
+        result_by_key[template.key].state
+        for template in shortlisted_templates
+        if template.key in result_by_key
+    ]
+
+    # --- Template racing -----------------------------------------------------
+    # Rank by the better of what the pre-screen already measured and what the
+    # surrogate predicts the best sharing pattern reaches. Only the top few earn
+    # coupled fits; the rest keep their (free) all-local node on the leaderboard.
+    # The pre-screen's measurement counts only when it shares the search's
+    # resolution: comparing an IC over the full record against a surrogate IC over
+    # a rebinned one ranks templates by their point count, not their fit.
+    def _race_score(result: _SeparableTemplateResult) -> float:
+        scores = [float("inf")]
+        prescreen = prescreen_assessments.get(result.template_key)
+        if resolution_matches and prescreen is not None:
+            prescreen_score = float(prescreen.metric_value(metric))
+            if np.isfinite(prescreen_score):
+                scores.append(prescreen_score)
+        ranked = rank_assignments(result.estimates, result.state.free_param_names, metric)
+        if ranked:
+            scores.append(float(ranked[0][1]))
+        return min(scores)
+
+    contenders = [
+        result for result in anchor_results if result.estimates and result.state.free_param_names
+    ]
+    ranked_results = sorted(contenders, key=_race_score)
+    advancing = ranked_results[:_SEPARABLE_RACING_ADVANCE_COUNT]
+    if len(ranked_results) > len(advancing):
+        _record_counter(
+            instrumentation,
+            "separable_templates_raced_out",
+            len(ranked_results) - len(advancing),
+        )
+        _progress_log(
+            progress_callback,
+            f"Template racing advanced {len(advancing)}/{len(ranked_results)} template(s) "
+            "into backward elimination; the rest keep their all-local score.",
+        )
+
+    # --- Cross-template incumbent bound (technique B) ------------------------
+    # A template whose all-local chi-squared floor plus the smallest penalty any
+    # of its assignments could carry still loses to the best converged IC found
+    # so far cannot produce the winner, so it never earns a coupled fit.
+    sample_count = int(sum(dataset.n_points for dataset in search_datasets))
+    converged_ics = [
+        float(result.state.best_assessment.metric_value(metric))
+        for result in anchor_results
+        if result.state.best_assessment is not None and result.state.best_assessment.is_successful
+    ]
+    cross_incumbent = min(converged_ics) if converged_ics else float("inf")
+
+    elimination_tasks: list[_SeparableEliminationTask] = []
+    for result in advancing:
+        state = result.state
+        best_possible_ic = _assessment_chi2(state.anchor_assessment) + _metric_penalty(
+            _layer_parameter_count(
+                0,
+                free_param_count=len(state.free_param_names),
+                n_datasets=len(search_datasets),
+            ),
+            sample_count=sample_count,
+            metric=metric,
+        )
+        if (
+            math.isfinite(cross_incumbent)
+            and best_possible_ic > cross_incumbent + _LAYER_BOUND_MARGIN
+        ):
+            _record_counter(instrumentation, "cross_template_templates_pruned")
+            _progress_log(
+                progress_callback,
+                f"{state.template.title}: cross-template bound fired (best possible "
+                f"{best_possible_ic:.2f} > cross-incumbent {cross_incumbent:.2f} + "
+                f"{_LAYER_BOUND_MARGIN:.1f}); skipping backward elimination.",
+            )
+            continue
+        elimination_tasks.append(
+            _SeparableEliminationTask(
+                template_key=result.template_key,
+                state=state,
+                estimates=result.estimates,
+                datasets=search_fit_records,
+                axis_key=axis_key,
+                metric=metric,
+                search_strategy=search_strategy,
+            )
+        )
+
+    if elimination_tasks:
+        _progress_log(
+            progress_callback,
+            f"Separable role search: backward elimination on {len(elimination_tasks)} template(s).",
+        )
+        elimination_results = _drain_separable_tasks(
+            elimination_tasks,
+            _run_separable_elimination_task,
+            activity="Separable role search (backward elimination)",
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            cancel_callback=cancel_callback,
+            deadline=deadline,
+            shared_executor=shared_executor,
+        )
+        searched_by_key = {result.template_key: result.state for result in elimination_results}
+        states = [searched_by_key.get(state.template.key, state) for state in states]
+        _fit_separable_flip_neighbourhoods(
+            elimination_results,
+            search_fit_records,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            cancel_callback=cancel_callback,
+            deadline=deadline,
+            shared_executor=shared_executor,
+        )
+
+    if search_rebin_factor > 1 and full_resolution_refit:
+        states = _refit_states_at_full_resolution(
+            datasets,
+            states,
+            template_contexts=template_contexts,
+            single_run_prefit_cache_for=single_run_prefit_cache_for,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            dense_curves=False,
+        )
+
+    return _finalise_heuristic_assessments(
+        datasets,
+        states,
+        metric=metric,
+        progress_callback=progress_callback,
+        materialise_curves=materialise_curves,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Per-phase optimisation (tier 3)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class _PhaseWindow:
+    """One segment of a *candidate* partition, as positions into the series order.
+
+    Deliberately not a :class:`Segment`: a shifted-break candidate has no cost or
+    structure until its segments have been fitted, and a placeholder ``inf`` on a
+    ``Segment`` would be indistinguishable from a segment nothing could describe.
+    """
+
+    start: int
+    stop: int
+    excluded: bool
+
+
+def _windows_of(solution: PartitionSolution) -> tuple[_PhaseWindow, ...]:
+    return tuple(
+        _PhaseWindow(segment.start, segment.stop, segment.excluded) for segment in solution.segments
+    )
+
+
+def _restrict_prescreen_assessment(
+    assessment: GlobalCandidateAssessment,
+    datasets: Sequence[MuonDataset],
+    *,
+    metric: SelectionMetric,
+    analysed_points_by_run: Mapping[int, int],
+) -> GlobalCandidateAssessment:
+    """One phase-1 pre-screen row, restricted to a segment of the series.
+
+    The per-run fits carry over verbatim — they are independent fits, so a
+    segment's rows really are its own — but the information criteria are
+    recomputed over the segment's runs and point count. A series-wide IC says
+    nothing about how a template does on one phase, and it is what the separable
+    search's template racing reads.
+
+    The result is a search *input* — every phase's search reads it and nothing
+    displays it — so it drops the dense curves rather than slicing them, per the
+    contract on :class:`GlobalCandidateAssessment`. Restricting one series-wide
+    row per template with its curves attached would hold the whole pre-screen
+    table's curves alive again for every phase in turn.
+    """
+
+    run_numbers = [int(dataset.run_number) for dataset in datasets]
+    wanted = set(run_numbers)
+    free_names = tuple(
+        name
+        for name in assessment.template.model.param_names
+        if name not in assessment.fixed_param_names
+    )
+    results = {
+        run_number: assessment.fit_results_by_run[run_number]
+        for run_number in run_numbers
+        if run_number in assessment.fit_results_by_run
+    }
+    complete = len(results) == len(run_numbers) and all(
+        result.success for result in results.values()
+    )
+    if complete:
+        aic, aicc, bic = compute_information_criteria(
+            math.fsum(float(result.chi_squared) for result in results.values()),
+            len(free_names) * len(run_numbers),
+            sum(int(analysed_points_by_run[run_number]) for run_number in run_numbers),
+        )
+    else:
+        aic, aicc, bic = float("inf"), None, float("inf")
+
+    return replace(
+        assessment,
+        fit_results_by_run=results,
+        run_diagnostics=tuple(
+            diagnostic
+            for diagnostic in assessment.run_diagnostics
+            if diagnostic.run_number in wanted
+        ),
+        aic=float(aic),
+        aicc=None if aicc is None else float(aicc),
+        bic=float(bic),
+        selected_score=_metric_value(metric, aic, aicc, bic),
+        fitted_curves_by_run={},
+        component_curves_by_run={},
+    )
+
+
+def _partition_bic(
+    assessment: GlobalCandidateAssessment, points_by_run: Mapping[int, int]
+) -> float:
+    """BIC of one fitted phase under the partition convention.
+
+    ``Σ_r χ²_r + n_shared·ln N_phase + n_local·Σ_r ln n_r`` — the convention
+    :meth:`~asymmetry.core.fitting.global_search.surrogate.OrderedCollapse.partition_ic`
+    scores the surrogate path with, so an exactly refitted row and a surrogate
+    row sit on one scale. ``points_by_run`` is each run's fitted point count
+    at the resolution the assessment was fitted at.
+    """
+
+    chi_squared = math.fsum(
+        float(result.chi_squared) for result in assessment.fit_results_by_run.values()
+    )
+    points = [int(points_by_run[run]) for run in assessment.fit_results_by_run]
+    shared = len(assessment.global_param_names)
+    local = len(assessment.local_param_names)
+    return (
+        chi_squared
+        + shared * math.log(max(sum(points), 1))
+        + local * math.fsum(math.log(max(count, 1)) for count in points)
+    )
+
+
+def _oscillatory_admissible_phase_candidates(
+    assessments: Sequence[GlobalCandidateAssessment],
+    instrumentation: dict[str, object] | None = None,
+) -> tuple[GlobalCandidateAssessment, ...]:
+    """Drop phase fits whose oscillation has vanished somewhere in the phase.
+
+    A multiplet template is a description of a *phase* of oscillation only where
+    its lines are measured. If a phase fit of one leaves the amplitudes of every
+    line consistent with zero on even a single run
+    (:func:`~asymmetry.core.fitting.fit_wizard.is_oscillatory_admissible`), the
+    template has degenerated to its envelope over part of the phase — it is
+    describing those runs as relaxation while claiming the whole stretch is one
+    oscillatory phase, which is precisely the transition the partition exists to
+    find. Such a candidate is not an answer for this phase, so it never enters
+    the ranking; the phase falls to the best remaining template, or to no answer
+    at all, which makes the containing partition infeasible.
+
+    The rule is applied to converged candidates only. A failed fit is already
+    excluded by :attr:`GlobalCandidateAssessment.is_successful` and its
+    parameters mean nothing, so counting it here would only inflate the audit.
+    """
+
+    kept: list[GlobalCandidateAssessment] = []
+    for assessment in assessments:
+        if assessment.is_successful and is_multiplet_template_key(assessment.template.key):
+            if not all(
+                fit_result_is_oscillatory_admissible(assessment.template, result)
+                for result in assessment.fit_results_by_run.values()
+            ):
+                _record_counter(instrumentation, "oscillation_vanished_phases")
+                continue
+        kept.append(assessment)
+    return tuple(kept)
+
+
+def _recommended_segment_assessment(
+    assessments: Sequence[GlobalCandidateAssessment],
+    points_by_run: Mapping[int, int],
+) -> GlobalCandidateAssessment | None:
+    """The phase's answer: the best partition score among converged fits.
+
+    Ranked by :func:`_partition_bic` — the same per-run convention the
+    partition path totals are scored with — and not by the search's own
+    selection metric. The two must agree, or a phase can pick a template by
+    a laxer criterion than the one that then judges the break beside it: on a
+    real series the highest oscillatory phase chose a two-line template that
+    won by 19 AICc, the path scored its twenty extra per-run parameters at
+    ~170 under the BIC convention, and the transition above it looked
+    unsupported by 63 — while the one-line template that the partition
+    convention prefers has fewer parameters than the merged alternative and
+    supports the break by ~75. Ranking on the partition score removes that
+    seam; the search metric still breaks exact ties through
+    :func:`_assessment_sort_key`'s secondary keys.
+
+    The residual and series-consistency gates are caveats on a fit here, not
+    evidence for a different model — the partition already placed the breaks,
+    and ranking on the gates first threw away a model a thousand criterion
+    units better on a real series when two phase angles wrapped between runs.
+    A gate-clean candidate is preferred only within ``_LAYER_BOUND_MARGIN``,
+    the margin the search treats as "not distinguishable". ``None`` means
+    nothing converged on this phase, which makes the candidate partition
+    containing it infeasible: a real answer rather than a failure. The same
+    ``None`` is reached when every converged candidate was an oscillatory
+    template whose lines vanished somewhere in the phase — those are removed
+    from the phase's candidate list before it gets here, by
+    :func:`_oscillatory_admissible_phase_candidates`.
+    """
+
+    converged = [assessment for assessment in assessments if assessment.is_successful]
+    if not converged:
+        return None
+
+    def _key(assessment: GlobalCandidateAssessment) -> tuple[float, int, int, int, int, int, str]:
+        return (
+            _partition_bic(assessment, points_by_run),
+            *_assessment_sort_key(assessment, SelectionMetric.BIC)[1:],
+        )
+
+    best = min(converged, key=_key)
+    if best.residual_gate_passed:
+        return best
+    best_score = _partition_bic(best, points_by_run)
+    clean = [
+        assessment
+        for assessment in converged
+        if assessment.residual_gate_passed
+        and _partition_bic(assessment, points_by_run) <= best_score + _LAYER_BOUND_MARGIN
+    ]
+    if not clean:
+        return best
+    return min(clean, key=_key)
+
+
+def _optimise_partition_phases(
+    ordered_datasets: list[MuonDataset],
+    *,
+    path: PartitionPath,
+    partition_k: int,
+    templates: list[CandidateTemplate],
+    template_contexts: dict[str, tuple[dict[int, ParameterSet], tuple[str, ...]]],
+    prescreen_assessments: dict[str, GlobalCandidateAssessment],
+    analysed_points_by_run: Mapping[int, int],
+    axis_key: str,
+    metric: SelectionMetric,
+    search_rebin_factor: int,
+    progress_callback: Callable[[str], None] | None,
+    search_strategy: str,
+    instrumentation: dict[str, object] | None,
+    single_run_prefit_cache_for: Callable[
+        [CandidateTemplate], dict[object, dict[int, ParameterSet]]
+    ],
+    cancel_callback: Callable[[], bool] | None,
+    config: PartitionConfig = PartitionConfig(),
+) -> tuple[PartitionPath, dict[tuple[int, int], GlobalCandidateAssessment], int]:
+    """Tier 3: fit each phase of the selected partition, and verify the elbow.
+
+    Verification covers the selected solution ``k*`` and the one below it,
+    ``k*−1``, so the last accepted break's gain is measured exactly rather than
+    predicted. Every distinct segment across the two is fitted **once**
+    (neighbouring solutions share most of their segments), and the path rows
+    they touch are re-scored with the exact per-segment BIC, still on the BIC
+    scale (:data:`_PARTITION_METRIC`) whatever ranking metric the user chose.
+    ``selected_k`` is then re-derived from the exact gains. The wider set — the
+    solution above, and each break shifted one run either way — was measured
+    on a real 29-run series at 18 distinct segments of several minutes each,
+    so it is not run by default; the boundary's ``± half_gap`` already states
+    the position uncertainty the shifts would have probed.
+
+    An excluded end stub never receives a coupled fit and keeps its per-run cost
+    from the closed-form path, which is precisely what "not part of any phase"
+    means. Rows outside the verified window keep their surrogate totals; a gain
+    that straddles the edge therefore compares an exact total against a surrogate
+    one, which is honest — the search measured what it could afford to measure.
+
+    Segments run serially here and each one's templates fan out over the existing
+    spawn pool. Pools must not nest, so the choice is which level gets the
+    workers, and the alphabet is always larger than the number of phases: two
+    segment-level tasks would leave most of ``_MAX_TEMPLATE_WORKERS`` idle where
+    the per-template fan-out fills them.
+    """
+
+    solutions = path.solutions
+    candidates: dict[int, list[tuple[_PhaseWindow, ...]]] = {}
+    for k in (partition_k - 1, partition_k):
+        if 0 <= k < len(solutions):
+            candidates[k] = [_windows_of(solutions[k])]
+
+    stub_ic: dict[tuple[int, int], float] = {
+        (segment.start, segment.stop): float(segment.ic)
+        for solution in solutions
+        for segment in solution.segments
+        if segment.excluded
+    }
+    stub_structure: dict[tuple[int, int], str] = {
+        (segment.start, segment.stop): segment.structure
+        for solution in solutions
+        for segment in solution.segments
+        if segment.excluded
+    }
+
+    targets = sorted(
+        {
+            (window.start, window.stop)
+            for windows_list in candidates.values()
+            for windows in windows_list
+            for window in windows
+            if not window.excluded
+        }
+    )
+    _set_metric(instrumentation, "partition_segments_fitted", len(targets))
+    _progress_log(
+        progress_callback,
+        f"Optimising {len(targets)} distinct phase(s) across the {partition_k}-break "
+        "solution and its verified neighbours.",
+    )
+
+    searched_by_window: dict[tuple[int, int], tuple[GlobalCandidateAssessment, ...]] = {}
+    # What each phase's search was measured on, kept so the phase answers can be
+    # given their dense curves on the way out: the records at the series search
+    # resolution, and the per-template seeds restricted to the phase's runs.
+    search_datasets_by_window: dict[tuple[int, int], list[MuonDataset]] = {}
+    seeds_by_window: dict[tuple[int, int], dict[str, dict[int, ParameterSet]]] = {}
+    # Each phase's search opens and closes its own pool: a phase that trips its
+    # budget then terminates its own workers, instead of leaving them running
+    # on a shared pool where the next phase's tasks would queue behind them
+    # and time out having done nothing.
+    try:
+        for start, stop in targets:
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            segment_datasets = ordered_datasets[start:stop]
+            segment_runs = {int(dataset.run_number) for dataset in segment_datasets}
+            _progress_log(
+                progress_callback,
+                f"Phase {segment_datasets[0].run_label}–{segment_datasets[-1].run_label}: "
+                f"separable role search over {len(templates)} candidate(s).",
+            )
+            segment_contexts = {
+                key: (
+                    {
+                        run_number: parameters
+                        for run_number, parameters in base_by_run.items()
+                        if run_number in segment_runs
+                    },
+                    fixed_param_names,
+                )
+                for key, (base_by_run, fixed_param_names) in template_contexts.items()
+            }
+            search_datasets_by_window[(start, stop)] = _separable_search_datasets(
+                segment_datasets,
+                search_rebin_factor=search_rebin_factor,
+                instrumentation=None,
+            )
+            seeds_by_window[(start, stop)] = {
+                key: base_by_run for key, (base_by_run, _fixed) in segment_contexts.items()
+            }
+            # The phase's candidate list, with any template whose oscillation
+            # has vanished on one of its runs removed before anything ranks it.
+            searched_by_window[(start, stop)] = _oscillatory_admissible_phase_candidates(
+                _run_separable_search(
+                    segment_datasets,
+                    shortlisted_templates=list(templates),
+                    template_contexts=segment_contexts,
+                    prescreen_assessments={
+                        key: _restrict_prescreen_assessment(
+                            assessment,
+                            segment_datasets,
+                            metric=metric,
+                            analysed_points_by_run=analysed_points_by_run,
+                        )
+                        for key, assessment in prescreen_assessments.items()
+                    },
+                    axis_key=axis_key,
+                    metric=metric,
+                    progress_callback=progress_callback,
+                    search_strategy=search_strategy,
+                    instrumentation=instrumentation,
+                    single_run_prefit_cache_for=single_run_prefit_cache_for,
+                    cancel_callback=cancel_callback,
+                    search_rebin_factor=search_rebin_factor,
+                    prescreen_rebin_factor=search_rebin_factor,
+                    full_resolution_refit=False,
+                    # Only one assessment per phase is kept, so the curves are
+                    # built for those and not for every converged node of every
+                    # template.
+                    materialise_curves=False,
+                    time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
+                ),
+                instrumentation,
+            )
+    except FitCancelledError:
+        raise
+
+    # Every phase is fitted at the series search resolution (no full-resolution
+    # refit on this path), so the exact rows are scored on the same points the
+    # closed-form path was — one scale along the whole path.
+    scored_points_by_run = {int(run): int(count) for run, count in analysed_points_by_run.items()}
+
+    def _score(
+        windows: tuple[_PhaseWindow, ...],
+    ) -> tuple[float, tuple[GlobalCandidateAssessment | None, ...]]:
+        total = 0.0
+        chosen: list[GlobalCandidateAssessment | None] = []
+        for window in windows:
+            if window.excluded:
+                total += stub_ic[(window.start, window.stop)]
+                chosen.append(None)
+                continue
+            assessment = _recommended_segment_assessment(
+                searched_by_window[(window.start, window.stop)], scored_points_by_run
+            )
+            if assessment is None:
+                return math.inf, ()
+            total += _partition_bic(assessment, scored_points_by_run)
+            chosen.append(assessment)
+        return total, tuple(chosen)
+
+    phase_assessments: dict[tuple[int, int], GlobalCandidateAssessment] = {}
+    # Neighbouring partition solutions share most of their segments, and a shared
+    # segment's answer is the same object both times: build its curves once.
+    displayed_by_window: dict[tuple[int, int], GlobalCandidateAssessment] = {}
+
+    def _displayable(
+        window: _PhaseWindow, assessment: GlobalCandidateAssessment
+    ) -> GlobalCandidateAssessment:
+        window_key = (window.start, window.stop)
+        materialised = displayed_by_window.get(window_key)
+        if materialised is None:
+            materialised = _with_dense_curves(
+                assessment,
+                search_datasets_by_window[window_key],
+                base_by_run=seeds_by_window[window_key][assessment.template.key],
+            )
+            displayed_by_window[window_key] = materialised
+        return materialised
+
+    rescored: dict[int, PartitionSolution] = {}
+    for k, windows_list in candidates.items():
+        scored = [(_score(windows), windows) for windows in windows_list]
+        (total, chosen), windows = min(scored, key=lambda item: item[0][0])
+        if not math.isfinite(total):
+            continue
+        segments: list[Segment] = []
+        for index, (window, assessment) in enumerate(zip(windows, chosen, strict=True)):
+            run_numbers = tuple(
+                int(dataset.run_number) for dataset in ordered_datasets[window.start : window.stop]
+            )
+            if assessment is None:
+                segments.append(
+                    Segment(
+                        start=window.start,
+                        stop=window.stop,
+                        run_numbers=run_numbers,
+                        structure=stub_structure[(window.start, window.stop)],
+                        ic=stub_ic[(window.start, window.stop)],
+                        excluded=True,
+                    )
+                )
+                continue
+            phase_assessments[(k, index)] = _displayable(window, assessment)
+            segments.append(
+                Segment(
+                    start=window.start,
+                    stop=window.stop,
+                    run_numbers=run_numbers,
+                    structure=assessment.selection_key,
+                    ic=_partition_bic(assessment, scored_points_by_run),
+                    excluded=False,
+                )
+            )
+        rescored[k] = replace(
+            solutions[k],
+            breaks=len(segments) - 1,
+            segments=tuple(segments),
+            total_ic=total,
+            boundaries=_partition_boundaries(ordered_datasets, segments, axis_key),
+        )
+
+    updated = _rescored_partition_path(path, rescored)
+    # The elbow may move onto a neighbour tier 3 measured — that is what verifying
+    # the neighbours is for. It is never followed outside the verified window,
+    # where the gains are still the surrogate's.
+    recommended_k = updated.selected_k if updated.selected_k in rescored else partition_k
+    return updated, phase_assessments, recommended_k
+
+
+def _partition_boundaries(
+    ordered_datasets: Sequence[MuonDataset],
+    segments: Sequence[Segment],
+    axis_key: str,
+) -> tuple[tuple[float, float], ...]:
+    """``((x_a + x_b)/2, (x_b − x_a)/2)`` for each adjacent pair, as tier 1 does."""
+
+    axis_values = {
+        int(dataset.run_number): _axis_value(dataset, axis_key) for dataset in ordered_datasets
+    }
+    return tuple(
+        (
+            0.5 * (axis_values[left.run_numbers[-1]] + axis_values[right.run_numbers[0]]),
+            0.5 * (axis_values[right.run_numbers[0]] - axis_values[left.run_numbers[-1]]),
+        )
+        for left, right in zip(segments, segments[1:], strict=False)
+    )
+
+
+def _rescored_partition_path(
+    path: PartitionPath,
+    rescored: Mapping[int, PartitionSolution],
+) -> PartitionPath:
+    """Replace the rows tier 3 measured, then re-read the elbow off the new gains.
+
+    The gains are recomputed for the whole path so the exact rows and the
+    surrogate rows around them stay one sequence, and ``selected_k`` is re-derived
+    by the same rule the closed-form path uses: the largest ``k`` whose gains are
+    *all* admissible, so a rejected break still ends the path — but never past
+    the last row tier 3 measured. An exact total is pessimistic beside a
+    surrogate one (one template per phase against the per-run best of each
+    family), so the gain from the top exact row into the surrogate row above
+    it is not evidence for that break: on a real series it read +180 for a
+    fourth break nobody had fitted. The rows above the verified window keep
+    their recomputed gains for display; the elbow stops at the window.
+    """
+
+    solutions: list[PartitionSolution] = []
+    previous_total = math.inf
+    for index, solution in enumerate(path.solutions):
+        current = rescored.get(index, solution)
+        gain = 0.0 if index == 0 else previous_total - current.total_ic
+        solutions.append(
+            replace(
+                current,
+                gain=gain,
+                admissible=True if index == 0 else gain >= path.beta_floor,
+            )
+        )
+        previous_total = current.total_ic
+
+    selected_k = 0
+    verified_top = max(rescored)
+    for index in range(1, verified_top + 1):
+        if not solutions[index].admissible:
+            break
+        selected_k = index
+
+    return replace(path, solutions=tuple(solutions), selected_k=selected_k)
 
 
 def _run_exhaustive_wavefront_search(
@@ -7637,6 +11162,11 @@ def _run_exhaustive_wavefront_search(
     def _check_cancelled() -> None:
         if cancel_callback is not None and cancel_callback():
             raise FitCancelledError("Global fit wizard analysis cancelled.")
+
+    # Every assignment task carries the whole series, so the series is pickled
+    # once per node of the wavefront. It travels as fit records — arrays and
+    # provenance, no raw counts — because no fit in this search reads a count.
+    fit_records = [dataset.fit_record() for dataset in datasets]
 
     states: list[_WavefrontTemplateState] = []
     state_by_key: dict[str, _WavefrontTemplateState] = {}
@@ -7927,7 +11457,7 @@ def _run_exhaustive_wavefront_search(
                         _WavefrontAssignmentTask(
                             template_key=state.template.key,
                             template=state.template,
-                            datasets=datasets,
+                            datasets=fit_records,
                             base_by_run=state.prefit_base_by_run,
                             fixed_param_names=state.fixed_param_names,
                             global_param_names=global_param_names,

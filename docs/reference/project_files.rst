@@ -81,6 +81,43 @@ is re-run rather than requiring a fresh batch fit. Each top-level
     global-fitted (so every batch fit has an explicit owning group). Renaming
     an ``"auto"`` group promotes it to ``"user"``.
 
+A group is a **phase** when its ``parent_group_id`` names another
+``data_groups`` entry — the series group a transition partitions it out of
+(see :ref:`phases-within-a-group` in :doc:`gui_usage`). Schema v19 adds six
+additive phase fields to every ``data_groups`` entry, meaningless (and left at
+their defaults) on an ordinary group:
+
+``parent_group_id``
+    The id of the series group this phase belongs to, or ``null`` for an
+    ordinary group. A group *is* a phase exactly when this is set.
+
+``phase_ordinal``
+    1-based position of this phase along the sweep axis (``1`` for the
+    coldest/lowest-field phase), or ``null``. Drives both the phase's display
+    name (:doc:`gui_usage`'s ``Phase I``, ``Phase II``, …) and its identity
+    colour, which cycle past five.
+
+``phase_range``
+    ``[first, last]`` axis value spanned by this phase's members, or ``null``.
+
+``phase_boundaries``
+    ``{"lower": [estimate, half_gap] | null, "upper": [estimate, half_gap] |
+    null}``. Both keys are always present; a ``null`` side means this phase
+    sits at a series end, where there is no break to estimate.
+
+``phase_color``
+    The swatch colour (a hex string) assigned when the wizard created this
+    phase, or ``null`` to fall back to the ordinal's slot in the identity
+    palette.
+
+``phase_provenance``
+    A plain, JSON-able record of how this phase was found and last fitted:
+    ``found_at`` (ISO timestamp), ``selected_breaks``, ``gains``,
+    ``axis_key``, ``model_title``, ``confidence``, ``shared_parameters``,
+    ``fit_state``, and ``reduced_chi_squared`` — every key is genuinely
+    optional, since a phase exists as soon as the partition is applied, which
+    is before its own global fit has run. Defaults to ``{}``.
+
 Each run-membered (``member_kind == "runs"``) entry in ``batches`` gains:
 
 ``group_id``

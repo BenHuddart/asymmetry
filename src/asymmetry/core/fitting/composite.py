@@ -1912,6 +1912,23 @@ class CompositeModel:
                 identities[fraction_name] = FractionWeight(idx)
         return identities
 
+    def scale_parameter_name(self, component_index: int) -> str | None:
+        """Return the fitted name of a component's scale, or ``None``.
+
+        ``None`` means the component owns no scale under the amplitude policy:
+        either it declares no scaling parameter at all, or the policy suppressed
+        its amplitude because another factor of the same product — or, inside a
+        fraction group, the group amplitude — carries that product's single
+        scale. So walking a product's leaves through this method yields exactly
+        the one name that scales the product (see
+        :meth:`_suppressed_scaling_parameters`).
+        """
+        mapping = self._param_mappings[component_index]
+        for pname in self.components[component_index].param_names:
+            if self._is_scaling_parameter(pname) and mapping[pname] != _UNIT_AMPLITUDE_SENTINEL:
+                return mapping[pname]
+        return None
+
     def knight_observable_params(self) -> dict[str, str]:
         """Map fitted parameter name → kind for Knight-convertible components.
 

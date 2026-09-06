@@ -64,6 +64,20 @@ def build_bench_palette() -> QPalette:
     return palette
 
 
+def is_dark_surface(palette: QPalette) -> bool:
+    """``True`` when *palette* paints content on a dark surface.
+
+    The app forces :func:`build_bench_palette` (a light theme) on startup, so
+    today this is always ``False`` for our own widgets — it exists so identity
+    ramps with a dark variant (``tokens.PHASE_COLORS_DARK``) ask one question in
+    one place instead of each surface inventing its own test. Reads
+    ``QPalette.Base`` — the colour a table/list row is actually painted on —
+    rather than ``Window``, so a widget deliberately hosted on a dark surface
+    answers for itself.
+    """
+    return palette.color(QPalette.ColorRole.Base).lightness() < 128
+
+
 def apply_bench_style(app) -> None:
     """Force the Fusion style and the BENCH palette on the application."""
     if hasattr(app, "setStyle"):

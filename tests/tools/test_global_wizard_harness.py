@@ -14,6 +14,7 @@ only) so it stays out of the always-on shard.
 from __future__ import annotations
 
 import json
+import os
 import time
 
 import pytest
@@ -173,7 +174,7 @@ def test_disagreement_flags_ic_gap_within_tolerance(
 
     case = harness.synthetic_cases()[0]
 
-    def _fake_isolated(c, tier, *, timeout_s):  # noqa: ANN001, ARG001
+    def _fake_isolated(c, tier, *, engine=harness.DEFAULT_ENGINE, timeout_s):  # noqa: ANN001, ARG001
         # Candidate flips one role but sits only 1.0 IC unit off the baseline.
         roles = dict(c.planted_roles)
         first = next(iter(roles))
@@ -233,7 +234,7 @@ def test_timeout_status_aggregates_and_harness_continues(
     """A case reporting TIMEOUT does not stop later cases; the roll-up counts
     every timeout. Aggregation is exercised in-process (no spawn)."""
 
-    def _fake_isolated(case, tier, *, timeout_s):  # noqa: ANN001, ARG001
+    def _fake_isolated(case, tier, *, engine=harness.DEFAULT_ENGINE, timeout_s):  # noqa: ANN001, ARG001
         return {"status": "TIMEOUT", "wall_s": timeout_s}
 
     monkeypatch.setattr(harness, "run_case_isolated", _fake_isolated)
@@ -253,7 +254,7 @@ def test_timeout_status_aggregates_and_harness_continues(
 def test_error_status_is_captured_not_raised(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _fake_isolated(case, tier, *, timeout_s):  # noqa: ANN001, ARG001
+    def _fake_isolated(case, tier, *, engine=harness.DEFAULT_ENGINE, timeout_s):  # noqa: ANN001, ARG001
         return {"status": "ERROR", "error": "synthetic explosion"}
 
     monkeypatch.setattr(harness, "run_case_isolated", _fake_isolated)
@@ -281,7 +282,7 @@ def test_fake_tier_run_produces_full_report_schema(
 
     # Stub run_case_isolated so the test stays in-process and fast while still
     # driving the diff + roll-up against a matching synthetic baseline.
-    def _fake_isolated(case, tier, *, timeout_s):  # noqa: ANN001, ARG001
+    def _fake_isolated(case, tier, *, engine=harness.DEFAULT_ENGINE, timeout_s):  # noqa: ANN001, ARG001
         roles = dict(case.planted_roles)
         template_key = case.template_keys[0]
         return {
@@ -367,7 +368,7 @@ def test_overall_wall_guard_stops_launching_further_cases(
 
     calls: list[str] = []
 
-    def _fake_isolated(case, tier, *, timeout_s):  # noqa: ANN001, ARG001
+    def _fake_isolated(case, tier, *, engine=harness.DEFAULT_ENGINE, timeout_s):  # noqa: ANN001, ARG001
         calls.append(case.case_id)
         return {
             "status": "OK",
@@ -435,7 +436,7 @@ def test_freeze_returns_nonzero_when_a_case_is_not_ok(
 
     written: dict[str, object] = {}
 
-    def _fake_isolated(case, tier, *, timeout_s):  # noqa: ANN001, ARG001
+    def _fake_isolated(case, tier, *, engine=harness.DEFAULT_ENGINE, timeout_s):  # noqa: ANN001, ARG001
         # First case OK, the rest TIMEOUT, to prove the failure signal.
         if case.case_id.startswith("pure_global"):
             return {
@@ -461,7 +462,7 @@ def test_freeze_returns_nonzero_when_a_case_is_not_ok(
 def test_freeze_returns_zero_when_all_cases_ok(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _fake_isolated(case, tier, *, timeout_s):  # noqa: ANN001, ARG001
+    def _fake_isolated(case, tier, *, engine=harness.DEFAULT_ENGINE, timeout_s):  # noqa: ANN001, ARG001
         return {
             "status": "OK",
             "verdict": {"template_key": "exp_constant", "roles": {}, "aicc": 1.0},
@@ -505,6 +506,113 @@ def test_real_subprocess_kill_reports_timeout_and_continues() -> None:
     assert elapsed < 30.0
 
 
+def test_timeout_kill_signals_the_group_only_once_the_child_owns_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A child still in *our* process group is killed by pid, never group-wide.
+
+    The timeout kill goes group-wide so the wizard's own pool workers die with
+    the case. But a spawn child re-imports this whole module before its first
+    line — ``_become_group_leader`` included — runs, so on a loaded machine the
+    timeout can fire while the child is still in the launcher's group. Signalling
+    *that* group kills the launcher and everything beside it; under pytest-xdist
+    that is the whole test session, which is exactly how this was found.
+    """
+
+    own_group = os.getpgrp()
+    killed_groups: list[int] = []
+    killed_pids: list[int] = []
+    monkeypatch.setattr(harness.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(os, "killpg", lambda pgid, _sig: killed_groups.append(pgid))
+    monkeypatch.setattr(os, "kill", lambda pid, _sig: killed_pids.append(pid))
+
+    # Before setsid: the child's group is ours, so only its pid may be signalled.
+    monkeypatch.setattr(os, "getpgid", lambda _pid: own_group)
+    harness._kill_process_group(4242)
+    assert killed_groups == []
+    assert killed_pids == [4242, 4242]  # SIGTERM then SIGKILL
+
+    # After setsid: the child leads its own group, which is what gets reaped.
+    killed_pids.clear()
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    harness._kill_process_group(4242)
+    assert killed_groups == [4242, 4242]
+    assert killed_pids == []
+
+
+def test_engine_option_defaults_to_separable_and_reaches_the_wizard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--engine`` selects the role-search engine and defaults to separable.
+
+    The engine reaches ``build_global_fit_wizard_recommendation`` as
+    ``search_engine=`` — the seam the wizard validates — so a typo would raise
+    there rather than silently running the default engine under another name.
+    """
+
+    assert harness.DEFAULT_ENGINE == "separable"
+    assert set(harness.ENGINES) == {"separable", "exhaustive"}
+    assert harness._parse_args([]).engine == "separable"
+    assert harness._parse_args(["--engine", "exhaustive"]).engine == "exhaustive"
+
+    seen: list[str] = []
+
+    def _fake_builder(datasets, **kwargs):  # noqa: ANN001, ANN003
+        seen.append(kwargs["search_engine"])
+        return object()
+
+    import asymmetry.core.fitting.global_fit_wizard as wizard_module
+
+    monkeypatch.setattr(wizard_module, "build_global_fit_wizard_recommendation", _fake_builder)
+    harness.TIER_CONFIGS["exhaustive"]([], template_keys=(), engine="exhaustive")
+    harness.TIER_CONFIGS["exhaustive"]([], template_keys=())
+
+    assert seen == ["exhaustive", harness.DEFAULT_ENGINE]
+
+
+def test_engine_is_reported_and_the_baseline_freezes_the_referee(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The report names the engine it ran, and ``--freeze`` pins the referee.
+
+    A baseline frozen with a candidate engine would compare the candidate
+    against itself, so ``freeze_baseline`` never takes the engine from the CLI.
+    """
+
+    case = harness.synthetic_cases()[0]
+    seen_engines: list[str] = []
+
+    def _fake_isolated(c, tier, *, engine=harness.DEFAULT_ENGINE, timeout_s):  # noqa: ANN001, ARG001
+        seen_engines.append(engine)
+        return {
+            "status": "OK",
+            "verdict": {
+                "template_key": c.template_keys[0],
+                "roles": dict(c.planted_roles),
+                "aicc": 100.0,
+            },
+            "wall_s": 0.0,
+            "minuit_fits": 1,
+            "minuit_fevals": 1,
+        }
+
+    monkeypatch.setattr(harness, "run_case_isolated", _fake_isolated)
+
+    report = harness.run_harness(
+        [case],
+        "exhaustive",
+        engine="separable",
+        baseline=None,
+        per_case_timeout_s=5.0,
+        overall_wall_s=10.0,
+    )
+    assert report["engine"] == "separable"
+
+    payload = harness.freeze_baseline([case], timeout_s=5.0, generation_date="2026-01-01")
+    assert payload["engine"] == harness.BASELINE_ENGINE == "exhaustive"
+    assert seen_engines == ["separable", "exhaustive"]
+
+
 @pytest.mark.slow
 def test_exhaustive_reproduces_frozen_baseline_at_full_agreement() -> None:
     """PR 1 acceptance: current Exhaustive reproduces the frozen baseline at
@@ -515,6 +623,7 @@ def test_exhaustive_reproduces_frozen_baseline_at_full_agreement() -> None:
     report = harness.run_harness(
         harness.synthetic_cases(),
         "exhaustive",
+        engine=harness.BASELINE_ENGINE,
         baseline=baseline,
         per_case_timeout_s=180.0,
         overall_wall_s=540.0,

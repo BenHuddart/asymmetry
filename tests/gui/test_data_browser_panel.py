@@ -2117,6 +2117,7 @@ def test_sort_by_run_number_ignores_combined_dataset_sentinel(qapp: QApplication
 # ── Phase 2: canonical registry, multi-membership, auto-group palette ─────────
 
 
+from asymmetry.core.representation.group import PhaseSpec  # noqa: E402
 from asymmetry.core.representation.project_model import ProjectModel  # noqa: E402
 from asymmetry.gui.panels.data_browser import (  # noqa: E402
     _AUTO_GROUP_HEADER_BACKGROUND,
@@ -2358,6 +2359,56 @@ def test_legacy_browser_state_groups_without_registry_still_show(qapp: QApplicat
     assert panel._project_model.data_group("legacy-grp") is not None
     assert panel.get_group_member_run_numbers("legacy-grp") == [1, 2]
     assert panel._is_collapsed("legacy-grp") is True
+
+
+def test_browser_state_echoes_parent_group_id_for_a_phase_group(qapp: QApplication) -> None:
+    """browser_state.data_groups carries parent_group_id (D1).
+
+    Phase groups are not yet rendered specially (that is D2's job), but a
+    phase created directly on the project model — as the wizard will do —
+    must still round-trip its ``parent_group_id`` through
+    ``get_state``/``restore_state`` so a legacy seed can recreate it under
+    its parent.
+    """
+    panel = DataBrowserPanel()
+    panel.set_project_model(ProjectModel())
+    for rn in (1, 2, 3):
+        panel.add_dataset(_dataset(rn))
+    parent_gid = panel.create_data_group([1, 2, 3], name="Series")
+    (phase_gid,) = panel._project_model.create_phase_groups(
+        parent_gid,
+        [
+            PhaseSpec(
+                ordinal=1,
+                name="Phase I",
+                member_run_numbers=(1, 2),
+                phase_range=(1.0, 2.0),
+                phase_boundaries={"lower": None, "upper": None},
+                phase_color="#2F4DA0",
+                phase_provenance={},
+            )
+        ],
+    )
+    # The phase was created out-of-band (bypassing the panel's own group-
+    # creation path), so pull it into the view the same way a mainwindow
+    # caller would after the project model changes underneath the panel.
+    panel.sync_groups_from_project_model()
+
+    state = panel.get_state()
+    entries = {entry["group_id"]: entry for entry in state["data_groups"]}
+    assert entries[parent_gid]["parent_group_id"] is None
+    assert entries[phase_gid]["parent_group_id"] == parent_gid
+
+    restored = DataBrowserPanel()
+    restored.set_project_model(ProjectModel())  # empty registry
+    for rn in (1, 2, 3):
+        restored.add_dataset(_dataset(rn))
+    restored.restore_state(state)
+
+    restored_phase = restored._project_model.data_group(phase_gid)
+    assert restored_phase is not None
+    assert restored_phase.is_phase
+    assert restored_phase.parent_group_id == parent_gid
 
 
 def test_header_and_member_colours_switch_on_kind(qapp: QApplication) -> None:
