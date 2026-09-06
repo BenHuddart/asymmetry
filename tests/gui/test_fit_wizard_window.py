@@ -1651,3 +1651,200 @@ def test_fit_wizard_window_click_seeded_frequency_carries_a_damping_estimate(
     assert window._peaks_table.item(row, 3).data(_display_role()) == pytest.approx(
         seed["damping_rate_per_us"]
     )
+
+
+# --------------------------------------------------------------------------- #
+# On-demand dense curves. A build materialises curves only for the rows it
+# exposes as its answer; the window builds any other row the user selects on a
+# worker thread and hands it to the card.
+# --------------------------------------------------------------------------- #
+
+
+def _recommendation_with_bare_alternative(dataset: MuonDataset) -> FitWizardRecommendation:
+    """The shape a real build returns: the answer drawn, the alternative bare."""
+    recommendation = _fake_recommendation(dataset)
+    winner, alternative = recommendation.assessments
+    empty = np.array([], dtype=float)
+    return dataclasses.replace(
+        recommendation,
+        assessments=(
+            winner,
+            dataclasses.replace(
+                alternative, fitted_time=empty, fitted_curve=empty, component_curves=()
+            ),
+        ),
+    )
+
+
+def _fit_line_lengths(window: FitWizardWindow) -> list[int]:
+    figure = window._answer_card._plot_widget._figure
+    return [
+        len(line.get_xdata())
+        for axes in figure.axes
+        for line in axes.lines
+        if line.get_label() == "Fit"
+    ]
+
+
+def test_recommended_row_draws_without_building_any_curve(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The answer is materialised by the build, so showing it costs nothing here."""
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _recommendation_with_bare_alternative(dataset)
+        ),
+    )
+    builds: list[str] = []
+    monkeypatch.setattr(
+        wizard_window_module,
+        "assessment_with_curves",
+        lambda recommendation, key, data: builds.append(key),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    assert window._answer_card.selected_key() == "exp_constant"
+    assert builds == []
+    assert window._requested_curve_keys == set()
+    assert _fit_line_lengths(window) == [dataset.n_points]
+
+
+def test_selecting_a_bare_row_materialises_its_curves_off_the_gui_thread(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dense multi-component curve is far too expensive to build on a click.
+
+    The card asks for the curves it lacks, the window builds them through its
+    TaskRunner (never on the GUI thread), and the result is folded back into the
+    recommendation and drawn.
+    """
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _recommendation_with_bare_alternative(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    real_build = wizard_window_module.assessment_with_curves
+    build_threads: list[int] = []
+
+    def _recorded(recommendation, key, data):
+        build_threads.append(threading.get_ident())
+        return real_build(recommendation, key, data)
+
+    monkeypatch.setattr(wizard_window_module, "assessment_with_curves", _recorded)
+
+    window._answer_card.set_selected_key("gaussian_constant")
+    # The click itself only queues work — nothing is built on the GUI thread.
+    assert window._requested_curve_keys == {"gaussian_constant"}
+
+    def _materialised() -> bool:
+        assessment = window._recommendation.assessment_for_key("gaussian_constant")
+        return assessment is not None and assessment.fitted_time.size > 0
+
+    wait_for(_materialised, qapp)
+
+    assert build_threads and threading.get_ident() not in build_threads
+    materialised = window._recommendation.assessment_for_key("gaussian_constant")
+    assert _fit_line_lengths(window) == [materialised.fitted_time.size]
+    # The rest of the recommendation is untouched: same ranking, same selection.
+    assert window._recommendation.recommended_key == "exp_constant"
+    assert window._answer_card.selected_key() == "gaussian_constant"
+
+
+def test_one_curve_build_per_row_while_it_is_in_flight(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A redraw while a build runs must not queue a second worker for that row.
+
+    The card re-asks on every redraw it cannot draw a fit line for — a residuals
+    toggle, a re-rank — so the window tracks the keys it already has in flight.
+    """
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _recommendation_with_bare_alternative(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    release = threading.Event()
+    real_build = wizard_window_module.assessment_with_curves
+    starts: list[str] = []
+
+    def _blocking(recommendation, key, data):
+        starts.append(key)
+        release.wait(timeout=5.0)
+        return real_build(recommendation, key, data)
+
+    monkeypatch.setattr(wizard_window_module, "assessment_with_curves", _blocking)
+
+    window._answer_card.set_selected_key("gaussian_constant")
+    # Force further redraws of the same still-bare row.
+    window._answer_card._residuals_toggle.setChecked(True)
+    window._answer_card._residuals_toggle.setChecked(False)
+    release.set()
+
+    def _materialised() -> bool:
+        assessment = window._recommendation.assessment_for_key("gaussian_constant")
+        return assessment is not None and assessment.fitted_time.size > 0
+
+    wait_for(_materialised, qapp)
+    assert starts == ["gaussian_constant"]
+
+
+def test_a_curve_result_for_a_replaced_recommendation_is_dropped(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-analysing while a curve build runs must not resurrect the old result."""
+    monkeypatch.setattr(
+        wizard_window_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, current_model=None, metric=SelectionMetric.AICC, **kwargs: (
+            _recommendation_with_bare_alternative(dataset)
+        ),
+    )
+    window = FitWizardWindow()
+    window.set_analysis_context(dataset)
+    window._start_analysis()
+    wait_for(lambda: _analysis_complete(window), qapp)
+
+    release = threading.Event()
+    real_build = wizard_window_module.assessment_with_curves
+
+    def _blocking(recommendation, key, data):
+        release.wait(timeout=5.0)
+        return real_build(recommendation, key, data)
+
+    monkeypatch.setattr(wizard_window_module, "assessment_with_curves", _blocking)
+    window._answer_card.set_selected_key("gaussian_constant")
+
+    replacement = _fake_recommendation(dataset)
+    window._recommendation = replacement
+    window._invalidate_pending_curves()
+    release.set()
+
+    wait_for(lambda: window._tasks.active_count == 0, qapp)
+    assert window._recommendation is replacement
