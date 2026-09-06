@@ -134,7 +134,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-fitted from the full ladder regardless. Completion is one task per **cell**
   rather than per run, and a cell re-fitted from the run's *own* values for the
   same model at another binning — the same minimum by construction — is fitted
-  once, with no ladder at all. Inside a phase the answer is the best
+  once, with no ladder at all. Every task a wizard sends to a worker now carries
+  a **fit record** — the fitted arrays and the run's provenance, without the raw
+  detector histograms no fit reads — instead of the whole run. On a synthetic
+  twelve-run series of fifteen-detector records a completion cell's payload fell
+  from ~11 MB to ~0.4 MB and a separable search task from ~130 MB to under
+  0.1 MB, halving the wall time of the completion stage. Inside a phase the answer is the best
   information criterion among the converged candidates; a gate-clean candidate
   is preferred only within the search's own comparability margin. The gates
   (per-run residual tests and the series-consistency caveats such as a

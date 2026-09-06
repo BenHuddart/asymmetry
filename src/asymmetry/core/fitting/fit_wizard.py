@@ -2098,6 +2098,11 @@ class _AssessmentTask:
     parameter fits already).
     """
 
+    #: The record to fit, as a **fit record** — the fitted arrays and the run's
+    #: scalar provenance, without the run's raw detector histograms (see
+    #: :meth:`~asymmetry.core.data.dataset.MuonDataset.fit_record`). Every
+    #: construction site converts; the counts are the bulk of a run's pickled
+    #: size and no assessment reads one.
     dataset: MuonDataset
     fingerprint: SpectrumFingerprint
     template: CandidateTemplate
@@ -2444,6 +2449,15 @@ def build_fit_wizard_recommendation(
         )
         peak_analysis = _peaks_within_analysis_band(peak_analysis, analysis_dataset)
 
+    # What the fan-outs below actually ship to a worker: the analysed record
+    # without the run's raw detector histograms (see
+    # :meth:`MuonDataset.fit_record`). No fit here reads a count — the assessment
+    # path is time-domain throughout — and the counts are two orders of magnitude
+    # larger than the fitted arrays, so leaving them in would make every one of
+    # the two or three dozen task payloads of this build a copy of the whole run.
+    # Built once, here, rather than per task.
+    analysis_fit_record = analysis_dataset.fit_record()
+
     stage1_context = TemplateSeedContext(
         peak_analysis=peak_analysis, field_gauss=field_gauss, geometry=geometry
     )
@@ -2453,7 +2467,7 @@ def build_fit_wizard_recommendation(
 
     def _stage1_task(template: CandidateTemplate) -> _AssessmentTask:
         return _AssessmentTask(
-            dataset=analysis_dataset,
+            dataset=analysis_fit_record,
             fingerprint=fingerprint,
             template=template,
             metric=metric,
@@ -2731,7 +2745,7 @@ def build_fit_wizard_recommendation(
                 rate_dimension=_rate_dimension(template),
             )
             return _AssessmentTask(
-                dataset=analysis_dataset,
+                dataset=analysis_fit_record,
                 fingerprint=fingerprint,
                 template=template,
                 metric=metric,
@@ -2766,7 +2780,7 @@ def build_fit_wizard_recommendation(
         null_assessments = _run_template_assessments(
             [
                 _AssessmentTask(
-                    dataset=analysis_dataset,
+                    dataset=analysis_fit_record,
                     fingerprint=fingerprint,
                     template=template,
                     metric=metric,
@@ -2906,6 +2920,9 @@ def build_fit_wizard_recommendation_for_templates(
     # No peak detection on this path, but the applied field is metadata rather
     # than a measurement — so the field/B_L policy still applies.
     active_seed_context = seed_context or _field_seed_context(dataset)
+    # The tasks carry the fit record, not the record: a task payload is built to
+    # cross a process boundary, and no assessment reads a raw count.
+    fit_record = dataset.fit_record()
     # max_workers=1 preserves this function's historical serial semantics (one
     # fit engine's worth of work at a time, in list order); the previous single
     # shared FitEngine() is replaced by one-per-task, which is equivalent since
@@ -2914,7 +2931,7 @@ def build_fit_wizard_recommendation_for_templates(
         _run_template_assessments(
             [
                 _AssessmentTask(
-                    dataset=dataset,
+                    dataset=fit_record,
                     fingerprint=active_fingerprint,
                     template=template,
                     metric=metric,
@@ -5867,10 +5884,11 @@ def _refine_top_candidates(
         return assessments
 
     progress(f"Refinement: re-fitting {len(targets)} top candidates with the full seed ladder")
+    fit_record = dataset.fit_record()
     refined = _run_template_assessments(
         [
             _AssessmentTask(
-                dataset=dataset,
+                dataset=fit_record,
                 fingerprint=fingerprint,
                 template=assessment.template,
                 metric=metric,

@@ -1,5 +1,7 @@
 """Tests for the core data model."""
 
+import pickle
+
 import numpy as np
 import pytest
 
@@ -170,3 +172,116 @@ class TestMuonDataset:
         repr_str = repr(ds)
         assert "75" in repr_str
         assert "1" in repr_str  # run number
+
+
+class TestFitRecord:
+    """The contract of :meth:`MuonDataset.fit_record`.
+
+    A fit record is what crosses a process boundary to be fitted: the fitted
+    arrays and the run's scalar provenance, never the run's raw counts.
+    """
+
+    def _record(self, *, n_points=64, n_histograms=15, n_bins=1000) -> MuonDataset:
+        """A dataset backed by a multi-detector run, as a loader would build it."""
+        rng = np.random.default_rng(20260906)
+        t = np.linspace(0.0, 10.0, n_points)
+        run = Run(
+            run_number=4321,
+            histograms=[
+                Histogram(
+                    counts=rng.poisson(500.0, size=n_bins).astype(float),
+                    bin_width=0.016,
+                    t0_bin=10,
+                    good_bin_start=12,
+                    good_bin_end=n_bins - 1,
+                )
+                for _ in range(n_histograms)
+            ],
+            metadata={"title": "Synthetic", "temperature": 12.5, "field": 100.0},
+            grouping={"groups": {0: [0, 1], 1: [2, 3]}, "t0_bin": 10},
+            source_file="synthetic.nxs",
+        )
+        return MuonDataset(
+            time=t,
+            asymmetry=0.2 * np.exp(-t),
+            error=np.full(n_points, 0.01),
+            metadata={"run_number": 4321, "run_label": "4321", "temperature": 12.5},
+            run=run,
+        )
+
+    def _run_less_dataset(self) -> MuonDataset:
+        t = np.linspace(0.0, 10.0, 32)
+        return MuonDataset(
+            time=t,
+            asymmetry=np.zeros(32),
+            error=np.ones(32),
+            metadata={"run_number": 7},
+        )
+
+    def test_drops_the_raw_counts_and_keeps_everything_else(self):
+        dataset = self._record()
+        record = dataset.fit_record()
+
+        assert record.run is not None
+        assert record.run.histograms == []
+        # Provenance survives: the scalars a worker reads to key and label its
+        # result, plus the run's metadata and grouping.
+        assert record.run_number == dataset.run_number
+        assert record.run_label == dataset.run_label
+        assert record.run.temperature == dataset.run.temperature
+        assert record.run.field == dataset.run.field
+        assert record.run.source_file == dataset.run.source_file
+        assert record.run.metadata == dataset.run.metadata
+        assert record.run.grouping == dataset.run.grouping
+        assert record.metadata == dataset.metadata
+
+    def test_shares_the_fitted_arrays_and_leaves_the_source_untouched(self):
+        dataset = self._record()
+        record = dataset.fit_record()
+
+        # Nothing is duplicated in the parent: the arrays are the same objects.
+        assert record.time is dataset.time
+        assert record.asymmetry is dataset.asymmetry
+        assert record.error is dataset.error
+        # Stripping the counts is not a mutation of the dataset it came from.
+        assert len(dataset.run.histograms) == 15
+
+    def test_a_dataset_without_a_run_carries_no_counts_already(self):
+        dataset = self._run_less_dataset()
+        assert dataset.fit_record() is dataset
+
+    def test_survives_a_round_trip_through_pickle(self):
+        dataset = self._record()
+        restored = pickle.loads(pickle.dumps(dataset.fit_record()))
+
+        np.testing.assert_array_equal(restored.time, dataset.time)
+        np.testing.assert_array_equal(restored.asymmetry, dataset.asymmetry)
+        np.testing.assert_array_equal(restored.error, dataset.error)
+        assert restored.metadata == dataset.metadata
+        assert restored.run_number == dataset.run_number
+        assert restored.run_label == dataset.run_label
+        assert restored.run.histograms == []
+        assert restored.run.metadata == dataset.run.metadata
+        assert restored.run.grouping == dataset.run.grouping
+
+    def test_pickles_to_about_the_size_of_its_three_arrays(self):
+        """The whole point: a task payload is its arrays, not the run's counts."""
+        dataset = self._record(n_points=2000, n_histograms=15, n_bins=20000)
+        arrays_bytes = dataset.time.nbytes + dataset.asymmetry.nbytes + dataset.error.nbytes
+
+        record_bytes = len(pickle.dumps(dataset.fit_record()))
+        full_bytes = len(pickle.dumps(dataset))
+
+        assert record_bytes < 2 * arrays_bytes
+        # And the record it came from is dominated by the counts it drops.
+        assert full_bytes > 50 * record_bytes
+
+    def test_rebinning_keeps_the_counts_so_the_fit_record_is_the_boundary(self):
+        """``rebin`` and ``time_range`` share the run by design; only this strips it."""
+        dataset = self._record()
+        rebinned = dataset.rebin(2)
+
+        assert rebinned.run is dataset.run
+        assert len(rebinned.run.histograms) == 15
+        assert rebinned.fit_record().run.histograms == []
+        assert dataset.time_range(1.0, 5.0).fit_record().run.histograms == []

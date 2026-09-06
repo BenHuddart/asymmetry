@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 import asymmetry.core.fitting.fit_wizard as fit_wizard_module
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.component_tags import ComputationalCost
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.damped_line_scan import DampedLineAnalysis
@@ -52,6 +52,7 @@ from asymmetry.core.fitting.fit_wizard import (
     _stage2_variant_budget,
     analysis_rebin_factor,
     build_fit_wizard_recommendation,
+    build_fit_wizard_recommendation_for_templates,
     build_null_baseline_templates,
     build_wizard_families,
     deserialize_family_screening_report,
@@ -3128,3 +3129,81 @@ def test_refinement_reuses_the_builds_pool_instead_of_opening_another(
     assert len(fanned_out) == 4
     assert set(fanned_out) == {caller_pool}
     assert caller_pool.shutdown_calls == []
+
+
+class _RecordingProcessPool(_FakeProcessPool):
+    """A fake pool that keeps every payload it was handed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tasks: list[_AssessmentTask] = []
+
+    def submit(self, fn, *args):
+        self.tasks.append(args[0])
+        return super().submit(fn, *args)
+
+
+def _histogram_backed_dataset() -> MuonDataset:
+    """The ladder record, backed by a run whose detector counts are the bulk of it."""
+    dataset = _ladder_dataset()
+    dataset.metadata["run_label"] = "1"
+    dataset.run = Run(
+        run_number=1,
+        histograms=[
+            Histogram(counts=np.full(4096, 120.0), bin_width=0.016, t0_bin=10) for _ in range(15)
+        ],
+        metadata={"title": "Synthetic", "temperature": 5.0, "field": 100.0},
+        grouping={"groups": {0: [0, 1], 1: [2, 3]}},
+    )
+    return dataset
+
+
+def test_every_task_the_build_submits_carries_a_fit_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No worker payload carries the run's raw counts — none of them fits counts.
+
+    A build submits two or three dozen tasks (Stage 1, Stage 2, the null
+    baselines, refinement) and each one used to pickle the whole run: the
+    detector histograms are two orders of magnitude larger than the fitted
+    arrays they are attached to.
+    """
+    _cheap_single_family(monkeypatch)
+    _monkeypatch_dummy_worker(monkeypatch)
+    pool = _RecordingProcessPool()
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", lambda workers: pool)
+    dataset = _histogram_backed_dataset()
+
+    build_fit_wizard_recommendation(dataset, max_workers=4, refine_top_candidates=3)
+
+    assert pool.tasks
+    for task in pool.tasks:
+        assert task.dataset.run is not None
+        assert task.dataset.run.histograms == []
+        # Provenance is what the result is keyed and labelled by, so it stays.
+        assert task.dataset.run_number == dataset.run_number
+        assert task.dataset.run_label == dataset.run_label
+    # The record the caller handed in is untouched — it still has its counts.
+    assert len(dataset.run.histograms) == 15
+
+
+def test_explicit_template_evaluation_also_submits_fit_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The templates-only path builds the same payloads, serial fan-out or not."""
+    _monkeypatch_dummy_worker(monkeypatch)
+    dataset = _histogram_backed_dataset()
+    submitted: list[_AssessmentTask] = []
+    original = fit_wizard_module._run_template_assessments
+
+    def _record(tasks, **kwargs):
+        submitted.extend(tasks)
+        return original(tasks, **kwargs)
+
+    monkeypatch.setattr(fit_wizard_module, "_run_template_assessments", _record)
+
+    build_fit_wizard_recommendation_for_templates(dataset, (_ladder_template(),))
+
+    assert submitted
+    assert all(task.dataset.run.histograms == [] for task in submitted)
+    assert all(task.dataset.run_number == dataset.run_number for task in submitted)

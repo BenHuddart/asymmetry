@@ -719,6 +719,10 @@ class _WarmStartAssessment:
 class _WavefrontAssignmentTask:
     template_key: str
     template: CandidateTemplate
+    #: The series as **fit records** — fitted arrays and run provenance, no raw
+    #: detector counts (see :meth:`MuonDataset.fit_record`). Every assignment
+    #: task carries the whole series, so the counts would otherwise be pickled
+    #: once per node of the wavefront.
     datasets: list[MuonDataset]
     base_by_run: dict[int, ParameterSet]
     fixed_param_names: tuple[str, ...]
@@ -1079,6 +1083,12 @@ def _plan_run_completion(
     covers every cell this run lacks and no cell ever starts cold.
     """
     analysis_dataset = dataset.rebin(rebin_factor) if rebin_factor > 1 else dataset
+    # One task per cell means the rebinned record is pickled once per cell this
+    # run lacks, and a series-wide completion pass is hundreds of cells. The
+    # tasks therefore carry the *fit record* — arrays and provenance, no raw
+    # counts — while the plan keeps the full record for the in-parent curve
+    # rebuild in :func:`_assemble_completed_run`.
+    analysis_fit_record = analysis_dataset.fit_record()
     same_resolution = int(source.rebin_factor) == int(rebin_factor)
     seed_context = TemplateSeedContext(
         peak_analysis=source.peak_analysis,
@@ -1101,7 +1111,7 @@ def _plan_run_completion(
             continue
         tasks.append(
             _AssessmentTask(
-                dataset=analysis_dataset,
+                dataset=analysis_fit_record,
                 fingerprint=source.fingerprint,
                 template=template,
                 metric=metric,
@@ -9237,6 +9247,9 @@ class _SeparableAnchorTask:
 
     template_key: str
     template: CandidateTemplate
+    #: The series as **fit records** — fitted arrays and run provenance, no raw
+    #: detector counts (see :meth:`MuonDataset.fit_record`). Every task carries
+    #: the whole series, so the counts would otherwise be pickled once per task.
     datasets: list[MuonDataset]
     base_by_run: dict[int, ParameterSet]
     fixed_param_names: tuple[str, ...]
@@ -9272,6 +9285,7 @@ class _SeparableEliminationTask:
     template_key: str
     state: _HeuristicTemplateState
     estimates: tuple[RunEstimate, ...]
+    #: The series as fit records — see :class:`_SeparableAnchorTask`.
     datasets: list[MuonDataset]
     axis_key: str
     metric: SelectionMetric
@@ -9285,6 +9299,7 @@ class _SeparableFlipTask:
     template_key: str
     state: _HeuristicTemplateState
     estimates: tuple[RunEstimate, ...]
+    #: The series as fit records — see :class:`_SeparableAnchorTask`.
     datasets: list[MuonDataset]
     #: The node every flip of this template warm-starts from.
     winner: GlobalCandidateAssessment
@@ -10170,6 +10185,10 @@ def _fit_separable_flip_neighbourhoods(
 
     Tasks are ordered template-major, so a tripped budget costs the later
     templates their flips rather than leaving every template half-justified.
+
+    ``datasets`` are the search-resolution **fit records** the caller already
+    built (see :class:`_SeparableAnchorTask`), not the source records: they go
+    straight into the task payloads.
     """
 
     state_by_key = {result.template_key: result.state for result in elimination_results}
@@ -10353,6 +10372,13 @@ def _run_separable_search(
         search_rebin_factor=search_rebin_factor,
         instrumentation=instrumentation,
     )
+    # What the anchor, elimination and flip tasks carry: every task holds the
+    # whole series, so the series crosses the process boundary once per task —
+    # as fit records, arrays and provenance without the runs' raw counts, which
+    # no fit in this search reads. Rebinning shares the source ``Run``
+    # (see :meth:`MuonDataset.rebin`), so a search-resolution record still holds
+    # the full-resolution counts until this strips them. Built once, here.
+    search_fit_records = [dataset.fit_record() for dataset in search_datasets]
     if search_rebin_factor > 1:
         _progress_log(
             progress_callback,
@@ -10372,7 +10398,7 @@ def _run_separable_search(
             _SeparableAnchorTask(
                 template_key=template.key,
                 template=template,
-                datasets=search_datasets,
+                datasets=search_fit_records,
                 base_by_run=base_by_run,
                 fixed_param_names=fixed_param_names,
                 axis_key=axis_key,
@@ -10497,7 +10523,7 @@ def _run_separable_search(
                 template_key=result.template_key,
                 state=state,
                 estimates=result.estimates,
-                datasets=search_datasets,
+                datasets=search_fit_records,
                 axis_key=axis_key,
                 metric=metric,
                 search_strategy=search_strategy,
@@ -10523,7 +10549,7 @@ def _run_separable_search(
         states = [searched_by_key.get(state.template.key, state) for state in states]
         _fit_separable_flip_neighbourhoods(
             elimination_results,
-            search_datasets,
+            search_fit_records,
             axis_key=axis_key,
             metric=metric,
             search_strategy=search_strategy,
@@ -11041,6 +11067,11 @@ def _run_exhaustive_wavefront_search(
         if cancel_callback is not None and cancel_callback():
             raise FitCancelledError("Global fit wizard analysis cancelled.")
 
+    # Every assignment task carries the whole series, so the series is pickled
+    # once per node of the wavefront. It travels as fit records — arrays and
+    # provenance, no raw counts — because no fit in this search reads a count.
+    fit_records = [dataset.fit_record() for dataset in datasets]
+
     states: list[_WavefrontTemplateState] = []
     state_by_key: dict[str, _WavefrontTemplateState] = {}
     layers_by_key: dict[str, tuple[tuple[tuple[str, ...], ...], ...]] = {}
@@ -11330,7 +11361,7 @@ def _run_exhaustive_wavefront_search(
                         _WavefrontAssignmentTask(
                             template_key=state.template.key,
                             template=state.template,
-                            datasets=datasets,
+                            datasets=fit_records,
                             base_by_run=state.prefit_base_by_run,
                             fixed_param_names=state.fixed_param_names,
                             global_param_names=global_param_names,

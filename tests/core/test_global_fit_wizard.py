@@ -19,7 +19,7 @@ import pytest
 import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 from asymmetry.core import fitting as fitting_api
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
@@ -895,6 +895,87 @@ def test_build_or_complete_single_fit_tables_uses_spawn_safe_executor(
     assert len(submitted) == 1
     assert set(table.recommendations_by_run) == {int(dataset.run_number) for dataset in datasets}
     assert set(table.generated_run_numbers) == {int(dataset.run_number) for dataset in datasets}
+
+
+def _with_detector_histograms(dataset: MuonDataset, *, n_histograms: int = 15) -> MuonDataset:
+    """Back a synthetic record with a run whose raw counts dominate its size."""
+    dataset.run = Run(
+        run_number=int(dataset.run_number),
+        histograms=[
+            Histogram(counts=np.full(4096, 120.0), bin_width=0.016, t0_bin=10)
+            for _ in range(n_histograms)
+        ],
+        metadata={"title": "Synthetic", "temperature": 8.0, "field": 100.0},
+        grouping={"groups": {0: [0, 1], 1: [2, 3]}},
+    )
+    return dataset
+
+
+def test_completion_cells_carry_fit_records_not_raw_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completion cell ships arrays and provenance, never the run's histograms.
+
+    The completion pass is one task per cell, so on a real series it is hundreds
+    of payloads; each used to pickle the whole source run, whose detector counts
+    are two orders of magnitude larger than the rebinned arrays being fitted.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    datasets = [
+        _with_detector_histograms(
+            _dataset_for(
+                run_number=380 + idx,
+                field=20.0 * idx,
+                temperature=8.0,
+                model=model,
+                params={"A_1": 0.2, "Lambda": 0.2 + (0.05 * idx), "A_bg": 0.01},
+            )
+        )
+        for idx in range(1, 4)
+    ]
+    template = _restrict_to_exp_constant_template(monkeypatch, model)
+    coarse_run = int(datasets[0].run_number)
+
+    def _fake_build(dataset, current_model=None, **kwargs):
+        return replace(
+            build_fit_wizard_recommendation_for_templates(dataset, (template,)),
+            build_signature=fit_wizard_module.single_fit_build_signature(None, None),
+            rebin_factor=3 if int(dataset.run_number) == coarse_run else 1,
+        )
+
+    monkeypatch.setattr(global_fit_wizard_module, "build_fit_wizard_recommendation", _fake_build)
+
+    submitted: list[object] = []
+
+    class _FakeExecutor:
+        def submit(self, fn, *args):
+            submitted.append(args[0])
+            future: Future = Future()
+            future.set_result(fn(*args))
+            return future
+
+        def shutdown(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(
+        global_fit_wizard_module, "open_spawn_pool", lambda workers: _FakeExecutor()
+    )
+    monkeypatch.setattr(global_fit_wizard_module.os, "cpu_count", lambda: 8)
+
+    build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets,
+        current_model=model,
+    )
+
+    assert submitted
+    for task in submitted:
+        assert task.dataset.run is not None
+        assert task.dataset.run.histograms == []
+        # The cell is still keyed and labelled by the run it came from.
+        assert task.dataset.run_number in {int(dataset.run_number) for dataset in datasets}
+        assert task.dataset.run_label == str(task.dataset.run_number)
+    # The records the caller handed in keep their counts.
+    assert all(len(dataset.run.histograms) == 15 for dataset in datasets)
 
 
 class _Phase1Recorder:
@@ -3386,6 +3467,44 @@ def test_separable_engine_is_the_default_and_agrees_with_the_referee(
         default.recommended_assessment.local_param_names
         == explicit.recommended_assessment.local_param_names
     )
+
+
+def test_wavefront_assignment_tasks_carry_fit_records_not_raw_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every wavefront node ships the whole series; it ships it without counts.
+
+    An assignment task carries one copy of the series per node of the search, so
+    the run histograms would otherwise be pickled once for every assignment the
+    wavefront visits.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant_template(monkeypatch, model)
+    datasets = [_with_detector_histograms(dataset) for dataset in _varying_lambda_series(model)]
+
+    submitted: list[object] = []
+    real_runner = global_fit_wizard_module._run_wavefront_assignment_task
+
+    def _recording_runner(task):
+        submitted.append(task)
+        return real_runner(task)
+
+    # One worker keeps the runner in this process, where the recorder sees the
+    # payloads the pool path would otherwise pickle.
+    monkeypatch.setattr(global_fit_wizard_module, "_wavefront_worker_count", lambda count: 1)
+    monkeypatch.setattr(
+        global_fit_wizard_module, "_run_wavefront_assignment_task", _recording_runner
+    )
+
+    build_global_fit_wizard_recommendation(datasets, search_engine="exhaustive")
+
+    assert submitted
+    for task in submitted:
+        assert [dataset.run.histograms for dataset in task.datasets] == [[]] * len(datasets)
+        assert [int(dataset.run_number) for dataset in task.datasets] == [
+            int(dataset.run_number) for dataset in datasets
+        ]
+    assert all(len(dataset.run.histograms) == 15 for dataset in datasets)
 
 
 def test_unknown_search_engine_raises_value_error(

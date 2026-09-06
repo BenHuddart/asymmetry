@@ -25,7 +25,7 @@ import pytest
 
 import asymmetry.core.fitting.fit_wizard as fit_wizard_module
 import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
-from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import CandidateTemplate, SelectionMetric
@@ -836,3 +836,56 @@ def test_a_displayed_assessment_carries_its_residual_series(
             assessment.template.model.function(dataset.time, **values), dtype=float
         )
         assert np.allclose(np.asarray(result.residuals, dtype=float), expected)
+
+
+def _with_detector_histograms(dataset: MuonDataset, *, n_histograms: int = 15) -> MuonDataset:
+    """Back a synthetic record with a run whose raw counts dominate its size."""
+    dataset.run = Run(
+        run_number=int(dataset.run_number),
+        histograms=[
+            Histogram(counts=np.full(4096, 120.0), bin_width=0.016, t0_bin=10)
+            for _ in range(n_histograms)
+        ],
+        metadata={"title": "Synthetic", "temperature": 5.0, "field": 0.0},
+        grouping={"groups": {0: [0, 1], 1: [2, 3]}},
+    )
+    return dataset
+
+
+def test_every_search_task_carries_fit_records_not_raw_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anchor, elimination and flip tasks each carry the series — without counts.
+
+    Every task holds one copy of the whole series, so a search's payloads are
+    series-sized many times over; the raw detector histograms are the bulk of a
+    record and no fit in this search reads one. The search-resolution records
+    share their source ``Run``, so this only holds because the tasks are built
+    from fit records.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant(monkeypatch, model)
+    datasets = [_with_detector_histograms(dataset) for dataset in _local_lambda_series(model)]
+
+    activities: list[str] = []
+    real_drain = global_fit_wizard_module._drain_separable_tasks
+
+    def _recording_drain(tasks, runner, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        activities.append(kwargs["activity"])
+        for task in tasks:
+            assert [dataset.run.histograms for dataset in task.datasets] == [[]] * len(datasets)
+            assert [int(dataset.run_number) for dataset in task.datasets] == [
+                int(dataset.run_number) for dataset in datasets
+            ]
+        return real_drain(tasks, runner, **kwargs)
+
+    monkeypatch.setattr(global_fit_wizard_module, "_drain_separable_tasks", _recording_drain)
+
+    build_global_fit_wizard_recommendation(datasets)
+
+    # All three fan-outs of the search were seen, not just the first.
+    assert any("anchor" in activity for activity in activities)
+    assert any("elimination" in activity for activity in activities)
+    assert any("flip" in activity for activity in activities)
+    # The records the caller handed in keep their counts.
+    assert all(len(dataset.run.histograms) == 15 for dataset in datasets)
