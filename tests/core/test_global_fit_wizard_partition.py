@@ -697,3 +697,20 @@ def test_a_phase_with_no_converged_fit_has_no_answer():
         global_fit_wizard_module._recommended_segment_assessment([failed], SelectionMetric.AICC)
         is None
     )
+
+
+def test_series_fingerprints_are_computed_once_per_record(monkeypatch, planted_series):
+    datasets, _table, _screening, _optimised = planted_series
+    calls = {"n": 0}
+    real = global_fit_wizard_module.fingerprint_spectrum
+
+    def counting(dataset):
+        calls["n"] += 1
+        return real(dataset)
+
+    monkeypatch.setattr(global_fit_wizard_module, "fingerprint_spectrum", counting)
+    global_fit_wizard_module._SERIES_FINGERPRINT_CACHE.clear()
+    first = global_fit_wizard_module._fingerprint_jump_warnings(datasets)
+    second = global_fit_wizard_module._fingerprint_jump_warnings(datasets)
+    assert first == second
+    assert calls["n"] == len(datasets)

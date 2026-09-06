@@ -972,18 +972,23 @@ def _gauss_newton_covariance(
     return covariance, unconstrained
 
 
-#: Least-squares convergence tolerances: scipy's own 1e-8 defaults. The
-#: temptation is to tighten them because the wizard compares information
-#: criteria at the ±6 scale, and on small synthetic cases 1e-10 reproduces the
-#: joint Minuit χ² to ~1e-5. On a real coupled node it is the opposite: the
-#: Jacobian is finite-differenced, so below ~1e-8 the trust-region steps chase
-#: round-off. Measured on a 12-run, 217 k-point node with one shared parameter,
-#: 1e-8 converged in 28 residual evaluations (8 s); 1e-9 took 660 evaluations
-#: (93 s) for 0.8 χ² units; 1e-10 ran to the caller's ``max_calls`` cap, at
-#: which point the node reports no convergence and the wizard escalates. The
-#: 0.1-χ² parity gate against the joint path in the tests is what pins the
-#: accuracy side; this pins the cost side.
-_LEAST_SQUARES_FTOL = 1e-8
+#: Least-squares convergence tolerances. ``xtol``/``gtol`` are scipy's 1e-8
+#: defaults; ``ftol`` is 1e-7. The temptation is to tighten them because the
+#: wizard compares information criteria at the ±6 scale, and on small synthetic
+#: cases 1e-10 reproduces the joint Minuit χ² to ~1e-5. On a real coupled node
+#: it is the opposite: the Jacobian is finite-differenced, so below ~1e-8 the
+#: trust-region steps chase round-off. Measured on a 12-run, 217 k-point node
+#: with one shared parameter: 1e-8 all round took 28–88 residual evaluations
+#: depending on tiny differences in the start (the wizard's collapse warm start
+#: sat at 87, ~25 s); 1e-9 took 660 (93 s) for 0.8 χ² units; 1e-10 ran to the
+#: caller's ``max_calls`` cap, at which point the node reports no convergence
+#: and the wizard escalates. ``ftol = 1e-7`` ends the near-optimum crawl: the
+#: same node converges in 11 evaluations (~8 s) within 0.7 χ² of the 1e-8
+#: answer, below the margin at which the search treats two nodes as
+#: indistinguishable (``_LAYER_BOUND_MARGIN``, 6.0). The 0.1-χ² parity gate
+#: against the joint path in the tests pins the accuracy side on cases where
+#: the finite-difference noise is negligible; this pins the cost side.
+_LEAST_SQUARES_FTOL = 1e-7
 _LEAST_SQUARES_XTOL = 1e-8
 _LEAST_SQUARES_GTOL = 1e-8
 

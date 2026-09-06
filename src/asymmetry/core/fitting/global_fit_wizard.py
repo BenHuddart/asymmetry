@@ -7769,12 +7769,54 @@ def _filtered_gate_reasons(
     return reasons
 
 
+def _series_fingerprint_key(dataset: MuonDataset) -> tuple[int, int, float, float, float, float]:
+    """A cheap content key for one record's fingerprint.
+
+    The fingerprint depends only on the record's arrays. Run number, point
+    count, the time span and two asymmetry moments identify a record for the
+    lifetime of a search without hashing 10⁵ points per call.
+    """
+    asymmetry = np.asarray(dataset.asymmetry, dtype=float)
+    time = np.asarray(dataset.time, dtype=float)
+    return (
+        int(dataset.run_number),
+        int(dataset.n_points),
+        float(time[0]),
+        float(time[-1]),
+        float(asymmetry.sum()),
+        float(asymmetry[asymmetry.size // 2]),
+    )
+
+
+#: Fingerprints of the records a coupled search scores, by content key. The
+#: series-consistency caveat recomputes every run's fingerprint for every node
+#: it assembles — a peak pass, a damped-line scan and a residual pass per run —
+#: which on a 12-run phase was 2.4 s of the ~8 s a node costs, for an answer
+#: that never changes within the search. Bounded so a long session does not
+#: accumulate one entry per record ever fitted.
+_SERIES_FINGERPRINT_CACHE: dict[
+    tuple[int, int, float, float, float, float], SpectrumFingerprint
+] = {}
+_SERIES_FINGERPRINT_CACHE_MAX = 256
+
+
+def _cached_series_fingerprint(dataset: MuonDataset) -> SpectrumFingerprint:
+    key = _series_fingerprint_key(dataset)
+    cached = _SERIES_FINGERPRINT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    fingerprint = fingerprint_spectrum(dataset)
+    if len(_SERIES_FINGERPRINT_CACHE) >= _SERIES_FINGERPRINT_CACHE_MAX:
+        _SERIES_FINGERPRINT_CACHE.pop(next(iter(_SERIES_FINGERPRINT_CACHE)))
+    _SERIES_FINGERPRINT_CACHE[key] = fingerprint
+    return fingerprint
+
+
 def _fingerprint_jump_warnings(datasets: list[MuonDataset]) -> list[str]:
     warnings: list[str] = []
     if len(datasets) < 4:
         return warnings
-
-    fingerprints = [fingerprint_spectrum(dataset) for dataset in datasets]
+    fingerprints = [_cached_series_fingerprint(dataset) for dataset in datasets]
     features = np.array(
         [
             [
