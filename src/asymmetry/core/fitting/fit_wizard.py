@@ -5423,8 +5423,19 @@ def analysis_rebin_factor(
     seeded = _multiplet_seed_peaks(
         peak_analysis, len(peak_analysis.peaks) if peak_analysis is not None else 0
     )
-    if seeded:
-        f_max = max(abs(float(peak.frequency_mhz)) for peak in seeded)
+    # A line that cannot be sampled at ``_FIT_SAMPLES_PER_CYCLE`` even at full
+    # resolution (its period is shorter than that many native bins) cannot be
+    # protected by any factor, so it constrains nothing: a spectral-edge noise
+    # peak reported a few percent below Nyquist would otherwise pin the whole
+    # record at full resolution for a line no fit could ever resolve.
+    protectable_mhz = 1.0 / (_FIT_SAMPLES_PER_CYCLE * dt)
+    frequencies = [
+        abs(float(peak.frequency_mhz))
+        for peak in seeded
+        if abs(float(peak.frequency_mhz)) <= protectable_mhz
+    ]
+    if frequencies:
+        f_max = max(frequencies)
     elif field_gauss:
         larmor = field_gauss_to_frequency_mhz(float(field_gauss))
         if np.isfinite(larmor):

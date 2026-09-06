@@ -2630,6 +2630,9 @@ def test_rebin_factor_ignores_a_sub_threshold_residual_peak_near_nyquist() -> No
 
     assert analysis_rebin_factor(dataset, analysis) == 5
 
+    # Above the multiplet SNR the same peak would be seeded — but at 4.9 GHz its
+    # period is under 8 native bins, so no factor can protect it and it still
+    # constrains nothing.
     strong_noise = DetectedPeak(
         frequency_mhz=4907.0,
         amplitude=1.0,
@@ -2638,7 +2641,21 @@ def test_rebin_factor_ignores_a_sub_threshold_residual_peak_near_nyquist() -> No
         prominence=0.0,
         source="residual_fft",
     )
-    binding = _scan_peak_analysis([_damped_scan_peak(240.0), strong_noise], threshold=34.0)
+    unprotectable = _scan_peak_analysis([_damped_scan_peak(240.0), strong_noise], threshold=34.0)
+
+    assert analysis_rebin_factor(dataset, unprotectable) == 5
+
+    # A seed-eligible Hann peak that *can* be sampled does bind: 1000 MHz needs
+    # 8 samples per 1 ns period, which only the native 0.1 ns binning gives.
+    fast_line = DetectedPeak(
+        frequency_mhz=1000.0,
+        amplitude=1.0,
+        snr=6.0,
+        width_mhz=1.0,
+        prominence=0.0,
+        source="residual_fft",
+    )
+    binding = _scan_peak_analysis([_damped_scan_peak(240.0), fast_line], threshold=34.0)
 
     assert analysis_rebin_factor(dataset, binding) == 1
 
