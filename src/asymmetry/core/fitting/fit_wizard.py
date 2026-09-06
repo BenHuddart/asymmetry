@@ -1405,6 +1405,15 @@ _FIT_SAMPLES_PER_CYCLE = 8.0
 #: reordered the table.
 _UNDER_CONVERGENCE_CHI2_TOLERANCE = 1.0
 
+#: χ² within which a warm attempt and the base seed count as the *same* minimum,
+#: so the rest of the seed ladder buys nothing and is skipped (see
+#: :func:`_assess_candidate_template`). Two converged fits of one basin agree to
+#: far better than a χ² unit — the same scale as
+#: ``_UNDER_CONVERGENCE_CHI2_TOLERANCE`` — while two different basins of the same
+#: model differ by tens to thousands, so the test separates cleanly and the
+#: threshold's exact value is not delicate.
+_WARM_LADDER_AGREEMENT = 1.0
+
 #: Fast-edge tolerance the wizard applies. Deliberately the library default; an
 #: analysis with a specific binning argument should call
 #: :func:`~asymmetry.core.fitting.resolution.assess_component_resolution`
@@ -2142,10 +2151,11 @@ def _run_template_assessments(
     deterministic test path and it is also the only path that can honour an
     *in-fit* cancellation (a cancel_callback cannot cross a process boundary).
 
-    Process path: reuses ``executor`` if given (a caller-managed shared pool);
-    otherwise opens one via :func:`open_spawn_pool` and closes it in a
-    ``finally`` — but only the pool this call opened; a caller-supplied
-    ``executor`` remains the caller's to shut down. ``cancel_callback`` cannot
+    Process path: reuses ``executor`` if given (a shared pool managed by the
+    build, or by the series analysis that owns the build); otherwise opens one
+    via :func:`open_spawn_pool` and closes it in a ``finally`` — but only the
+    pool this call opened. A supplied ``executor`` is never shut down or
+    terminated here, at any depth: it remains its owner's. ``cancel_callback`` cannot
     be forwarded across the process boundary, so cancellation is instead polled
     *while waiting*: the driver loops on :func:`concurrent.futures.wait` with a
     ``_CANCEL_POLL_SECONDS`` timeout and re-checks ``cancel_callback`` each
@@ -2262,6 +2272,7 @@ def build_fit_wizard_recommendation(
     scope: WizardScope | None = None,
     user_frequencies_mhz: Sequence[float] | None = None,
     max_workers: int | None = None,
+    executor: Executor | None = None,
     warm_start_by_template: Mapping[str, ParameterSet] | None = None,
     progress_callback: Callable[[str], None] | None = None,
     cancel_callback: Callable[[], bool] | None = None,
@@ -2292,6 +2303,17 @@ def build_fit_wizard_recommendation(
     pool, cancellation instead takes effect only between fits (a
     cancel_callback cannot cross a process boundary) — either way,
     cancellation raises :class:`FitCancelledError`.
+
+    ``executor`` supplies a **caller-owned** process pool. Given one, this build
+    opens no pool of its own and every fan-out — Stage 1, Stage 2, the null
+    baselines and refinement — submits to it; the pool is never shut down or
+    terminated here, not even on cancellation, because its lifetime belongs to
+    the caller. That is how a series analysis gives one pool to many builds, so
+    one run's fan-out can use workers another run's serial stage leaves idle and
+    the per-worker import of the fitting package is paid once for the series
+    rather than twice per run. Without an ``executor`` the build opens **one**
+    pool and shares it across the same four fan-outs, shutting it down on the way
+    out (terminating it on cancellation).
 
     ``warm_start_by_template`` supplies already-fitted values per template key —
     the same models fitted on a *neighbouring run* of a series, which a series
@@ -2428,19 +2450,25 @@ def build_fit_wizard_recommendation(
     stage1_groups = [(family, [family.stage1_rep, *family.stage1_extras]) for family in families]
     flat_stage1_templates = [template for _family, group in stage1_groups for template in group]
 
-    # One process pool for the whole build, shared across the three fan-outs
-    # below (Stage 1, Stage 2, null baselines) — opening a spawn pool per call
-    # would pay the process-startup cost three times over for no benefit, since
-    # the pool is idle between fan-outs anyway.
-    resolved_workers = (
-        int(max_workers)
-        if max_workers is not None
-        else min(
-            max(len(flat_stage1_templates), 1),
-            max(1, (os.cpu_count() or 4) - 2),
+    # One process pool for the whole build, shared across all four fan-outs
+    # below (Stage 1, Stage 2, null baselines, refinement) — opening a spawn pool
+    # per call would pay the process-startup cost four times over for no benefit,
+    # since the pool is idle between fan-outs anyway, and every worker re-imports
+    # the fitting package on the way up. A caller-supplied ``executor`` replaces
+    # it outright and is never torn down here.
+    caller_owns_pool = executor is not None
+    if caller_owns_pool:
+        shared_pool: Executor | None = executor
+    else:
+        resolved_workers = (
+            int(max_workers)
+            if max_workers is not None
+            else min(
+                max(len(flat_stage1_templates), 1),
+                max(1, (os.cpu_count() or 4) - 2),
+            )
         )
-    )
-    shared_pool = open_spawn_pool(resolved_workers) if resolved_workers > 1 else None
+        shared_pool = open_spawn_pool(resolved_workers) if resolved_workers > 1 else None
 
     pool_terminated = False
     try:
@@ -2736,75 +2764,81 @@ def build_fit_wizard_recommendation(
             cancel_callback=cancel_callback,
             executor=shared_pool,
         )
+
+        family_reports = tuple(
+            FamilyScreeningReport(
+                family_key=family.key,
+                title=family.title,
+                stage1_template_key=assessment.template.key,
+                stage1_metric_value=(
+                    assessment.metric_value(metric) if assessment.is_successful else math.inf
+                ),
+                stage1_gate_passed=assessment.residual_gate_passed,
+                promoted=promoted,
+                reason=reason,
+                stage2_template_keys=tuple(stage2_keys_by_family.get(family.key, ())),
+            )
+            for family, assessment, promoted, reason in decisions
+        )
+
+        all_templates = (
+            tuple(flat_stage1_templates) + tuple(stage2_templates) + tuple(null_templates)
+        )
+        all_assessments = _apply_frequency_support_disqualifiers(
+            # The FULL-RESOLUTION record, deliberately — not ``analysis_dataset``.
+            # Every effective-window quantity in the wizard's verdict (this
+            # disqualifier's cycle floor and 1/T_eff tolerance, the edge-window
+            # caveat's cycle count via ``peak_analysis.resolution_mhz``, the
+            # fingerprint's window) has to be measured on the record peak detection
+            # ran on, or the verdict changes when the *cost* heuristic decides to
+            # rebin. ``effective_analysis_window`` truncates at the first bin whose
+            # σ exceeds 5× the early σ, and rebinning averages away the per-bin
+            # scatter in σ, so a rebinned copy of a real record keeps a visibly
+            # longer informative window (4.93 µs against 3.85 µs on one measured
+            # 50 G transverse-field record). That moved a 0.69 MHz line from 2.7
+            # cycles — exempt from the hard floor, caveated — to 3.4 cycles, and
+            # disqualified the whole precession family on a textbook TF record.
+            # The fits themselves stay on ``analysis_dataset``; only the window
+            # arithmetic is anchored here.
+            dataset,
+            tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments),
+            peak_analysis,
+        )
+
+        with stage_timer(
+            instrumentation,
+            "single_fit.refinement",
+            items_total=refine_top_candidates if refine_top_candidates > 0 else 0,
+            stage_callback=stage_callback,
+            message="Refinement: re-fitting top candidates with the full seed ladder",
+        ):
+            all_assessments = _refine_top_candidates(
+                dataset=analysis_dataset,
+                fingerprint=fingerprint,
+                assessments=all_assessments,
+                metric=metric,
+                seed_context=stage2_context,
+                max_workers=max_workers,
+                cancel_callback=cancel_callback,
+                refine_top_candidates=refine_top_candidates,
+                progress=_progress,
+                executor=shared_pool,
+            )
+
     except FitCancelledError:
-        # Cancellation of a *shared* pool is ours to tear down here (the fan-out
-        # helper only terminates a pool it opened itself). Kill-and-reap instead
-        # of a blocking ``shutdown(wait=True)``, which would stall the Cancel
-        # click for one in-flight fit's duration and could orphan spawn workers.
-        if shared_pool is not None:
+        # Cancellation of a pool *this build opened* is ours to tear down here
+        # (the fan-out helper only terminates a pool it opened itself).
+        # Kill-and-reap instead of a blocking ``shutdown(wait=True)``, which
+        # would stall the Cancel click for one in-flight fit's duration and could
+        # orphan spawn workers. A caller-supplied pool is left alone: the caller
+        # is still using it for the other builds it owns.
+        if shared_pool is not None and not caller_owns_pool:
             terminate_spawn_pool(shared_pool)
             pool_terminated = True
         raise
     finally:
-        if shared_pool is not None and not pool_terminated:
+        if shared_pool is not None and not caller_owns_pool and not pool_terminated:
             shared_pool.shutdown()
-
-    family_reports = tuple(
-        FamilyScreeningReport(
-            family_key=family.key,
-            title=family.title,
-            stage1_template_key=assessment.template.key,
-            stage1_metric_value=(
-                assessment.metric_value(metric) if assessment.is_successful else math.inf
-            ),
-            stage1_gate_passed=assessment.residual_gate_passed,
-            promoted=promoted,
-            reason=reason,
-            stage2_template_keys=tuple(stage2_keys_by_family.get(family.key, ())),
-        )
-        for family, assessment, promoted, reason in decisions
-    )
-
-    all_templates = tuple(flat_stage1_templates) + tuple(stage2_templates) + tuple(null_templates)
-    all_assessments = _apply_frequency_support_disqualifiers(
-        # The FULL-RESOLUTION record, deliberately — not ``analysis_dataset``.
-        # Every effective-window quantity in the wizard's verdict (this
-        # disqualifier's cycle floor and 1/T_eff tolerance, the edge-window
-        # caveat's cycle count via ``peak_analysis.resolution_mhz``, the
-        # fingerprint's window) has to be measured on the record peak detection
-        # ran on, or the verdict changes when the *cost* heuristic decides to
-        # rebin. ``effective_analysis_window`` truncates at the first bin whose
-        # σ exceeds 5× the early σ, and rebinning averages away the per-bin
-        # scatter in σ, so a rebinned copy of a real record keeps a visibly
-        # longer informative window (4.93 µs against 3.85 µs on one measured
-        # 50 G transverse-field record). That moved a 0.69 MHz line from 2.7
-        # cycles — exempt from the hard floor, caveated — to 3.4 cycles, and
-        # disqualified the whole precession family on a textbook TF record.
-        # The fits themselves stay on ``analysis_dataset``; only the window
-        # arithmetic is anchored here.
-        dataset,
-        tuple(flat_stage1) + tuple(stage2_assessments) + tuple(null_assessments),
-        peak_analysis,
-    )
-
-    with stage_timer(
-        instrumentation,
-        "single_fit.refinement",
-        items_total=refine_top_candidates if refine_top_candidates > 0 else 0,
-        stage_callback=stage_callback,
-        message="Refinement: re-fitting top candidates with the full seed ladder",
-    ):
-        all_assessments = _refine_top_candidates(
-            dataset=analysis_dataset,
-            fingerprint=fingerprint,
-            assessments=all_assessments,
-            metric=metric,
-            seed_context=stage2_context,
-            max_workers=max_workers,
-            cancel_callback=cancel_callback,
-            refine_top_candidates=refine_top_candidates,
-            progress=_progress,
-        )
 
     return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
@@ -3932,6 +3966,25 @@ def _fit_with_call_limit_continuations(
     return result
 
 
+def _warm_ladder_is_settled(results: Sequence[FitResult]) -> bool:
+    """Whether a warm-aware opening batch makes the rest of the ladder pointless.
+
+    *results* are the warm attempt and the base rung, in that order. The batch is
+    settled when exactly one of them converged (that one is the answer; the other
+    had its chance) or when both converged to the same minimum, within
+    ``_WARM_LADDER_AGREEMENT``. Neither converging means the seed region is wrong
+    and the perturbed rungs are exactly what exists for that; both converging far
+    apart means there are at least two basins in play and the ladder should map
+    them.
+    """
+    converged = [result.chi_squared for result in results if result.success]
+    if not converged:
+        return False
+    if len(converged) < len(results):
+        return True
+    return (max(converged) - min(converged)) <= _WARM_LADDER_AGREEMENT
+
+
 def _assess_candidate_template(
     dataset: MuonDataset,
     fingerprint: SpectrumFingerprint,
@@ -3946,6 +3999,29 @@ def _assess_candidate_template(
     migrad_ncall: int | None = None,
     warm_start: ParameterSet | None = None,
 ) -> CandidateAssessment:
+    """Fit one candidate template from a seed ladder and score the best attempt.
+
+    Cold (``warm_start is None``) the whole ``variant_budget`` ladder of
+    :func:`_parameter_variants` runs and the best attempt wins.
+
+    With a ``warm_start`` — already-fitted values for this template, from a
+    neighbouring run of a series or from this run at another rebin factor — the
+    ladder becomes *warm-aware*. The warm attempt and the base rung (the
+    unmodified seed) run first; the perturbed rungs run only when those two do
+    not settle the basin between them, which is when **neither** converged or
+    when both converged to χ² more than ``_WARM_LADDER_AGREEMENT`` apart. A warm
+    start is an answer for this model on data like this, so agreeing with the
+    cold seed leaves the remaining rungs nothing to find; measured on a series of
+    10⁵-point records, capping the ladder there reproduced the recommendation at
+    roughly a third to a half of the build time. Refinement
+    (:func:`_refine_top_candidates`) re-fits the ranking's contenders with the
+    full cold ladder regardless, which is what makes the cap safe.
+
+    ``variant_budget=0`` means "no ladder at all" and only ever accompanies a
+    warm start (the sole caller that passes it is the completion of a cell from
+    the run's *own* fit of the same template at another binning — the same basin
+    by construction, so it is fitted once from the answer).
+    """
     # Frequencies measured from spectral peaks are trusted seeds: the 0.5x/2x
     # variant scaling that rescues a blind FFT guess would only destroy them.
     frozen_scale_names: frozenset[str] = frozenset()
@@ -3958,14 +4034,30 @@ def _assess_candidate_template(
     seeded = _initial_parameters_for_template(
         dataset, fingerprint, template, seed_context=seed_context
     )
-    attempts = _parameter_variants(
-        seeded,
-        template=template,
-        variant_budget=variant_budget,
-        frozen_scale_names=frozen_scale_names,
+    # ``variant_budget=0`` means "no ladder at all", which only ever accompanies a
+    # warm start — a cell re-fitted from an already-fitted answer for the same
+    # model on the same data at another binning needs that answer tried, not a
+    # search around it. ``_parameter_variants`` keeps its own ``max(1, budget)``
+    # floor, so the emptiness is decided here.
+    ladder = (
+        _parameter_variants(
+            seeded,
+            template=template,
+            variant_budget=variant_budget,
+            frozen_scale_names=frozen_scale_names,
+        )
+        if variant_budget > 0
+        else ()
     )
-    if warm_start is not None:
-        attempts = (_warm_started_parameters(seeded, warm_start), *attempts)
+    if warm_start is None:
+        attempts = ladder
+        deferred_rungs: tuple[ParameterSet, ...] = ()
+    else:
+        # Warm-aware ladder: the warm start and the base rung (the unmodified
+        # seed) run first, and the perturbed rungs only when those two fail to
+        # settle the basin between them — see ``_warm_ladder_is_settled``.
+        attempts = (_warm_started_parameters(seeded, warm_start), *ladder[:1])
+        deferred_rungs = ladder[1:]
 
     # Screening cap (Stage 1 only): forwarded to the engine's migrad drive, not
     # the scipy fallback below (scipy has no call-count knob).
@@ -3973,40 +4065,54 @@ def _assess_candidate_template(
 
     best_result: FitResult | None = None
     best_parameters: ParameterSet | None = None
-    for parameters in attempts:
-        if cancel_callback is not None and cancel_callback():
-            raise FitCancelledError("Fit wizard analysis cancelled.")
-        result = fit_engine.fit(
-            dataset,
-            template.model.function,
-            _clone_parameter_set(parameters),
-            cancel_callback=cancel_callback,
-            migrad_kwargs=migrad_kwargs,
-        )
-        if _needs_fit_backend_fallback(result):
-            result = _scipy_fit_fallback(dataset, template.model.function, parameters)
-        elif migrad_kwargs is None:
-            # Only the uncapped fits continue: a screening fit that hit the cap
-            # hit it *by design* (see ``_CALL_LIMIT_CONTINUATIONS``).
-            result = _fit_with_call_limit_continuations(
-                fit_engine,
+
+    def _run_attempts(parameter_sets: Sequence[ParameterSet]) -> list[FitResult]:
+        """Fit each attempt, keeping the best; return this batch's results."""
+        nonlocal best_result, best_parameters
+        batch: list[FitResult] = []
+        for parameters in parameter_sets:
+            if cancel_callback is not None and cancel_callback():
+                raise FitCancelledError("Fit wizard analysis cancelled.")
+            result = fit_engine.fit(
                 dataset,
-                template,
-                parameters,
-                result,
+                template.model.function,
+                _clone_parameter_set(parameters),
                 cancel_callback=cancel_callback,
+                migrad_kwargs=migrad_kwargs,
             )
-        if best_result is None:
-            best_result = result
-            best_parameters = _clone_parameter_set(parameters)
-            continue
-        if result.success and not best_result.success:
-            best_result = result
-            best_parameters = _clone_parameter_set(parameters)
-            continue
-        if result.success == best_result.success and result.chi_squared < best_result.chi_squared:
-            best_result = result
-            best_parameters = _clone_parameter_set(parameters)
+            if _needs_fit_backend_fallback(result):
+                result = _scipy_fit_fallback(dataset, template.model.function, parameters)
+            elif migrad_kwargs is None:
+                # Only the uncapped fits continue: a screening fit that hit the
+                # cap hit it *by design* (see ``_CALL_LIMIT_CONTINUATIONS``).
+                result = _fit_with_call_limit_continuations(
+                    fit_engine,
+                    dataset,
+                    template,
+                    parameters,
+                    result,
+                    cancel_callback=cancel_callback,
+                )
+            batch.append(result)
+            if best_result is None:
+                best_result = result
+                best_parameters = _clone_parameter_set(parameters)
+                continue
+            if result.success and not best_result.success:
+                best_result = result
+                best_parameters = _clone_parameter_set(parameters)
+                continue
+            if (
+                result.success == best_result.success
+                and result.chi_squared < best_result.chi_squared
+            ):
+                best_result = result
+                best_parameters = _clone_parameter_set(parameters)
+        return batch
+
+    opening = _run_attempts(attempts)
+    if deferred_rungs and not _warm_ladder_is_settled(opening):
+        _run_attempts(deferred_rungs)
 
     if best_result is None:
         best_result = FitResult(success=False, message="No fit attempt was created.")
@@ -5647,6 +5753,7 @@ def _refine_top_candidates(
     cancel_callback: Callable[[], bool] | None,
     refine_top_candidates: int,
     progress: Callable[[str], None],
+    executor: Executor | None = None,
 ) -> tuple[CandidateAssessment, ...]:
     """Re-fit the top-ranked candidates deeper and record what that bought.
 
@@ -5669,6 +5776,16 @@ def _refine_top_candidates(
     the leader the deeper ladder that would settle whether its score is real.
     A refined fit that *does* converge replaces the failed assessment below; one
     that does not leaves it untouched, still unsuccessful.
+
+    The cold ladder here is also what makes the warm-aware cap in
+    :func:`_assess_candidate_template` safe: a warm-started screening fit that
+    stopped at warm + base is re-fitted from the full ladder if it is one of the
+    candidates the recommendation rests on.
+
+    ``executor`` is the build's pool, shared with the earlier fan-outs. This pass
+    used to open a second pool of its own per analysis — a whole extra round of
+    worker start-ups, each re-importing the fitting package, and a pool-start
+    latency in front of every refinement.
     """
     if refine_top_candidates <= 0 or not assessments:
         return assessments
@@ -5706,6 +5823,7 @@ def _refine_top_candidates(
         ],
         max_workers=max_workers,
         cancel_callback=cancel_callback,
+        executor=executor,
     )
 
     refined_by_key = {assessment.template.key: assessment for assessment in refined}

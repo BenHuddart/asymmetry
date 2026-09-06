@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import (
     FIRST_COMPLETED,
+    Executor,
     ProcessPoolExecutor,
     ThreadPoolExecutor,
     as_completed,
@@ -34,9 +35,11 @@ from asymmetry.core.fitting.fit_wizard import (
     SelectionMetric,
     SpectrumFingerprint,
     TemplateSeedContext,
+    _AssessmentTask,
     _bound_hit_names,
     _clone_parameter_set,
     _dense_fit_curves,
+    _execute_assessment_task,
     _field_seed_context,
     _initial_parameters_for_template,
     _is_additive_relaxation_mixture_template,
@@ -53,7 +56,6 @@ from asymmetry.core.fitting.fit_wizard import (
     analysis_rebin_factor,
     build_candidate_templates,
     build_fit_wizard_recommendation,
-    build_fit_wizard_recommendation_for_templates,
     build_wizard_families,
     compute_information_criteria,
     dataset_field_geometry,
@@ -804,25 +806,6 @@ def _wavefront_worker_count(task_count: int) -> int:
     return max(1, min(task_count, cpu_count, _MAX_WAVEFRONT_WORKERS))
 
 
-def _single_fit_table_worker_count(task_count: int) -> int:
-    """Workers for phase-1 single-fit table generation — one task per *dataset*.
-
-    Bounded by the host's CPU count: each table is minutes of CPU-bound fitting,
-    so running more of them than there are cores only lengthens the time to the
-    *first* completed table — which is the stage's only sign of life.
-
-    It is deliberately **not** bounded by ``_MAX_TEMPLATE_WORKERS``. That cap
-    sizes template-level fan-out inside one series fit, where the tasks share
-    caches and the deeper stages fan out again; phase-1 tables are independent
-    whole-dataset jobs, and capping them at four left a 14-dataset series using
-    a fraction of a large host while taking 3.5 sequential rounds to finish.
-    """
-    if task_count <= 0:
-        return 1
-    cpu_count = os.cpu_count() or 1
-    return max(1, min(task_count, cpu_count))
-
-
 def _phase_one_concurrency(task_count: int) -> int:
     """How many per-run single-run analyses phase 1 runs at once.
 
@@ -834,24 +817,15 @@ def _phase_one_concurrency(task_count: int) -> int:
     side by side fills those gaps with another run's fan-out.
 
     The count is halved from the core count and capped at
-    ``_MAX_PHASE_ONE_ANALYSES``, because each analysis still opens its own pool
-    and the *product* of the two is what lands on the host — see
-    :func:`_phase_one_analysis_workers`, which splits the cores between them.
+    ``_MAX_PHASE_ONE_ANALYSES``. The analyses now share phase 1's single spawn
+    pool rather than each opening one, so this no longer has to keep a *product*
+    of widths off the host; what it still bounds is how many runs' serial stages
+    and result objects are alive in the parent at once.
     """
     if task_count <= 0:
         return 1
     cpu_count = os.cpu_count() or 1
     return max(1, min(task_count, _MAX_PHASE_ONE_ANALYSES, cpu_count // 2))
-
-
-def _phase_one_analysis_workers(concurrency: int) -> int:
-    """``max_workers`` for one analysis when *concurrency* of them run at once.
-
-    The host's cores divided between the concurrent analyses, so the total
-    number of fit workers stays at the core count however phase 1 is split.
-    """
-    cpu_count = os.cpu_count() or 1
-    return max(1, cpu_count // max(1, int(concurrency)))
 
 
 def _try_open_process_pool(
@@ -1028,88 +1002,131 @@ def _run_wavefront_assignment_task(
     )
 
 
-def _single_fit_completion_task(
+@dataclass(frozen=True)
+class _RunCompletionPlan:
+    """One run's share of the completion pass: what is kept, what must be fitted.
+
+    Built in the parent, so the source recommendation — tens of megabytes once
+    every cell carries its dense fitted curves — never crosses a process
+    boundary. Only the ``tasks`` do, and each of those carries the rebinned
+    record and one template.
+    """
+
+    dataset: MuonDataset
+    source: FitWizardRecommendation
+    analysed_points: int
+    #: Cells the run's own table already holds at the series rebin factor.
+    kept: dict[str, CandidateAssessment]
+    #: One task per cell this run lacks, in alphabet order.
+    tasks: tuple[_AssessmentTask, ...]
+
+
+def _plan_run_completion(
     dataset: MuonDataset,
     templates: tuple[CandidateTemplate, ...],
     source: FitWizardRecommendation,
+    *,
     rebin_factor: int,
     metric: SelectionMetric,
-    sibling_values_by_template: dict[str, ParameterSet],
-) -> tuple[int, FitWizardRecommendation, int]:
-    """Score one run against the whole series alphabet at the series resolution.
+    sibling_values_by_template: Mapping[str, ParameterSet],
+) -> _RunCompletionPlan:
+    """Work out how to score one run against the whole series alphabet.
 
-    Plain-data in, plain-data out, so this can cross a process boundary. Cells
-    the run's own single-fit table already holds *at this rebin factor* are kept
-    verbatim; everything else is fitted on the rebinned record, warm-started
-    from the run's own values for that template when it has them at another
-    factor and from the best sibling run's otherwise, and seeded from the run's
-    own peak analysis so a multiplet template's lines start on the lines this
-    run actually shows. Every alphabet template was fitted successfully on some
-    run (that is what :func:`series_template_alphabet` admits), so
-    ``sibling_values_by_template`` covers every cell this run lacks and no cell
-    ever starts cold.
+    Cells the run's own single-fit table already holds *at this rebin factor* are
+    kept verbatim; everything else becomes an assessment task on the rebinned
+    record, seeded from the run's own peak analysis so a multiplet template's
+    lines start on the lines this run actually shows, and warm-started:
 
-    Returns the run number, the completed table, and the number of fits it cost.
+    * from **this run's own** fitted values for that template, when it has them
+      at another rebin factor. That is the same data and the same model at
+      another binning — the same basin by construction — so the cell is fitted
+      once from the answer and no ladder runs (``variant_budget=0``).
+    * from the **best sibling run's** values otherwise. A sibling is a different
+      record, and a sibling-seeded cell measurably can converge into a far worse
+      basin than the base seed finds, so those keep the base rung as well
+      (``variant_budget=1``, which the warm-aware ladder in
+      :func:`~asymmetry.core.fitting.fit_wizard._assess_candidate_template` runs
+      alongside the warm attempt).
+
+    Every alphabet template was fitted successfully on some run (that is what
+    :func:`series_template_alphabet` admits), so ``sibling_values_by_template``
+    covers every cell this run lacks and no cell ever starts cold.
     """
-    run_number = int(dataset.run_number)
     analysis_dataset = dataset.rebin(rebin_factor) if rebin_factor > 1 else dataset
     same_resolution = int(source.rebin_factor) == int(rebin_factor)
-
-    assessments_by_key: dict[str, CandidateAssessment] = {}
-    warm_templates: list[CandidateTemplate] = []
-    warm_starts: dict[str, ParameterSet] = {}
-    for template in templates:
-        assessment = source.assessment_for_key(template.key)
-        if assessment is not None and assessment.is_successful and same_resolution:
-            assessments_by_key[template.key] = assessment
-            continue
-        warm_templates.append(template)
-        warm_starts[template.key] = (
-            assessment.fit_result.parameters
-            if assessment is not None and assessment.is_successful
-            else sibling_values_by_template[template.key]
-        )
-
     seed_context = TemplateSeedContext(
         peak_analysis=source.peak_analysis,
         multiplet_matches=source.multiplet_matches,
         field_gauss=dataset.field,
         geometry=dataset_field_geometry(dataset),
     )
-    # One attempt per cell: a cell that starts from an already fitted answer
-    # needs the answer tried, not a ladder around it.
-    if warm_templates:
-        completed = build_fit_wizard_recommendation_for_templates(
-            analysis_dataset,
-            tuple(warm_templates),
-            fingerprint=source.fingerprint,
-            metric=metric,
-            seed_context=seed_context,
-            warm_start_by_template=warm_starts,
-            variant_budget=1,
-        )
-        for assessment in completed.assessments:
-            assessments_by_key[assessment.template.key] = assessment
 
-    recommendation = rerank_fit_wizard_recommendation(
+    kept: dict[str, CandidateAssessment] = {}
+    tasks: list[_AssessmentTask] = []
+    for template in templates:
+        assessment = source.assessment_for_key(template.key)
+        own_values = (
+            assessment.fit_result.parameters
+            if assessment is not None and assessment.is_successful
+            else None
+        )
+        if own_values is not None and same_resolution:
+            kept[template.key] = assessment
+            continue
+        tasks.append(
+            _AssessmentTask(
+                dataset=analysis_dataset,
+                fingerprint=source.fingerprint,
+                template=template,
+                metric=metric,
+                seed_context=seed_context,
+                variant_budget=0 if own_values is not None else 1,
+                stage=2,
+                screening_cap=False,
+                warm_start=(
+                    own_values
+                    if own_values is not None
+                    else sibling_values_by_template[template.key]
+                ),
+            )
+        )
+    return _RunCompletionPlan(
+        dataset=dataset,
+        source=source,
+        analysed_points=int(analysis_dataset.n_points),
+        kept=kept,
+        tasks=tuple(tasks),
+    )
+
+
+def _assemble_completed_run(
+    plan: _RunCompletionPlan,
+    fitted: Mapping[str, CandidateAssessment],
+    templates: tuple[CandidateTemplate, ...],
+    *,
+    rebin_factor: int,
+    metric: SelectionMetric,
+) -> FitWizardRecommendation:
+    """One run's completed row: the kept cells plus the fitted ones, re-ranked."""
+    assessments_by_key: dict[str, CandidateAssessment] = {**plan.kept, **fitted}
+    return rerank_fit_wizard_recommendation(
         FitWizardRecommendation(
-            fingerprint=source.fingerprint,
+            fingerprint=plan.source.fingerprint,
             templates=tuple(templates),
             assessments=tuple(assessments_by_key[template.key] for template in templates),
             metric=metric,
             recommended_key=None,
             comparable_keys=(),
             summary="",
-            peak_analysis=source.peak_analysis,
-            multiplet_matches=source.multiplet_matches,
-            family_reports=source.family_reports,
-            scope_note=source.scope_note,
+            peak_analysis=plan.source.peak_analysis,
+            multiplet_matches=plan.source.multiplet_matches,
+            family_reports=plan.source.family_reports,
+            scope_note=plan.source.scope_note,
             rebin_factor=int(rebin_factor),
-            analysed_points=int(analysis_dataset.n_points),
+            analysed_points=plan.analysed_points,
         ),
         metric,
     )
-    return run_number, recommendation, len(warm_templates)
 
 
 @dataclass(frozen=True)
@@ -1620,6 +1637,7 @@ def _run_single_run_analyses(
     user_frequencies_mhz: Sequence[float] | None,
     cancel_callback: Callable[[], bool] | None,
     concurrency: int,
+    executor: Executor | None,
     progress_callback: Callable[[str], None] | None,
     on_completed: Callable[[_SingleRunAnalysisOutcome], None],
 ) -> int:
@@ -1633,12 +1651,17 @@ def _run_single_run_analyses(
     can only improve a template's fit or leave it alone.
 
     ``concurrency`` analyses run at once on a thread pool in this process. That
-    is not a way to dodge the GIL — each analysis spends its time in its own
+    is not a way to dodge the GIL — each analysis spends its time in the shared
     *spawn* pool and in NumPy — it is a way to overlap one run's serial stages
-    (detection, pattern search, gating) with another run's fan-out; the per-call
-    ``max_workers`` is divided down (:func:`_phase_one_analysis_workers`) so the
-    host still sees one machine's worth of fit workers. ``concurrency == 1``
-    keeps the plain serial path, where each analysis owns the whole machine.
+    (detection, pattern search, gating) with another run's fan-out.
+
+    ``executor`` is phase 1's single spawn pool, handed to every analysis so they
+    share one set of workers sized to the host. Sharing is what makes the overlap
+    pay: an analysis in its serial stages leaves the pool idle, and the workers
+    go to whichever analysis has fits to run rather than sitting in that
+    analysis's own private slice of the machine. ``None`` (the serial fallback,
+    where a spawn pool could not be opened at all) leaves each analysis to its
+    own devices, exactly as an unaccompanied single-run analysis behaves.
 
     Each analysis logs its start through ``progress_callback`` from its own
     thread (the caller's callback is already serialised by
@@ -1680,7 +1703,7 @@ def _run_single_run_analyses(
             scope=scope,
             user_frequencies_mhz=user_frequencies_mhz,
             cancel_callback=cancel_callback,
-            max_workers=(_phase_one_analysis_workers(concurrency) if concurrency > 1 else None),
+            executor=executor,
             warm_start_by_template=warm_start,
         )
         with state_lock:
@@ -1694,13 +1717,13 @@ def _run_single_run_analyses(
             on_completed(_analyse(index))
         return warm_seeded
 
-    executor = ThreadPoolExecutor(max_workers=concurrency)
+    analysis_threads = ThreadPoolExecutor(max_workers=concurrency)
     try:
         pending = set()
         for index in range(len(datasets)):
             if cancel_callback is not None and cancel_callback():
                 raise FitCancelledError("Global fit wizard analysis cancelled.")
-            pending.add(executor.submit(_analyse, index))
+            pending.add(analysis_threads.submit(_analyse, index))
         while pending:
             if cancel_callback is not None and cancel_callback():
                 raise FitCancelledError("Global fit wizard analysis cancelled.")
@@ -1715,10 +1738,10 @@ def _run_single_run_analyses(
         # Cancel, a worker failure or a Ctrl-C: drop the queued analyses and
         # return control now. The analyses already running poll the same
         # cancel_callback and raise out of their own pools.
-        executor.shutdown(wait=False, cancel_futures=True)
+        analysis_threads.shutdown(wait=False, cancel_futures=True)
         raise
     else:
-        executor.shutdown(wait=True)
+        analysis_threads.shutdown(wait=True)
     return warm_seeded
 
 
@@ -1775,9 +1798,8 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
        low-temperature half of a series; a portfolio built from the *median*
        fingerprint cannot. A few runs are analysed at once
        (:func:`_phase_one_concurrency`, overridable with ``phase1_concurrency``),
-       each with its worker count divided down so the host still sees one
-       machine's worth of fit workers, and each warm-started from the nearest
-       already-finished run along the sweep axis
+       all submitting to phase 1's single shared pool, and each warm-started from
+       the nearest already-finished run along the sweep axis
        (:func:`_run_single_run_analyses`). An existing
        recommendation is reused when it answers the same question — same scope,
        same user-declared frequencies, encoded by
@@ -1793,8 +1815,15 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
        the series search resolution is the smallest per-run rebin factor
        (:func:`series_rebin_factor`). Every (run, template) cell the run's own
        table does not already hold *at that factor* is fitted, warm-started and
-       peak-seeded by :func:`_single_fit_completion_task`. The result is a
-       rectangular table whose information criteria are mutually comparable.
+       peak-seeded — one task per **cell** (:func:`_plan_run_completion`), not
+       one per run. The result is a rectangular table whose information criteria
+       are mutually comparable.
+
+    Both stages share **one** spawn pool, opened here at the host's core count
+    and handed down: to each per-run analysis as its ``executor``, and to the
+    completion cells. It is shut down on the way out and terminated on the way
+    out of a cancel. When it cannot open at all (no spawn-safe environment) both
+    stages run serially, as they did before.
 
     ``cancel_callback`` is polled between submissions and while draining in both
     stages: a ``wait`` with a
@@ -1861,111 +1890,137 @@ def build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
         else max(1, min(int(phase1_concurrency), max(len(missing_datasets), 1)))
     )
     _set_metric(instrumentation, "phase1_concurrency", concurrency)
-    with stage_timer(
-        instrumentation,
-        "screening.single_fit_tables",
-        items_total=len(missing_datasets),
-        stage_callback=stage_callback,
-        message=f"Analysing {len(missing_datasets)} dataset(s) with the single-run Fit Wizard.",
-    ) as advance:
+    # ONE spawn pool for the whole of phase 1: the per-run analyses and the
+    # completion cells all submit to it. Every worker re-imports the fitting
+    # package on the way up (~2.5 s), and the previous arrangement — a pool per
+    # analysis plus a second one inside its refinement, then another for the
+    # completion pass — paid that start-up four times per run for pools that sat
+    # idle through each analysis's serial stages.
+    pool = _try_open_process_pool(
+        max_workers=os.cpu_count() or 1,
+        progress_callback=progress_callback,
+        activity="Phase 1",
+    )
+    pool_terminated = False
+    try:
+        with stage_timer(
+            instrumentation,
+            "screening.single_fit_tables",
+            items_total=len(missing_datasets),
+            stage_callback=stage_callback,
+            message=f"Analysing {len(missing_datasets)} dataset(s) with the single-run Fit Wizard.",
+        ) as advance:
 
-        def _record(outcome: _SingleRunAnalysisOutcome) -> None:
-            run_number = int(outcome.dataset.run_number)
-            source_by_run[run_number] = outcome.recommendation
-            generated_run_numbers.append(run_number)
-            message = (
-                f"Single-fit analysis {outcome.dataset.run_label}: done "
-                f"({len(generated_run_numbers)}/{len(missing_datasets)})."
+            def _record(outcome: _SingleRunAnalysisOutcome) -> None:
+                run_number = int(outcome.dataset.run_number)
+                source_by_run[run_number] = outcome.recommendation
+                generated_run_numbers.append(run_number)
+                message = (
+                    f"Single-fit analysis {outcome.dataset.run_label}: done "
+                    f"({len(generated_run_numbers)}/{len(missing_datasets)})."
+                )
+                _progress_log(progress_callback, message)
+                advance(len(generated_run_numbers), message)
+
+            warm_seeded = _run_single_run_analyses(
+                missing_datasets,
+                current_model=current_model,
+                metric=metric,
+                scope=scope,
+                user_frequencies_mhz=user_frequencies_mhz,
+                cancel_callback=cancel_callback,
+                concurrency=concurrency,
+                executor=pool,
+                progress_callback=progress_callback,
+                on_completed=_record,
             )
-            _progress_log(progress_callback, message)
-            advance(len(generated_run_numbers), message)
+        _set_metric(instrumentation, "phase1_warm_seeded", warm_seeded)
 
-        warm_seeded = _run_single_run_analyses(
-            missing_datasets,
-            current_model=current_model,
-            metric=metric,
-            scope=scope,
-            user_frequencies_mhz=user_frequencies_mhz,
-            cancel_callback=cancel_callback,
-            concurrency=concurrency,
-            progress_callback=progress_callback,
-            on_completed=_record,
+        _sync_single_fit_recommendation_store(existing_recommendations_by_run, source_by_run)
+
+        bound_dropped_keys = (
+            alphabet_bound_dropped_keys(source_by_run) if apply_alphabet_bound else frozenset()
         )
-    _set_metric(instrumentation, "phase1_warm_seeded", warm_seeded)
+        ranked_alphabet = series_template_alphabet(source_by_run)
+        bounded_alphabet = tuple(
+            template for template in ranked_alphabet if template.key not in bound_dropped_keys
+        )
+        dropped_from_alphabet = tuple(
+            template.key for template in ranked_alphabet if template.key in bound_dropped_keys
+        )
+        _set_metric(instrumentation, "alphabet_bound_dropped", len(dropped_from_alphabet))
+        if dropped_from_alphabet:
+            _progress_log(
+                progress_callback,
+                f"Alphabet bound: dropping {len(dropped_from_alphabet)} candidate(s) beaten on "
+                "every run by one other template — " + ", ".join(dropped_from_alphabet) + ".",
+            )
+        alphabet = _scope_filtered_templates(
+            bounded_alphabet,
+            preview.ordered_datasets,
+            scope,
+        )
+        portfolio = replace(
+            preview,
+            templates=alphabet,
+            pattern_template_keys=_series_pattern_template_keys(alphabet, source_by_run),
+        )
+        portfolio = _apply_screening_effort_tier(
+            portfolio,
+            effort_tier,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+        )
+        rebin_factor = series_rebin_factor(preview.ordered_datasets, source_by_run)
+        _set_metric(instrumentation, "alphabet_size", len(portfolio.templates))
+        _set_metric(instrumentation, "series_rebin_factor", rebin_factor)
 
-    _sync_single_fit_recommendation_store(existing_recommendations_by_run, source_by_run)
+        if not portfolio.templates:
+            _set_metric(instrumentation, "completion_fits", 0)
+            return GlobalFitWizardScreeningTable(
+                portfolio=portfolio,
+                recommendations_by_run={},
+                single_fit_recommendations_by_run=source_by_run,
+                generated_run_numbers=tuple(generated_run_numbers),
+                series_rebin_factor=rebin_factor,
+            )
 
-    bound_dropped_keys = (
-        alphabet_bound_dropped_keys(source_by_run) if apply_alphabet_bound else frozenset()
-    )
-    ranked_alphabet = series_template_alphabet(source_by_run)
-    bounded_alphabet = tuple(
-        template for template in ranked_alphabet if template.key not in bound_dropped_keys
-    )
-    dropped_from_alphabet = tuple(
-        template.key for template in ranked_alphabet if template.key in bound_dropped_keys
-    )
-    _set_metric(instrumentation, "alphabet_bound_dropped", len(dropped_from_alphabet))
-    if dropped_from_alphabet:
         _progress_log(
             progress_callback,
-            f"Alphabet bound: dropping {len(dropped_from_alphabet)} candidate(s) beaten on "
-            "every run by one other template — " + ", ".join(dropped_from_alphabet) + ".",
+            f"Series alphabet: {len(portfolio.templates)} candidate(s) at rebin factor "
+            f"x{rebin_factor}; completing the per-run score table.",
         )
-    alphabet = _scope_filtered_templates(
-        bounded_alphabet,
-        preview.ordered_datasets,
-        scope,
-    )
-    portfolio = replace(
-        preview,
-        templates=alphabet,
-        pattern_template_keys=_series_pattern_template_keys(alphabet, source_by_run),
-    )
-    portfolio = _apply_screening_effort_tier(
-        portfolio,
-        effort_tier,
-        progress_callback=progress_callback,
-        instrumentation=instrumentation,
-    )
-    rebin_factor = series_rebin_factor(preview.ordered_datasets, source_by_run)
-    _set_metric(instrumentation, "alphabet_size", len(portfolio.templates))
-    _set_metric(instrumentation, "series_rebin_factor", rebin_factor)
-
-    if not portfolio.templates:
-        _set_metric(instrumentation, "completion_fits", 0)
+        completed_by_run, completion_fits = _complete_single_fit_table(
+            preview.ordered_datasets,
+            portfolio.templates,
+            source_by_run,
+            rebin_factor=rebin_factor,
+            metric=metric,
+            executor=pool,
+            progress_callback=progress_callback,
+            cancel_callback=cancel_callback,
+            instrumentation=instrumentation,
+            stage_callback=stage_callback,
+        )
+        _set_metric(instrumentation, "completion_fits", completion_fits)
         return GlobalFitWizardScreeningTable(
             portfolio=portfolio,
-            recommendations_by_run={},
+            recommendations_by_run=completed_by_run,
             single_fit_recommendations_by_run=source_by_run,
             generated_run_numbers=tuple(generated_run_numbers),
             series_rebin_factor=rebin_factor,
         )
-
-    _progress_log(
-        progress_callback,
-        f"Series alphabet: {len(portfolio.templates)} candidate(s) at rebin factor "
-        f"x{rebin_factor}; completing the per-run score table.",
-    )
-    completed_by_run, completion_fits = _complete_single_fit_table(
-        preview.ordered_datasets,
-        portfolio.templates,
-        source_by_run,
-        rebin_factor=rebin_factor,
-        metric=metric,
-        progress_callback=progress_callback,
-        cancel_callback=cancel_callback,
-        instrumentation=instrumentation,
-        stage_callback=stage_callback,
-    )
-    _set_metric(instrumentation, "completion_fits", completion_fits)
-    return GlobalFitWizardScreeningTable(
-        portfolio=portfolio,
-        recommendations_by_run=completed_by_run,
-        single_fit_recommendations_by_run=source_by_run,
-        generated_run_numbers=tuple(generated_run_numbers),
-        series_rebin_factor=rebin_factor,
-    )
+    except BaseException:
+        # Cancel, a worker crash, or a Ctrl-C: never wait on the fits still in
+        # flight. Drop queued work and force-kill the workers, so the caller gets
+        # control back at once and nothing is orphaned.
+        if pool is not None:
+            terminate_spawn_pool(pool)
+            pool_terminated = True
+        raise
+    finally:
+        if pool is not None and not pool_terminated:
+            _shutdown_process_pool(pool)
 
 
 def _complete_single_fit_table(
@@ -1975,6 +2030,7 @@ def _complete_single_fit_table(
     *,
     rebin_factor: int,
     metric: SelectionMetric,
+    executor: Executor | None,
     progress_callback: Callable[[str], None] | None,
     cancel_callback: Callable[[], bool] | None,
     instrumentation: dict[str, object] | None,
@@ -1982,91 +2038,94 @@ def _complete_single_fit_table(
 ) -> tuple[dict[int, FitWizardRecommendation], int]:
     """Score every run against every alphabet template at one rebin factor.
 
-    Each run is one independent task, so this fans out over the spawn pool; the
-    per-task fits are serial, so no pool nests inside another.
+    One task per **cell** — one run, one template — submitted to phase 1's pool
+    (``executor``), which this function borrows and never shuts down. Cells are
+    the unit for two reasons: a task then carries the rebinned record and one
+    template instead of the run's whole source recommendation, and a series of
+    unequal rows no longer finishes in rounds of run-sized tasks with most
+    workers idle in the last one. A run's row is assembled here, in the parent,
+    as its last cell lands — and immediately, before any fitting, for a run whose
+    own table already covers the alphabet at this factor and so has no cell to
+    fit at all. Progress is still reported once per completed run.
     """
     sibling_values = _sibling_warm_starts(templates, source_by_run, metric)
-    completed_by_run: dict[int, FitWizardRecommendation] = {}
-    completion_fits = 0
-
-    def _task_args(dataset: MuonDataset) -> tuple[object, ...]:
-        return (
+    plans = [
+        _plan_run_completion(
             dataset,
             templates,
             source_by_run[int(dataset.run_number)],
-            rebin_factor,
-            metric,
-            sibling_values,
+            rebin_factor=rebin_factor,
+            metric=metric,
+            sibling_values_by_template=sibling_values,
         )
+        for dataset in ordered_datasets
+    ]
+    completed_by_run: dict[int, FitWizardRecommendation] = {}
+    completion_fits = sum(len(plan.tasks) for plan in plans)
+    total = len(plans)
 
     with stage_timer(
         instrumentation,
         "screening.completion_fits",
-        items_total=len(ordered_datasets),
+        items_total=total,
         stage_callback=stage_callback,
         message=(
             f"Completing the per-run score table for {len(ordered_datasets)} dataset(s) "
             f"against {len(templates)} candidate(s)."
         ),
     ) as advance:
-        worker_count = _single_fit_table_worker_count(len(ordered_datasets))
-        executor = (
-            _try_open_process_pool(
-                max_workers=worker_count,
-                progress_callback=progress_callback,
-                activity="Phase-1 completion fits",
+
+        def _finish(plan: _RunCompletionPlan, fitted: dict[str, CandidateAssessment]) -> None:
+            completed_by_run[int(plan.dataset.run_number)] = _assemble_completed_run(
+                plan, fitted, templates, rebin_factor=rebin_factor, metric=metric
             )
-            if worker_count > 1
-            else None
-        )
+            message = (
+                f"Score table {plan.dataset.run_label}: done ({len(completed_by_run)}/{total})."
+            )
+            _progress_log(progress_callback, message)
+            advance(len(completed_by_run), message)
+
         if executor is None:
-            for dataset in ordered_datasets:
+            for plan in plans:
                 if cancel_callback is not None and cancel_callback():
                     raise FitCancelledError("Global fit wizard analysis cancelled.")
-                run_number, recommendation, fits = _single_fit_completion_task(*_task_args(dataset))
-                completed_by_run[run_number] = recommendation
-                completion_fits += fits
-                message = (
-                    f"Score table {dataset.run_label}: done "
-                    f"({len(completed_by_run)}/{len(ordered_datasets)})."
+                _finish(
+                    plan,
+                    {
+                        task.template.key: _execute_assessment_task(task, cancel_callback)
+                        for task in plan.tasks
+                    },
                 )
-                _progress_log(progress_callback, message)
-                advance(len(completed_by_run), message)
             return completed_by_run, completion_fits
 
-        try:
-            future_to_dataset = {
-                executor.submit(_single_fit_completion_task, *_task_args(dataset)): dataset
-                for dataset in ordered_datasets
-            }
-            pending = set(future_to_dataset)
-            total = len(pending)
-            while pending:
-                if cancel_callback is not None and cancel_callback():
-                    raise FitCancelledError("Global fit wizard analysis cancelled.")
-                done, pending = wait(
-                    pending,
-                    timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
-                    return_when=FIRST_COMPLETED,
-                )
-                for future in done:
-                    run_number, recommendation, fits = future.result()
-                    completed_by_run[run_number] = recommendation
-                    completion_fits += fits
-                    message = (
-                        f"Score table {future_to_dataset[future].run_label}: "
-                        f"done ({len(completed_by_run)}/{total})."
-                    )
-                    _progress_log(progress_callback, message)
-                    advance(len(completed_by_run), message)
-        except BaseException:
-            # Cancel, a worker crash, or a Ctrl-C: never wait on the fits still
-            # in flight. Drop queued work and force-kill the workers, so the
-            # caller gets control back at once and nothing is orphaned.
-            terminate_spawn_pool(executor)
-            raise
-        else:
-            _shutdown_process_pool(executor)
+        fitted_by_index: list[dict[str, CandidateAssessment]] = [{} for _plan in plans]
+        outstanding = [len(plan.tasks) for plan in plans]
+        for plan in plans:
+            if not plan.tasks:
+                _finish(plan, {})
+
+        future_to_cell = {
+            executor.submit(_execute_assessment_task, task): (index, task.template.key)
+            for index, plan in enumerate(plans)
+            for task in plan.tasks
+        }
+        pending = set(future_to_cell)
+        while pending:
+            if cancel_callback is not None and cancel_callback():
+                # The pool belongs to phase 1, which tears it down; raising here
+                # is what tells it to.
+                raise FitCancelledError("Global fit wizard analysis cancelled.")
+            done, pending = wait(
+                pending,
+                timeout=_PHASE_ONE_CANCEL_POLL_SECONDS,
+                return_when=FIRST_COMPLETED,
+            )
+            for future in done:
+                index, template_key = future_to_cell[future]
+                fitted_by_index[index][template_key] = future.result()
+                outstanding[index] -= 1
+                if outstanding[index] == 0:
+                    _finish(plans[index], fitted_by_index[index])
     return completed_by_run, completion_fits
 
 

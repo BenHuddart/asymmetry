@@ -452,13 +452,22 @@ performs on one spectrum. The series' candidate list is then the union of the
 templates those per-run analyses assessed, so a model that describes only part of
 a temperature series (a heavily damped pair below a transition, say) is
 considered for the whole series instead of being averaged away. A few runs are
-analysed side by side, in sweep-axis order, with the machine's cores divided
-between them: each analysis spends much of its time in stages that use one core
+analysed side by side, in sweep-axis order, sharing one pool of worker
+processes: each analysis spends much of its time in stages that use one core
 (spectral detection, the pattern search, the tier gating), so overlapping them
-fills those gaps. Each analysis is also started from the fitted values of the
-nearest run that has already finished — an extra first attempt per candidate,
-ahead of the usual seed ladder rather than in place of it, so it can only
-improve a candidate's fit.
+lets one run's fitting use the workers another run's serial stages leave idle.
+That pool is opened once for the whole of this phase and serves the scoring pass
+below as well.
+
+Each analysis is also started from the fitted values of the nearest run that has
+already finished — an extra first attempt per candidate, tried ahead of the seed
+ladder. When that warm attempt and the plain seed both converge to the same
+minimum, the rest of the ladder is skipped: a fitted answer for the same model on
+a neighbouring run agreeing with a cold start leaves the remaining seeds nothing
+to find. They are climbed as usual when neither converges or when the two land in
+different minima, and the top-ranked candidates are re-fitted from the full
+ladder afterwards either way, so the ranking the recommendation rests on is never
+the short ladder's.
 
 A candidate no partition of the series could ever select is then dropped from
 the list before any scoring: one whose bare χ² on every run already exceeds some
@@ -470,7 +479,12 @@ Every remaining run is then scored against every candidate at one common
 rebinning factor — the smallest any run's own analysis chose — so the
 information criteria of two runs, or of two candidates, may be summed and
 compared. The cells a run's own analysis already holds at that factor are kept;
-the rest are fitted, warm-started from that run's or a sibling run's values.
+the rest are fitted, warm-started from that run's or a sibling run's values. A
+cell started from **that run's own** values for the same model at another
+binning is the same data and the same model at a different sampling — the same
+minimum by construction — so it is fitted once, from those values. A cell
+started from a **sibling** run's values is a different record, so it gets the
+plain seed alongside the warm one.
 
 On a long series this legitimately runs for **many minutes** before it returns;
 each completed analysis and each completed score row is reported through
@@ -479,7 +493,8 @@ has stalled. Pass a ``cancel_callback`` if you need to be able to stop it — it
 polled several times a second throughout, including while fits are running in
 worker processes.
 
-The scoring pass fans its per-run work across a process pool, so the
+The scoring pass fans out one task per cell — one run, one candidate — across
+the same process pool, so the
 ``if __name__ == "__main__":`` rule in
 :ref:`fit-wizard-scripting-and-parallelism` applies here too: an unguarded
 script degrades to serial execution with a ``SpawnUnsafeWarning`` rather than

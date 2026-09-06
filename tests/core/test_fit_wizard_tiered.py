@@ -2869,3 +2869,262 @@ def test_peaks_above_the_analysed_record_nyquist_are_dropped() -> None:
 
     assert [peak.frequency_mhz for peak in kept.peaks] == [240.0]
     assert _peaks_within_analysis_band(analysis, dataset) is analysis
+
+
+class _LadderRecordingEngine:
+    """A ``FitEngine`` stand-in that records every attempt and scripts results.
+
+    The queued results are consumed in order and the last one repeats, so a test
+    can say what the warm attempt and the base rung came back with and let the
+    rest of the ladder — if it runs at all — return something harmless.
+    """
+
+    def __init__(self, results: list[FitResult]) -> None:
+        self._results = list(results)
+        self.attempts: list[ParameterSet] = []
+
+    def fit(self, _dataset, _model_fn, parameters, **_kwargs) -> FitResult:
+        self.attempts.append(parameters)
+        return self._results.pop(0) if len(self._results) > 1 else self._results[0]
+
+
+def _ladder_dataset() -> MuonDataset:
+    t = np.linspace(0.02, 10.0, 160)
+    return _tiered_dataset(t, 0.22 * np.exp(-0.8 * t) + 0.03, error=0.004)
+
+
+def _ladder_template() -> CandidateTemplate:
+    return CandidateTemplate(
+        key="exp_constant",
+        title="Exponential + Constant",
+        category="General",
+        rationale="warm-ladder test",
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+    )
+
+
+def _ladder_fit_result(*, success: bool, chi_squared: float) -> FitResult:
+    return FitResult(
+        success=success,
+        chi_squared=chi_squared,
+        parameters=ParameterSet(
+            [
+                Parameter("A_1", value=0.22, min=0.0, max=1.0),
+                Parameter("Lambda", value=0.8, min=0.0, max=100.0),
+                Parameter("A_bg", value=0.03, min=-1.0, max=1.0),
+            ]
+        ),
+        message="scripted",
+    )
+
+
+def _warm_values() -> ParameterSet:
+    return ParameterSet(
+        [
+            Parameter("A_1", value=0.21, min=0.0, max=1.0),
+            Parameter("Lambda", value=0.79, min=0.0, max=100.0),
+            Parameter("A_bg", value=0.031, min=-1.0, max=1.0),
+        ]
+    )
+
+
+def _assess_with_ladder(
+    results: list[FitResult],
+    *,
+    warm_start: ParameterSet | None,
+    variant_budget: int = 5,
+) -> _LadderRecordingEngine:
+    """Run one assessment against a scripted engine; return the engine."""
+    dataset = _ladder_dataset()
+    engine = _LadderRecordingEngine(results)
+    fit_wizard_module._assess_candidate_template(
+        dataset,
+        fingerprint_spectrum(dataset),
+        _ladder_template(),
+        fit_engine=engine,
+        metric=SelectionMetric.AICC,
+        seed_context=None,
+        variant_budget=variant_budget,
+        stage=2,
+        warm_start=warm_start,
+    )
+    return engine
+
+
+def test_cold_ladder_length_is_unchanged_without_a_warm_start() -> None:
+    """No warm start, no change: the whole ``variant_budget`` ladder runs."""
+    engine = _assess_with_ladder(
+        [_ladder_fit_result(success=True, chi_squared=100.0)], warm_start=None
+    )
+
+    assert len(engine.attempts) == 5
+
+
+def test_warm_and_base_agreeing_stops_the_ladder() -> None:
+    """Two converged fits of one basin agree, so the perturbed rungs buy nothing."""
+    engine = _assess_with_ladder(
+        [
+            _ladder_fit_result(success=True, chi_squared=100.0),
+            _ladder_fit_result(success=True, chi_squared=100.4),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+        ],
+        warm_start=_warm_values(),
+    )
+
+    assert len(engine.attempts) == 2
+
+
+def test_one_converged_opening_attempt_stops_the_ladder() -> None:
+    """A warm start that fails where the base seed converges is already answered.
+
+    The rule for climbing is that *neither* opening attempt converged — one of
+    them landing in a minimum is the answer the cell needed.
+    """
+    engine = _assess_with_ladder(
+        [
+            _ladder_fit_result(success=False, chi_squared=math.inf),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+        ],
+        warm_start=_warm_values(),
+    )
+
+    assert len(engine.attempts) == 2
+
+
+def test_neither_opening_attempt_converging_runs_the_rest_of_the_ladder() -> None:
+    """A wrong seed region is exactly what the perturbed rungs exist for."""
+    engine = _assess_with_ladder(
+        [
+            _ladder_fit_result(success=False, chi_squared=5000.0),
+            _ladder_fit_result(success=False, chi_squared=4000.0),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+        ],
+        warm_start=_warm_values(),
+    )
+
+    # Warm + base, then the four remaining rungs.
+    assert len(engine.attempts) == 6
+
+
+def test_opening_attempts_in_different_basins_run_the_rest_of_the_ladder() -> None:
+    """Two converged fits more than a χ² unit apart mean more than one minimum."""
+    engine = _assess_with_ladder(
+        [
+            _ladder_fit_result(success=True, chi_squared=100.0),
+            _ladder_fit_result(success=True, chi_squared=140.0),
+            _ladder_fit_result(success=True, chi_squared=100.0),
+        ],
+        warm_start=_warm_values(),
+    )
+
+    assert len(engine.attempts) == 6
+
+
+def test_zero_variant_budget_with_a_warm_start_fits_once() -> None:
+    """``variant_budget=0`` plus a warm start means no ladder at all.
+
+    That is the completion pass re-fitting a cell from the run's own values for
+    the same template at another rebin factor — the same basin by construction.
+    """
+    engine = _assess_with_ladder(
+        [_ladder_fit_result(success=True, chi_squared=100.0)],
+        warm_start=_warm_values(),
+        variant_budget=0,
+    )
+
+    assert len(engine.attempts) == 1
+    warm = engine.attempts[0]
+    assert warm["Lambda"].value == pytest.approx(0.79)
+
+
+def _cheap_single_family(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One tiny family, so a whole build is a handful of fast fits."""
+    template = _ladder_template()
+    family = WizardFamily(
+        key="general",
+        title="General",
+        priority=1.0,
+        stage1_rep=template,
+        stage2_members=(template,),
+    )
+    monkeypatch.setattr(
+        fit_wizard_module,
+        "build_wizard_families",
+        lambda fingerprint, current_model=None, scope_resolution=None: (family,),
+    )
+
+
+def test_a_caller_supplied_executor_replaces_the_builds_own_pool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Given a pool, the build opens none of its own and submits to that one.
+
+    This is how a series analysis gives one pool to many builds: the per-worker
+    import of the fitting package is paid once for the series rather than twice
+    per run, and one run's fan-out can use workers another run's serial stage
+    leaves idle.
+    """
+    _cheap_single_family(monkeypatch)
+    _monkeypatch_dummy_worker(monkeypatch)
+    pool = _FakeProcessPool()
+    opened: list[int] = []
+
+    def _must_not_open(workers: int):
+        opened.append(workers)
+        raise AssertionError("the build opened a pool despite being given an executor")
+
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", _must_not_open)
+
+    build_fit_wizard_recommendation(_ladder_dataset(), max_workers=4, executor=pool)
+
+    assert opened == []
+    # Submitted to the caller's pool, and left for the caller to shut down.
+    assert pool.shutdown_calls == []
+
+
+def test_refinement_reuses_the_builds_pool_instead_of_opening_another(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One pool per build, refinement included.
+
+    Refinement used to open a second spawn pool of its own inside every
+    analysis — a whole extra round of worker start-ups per run, each re-importing
+    the fitting package, plus a pool-start latency in front of the pass.
+    """
+    _cheap_single_family(monkeypatch)
+    _monkeypatch_dummy_worker(monkeypatch)
+    pool = _FakeProcessPool()
+    opened: list[int] = []
+    fanned_out: list[object] = []
+    original = fit_wizard_module._run_template_assessments
+
+    def _fake_open(workers: int) -> _FakeProcessPool:
+        opened.append(workers)
+        return pool
+
+    def _record(tasks, **kwargs):
+        fanned_out.append(kwargs.get("executor"))
+        return original(tasks, **kwargs)
+
+    monkeypatch.setattr(fit_wizard_module, "open_spawn_pool", _fake_open)
+    monkeypatch.setattr(fit_wizard_module, "_run_template_assessments", _record)
+
+    build_fit_wizard_recommendation(_ladder_dataset(), max_workers=4, refine_top_candidates=3)
+
+    # Stage 1, Stage 2, the null baselines and refinement — one pool, opened once.
+    assert opened == [4]
+    assert len(fanned_out) == 4
+    assert set(fanned_out) == {pool}
+
+    opened.clear()
+    fanned_out.clear()
+    caller_pool = _FakeProcessPool()
+    build_fit_wizard_recommendation(
+        _ladder_dataset(), max_workers=4, refine_top_candidates=3, executor=caller_pool
+    )
+
+    assert opened == []
+    assert len(fanned_out) == 4
+    assert set(fanned_out) == {caller_pool}
+    assert caller_pool.shutdown_calls == []

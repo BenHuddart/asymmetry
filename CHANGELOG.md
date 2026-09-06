@@ -121,7 +121,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fitted answer (its own run's at another binning, or the best sibling run's),
   so it is one attempt, not a ladder. Measured on a synthetic twelve-run series of 8 000-point
   records with three families present, phase 1 went from ~115–139 s to ~73–82 s
-  on an eight-core laptop. `instrumentation` records `alphabet_size`,
+  on an eight-core laptop. Phase 1 now also opens **one** worker pool for the
+  whole of it — the per-run analyses (refinement included, which used to open a
+  second pool inside every analysis) and the completion fits all share it, so
+  the per-worker import of the fitting package is paid once for the series
+  rather than four times per run, and a run's fan-out can use workers another
+  run's serial stages leave idle. A candidate fitted from a neighbour run's
+  values now runs that warm start and the plain seed first and climbs the rest
+  of the seed ladder only when the two fail to converge or land in different
+  minima; a ladder capped at warm plus base reproduced the recommendation at
+  roughly a third to a half of the build time, and the top candidates are
+  re-fitted from the full ladder regardless. Completion is one task per **cell**
+  rather than per run, and a cell re-fitted from the run's *own* values for the
+  same model at another binning — the same minimum by construction — is fitted
+  once, with no ladder at all. `instrumentation` records `alphabet_size`,
   `series_rebin_factor`, `completion_fits`, `phase1_concurrency`,
   `phase1_warm_seeded` and `alphabet_bound_dropped`. The effort tier now
   narrows that alphabet rather than a
