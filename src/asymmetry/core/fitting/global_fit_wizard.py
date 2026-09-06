@@ -146,9 +146,10 @@ _WAVEFRONT_TIME_BUDGET_SECONDS: float | None = 180.0
 #: elimination step is a 30–60 s profiled fit, so that backstop tripped on the
 #: first phase and — because abandoned tasks keep running in the shared pool —
 #: starved every later phase's anchor tasks into timing out with nothing done.
-#: Fifteen minutes per phase is a backstop again: a healthy phase finishes in
-#: a few minutes and the GUI's own cancel remains the way to stop early.
-_PHASE_SEARCH_TIME_BUDGET_SECONDS: float | None = 900.0
+#: Thirty minutes per phase is a backstop again — a 12-run phase of two raced
+#: nine-parameter templates measured ~40 s per coupled fit and up to 18 fits
+#: per template — and the GUI's own cancel remains the way to stop early.
+_PHASE_SEARCH_TIME_BUDGET_SECONDS: float | None = 1800.0
 #: Interval (seconds) at which the pooled wavefront loop wakes to re-check the
 #: cancel callback and the wall-clock deadline while futures are in flight.
 _WAVEFRONT_POLL_INTERVAL_SECONDS = 0.25
@@ -9425,7 +9426,13 @@ def _drain_separable_tasks(
     finally:
         # A borrowed pool outlives this call and is its owner's to close.
         if executor is not None and executor is not shared_executor:
-            _shutdown_process_pool(executor, wait=not truncated, cancel_futures=truncated)
+            if truncated:
+                # A tripped budget must actually stop the work: shutting the pool
+                # down without waiting leaves the in-flight fits running on the
+                # workers, which then starve whatever the caller runs next.
+                terminate_spawn_pool(executor)
+            else:
+                _shutdown_process_pool(executor)
 
     if truncated:
         _progress_log(
@@ -9979,15 +9986,10 @@ def _optimise_partition_phases(
 
     searched_by_window: dict[tuple[int, int], tuple[GlobalCandidateAssessment, ...]] = {}
     worker_count = _template_worker_count(len(templates))
-    executor = (
-        _try_open_process_pool(
-            max_workers=worker_count,
-            progress_callback=progress_callback,
-            activity="Per-phase separable role search",
-        )
-        if worker_count > 1 and len(templates) > 1
-        else None
-    )
+    # Each phase's search opens and closes its own pool: a phase that trips its
+    # budget then terminates its own workers, instead of leaving them running
+    # on a shared pool where the next phase's tasks would queue behind them
+    # and time out having done nothing.
     try:
         for start, stop in targets:
             if cancel_callback is not None and cancel_callback():
@@ -10031,17 +10033,11 @@ def _optimise_partition_phases(
                 cancel_callback=cancel_callback,
                 search_rebin_factor=search_rebin_factor,
                 prescreen_rebin_factor=search_rebin_factor,
-                shared_executor=executor,
                 full_resolution_refit=False,
                 time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
             )
-    except BaseException:
-        if executor is not None:
-            terminate_spawn_pool(executor)
+    except FitCancelledError:
         raise
-    else:
-        if executor is not None:
-            _shutdown_process_pool(executor)
 
     # Every phase is fitted at the series search resolution (no full-resolution
     # refit on this path), so the exact rows are scored on the same points the

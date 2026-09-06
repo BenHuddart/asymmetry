@@ -565,3 +565,9 @@ the feature branch. Phase F runs the full validation once.
   from a phase seeds the Batch tab's own global fit on the native record. The
   series-wide (non-partitioned) search keeps its full-resolution refit, now
   warm-started from the winner.
+- 2026-09-07 (integration, private gate): **each phase's search owns its pool
+  and a tripped budget terminates it.** A shared pool let a tripped phase's
+  abandoned fits keep running, so every later phase's anchor tasks queued
+  behind them and timed out with nothing done. The per-phase budget is 30
+  minutes (a 12-run phase measured ~40 s per coupled fit, up to 18 fits per
+  raced template); the series-wide 180 s backstop is unchanged.
