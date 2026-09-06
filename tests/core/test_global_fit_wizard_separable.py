@@ -17,6 +17,7 @@ wavefront in three ways this file pins:
 from __future__ import annotations
 
 import multiprocessing
+import time
 from dataclasses import replace
 
 import numpy as np
@@ -30,13 +31,16 @@ from asymmetry.core.fitting.engine import FitCancelledError
 from asymmetry.core.fitting.fit_wizard import CandidateTemplate, SelectionMetric
 from asymmetry.core.fitting.global_fit_wizard import (
     _assessment_chi2,
+    _fit_separable_flip_neighbourhoods,
     _fixed_param_names,
     _initial_parameter_sets_for_candidate,
     _local_names_for,
     _run_separable_anchor_task,
     _separable_backward_elimination,
     _separable_coupled_strategy,
+    _separable_flip_targets,
     _SeparableAnchorTask,
+    _SeparableTemplateResult,
     build_global_fit_wizard_recommendation,
 )
 from asymmetry.core.fitting.parameters import ParameterSet
@@ -45,6 +49,7 @@ from asymmetry.core.fitting.parameters import ParameterSet
 pytestmark = [pytest.mark.integration]
 
 _TEMPLATE_KEY = "exp_constant"
+_BIEXP_TEMPLATE_KEY = "biexp_constant"
 
 
 def _dataset(
@@ -70,13 +75,17 @@ def _dataset(
     )
 
 
-def _restrict_to_exp_constant(
+def _restrict_to_single_template(
     monkeypatch: pytest.MonkeyPatch,
     model: CompositeModel,
+    *,
+    key: str,
+    title: str,
 ) -> CandidateTemplate:
+    """Shortlist exactly one template, so a test drives a known parameter set."""
     template = CandidateTemplate(
-        key=_TEMPLATE_KEY,
-        title="Exponential + Constant",
+        key=key,
+        title=title,
         category="General",
         rationale="test",
         model=model,
@@ -87,6 +96,30 @@ def _restrict_to_exp_constant(
         lambda fingerprint, current_model=None: (template,),
     )
     return template
+
+
+def _restrict_to_exp_constant(
+    monkeypatch: pytest.MonkeyPatch,
+    model: CompositeModel,
+) -> CandidateTemplate:
+    return _restrict_to_single_template(
+        monkeypatch,
+        model,
+        key=_TEMPLATE_KEY,
+        title="Exponential + Constant",
+    )
+
+
+def _restrict_to_biexp_constant(
+    monkeypatch: pytest.MonkeyPatch,
+    model: CompositeModel,
+) -> CandidateTemplate:
+    return _restrict_to_single_template(
+        monkeypatch,
+        model,
+        key=_BIEXP_TEMPLATE_KEY,
+        title="Exponential + Exponential + Constant",
+    )
 
 
 def _all_global_series(model: CompositeModel, *, n_points: int = 120) -> list[MuonDataset]:
@@ -111,6 +144,32 @@ def _local_lambda_series(model: CompositeModel, *, n_points: int = 120) -> list[
             850 + index,
             model=model,
             params={"A_1": 0.2, "Lambda": lambdas[index - 1], "A_bg": 0.01},
+            temperature=5.0 * index,
+            n_points=n_points,
+        )
+        for index in range(1, 5)
+    ]
+
+
+def _biexp_series(model: CompositeModel, *, n_points: int = 160) -> list[MuonDataset]:
+    """Planted truth: five free parameters, of which only the fast rate scans.
+
+    A wider template than the exponential pair, so the winner has a
+    flip-neighbourhood of several nodes rather than one — which is what makes
+    the flip stage worth distributing, and what a truncation test needs.
+    """
+    lambdas = (0.6, 1.1, 1.9, 3.0)
+    return [
+        _dataset(
+            870 + index,
+            model=model,
+            params={
+                "A_1": 0.12,
+                "Lambda_1": 0.12,
+                "A_2": 0.10,
+                "Lambda_2": lambdas[index - 1],
+                "A_bg": 0.01,
+            },
             temperature=5.0 * index,
             n_points=n_points,
         )
@@ -289,6 +348,177 @@ def test_winner_flip_neighbourhood_is_fitted_and_justifies_every_role(
         recommendation_.name for recommendation_ in winner.parameter_recommendations
     }
     assert recommended_names == set(free_names)
+
+
+def _capture_search_caches(
+    patcher: pytest.MonkeyPatch,
+    datasets: list[MuonDataset],
+) -> tuple[dict[tuple[str, tuple[str, ...], tuple[str, ...]], float], list[int]]:
+    """Run one search, returning every template's exact cache and the flip counts.
+
+    The cache is flattened to ``(template, globals, locals) -> score`` because
+    that is precisely what the verdict layer reads: the flip neighbourhood is
+    only useful if the *same* nodes carry the *same* numbers however the fits
+    were distributed.
+    """
+
+    captured: dict[tuple[str, tuple[str, ...], tuple[str, ...]], float] = {}
+    flip_task_counts: list[int] = []
+    real_finalise = global_fit_wizard_module._finalise_heuristic_assessments
+    real_drain = global_fit_wizard_module._drain_separable_tasks
+
+    def _recording_drain(tasks, runner, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        if kwargs["activity"] == "Separable role search (flip neighbourhood)":
+            flip_task_counts.append(len(tasks))
+        return real_drain(tasks, runner, **kwargs)
+
+    def _recording_finalise(fit_datasets, states, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        for state in states:
+            for key, assessment in state.exact_cache.items():
+                captured[(state.template.key, *key)] = float(assessment.selected_score)
+        return real_finalise(fit_datasets, states, **kwargs)
+
+    patcher.setattr(global_fit_wizard_module, "_drain_separable_tasks", _recording_drain)
+    patcher.setattr(
+        global_fit_wizard_module, "_finalise_heuristic_assessments", _recording_finalise
+    )
+    build_global_fit_wizard_recommendation(datasets)
+    return captured, flip_task_counts
+
+
+def test_pooled_and_in_process_flip_neighbourhoods_produce_the_same_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fanning the flips across the pool changes where they run, nothing else.
+
+    The serial run is forced to a single worker, so its flips are fitted in this
+    process one after another; the other run submits the same flips to the spawn
+    pool. Both must leave the identical set of nodes, carrying the identical
+    scores, in every template's exact cache.
+    """
+    model = CompositeModel(["Exponential", "Exponential", "Constant"], operators=["+", "+"])
+    _restrict_to_biexp_constant(monkeypatch, model)
+    datasets = _biexp_series(model)
+
+    with pytest.MonkeyPatch.context() as pooled:
+        pooled_cache, pooled_flips = _capture_search_caches(pooled, datasets)
+    with pytest.MonkeyPatch.context() as serial:
+        serial.setattr(global_fit_wizard_module, "_template_worker_count", lambda count: 1)
+        serial_cache, serial_flips = _capture_search_caches(serial, datasets)
+
+    # Both runs reached the flip stage, with the same work to do there.
+    assert pooled_flips == serial_flips
+    assert sum(pooled_flips) >= 2
+    assert set(pooled_cache) == set(serial_cache)
+    for key, score in pooled_cache.items():
+        assert serial_cache[key] == pytest.approx(score, rel=1e-6, abs=1e-9)
+
+
+def test_every_flip_is_counted_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One flip is one task, one counter tick, and one node.
+
+    The search runs at full resolution here, so nothing else in the run fills a
+    flip neighbourhood; both counters must therefore land on the number of flip
+    tasks that were actually submitted.
+    """
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    _restrict_to_exp_constant(monkeypatch, model)
+    datasets = _local_lambda_series(model)
+
+    # One worker keeps the flip runner in this process, where it can be counted;
+    # the pooled path reports through the same merged instrumentation.
+    monkeypatch.setattr(global_fit_wizard_module, "_template_worker_count", lambda count: 1)
+    real_runner = global_fit_wizard_module._run_separable_flip_task
+    submitted: list[tuple[str, tuple[str, ...]]] = []
+
+    def _recording_runner(task):  # noqa: ANN001, ANN202
+        submitted.append((task.template_key, task.local_names))
+        return real_runner(task)
+
+    monkeypatch.setattr(global_fit_wizard_module, "_run_separable_flip_task", _recording_runner)
+
+    instrumentation: dict[str, object] = {}
+    build_global_fit_wizard_recommendation(datasets, instrumentation=instrumentation)
+
+    counters = _counters(instrumentation)
+    assert submitted
+    assert len(set(submitted)) == len(submitted), "a flip must be submitted once, not once per pass"
+    assert counters["separable_flip_fits"] == len(submitted)
+    assert counters["flip_neighbourhood_fits"] == len(submitted)
+
+
+def test_a_budget_that_trips_mid_flip_stage_keeps_the_completed_flips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wall budget truncates the flip stage; it never discards its work.
+
+    Each flip is its own task, so an expiring budget costs the flips that had
+    not started — the ones already fitted stay in the cache and still justify
+    their parameter's role.
+    """
+    model = CompositeModel(["Exponential", "Exponential", "Constant"], operators=["+", "+"])
+    template = _restrict_to_biexp_constant(monkeypatch, model)
+    datasets = _biexp_series(model)
+
+    anchor_result = _run_separable_anchor_task(_anchor_task(datasets, template))
+    state = anchor_result.state
+    instrumentation: dict[str, object] = {"counters": {}}
+    _separable_backward_elimination(
+        datasets,
+        state,
+        anchor_result.estimates,
+        axis_key="temperature",
+        metric=SelectionMetric.AICC,
+        search_strategy="staged_v2",
+        instrumentation=instrumentation,
+    )
+    pending = _separable_flip_targets(state, state.best_assessment)
+    assert len(pending) >= 2, "the budget can only truncate a stage with more than one flip in it"
+    before = set(state.exact_cache)
+
+    deadline = time.monotonic() + 0.5
+    real_runner = global_fit_wizard_module._run_separable_flip_task
+
+    def _runner_that_outlasts_the_budget(task):  # noqa: ANN001, ANN202
+        result = real_runner(task)
+        time.sleep(0.6)
+        return result
+
+    monkeypatch.setattr(global_fit_wizard_module, "_template_worker_count", lambda count: 1)
+    monkeypatch.setattr(
+        global_fit_wizard_module,
+        "_run_separable_flip_task",
+        _runner_that_outlasts_the_budget,
+    )
+
+    _fit_separable_flip_neighbourhoods(
+        [
+            _SeparableTemplateResult(
+                template_key=template.key,
+                state=state,
+                estimates=anchor_result.estimates,
+                instrumentation={"counters": {}},
+            )
+        ],
+        datasets,
+        axis_key="temperature",
+        metric=SelectionMetric.AICC,
+        search_strategy="staged_v2",
+        progress_callback=None,
+        instrumentation=instrumentation,
+        cancel_callback=None,
+        deadline=deadline,
+    )
+
+    added = set(state.exact_cache) - before
+    assert len(added) == 1, "the flip that completed before the budget expired is kept"
+    assert len(added) < len(pending)
+    assert _counters(instrumentation)["separable_budget_truncations"] >= 1
+    # The template is still usable: its best node is a real converged fit.
+    assert state.best_assessment is not None
+    assert state.best_assessment.is_successful
 
 
 # --------------------------------------------------------------------------- #

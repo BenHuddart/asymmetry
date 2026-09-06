@@ -17,6 +17,7 @@ from concurrent.futures import (
 )
 from dataclasses import dataclass, field, replace
 from itertools import combinations
+from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -9076,7 +9077,14 @@ class _SeparableTemplateResult:
 
 @dataclass(frozen=True)
 class _SeparableEliminationTask:
-    """Run one template's backward elimination and winner flip-neighbourhood."""
+    """Run one template's backward elimination.
+
+    The walk is a chain — each step warm-starts from the step before — so it is
+    irreducibly serial and one template is one task. The winner's flip
+    neighbourhood is *not* part of it: those fits are independent of each other
+    and go back to the pool as tasks of their own (see
+    :func:`_fit_separable_flip_neighbourhoods`).
+    """
 
     template_key: str
     state: _HeuristicTemplateState
@@ -9085,6 +9093,38 @@ class _SeparableEliminationTask:
     axis_key: str
     metric: SelectionMetric
     search_strategy: str
+
+
+@dataclass(frozen=True)
+class _SeparableFlipTask:
+    """Fit one single-role flip of one template's winner."""
+
+    template_key: str
+    state: _HeuristicTemplateState
+    estimates: tuple[RunEstimate, ...]
+    datasets: list[MuonDataset]
+    #: The node every flip of this template warm-starts from.
+    winner: GlobalCandidateAssessment
+    #: The flipped assignment's local names; the globals follow from them.
+    local_names: tuple[str, ...]
+    axis_key: str
+    metric: SelectionMetric
+    search_strategy: str
+
+
+@dataclass(frozen=True)
+class _SeparableFlipResult:
+    template_key: str
+    local_names: tuple[str, ...]
+    assessment: GlobalCandidateAssessment
+    instrumentation: dict[str, object]
+
+
+#: What :func:`_drain_separable_tasks` hands back — one result per task, whatever
+#: kind of task the caller submitted.
+_SeparableTaskResultT = TypeVar(
+    "_SeparableTaskResultT", _SeparableTemplateResult, _SeparableFlipResult
+)
 
 
 def _fresh_task_instrumentation() -> dict[str, object]:
@@ -9694,26 +9734,22 @@ def _separable_backward_elimination(
         shared = candidate_shared
 
 
-def _fill_separable_flip_neighbourhood(
-    datasets: list[MuonDataset],
+def _separable_flip_targets(
     state: _HeuristicTemplateState,
     winner: GlobalCandidateAssessment,
-    estimates: tuple[RunEstimate, ...],
-    *,
-    axis_key: str,
-    metric: SelectionMetric,
-    search_strategy: str,
-    instrumentation: dict[str, object],
-) -> None:
-    """Fit every single-role flip of ``winner`` the walk did not already visit.
+) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
+    """Every single-role flip of ``winner`` this template has not fitted yet.
 
     ``_build_parameter_recommendations_from_exact_cache`` justifies each
     parameter's role by comparing the winner against exactly these neighbours, so
     without them the verdict layer is starved. Elimination visits only the
     accepted chain plus its one rejected step, so most flips land here.
+
+    Yields ``(local_names, global_names)`` pairs, in free-parameter order.
     """
 
     winner_local = set(winner.local_param_names)
+    targets: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
     for name in state.free_param_names:
         if name in winner_local:
             flipped = _local_names_for(state.free_param_names, winner_local - {name})
@@ -9722,19 +9758,82 @@ def _fill_separable_flip_neighbourhood(
         global_names = _global_names_for(state.free_param_names, flipped)
         if (global_names, flipped) in state.exact_cache:
             continue
-        _record_counter(instrumentation, "flip_neighbourhood_fits")
-        _record_counter(instrumentation, "separable_flip_fits")
-        _fit_separable_assignment(
-            datasets,
-            state,
-            flipped,
-            estimates=estimates,
-            warm_start_source=winner,
-            axis_key=axis_key,
-            metric=metric,
-            search_strategy=search_strategy,
-            instrumentation=instrumentation,
-        )
+        targets.append((flipped, global_names))
+    return targets
+
+
+def _separable_flip_worker_state(state: _HeuristicTemplateState) -> _HeuristicTemplateState:
+    """The slice of a template's state one flip fit needs, and nothing more.
+
+    A flip reads the template, its prefit base and its free-parameter names, and
+    writes exactly one node. The walk's ``exact_cache`` holds a per-run residual
+    array and a per-run curve set for every node it visited — tens of megabytes
+    that would otherwise be pickled once per flip task, to serve a lookup that
+    cannot hit: the parent only submits flips the cache does not already hold.
+    """
+
+    return replace(
+        state,
+        exact_cache={},
+        converged_assessments={},
+        anchor_assessment=None,
+        best_assessment=None,
+    )
+
+
+def _run_separable_flip_task(task: _SeparableFlipTask) -> _SeparableFlipResult:
+    """One flip of one template's winner: a single warm-started coupled fit."""
+
+    instrumentation = _fresh_task_instrumentation()
+    _record_counter(instrumentation, "flip_neighbourhood_fits")
+    _record_counter(instrumentation, "separable_flip_fits")
+    assessment = _fit_separable_assignment(
+        task.datasets,
+        task.state,
+        task.local_names,
+        estimates=task.estimates,
+        warm_start_source=task.winner,
+        axis_key=task.axis_key,
+        metric=task.metric,
+        search_strategy=task.search_strategy,
+        instrumentation=instrumentation,
+    )
+    return _SeparableFlipResult(
+        template_key=task.template_key,
+        local_names=task.local_names,
+        assessment=assessment,
+        instrumentation=instrumentation,
+    )
+
+
+def _record_separable_flip(
+    state: _HeuristicTemplateState,
+    result: _SeparableFlipResult,
+    *,
+    metric: SelectionMetric,
+) -> None:
+    """Book a pool-fitted flip onto its template exactly as the worker booked it.
+
+    The worker mutated a *copy* of the state, so the bookkeeping at the tail of
+    :func:`_fit_separable_assignment` — the node under its
+    ``(global_names, local_names)`` key, the converged mirror of it, and the
+    best-so-far — has to happen again here on the parent's own state. Without it
+    ``_build_parameter_recommendations_from_exact_cache`` would read a cache
+    missing the very neighbours these fits were spent on.
+    """
+
+    global_names = _global_names_for(state.free_param_names, result.local_names)
+    key = (global_names, result.local_names)
+    assessment = result.assessment
+    state.exact_cache[key] = assessment
+    if assessment.is_successful:
+        state.converged_assessments[key] = assessment
+        # Every template reaching the flip stage converged its all-local anchor,
+        # which is what set ``best_assessment``, so there is always a node here.
+        if _assessment_sort_key(assessment, metric) < _assessment_sort_key(
+            state.best_assessment, metric
+        ):
+            state.best_assessment = assessment
 
 
 def _run_separable_elimination_task(
@@ -9751,22 +9850,6 @@ def _run_separable_elimination_task(
         search_strategy=task.search_strategy,
         instrumentation=instrumentation,
     )
-    # The flips are centred on the template's best converged node, not on the
-    # elimination's last incumbent: the walk stops at the first rejection, and a
-    # node it rejected (or an adopted screening fit) may still be the best one in
-    # the cache. A template only reaches elimination once its all-local anchor
-    # converged, and that anchor is what sets ``best_assessment`` in the first
-    # place, so there is always a node here.
-    _fill_separable_flip_neighbourhood(
-        task.datasets,
-        state,
-        state.best_assessment,
-        task.estimates,
-        axis_key=task.axis_key,
-        metric=task.metric,
-        search_strategy=task.search_strategy,
-        instrumentation=instrumentation,
-    )
     return _SeparableTemplateResult(
         template_key=task.template_key,
         state=state,
@@ -9776,8 +9859,10 @@ def _run_separable_elimination_task(
 
 
 def _drain_separable_tasks(
-    tasks: Sequence[_SeparableAnchorTask] | Sequence[_SeparableEliminationTask],
-    runner: Callable[..., _SeparableTemplateResult],
+    tasks: Sequence[_SeparableAnchorTask]
+    | Sequence[_SeparableEliminationTask]
+    | Sequence[_SeparableFlipTask],
+    runner: Callable[..., _SeparableTaskResultT],
     *,
     activity: str,
     progress_callback: Callable[[str], None] | None,
@@ -9785,8 +9870,9 @@ def _drain_separable_tasks(
     cancel_callback: Callable[[], bool] | None,
     deadline: float | None,
     shared_executor: ProcessPoolExecutor | None = None,
-) -> list[_SeparableTemplateResult]:
-    """Run per-template tasks on the spawn pool, polling cancel and the deadline.
+    unit: str = "template",
+) -> list[_SeparableTaskResultT]:
+    """Run independent search tasks on the spawn pool, polling cancel and the deadline.
 
     The wall budget is a backstop: a healthy search finishes on its merits long
     before it. On expiry the pool is torn down *without* waiting, so the wall we
@@ -9808,7 +9894,7 @@ def _drain_separable_tasks(
     def _budget_exceeded() -> bool:
         return deadline is not None and time.monotonic() >= deadline
 
-    results: list[_SeparableTemplateResult] = []
+    results: list[_SeparableTaskResultT] = []
     executor = shared_executor
     if executor is None:
         worker_count = _template_worker_count(len(tasks))
@@ -9857,12 +9943,88 @@ def _drain_separable_tasks(
         _progress_log(
             progress_callback,
             f"{activity} hit its wall-clock budget; keeping "
-            f"{len(results)}/{len(tasks)} completed template(s).",
+            f"{len(results)}/{len(tasks)} completed {unit}(s).",
         )
         _record_counter(instrumentation, "separable_budget_truncations")
     for result in results:
         _merge_instrumentation(instrumentation, result.instrumentation)
     return results
+
+
+def _fit_separable_flip_neighbourhoods(
+    elimination_results: Sequence[_SeparableTemplateResult],
+    datasets: list[MuonDataset],
+    *,
+    axis_key: str,
+    metric: SelectionMetric,
+    search_strategy: str,
+    progress_callback: Callable[[str], None] | None,
+    instrumentation: dict[str, object] | None,
+    cancel_callback: Callable[[], bool] | None,
+    deadline: float | None,
+    shared_executor: ProcessPoolExecutor | None = None,
+) -> None:
+    """Fit every raced template's winner flip-neighbourhood across the pool.
+
+    Backward elimination is a chain and holds one worker per template, so with a
+    handful of templates raced the pool sits mostly idle through the stage that
+    costs the most — and on a wide template the flips are the larger half of a
+    phase's coupled fits. They are also the half that parallelises perfectly:
+    every flip warm-starts from the same winner and none of them reads another's
+    result, so each is a task of its own and the pool runs them all at once.
+
+    The flips are centred on the template's best converged node, not on the
+    elimination's last incumbent: the walk stops at the first rejection, and a
+    node it rejected (or an adopted screening fit) may still be the best one in
+    the cache. A template only reaches elimination once its all-local anchor
+    converged, and that anchor is what sets ``best_assessment`` in the first
+    place, so there is always a node here.
+
+    Tasks are ordered template-major, so a tripped budget costs the later
+    templates their flips rather than leaving every template half-justified.
+    """
+
+    state_by_key = {result.template_key: result.state for result in elimination_results}
+    tasks: list[_SeparableFlipTask] = []
+    for result in elimination_results:
+        state = result.state
+        winner = state.best_assessment
+        worker_state = _separable_flip_worker_state(state)
+        for local_names, _global_names in _separable_flip_targets(state, winner):
+            tasks.append(
+                _SeparableFlipTask(
+                    template_key=result.template_key,
+                    state=worker_state,
+                    estimates=result.estimates,
+                    datasets=datasets,
+                    winner=winner,
+                    local_names=local_names,
+                    axis_key=axis_key,
+                    metric=metric,
+                    search_strategy=search_strategy,
+                )
+            )
+    if not tasks:
+        return
+
+    template_count = len({task.template_key for task in tasks})
+    _progress_log(
+        progress_callback,
+        f"Separable role search: {len(tasks)} flip(s) across {template_count} template(s).",
+    )
+    flip_results = _drain_separable_tasks(
+        tasks,
+        _run_separable_flip_task,
+        activity="Separable role search (flip neighbourhood)",
+        progress_callback=progress_callback,
+        instrumentation=instrumentation,
+        cancel_callback=cancel_callback,
+        deadline=deadline,
+        shared_executor=shared_executor,
+        unit="flip",
+    )
+    for flip in flip_results:
+        _record_separable_flip(state_by_key[flip.template_key], flip, metric=metric)
 
 
 def _separable_prescreen_results_for_template(
@@ -10155,6 +10317,18 @@ def _run_separable_search(
         )
         searched_by_key = {result.template_key: result.state for result in elimination_results}
         states = [searched_by_key.get(state.template.key, state) for state in states]
+        _fit_separable_flip_neighbourhoods(
+            elimination_results,
+            search_datasets,
+            axis_key=axis_key,
+            metric=metric,
+            search_strategy=search_strategy,
+            progress_callback=progress_callback,
+            instrumentation=instrumentation,
+            cancel_callback=cancel_callback,
+            deadline=deadline,
+            shared_executor=shared_executor,
+        )
 
     if search_rebin_factor > 1 and full_resolution_refit:
         states = _refit_states_at_full_resolution(

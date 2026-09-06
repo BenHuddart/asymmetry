@@ -163,6 +163,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen baseline on the harness's case set). The exhaustive wavefront is
   retained behind `search_engine="exhaustive"` as that baseline's referee;
   `tools/global_wizard_harness.py` gains `--engine {separable,exhaustive}`.
+  Once a template's elimination walk stops, the flips that justify each
+  parameter's role — on a wide template the larger half of the search's coupled
+  fits — are no longer fitted one after another inside that template's task.
+  Each flip warm-starts from the same winner and reads none of the others, so
+  every one of them is now submitted to the worker pool as a task of its own
+  and the whole neighbourhood is fitted at once instead of a template at a
+  time: with only a handful of templates racing, the pool was otherwise left
+  mostly idle through the most expensive stage of the search. The nodes and
+  numbers are unchanged (100% agreement with the frozen baseline, on the same
+  fit and function-evaluation counts).
   Each of those coupled fits is now solved by a sparse-Jacobian least-squares
   minimiser — `scipy.optimize.least_squares` in bounded trust-region-reflective
   mode, reachable directly as `FitEngine.global_fit(strategy="least_squares")`
