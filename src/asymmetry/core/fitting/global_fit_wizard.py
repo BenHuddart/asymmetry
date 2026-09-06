@@ -2808,7 +2808,10 @@ def _build_global_fit_wizard_recommendation_staged(
             metric=metric,
             fit_engine=FitEngine(),
             progress_callback=progress_callback,
-            repair_partial_incomplete=not normalized_selected_template_keys,
+            # A supplied completed table (``portfolio`` given) already retried
+            # every failed cell from a sibling in phase 1; the serial repair pass
+            # is only for a bare per-run table handed in without one.
+            repair_partial_incomplete=portfolio is None and not normalized_selected_template_keys,
         )
     else:
         template_workers = _template_worker_count(len(prescreen_templates))
