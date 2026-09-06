@@ -754,3 +754,15 @@ the feature branch. Phase F runs the full validation once.
   search. The same applies to the phase-1 completion cells (1.1 MB each,
   ~30 MB per run recommendation): only a run's recommended and comparable
   cells keep curves.
+- 2026-09-06 (Phase C6, memory): **workers receive fit records, not raw
+  histograms.** With the search nodes slimmed, the gate's parent still sat at
+  a 6 GB footprint and the four flip workers at ~550 MB each on a host whose
+  swap was 8.4 GB of 9.2 GB used. The reason is the dataset itself: a record's
+  `Run` carries every detector's raw counts (fifteen histograms of ~9×10⁴
+  bins, ~11 MB), and `rebin`/`time_range` share that `Run`, so a
+  value-rebinned record whose fitted arrays are ~0.4 MB pickles to 11.5 MB.
+  Every task sent to a worker carried one or twelve of those — the 608
+  phase-1 completion cells alone were ~7 GB of pickling, a flip task ~140 MB
+  — and no worker reads histograms (only the simulator and the GUI do). A fit
+  record is a copy whose `Run` keeps its scalars and metadata and drops the
+  histograms; every task payload is built from fit records at construction.
