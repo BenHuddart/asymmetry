@@ -555,3 +555,13 @@ the feature branch. Phase F runs the full validation once.
   already below the floor). A warm node whose one fit fails now escalates to a
   *capped* battery (first seed, one staged cycle, no prefit-only fallback)
   instead of the full multi-start ladder.
+- 2026-09-07 (integration, private gate): **phases are fitted and reported at
+  the series search resolution**; the per-phase path performs no
+  full-resolution refit. The refit of a 12-run phase's winner and flips on the
+  native record cost minutes per node (a joint fit over ~1.1 M points, the warm
+  refit escalating to simplex), and it put full-resolution rows next to
+  search-resolution ones on the path. The exact rows are now scored on the
+  analysed points, one scale along the whole path, and the fit a user applies
+  from a phase seeds the Batch tab's own global fit on the native record. The
+  series-wide (non-partitioned) search keeps its full-resolution refit, now
+  warm-started from the winner.

@@ -341,10 +341,14 @@ parameter toggled once from the winning assignment) is fitted too, so the
 per-parameter Global/Local recommendations on the results page are exact
 rather than inferred from the path taken to reach them. Every one of these
 fits runs at the series' own search resolution (the coarsest rebinning any
-run's own analysis chose); only the winner, and its flip-neighbourhood, are
-refitted once more at full resolution for the numbers you actually see. The
-whole search costs on the order of :math:`P` coupled fits per template, where
-the previous exhaustive search cost :math:`2^P`.
+run's own analysis chose); in a series-wide search only the winner, and its
+flip-neighbourhood, are refitted once more at full resolution for the numbers
+you actually see. A *phase* (see `Transitions: phases and the penalty path`_)
+is reported at the search resolution instead — every row of the penalty path
+is then scored on the same points, and the fit you apply from a phase seeds
+the Batch tab's own global fit, which runs on the native record. The whole
+search costs on the order of :math:`P` coupled fits per template, where the
+previous exhaustive search cost :math:`2^P`.
 
 The exhaustive "wavefront" search that enumerates every :math:`2^P` role
 assignment has not gone away — it is retained behind the lower-level

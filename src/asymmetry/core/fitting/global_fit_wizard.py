@@ -9513,6 +9513,7 @@ def _run_separable_search(
     prescreen_rebin_factor: int = 1,
     time_budget_seconds: float | None = _WAVEFRONT_TIME_BUDGET_SECONDS,
     shared_executor: ProcessPoolExecutor | None = None,
+    full_resolution_refit: bool = True,
 ) -> tuple[GlobalCandidateAssessment, ...]:
     """Separable global/local role search — the default engine.
 
@@ -9529,6 +9530,15 @@ def _run_separable_search(
     ``shared_executor`` lets a caller that runs several searches back to back —
     per-phase optimisation does, once per segment — pay for one spawn pool rather
     than two per call.
+
+    ``full_resolution_refit`` refits the winner and its flip neighbourhood on the
+    native record before anything reaches the leaderboard. Per-phase
+    optimisation turns it off: every phase is then reported at the series
+    search resolution, on the same points the closed-form path was scored on,
+    so exact and surrogate rows never mix scales — and the fit a user applies
+    from a phase seeds the Batch tab's own global fit, which runs on the native
+    record anyway. On a real 29-run series the full-resolution refit alone cost
+    minutes per node (a joint fit over 12 runs × 90 k points).
     """
 
     if not shortlisted_templates:
@@ -9711,7 +9721,7 @@ def _run_separable_search(
         searched_by_key = {result.template_key: result.state for result in elimination_results}
         states = [searched_by_key.get(state.template.key, state) for state in states]
 
-    if search_rebin_factor > 1:
+    if search_rebin_factor > 1 and full_resolution_refit:
         states = _refit_states_at_full_resolution(
             datasets,
             states,
@@ -10013,6 +10023,7 @@ def _optimise_partition_phases(
                 search_rebin_factor=search_rebin_factor,
                 prescreen_rebin_factor=search_rebin_factor,
                 shared_executor=executor,
+                full_resolution_refit=False,
             )
     except BaseException:
         if executor is not None:
@@ -10022,11 +10033,10 @@ def _optimise_partition_phases(
         if executor is not None:
             _shutdown_process_pool(executor)
 
-    # The exact rows are refitted at full resolution, so they are scored with
-    # each run's full point count.
-    full_points_by_run = {
-        int(dataset.run_number): int(dataset.n_points) for dataset in ordered_datasets
-    }
+    # Every phase is fitted at the series search resolution (no full-resolution
+    # refit on this path), so the exact rows are scored on the same points the
+    # closed-form path was — one scale along the whole path.
+    scored_points_by_run = {int(run): int(count) for run, count in analysed_points_by_run.items()}
 
     def _score(
         windows: tuple[_PhaseWindow, ...],
@@ -10043,7 +10053,7 @@ def _optimise_partition_phases(
             )
             if assessment is None:
                 return math.inf, ()
-            total += _partition_bic(assessment, full_points_by_run)
+            total += _partition_bic(assessment, scored_points_by_run)
             chosen.append(assessment)
         return total, tuple(chosen)
 
@@ -10078,7 +10088,7 @@ def _optimise_partition_phases(
                     stop=window.stop,
                     run_numbers=run_numbers,
                     structure=assessment.selection_key,
-                    ic=_partition_bic(assessment, full_points_by_run),
+                    ic=_partition_bic(assessment, scored_points_by_run),
                     excluded=False,
                 )
             )
