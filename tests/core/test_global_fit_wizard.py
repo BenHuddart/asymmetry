@@ -1034,51 +1034,6 @@ def test_alphabet_bound_needs_one_rival_not_a_per_run_best() -> None:
     assert global_fit_wizard_module.alphabet_bound_dropped_keys(recommendations) == frozenset()
 
 
-def test_completion_fits_a_cold_cell_with_a_short_ladder(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A cell no run has fitted gets two rungs; one with values to start from, one."""
-    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    dataset = _dataset_for(
-        run_number=940,
-        field=0.0,
-        temperature=5.0,
-        model=model,
-        params={"A_1": 0.2, "Lambda": 0.3, "A_bg": 0.01},
-    )
-    fitted = _template_named("fitted", model=model)
-    cold = _template_named("cold", model=CompositeModel(["Exponential"], operators=[]))
-    source = build_fit_wizard_recommendation_for_templates(dataset, (fitted,))
-    budgets: list[tuple[tuple[str, ...], int]] = []
-    real = global_fit_wizard_module.build_fit_wizard_recommendation_for_templates
-
-    def _record(target, templates, **kwargs):
-        budgets.append((tuple(t.key for t in templates), int(kwargs["variant_budget"])))
-        return real(target, templates, **kwargs)
-
-    monkeypatch.setattr(
-        global_fit_wizard_module, "build_fit_wizard_recommendation_for_templates", _record
-    )
-
-    global_fit_wizard_module._single_fit_completion_task(
-        dataset, (fitted, cold), source, 1, SelectionMetric.AICC, {}
-    )
-    assert budgets == [(("cold",), 2)]
-
-    budgets.clear()
-    sibling = source.assessment_for_key("fitted")
-    assert sibling is not None
-    global_fit_wizard_module._single_fit_completion_task(
-        dataset,
-        (fitted, cold),
-        source,
-        1,
-        SelectionMetric.AICC,
-        {"cold": sibling.fit_result.parameters},
-    )
-    assert budgets == [(("cold",), 1)]
-
-
 def test_global_fit_wizard_uses_single_fit_prescreen_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

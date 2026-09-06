@@ -356,9 +356,9 @@ def tier2_segment_cost(
                 break
             collapse = collapse_by_template.get(template)
             if collapse is not None and collapse.covers(start, stop):
-                shared, value = collapse.greedy_partition(start, stop, collapse.names)
+                _shared, value = collapse.greedy_partition(start, stop, collapse.names)
             else:
-                shared, value = (), tier1_total
+                value = tier1_total
             if value < best[0]:
                 best = (value, structure_of(template))
         cache[key] = best
@@ -383,6 +383,11 @@ def _boundaries(
         upper = float(axis_values[right.run_numbers[0]])
         estimates.append((0.5 * (lower + upper), 0.5 * (upper - lower)))
     return tuple(estimates)
+
+
+#: One DP state: (cost so far, runs dropped into stubs so far, split, structure
+#: key of the previous segment).
+_DPState = tuple[float, int, int, str | None]
 
 
 def partition_series(
@@ -453,8 +458,7 @@ def partition_series(
     #: one-run end stub and a two-run one cost the same whenever the extra run's
     #: own best template differs from the body's the same way, and dropping a
     #: run that the phase describes perfectly well is the worse answer.
-    State = tuple[float, int, int, str | None]
-    states: list[list[dict[str | None, State]]] = [
+    states: list[list[dict[str | None, _DPState]]] = [
         [{} for _ in range(total_runs + 1)] for _ in range(max_breaks + 1)
     ]
 
@@ -483,7 +487,7 @@ def partition_series(
                     if incumbent is None or (total, dropped) < (incumbent[0], incumbent[1]):
                         reached[key] = (total, dropped, split, previous_key)
 
-    def best_state(breaks: int) -> tuple[str | None, State] | None:
+    def best_state(breaks: int) -> tuple[str | None, _DPState] | None:
         candidates = states[breaks][total_runs]
         if not candidates:
             return None

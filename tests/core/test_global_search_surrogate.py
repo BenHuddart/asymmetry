@@ -657,8 +657,10 @@ def test_partition_ic_with_nothing_shared_is_the_sum_of_per_run_bics():
     # Sharing ``b`` (identical everywhere) trades four local penalties against
     # one shared penalty on the pooled points, with no χ² cost.
     shared = collapse.partition_ic(0, 4, ("b",))
-    expected = per_run - sum(math.log(e.n_points) for e in estimates) + math.log(
-        sum(e.n_points for e in estimates)
+    expected = (
+        per_run
+        - sum(math.log(e.n_points) for e in estimates)
+        + math.log(sum(e.n_points for e in estimates))
     )
     assert shared == pytest.approx(expected)
     assert collapse.lower_bound_partition_ic(0, 4) <= collapse.partition_ic(0, 4, ("a", "b"))

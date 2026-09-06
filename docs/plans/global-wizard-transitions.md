@@ -581,7 +581,8 @@ the feature branch. Phase F runs the full validation once.
   exactly as the completion path already did), never a replacement, so the
   answer can only improve; the completion order therefore decides which
   neighbour seeds which run, and phase 1 is no longer bit-reproducible.
-  Cold completion cells drop to a two-rung ladder. The alphabet also loses,
+  Completion cells are always warm (an alphabet template was fitted on some
+  run by construction), so the cold branch was deleted. The alphabet also loses,
   before scoring, every candidate that some *one* other candidate beats on
   every run (`alphabet_bound_dropped_keys`): χ²_t,r ≥ IC_u,r on every run makes
   u's all-local cost an upper bound on the best structure of any segment and

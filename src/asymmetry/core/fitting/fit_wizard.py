@@ -5392,7 +5392,9 @@ def _max_abs_autocorrelation(values: NDArray[np.float64]) -> float:
     return float(max(correlations, default=0.0))
 
 
-def _peaks_within_analysis_band(analysis: PeakAnalysis, analysis_dataset: MuonDataset) -> PeakAnalysis:
+def _peaks_within_analysis_band(
+    analysis: PeakAnalysis, analysis_dataset: MuonDataset
+) -> PeakAnalysis:
     """Drop every detected line the analysed record cannot represent.
 
     Detection runs on the full record for its bandwidth, but every fit runs on

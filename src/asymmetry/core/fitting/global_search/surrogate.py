@@ -691,7 +691,6 @@ class OrderedCollapse:
 
         return shared, best_ic
 
-
     # ------------------------------------------------------------------ #
     # Partition convention: each local parameter is penalised against the
     # points of *its own run*, each shared parameter against the segment's.

@@ -126,13 +126,6 @@ _SERIES_ALPHABET_CAP = 24
 #: usefully with each other's fan-outs.
 _MAX_PHASE_ONE_ANALYSES = 4
 
-#: Seed-ladder depth for a completion cell no run has ever fitted. Two rungs,
-#: not the single-run wizard's five: the completion table exists to *rank*
-#: templates across the series, and phase 3 refits the winner from the coupled
-#: search anyway, so a deeper ladder here buys a better number for a cell that
-#: is about to be re-solved. Cells that start from an already-fitted answer (the
-#: run's own values at another factor, or a sibling's) get one rung.
-_COMPLETION_COLD_VARIANT_BUDGET = 2
 
 _ROLE_DELTA_THRESHOLD = 2.0
 _COMPARABLE_SCORE_DELTA = 2.0
@@ -1051,9 +1044,10 @@ def _single_fit_completion_task(
     from the run's own values for that template when it has them at another
     factor and from the best sibling run's otherwise, and seeded from the run's
     own peak analysis so a multiplet template's lines start on the lines this
-    run actually shows. A cold cell — one neither this run nor any sibling has
-    fitted — runs the short ``_COMPLETION_COLD_VARIANT_BUDGET`` ladder rather
-    than the single-run wizard's five rungs.
+    run actually shows. Every alphabet template was fitted successfully on some
+    run (that is what :func:`series_template_alphabet` admits), so
+    ``sibling_values_by_template`` covers every cell this run lacks and no cell
+    ever starts cold.
 
     Returns the run number, the completed table, and the number of fits it cost.
     """
@@ -1064,20 +1058,17 @@ def _single_fit_completion_task(
     assessments_by_key: dict[str, CandidateAssessment] = {}
     warm_templates: list[CandidateTemplate] = []
     warm_starts: dict[str, ParameterSet] = {}
-    cold_templates: list[CandidateTemplate] = []
     for template in templates:
         assessment = source.assessment_for_key(template.key)
         if assessment is not None and assessment.is_successful and same_resolution:
             assessments_by_key[template.key] = assessment
             continue
-        if assessment is not None and assessment.is_successful:
-            warm_templates.append(template)
-            warm_starts[template.key] = assessment.fit_result.parameters
-        elif template.key in sibling_values_by_template:
-            warm_templates.append(template)
-            warm_starts[template.key] = sibling_values_by_template[template.key]
-        else:
-            cold_templates.append(template)
+        warm_templates.append(template)
+        warm_starts[template.key] = (
+            assessment.fit_result.parameters
+            if assessment is not None and assessment.is_successful
+            else sibling_values_by_template[template.key]
+        )
 
     seed_context = TemplateSeedContext(
         peak_analysis=source.peak_analysis,
@@ -1085,24 +1076,17 @@ def _single_fit_completion_task(
         field_gauss=dataset.field,
         geometry=dataset_field_geometry(dataset),
     )
-    # Two calls, one ladder depth each: a cell that starts from an already
-    # fitted answer needs the answer tried, not a ladder around it, while a cell
-    # no run has ever fitted gets a short ladder
-    # (``_COMPLETION_COLD_VARIANT_BUDGET``).
-    for group, budget in (
-        (warm_templates, 1),
-        (cold_templates, _COMPLETION_COLD_VARIANT_BUDGET),
-    ):
-        if not group:
-            continue
+    # One attempt per cell: a cell that starts from an already fitted answer
+    # needs the answer tried, not a ladder around it.
+    if warm_templates:
         completed = build_fit_wizard_recommendation_for_templates(
             analysis_dataset,
-            tuple(group),
+            tuple(warm_templates),
             fingerprint=source.fingerprint,
             metric=metric,
             seed_context=seed_context,
             warm_start_by_template=warm_starts,
-            variant_budget=budget,
+            variant_budget=1,
         )
         for assessment in completed.assessments:
             assessments_by_key[assessment.template.key] = assessment
@@ -1125,7 +1109,7 @@ def _single_fit_completion_task(
         ),
         metric,
     )
-    return run_number, recommendation, len(warm_templates) + len(cold_templates)
+    return run_number, recommendation, len(warm_templates)
 
 
 @dataclass(frozen=True)

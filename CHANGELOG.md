@@ -117,9 +117,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of the nearest run that has already finished, and a candidate whose bare χ²
   on every run already loses to one other candidate's information criterion is
   dropped before the scoring pass — it cannot win a segment under any sharing,
-  so the bound costs nothing in answers. A cell no run has fitted is completed
-  on a two-rung seed ladder instead of five, since the coupled search refits
-  the winner anyway. Measured on a synthetic twelve-run series of 8 000-point
+  so the bound costs nothing in answers. Every completion cell starts from a
+  fitted answer (its own run's at another binning, or the best sibling run's),
+  so it is one attempt, not a ladder. Measured on a synthetic twelve-run series of 8 000-point
   records with three families present, phase 1 went from ~115–139 s to ~73–82 s
   on an eight-core laptop. `instrumentation` records `alphabet_size`,
   `series_rebin_factor`, `completion_fits`, `phase1_concurrency`,

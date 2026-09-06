@@ -538,7 +538,9 @@ def test_tier2_with_nothing_shareable_equals_tier1():
     # Values far apart with tight errors: sharing ``a`` costs far more χ² than
     # the penalty it saves, so the greedy walk shares nothing.
     estimates = {run: _estimate(run, names, [10.0 * run], [0.01]) for run in order}
-    table = {run: {"T": estimates[run].chi_squared + math.log(estimates[run].n_points)} for run in order}
+    table = {
+        run: {"T": estimates[run].chi_squared + math.log(estimates[run].n_points)} for run in order
+    }
 
     tier1 = tier1_segment_cost(table, order)
     tier2 = tier2_segment_cost(table, order, {"T": estimates}, METRIC)
