@@ -702,3 +702,11 @@ the feature branch. Phase F runs the full validation once.
   squares"); "joint" and "profiled" stay reachable through the `strategy` seam
   and the exhaustive referee keeps its path, so the harness still compares
   like with like. The all-local anchor stays G independent fits.
+  Tolerances, measured on the real node through the wizard's own node path:
+  scipy's 1e-8 defaults converge in 28 residual evaluations (8 s); 1e-9 needs
+  660 (93 s) for 0.8 χ² units; 1e-10 (the first landing's choice, tuned on
+  synthetic cases) runs to the call cap and the node reports no convergence —
+  which is why the gate still tripped its budget after C3 landed. The
+  finite-difference Jacobian is the floor: below ~1e-8 the steps chase
+  round-off. Set to 1e-8; referee agreement stays 100 % at 8.4 s (11.0 s at
+  1e-10).
