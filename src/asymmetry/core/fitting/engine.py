@@ -597,11 +597,21 @@ class CostFactory:
     in play. ``build`` returns either an :mod:`iminuit.cost` object or a plain
     ``cost(*params)`` callable carrying ``errordef``; both are accepted by
     ``Minuit(cost, *initial, name=...)``.
+
+    ``needs_histograms`` declares whether fitting under this cost reads the
+    source run's raw detector counts (``dataset.run.histograms``) rather than
+    only the fitted time/asymmetry/error arrays. It is what lets a caller
+    assembling a worker payload decide whether the counts have to cross the
+    process boundary or whether a
+    :meth:`~asymmetry.core.data.dataset.MuonDataset.fit_record` will do — a
+    decision the cost declares, never one the payload site infers from a name.
+    It has no default: a new cost must state which it is.
     """
 
     name: str
     build: Callable[..., object]
     pointwise: Callable[[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]], float]
+    needs_histograms: bool
 
 
 def _build_least_squares(x, y, yerr, model):
@@ -624,17 +634,23 @@ def _build_poisson_cash(x, y, yerr, model):
 
 
 #: √-weighted least squares — the historical default for every fit surface.
+#: Reads only the fitted arrays, so it fits a fit record as well as a full one.
 GAUSSIAN_COST = CostFactory(
     "gaussian",
     _build_least_squares,
     lambda observed, model, errors: gaussian_chi2(observed, model, errors),
+    needs_histograms=False,
 )
 #: Cash statistic on raw Poisson counts — the count-domain modes' default,
-#: extended to grouped fits via the cost-factory seam.
+#: extended to grouped fits via the cost-factory seam. The count-domain and
+#: grouped setups behind it read ``run.histograms`` (the deadtime frame
+#: normalisation takes its bin width off the first detector), so this cost
+#: needs the full record.
 POISSON_COST = CostFactory(
     "poisson",
     _build_poisson_cash,
     lambda observed, model, _errors: poisson_cash(observed, model),
+    needs_histograms=True,
 )
 
 #: Resolve a cost name to its factory; ``None``/unknown → Gaussian.
