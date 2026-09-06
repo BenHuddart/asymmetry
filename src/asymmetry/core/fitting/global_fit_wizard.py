@@ -140,6 +140,15 @@ _LAYER_BOUND_MARGIN = 6.0
 #: disables the budget (unlimited). Kept high so it never trips on the small
 #: golden-verdict harness cases.
 _WAVEFRONT_TIME_BUDGET_SECONDS: float | None = 180.0
+#: Wall-clock budget (seconds) for ONE phase's separable search inside the
+#: per-phase optimisation. The 180 s series-wide backstop was sized for the
+#: harness cases; on a real 12-run phase of 90 k-point records a single
+#: elimination step is a 30–60 s profiled fit, so that backstop tripped on the
+#: first phase and — because abandoned tasks keep running in the shared pool —
+#: starved every later phase's anchor tasks into timing out with nothing done.
+#: Fifteen minutes per phase is a backstop again: a healthy phase finishes in
+#: a few minutes and the GUI's own cancel remains the way to stop early.
+_PHASE_SEARCH_TIME_BUDGET_SECONDS: float | None = 900.0
 #: Interval (seconds) at which the pooled wavefront loop wakes to re-check the
 #: cancel callback and the wall-clock deadline while futures are in flight.
 _WAVEFRONT_POLL_INTERVAL_SECONDS = 0.25
@@ -10024,6 +10033,7 @@ def _optimise_partition_phases(
                 prescreen_rebin_factor=search_rebin_factor,
                 shared_executor=executor,
                 full_resolution_refit=False,
+                time_budget_seconds=_PHASE_SEARCH_TIME_BUDGET_SECONDS,
             )
     except BaseException:
         if executor is not None:
