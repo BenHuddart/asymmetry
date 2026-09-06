@@ -200,8 +200,10 @@ def test_the_break_clears_the_floor_by_a_wide_margin(planted_series):
 
     assert path.solutions[1].gain > path.beta_floor
     assert path.solutions[1].admissible
-    # ...and a second break buys nothing, so the path stops at one.
-    assert not path.solutions[2].admissible
+    # ...and with two structures there is no partition with a second break (a
+    # stub carrying the body's own structure is not a different phase), so the
+    # path stops at one.
+    assert len(path.solutions) == 2
 
 
 @pytest.mark.integration
@@ -320,26 +322,63 @@ def test_every_distinct_verified_segment_is_fitted_exactly_once(planted_series):
             instrumentation=instrumentation,
         )
 
-    # k = 0 → (0, 10); k = 1 → (0, 5), (5, 10); k = 2 → (0, 5), (5, 9) plus an
-    # excluded stub; the shifted breaks → (0, 4), (4, 10), (0, 6), (6, 10).
-    assert instrumentation["partition_segments_fitted"] == 8
+    # k = 0 → (0, 10); k = 1 → (0, 5), (5, 10); no k = 2 exists for two
+    # structures; the shifted breaks → (0, 4), (4, 10), (0, 6), (6, 10).
+    assert instrumentation["partition_segments_fitted"] == 7
 
 
 @pytest.mark.integration
 def test_an_excluded_end_stub_carries_no_phase_assessment(planted_series):
     """A stub is excluded from the global fit, so nothing fits it."""
-    _datasets, _table, _screening, optimised = planted_series
-    path = optimised.partition_path
+    datasets, table, screening, _optimised = planted_series
+    base = screening.partition_path
+    body = base.solutions[1].segments
+    all_runs = base.solutions[0].segments[0].run_numbers
+    # Hand the optimiser a solution that sets the last run aside as a stub of a
+    # different structure — what the partition produces when an end run looks
+    # like yet another phase.
+    trimmed = Segment(
+        start=body[1].start,
+        stop=body[1].stop - 1,
+        run_numbers=body[1].run_numbers[:-1],
+        structure=body[1].structure,
+        ic=body[1].ic,
+        excluded=False,
+    )
+    stub = Segment(
+        start=len(all_runs) - 1,
+        stop=len(all_runs),
+        run_numbers=all_runs[-1:],
+        structure="stub",
+        ic=1.0,
+        excluded=True,
+    )
+    two = PartitionSolution(
+        breaks=2,
+        segments=(body[0], trimmed, stub),
+        total_ic=body[0].ic + trimmed.ic + stub.ic,
+        gain=1.0,
+        admissible=False,
+        boundaries=(*base.solutions[1].boundaries, (99.0, 0.5)),
+    )
+    path = replace(base, solutions=(*base.solutions, two))
 
-    stubs = [
-        (k, index)
-        for k, solution in enumerate(path.solutions)
-        for index, segment in enumerate(solution.segments)
-        if segment.excluded
-    ]
-    assert stubs, "the planted series' k = 2 solution splits an end stub off"
-    for key in stubs:
-        assert key not in optimised.phase_assessments
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            global_fit_wizard_module,
+            "build_candidate_templates",
+            lambda fingerprint, current_model=None: TEMPLATES,
+        )
+        optimised = build_global_fit_wizard_recommendation(
+            datasets,
+            single_fit_recommendations_by_run=table,
+            partition_path=path,
+            partition_k=2,
+        )
+
+    assert (2, 0) in optimised.phase_assessments
+    assert (2, 1) in optimised.phase_assessments
+    assert (2, 2) not in optimised.phase_assessments
 
 
 @pytest.mark.integration

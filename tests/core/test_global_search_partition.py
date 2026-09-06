@@ -164,8 +164,7 @@ def test_selected_k_stops_at_the_first_gain_below_the_floor():
     assert not straddling.solutions[2].admissible
     assert straddling.selected_k == 1
 
-    # A floor of zero admits every non-negative gain, including the merged
-    # duplicates whose gain is exactly 0.
+    # A floor of zero admits every non-negative gain.
     permissive = partition_series(
         order,
         _axis(order),
@@ -246,7 +245,10 @@ def test_every_non_excluded_segment_respects_min_segment():
         n_total_points=2400,
     )
 
-    assert len(path.solutions) == 12 // 4  # K_max = 2, so k = 0, 1, 2
+    # K_max = 2, but with only two structures a third segment would have to
+    # repeat one of them next to itself (a stub of the body's own structure is
+    # no different), so the path holds k = 0 and k = 1 only.
+    assert len(path.solutions) == 2
     for solution in path.solutions:
         for segment in solution.segments:
             if not segment.excluded:
@@ -273,7 +275,9 @@ def test_max_breaks_caps_the_path():
 # --------------------------------------------------------------------------- #
 
 
-def test_tier2_finds_a_role_structure_change_at_a_fixed_template():
+def test_a_sharing_change_at_a_fixed_template_is_not_a_break():
+    """Which parameters a phase shares is decided within the phase, never a break."""
+
     order = list(range(12))
     names = ("a", "b")
     sigma = [0.1, 0.1]
@@ -295,13 +299,16 @@ def test_tier2_finds_a_role_structure_change_at_a_fixed_template():
     )
     path = partition_series(order, _axis(order), cost, PartitionConfig(), n_total_points=12 * 200)
 
-    assert path.selected_k == 1
-    solution = path.solutions[1]
-    assert [segment.structure for segment in solution.segments] == ["T|g=a", "T|g=b"]
-    assert solution.segments[0].run_numbers == (0, 1, 2, 3, 4, 5)
-    assert solution.segments[1].run_numbers == (6, 7, 8, 9, 10, 11)
-    ((estimate, half_gap),) = solution.boundaries
-    assert (estimate, half_gap) == pytest.approx((5.5, 0.5))
+    assert path.selected_k == 0
+    # One template is one structure, so no partition with an interior break
+    # exists; the only solutions past k = 0 are end stubs, and a stub whose runs
+    # carry the body's own structure is never allowed either.
+    assert len(path.solutions) == 1
+    assert path.solutions[0].segments[0].structure == "T"
+    # The sharing is still *priced*: the whole-series segment shares ``b``'s
+    # partner nowhere near as cheaply as the two halves would, but that is a
+    # role question for the coupled fit, not a transition.
+    assert cost(0, 6)[0] + cost(6, 12)[0] < cost(0, 12)[0]
 
 
 def test_a_smoothly_drifting_global_yields_no_breaks():
@@ -313,11 +320,13 @@ def test_a_smoothly_drifting_global_yields_no_breaks():
     path = partition_series(order, _axis(order), cost, PartitionConfig(), n_total_points=9 * 200)
 
     assert path.selected_k == 0
-    assert path.solutions[0].segments[0].structure == "T|g=a"
+    assert path.solutions[0].segments[0].structure == "T"
     assert path.solutions[0].breaks == 0
+    # One template is one structure, so no partition with a break exists.
+    assert len(path.solutions) == 1
 
 
-def test_a_global_that_only_changes_value_is_merged_back_to_one_segment():
+def test_a_global_that_only_changes_value_is_not_a_break():
     """Rule 1 of the plan: a break is structural, never merely a value change."""
 
     order = list(range(10))
@@ -328,12 +337,48 @@ def test_a_global_that_only_changes_value_is_merged_back_to_one_segment():
     path = partition_series(order, _axis(order), cost, PartitionConfig(), n_total_points=10 * 200)
 
     assert path.selected_k == 0
-    # The exactly-one-break optimum has both halves sharing ``a`` — one
-    # structure — so merging collapses it back onto the k = 0 partition and its
-    # gain is exactly zero.
-    assert path.solutions[1].breaks == 0
-    assert path.solutions[1].total_ic == pytest.approx(path.solutions[0].total_ic)
-    assert path.solutions[1].gain == pytest.approx(0.0)
+    # Both halves would carry the same structure, so the exactly-one-break
+    # partition does not exist and the path ends at k = 0.
+    assert len(path.solutions) == 1
+
+
+def test_a_template_change_within_one_family_is_not_a_break_but_across_families_is():
+    order = list(range(15))
+    table = {}
+    for run in order:
+        if run < 5:
+            table[run] = {"osc2": 100.0, "osc1": 130.0, "relax": 160.0}
+        elif run < 10:
+            table[run] = {"osc2": 130.0, "osc1": 100.0, "relax": 160.0}
+        else:
+            table[run] = {"osc2": 160.0, "osc1": 160.0, "relax": 100.0}
+    family = {"osc2": "oscillatory", "osc1": "oscillatory", "relax": "relaxation"}
+
+    by_template = partition_series(
+        order,
+        _axis(order),
+        tier1_segment_cost(table, order),
+        PartitionConfig(),
+        n_total_points=15 * 200,
+    )
+    by_family = partition_series(
+        order,
+        _axis(order),
+        tier1_segment_cost(table, order, family_of=family.__getitem__),
+        PartitionConfig(),
+        n_total_points=15 * 200,
+    )
+
+    # Template-level structure sees the osc2 → osc1 switch as a break ...
+    assert by_template.solutions[2].breaks == 2
+    # ... family-level structure does not: the ordered phase is one phase, and
+    # the only break is where the family changes.
+    assert [segment.structure for segment in by_family.solutions[1].segments] == [
+        "oscillatory",
+        "relaxation",
+    ]
+    assert by_family.solutions[1].segments[0].run_numbers == tuple(range(10))
+    assert len(by_family.solutions) == 2
 
 
 def test_tier2_falls_back_to_the_tier1_sum_when_a_template_has_no_estimates():
@@ -344,7 +389,7 @@ def test_tier2_falls_back_to_the_tier1_sum_when_a_template_has_no_estimates():
 
     ic, structure = cost(0, 6)
     assert ic == pytest.approx(6 * 250.0)
-    assert structure == "T|g=none"
+    assert structure == "T"
 
 
 def test_tier2_marks_a_template_infeasible_when_a_cell_is_missing():
@@ -480,10 +525,7 @@ def test_greedy_segment_costs_agree_with_exhaustive_enumeration():
                 )
                 best_subset, best_ic = subsets[0]
                 if best_ic < reference[0]:
-                    reference = (
-                        best_ic,
-                        f"{template}|g={','.join(best_subset) or 'none'}",
-                    )
+                    reference = (best_ic, template)
             value, structure = cost(start, stop)
             assert value == pytest.approx(reference[0]), (start, stop)
             assert structure == reference[1], (start, stop)

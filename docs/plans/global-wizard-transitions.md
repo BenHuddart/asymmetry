@@ -37,10 +37,13 @@ assignment hold; a *break* between phases is a change of **structure**
 (template and/or assignment), never merely of values. Each phase becomes a
 data group nested under the series group, owning its own global-fit series.
 
-1. **Breaks are structural only.** Adjacent segments with the same structure
-   are one segment. A drifting global therefore has exactly two honest
-   representations, global or local; it can never be approximated by a
-   staircase of breaks.
+1. **Breaks are structural only**, and the structure is the template
+   *family* (oscillatory, relaxation, multi-rate, Kubo-Toyabe, …). Adjacent
+   segments of the same family are one segment; the template within the
+   family and the sharing pattern are priced into a segment's cost but are
+   decided by the coupled fit within the phase, never by a break. A drifting
+   global therefore has exactly two honest representations, global or local;
+   it can never be approximated by a staircase of breaks.
 2. **Minimum phase length L = 3** runs. A stub shorter than L is admitted only
    at either end of the series; it receives no coupled fit, is scored at its
    own per-run cost plus the usual break penalty, and is reported as
@@ -516,3 +519,22 @@ the feature branch. Phase F runs the full validation once.
   per-phase searches as both `search_rebin_factor` and `prescreen_rebin_factor`,
   so each segment's all-local anchor is the phase-1 pre-screen's own per-run fits
   and costs no fit at all.
+- 2026-09-07 (integration, private gate): **a break is a change of template
+  family, not of template or sharing pattern.** With template-level structure
+  keys the tier-2 path on the real series fragmented into seven admissible
+  breaks — an osc2→osc1 switch inside the ordered phase, and sharing-pattern
+  changes inside the relaxation phase — each worth hundreds of BIC units at 2.6
+  million points. With family keys the same table gives a clean elbow at the
+  physics. The DP now enforces the rule by construction (adjacent segments,
+  end stubs included, must differ in structure key), replacing the post-DP
+  merge; `series_template_families` supplies the map from the per-run family
+  reports (multiplet templates → `oscillatory`).
+- 2026-09-07 (integration): the screening pass no longer runs the serial
+  "repair" of failed cells (30 minutes on the real series); coverage of a
+  supplied table requires *converged* cells, so a failed cell is retried by the
+  parallel completion pass with a sibling warm start instead.
+- 2026-09-07 (integration): two source fixes from the private gate — a line
+  whose period is under eight native bins cannot be protected by any rebin
+  factor and no longer constrains it, and a detected line above the analysed
+  record's Nyquist is never seeded (its frequency bounds inverted on the
+  Nyquist clamp and Minuit refused the limit).

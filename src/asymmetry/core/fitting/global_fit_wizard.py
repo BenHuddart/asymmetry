@@ -1274,12 +1274,14 @@ def single_fit_table_covers_portfolio(
     """True when ``recommendations_by_run`` is a usable series score table.
 
     Two conditions, and both are what the series arithmetic needs rather than
-    bookkeeping: every run carries a score for every template (a missing cell
-    makes that template's series sum meaningless), and every run was scored at
-    the *same* rebin factor (an information criterion computed on a coarser
-    record is not comparable with one computed on a finer one). Coverage is not
-    identity: a run's table may hold more templates than the series ranks, which
-    is exactly what a genuine single-run analysis does.
+    bookkeeping: every run carries a *converged* score for every template (a
+    missing or failed cell makes that template's series sum meaningless — and a
+    failed cell is exactly what the completion pass exists to retry from a
+    sibling run's values), and every run was scored at the *same* rebin factor
+    (an information criterion computed on a coarser record is not comparable
+    with one computed on a finer one). Coverage is not identity: a run's table
+    may hold more templates than the series ranks, which is exactly what a
+    genuine single-run analysis does.
     """
     if not recommendations_by_run or not templates:
         return False
@@ -1290,7 +1292,8 @@ def single_fit_table_covers_portfolio(
             return False
         factors.add(int(recommendation.rebin_factor))
         for template in templates:
-            if recommendation.assessment_for_key(template.key) is None:
+            assessment = recommendation.assessment_for_key(template.key)
+            if assessment is None or not assessment.is_successful:
                 return False
     return len(factors) == 1
 
@@ -1897,6 +1900,10 @@ def build_global_fit_wizard_screening_recommendation(
             metric=metric,
             fit_engine=FitEngine(),
             progress_callback=progress_callback,
+        
+            # The completed table already tried every cell with sibling warm
+            # starts (phase 1); the serial repair pass would only repeat that.
+            repair_partial_incomplete=False,
         )
 
     partition_started = time.monotonic()
@@ -1914,6 +1921,7 @@ def build_global_fit_wizard_screening_recommendation(
                 int(run_number): int(recommendation.analysed_points)
                 for run_number, recommendation in recommendations_by_run.items()
             },
+            family_by_template=series_template_families(recommendations_by_run),
         )
     _set_metric(instrumentation, "partition_seconds", time.monotonic() - partition_started)
     if partition_path is not None:
@@ -2275,12 +2283,33 @@ def _partition_inputs_from_prescreen(
     return table, estimates_by_template, n_total_points
 
 
+def series_template_families(
+    recommendations_by_run: Mapping[int, FitWizardRecommendation],
+) -> dict[str, str]:
+    """Map every template key the series knows to its family key.
+
+    The union of the per-run family reports, plus every multiplet template
+    (built from a run's detected lines rather than listed in a family report)
+    under ``"oscillatory"``. A key absent from the result belongs to no known
+    family and stands as its own structure.
+    """
+
+    families: dict[str, str] = {}
+    for recommendation in recommendations_by_run.values():
+        families.update(_template_family_map(recommendation.family_reports))
+        for template in recommendation.templates:
+            if is_multiplet_template_key(template.key):
+                families[template.key] = "oscillatory"
+    return families
+
+
 def build_series_partition_path(
     ordered_datasets: Sequence[MuonDataset],
     prescreen_assessments: Mapping[str, GlobalCandidateAssessment],
     *,
     axis_key: str,
     analysed_points_by_run: Mapping[int, int],
+    family_by_template: Mapping[str, str],
     config: PartitionConfig = PartitionConfig(),
 ) -> PartitionPath | None:
     """Where the series breaks, read off the completed phase-1 table.
@@ -2293,6 +2322,14 @@ def build_series_partition_path(
     ``analysed_points_by_run`` gives every ordered run's fitted point count at the
     series search resolution. A non-empty ``prescreen_assessments`` implies a
     completed per-run table, which is exactly when that mapping is total.
+
+    ``family_by_template`` names each template's family
+    (:func:`series_template_families`); a break is a change of *family*
+    between adjacent phases. Which template within the family, and which
+    parameters it shares, are priced into the segment cost but are not breaks
+    — a two-line and a one-line damped oscillation are the same ordered phase,
+    and a background that becomes shareable is not a transition. A template
+    absent from the map is its own family.
     """
 
     order = [int(dataset.run_number) for dataset in ordered_datasets]
@@ -2310,10 +2347,15 @@ def build_series_partition_path(
     axis_values = {
         int(dataset.run_number): _axis_value(dataset, axis_key) for dataset in ordered_datasets
     }
+    def family_of(template_key: str) -> str:
+        return family_by_template.get(template_key, template_key)
+
     return partition_series(
         order,
         axis_values,
-        tier2_segment_cost(table, order, estimates_by_template, _PARTITION_METRIC),
+        tier2_segment_cost(
+            table, order, estimates_by_template, _PARTITION_METRIC, family_of=family_of
+        ),
         config,
         n_total_points=n_total_points,
     )

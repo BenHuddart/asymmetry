@@ -236,11 +236,15 @@ appearing above an ordering temperature. Rather than fit the whole series
 under one template and hope the residuals stay clean, the wizard partitions
 the series into **phases** — contiguous runs along the sweep axis, each with
 its own template and its own Global/Local assignment — and fits each phase
-independently. A **break** between two phases is always a change of
-*structure* (a different template, or a different Global/Local split), never
-merely a change of *values*: a global parameter that drifts smoothly along the
-whole series has exactly two honest representations, Global or Local, and can
-never be approximated by inserting breaks.
+independently. A **break** between two phases is always a change of *model
+family* — damped oscillation, single relaxation, multi-rate relaxation,
+Kubo-Toyabe — never a change of template within a family, of Global/Local
+split, or of parameter values. Which template a phase uses (two damped lines
+or one, an exponential or a Gaussian envelope) and which of its parameters are
+shared are decided by the coupled fit *within* the phase; a global parameter
+that drifts smoothly along the whole series has exactly two honest
+representations, Global or Local, and can never be approximated by inserting
+breaks.
 
 A **Transitions** card appears on the Result page, between the series answer
 card and the screening shortlist, whenever the series alphabet's per-run

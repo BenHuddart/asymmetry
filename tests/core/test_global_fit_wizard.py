@@ -46,6 +46,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     build_global_fit_wizard_recommendation,
     build_global_fit_wizard_screening_recommendation,
     build_or_complete_single_fit_wizard_recommendations_for_global_portfolio,
+    single_fit_table_covers_portfolio,
     merge_global_fit_wizard_recommendations,
     rerank_global_fit_wizard_recommendation,
 )
@@ -1086,9 +1087,15 @@ def test_selected_candidate_optimisation_skips_prescreen_repair(
     assert recommendation.assessment_for_key("exp_constant") is not None
 
 
-def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
+def test_global_fit_wizard_screening_completes_a_failed_cell_from_a_sibling(
     monkeypatch,
 ) -> None:
+    """A failed cell in a supplied table is retried by the completion pass.
+
+    Coverage requires *converged* cells, so a table carrying a failed fit for
+    one run is completed — that cell refitted, warm-started from the best
+    sibling run's values — rather than repaired by a separate serial pass.
+    """
     model = CompositeModel(["Exponential", "Constant"], operators=["+"])
     datasets = [
         _dataset_for(
@@ -1101,27 +1108,27 @@ def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
         for idx, lambda_value in enumerate((0.18, 0.42, 0.55), start=1)
     ]
     portfolio = build_global_fit_wizard_candidate_portfolio(datasets, current_model=model)
-    single_fit_recommendations_by_run = {
+    own_analyses = {
         int(dataset.run_number): build_fit_wizard_recommendation_for_templates(
-            dataset,
-            portfolio.templates,
+            dataset, portfolio.templates
         )
         for dataset in datasets
     }
-
-    donor_run = int(datasets[0].run_number)
+    # Stand in for the per-run single-fit wizard: the derived tables above are
+    # every run's "own analysis" here, so stage 1 costs nothing and no pool
+    # nests under the test runner's.
+    monkeypatch.setattr(
+        global_fit_wizard_module,
+        "build_fit_wizard_recommendation",
+        lambda dataset, *_args, **_kwargs: own_analyses[int(dataset.run_number)],
+    )
+    table = build_or_complete_single_fit_wizard_recommendations_for_global_portfolio(
+        datasets, current_model=model
+    )
     failed_run = int(datasets[1].run_number)
-    donor_assessment = single_fit_recommendations_by_run[donor_run].assessment_for_key(
-        "exp_constant"
-    )
-    failed_assessment = single_fit_recommendations_by_run[failed_run].assessment_for_key(
-        "exp_constant"
-    )
-    assert donor_assessment is not None and donor_assessment.fit_result.success is True
-    assert failed_assessment is not None
-
-    single_fit_recommendations_by_run[failed_run] = replace(
-        single_fit_recommendations_by_run[failed_run],
+    failed_recommendation = table.recommendations_by_run[failed_run]
+    forced = replace(
+        failed_recommendation,
         assessments=tuple(
             replace(
                 assessment,
@@ -1136,72 +1143,28 @@ def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
                 aicc=None,
                 bic=float("inf"),
                 selected_score=float("inf"),
-                residual_rms=float("inf"),
-                runs_z_score=float("inf"),
-                max_abs_autocorrelation=float("inf"),
-                residual_fft_peak_snr=float("inf"),
-                residual_gate_passed=False,
-                residual_gate_reasons=("forced single-fit failure",),
-                bound_hits=(),
             )
             if assessment.template.key == "exp_constant"
             else assessment
-            for assessment in single_fit_recommendations_by_run[failed_run].assessments
+            for assessment in failed_recommendation.assessments
         ),
     )
+    supplied = dict(table.recommendations_by_run)
+    supplied[failed_run] = forced
+    # The run's "own analysis" now carries the failure too, so only the
+    # completion pass can put a converged fit back in that cell.
+    own_analyses[failed_run] = forced
+    assert not single_fit_table_covers_portfolio(datasets, table.portfolio.templates, supplied)
 
-    donor_lambda = next(
-        parameter.value
-        for parameter in donor_assessment.fit_result.parameters
-        if parameter.name == "Lambda"
-    )
-    fit_calls: list[tuple[int, float, str]] = []
-
-    class FakeFitEngine:
-        def fit(self, dataset, _model_fn, parameters, t_min=None, t_max=None, method="migrad"):
-            del t_min, t_max
-            values = {parameter.name: float(parameter.value) for parameter in parameters}
-            fit_calls.append((int(dataset.run_number), values.get("Lambda", float("nan")), method))
-            cloned = ParameterSet(
-                [
-                    Parameter(
-                        parameter.name,
-                        parameter.value,
-                        min=parameter.min,
-                        max=parameter.max,
-                        fixed=parameter.fixed,
-                    )
-                    for parameter in parameters
-                ]
-            )
-            if (
-                int(dataset.run_number) == failed_run
-                and abs(values.get("Lambda", 0.0) - donor_lambda) < 0.2
-            ):
-                return FitResult(
-                    success=True,
-                    chi_squared=0.5,
-                    reduced_chi_squared=0.01,
-                    parameters=cloned,
-                    residuals=np.zeros_like(dataset.asymmetry),
-                    message="repaired",
-                )
-            return FitResult(
-                success=False,
-                chi_squared=float("inf"),
-                reduced_chi_squared=float("inf"),
-                parameters=cloned,
-                message="not repaired",
-            )
-
-    monkeypatch.setattr(global_fit_wizard_module, "FitEngine", FakeFitEngine)
     progress_messages: list[str] = []
-
+    instrumentation: dict[str, object] = {}
     recommendation = build_global_fit_wizard_screening_recommendation(
         datasets,
         current_model=model,
-        single_fit_recommendations_by_run=single_fit_recommendations_by_run,
+        single_fit_recommendations_by_run=supplied,
+        portfolio=table.portfolio,
         progress_callback=progress_messages.append,
+        instrumentation=instrumentation,
     )
 
     assessment = recommendation.assessment_for_key("exp_constant")
@@ -1209,39 +1172,8 @@ def test_global_fit_wizard_screening_repairs_partial_single_fit_family(
     assert assessment.fit_results_by_run[failed_run].success is True
     assert set(assessment.fit_results_by_run) == {int(dataset.run_number) for dataset in datasets}
     assert np.isfinite(assessment.aic)
-    assert not any(
-        "Single-fit pre-screen incomplete" in warning for warning in assessment.series_warnings
-    )
-    assert any(
-        "repairing partial single-fit screening results" in message for message in progress_messages
-    )
-    assert any(
-        run_number == failed_run and abs(lambda_value - donor_lambda) < 0.2
-        for run_number, lambda_value, method in fit_calls
-        if method == "migrad"
-    )
-    repaired_single_fit_assessment = single_fit_recommendations_by_run[
-        failed_run
-    ].assessment_for_key("exp_constant")
-    assert repaired_single_fit_assessment is not None
-    assert repaired_single_fit_assessment.fit_result.success is True
-
-    fit_calls_after_first_pass = len(fit_calls)
-    progress_messages.clear()
-    repeat_recommendation = build_global_fit_wizard_screening_recommendation(
-        datasets,
-        current_model=model,
-        single_fit_recommendations_by_run=single_fit_recommendations_by_run,
-        progress_callback=progress_messages.append,
-    )
-
-    repeat_assessment = repeat_recommendation.assessment_for_key("exp_constant")
-    assert repeat_assessment is not None
-    assert repeat_assessment.fit_results_by_run[failed_run].success is True
-    assert len(fit_calls) == fit_calls_after_first_pass
-    assert not any(
-        "repairing partial single-fit screening results" in message for message in progress_messages
-    )
+    assert int(instrumentation["completion_fits"]) >= 1
+    assert not any("repairing partial" in message for message in progress_messages)
 
 
 def test_single_run_prefit_parameter_sets_reuses_cache() -> None:
