@@ -739,3 +739,18 @@ the feature branch. Phase F runs the full validation once.
   oscillation amplitude vanishes should count as a family change, and
   whether the partition totals should be AICc rather than BIC, are modelling
   choices; the code reports the elbow the user asked to optimise.
+- 2026-09-06 (Phase C5, memory): **search nodes carry no dense curves.** With
+  the flips across the pool, the first phase's 20 flips still took 830 s on
+  four workers: the gate's parent process had grown to 11 GB on an 8.6 GB
+  host, free memory was ~20 MB, and each worker got ~27 % of a core waiting
+  on paging. One 12-run assessment pickles to 36.5 MB — 34.7 MB of dense
+  fitted and component curves at ~72 k samples per run, 1.7 MB of per-run
+  residuals, 0.02 MB of everything else — and the search assembled one for
+  every anchor, elimination step and flip it visited, keeping them in the
+  per-template caches. Only the assessments a recommendation exposes are ever
+  drawn, so search-internal nodes are assembled without curves (and without
+  residuals once the diagnostics are computed) and the curves are rebuilt
+  once, from the fitted parameters, for the assessments that leave the
+  search. The same applies to the phase-1 completion cells (1.1 MB each,
+  ~30 MB per run recommendation): only a run's recommended and comparable
+  cells keep curves.
