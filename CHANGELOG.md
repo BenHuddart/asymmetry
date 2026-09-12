@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`frequency` = centre, `delta_frequency` = half-width) fits the two edges independently or
   matches literature written that way; the Fit Parameters panel's **Create Composite Parameter**
   converts between them with propagated uncertainties. The Fit Wizard offers `OverhauserPowder`
-  and `OverhauserPowderCutoff`, each with an optional extra `Exponential`, in its precession family
+  and `OverhauserPowderCutoff`, each with an optional extra `Exponential`, in its **Precession** family
   for both the single-run and Global Fit Wizards. See
   `docs/reference/fit_functions/oscillation.rst` for the full lineshapes, the narrow-distribution
   approximation the two-cut-off form makes (and when to fall back to `OverhauserPowder` instead),

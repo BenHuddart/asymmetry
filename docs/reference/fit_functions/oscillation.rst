@@ -26,9 +26,9 @@ When a signal contains several inequivalent muon sites, a sum of two or three
 ``Oscillatory`` components is generally preferable to one component with a
 broadened envelope; if the field distribution is genuinely continuous, look
 at the Fourier spectrum first (:doc:`../fourier_analysis`), and for an
-*incommensurate* distribution use ``Bessel``. ``Bessel`` describes a single
-crystal or textured sample; for a **powder** of the same incommensurate,
-single-site structure, where a non-precessing ⅓ tail is also present, use
+*incommensurate* distribution use ``Bessel``. ``Bessel`` is the bare
+precessing line; for a **powder** of the same incommensurate, single-site
+structure, where a non-precessing ⅓ tail is also present, use
 ``OverhauserPowder`` instead. For a powder of a more general single-q
 structure — helical or collinear order at a low-symmetry muon site, where the
 field distribution has two non-zero cut-offs rather than running to zero —
@@ -274,7 +274,7 @@ is about 0.03 at :math:`r = 0.8`, 0.07 at :math:`r = 0.6`, 0.12 at
 :math:`r = 0.4` and 0.31 at :math:`r = 0` (in units of the precessing
 amplitude). At :math:`r = 0` the closed form does **not** reduce to
 ``OverhauserPowder``'s :math:`J_0(2\pi f_{\max} t)`; once a fit drives
-``ratio`` (or :math:`f_{\min}`) toward zero, switch to ``OverhauserPowder``,
+``ratio`` (or :math:`f_{\min}`) towards zero, switch to ``OverhauserPowder``,
 which is exact for a single-cut-off distribution. As with ``Bessel``, a
 Bessel-like line does not on its own prove incommensurate or single-*q*
 order — several commensurate sites, or disorder, can mimic it — so
@@ -298,7 +298,7 @@ In a composite model, a name shared by several components carries the index
 shown in the fit table (e.g. ``frequency_1``).
 
 The Fit Wizard offers ``OverhauserPowder`` and ``OverhauserPowderCutoff``,
-each with an optional extra ``Exponential``, in its precession family for
+each with an optional extra ``Exponential``, in its **Precession** family for
 the single-run and Global Fit Wizards. ``OverhauserPowderCentre`` is not
 offered as a wizard template, because it is numerically identical to the
 cut-off form.

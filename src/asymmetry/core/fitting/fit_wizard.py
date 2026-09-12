@@ -830,9 +830,6 @@ def build_candidate_templates(
             category="Oscillatory",
             rationale="A J0 (Bessel) line shape fits incommensurate/SDW internal-field distributions better than a cosine.",
         )
-        # Offered beside the bare Bessel line because a powder average also fixes
-        # a third of the amplitude in a non-precessing tail that relaxes at its
-        # own rate, which the Bessel candidate has no way to describe.
         _add(
             "overhauser_powder_constant",
             CompositeModel(["OverhauserPowder", "Constant"], operators=["+"]),
@@ -4989,11 +4986,9 @@ def _initial_parameters_for_template(
     elif template.key in OVERHAUSER_TEMPLATE_KEYS:
         lead = seed_peaks[0] if seed_peaks else None
         amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
-        # ``frequency`` is the Overhauser edge f_max, and that is exactly where
-        # the field distribution's spectral singularity — the detected line —
-        # sits, so it seeds as a cosine's frequency does. The two-cut-off arch
-        # peaks at both of its edges instead, so a second detected line measures
-        # r = f_min/f_max; with one line the midpoint is the honest guess.
+        # The Overhauser edge f_max is where the spectral singularity sits, so it
+        # seeds like a cosine's frequency; the two-cut-off arch peaks at both
+        # edges, so a second detected line measures r = f_min/f_max.
         edge, ratio = lead, 0.5
         if "ratio" in template.model.param_names and len(seed_peaks) >= 2:
             lower, edge = sorted(seed_peaks[:2], key=lambda peak: peak.frequency_mhz)
