@@ -1336,6 +1336,29 @@ def test_the_cutoff_overhauser_reads_its_edges_off_the_detected_lines(
     assert seeded["ratio"].value == pytest.approx(ratio)
 
 
+def test_a_scan_amplitude_seeds_the_whole_powder_amplitude_not_its_precessing_part() -> None:
+    """The scan's damped-cosine coefficient is the 2/3 precessing fraction of A."""
+    dataset = _scan_record((_SCAN_LINE_A,))
+    template = CandidateTemplate(
+        key="overhauser_powder_constant",
+        title="test powder Overhauser",
+        category="Oscillatory",
+        rationale="test",
+        model=CompositeModel(["OverhauserPowder", "Constant"], operators=["+"]),
+    )
+
+    seeded = _initial_parameters_for_template(
+        dataset,
+        fingerprint_spectrum(dataset),
+        template,
+        seed_context=TemplateSeedContext(
+            peak_analysis=_analysis([_scan_peak(1.0, amplitude_percent=6.0)]), field_gauss=None
+        ),
+    )
+
+    assert seeded["A_1"].value == pytest.approx(9.0)
+
+
 # --------------------------------------------------------------------------- #
 # Which parameters are the lines, and when a line has vanished
 # --------------------------------------------------------------------------- #

@@ -4993,7 +4993,9 @@ def _initial_parameters_for_template(
         if "ratio" in template.model.param_names and len(seed_peaks) >= 2:
             lower, edge = sorted(seed_peaks[:2], key=lambda peak: peak.frequency_mhz)
             ratio = lower.frequency_mhz / edge.frequency_mhz
-        line_amplitude = _seeded_amplitude(lead, amplitude)
+        # The scan measures the damped-cosine coefficient, which is the precessing
+        # 2/3 of this component's A; the fallback is already the whole amplitude.
+        line_amplitude = 1.5 * _seeded_amplitude(lead, amplitude / 1.5)
         overrides = {
             "A": line_amplitude,
             "frequency": min(
