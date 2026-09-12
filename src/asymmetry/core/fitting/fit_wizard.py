@@ -4898,11 +4898,18 @@ def _initial_parameters_for_template(
             amplitude *= math.exp(growth)
         return max(min(amplitude, 4.0 * data_span), _EPS)
 
-    def _seeded_phase(peak: DetectedPeak | None, fallback: float) -> float:
-        """The line's measured phase referred to t = 0, else ``fallback``."""
+    def _seeded_phase(
+        peak: DetectedPeak | None, fallback: float, cosine_frequency: float | None = None
+    ) -> float:
+        """The line's measured phase referred to t = 0, else ``fallback``.
+
+        ``cosine_frequency`` is the frequency the model's cosine runs at when
+        that is not the detected line's own (the two-cut-off centre f_av).
+        """
         if peak is None or peak.phase_rad is None or not _is_scan_measured(peak):
             return fallback
-        phase = float(peak.phase_rad) - 2.0 * math.pi * float(peak.frequency_mhz) * t_origin
+        frequency = peak.frequency_mhz if cosine_frequency is None else cosine_frequency
+        phase = float(peak.phase_rad) - 2.0 * math.pi * float(frequency) * t_origin
         return float(((phase + math.pi) % (2.0 * math.pi)) - math.pi)
 
     if template.key == "exp_constant":
@@ -4996,13 +5003,14 @@ def _initial_parameters_for_template(
         # The scan measures the damped-cosine coefficient, which is the precessing
         # 2/3 of this component's A; the fallback is already the whole amplitude.
         line_amplitude = 1.5 * _seeded_amplitude(lead, amplitude / 1.5)
+        frequency = min(edge.frequency_mhz if edge is not None else frequency_guess, 0.98 * nyquist)
         overrides = {
             "A": line_amplitude,
-            "frequency": min(
-                edge.frequency_mhz if edge is not None else frequency_guess, 0.98 * nyquist
-            ),
+            "frequency": frequency,
             "ratio": ratio,
-            "phase": _seeded_phase(lead, phase_guess),
+            "phase": _seeded_phase(
+                lead, phase_guess, cosine_frequency=frequency * (1.0 + ratio) / 2.0
+            ),
             "lambda_T": _damped_envelope_rate(lead) or lambda_guess,
             # Nothing measures the 1/3 tail's own rate separately on a record the
             # line has already decayed through: the early slope is all there is.

@@ -1301,6 +1301,15 @@ def test_a_prefix_template_is_seeded_from_the_same_prefix() -> None:
     assert seeded["frequency"].value == pytest.approx(240.0)
 
 
+CUTOFF_TEMPLATE = CandidateTemplate(
+    key="overhauser_cutoff_powder_constant",
+    title="test cut-off Overhauser",
+    category="Oscillatory",
+    rationale="test",
+    model=CompositeModel(["OverhauserPowderCutoff", "Constant"], operators=["+"]),
+)
+
+
 @pytest.mark.parametrize(
     ("peaks", "frequency", "ratio"),
     [
@@ -1317,23 +1326,37 @@ def test_the_cutoff_overhauser_reads_its_edges_off_the_detected_lines(
     one line is the upper edge alone and leaves the midpoint guess.
     """
     dataset = _scan_record((_SCAN_LINE_A,))
-    template = CandidateTemplate(
-        key="overhauser_cutoff_powder_constant",
-        title="test cut-off Overhauser",
-        category="Oscillatory",
-        rationale="test",
-        model=CompositeModel(["OverhauserPowderCutoff", "Constant"], operators=["+"]),
-    )
 
     seeded = _initial_parameters_for_template(
         dataset,
         fingerprint_spectrum(dataset),
-        template,
+        CUTOFF_TEMPLATE,
         seed_context=TemplateSeedContext(peak_analysis=_analysis(peaks), field_gauss=None),
     )
 
     assert seeded["frequency"].value == pytest.approx(frequency)
     assert seeded["ratio"].value == pytest.approx(ratio)
+
+
+def test_the_cutoff_phase_is_referred_to_t_zero_at_the_centre_frequency() -> None:
+    """The model's cosine runs at f_av, not at the detected edge the scan measured."""
+    record = _scan_record((_SCAN_LINE_A,))
+    dataset = MuonDataset(
+        time=record.time + 0.2,
+        asymmetry=record.asymmetry,
+        error=record.error,
+        metadata=record.metadata,
+    )
+    peaks = [_scan_peak(1.0, phase_rad=0.3), _scan_peak(0.5)]
+
+    seeded = _initial_parameters_for_template(
+        dataset,
+        fingerprint_spectrum(dataset),
+        CUTOFF_TEMPLATE,
+        seed_context=TemplateSeedContext(peak_analysis=_analysis(peaks), field_gauss=None),
+    )
+
+    assert seeded["phase"].value == pytest.approx(0.3 - 2.0 * np.pi * 0.75 * 0.2)
 
 
 def test_a_scan_amplitude_seeds_the_whole_powder_amplitude_not_its_precessing_part() -> None:

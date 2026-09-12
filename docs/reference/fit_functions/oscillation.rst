@@ -261,8 +261,10 @@ and :math:`[-\pi, \pi]` respectively; in a manual fit only the lower bound of
 ``frequency``. ``delta_frequency`` exceeding :math:`f_{\mathrm{av}}` is not
 clamped: it is telling you :math:`B_{\min}` has reached zero, and you should
 switch to ``OverhauserPowder`` rather than read a negative :math:`f_{\min}`.
-In the cut-off form, :math:`r > 1` mirrors the same line back onto itself
-(:math:`J_0` is even), so it is redundant rather than wrong.
+In the cut-off form :math:`r > 1` is not the same line: it makes
+``frequency`` the *lower* cut-off and :math:`r f` the upper one, so set an
+upper bound of 1 on ``ratio`` in the fit table (the Fit Wizard does), or
+read a fit that crosses it with the two edges swapped.
 
 The closed form above is an *approximation*: it is exactly the transform of
 an arcsine density on :math:`(f_{\min}, f_{\max})`, whereas the true
