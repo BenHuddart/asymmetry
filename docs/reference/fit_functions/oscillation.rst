@@ -26,7 +26,13 @@ When a signal contains several inequivalent muon sites, a sum of two or three
 ``Oscillatory`` components is generally preferable to one component with a
 broadened envelope; if the field distribution is genuinely continuous, look
 at the Fourier spectrum first (:doc:`../fourier_analysis`), and for an
-*incommensurate* distribution use ``Bessel``.
+*incommensurate* distribution use ``Bessel``. ``Bessel`` is the bare
+precessing line; for a **powder** of the same incommensurate, single-site
+structure, where a non-precessing ⅓ tail is also present, use
+``OverhauserPowder`` instead. For a powder of a more general single-q
+structure — helical or collinear order at a low-symmetry muon site, where the
+field distribution has two non-zero cut-offs rather than running to zero —
+use the ``OverhauserPowderCutoff``/``OverhauserPowderCentre`` pair.
 
 .. _fit-oscillatory:
 
@@ -120,7 +126,9 @@ a damped cosine with a characteristic :math:`-45^\circ` phase — so a
 free-phase ``Oscillatory`` fit that insists on a phase near
 :math:`-45^\circ` is the classic sign that this component is needed.
 Compose with a relaxation envelope for additional damping; for commensurate
-order use ``Oscillatory`` or ``OscillatoryField``.
+order use ``Oscillatory`` or ``OscillatoryField``. For a **powder** sample,
+where the ⅓ non-precessing tail is also visible, use ``OverhauserPowder``
+instead.
 
 =============  ============  =====  ==========================================
 Name           Symbol        Unit   Description
@@ -133,6 +141,175 @@ Name           Symbol        Unit   Description
 **References**
 
 - L. P. Le *et al.*, Phys. Rev. B **48**, 7284 (1993).
+
+.. _fit-overhauser-powder:
+
+OverhauserPowder
+----------------
+
+.. math::
+
+   A(t) = A\left[\tfrac{1}{3}\,e^{-\lambda_L t}
+          + \tfrac{2}{3}\,J_0(2\pi f t)\,e^{-\lambda_T t}\right]
+
+The polarisation of a **powder** (polycrystalline) sample of the same
+incommensurate, single-site structure as ``Bessel`` — a spin-density wave with
+one muon site, sampled over every crystallite orientation. Each crystallite
+still sees the Overhauser field distribution
+:math:`p(B) = \pi^{-1}(B_{\max}^2 - B^2)^{-1/2}` for :math:`|B| < B_{\max}`,
+with :math:`f = \gamma_\mu B_{\max}/2\pi` the distribution edge and the
+order parameter to trend versus temperature, but the powder average splits
+the polarisation into two exact fractions: a non-precessing :math:`\tfrac{1}{3}`
+of the muon spins lie along the local field at their site and relax at
+:math:`\lambda_L`, while the precessing :math:`\tfrac{2}{3}` follow the
+:math:`J_0` line shape of ``Bessel`` and relax at :math:`\lambda_T`.
+
+=================  =================  =======  ==========================================
+Name               Symbol             Unit     Description
+=================  =================  =======  ==========================================
+``A``              :math:`A`          %        Component asymmetry amplitude.
+``frequency``      :math:`f`          MHz      Field-distribution edge, γ\ :sub:`μ`\ B\ :sub:`max`\ /2π.
+``lambda_T``       :math:`\lambda_T`  µs⁻¹     Relaxation of the precessing ⅔ fraction.
+``lambda_L``       :math:`\lambda_L`  µs⁻¹     Relaxation of the non-precessing ⅓ fraction.
+=================  =================  =======  ==========================================
+
+``frequency``, ``lambda_T`` and ``lambda_L`` are bounded non-negative. A
+Bessel-like line does not on its own prove incommensurate order — a
+distribution of fields from a commensurate structure with several sites, or
+from disorder, can mimic it — so corroborate with the ordering wavevector
+from diffraction where possible.
+
+**References**
+
+- A. T. Savici *et al.*, Phys. Rev. B **66**, 014524 (2002).
+- L. P. Le *et al.*, Phys. Rev. B **48**, 7284 (1993).
+- P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).
+
+.. _fit-overhauser-powder-two-cutoff:
+
+OverhauserPowderCutoff and OverhauserPowderCentre
+--------------------------------------------------
+
+.. math::
+
+   A(t) = A\left[\tfrac{1}{3}\,e^{-\lambda_L t}
+          + \tfrac{2}{3}\,J_0(2\pi\Delta f\,t)\,
+            \cos(2\pi f_{\mathrm{av}} t + \phi)\,e^{-\lambda_T t}\right]
+
+The polarisation of a **powder** sample of a general single-*q* magnetic
+structure — helical or collinear order at a low-symmetry muon site — where
+the local field distribution has *two* non-zero cut-offs,
+:math:`p(B) \propto B\,[(B^2 - B_{\min}^2)(B_{\max}^2 - B^2)]^{-1/2}`, rather
+than running down to zero as in ``OverhauserPowder``. As with
+``OverhauserPowder`` the polarisation splits into a non-precessing
+:math:`\tfrac{1}{3}` tail relaxing at :math:`\lambda_L` and a precessing
+:math:`\tfrac{2}{3}` fraction relaxing at :math:`\lambda_T`; :math:`\phi` is
+a phase offset.
+
+The two entries fit the same lineshape in two parametrisations, sharing one
+implementation:
+
+- **OverhauserPowderCutoff** — ``frequency`` is the upper cut-off
+  :math:`f_{\max}` and ``ratio`` is :math:`r = B_{\min}/B_{\max}`. Share
+  ``ratio`` across a series, since it is a structural constant of the
+  magnetic structure, and trend ``frequency`` as the order parameter.
+- **OverhauserPowderCentre** — ``frequency`` is the centre :math:`f_{\mathrm{av}}`
+  and ``delta_frequency`` is the half-width :math:`\Delta f`, the form of
+  Amato *et al.* (2014). Use it to fit the two edges as independent numbers,
+  or to compare directly against literature written in :math:`(f_{\mathrm{av}},
+  \Delta f)`.
+
+The two parameter sets convert into each other directly:
+
+.. math::
+
+   f_{\mathrm{av}} = f_{\max}\,\frac{1+r}{2}, \qquad
+   \Delta f = f_{\max}\,\frac{1-r}{2}, \qquad
+   f_{\min} = r\,f_{\max}
+
+.. math::
+
+   f_{\max} = f_{\mathrm{av}} + \Delta f, \qquad
+   f_{\min} = f_{\mathrm{av}} - \Delta f, \qquad
+   r = \frac{f_{\mathrm{av}} - \Delta f}{f_{\mathrm{av}} + \Delta f}
+
+=====================  =========================  =======  ==========================================
+Name                    Symbol                     Unit     Description
+=====================  =========================  =======  ==========================================
+``A``                   :math:`A`                  %        Component asymmetry amplitude.
+``frequency``           :math:`f_{\max}`           MHz      Upper cut-off frequency (OverhauserPowderCutoff).
+``ratio``               :math:`r`                  —        :math:`B_{\min}/B_{\max}` (OverhauserPowderCutoff).
+``phase``               :math:`\phi`               rad      Phase offset.
+``lambda_T``            :math:`\lambda_T`          µs⁻¹     Relaxation of the precessing ⅔ fraction.
+``lambda_L``            :math:`\lambda_L`          µs⁻¹     Relaxation of the non-precessing ⅓ fraction.
+=====================  =========================  =======  ==========================================
+
+=====================  =========================  =======  ==========================================
+Name                    Symbol                     Unit     Description
+=====================  =========================  =======  ==========================================
+``A``                   :math:`A`                  %        Component asymmetry amplitude.
+``frequency``           :math:`f_{\mathrm{av}}`    MHz      Centre frequency (OverhauserPowderCentre).
+``delta_frequency``     :math:`\Delta f`           MHz      Half-width between the two cut-offs.
+``phase``               :math:`\phi`               rad      Phase offset.
+``lambda_T``            :math:`\lambda_T`          µs⁻¹     Relaxation of the precessing ⅔ fraction.
+``lambda_L``            :math:`\lambda_L`          µs⁻¹     Relaxation of the non-precessing ⅓ fraction.
+=====================  =========================  =======  ==========================================
+
+In the Fit Wizard, ``ratio`` and :math:`\phi` are bounded to :math:`[0, 1]`
+and :math:`[-\pi, \pi]` respectively; in a manual fit only the lower bound of
+0 is set on ``ratio``, ``delta_frequency``, ``lambda_T``, ``lambda_L`` and
+``frequency``. ``delta_frequency`` exceeding :math:`f_{\mathrm{av}}` is not
+clamped: it is telling you :math:`B_{\min}` has reached zero, and you should
+switch to ``OverhauserPowder`` rather than read a negative :math:`f_{\min}`.
+In the cut-off form :math:`r > 1` is not the same line: it makes
+``frequency`` the *lower* cut-off and :math:`r f` the upper one, so set an
+upper bound of 1 on ``ratio`` in the fit table (the Fit Wizard does), or
+read a fit that crosses it with the two edges swapped.
+
+The closed form above is an *approximation*: it is exactly the transform of
+an arcsine density on :math:`(f_{\min}, f_{\max})`, whereas the true
+two-cut-off density carries an extra factor of
+:math:`B/\sqrt{(B+B_{\min})(B_{\max}+B)}`. The approximation is exact as
+:math:`r \to 1` (a pure cosine at :math:`f_{\max}`) and worsens as :math:`r`
+falls: the maximum deviation of the precessing part from the exact transform
+is about 0.03 at :math:`r = 0.8`, 0.07 at :math:`r = 0.6`, 0.12 at
+:math:`r = 0.4` and 0.31 at :math:`r = 0` (in units of the precessing
+amplitude). At :math:`r = 0` the closed form does **not** reduce to
+``OverhauserPowder``'s :math:`J_0(2\pi f_{\max} t)`; once a fit drives
+``ratio`` (or :math:`f_{\min}`) towards zero, switch to ``OverhauserPowder``,
+which is exact for a single-cut-off distribution. As with ``Bessel``, a
+Bessel-like line does not on its own prove incommensurate or single-*q*
+order — several commensurate sites, or disorder, can mimic it — so
+corroborate with the ordering wavevector from diffraction where possible.
+
+The Fit Parameters panel's **Create Composite Parameter**
+(:doc:`../parameter_trending`) recovers the other parametrisation's
+quantities as derived, uncertainty-propagated trends. From the centre form:
+
+- ``frequency + delta_frequency`` for :math:`f_{\max}`
+- ``frequency - delta_frequency`` for :math:`f_{\min}`
+- ``(frequency - delta_frequency)/(frequency + delta_frequency)`` for :math:`r`
+
+From the cut-off form:
+
+- ``frequency*(1 + ratio)/2`` for :math:`f_{\mathrm{av}}`
+- ``frequency*(1 - ratio)/2`` for :math:`\Delta f`
+- ``frequency*ratio`` for :math:`f_{\min}`
+
+In a composite model, a name shared by several components carries the index
+shown in the fit table (e.g. ``frequency_1``).
+
+The Fit Wizard offers ``OverhauserPowder`` and ``OverhauserPowderCutoff``,
+each with an optional extra ``Exponential``, in its **Precession** family for
+the single-run and Global Fit Wizards. ``OverhauserPowderCentre`` is not
+offered as a wizard template, because it is numerically identical to the
+cut-off form.
+
+**References**
+
+- A. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
+- P. Dalmas de Réotier *et al.*, Phys. Rev. B **93**, 144419 (2016).
+- P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).
 
 .. _fit-vortex-lattice:
 

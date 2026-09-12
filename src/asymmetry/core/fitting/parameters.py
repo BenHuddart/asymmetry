@@ -328,6 +328,19 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "lambda_T": ParamInfo(
         "lambda_T", "lambda_T", "λ_T", r"$\lambda_T$", r"\lambda_{T}", "µs⁻¹", default_min=0.0
     ),
+    "lambda_L": ParamInfo(
+        "lambda_L", "lambda_L", "λ_L", r"$\lambda_L$", r"\lambda_{L}", "µs⁻¹", default_min=0.0
+    ),
+    "ratio": ParamInfo("ratio", "ratio", "r", r"$r$", r"{\it r}", default_min=0.0),
+    "delta_frequency": ParamInfo(
+        "delta_frequency",
+        "delta_frequency",
+        "Δf",
+        r"$\Delta f$",
+        r"\Delta{\it f}",
+        "MHz",
+        default_min=0.0,
+    ),
     "r_muH": ParamInfo(
         "r_muH", "r_muH", "r_μH", r"$r_{\mu H}$", r"{\it r}_{\mu H}", "Å", default_min=0.0
     ),
@@ -520,7 +533,13 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "tau_c": "Correlation time of the fluctuating coupling (inverse hop or collision rate).",
     "w_rel": "Fractional standard deviation of the Gaussian distribution of the Kubo-Toyabe width Δ.",
     "B_dip": "Dipolar field at the muon from the coupled nuclear spin (ω_d = γµB_dip).",
-    "lambda_T": "Transverse damping applied to the oscillating part of the dipole-pair polarization.",
+    "lambda_T": "Transverse damping applied to the oscillating (precessing) part of the polarization.",
+    "lambda_L": "Longitudinal relaxation rate of the non-precessing (powder 1/3) fraction.",
+    "ratio": "Ratio B_min/B_max of the lower to the upper cut-off of a two-cut-off field distribution (0 ≤ r ≤ 1).",
+    "delta_frequency": (
+        "Half the difference between the upper and lower cut-off frequencies of a "
+        "two-cut-off field distribution."
+    ),
     "r_muH": "Muon-proton distance for the spin-1/2 dipole-pair polarization.",
     "r_mue": "Muon-electron distance for the spin-1/2 dipole-pair polarization.",
     "f_dip": "Dipolar coupling frequency between the muon and the spin-J nucleus.",

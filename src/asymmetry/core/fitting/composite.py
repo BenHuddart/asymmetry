@@ -16,6 +16,7 @@ from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.special import j0
 
 from asymmetry.core.fitting.component_tags import (
     ALL_GEOMETRIES,
@@ -335,6 +336,48 @@ def _bessel_component(t: NDArray, A: float, frequency: float, phase: float) -> N
     return A * bessel_oscillation(t, frequency, phase)
 
 
+def _overhauser_powder_component(
+    t: NDArray, A: float, frequency: float, lambda_T: float, lambda_L: float
+) -> NDArray[np.float64]:
+    return A * (
+        np.exp(-lambda_L * t) / 3.0
+        + 2.0 / 3.0 * j0(2.0 * np.pi * frequency * t) * np.exp(-lambda_T * t)
+    )
+
+
+def _overhauser_powder_centre_component(
+    t: NDArray,
+    A: float,
+    frequency: float,
+    delta_frequency: float,
+    phase: float,
+    lambda_T: float,
+    lambda_L: float,
+) -> NDArray[np.float64]:
+    precessing = j0(2.0 * np.pi * delta_frequency * t) * np.cos(2.0 * np.pi * frequency * t + phase)
+    return A * (np.exp(-lambda_L * t) / 3.0 + 2.0 / 3.0 * precessing * np.exp(-lambda_T * t))
+
+
+def _overhauser_powder_cutoff_component(
+    t: NDArray,
+    A: float,
+    frequency: float,
+    ratio: float,
+    phase: float,
+    lambda_T: float,
+    lambda_L: float,
+) -> NDArray[np.float64]:
+    return _overhauser_powder_centre_component(
+        t,
+        A,
+        frequency * (1.0 + ratio) / 2.0,
+        frequency * (1.0 - ratio) / 2.0,
+        phase,
+        lambda_T,
+        lambda_L,
+    )
+
+
 def _gaussian_broadened_kt_component(
     t: NDArray, A: float, Delta: float, B_L: float, w_rel: float
 ) -> NDArray[np.float64]:
@@ -592,6 +635,108 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         category="Oscillation",
         knight_observable="frequency",
         field_geometries=frozenset({FieldGeometry.ZF, FieldGeometry.TF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.CHEAP,
+    ),
+    "OverhauserPowder": ComponentDefinition(
+        name="OverhauserPowder",
+        description=(
+            "Powder incommensurate (sine-wave) magnet: 1/3 exp(-lambda_L t) + "
+            "2/3 J0(2 pi f t) exp(-lambda_T t), f the Overhauser field-distribution edge"
+        ),
+        function=_overhauser_powder_component,
+        param_names=["A", "frequency", "lambda_T", "lambda_L"],
+        param_defaults={"A": 25.0, "frequency": 1.0, "lambda_T": 0.5, "lambda_L": 0.1},
+        param_info={
+            "A": get_param_info("A"),
+            "frequency": get_param_info("frequency"),
+            "lambda_T": get_param_info("lambda_T"),
+            "lambda_L": get_param_info("lambda_L"),
+        },
+        formula_template=(
+            "{A}*(1/3*exp(-{lambda_L}*t) + 2/3*J0(2*pi*{frequency}*t)*exp(-{lambda_T}*t))"
+        ),
+        latex_equation=(
+            r"A(t) = A\left[\frac{1}{3}e^{-\lambda_L t} + "
+            r"\frac{2}{3}J_0(2\pi f t)\,e^{-\lambda_T t}\right]"
+        ),
+        category="Oscillation",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.CHEAP,
+    ),
+    "OverhauserPowderCutoff": ComponentDefinition(
+        name="OverhauserPowderCutoff",
+        description=(
+            "Two-cut-off powder line (helical or general single-q): f = upper cut-off f_max, "
+            "ratio r = B_min/B_max; f_av = f(1+r)/2, Delta f = f(1-r)/2"
+        ),
+        function=_overhauser_powder_cutoff_component,
+        param_names=["A", "frequency", "ratio", "phase", "lambda_T", "lambda_L"],
+        param_defaults={
+            "A": 25.0,
+            "frequency": 1.0,
+            "ratio": 0.5,
+            "phase": 0.0,
+            "lambda_T": 0.5,
+            "lambda_L": 0.1,
+        },
+        param_info={
+            "A": get_param_info("A"),
+            "frequency": get_param_info("frequency"),
+            "ratio": get_param_info("ratio"),
+            "phase": get_param_info("phase"),
+            "lambda_T": get_param_info("lambda_T"),
+            "lambda_L": get_param_info("lambda_L"),
+        },
+        formula_template=(
+            "{A}*(1/3*exp(-{lambda_L}*t) + 2/3*J0(pi*{frequency}*(1-{ratio})*t)*"
+            "cos(pi*{frequency}*(1+{ratio})*t + {phase})*exp(-{lambda_T}*t))"
+        ),
+        latex_equation=(
+            r"A(t) = A\left[\frac{1}{3}e^{-\lambda_L t} + "
+            r"\frac{2}{3}J_0\left(\pi f(1-r)t\right)"
+            r"\cos\left(\pi f(1+r)t+\phi\right)e^{-\lambda_T t}\right]"
+        ),
+        category="Oscillation",
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.CHEAP,
+    ),
+    "OverhauserPowderCentre": ComponentDefinition(
+        name="OverhauserPowderCentre",
+        description=(
+            "Same two-cut-off powder line as OverhauserPowderCutoff, parametrised by the "
+            "centre f = (f_max+f_min)/2 and half-width Delta f = (f_max-f_min)/2"
+        ),
+        function=_overhauser_powder_centre_component,
+        param_names=["A", "frequency", "delta_frequency", "phase", "lambda_T", "lambda_L"],
+        param_defaults={
+            "A": 25.0,
+            "frequency": 1.0,
+            "delta_frequency": 0.3,
+            "phase": 0.0,
+            "lambda_T": 0.5,
+            "lambda_L": 0.1,
+        },
+        param_info={
+            "A": get_param_info("A"),
+            "frequency": get_param_info("frequency"),
+            "delta_frequency": get_param_info("delta_frequency"),
+            "phase": get_param_info("phase"),
+            "lambda_T": get_param_info("lambda_T"),
+            "lambda_L": get_param_info("lambda_L"),
+        },
+        formula_template=(
+            "{A}*(1/3*exp(-{lambda_L}*t) + 2/3*J0(2*pi*{delta_frequency}*t)*"
+            "cos(2*pi*{frequency}*t + {phase})*exp(-{lambda_T}*t))"
+        ),
+        latex_equation=(
+            r"A(t) = A\left[\frac{1}{3}e^{-\lambda_L t} + "
+            r"\frac{2}{3}J_0(2\pi\,\Delta f\,t)\cos(2\pi f t+\phi)\,e^{-\lambda_T t}\right]"
+        ),
+        category="Oscillation",
+        field_geometries=frozenset({FieldGeometry.ZF}),
         physics_classes=frozenset({PhysicsClass.MAGNETISM}),
         cost=ComputationalCost.CHEAP,
     ),
