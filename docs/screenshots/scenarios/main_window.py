@@ -24,9 +24,11 @@ class MainWindowScenario(Scenario):
     size = (1500, 920)
 
     def build(self) -> QWidget:
-        from asymmetry.gui.mainwindow import MainWindow
+        from asymmetry.gui.shell import ProjectShell
 
-        window = MainWindow()
+        # Through the shell so the hero shot shows the project tab strip.
+        shell = ProjectShell()
+        window = shell.add_project()
         # Surface the fit dock so the full WiMDA-style layout is visible.
         window._on_fit()
         # Wider data-browser dock so Run/Title/T(K)/B(G) all fit.
@@ -36,7 +38,14 @@ class MainWindowScenario(Scenario):
         for dataset in make_euo_tf_tscan():
             window._data_browser.add_dataset(dataset)
         window._on_dataset_selected(3003)  # T=65 K, just below Tc
-        return window
+        return shell
+
+    def teardown(self, widget: QWidget) -> None:
+        # The base teardown clears `_dirty` on the widget itself; here the
+        # pages carry it, and a dirty page's save prompt would block offscreen.
+        for page in widget.pages():
+            page._dirty = False
+        super().teardown(widget)
 
 
 register(MainWindowScenario())
