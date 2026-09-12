@@ -53,6 +53,17 @@ UI_SCALE_OPTIONS: tuple[float, ...] = (0.8, 0.9, 1.0, 1.1, 1.2)
 _APP_BASE_STYLESHEET_PROP = "_asymmetry_base_stylesheet"
 _APP_BASE_FONT_PROP = "_asymmetry_base_font"
 
+
+class _UIScaleBroadcast(QObject):
+    """Process-wide signal so every open project's chrome tracks the shared scale."""
+
+    ui_scale_broadcast = Signal(float)
+
+
+# Each project tab owns its own UIManager, but the scale is one shared
+# preference; a module-level instance is safe to build before the QApplication.
+_ui_scale_broadcast = _UIScaleBroadcast()
+
 _DEFAULT_UI_SCALE = 0.9
 _RESOURCE_DIR = Path(__file__).resolve().parents[1] / "resources"
 _SPIN_UP_ARROW_ICON = (_RESOURCE_DIR / "spin_up_arrow.svg").as_posix()
@@ -99,6 +110,7 @@ class UIManager(QObject):
             self._base_font = QFont()
             self._base_stylesheet = ""
         self._base_font_size = self._resolve_font_point_size(self._base_font)
+        _ui_scale_broadcast.ui_scale_broadcast.connect(self._follow_ui_scale_broadcast)
 
     def restore_settings(self) -> None:
         """Restore persisted UI scale preferences and clear legacy compact-mode state."""
@@ -123,6 +135,14 @@ class UIManager(QObject):
         self.ui_scale = next_scale
         self._settings.setValue(UI_SCALE_SETTINGS_KEY, next_scale)
         self._settings.sync()
+        self.apply_ui_scale()
+        _ui_scale_broadcast.ui_scale_broadcast.emit(next_scale)
+
+    def _follow_ui_scale_broadcast(self, scale: float) -> None:
+        """Adopt another tab's scale change without re-persisting or re-emitting it."""
+        if abs(scale - self.ui_scale) < 1e-9:
+            return
+        self.ui_scale = scale
         self.apply_ui_scale()
 
     def increase_scale(self) -> None:

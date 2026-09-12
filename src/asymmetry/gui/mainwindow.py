@@ -308,6 +308,18 @@ if TYPE_CHECKING:
     # Imported for typing only: shell.py imports this module to build its pages.
     from asymmetry.gui.shell import ProjectShell
 
+
+class _RecentProjectsBroadcast(QObject):
+    """Process-wide signal so every open project's menu tracks the shared list."""
+
+    recent_projects_changed = Signal()
+
+
+# The recent-projects list lives in QSettings shared by every tab, so each
+# tab's menu must rebuild when any tab changes it. A QObject can be built
+# before the QApplication, so a module-level instance is safe at import time.
+_recent_projects_broadcast = _RecentProjectsBroadcast()
+
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
 #: After the user cancels a bulk load, how long to wait for the worker to stop
@@ -1089,6 +1101,9 @@ class MainWindow(QMainWindow):
         save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
         self._recent_menu = file_menu.addMenu("Recent Projects")
         self._update_recent_projects_menu()
+        _recent_projects_broadcast.recent_projects_changed.connect(
+            self._update_recent_projects_menu
+        )
         file_menu.addSeparator()
         close_action = file_menu.addAction("Close Project", self._on_close_project)
         close_action.setShortcut(QKeySequence(QKeySequence.StandardKey.Close))
@@ -16088,7 +16103,9 @@ class MainWindow(QMainWindow):
         recent.insert(0, path)
         recent = recent[:_MAX_RECENT_PROJECTS]
         self._settings.setValue("project/recent_files", recent)
-        self._update_recent_projects_menu()
+        # Flush so other tabs' QSettings instances see this write before the broadcast.
+        self._settings.sync()
+        _recent_projects_broadcast.recent_projects_changed.emit()
 
     def _update_recent_projects_menu(self) -> None:
         """Rebuild the Recent Projects submenu from QSettings."""
@@ -16109,7 +16126,8 @@ class MainWindow(QMainWindow):
     def _clear_recent_projects(self) -> None:
         """Remove all entries from the recent-projects list."""
         self._settings.remove("project/recent_files")
-        self._update_recent_projects_menu()
+        self._settings.sync()
+        _recent_projects_broadcast.recent_projects_changed.emit()
 
     def _update_window_title(self) -> None:
         """Update window title to reflect the current project file name.
