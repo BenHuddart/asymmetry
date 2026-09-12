@@ -30,6 +30,7 @@ from asymmetry.core.fitting.composite import (
 )
 from asymmetry.core.fitting.engine import FitCancelledError, FitEngine, FitResult
 from asymmetry.core.fitting.fit_wizard import (
+    OVERHAUSER_TEMPLATE_KEYS,
     CandidateAssessment,
     CandidateTemplate,
     FitWizardRecommendation,
@@ -2708,7 +2709,9 @@ def _partition_inputs_from_prescreen(
         )
         if not free_names:
             continue
-        lines_required = is_multiplet_template_key(template_key)
+        lines_required = (
+            is_multiplet_template_key(template_key) or template_key in OVERHAUSER_TEMPLATE_KEYS
+        )
         per_run: dict[int, RunEstimate] = {}
         for dataset in ordered_datasets:
             run_number = int(dataset.run_number)
@@ -10732,8 +10735,9 @@ def _oscillatory_admissible_phase_candidates(
 ) -> tuple[GlobalCandidateAssessment, ...]:
     """Drop phase fits whose oscillation has vanished somewhere in the phase.
 
-    A multiplet template is a description of a *phase* of oscillation only where
-    its lines are measured. If a phase fit of one leaves the amplitudes of every
+    A template that carries lines (multiplet or powder Overhauser) is a
+    description of a *phase* of oscillation only where those lines are measured.
+    If a phase fit of one leaves the amplitudes of every
     line consistent with zero on even a single run
     (:func:`~asymmetry.core.fitting.fit_wizard.is_oscillatory_admissible`), the
     template has degenerated to its envelope over part of the phase — it is
@@ -10750,7 +10754,10 @@ def _oscillatory_admissible_phase_candidates(
 
     kept: list[GlobalCandidateAssessment] = []
     for assessment in assessments:
-        if assessment.is_successful and is_multiplet_template_key(assessment.template.key):
+        if assessment.is_successful and (
+            is_multiplet_template_key(assessment.template.key)
+            or assessment.template.key in OVERHAUSER_TEMPLATE_KEYS
+        ):
             if not all(
                 fit_result_is_oscillatory_admissible(assessment.template, result)
                 for result in assessment.fit_results_by_run.values()

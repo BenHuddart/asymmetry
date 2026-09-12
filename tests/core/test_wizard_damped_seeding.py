@@ -1301,6 +1301,41 @@ def test_a_prefix_template_is_seeded_from_the_same_prefix() -> None:
     assert seeded["frequency"].value == pytest.approx(240.0)
 
 
+@pytest.mark.parametrize(
+    ("peaks", "frequency", "ratio"),
+    [
+        pytest.param([_hann_peak(1.0), _hann_peak(0.5)], 1.0, 0.5, id="both-edges"),
+        pytest.param([_hann_peak(1.0)], 1.0, 0.5, id="one-edge"),
+    ],
+)
+def test_the_cutoff_overhauser_reads_its_edges_off_the_detected_lines(
+    peaks: list[DetectedPeak], frequency: float, ratio: float
+) -> None:
+    """``frequency`` is the upper cut-off f_max and ``ratio`` is f_min/f_max.
+
+    The arch peaks at both of its edges, so two detected lines measure the pair;
+    one line is the upper edge alone and leaves the midpoint guess.
+    """
+    dataset = _scan_record((_SCAN_LINE_A,))
+    template = CandidateTemplate(
+        key="overhauser_cutoff_powder_constant",
+        title="test cut-off Overhauser",
+        category="Oscillatory",
+        rationale="test",
+        model=CompositeModel(["OverhauserPowderCutoff", "Constant"], operators=["+"]),
+    )
+
+    seeded = _initial_parameters_for_template(
+        dataset,
+        fingerprint_spectrum(dataset),
+        template,
+        seed_context=TemplateSeedContext(peak_analysis=_analysis(peaks), field_gauss=None),
+    )
+
+    assert seeded["frequency"].value == pytest.approx(frequency)
+    assert seeded["ratio"].value == pytest.approx(ratio)
+
+
 # --------------------------------------------------------------------------- #
 # Which parameters are the lines, and when a line has vanished
 # --------------------------------------------------------------------------- #
@@ -1344,6 +1379,30 @@ def test_the_relaxation_amplitude_is_a_parameter_but_not_a_line() -> None:
 
     assert "A_5" in template.model.param_names
     assert "A_5" not in oscillatory_line_amplitude_names(template)
+
+
+#: ``OverhauserPowder + Exponential + Constant``: the powder line carries its own
+#: envelope, so it is a bare leaf rather than a product — and so is the relaxing
+#: background beside it, which is the pair the derivation has to tell apart.
+OVERHAUSER_EXP_TEMPLATE = CandidateTemplate(
+    key="overhauser_powder_exp_constant",
+    title="test powder Overhauser",
+    category="Oscillatory",
+    rationale="test",
+    model=CompositeModel(["OverhauserPowder", "Exponential", "Constant"], operators=["+", "+"]),
+)
+
+
+def test_the_powder_overhauser_leaf_is_a_line_and_the_exponential_beside_it_is_not() -> None:
+    assert "A_2" in OVERHAUSER_EXP_TEMPLATE.model.param_names
+    assert oscillatory_line_amplitude_names(OVERHAUSER_EXP_TEMPLATE) == ("A_1",)
+
+
+def test_a_powder_overhauser_amplitude_inside_two_sigma_is_no_longer_a_line() -> None:
+    """The same rule as a multiplet's: the lineshape has decayed to its tail."""
+    assert not is_oscillatory_admissible(
+        OVERHAUSER_EXP_TEMPLATE, {"A_1": 0.01, "A_2": 0.2}, {"A_1": 0.01, "A_2": 0.01}
+    )
 
 
 def _amplitude_fit_result(values: dict[str, float], uncertainties: dict[str, float]) -> FitResult:
