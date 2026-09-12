@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Three fit components describe a powder sample's Overhauser field distribution, covering both a
+  single-cut-off (incommensurate) and a general two-cut-off (helical or collinear) magnetic
+  structure.** `OverhauserPowder` splits the polarisation of an incommensurate, single-site powder
+  into the exact powder fractions — a non-precessing ⅓ tail relaxing at `lambda_L` and a precessing
+  ⅔ fraction following the `Bessel` line shape at the distribution edge `frequency`, relaxing at
+  `lambda_T`. `OverhauserPowderCutoff` and `OverhauserPowderCentre` fit the same two-cut-off
+  lineshape in two interchangeable parametrisations of the same body — the cut-off form
+  (`frequency` = upper edge, `ratio` = B_min/B_max) is convenient for sharing the structural
+  `ratio` across a series and trending `frequency` as the order parameter, while the centre form
+  (`frequency` = centre, `delta_frequency` = half-width) fits the two edges independently or
+  matches literature written that way; the Fit Parameters panel's **Create Composite Parameter**
+  converts between them with propagated uncertainties. The Fit Wizard offers `OverhauserPowder`
+  and `OverhauserPowderCutoff`, each with an optional extra `Exponential`, in its precession family
+  for both the single-run and Global Fit Wizards. See
+  `docs/reference/fit_functions/oscillation.rst` for the full lineshapes, the narrow-distribution
+  approximation the two-cut-off form makes (and when to fall back to `OverhauserPowder` instead),
+  and the literature references.
+
 ## [0.18.0] - 2026-09-06
 
 ### Added

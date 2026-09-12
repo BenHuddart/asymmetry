@@ -263,6 +263,52 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "with a relaxation component for additional damping; for commensurate order use "
         "Oscillatory/OscillatoryField instead."
     ),
+    "OverhauserPowder": (
+        "Use for a powder or polycrystalline sample of an incommensurate, single-site magnet, such as a "
+        "spin-density-wave state, where the field distribution runs all the way to zero. Every crystallite "
+        "contributes the same Overhauser field distribution, so the polarization splits into a non-precessing "
+        "⅓ tail relaxing at λ_L and a precessing ⅔ fraction relaxing at λ_T, with frequency the upper edge of "
+        "the distribution and the order parameter to trend versus temperature. Prefer Bessel instead for a "
+        "single crystal or a textured sample without the powder tail. When the two-cut-off components "
+        "(OverhauserPowderCutoff/OverhauserPowderCentre) are driving their lower cut-off toward zero, switch "
+        "to this component, which is the exact r → 0 limit rather than an approximation to it. A "
+        "Bessel-like line is not on its own proof of incommensurate order — several commensurate sites, or "
+        "disorder, can produce a similar field distribution — so corroborate with the ordering wavevector "
+        "from diffraction where possible."
+    ),
+    "OverhauserPowderCutoff": (
+        "Use for a powder sample of a general single-q magnetic structure (helical or collinear) at a "
+        "low-symmetry muon site, where the local field runs between two non-zero cut-offs rather than down "
+        "to zero. Parameterize by frequency (the upper cut-off f_max) and ratio (r = B_min/B_max) to trend "
+        "the order parameter while sharing r, a structural constant of the magnetic structure, across a "
+        "series; the equivalent OverhauserPowderCentre parameterizes the same lineshape by the centre "
+        "frequency f_av and half-width delta_frequency instead — convert with f_av = f_max(1 + r)/2 and "
+        "delta_frequency = f_max(1 − r)/2, or back with f_max = f_av + delta_frequency and "
+        "r = (f_av − delta_frequency)/(f_av + delta_frequency). As with OverhauserPowderCentre, the polarization "
+        "splits into a non-precessing ⅓ tail (λ_L) and a precessing ⅔ fraction (λ_T); the closed form is a "
+        "narrow-distribution approximation that becomes exact as r → 1 and departs further from the true "
+        "two-cut-off lineshape as r falls toward 0, where OverhauserPowder should be used instead. A fit that "
+        "wants r below 0 signals that the lower cut-off has reached zero, not a clamp to enforce. A "
+        "Bessel-like line does not on its own prove incommensurate order — several commensurate sites, or "
+        "disorder, can mimic it — so corroborate with the ordering wavevector from diffraction where possible."
+    ),
+    "OverhauserPowderCentre": (
+        "Use for a powder sample of a general single-q magnetic structure (helical or collinear) at a "
+        "low-symmetry muon site, where the local field runs between two non-zero cut-offs rather than down "
+        "to zero. Parameterize by frequency (the centre f_av) and delta_frequency (the half-width Δf) when "
+        "fitting the two edges as independent numbers or comparing against literature written this way; the "
+        "equivalent OverhauserPowderCutoff parameterizes the same lineshape by the upper cut-off f_max and "
+        "ratio r = B_min/B_max instead — convert with f_max = f_av + delta_frequency and "
+        "r = (f_av − delta_frequency)/(f_av + delta_frequency), or back with f_av = f_max(1 + r)/2 and "
+        "delta_frequency = f_max(1 − r)/2. The polarization splits into a non-precessing ⅓ tail (λ_L) and a "
+        "precessing ⅔ fraction (λ_T); the closed form is a narrow-distribution approximation that becomes "
+        "exact as the lower cut-off approaches f_av (delta_frequency small relative to frequency) and departs "
+        "further from the true two-cut-off lineshape as the lower cut-off falls toward zero, where "
+        "OverhauserPowder should be used instead. delta_frequency exceeding frequency signals that the lower "
+        "cut-off has reached zero, not a clamp to enforce. A Bessel-like line does not on its own prove "
+        "incommensurate order — several commensurate sites, or disorder, can mimic it — so corroborate with "
+        "the ordering wavevector from diffraction where possible."
+    ),
     "VortexLattice": (
         "Use for transverse-field precession in the mixed state of a type-II superconductor, where the muon "
         "samples the inhomogeneous field of the flux-line lattice. The line is non-Gaussian — a sharp "
@@ -520,6 +566,21 @@ FIT_COMPONENT_REFERENCES: dict[str, tuple[str, ...]] = {
     ),
     "RischKehr": ("R. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).",),
     "Bessel": ("L. P. Le et al., Phys. Rev. B 48, 7284 (1993).",),
+    "OverhauserPowder": (
+        "A. T. Savici et al., Phys. Rev. B 66, 014524 (2002).",
+        "L. P. Le et al., Phys. Rev. B 48, 7284 (1993).",
+        "P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).",
+    ),
+    "OverhauserPowderCutoff": (
+        "A. Amato et al., Phys. Rev. B 89, 184425 (2014).",
+        "P. Dalmas de Réotier et al., Phys. Rev. B 93, 144419 (2016).",
+        "P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).",
+    ),
+    "OverhauserPowderCentre": (
+        "A. Amato et al., Phys. Rev. B 89, 184425 (2014).",
+        "P. Dalmas de Réotier et al., Phys. Rev. B 93, 144419 (2016).",
+        "P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).",
+    ),
     "VortexLattice": (
         "E. H. Brandt, Phys. Rev. B 68, 054506 (2003).",
         "J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. 72, 769 (2000).",
