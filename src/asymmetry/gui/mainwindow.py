@@ -3529,10 +3529,17 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, step)
 
         _bulk_load_owner = self
+        # Same busy state as the file load, so a close attempt mid-loop defers
+        # (and cancels at the next item boundary) instead of tearing down the
+        # window under the queued steps.
+        self._bulk_load_active = True
+        self._bulk_load_cancel = dialog.cancel
         QTimer.singleShot(0, step)
         try:
             loop.exec()
         finally:
+            self._bulk_load_active = False
+            self._bulk_load_cancel = None
             _bulk_load_owner = None
         dialog.close()
         dialog.deleteLater()

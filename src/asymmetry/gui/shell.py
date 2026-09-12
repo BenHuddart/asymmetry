@@ -176,7 +176,11 @@ class ProjectShell(QWidget):
         # Both stacks shrink before the tab does, so the currentChanged the
         # removal emits already sees matching indices.
         self._pages.removeWidget(page)
-        self._menu_bars.removeWidget(self._menu_bars.widget(index))
+        # The bar was reparented into the stack, so deleting the page alone
+        # would leave it (and its action tree) alive under the shell.
+        bar = self._menu_bars.widget(index)
+        self._menu_bars.removeWidget(bar)
+        bar.deleteLater()
         self._tabs.removeTab(index)
         page.deleteLater()
         if self._pages.count() == 0:

@@ -21,7 +21,8 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QSettings  # noqa: E402
+import shiboken6  # noqa: E402
+from PySide6.QtCore import QEvent, QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 import asymmetry.gui.mainwindow as mw_module  # noqa: E402
@@ -191,6 +192,18 @@ def test_closing_last_tab_leaves_fresh_untitled_tab(
             page._dirty = False
 
 
+def test_close_page_deletes_its_menu_bar(shell: ProjectShell, qapp: QApplication) -> None:
+    page1 = shell.add_project()
+    shell.add_project()
+    bar = shell._menu_bars.widget(0)
+
+    shell.close_page(page1)
+    qapp.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+
+    assert shell._menu_bars.count() == 1
+    assert not shiboken6.isValid(bar)
+
+
 # ── quit guard ────────────────────────────────────────────────────────────
 
 
@@ -289,6 +302,16 @@ def test_bulk_load_gate_blocks_other_tab(
     assert page2._load_paths_with_progress(["x.dat"]) == {}
     assert page2.statusBar().currentMessage() == mw_module._BULK_LOAD_BUSY_MESSAGE
     assert page2._apply_items_with_progress("t", [("a", lambda: None)]) is False
+
+
+def test_apply_items_marks_page_busy_for_the_close_guards(shell: ProjectShell) -> None:
+    page = shell.add_project()
+    seen: list[bool] = []
+
+    page._apply_items_with_progress("t", [("a", lambda: seen.append(page._bulk_load_active))])
+
+    assert seen == [True]
+    assert page._bulk_load_active is False
 
 
 # ── window() resolves the shell's UI manager for an embedded page ────────
