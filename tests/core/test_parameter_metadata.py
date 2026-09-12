@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from asymmetry.core.fitting.composite import COMPONENTS, CompositeModel
 from asymmetry.core.fitting.models import MODELS
 from asymmetry.core.fitting.parameter_models import (
@@ -18,6 +20,27 @@ def test_get_param_info_known_parameter_has_rich_formats() -> None:
     assert info.latex == r"$\lambda$"
     assert info.gle == r"\lambda"
     assert info.unit == "µs⁻¹"
+
+
+@pytest.mark.parametrize(
+    ("name", "plain", "unicode", "latex", "gle", "unit"),
+    [
+        ("lambda_L", "lambda_L", "λ_L", r"$\lambda_L$", r"\lambda_{L}", "µs⁻¹"),
+        ("ratio", "ratio", "r", r"$r$", r"{\it r}", None),
+        ("delta_frequency", "delta_frequency", "Δf", r"$\Delta f$", r"\Delta{\it f}", "MHz"),
+    ],
+)
+def test_get_param_info_overhauser_powder_params_have_rich_formats(
+    name: str, plain: str, unicode: str, latex: str, gle: str, unit: str | None
+) -> None:
+    info = get_param_info(name)
+    assert info.plain == plain
+    assert info.unicode == unicode
+    assert info.latex == latex
+    assert info.gle == gle
+    assert info.unit == unit
+    assert info.default_min == 0.0
+    assert info.description is not None
 
 
 def test_get_param_info_shape_factor_a_has_expected_defaults() -> None:

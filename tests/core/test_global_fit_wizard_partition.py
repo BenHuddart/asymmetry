@@ -24,10 +24,15 @@ import asymmetry.core.fitting.global_fit_wizard as global_fit_wizard_module
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.fit_wizard import (
+    OVERHAUSER_TEMPLATE_KEYS,
     CandidateTemplate,
+    FamilyScreeningReport,
+    FitWizardRecommendation,
     SelectionMetric,
     _multiplet_model,
     build_fit_wizard_recommendation_for_templates,
+    build_wizard_families,
+    fingerprint_spectrum,
 )
 from asymmetry.core.fitting.global_fit_wizard import (
     GlobalFitWizardRecommendation,
@@ -37,6 +42,7 @@ from asymmetry.core.fitting.global_fit_wizard import (
     merge_global_fit_wizard_recommendations,
     rerank_global_fit_wizard_recommendation,
     serialize_global_fit_wizard_recommendation,
+    series_template_families,
     transitions_summary,
 )
 from asymmetry.core.fitting.global_search.partition import (
@@ -803,14 +809,29 @@ LINE_ALIVE = ({"A_1": 0.20}, {"A_1": 0.01})
 LINE_VANISHED = ({"A_1": 0.004}, {"A_1": 0.01})
 
 
-def _multiplet_fit_result(amplitude: dict[str, float], sigma: dict[str, float], chi_squared):
+#: A powder Overhauser template, whose single line amplitude is ``A_1`` too.
+OVERHAUSER_TEMPLATE = CandidateTemplate(
+    key="overhauser_powder_constant",
+    title="Overhauser (powder) + Constant",
+    category="Oscillatory",
+    rationale="test",
+    model=CompositeModel(["OverhauserPowder", "Constant"], operators=["+"]),
+)
+
+
+def _multiplet_fit_result(
+    amplitude: dict[str, float],
+    sigma: dict[str, float],
+    chi_squared,
+    template=MULTIPLET_TEMPLATE,
+):
     """A converged multiplet fit whose line amplitude is the point of interest."""
     from asymmetry.core.fitting.engine import FitResult
     from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 
-    values = {name: 0.1 for name in MULTIPLET_TEMPLATE.model.param_names}
+    values = {name: 0.1 for name in template.model.param_names}
     values.update(amplitude)
-    uncertainties = {name: 0.001 for name in MULTIPLET_TEMPLATE.model.param_names}
+    uncertainties = {name: 0.001 for name in template.model.param_names}
     uncertainties.update(sigma)
     return FitResult(
         success=True,
@@ -952,6 +973,64 @@ def test_only_the_runs_whose_lines_vanished_lose_their_multiplet_cell():
         assert MULTIPLET_TEMPLATE.key not in table[run]
         # The run is still describable — only its *oscillatory* reading is gone.
         assert EXPONENTIAL_TEMPLATE.key in table[run]
+
+
+def test_a_powder_overhauser_run_whose_line_vanished_loses_its_cell_too():
+    """The powder Overhauser line is gated by the rule the multiplets are."""
+    datasets = _two_phase_series()
+    results = {
+        int(dataset.run_number): _multiplet_fit_result(
+            *(LINE_ALIVE if index < OSCILLATION_RUNS else LINE_VANISHED),
+            250.0,
+            template=OVERHAUSER_TEMPLATE,
+        )
+        for index, dataset in enumerate(datasets)
+    }
+
+    table, _estimates, _points = global_fit_wizard_module._partition_inputs_from_prescreen(
+        datasets,
+        {OVERHAUSER_TEMPLATE.key: _prescreen_assessment(OVERHAUSER_TEMPLATE, results)},
+        analysed_points_by_run={int(d.run_number): int(d.n_points) for d in datasets},
+    )
+
+    for dataset in datasets[:OSCILLATION_RUNS]:
+        assert OVERHAUSER_TEMPLATE.key in table[int(dataset.run_number)]
+    for dataset in datasets[OSCILLATION_RUNS:]:
+        assert OVERHAUSER_TEMPLATE.key not in table[int(dataset.run_number)]
+
+
+def test_the_powder_overhauser_templates_are_series_oscillatory_templates():
+    """They are Stage-2 members of the precession family, so the series map
+    classifies them without a rule of their own."""
+    fingerprint = fingerprint_spectrum(_two_phase_series()[0])
+    oscillatory = next(
+        family for family in build_wizard_families(fingerprint) if family.key == "oscillatory"
+    )
+    recommendation = FitWizardRecommendation(
+        fingerprint=fingerprint,
+        templates=(),
+        assessments=(),
+        metric=SelectionMetric.AICC,
+        recommended_key=None,
+        comparable_keys=(),
+        summary="",
+        family_reports=(
+            FamilyScreeningReport(
+                family_key=oscillatory.key,
+                title=oscillatory.title,
+                stage1_template_key=oscillatory.stage1_rep.key,
+                stage1_metric_value=0.0,
+                stage1_gate_passed=True,
+                promoted=True,
+                reason="test",
+                stage2_template_keys=tuple(m.key for m in oscillatory.stage2_members),
+            ),
+        ),
+    )
+
+    families = series_template_families({1: recommendation})
+
+    assert {families[key] for key in OVERHAUSER_TEMPLATE_KEYS} == {"oscillatory"}
 
 
 def _multiplet_phase_assessment(*, key, chi_squared, vanished_runs=()):

@@ -263,6 +263,42 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "with a relaxation component for additional damping; for commensurate order use "
         "Oscillatory/OscillatoryField instead."
     ),
+    "OverhauserPowder": (
+        "Use for a powder sample of an incommensurate, single-site magnet (a spin-density-wave state) "
+        "whose field distribution runs down to zero. The powder average splits the polarization into a "
+        "non-precessing ⅓ tail relaxing at λ_L and a precessing ⅔ fraction relaxing at λ_T, with frequency "
+        "the upper edge of the Overhauser distribution and the order parameter to trend versus temperature. "
+        "Prefer Bessel when the ⅓ tail is absent (a single crystal, or a signal already reduced to its "
+        "precessing part). When OverhauserPowderCutoff/OverhauserPowderCentre drive their lower cut-off to "
+        "zero, switch to this component: it is exact there, where their closed form is not. A Bessel-like "
+        "line does not by itself prove incommensurate order — several commensurate sites, or disorder, can "
+        "mimic it — so corroborate with the ordering wavevector from diffraction where possible."
+    ),
+    "OverhauserPowderCutoff": (
+        "Use for a powder sample of a general single-q structure (helical or collinear) at a low-symmetry "
+        "muon site, where the local field runs between two non-zero cut-offs. frequency is the upper cut-off "
+        "f_max (the order parameter) and ratio is r = B_min/B_max, a structural constant to share across a "
+        "series; OverhauserPowderCentre fits the same lineshape by the centre f_av = f_max(1 + r)/2 and "
+        "half-width delta_frequency = f_max(1 − r)/2 (back: f_max = f_av + delta_frequency, "
+        "r = (f_av − delta_frequency)/(f_av + delta_frequency)). The polarization splits into a "
+        "non-precessing ⅓ tail (λ_L) and a precessing ⅔ fraction (λ_T). The closed form is a "
+        "narrow-distribution approximation, exact as r → 1 and increasingly wrong as r → 0; a fit pinned at "
+        "r = 0 says the lower cut-off has reached zero — use OverhauserPowder there. A Bessel-like line does "
+        "not by itself prove single-q order; corroborate with the ordering wavevector from diffraction where "
+        "possible."
+    ),
+    "OverhauserPowderCentre": (
+        "Use for the same two-cut-off powder line as OverhauserPowderCutoff — a general single-q structure "
+        "(helical or collinear) at a low-symmetry muon site — when fitting the two edges as independent "
+        "numbers or comparing with literature written this way: frequency is the centre f_av and "
+        "delta_frequency the half-width Δf, so f_max = f_av + Δf, f_min = f_av − Δf and r = f_min/f_max "
+        "(back: f_av = f_max(1 + r)/2, Δf = f_max(1 − r)/2). The polarization splits into a non-precessing ⅓ "
+        "tail (λ_L) and a precessing ⅔ fraction (λ_T). Δf ≤ f_av is not enforced: a fit that wants Δf > f_av "
+        "is telling you B_min has reached zero, where the closed form (a narrow-distribution approximation, "
+        "exact as Δf → 0) no longer holds — use OverhauserPowder instead. A Bessel-like line does not by "
+        "itself prove single-q order; corroborate with the ordering wavevector from diffraction where "
+        "possible."
+    ),
     "VortexLattice": (
         "Use for transverse-field precession in the mixed state of a type-II superconductor, where the muon "
         "samples the inhomogeneous field of the flux-line lattice. The line is non-Gaussian — a sharp "
@@ -520,6 +556,21 @@ FIT_COMPONENT_REFERENCES: dict[str, tuple[str, ...]] = {
     ),
     "RischKehr": ("R. Risch and K. W. Kehr, Phys. Rev. B 46, 5246 (1992).",),
     "Bessel": ("L. P. Le et al., Phys. Rev. B 48, 7284 (1993).",),
+    "OverhauserPowder": (
+        "A. T. Savici et al., Phys. Rev. B 66, 014524 (2002).",
+        "L. P. Le et al., Phys. Rev. B 48, 7284 (1993).",
+        "P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).",
+    ),
+    "OverhauserPowderCutoff": (
+        "A. Amato et al., Phys. Rev. B 89, 184425 (2014).",
+        "P. Dalmas de Réotier et al., Phys. Rev. B 93, 144419 (2016).",
+        "P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).",
+    ),
+    "OverhauserPowderCentre": (
+        "A. Amato et al., Phys. Rev. B 89, 184425 (2014).",
+        "P. Dalmas de Réotier et al., Phys. Rev. B 93, 144419 (2016).",
+        "P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).",
+    ),
     "VortexLattice": (
         "E. H. Brandt, Phys. Rev. B 68, 054506 (2003).",
         "J. E. Sonier, J. H. Brewer, and R. F. Kiefl, Rev. Mod. Phys. 72, 769 (2000).",

@@ -76,6 +76,12 @@ def test_spot_check_pins() -> None:
     bessel = COMPONENTS["Bessel"]
     assert FieldGeometry.ZF in bessel.field_geometries
 
+    for name in ("OverhauserPowder", "OverhauserPowderCutoff", "OverhauserPowderCentre"):
+        overhauser = COMPONENTS[name]
+        assert overhauser.field_geometries == frozenset({FieldGeometry.ZF})
+        assert overhauser.physics_classes == frozenset({PhysicsClass.MAGNETISM})
+        assert overhauser.cost is ComputationalCost.CHEAP
+
     constant = COMPONENTS["Constant"]
     assert constant.field_geometries == ALL_GEOMETRIES
     assert constant.physics_classes == frozenset({PhysicsClass.BACKGROUND})

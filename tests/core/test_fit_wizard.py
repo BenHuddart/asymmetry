@@ -190,6 +190,44 @@ def test_fit_wizard_recommends_bessel_for_bessel_oscillation_spectrum(
     assert recommendation.recommended_key == "bessel_exp_constant"
 
 
+def test_fit_wizard_recommends_overhauser_powder_for_powder_j0_spectrum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_scipy_fit_backend(monkeypatch)
+    model = CompositeModel(["OverhauserPowder", "Constant"], operators=["+"])
+    # Both rates are resolvable in the 8 µs window (λ·T > 1) and the J0 edge is
+    # well above the record's own 1/T resolution: an Overhauser line the record
+    # cannot resolve is correctly not recommended as one.
+    dataset = _dataset_for(model, A_1=0.25, frequency=1.5, lambda_T=0.15, lambda_L=0.3, A_bg=0.01)
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    assert recommendation.recommended_key == "overhauser_powder_constant"
+
+
+def test_fit_wizard_recommends_the_cutoff_overhauser_for_a_two_cutoff_spectrum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _configure_scipy_fit_backend(monkeypatch)
+    model = CompositeModel(["OverhauserPowderCutoff", "Constant"], operators=["+"])
+    # Cut-offs at 0.6 and 1.5 MHz: far enough apart that the arch's two edge
+    # singularities are separately detected, which is what seeds the ratio.
+    dataset = _dataset_for(
+        model,
+        A_1=0.25,
+        frequency=1.5,
+        ratio=0.4,
+        phase=0.0,
+        lambda_T=0.2,
+        lambda_L=0.2,
+        A_bg=0.01,
+    )
+
+    recommendation = build_fit_wizard_recommendation(dataset, max_workers=1)
+
+    assert recommendation.recommended_key == "overhauser_cutoff_powder_constant"
+
+
 def test_fit_wizard_recommends_gbkt_for_broadened_kt_spectrum(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -222,6 +260,8 @@ _ALLOWED_WIZARD_COMPONENTS = {
     "RischKehr",
     "GaussianBroadenedKT",
     "Bessel",
+    "OverhauserPowder",
+    "OverhauserPowderCutoff",
 }
 
 

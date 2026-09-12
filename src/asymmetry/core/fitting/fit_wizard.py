@@ -25,6 +25,7 @@ from asymmetry.core.fitting.component_tags import (
 from asymmetry.core.fitting.composite import (
     COMPONENTS,
     CompositeModel,
+    ExprLeaf,
     ExprProduct,
     _legacy_fraction_rename_map,
     iter_nodes,
@@ -106,6 +107,12 @@ _FIT_WIZARD_TITLES = {
     "oscillatory_exp_constant": "Oscillatory * Exponential + Constant",
     "oscillatory_gaussian_constant": "Oscillatory * Gaussian + Constant",
     "bessel_exp_constant": "Bessel * Exponential + Constant",
+    "overhauser_powder_constant": "Overhauser (powder) + Constant",
+    "overhauser_powder_exp_constant": "Overhauser (powder) + Exponential + Constant",
+    "overhauser_cutoff_powder_constant": "Two-cut-off Overhauser (powder) + Constant",
+    "overhauser_cutoff_powder_exp_constant": (
+        "Two-cut-off Overhauser (powder) + Exponential + Constant"
+    ),
     "gbkt_constant": "Gaussian-broadened KT + Constant",
     "risch_kehr_constant": "Risch-Kehr + Constant",
     "current_model": "Current Fit Function",
@@ -823,6 +830,32 @@ def build_candidate_templates(
             category="Oscillatory",
             rationale="A J0 (Bessel) line shape fits incommensurate/SDW internal-field distributions better than a cosine.",
         )
+        _add(
+            "overhauser_powder_constant",
+            CompositeModel(["OverhauserPowder", "Constant"], operators=["+"]),
+            category="Oscillatory",
+            rationale="Powder average of an incommensurate (Overhauser) field distribution: a J0 line with the exact 1/3 non-precessing tail relaxing on its own.",
+        )
+        _add(
+            "overhauser_powder_exp_constant",
+            CompositeModel(["OverhauserPowder", "Exponential", "Constant"], operators=["+", "+"]),
+            category="Oscillatory",
+            rationale="Powder Overhauser line with the exact 1/3 non-precessing tail, with a separately relaxing background fraction.",
+        )
+        _add(
+            "overhauser_cutoff_powder_constant",
+            CompositeModel(["OverhauserPowderCutoff", "Constant"], operators=["+"]),
+            category="Oscillatory",
+            rationale="Two-cut-off (helical / general single-q) powder line: a J0-modulated cosine between the lower and upper field cut-offs.",
+        )
+        _add(
+            "overhauser_cutoff_powder_exp_constant",
+            CompositeModel(
+                ["OverhauserPowderCutoff", "Exponential", "Constant"], operators=["+", "+"]
+            ),
+            category="Oscillatory",
+            rationale="Two-cut-off (helical / general single-q) powder line, with a separately relaxing background fraction.",
+        )
 
     if current_model is not None:
         _add(
@@ -1164,6 +1197,46 @@ def build_wizard_families(
                     rationale=(
                         "A J0 (Bessel) line shape fits incommensurate/SDW internal-field "
                         "distributions better than a cosine."
+                    ),
+                ),
+                _family_template(
+                    "overhauser_powder_constant",
+                    CompositeModel(["OverhauserPowder", "Constant"], operators=["+"]),
+                    category="Oscillatory",
+                    rationale=(
+                        "Powder average of an incommensurate (Overhauser) field distribution: "
+                        "a J0 line with the exact 1/3 non-precessing tail relaxing on its own."
+                    ),
+                ),
+                _family_template(
+                    "overhauser_powder_exp_constant",
+                    CompositeModel(
+                        ["OverhauserPowder", "Exponential", "Constant"], operators=["+", "+"]
+                    ),
+                    category="Oscillatory",
+                    rationale=(
+                        "Powder Overhauser line with the exact 1/3 non-precessing tail, with a "
+                        "separately relaxing background fraction."
+                    ),
+                ),
+                _family_template(
+                    "overhauser_cutoff_powder_constant",
+                    CompositeModel(["OverhauserPowderCutoff", "Constant"], operators=["+"]),
+                    category="Oscillatory",
+                    rationale=(
+                        "Two-cut-off (helical / general single-q) powder line: a J0-modulated "
+                        "cosine between the lower and upper field cut-offs."
+                    ),
+                ),
+                _family_template(
+                    "overhauser_cutoff_powder_exp_constant",
+                    CompositeModel(
+                        ["OverhauserPowderCutoff", "Exponential", "Constant"], operators=["+", "+"]
+                    ),
+                    category="Oscillatory",
+                    rationale=(
+                        "Two-cut-off (helical / general single-q) powder line, with a separately "
+                        "relaxing background fraction."
                     ),
                 ),
                 _family_template(
@@ -1633,6 +1706,13 @@ def _damped_envelope_rate(peak: DetectedPeak | None) -> float | None:
 #: two cannot drift apart.
 _MULTIPLET_LINE_COMPONENT = "Oscillatory"
 
+#: Components that carry their oscillating line inside a single leaf rather than
+#: in an ``Osc × Env`` product: the whole lineshape, envelope and 1/3 tail
+#: included, is one component, so its own scale is the line amplitude.
+_SELF_ENVELOPED_LINE_COMPONENTS = frozenset(
+    {"OverhauserPowder", "OverhauserPowderCutoff", "OverhauserPowderCentre"}
+)
+
 
 def _multiplet_model(n: int, envelope: str, *, relax: bool) -> CompositeModel:
     """``Σ_k (Osc × Env) [+ Exp] + Const`` for ``n`` damped cosines."""
@@ -1835,14 +1915,18 @@ OSCILLATORY_LINE_SIGMA = 2.0
 
 
 def oscillatory_line_amplitude_names(template: CandidateTemplate) -> tuple[str, ...]:
-    """The fitted parameter names of a multiplet template's line amplitudes.
+    """The fitted parameter names of an oscillatory template's line amplitudes.
 
     Read off the model's own expression tree rather than off parameter spellings:
     a multiplet is ``Σ_k (Osc × Env) [+ Exp] + Const`` (:func:`_multiplet_model`),
     so a *line* amplitude is the single scale of a product that contains an
     Oscillatory component. The optional relaxation term is a bare leaf, not a
     product, so its own amplitude is never mistaken for a line — which is the
-    whole point of deriving these structurally.
+    whole point of deriving these structurally. A
+    :data:`_SELF_ENVELOPED_LINE_COMPONENTS` leaf is the other shape a line takes:
+    it needs no envelope factor, so it stands alone and its own scale is the
+    line — and the ``Exponential`` leaf beside it in the ``+ Exponential``
+    templates still is not one.
 
     Order follows the tree, so the names come out in component order (``A_1``,
     ``A_3``, … for the built multiplets). Every product that contains a line
@@ -1853,6 +1937,14 @@ def oscillatory_line_amplitude_names(template: CandidateTemplate) -> tuple[str, 
     model = template.model
     names: list[str] = []
     for node in iter_nodes(model.expression_tree()):
+        if isinstance(node, ExprLeaf):
+            # A leaf that is a factor of a product carries no scale of its own;
+            # the product branch below is what owns that case.
+            if model.component_names[node.index] in _SELF_ENVELOPED_LINE_COMPONENTS and (
+                scale := model.scale_parameter_name(node.index)
+            ):
+                names.append(scale)
+            continue
         if not isinstance(node, ExprProduct):
             continue
         indices = leaf_indices(node)
@@ -1880,9 +1972,9 @@ def is_oscillatory_admissible(
     An oscillatory template whose amplitudes are all consistent with zero has
     degenerated to its envelope on that run: it is describing relaxation, and the
     partition treats it as the relaxation family there rather than as a phase of
-    oscillation. Only multiplet templates have lines, so anything else is
-    admissible by construction and callers gate on
-    :func:`is_multiplet_template_key` before asking.
+    oscillation. Lines belong to the multiplet templates and to the powder
+    Overhauser ones (:data:`OVERHAUSER_TEMPLATE_KEYS`); anything else is
+    admissible by construction, and callers gate on those two before asking.
     """
     for name in oscillatory_line_amplitude_names(template):
         sigma = float(uncertainties.get(name, 0.0))
@@ -1903,6 +1995,15 @@ def fit_result_is_oscillatory_admissible(template: CandidateTemplate, result: Fi
     )
 
 
+#: Powder Overhauser templates: one J0-shaped line seeded from the detected peaks.
+OVERHAUSER_TEMPLATE_KEYS = frozenset(
+    {
+        "overhauser_powder_constant",
+        "overhauser_powder_exp_constant",
+        "overhauser_cutoff_powder_constant",
+        "overhauser_cutoff_powder_exp_constant",
+    }
+)
 #: Muonium TF templates whose ``field``/``A_hf`` seeding shares one rule.
 _MUONIUM_TF_TEMPLATE_KEYS = frozenset(
     {"muonium_low_tf_constant", "muonium_tf_constant", "muonium_high_tf_constant"}
@@ -4797,11 +4898,18 @@ def _initial_parameters_for_template(
             amplitude *= math.exp(growth)
         return max(min(amplitude, 4.0 * data_span), _EPS)
 
-    def _seeded_phase(peak: DetectedPeak | None, fallback: float) -> float:
-        """The line's measured phase referred to t = 0, else ``fallback``."""
+    def _seeded_phase(
+        peak: DetectedPeak | None, fallback: float, cosine_frequency: float | None = None
+    ) -> float:
+        """The line's measured phase referred to t = 0, else ``fallback``.
+
+        ``cosine_frequency`` is the frequency the model's cosine runs at when
+        that is not the detected line's own (the two-cut-off centre f_av).
+        """
         if peak is None or peak.phase_rad is None or not _is_scan_measured(peak):
             return fallback
-        phase = float(peak.phase_rad) - 2.0 * math.pi * float(peak.frequency_mhz) * t_origin
+        frequency = peak.frequency_mhz if cosine_frequency is None else cosine_frequency
+        phase = float(peak.phase_rad) - 2.0 * math.pi * float(frequency) * t_origin
         return float(((phase + math.pi) % (2.0 * math.pi)) - math.pi)
 
     if template.key == "exp_constant":
@@ -4882,6 +4990,42 @@ def _initial_parameters_for_template(
         }
         if (rate := _damped_envelope_rate(lead)) is not None:
             overrides["sigma"] = rate
+    elif template.key in OVERHAUSER_TEMPLATE_KEYS:
+        lead = seed_peaks[0] if seed_peaks else None
+        amplitude = max(abs(fingerprint.initial_amplitude_estimate), 0.25 * data_span, _EPS)
+        # The Overhauser edge f_max is where the spectral singularity sits, so it
+        # seeds like a cosine's frequency; the two-cut-off arch peaks at both
+        # edges, so a second detected line measures r = f_min/f_max.
+        edge, ratio = lead, 0.5
+        if "ratio" in template.model.param_names and len(seed_peaks) >= 2:
+            lower, edge = sorted(seed_peaks[:2], key=lambda peak: peak.frequency_mhz)
+            ratio = lower.frequency_mhz / edge.frequency_mhz
+        # The scan measures the damped-cosine coefficient, which is the precessing
+        # 2/3 of this component's A; the fallback is already the whole amplitude.
+        line_amplitude = 1.5 * _seeded_amplitude(lead, amplitude / 1.5)
+        frequency = min(edge.frequency_mhz if edge is not None else frequency_guess, 0.98 * nyquist)
+        overrides = {
+            "A": line_amplitude,
+            "frequency": frequency,
+            "ratio": ratio,
+            "phase": _seeded_phase(
+                lead, phase_guess, cosine_frequency=frequency * (1.0 + ratio) / 2.0
+            ),
+            "lambda_T": _damped_envelope_rate(lead) or lambda_guess,
+            # Nothing measures the 1/3 tail's own rate separately on a record the
+            # line has already decayed through: the early slope is all there is.
+            "lambda_L": lambda_guess,
+            "Lambda": lambda_guess,
+            # A third of the line sits in the non-precessing tail, so the
+            # measured tail is already mostly this component and not background
+            # — seeding A_bg with all of it drives lambda_L up to make room
+            # (the same correction the KT branches make for their own 1/3 tail).
+            "A_bg": fingerprint.tail_estimate - line_amplitude / 3.0,
+        }
+        if edge is not None:
+            # Bound here rather than through the shared post-branch step, so the
+            # box lands on the peak ``frequency`` was actually seeded from.
+            _narrow_frequency_bounds("frequency", edge)
     elif (multiplet := _MULTIPLET_TEMPLATE_KEY_RE.match(template.key)) is not None:
         # One damped cosine per detected line: frequencies/amplitudes from the
         # peaks. Each (Osc x Env) pair carries exactly one amplitude by
@@ -5210,6 +5354,9 @@ def _parameter_bounds(
         return lower, upper
     if base_name == "phase":
         return -math.pi, math.pi
+    if base_name == "ratio":
+        # B_min/B_max: r = 0 is a single cut-off, r = 1 a sharp line.
+        return 0.0, 1.0
     if base_name == "beta":
         return 0.1, 3.0
     if base_name in {"r_muF", "r1", "r2"}:
