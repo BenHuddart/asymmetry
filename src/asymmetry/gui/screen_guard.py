@@ -104,6 +104,27 @@ def screen_for(widget: QWidget) -> QScreen | None:
     return QGuiApplication.primaryScreen()
 
 
+def place_window_on_screen(window: QWidget) -> None:
+    """Size a top-level window to most of its screen and centre it there.
+
+    Prefers the spacious default, capped at ~90% of the available screen so the
+    window opens comfortably *windowed* (never wall-to-wall) on a 13-inch
+    laptop, and centred rather than wherever the window manager drops it.
+    """
+    screen = screen_for(window)
+    if screen is None:
+        window.resize(1400, 900)
+        return
+    available = screen.availableGeometry()
+    window.resize(
+        max(640, min(1400, round(available.width() * 0.92))),
+        max(480, min(900, round(available.height() * 0.86))),
+    )
+    frame = window.frameGeometry()
+    frame.moveCenter(available.center())
+    window.move(frame.topLeft())
+
+
 def pin_screens() -> None:
     """Refresh module-level strong references to all current screen wrappers.
 
