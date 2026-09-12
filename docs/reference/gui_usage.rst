@@ -1277,7 +1277,8 @@ Keyboard shortcuts
 * **Ctrl+S**: Save project
 * **Ctrl+Shift+S**: Save project as
 * **Ctrl+Return**: Run the fit
-* **Ctrl+W** / **Ctrl+Q**: Close the window (quit)
+* **Ctrl+W**: Close the current project tab
+* **Ctrl+Q**: Quit Asymmetry
 
 Tips and tricks
 ---------------
@@ -1298,10 +1299,12 @@ maintain several independent analyses side-by-side.
 Creating and saving
 ~~~~~~~~~~~~~~~~~~~~
 
-* **File → New Project** (``Ctrl+N``) clears the current session.
-* **File → Save Project** (``Ctrl+S``) saves to the current project file.
+* **File → New Project** (``Ctrl+N``) always opens a new, empty project tab;
+   existing tabs are left exactly as they were.
+* **File → Save Project** (``Ctrl+S``) saves the active tab to its project file.
    If no project file is open yet, you will be prompted to choose a location.
-* **File → Save Project As…** (``Ctrl+Shift+S``) always asks for a new filename.
+* **File → Save Project As…** (``Ctrl+Shift+S``) always asks for a new filename
+   for the active tab.
 
 .. _unsaved-changes-guard:
 
@@ -1309,16 +1312,21 @@ Unsaved-changes guard
 ~~~~~~~~~~~~~~~~~~~~~~
 
 Hours of grouping, fitting, and trend work live in memory until you save, so
-Asymmetry tracks whether the session holds unsaved work and refuses to drop it
-silently. A ``*`` in the window title marks a modified session, and any action
-that would clear it — closing the window, **New Project**, **Open Project**, or
-opening a recent project — first raises a **Save / Discard / Cancel** prompt.
-Choosing **Cancel** aborts the action and keeps your work; **Save** writes the
-project (choosing a location if none is set yet) before proceeding. The flag is
-set by every mutating action — data load and removal, grouping edits, each fit
-completion, trend-series rename or delete, ALC scan builds, and custom-column
-edits — and cleared on a successful save, open, or new project. Opening a
-project or starting a fresh one therefore always begins from a clean state.
+Asymmetry tracks whether each project tab holds unsaved work and refuses to
+drop it silently. A ``*`` on the tab label, and in the window title for the
+active tab, marks a modified project. Closing that tab — via **File → Close
+Project**, its ``×``, or **File → Exit** — first raises a **Save / Discard /
+Cancel** prompt for it. Choosing **Cancel** aborts the action — for **Exit**,
+this aborts the whole quit and leaves every tab open, including any already
+confirmed; **Save** writes the project (choosing a location if none is set
+yet) before proceeding. The flag is set by every mutating action — data load
+and removal, grouping edits, each fit completion, trend-series rename or
+delete, ALC scan builds, and custom-column edits — and cleared on a successful
+save. **New Project**, **Open Project…**, and **Recent Projects** never raise
+this prompt: they open a new tab (or reuse an untouched, empty one) instead of
+discarding the current project, so opening or starting a project always
+begins from a clean tab without disturbing your other work — see `Working
+with several projects`_ below.
 
 Opening a project
 ~~~~~~~~~~~~~~~~~~
@@ -1327,6 +1335,10 @@ Opening a project
    ``.asymp`` file.
 * **File → Recent Projects** lists up to the 10 most recently opened projects
    for one-click access.
+
+Both open the project into the current tab when that tab is an untouched,
+empty project — no datasets loaded, no unsaved changes, never saved — and
+otherwise open it in a new tab, leaving the current tab exactly as it was.
 
 On open, every source data file referenced by the project is reloaded
 from disk.  Asymmetry tries paths in this order:
@@ -1343,6 +1355,49 @@ new data location, without losing your session state.
 
 If a source file cannot be found even after the search, Asymmetry logs a
 warning and skips that dataset — the rest of the session is restored normally.
+
+Working with several projects
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Several ``.asymp`` projects can be open at once in the same window, switched
+with a tab strip that sits on the menu-bar row, to the right of the menus.
+
+Each tab is a fully independent project: its own data browser, plot, fit
+panel, Fit Parameters panel, grouping profiles, saved views, and
+unsaved-changes state. Projects share nothing with each other — there is no
+cross-project import of series or grouping profiles, and no shared loaded
+runs — so comparing two projects means viewing them side-by-side or exporting
+tables from each.
+
+A tab's label is the project file's stem (``Untitled`` for a new, unsaved
+project), with a trailing ``*`` while that project has unsaved changes;
+hovering over a tab shows its full path. The window title continues to show
+the active project, as it does today.
+
+* **New Project** always opens another tab, so you never lose an
+   in-progress analysis by starting a new one.
+* **Open Project…** and **Recent Projects** reuse the current tab only when
+   it is untouched and empty; otherwise they open a new tab. Because of this,
+   opening a project never raises the unsaved-changes prompt.
+* **Save Project** and **Save Project As…** act on the active tab only.
+* **Close Project** (``Ctrl+W``) and a tab's ``×`` close that project,
+   running its **Save / Discard / Cancel** prompt if it has unsaved changes.
+   Closing the last remaining tab leaves one empty ``Untitled`` tab open
+   rather than quitting.
+* **Exit** (``Ctrl+Q``) and the window's close button walk the open tabs in
+   order, running each modified project's **Save / Discard / Cancel** prompt
+   in turn; the first **Cancel** aborts the whole quit and nothing closes.
+* **View → UI Scale** is process-wide: a change applies to every open tab,
+   not just the active one.
+* Only one bulk file load can run at a time across the whole window. Starting
+   a load in a second tab while another is still loading is refused, with the
+   status bar reporting "Another project is loading files — wait for it to
+   finish."
+* A dialog opened from a project — grouping, simulate, run info, global fit
+   setup — blocks the whole window while it is open, exactly as it does
+   today.
+* A fit started in one tab keeps running when you switch to another tab, and
+   reports its result back into the tab it was started from.
 
 What is saved
 ~~~~~~~~~~~~~
@@ -1361,7 +1416,7 @@ What is saved
    flags, and bounds
 * Fit results text (χ², χ²ᵣ, best-fit values with uncertainties)
 * Active fit panel tab (Single or Global)
-* Fitted Parameters panel rows, axis settings, plot mode, component-display
+* Fit Parameters panel rows, axis settings, plot mode, component-display
    toggle, and plot labels
 * Fourier panel state, including apodisation settings, phase mode, per-run
   group phase tables, included groups, and phase-estimation settings

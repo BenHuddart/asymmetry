@@ -87,6 +87,7 @@ from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
@@ -270,7 +271,7 @@ from asymmetry.gui.panels.log_panel import LogPanel
 from asymmetry.gui.panels.maxent_panel import MaxEntPanel
 from asymmetry.gui.panels.plot_panel import PlotPanel
 from asymmetry.gui.panels.plot_workspace_panel import PlotWorkspacePanel
-from asymmetry.gui.screen_guard import screen_for
+from asymmetry.gui.screen_guard import place_window_on_screen
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.typography import header_font, status_font
 from asymmetry.gui.styles.widgets import (
@@ -303,6 +304,22 @@ from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
 from asymmetry.gui.windows.simulate_dialog import SimulateDialog
 
+if TYPE_CHECKING:
+    # Imported for typing only: shell.py imports this module to build its pages.
+    from asymmetry.gui.shell import ProjectShell
+
+
+class _RecentProjectsBroadcast(QObject):
+    """Process-wide signal so every open project's menu tracks the shared list."""
+
+    recent_projects_changed = Signal()
+
+
+# The recent-projects list lives in QSettings shared by every tab, so each
+# tab's menu must rebuild when any tab changes it. A QObject can be built
+# before the QApplication, so a module-level instance is safe at import time.
+_recent_projects_broadcast = _RecentProjectsBroadcast()
+
 _MAX_RECENT_PROJECTS = 10
 _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
 #: After the user cancels a bulk load, how long to wait for the worker to stop
@@ -310,6 +327,11 @@ _PROJECT_FILE_FILTER = "Asymmetry projects (*.asymp);;All files (*)"
 #: event loop and leaving the worker to finish in the background. Keeps the
 #: window closable even when a single file read is wedged (e.g. a dead mount).
 _BULK_LOAD_ABANDON_GRACE_MS = 5000
+#: The window currently inside a bulk-load / bulk-apply nested event loop, if
+#: any. Process-wide because the nested loop dispatches input to *every* open
+#: project, so a second tab could otherwise start its own load on top of it.
+_bulk_load_owner: MainWindow | None = None
+_BULK_LOAD_BUSY_MESSAGE = "Another project is loading files — wait for it to finish."
 _COMPACT_MODE_SETTINGS_KEY = "ui/compact_mode"
 _UI_SCALE_SETTINGS_KEY = UI_SCALE_SETTINGS_KEY
 _UI_SCALE_OPTIONS = UI_SCALE_OPTIONS
@@ -700,6 +722,10 @@ class MainWindow(QMainWindow):
     #: delivery queued, so background workers never touch the log widget.
     _background_log = Signal(str)
 
+    #: Unsaved-work state changed; lets a hosting ProjectShell mirror the
+    #: marker on this project's tab.
+    dirty_changed = Signal(bool)
+
     def __init__(self) -> None:
         super().__init__()
         # Includes Qt's [*] window-modified placeholder so the unsaved-changes
@@ -729,24 +755,11 @@ class MainWindow(QMainWindow):
         if icon is not None:
             self.setWindowIcon(icon)
 
-        # Prefer the spacious default, capped at ~90% of the available screen
-        # so the window opens comfortably *windowed* (never wall-to-wall) on a
-        # 13-inch MacBook, and centred rather than wherever the WM drops it.
-        # screen_for, not self.screen(): PySide's .screen() binding parents the
-        # shared QScreen wrapper to the receiver (per-test MainWindows would tie
-        # the screen's fate to their GC); see gui/screen_guard.py.
-        screen = screen_for(self)
-        if screen is not None:
-            available = screen.availableGeometry()
-            self.resize(
-                max(640, min(1400, round(available.width() * 0.92))),
-                max(480, min(900, round(available.height() * 0.86))),
-            )
-            frame = self.frameGeometry()
-            frame.moveCenter(available.center())
-            self.move(frame.topLeft())
-        else:
-            self.resize(1400, 900)
+        place_window_on_screen(self)
+
+        #: The ProjectShell hosting this window as a tab, or None when the
+        #: window is the top-level window in its own right.
+        self._shell: ProjectShell | None = None
 
         self._settings = QSettings()
         self._last_open_dir = self._settings.value("io/last_open_dir", "", str)
@@ -765,6 +778,8 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._restoring_project = False
         self._project_save_active = False  # True while a background save is writing
+        self._bulk_load_active = False  # True while a bulk load's nested loop runs
+        self._bulk_load_cancel: Callable[[], None] | None = None
         self._fourier_compute_active = False  # True while a background FFT runs
         self._fourier_phase_estimate_active = False  # True while auto-phase runs
         self._fourier_apodisation_suggest_active = False  # True while apodisation suggestion runs
@@ -1086,14 +1101,16 @@ class MainWindow(QMainWindow):
         save_as_action.setShortcut(QKeySequence.StandardKey.SaveAs)
         self._recent_menu = file_menu.addMenu("Recent Projects")
         self._update_recent_projects_menu()
-        file_menu.addSeparator()
-        exit_action = file_menu.addAction("E&xit", self.close)
-        # Quit (Ctrl+Q) is the cross-platform expectation; StandardKey.Quit is
-        # empty on Windows, so pair it with StandardKey.Close (Ctrl+W) which the
-        # single-window app treats as the same close.
-        exit_action.setShortcuts(
-            [QKeySequence("Ctrl+Q"), QKeySequence(QKeySequence.StandardKey.Close)]
+        _recent_projects_broadcast.recent_projects_changed.connect(
+            self._update_recent_projects_menu
         )
+        file_menu.addSeparator()
+        close_action = file_menu.addAction("Close Project", self._on_close_project)
+        close_action.setShortcut(QKeySequence(QKeySequence.StandardKey.Close))
+        exit_action = file_menu.addAction("E&xit", self._on_exit)
+        # Quit (Ctrl+Q) is the cross-platform expectation; StandardKey.Quit is
+        # empty on Windows, so it cannot carry the action on its own.
+        exit_action.setShortcut(QKeySequence("Ctrl+Q"))
 
         # Analysis
         analysis_menu = mb.addMenu("&Analysis")
@@ -3323,15 +3340,22 @@ class MainWindow(QMainWindow):
         File I/O is the only thing that runs off-thread — all dataset
         bookkeeping stays with the caller on the GUI thread.
         """
+        global _bulk_load_owner
+
         if not paths:
             return {}
-        if getattr(self, "_bulk_load_active", False):
+        if _bulk_load_owner is not None and _bulk_load_owner is not self:
+            self.statusBar().showMessage(_BULK_LOAD_BUSY_MESSAGE)
+            self._log_panel.log(_BULK_LOAD_BUSY_MESSAGE)
+            return {}
+        if self._bulk_load_active:
             # The nested event loop below dispatches user input before the
             # modal dialog becomes visible (minimumDuration), so a second
             # File→Open / drop could re-enter here; refuse it.
             self._log_panel.log("A file load is already in progress; ignoring the new request.")
             return {}
         self._bulk_load_active = True
+        _bulk_load_owner = self
 
         dialog = QProgressDialog("Loading data files…", "Cancel", 0, len(paths), self)
         dialog.setWindowTitle("Loading Data")
@@ -3421,6 +3445,7 @@ class MainWindow(QMainWindow):
         finally:
             self._bulk_load_active = False
             self._bulk_load_cancel = None
+            _bulk_load_owner = None
         # Runs after the caller has added the loaded runs to the browser.
         self._schedule_memory_settle()
         was_cancelled = dialog.wasCanceled()
@@ -3462,8 +3487,14 @@ class MainWindow(QMainWindow):
         their own expected per-item failures internally (as the restore loop
         always has).
         """
+        global _bulk_load_owner
+
         if not items:
             return True
+        if _bulk_load_owner is not None and _bulk_load_owner is not self:
+            self.statusBar().showMessage(_BULK_LOAD_BUSY_MESSAGE)
+            self._log_panel.log(_BULK_LOAD_BUSY_MESSAGE)
+            return False
 
         dialog = QProgressDialog(title, "Cancel", 0, len(items), self)
         dialog.setWindowTitle(title)
@@ -3497,8 +3528,19 @@ class MainWindow(QMainWindow):
             state["index"] = index + 1
             QTimer.singleShot(0, step)
 
+        _bulk_load_owner = self
+        # Same busy state as the file load, so a close attempt mid-loop defers
+        # (and cancels at the next item boundary) instead of tearing down the
+        # window under the queued steps.
+        self._bulk_load_active = True
+        self._bulk_load_cancel = dialog.cancel
         QTimer.singleShot(0, step)
-        loop.exec()
+        try:
+            loop.exec()
+        finally:
+            self._bulk_load_active = False
+            self._bulk_load_cancel = None
+            _bulk_load_owner = None
         dialog.close()
         dialog.deleteLater()
 
@@ -14793,6 +14835,9 @@ class MainWindow(QMainWindow):
 
     def _on_new_project(self) -> None:
         """Clear all state to start a fresh project."""
+        if self._shell is not None:
+            self._shell.add_project()
+            return
         if not self._maybe_save("starting a new project"):
             return
         self._clear_all_state()
@@ -14804,8 +14849,6 @@ class MainWindow(QMainWindow):
 
     def _on_open_project(self) -> None:
         """Open a project file chosen via file dialog."""
-        if not self._maybe_save("opening another project"):
-            return
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Project",
@@ -14813,7 +14856,21 @@ class MainWindow(QMainWindow):
             _PROJECT_FILE_FILTER,
         )
         if path:
-            self._open_project_file(path)
+            self._open_project_request(path)
+
+    def _open_project_request(self, path: str) -> None:
+        """Open *path*, in a tab when hosted and in place when standalone.
+
+        Hosted, the shell decides which tab receives the project, so the
+        standalone Save/Discard/Cancel guard would prompt about work the open
+        is not about to overwrite.
+        """
+        if self._shell is not None:
+            self._shell.open_project(path)
+            return
+        if not self._maybe_save("opening another project"):
+            return
+        self._open_project_file(path)
 
     def _on_save_project(self) -> None:
         """Save the current project to its existing path, or prompt if new."""
@@ -14943,15 +15000,8 @@ class MainWindow(QMainWindow):
         self._log_panel.log(f"ERROR saving project: {message}")
 
     def _open_recent_project(self, path: str) -> None:
-        """Open a recent project, guarding unsaved work first (P0-2).
-
-        The recent-projects menu loads files directly, so it needs the same
-        Save/Discard/Cancel prompt that :meth:`_on_open_project` runs before its
-        file dialog.
-        """
-        if not self._maybe_save("opening another project"):
-            return
-        self._open_project_file(path)
+        """Open a recent project, routed exactly like File ▸ Open Project…."""
+        self._open_project_request(path)
 
     def _schedule_memory_settle(self) -> None:
         """Coalesce a :func:`settle_memory` onto the next event-loop turn.
@@ -14979,7 +15029,7 @@ class MainWindow(QMainWindow):
 
     def _open_project_file(self, path: str) -> None:
         """Load and restore a project from *path*."""
-        if getattr(self, "_bulk_load_active", False):
+        if self._bulk_load_active:
             # Restoring clears all state first, then prefetches data files via
             # _load_paths_with_progress — which the in-progress bulk load's
             # re-entrancy guard would refuse, leaving a wiped, run-less session
@@ -16060,7 +16110,9 @@ class MainWindow(QMainWindow):
         recent.insert(0, path)
         recent = recent[:_MAX_RECENT_PROJECTS]
         self._settings.setValue("project/recent_files", recent)
-        self._update_recent_projects_menu()
+        # Flush so other tabs' QSettings instances see this write before the broadcast.
+        self._settings.sync()
+        _recent_projects_broadcast.recent_projects_changed.emit()
 
     def _update_recent_projects_menu(self) -> None:
         """Rebuild the Recent Projects submenu from QSettings."""
@@ -16081,7 +16133,8 @@ class MainWindow(QMainWindow):
     def _clear_recent_projects(self) -> None:
         """Remove all entries from the recent-projects list."""
         self._settings.remove("project/recent_files")
-        self._update_recent_projects_menu()
+        self._settings.sync()
+        _recent_projects_broadcast.recent_projects_changed.emit()
 
     def _update_window_title(self) -> None:
         """Update window title to reflect the current project file name.
@@ -16108,11 +16161,13 @@ class MainWindow(QMainWindow):
             return
         self._dirty = True
         self.setWindowModified(True)
+        self.dirty_changed.emit(True)
 
     def _clear_dirty(self) -> None:
         """Mark the session as saved/clean (after save, open, or new)."""
         self._dirty = False
         self.setWindowModified(False)
+        self.dirty_changed.emit(False)
 
     def _maybe_save(self, action_label: str) -> bool:
         """Prompt to save when work is unsaved; return True to proceed.
@@ -16148,42 +16203,30 @@ class MainWindow(QMainWindow):
             return False
         return True
 
-    def closeEvent(self, event) -> None:
-        """Stop background work and save plot axis ranges before closing."""
-        # A bulk load's nested event loop is on the stack: destroying the
-        # window underneath it would leave the resumed frame touching dead
-        # widgets. Refuse this close, but kick off the same cooperative-cancel
-        # -then-abandon escape the Cancel button uses, so the load unwinds
-        # within the grace period and the next close attempt succeeds (rather
-        # than the window being stuck until the load happens to finish).
-        if getattr(self, "_bulk_load_active", False):
-            cancel = getattr(self, "_bulk_load_cancel", None)
-            if callable(cancel):
-                cancel()
-            self.statusBar().showMessage("Stopping file load — try closing again in a moment.")
-            event.ignore()
+    def _on_close_project(self) -> None:
+        """File ▸ Close Project: drop this project, keeping the app running."""
+        if self._shell is not None:
+            self._shell.close_page(self)
             return
-        # Unsaved-changes guard (P0-2): prompt before the irreversible worker
-        # shutdown below drops the session.
-        if not self._maybe_save("closing"):
-            event.ignore()
+        self.close()
+
+    def _on_exit(self) -> None:
+        """File ▸ Exit: quit the application, not merely this project."""
+        if self._shell is not None:
+            self._shell.close()
             return
-        # If the prompt kicked off a background save, the _tasks.shutdown()
-        # below would cancel it mid-write. Defer the close until the save
-        # finishes (it clears _dirty), so the next close attempt proceeds —
-        # the same try-again pattern the bulk-load guard above uses.
-        if self._project_save_active:
-            self.statusBar().showMessage("Saving project — try closing again in a moment.")
-            event.ignore()
-            return
+        self.close()
+
+    def _shutdown_workers(self) -> None:
+        """Stop every background worker this window owns and flush settings.
+
+        Split out of :meth:`closeEvent` so a hosting ProjectShell can run it
+        for each tab once the whole quit sequence has been approved.
+        """
         # All TaskRunner work (file loads, MaxEnt, FFT, save, …): cancel, quit
         # and wait, with the bounded + orphan-reaper fallback shutdown() owns.
         if getattr(self, "_tasks", None) is not None:
             self._tasks.shutdown()
-        # Parentless gleplot editor windows (Analysis ▸ GLE Figure Editor… and
-        # post-export previews) outlive the panel that opened them — close them
-        # explicitly rather than leaving them dangling after MainWindow exits.
-        close_all_gle_editors()
         # Fit-panel worker threads (single / batch / count-domain fits).
         fit_panel = getattr(self, "_fit_panel", None)
         if fit_panel is not None and hasattr(fit_panel, "shutdown_workers"):
@@ -16200,6 +16243,41 @@ class MainWindow(QMainWindow):
             if panel is not None and hasattr(panel, "shutdown_workers"):
                 panel.shutdown_workers()
         self._settings.sync()
+
+    def closeEvent(self, event) -> None:
+        """Stop background work and save plot axis ranges before closing."""
+        # A bulk load's nested event loop is on the stack: destroying the
+        # window underneath it would leave the resumed frame touching dead
+        # widgets. Refuse this close, but kick off the same cooperative-cancel
+        # -then-abandon escape the Cancel button uses, so the load unwinds
+        # within the grace period and the next close attempt succeeds (rather
+        # than the window being stuck until the load happens to finish).
+        if self._bulk_load_active:
+            if self._bulk_load_cancel is not None:
+                self._bulk_load_cancel()
+            self.statusBar().showMessage("Stopping file load — try closing again in a moment.")
+            event.ignore()
+            return
+        # Unsaved-changes guard (P0-2): prompt before the irreversible worker
+        # shutdown below drops the session.
+        if not self._maybe_save("closing"):
+            event.ignore()
+            return
+        # If the prompt kicked off a background save, the _tasks.shutdown()
+        # below would cancel it mid-write. Defer the close until the save
+        # finishes (it clears _dirty), so the next close attempt proceeds —
+        # the same try-again pattern the bulk-load guard above uses.
+        if self._project_save_active:
+            self.statusBar().showMessage("Saving project — try closing again in a moment.")
+            event.ignore()
+            return
+        self._shutdown_workers()
+        # Parentless gleplot editor windows (Analysis ▸ GLE Figure Editor… and
+        # post-export previews) outlive the panel that opened them — close them
+        # explicitly rather than leaving them dangling after MainWindow exits.
+        # Hosted, they are shared across tabs, so the shell closes them on quit.
+        if self._shell is None:
+            close_all_gle_editors()
         super().closeEvent(event)
 
 
