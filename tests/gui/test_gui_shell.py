@@ -349,9 +349,13 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
             events.append("exec")
             return 0
 
-    class _FakeWindow:
+    class _FakeShell:
         def __init__(self):
             events.append("window-init")
+
+        def add_project(self):
+            events.append("add-project")
+            return object()
 
         def show(self):
             events.append("window-show")
@@ -374,7 +378,7 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
         return _FakeSplash()
 
     monkeypatch.setattr(app_module, "QApplication", _FakeApp)
-    monkeypatch.setattr(app_module, "MainWindow", _FakeWindow)
+    monkeypatch.setattr(app_module, "ProjectShell", _FakeShell)
     monkeypatch.setattr(app_module, "_load_startup_pixmap", _fake_startup_pixmap)
     monkeypatch.setattr(
         app_module,
@@ -404,6 +408,7 @@ def test_app_main_headless(monkeypatch: pytest.MonkeyPatch) -> None:
         "splash-show",
         "set-name",
         "window-init",
+        "add-project",
         "window-show",
         "splash-finish",
         "exec",
@@ -452,7 +457,10 @@ def test_main_uses_resource_fallback_for_splash_logo(
         def exec(self):
             return 0
 
-    class _FakeWindow:
+    class _FakeShell:
+        def add_project(self):
+            return object()
+
         def show(self):
             return
 
@@ -464,7 +472,7 @@ def test_main_uses_resource_fallback_for_splash_logo(
     seen: dict[str, object] = {}
 
     monkeypatch.setattr(app_module, "QApplication", _FakeApp)
-    monkeypatch.setattr(app_module, "MainWindow", _FakeWindow)
+    monkeypatch.setattr(app_module, "ProjectShell", _FakeShell)
     monkeypatch.setattr(app_module, "_load_startup_pixmap", lambda _filename: None)
     monkeypatch.setattr(
         app_module,

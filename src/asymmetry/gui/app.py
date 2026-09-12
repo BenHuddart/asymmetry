@@ -13,7 +13,7 @@ import multiprocessing as mp
 import sys
 
 QApplication = None
-MainWindow = None
+ProjectShell = None
 MACOS_ICON_TILE_SCALE = 0.82
 _SMOKE_QT_PREVIOUS_HANDLER = None
 _SMOKE_QT_MESSAGE_HANDLER = None
@@ -226,7 +226,7 @@ def _create_splash_screen(app, logo=None):
 def main() -> None:
     mp.freeze_support()
 
-    global QApplication, MainWindow
+    global QApplication, ProjectShell
 
     smoke_test = "--smoke-test" in sys.argv
     root_smoke_test = "--smoke-test-root" in sys.argv
@@ -314,19 +314,20 @@ def main() -> None:
     except Exception:
         pass
 
-    if MainWindow is None:
-        from asymmetry.gui.mainwindow import MainWindow as _MainWindow
+    if ProjectShell is None:
+        from asymmetry.gui.shell import ProjectShell as _ProjectShell
 
-        MainWindow = _MainWindow
+        ProjectShell = _ProjectShell
 
-    window = MainWindow()
-    window.show()
+    shell = ProjectShell()
+    shell.add_project()
+    shell.show()
     if splash is not None:
-        splash.finish(window)
+        splash.finish(shell)
 
     if smoke_test:
         app.processEvents()
-        window.close()
+        shell.close()
         return
 
     sys.exit(app.exec())

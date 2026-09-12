@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Several `.asymp` projects can now be open at once in the same window,
+  switched with tabs, instead of one project per window.** A tab strip sits
+  on the menu-bar row, to the right of the menus, so it costs no extra height
+  on Windows/Linux. Each tab is a fully independent project — its own data
+  browser, plot, fit panel, Fit Parameters panel, grouping profiles, saved
+  views, and unsaved-changes state — with nothing shared between projects, so
+  comparison is by eye or by exporting tables. **File → New Project** always
+  opens a new tab; **File → Open Project…** and **File → Recent Projects**
+  reuse the current tab only when it is untouched and empty, otherwise they
+  open a new tab, so opening a project never raises the unsaved-changes
+  prompt. **File → Close Project** (`Ctrl+W`) and a tab's `×` close that
+  project's tab, prompting to save first if needed; closing the last tab
+  leaves one empty `Untitled` tab rather than quitting. **File → Exit**
+  (`Ctrl+Q`) walks every tab's unsaved-changes prompt in turn, and the first
+  **Cancel** aborts the whole quit. A fit started in one tab keeps running,
+  and reports back into that tab, when you switch away. See
+  `docs/reference/gui_usage.rst` § "Working with several projects".
+
 - **Three fit components describe a powder sample's Overhauser field distribution, covering both a
   single-cut-off (incommensurate) and a general two-cut-off (helical or collinear) magnetic
   structure.** `OverhauserPowder` splits the polarisation of an incommensurate, single-site powder
