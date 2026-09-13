@@ -247,3 +247,33 @@ def test_a_message_can_carry_the_tone_of_the_outcome_it_replays(qapp: QApplicati
     assert card.tag_text() == "No fit yet"
     assert tokens.SURFACE_ALT in card._tag.styleSheet()
     card.deleteLater()
+
+
+def test_the_detail_line_carries_a_tooltip_that_the_next_message_drops(
+    qapp: QApplication,
+) -> None:
+    """The χ² band behind a verdict chip has no room on the line; it hovers.
+
+    Every ``set_message`` sets the hover text, so a later read-out can never
+    inherit the explanation of a fit that is no longer on the card.
+    """
+    card = _card()
+
+    card.set_summary(
+        FitCardSummary(
+            tag="Fit ✓",
+            tone="ok",
+            headline="converged",
+            meta="",
+            detail_html="χ²/ν 0.9794 · good",
+            detail_tooltip="good fit (band 0.84–1.18 at 95 %)",
+        )
+    )
+    assert card._detail.toolTip() == "good fit (band 0.84–1.18 at 95 %)"
+
+    card.set_message("Forward/backward fit", tag="Fit ✓", tone="ok", tooltip="band 0.9–1.1")
+    assert card._detail.toolTip() == "band 0.9–1.1"
+
+    card.set_message("Fitting…", tag="Fitting")
+    assert card._detail.toolTip() == ""
+    card.deleteLater()

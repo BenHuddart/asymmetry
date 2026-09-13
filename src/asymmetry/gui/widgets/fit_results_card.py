@@ -95,6 +95,9 @@ class FitCardSummary:
     detail_html: str
     #: One chip per member of a batch; empty for a single fit.
     members: tuple[MemberChip, ...] = ()
+    #: Hover text for the body line — the χ² band behind a verdict chip it
+    #: renders, which the line itself has no room to spell out.
+    detail_tooltip: str = ""
 
 
 def _wrapping_strip(parent: QWidget) -> tuple[QWidget, FlowLayout]:
@@ -205,18 +208,22 @@ class FitResultsCard(QWidget):
         *,
         tag: str = "No fit yet",
         tone: CardTone = "neutral",
+        tooltip: str = "",
     ) -> None:
         """Show *text* as the card's whole content — a placeholder, progress or error.
 
         The completed-fit read-outs (members, the mono meta) go away, so a
         message can never be read as belonging to a fit that is no longer on the
         card. *tone* carries the tag's colour for a read-out replayed from saved
-        state, where the outcome is known but there is no live result behind it.
+        state, where the outcome is known but there is no live result behind it;
+        *tooltip* is the body line's hover text, and defaults to none so the next
+        message never inherits the last one's.
         """
         self._apply_tag(tag, tone)
         self._headline.setText("")
         self._meta.setText("")
         self._detail.setText(text)
+        self._detail.setToolTip(tooltip)
         self._set_members(())
         self._apply_meta()
         self._content_html = text
@@ -227,6 +234,7 @@ class FitResultsCard(QWidget):
         self._headline.setText(summary.headline)
         self._meta.setText(summary.meta)
         self._detail.setText(summary.detail_html)
+        self._detail.setToolTip(summary.detail_tooltip)
         self._set_members(summary.members)
         self._apply_meta()
         self._content_html = f"<b>{summary.tag}</b> {summary.headline}<br>{summary.detail_html}"

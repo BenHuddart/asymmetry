@@ -143,6 +143,7 @@ from asymmetry.gui.styles.widgets import (
     build_segmented_button_qss,
     error_html,
     fit_quality_chip_html,
+    fit_quality_tooltip,
     info_html,
     make_section_header,
     success_html,
@@ -883,19 +884,25 @@ class GlobalFitTab(FitTabBase):
     ) -> None:
         """Render a completed multi-member fit on the results card and run row.
 
-        One member chip per result, marked ``✓`` only when that member converged
-        *and* carries no advisory flag, so the card, the outcome chip and the
-        per-member results windows all read the batch the same way.
+        Convergence and quality are two different questions, so the read-out keeps
+        them apart: the headline counts the members that *converged*, while a
+        member chip reads ``✓`` only when it converged and the engine flagged
+        nothing about it. A converged-but-flagged run therefore counts towards the
+        headline and still shows ⚠ — on its chip, on the run row's outcome chip,
+        and in the card's own tag.
         """
         self._member_results = dict(results_by_member)
         member_flags = self.last_batch_member_flags()
         chips: list[MemberChip] = []
         chi2_values: list[float] = []
-        n_ok = 0
+        n_converged = 0
+        n_clean = 0
         for member, result in results_by_member.items():
             flags = sorted(set(member_flags.get(member) or member_quality_flags(result)))
-            good = bool(result.success) and not flags
-            n_ok += good
+            converged = bool(result.success)
+            clean = converged and not flags
+            n_converged += converged
+            n_clean += clean
             chi2 = float(result.reduced_chi_squared)
             if np.isfinite(chi2):
                 chi2_values.append(chi2)
@@ -903,7 +910,7 @@ class GlobalFitTab(FitTabBase):
             chips.append(
                 MemberChip(
                     run=int(member),
-                    text=f"{member} {'✓' if good else '⚠'} {chi2:.3g}",
+                    text=f"{member} {'✓' if clean else '⚠'} {chi2:.3g}",
                     colours=(
                         FIT_VERDICT_CHIP_COLOURS[quality["verdict"]]
                         if quality is not None
@@ -914,7 +921,7 @@ class GlobalFitTab(FitTabBase):
             )
 
         total = len(results_by_member)
-        warned = total - n_ok
+        warned = total - n_clean
         meta = (
             f"χ²ᵣ {min(chi2_values):.3g}–{max(chi2_values):.3g}"
             if len(chi2_values) > 1
@@ -924,14 +931,14 @@ class GlobalFitTab(FitTabBase):
             FitCardSummary(
                 tag=f"{tag_prefix} {'✓' if not warned else '⚠'}",
                 tone="ok" if not warned else "warn",
-                headline=f"{n_ok} of {total} converged",
+                headline=f"{n_converged} of {total} converged",
                 meta=meta,
                 detail_html=detail_html,
                 members=tuple(chips),
             )
         )
         noun = "groups" if self._member_kind == "groups" else "runs"
-        text = f"{total} {noun} · {n_ok} ✓"
+        text = f"{total} {noun} · {n_clean} ✓"
         if warned:
             text += f" {warned} ⚠"
         self._outcome_chip.setText(text)
@@ -2958,6 +2965,9 @@ class GlobalFitTab(FitTabBase):
             success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail),
             tag="Fit ✓",
             tone="ok",
+            tooltip=fit_quality_tooltip(
+                fwd_summary.get("quality"), fwd_summary.get("params_at_bound")
+            ),
         )
         if self._current_dataset is dataset:
             self.count_fit_completed.emit(
@@ -2998,6 +3008,7 @@ class GlobalFitTab(FitTabBase):
             success_html(f"Single-histogram fit · group {group_id} ({side})", detail=detail),
             tag="Fit ✓",
             tone="ok",
+            tooltip=fit_quality_tooltip(summary.get("quality"), summary.get("params_at_bound")),
         )
         if self._current_dataset is dataset:
             self.count_fit_completed.emit(

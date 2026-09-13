@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
 from asymmetry.core.data.dataset import MuonDataset  # noqa: E402
 from asymmetry.core.fitting.engine import FitResult  # noqa: E402
+from asymmetry.core.fitting.member_quality import member_quality_flags  # noqa: E402
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E402
 from asymmetry.gui.panels.fit.global_tab import (  # noqa: E402
     _COL_MAX,
@@ -57,14 +58,14 @@ def _dataset(run_number: int) -> MuonDataset:
     )
 
 
-def _result(chi2: float, *, success: bool = True) -> FitResult:
+def _result(chi2: float, *, success: bool = True, error: float = 0.01) -> FitResult:
     return FitResult(
         success=success,
         chi_squared=chi2 * 30.0,
         reduced_chi_squared=chi2,
         dof=30,
         parameters=ParameterSet([Parameter(name="Lambda", value=0.5)]),
-        uncertainties={"Lambda": 0.01},
+        uncertainties={"Lambda": error},
     )
 
 
@@ -161,13 +162,36 @@ def test_a_converged_batch_renders_one_chip_per_member(qapp, settings) -> None:
         card = tab._results_card
 
         assert card.tag_text() == "Batch ⚠"
-        assert "of 3 converged" in card.content_html()
+        assert "2 of 3 converged" in card.content_html()
         chips = [button.text() for button in card._members.findChildren(QPushButton)]
         assert any(text.startswith("3001 ✓") for text in chips)
         assert any(text.startswith("3003 ⚠") for text in chips)
         assert tab._outcome_chip.isVisibleTo(tab)
         assert tab._outcome_chip.text().startswith("3 runs · ")
         assert "⚠" in tab._outcome_chip.text()
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+def test_a_flagged_but_converged_member_still_counts_as_converged(qapp, settings) -> None:
+    """Convergence and quality are separate: the headline counts one, the chips
+    the other."""
+    tab = GlobalFitTab(member_kind="runs", settings=settings)
+    try:
+        # A 500 % relative error converges but earns an advisory flag.
+        flagged = _result(1.05, error=2.5)
+        assert member_quality_flags(flagged)
+        tab._render_fit_summary(
+            {3001: _result(0.98), 3002: flagged}, tag_prefix="Batch", detail_html=""
+        )
+        card = tab._results_card
+
+        assert "2 of 2 converged" in card.content_html()
+        chips = [button.text() for button in card._members.findChildren(QPushButton)]
+        assert [text.split()[1] for text in chips] == ["✓", "⚠"]
+        assert card.tag_text() == "Batch ⚠"
+        assert tab._outcome_chip.text() == "2 runs · 1 ✓ 1 ⚠"
     finally:
         tab.close()
         tab.deleteLater()
