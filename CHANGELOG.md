@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   platform, and the "Data Files Not Found" prompt lists bare file names instead of
   full paths.
 
+- **macOS: clicks inside a project tab landed at the wrong position.** The native
+  menu bar gave each project page its own window before the shell hosted it, so
+  every press in the tab was mapped through that stale window and offset by the
+  shell's client origin; a hosted page is now built as a plain child widget from
+  the start.
+
 ## [0.18.0] - 2026-09-06
 
 ### Added

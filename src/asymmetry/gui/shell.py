@@ -1,10 +1,10 @@
 """The application window: several open projects as tabs over one shell.
 
-Each tab is a whole :class:`~asymmetry.gui.mainwindow.MainWindow`, reparented
-as a plain widget, so a project keeps its own docks, panels, and session state
-and the two layers stay separable. The shell owns only what must be shared: the
-tab strip, the stack of per-page menu bars, the reduction-cache budget, and the
-quit sequence.
+Each tab is a whole :class:`~asymmetry.gui.mainwindow.MainWindow`, constructed
+as a plain child widget, so a project keeps its own docks, panels, and session
+state and the two layers stay separable. The shell owns only what must be
+shared: the tab strip, the stack of per-page menu bars, the reduction-cache
+budget, and the quit sequence.
 """
 
 from __future__ import annotations
@@ -136,12 +136,9 @@ class ProjectShell(QWidget):
 
     def add_project(self) -> MainWindow:
         """Open an empty project in a new tab and make it current."""
-        page = MainWindow()
+        page = MainWindow(self._pages)
         page._shell = self
         page._reduction_cache = self._reduction_cache
-        # QMainWindow sets the Window flag in its constructor; clear it before
-        # the stack adopts the page or it stays a separate top-level window.
-        page.setWindowFlags(Qt.WindowType.Widget)
         self._pages.addWidget(page)
         # Taking the bar reparents it out of the page's own layout, which drops
         # the page's menu-bar pointer — so page.menuBar() must never be called
