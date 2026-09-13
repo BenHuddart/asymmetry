@@ -2899,10 +2899,13 @@ def test_fit_panel_global_fit_results_seed_single_state_per_run(
     stored[102] = panel._single_state_by_run[102]
 
     assert "Batch fit" in panel._single_tab._results_card.content_html()
+    # The rebuilt read-out says a fit happened rather than "No fit yet".
+    assert panel._single_tab._results_card.tag_text() == "Fit ✓"
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.11)
 
     panel.set_dataset(d2)
     assert "Batch fit" in panel._single_tab._results_card.content_html()
+    assert panel._single_tab._results_card.tag_text() == "Fit ✓"
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.44)
 
     saved = panel.get_single_state()

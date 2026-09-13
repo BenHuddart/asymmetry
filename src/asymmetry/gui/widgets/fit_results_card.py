@@ -197,14 +197,21 @@ class FitResultsCard(QWidget):
 
     # ── Public API ──────────────────────────────────────────────────────────
 
-    def set_message(self, text: str, *, tag: str = "No fit yet") -> None:
+    def set_message(
+        self,
+        text: str,
+        *,
+        tag: str = "No fit yet",
+        tone: CardTone = "neutral",
+    ) -> None:
         """Show *text* as the card's whole content — a placeholder, progress or error.
 
-        The tag reads neutral and the completed-fit read-outs (members, the mono
-        meta) go away, so a message can never be read as belonging to a fit that
-        is no longer on the card.
+        The completed-fit read-outs (members, the mono meta) go away, so a
+        message can never be read as belonging to a fit that is no longer on the
+        card. *tone* carries the tag's colour for a read-out replayed from saved
+        state, where the outcome is known but there is no live result behind it.
         """
-        self._apply_tag(tag, "neutral")
+        self._apply_tag(tag, tone)
         self._headline.setText("")
         self._meta.setText("")
         self._detail.setText(text)
@@ -221,6 +228,10 @@ class FitResultsCard(QWidget):
         self._set_members(summary.members)
         self._apply_meta()
         self._content_html = f"<b>{summary.tag}</b> {summary.headline}<br>{summary.detail_html}"
+
+    def tag_text(self) -> str:
+        """The card's current tag, as the tabs persist it beside the read-out."""
+        return self._tag.text()
 
     def content_html(self) -> str:
         """What the card currently says, as one rich-text line.

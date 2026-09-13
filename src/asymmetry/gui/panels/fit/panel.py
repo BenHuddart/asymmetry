@@ -51,6 +51,11 @@ from .wizard_cache import (
 )
 
 
+def _result_tag(converged: bool) -> str:
+    """The results-card tag a rebuilt read-out is replayed under."""
+    return "Fit ✓" if converged else "Error"
+
+
 def _parse_bounds_text(bounds_text: object) -> tuple[str, str]:
     """Parse a ``GlobalFitTab``-style ``"<lo>, <hi>"`` bounds cell into (min, max) text.
 
@@ -832,6 +837,7 @@ class FitPanel(QWidget):
                     ),
                     "parameters": [],
                     "result_html": "No fit performed yet",
+                    "result_tag": "No fit yet",
                 }
         state["wizard_state"] = wizard_state
         self._single_state_by_run[run_key] = copy.deepcopy(state)
@@ -926,6 +932,7 @@ class FitPanel(QWidget):
             "composite_model": model.to_dict(),
             "parameters": params,
             "result_html": self._result_html_from_fit(fit_result, source),
+            "result_tag": _result_tag(getattr(fit_result, "success", False) is True),
         }
 
     def build_single_fit_payload_from_slot(
@@ -1009,6 +1016,7 @@ class FitPanel(QWidget):
             "composite_model": model.to_dict(),
             "parameters": params,
             "result_html": self._result_html_from_slot_result(result),
+            "result_tag": _result_tag(bool(result.get("success", False))),
         }
 
     def _result_html_from_slot_result(self, result: dict) -> str:

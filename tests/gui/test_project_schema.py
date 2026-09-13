@@ -1401,7 +1401,7 @@ class TestFitPanelState:
         from asymmetry.gui.panels.fit_panel import FitPanel
 
         panel = FitPanel()
-        panel._single_tab._results_card.set_message("<b>Saved Single Fit</b>")
+        panel._single_tab._results_card.set_message("<b>Saved Single Fit</b>", tag="Fit ✓")
         panel._global_tab._result_text.setHtml("<b>Saved Global Fit</b>")
         panel._tabs.setCurrentIndex(1)
 
@@ -1415,6 +1415,10 @@ class TestFitPanelState:
         panel2.restore_ui_state(ui_state)
 
         assert "Saved Single Fit" in panel2._single_tab._results_card.content_html()
+        # The tag rides with the read-out, so a recorded fit never comes back
+        # under the "No fit yet" placeholder.
+        assert single_state["result_tag"] == "Fit ✓"
+        assert panel2._single_tab._results_card.tag_text() == "Fit ✓"
         assert "Saved Global Fit" in panel2._global_tab._result_text.toPlainText()
         assert panel2._tabs.currentIndex() == 1
 

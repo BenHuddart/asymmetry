@@ -1,14 +1,15 @@
 """Fit-workflow guards: stop users silently doing the wrong thing.
 
-Covers three "silent wrong thing" workflow gaps found in the full-corpus GUI
+Covers the "silent wrong thing" workflow gaps found in the full-corpus GUI
 evaluation:
 
 (a) fitting a time-domain model against the FFT spectrum when the workspace is
     in the frequency domain (CdS),
-(b) the default ``Exponential + Constant`` splitting the amplitude during
-    amplitude calibration (Photo) — the background term is now removed in the
-    function editor, so only the model surgery itself is covered here,
-(c) a buried 2nd period (light ON/OFF) the data browser never surfaced (Photo).
+(b) a buried 2nd period (light ON/OFF) the data browser never surfaced (Photo).
+
+The third gap it once covered — the default ``Exponential + Constant`` splitting
+the amplitude during calibration — is answered by the function editor now that
+the Fit tab's ``Drop background`` action is retired.
 """
 
 from __future__ import annotations
@@ -26,7 +27,6 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run  # noqa: E402
-from asymmetry.core.fitting.composite import CompositeModel  # noqa: E402
 from asymmetry.gui.panels.data_browser import (  # noqa: E402
     _PERIOD_ROLE,
     _TITLE_COLUMN,
@@ -37,7 +37,6 @@ from asymmetry.gui.panels.fit_panel import (  # noqa: E402
     SingleFitTab,
     _dataset_representation_domain,
     _fit_domain_mismatch_message,
-    _model_without_trailing_background,
 )
 
 
@@ -114,24 +113,7 @@ def test_global_fit_refuses_domain_mismatch(qapp: QApplication) -> None:
     assert "frequency-domain spectrum" in tab._result_text.toPlainText()
 
 
-# ── (b) dropping a trailing background term ───────────────────────────────────────────
-
-
-def test_model_without_trailing_background_drops_only_a_plain_constant() -> None:
-    exp_const = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    assert _model_without_trailing_background(exp_const).component_names == ["Exponential"]
-
-    osc = CompositeModel(["Oscillatory", "Exponential", "Constant"], operators=["*", "+"])
-    assert _model_without_trailing_background(osc).component_names == ["Oscillatory", "Exponential"]
-
-    # No removable background: bare Exponential, or a Constant that is not the
-    # final additive term.
-    assert _model_without_trailing_background(CompositeModel(["Exponential"])) is None
-    multiplied = CompositeModel(["Exponential", "Constant"], operators=["*"])
-    assert _model_without_trailing_background(multiplied) is None
-
-
-# ── (c) multi-period browser cue ─────────────────────────────────────────────
+# ── (b) multi-period browser cue ─────────────────────────────────────────────
 
 
 def _two_period_dataset(run_number: int = 5) -> MuonDataset:

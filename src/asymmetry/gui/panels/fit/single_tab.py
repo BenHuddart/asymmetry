@@ -15,7 +15,6 @@ tab for project persistence.
 import copy
 import functools
 import html
-import json
 import logging
 from collections.abc import Callable, Sequence
 
@@ -108,8 +107,8 @@ from .wizard_cache import WizardCacheEntry, wizard_cache_entry
 
 logger = logging.getLogger(__name__)
 
-#: ``QSettings`` key holding the Parameters rail's chip states as a JSON
-#: ``{group: shown}`` dict.
+#: ``QSettings`` prefix under which the Parameters rail persists its chips —
+#: one boolean key per column group, ``fit/single/columns/<group>``.
 COLUMN_GROUPS_SETTINGS_KEY = "fit/single/columns"
 
 #: The Parameters rail, in header order: chip label, the ``FitParameterTable``
@@ -126,6 +125,15 @@ _COLUMN_GROUP_CHIPS = (
 DIAGNOSTIC_ACTION = "Diagnostic…"
 ADD_TO_SERIES_ACTION = "Add to series…"
 SEND_TO_BATCH_ACTION = "Send to Batch →"
+
+#: Tag a saved read-out goes back on the card under. A state written before the
+#: tag was persisted carries none, so it is replayed as a neutral ``Recorded``:
+#: a fit that happened, whose verdict this file does not record.
+RESTORED_TAG = "Recorded"
+
+#: Tone per results-card tag, for replaying a saved read-out. Anything else —
+#: including ``RESTORED_TAG`` — is neutral.
+_TONE_BY_TAG = {"Fit ✓": "ok", "Fit ⚠": "warn", "Error": "error"}
 
 
 class SingleFitTab(FitTabBase):
@@ -364,18 +372,14 @@ class SingleFitTab(FitTabBase):
         return rail
 
     def _stored_column_groups(self) -> dict[str, bool]:
-        """The rail's persisted chip states, with the defaults filling the gaps."""
-        raw = self._settings.value(COLUMN_GROUPS_SETTINGS_KEY, "")
-        try:
-            # The settings store is written outside this program, so its content
-            # is parsed as foreign data rather than trusted.
-            stored = json.loads(raw) if isinstance(raw, str) and raw else {}
-        except json.JSONDecodeError:
-            stored = {}
-        if not isinstance(stored, dict):
-            stored = {}
+        """The rail's persisted chip states, with the defaults filling the gaps.
+
+        One boolean key per group, so the store holds nothing that could need
+        interpreting: ``QSettings`` coerces to ``bool`` and falls back to the
+        default for a key it does not have.
+        """
         return {
-            group: bool(stored.get(group, default))
+            group: self._settings.value(f"{COLUMN_GROUPS_SETTINGS_KEY}/{group}", default, type=bool)
             for _label, group, default, _tooltip in _COLUMN_GROUP_CHIPS
         }
 
@@ -388,10 +392,7 @@ class SingleFitTab(FitTabBase):
         # table comes back into the tab.
         if not self._param_table_dialog.isVisible():
             self._param_table.set_column_group_visible(group, checked)
-        self._settings.setValue(
-            COLUMN_GROUPS_SETTINGS_KEY,
-            json.dumps({name: chip.isChecked() for name, chip in self._column_chips.items()}),
-        )
+        self._settings.setValue(f"{COLUMN_GROUPS_SETTINGS_KEY}/{group}", checked)
 
     def _build_param_table_dialog(self) -> QDialog:
         """The pop-out that hosts the live parameter table, every column shown."""
@@ -1535,6 +1536,9 @@ class SingleFitTab(FitTabBase):
             # fraction-value normalisation).
             "parameters": self._param_table.parameters_state(),
             "result_html": self._results_card.content_html(),
+            # The tag travels with the line so a replayed read-out still says
+            # how the fit went instead of reading as "No fit yet".
+            "result_tag": self._results_card.tag_text(),
         }
         if (
             self._cached_wizard_recommendation is not None
@@ -1594,7 +1598,14 @@ class SingleFitTab(FitTabBase):
 
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:
-            self._results_card.set_message(result_html)
+            # A state written before the tag was persisted carries none; it is
+            # still a recorded read-out, so it goes back under RESTORED_TAG
+            # rather than under the "no fit" placeholder.
+            tag = state.get("result_tag")
+            tag = tag if isinstance(tag, str) and tag else RESTORED_TAG
+            self._results_card.set_message(
+                result_html, tag=tag, tone=_TONE_BY_TAG.get(tag, "neutral")
+            )
 
         # Accepts both shapes: the session handle (no work — the recommendation
         # is shared by reference) and a persisted dict from a project file or a

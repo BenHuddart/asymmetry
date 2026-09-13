@@ -28,9 +28,11 @@ from asymmetry.gui.panels.fit.single_tab import (  # noqa: E402
     ADD_TO_SERIES_ACTION,
     COLUMN_GROUPS_SETTINGS_KEY,
     DIAGNOSTIC_ACTION,
+    RESTORED_TAG,
     SEND_TO_BATCH_ACTION,
     SingleFitTab,
 )
+from asymmetry.gui.styles import tokens  # noqa: E402
 from asymmetry.gui.windows.fit_results_window import FitResultsWindow  # noqa: E402
 
 
@@ -117,15 +119,27 @@ def test_rail_rests_on_bounds_only_and_persists_each_toggle(qapp, settings) -> N
         reopened.deleteLater()
 
 
-def test_a_corrupt_persisted_rail_falls_back_to_the_defaults(qapp, settings) -> None:
-    settings.setValue(COLUMN_GROUPS_SETTINGS_KEY, "{not json")
+def test_each_chip_is_its_own_settings_key(qapp, settings) -> None:
+    """One boolean per group, so a rail state is readable and cannot be malformed."""
     tab = SingleFitTab(settings=settings)
     try:
-        assert tab._param_table.column_group_visible("bounds") is True
-        assert tab._param_table.column_group_visible("links") is False
+        tab._column_chips["batch"].setChecked(True)
     finally:
         tab.close()
         tab.deleteLater()
+
+    assert settings.value(f"{COLUMN_GROUPS_SETTINGS_KEY}/batch", False, type=bool) is True
+    # An untouched chip leaves no key behind; its default stands in.
+    assert settings.value(f"{COLUMN_GROUPS_SETTINGS_KEY}/links", None) is None
+
+    reopened = SingleFitTab(settings=settings)
+    try:
+        assert reopened._param_table.column_group_visible("batch") is True
+        assert reopened._param_table.column_group_visible("bounds") is True
+        assert reopened._param_table.column_group_visible("links") is False
+    finally:
+        reopened.close()
+        reopened.deleteLater()
 
 
 # ── the pop-out ─────────────────────────────────────────────────────────────
@@ -243,6 +257,43 @@ def test_card_hand_offs_emit_the_tab_signals(qapp, settings) -> None:
         tab._results_card.action_triggered.emit(ADD_TO_SERIES_ACTION)
 
         assert seen == ["batch", "series"]
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+def test_a_restored_read_out_keeps_the_tag_it_was_saved_under(qapp, settings) -> None:
+    tab = SingleFitTab(settings=settings)
+    try:
+        tab.set_dataset(_dataset(3001))
+        _fit(tab)
+        state = tab.get_state()
+        assert state["result_tag"] == "Fit ✓"
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+    restored = SingleFitTab(settings=settings)
+    try:
+        restored.restore_state(state)
+        card = restored._results_card
+        assert card.tag_text() == "Fit ✓"
+        # The tone follows the tag, so a converged fit is not painted neutral.
+        assert tokens.SUCCESS_BG in card._tag.styleSheet()
+        assert "χ²/ν" in card.content_html()
+    finally:
+        restored.close()
+        restored.deleteLater()
+
+
+def test_a_state_saved_before_tags_reads_as_recorded_not_as_no_fit(qapp, settings) -> None:
+    """A project written before `result_tag` still says a fit happened."""
+    tab = SingleFitTab(settings=settings)
+    try:
+        tab.restore_state({"result_html": "<b>Batch fit</b><br>χ²ᵣ = 1.0500"})
+        assert tab._results_card.tag_text() == RESTORED_TAG
+        assert tokens.SURFACE_ALT in tab._results_card._tag.styleSheet()
+        assert "Batch fit" in tab._results_card.content_html()
     finally:
         tab.close()
         tab.deleteLater()

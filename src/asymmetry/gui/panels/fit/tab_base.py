@@ -25,7 +25,7 @@ Navigation map
    ``_link_group_combo_value``/``_set_link_group_combo_value``.
 5. **Domain/worker-exception helpers** — ``_dataset_representation_domain``,
    ``_fit_domain_mismatch_message``/``_apply_domain_mismatch_warning``,
-   ``_model_without_trailing_background``, ``_format_fit_worker_exception``,
+   ``_format_fit_worker_exception``,
    ``_fit_curve_sample_count``, and the fit-thread wait/dispatch helpers
    (``_fit_work_pending``, ``_wait_for_fit_thread``, ``_start_fit_call`` — the
    shared entry point both tabs use to launch a fit worker).
@@ -1112,32 +1112,6 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
     box = getattr(label, "_formula_box", None)
     if box is not None:
         box.refresh_height()
-
-
-def _model_without_trailing_background(model: CompositeModel | None) -> CompositeModel | None:
-    """Return *model* with a trailing additive ``Constant`` removed, or ``None``.
-
-    Only the unambiguous case is handled — a final ``+ Constant`` term outside
-    any parentheses (e.g. ``Exponential + Constant`` or
-    ``Oscillatory*Exponential + Constant``). A free constant background absorbs
-    part of the signal during amplitude calibration, splitting the fitted
-    amplitude; dropping it lets the relaxation term capture the full initial
-    asymmetry (A₀). Returns ``None`` when there is no such removable background.
-    """
-    if model is None:
-        return None
-    names = list(model.component_names)
-    operators = list(model.operators)
-    if len(names) < 2 or names[-1] != "Constant":
-        return None
-    if not operators or operators[-1] != "+":
-        return None
-    if any(model.open_parentheses) or any(model.close_parentheses):
-        return None
-    try:
-        return CompositeModel(names[:-1], operators=operators[:-1])
-    except ValueError:
-        return None
 
 
 def _format_bounds_pair(min_val: float, max_val: float) -> str:

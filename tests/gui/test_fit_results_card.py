@@ -228,3 +228,22 @@ def test_content_html_reports_what_the_card_says(qapp: QApplication) -> None:
     card.set_message(card.content_html())
     assert card._detail.text() == "<b>Fit ✓</b> converged<br>χ²/ν 0.9794 · good"
     card.deleteLater()
+
+
+def test_a_message_can_carry_the_tone_of_the_outcome_it_replays(qapp: QApplication) -> None:
+    """A saved read-out goes back under its own tag, not the neutral placeholder."""
+    card = _card()
+
+    card.set_message("χ²/ν 0.9794 · good", tag="Fit ✓", tone="ok")
+
+    assert card.tag_text() == "Fit ✓"
+    assert tokens.SUCCESS_BG in card._tag.styleSheet()
+    # Still a message: the completed-fit read-outs stay away.
+    assert card._headline.text() == ""
+    assert card._meta.text() == ""
+    assert card.content_html() == "χ²/ν 0.9794 · good"
+
+    card.set_message("No fit performed yet")
+    assert card.tag_text() == "No fit yet"
+    assert tokens.SURFACE_ALT in card._tag.styleSheet()
+    card.deleteLater()
