@@ -111,8 +111,8 @@ parameter table (a **Trend** checkbox and a χ²ᵣ flag per row — see
 :ref:`assessing a fit <assessing-a-fit>`), the shared Global parameter values
 above it, and **Copy TSV** / **Export…** below. Reading a row and finding it on
 the plot is otherwise a matter of counting points, so resting the pointer on a
-row rings that run's point on every plot — on each card in Subplots, and on
-both axes of a twin-axis Overlay.
+row rings that run's point on every plot — on each expanded card in Subplots,
+and on both axes of a twin-axis Overlay.
 
 .. _trending-data-model:
 

@@ -1014,6 +1014,8 @@ class FitParametersPanel(QWidget):
         # or closing the pop-out — takes the rings away again.
         self._table.setMouseTracking(True)
         self._table.entered.connect(self._on_table_row_entered)
+        # Blank viewport below the last row is not a run either.
+        self._table.viewportEntered.connect(self._clear_hover_rings)
         # Held rather than re-fetched in the filter: teardown delivers events to
         # this panel after the table's C++ side is gone, and an identity test
         # against the stored wrapper never reaches across that.
@@ -3027,6 +3029,11 @@ class FitParametersPanel(QWidget):
         )
         ring.set_visible(False)
         self._hover_rings[id(ax)] = ring
+        # A ring is born hidden, so a redraw under a resting pointer (lens change,
+        # mode switch, overlay completion) would lose the hovered run until the
+        # pointer moved; the next tick places the new rings instead.
+        if self._hovered_row is not None:
+            self._hover_ring_timer.start()
 
     def _on_canvas_drawn(self, event) -> None:
         """Cache a canvas' freshly-drawn pixels as the hover rings' background.
@@ -3106,8 +3113,8 @@ class FitParametersPanel(QWidget):
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
         """Drop the hover rings when the pointer leaves the rows or the pop-out hides.
 
-        ``viewportEntered`` fires only when the pointer crosses the viewport over
-        empty space, so leaving over a row (or closing the window outright) needs
+        ``viewportEntered`` covers only a move onto the viewport's empty space, so
+        leaving the viewport over a row (or closing the window outright) needs
         these two events.
         """
         leaving_rows = watched is self._table_viewport and event.type() == QEvent.Type.Leave

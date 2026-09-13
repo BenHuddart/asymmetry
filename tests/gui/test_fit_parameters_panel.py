@@ -3760,3 +3760,66 @@ class TestTableHoverRing:
         # The pin would pass vacuously if the ring never moved.
         assert seen[0] != seen[-1]
         assert len({tuple(point[0]) for point in seen}) == 5
+
+    def test_moving_onto_blank_viewport_hides_every_ring(self, panel: FitParametersPanel) -> None:
+        """``entered`` fires only over cells; the blank space below the last row
+        reports through ``viewportEntered`` and is not a run either."""
+        select_params(panel, ["A0", "Lambda"])
+        panel._refresh_table()
+        _hover(panel, 0)
+        assert all(ring.get_visible() for ring in panel._hover_rings.values())
+
+        panel._table.viewportEntered.emit()
+
+        assert not any(ring.get_visible() for ring in panel._hover_rings.values())
+        assert panel._hovered_row is None
+
+    def test_a_full_redraw_under_a_resting_pointer_keeps_the_run_ringed(
+        self, panel: FitParametersPanel
+    ) -> None:
+        """A redraw replaces every ring with a hidden one; the hovered run must
+        come back on the next tick without the pointer moving."""
+        select_params(panel, ["A0", "Lambda"])
+        panel._refresh_table()
+        _hover(panel, 1)
+        old_ring = panel._hover_rings[id(axes_for(panel, "A0"))]
+
+        panel._set_x_transform(AxisTransform.preset("square"))
+        panel._refresh_plot()
+
+        assert panel._hover_ring_timer.isActive()
+        panel._apply_hover_ring()
+        new_ring = panel._hover_rings[id(axes_for(panel, "A0"))]
+        assert new_ring is not old_ring
+        assert new_ring.get_visible()
+        np.testing.assert_allclose(new_ring.get_xydata(), [[200.0**2, 0.22]])
+
+    def test_a_single_card_redraw_under_a_resting_pointer_keeps_the_run_ringed(
+        self, panel: FitParametersPanel
+    ) -> None:
+        select_params(panel, ["A0", "Lambda"])
+        panel._refresh_table()
+        _hover(panel, 1)
+        untouched = panel._hover_rings[id(axes_for(panel, "Lambda"))]
+
+        panel._draw_card("A0")
+
+        assert panel._hover_ring_timer.isActive()
+        panel._apply_hover_ring()
+        assert panel._hover_rings[id(axes_for(panel, "Lambda"))] is untouched
+        ring = panel._hover_rings[id(axes_for(panel, "A0"))]
+        assert ring.get_visible()
+        np.testing.assert_allclose(ring.get_xydata(), [[200.0, 0.22]])
+
+    def test_a_redraw_with_no_pointer_on_the_table_arms_nothing(
+        self, panel: FitParametersPanel
+    ) -> None:
+        select_params(panel, ["A0", "Lambda"])
+        panel._refresh_table()
+        _hover(panel, 0)
+        QApplication.sendEvent(panel._table.viewport(), QEvent(QEvent.Type.Leave))
+
+        panel._refresh_plot()
+
+        assert not panel._hover_ring_timer.isActive()
+        assert not any(ring.get_visible() for ring in panel._hover_rings.values())

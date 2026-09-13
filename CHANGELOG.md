@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Resting the pointer on a row of the Fitted parameters window now rings that
   run's point on every trend plot.** Matching a table row to a point was
   otherwise a matter of counting along the abscissa. The ring follows the
-  pointer on each card in Subplots mode and on both axes of a twin-axis
+  pointer on each expanded card in Subplots mode and on both axes of a twin-axis
   Overlay, tracks whichever lens the axis carries, and marks excluded and
   flagged members like any other point — it says *where this run is*, not
   whether it counts. It is drawn straight over the existing plot, so sweeping
