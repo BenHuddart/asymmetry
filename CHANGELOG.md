@@ -74,7 +74,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canvas — offering `Add label here…`, `Edit label…` / `Remove label` over an
   existing label, and `Clear labels`; a trend point's
   `Exclude from trend` / `Include in trend` action joins the same menu.
-  Focusing a card (**⤢**) is now purely a size gesture. See
+  Focusing a card (**⤢**) is now purely a size gesture. The series pills are
+  now short handles — a series' run range (`394–397`), or the name you gave
+  it, with the full name on the tooltip and the model appended when two series
+  share a run range — and the strip wraps instead of widening the panel, so a
+  second series no longer pushes the dock off a 13-inch screen; the footer
+  gained a first row naming the series on screen in full (`2 series`, names on
+  its tooltip, while an overlay is selected). See
   `docs/reference/parameter_trending.rst`.
 
 - **The Parameters dock and the `Fitted parameters` pop-out now open at the

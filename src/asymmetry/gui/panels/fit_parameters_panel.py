@@ -165,13 +165,13 @@ from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     build_segmented_button_qss,
     clear_layout,
-    make_provenance_label,
     style_group_state_button,
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.formatting import format_param_label, format_value_uncertainty
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
+from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
@@ -530,6 +530,16 @@ class _GroupFitData:
     #: since ``MainWindow._refresh_trend_panel`` always re-supplies it via
     #: ``load_representation_series`` immediately after a project restore.
     phase: PhaseDecoration | None = None
+    #: Pill label: the shortest text that still tells this series from the others
+    #: loaded beside it (usually its run range). Only the host sees the whole set,
+    #: so only the host can compute it; like ``phase`` it is derived display state
+    #: and is not serialised. Empty means "no short form" and the full
+    #: ``group_name`` stands in — see :meth:`__post_init__`.
+    short_name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.short_name:
+            self.short_name = self.group_name
 
 
 class FitParametersPanel(QWidget):
@@ -728,9 +738,13 @@ class FitParametersPanel(QWidget):
 
         # ── Series strip ─────────────────────────────────────────────────────
         self._group_tabs_widget = QWidget()
-        self._group_tabs_layout = QHBoxLayout(self._group_tabs_widget)
+        self._group_tabs_layout = FlowLayout(self._group_tabs_widget)
         self._group_tabs_layout.setContentsMargins(0, 0, 0, 0)
-        self._group_tabs_layout.setSpacing(6)
+        # Like the y chip strip: the pills wrap, so the strip's height follows the
+        # width the dock gives it rather than the panel widening to fit the row.
+        strip_policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        strip_policy.setHeightForWidth(True)
+        self._group_tabs_widget.setSizePolicy(strip_policy)
         self._group_tabs_widget.setVisible(False)
         layout.addWidget(self._group_tabs_widget)
 
@@ -884,13 +898,25 @@ class FitParametersPanel(QWidget):
         # stack), so it asks for the stack redraw itself.
         self._card_stack.focus_changed.connect(self._plot_refresh_timer.start)
 
-        # ── Footer: trend provenance left, the Global-held note right ────────
+        # ── Footer row 1: the active series, named in full ───────────────────
+        # The pills are short handles, so the panel says somewhere which series
+        # is on screen. Elided (never wrapped) so the name cannot widen the dock.
+        self._active_series_label = ElidedLabel("")
+        self._active_series_label.set_pen_color(tokens.TEXT_MUTED)
+        self._active_series_label.hide()
+        layout.addWidget(self._active_series_label)
+
+        # ── Footer row 2: trend provenance left, the Global-held note right ──
         footer_row = QHBoxLayout()
         footer_row.setContentsMargins(0, 0, 0, 0)
         footer_row.setSpacing(6)
         # Trend provenance line (Phase 2, mirrors the integral-scan panel): how
         # many members feed the trend vs. how many the user excluded by click.
-        self._trend_provenance_label = make_provenance_label()
+        # Elided rather than wrapped: the footer stays one row tall, and the
+        # Global note keeps its width whatever the provenance line says.
+        self._trend_provenance_label = ElidedLabel("")
+        self._trend_provenance_label.set_pen_color(tokens.TEXT_MUTED)
+        self._trend_provenance_label.hide()
         footer_row.addWidget(self._trend_provenance_label, 1)
         # Surfaced when the batch classified a parameter as Global (shared): that
         # parameter takes one value across every run, so it is held flat and
@@ -903,6 +929,11 @@ class FitParametersPanel(QWidget):
             f"QLabel {{ color: {tokens.TEXT_MUTED}; font-style: italic; }}"
         )
         self._global_param_hint.setVisible(False)
+        # Fixed: the note is the footer's actionable half, so a long provenance
+        # line beside it must elide rather than squeeze it out.
+        self._global_param_hint.setSizePolicy(
+            QSizePolicy.Policy.Fixed, self._global_param_hint.sizePolicy().verticalPolicy()
+        )
         footer_row.addWidget(self._global_param_hint)
         layout.addLayout(footer_row)
 
@@ -1520,6 +1551,7 @@ class FitParametersPanel(QWidget):
         series_entries: list[tuple[str, str, list[dict]]],
         *,
         highlight_runs_by_id: dict[str, list[int]] | None = None,
+        short_names_by_id: dict[str, str] | None = None,
         select_id: str | None = None,
         global_params_by_id: dict[str, dict[str, dict[str, float]]] | None = None,
         knight_observables_by_id: dict[str, dict[str, str]] | None = None,
@@ -1545,6 +1577,11 @@ class FitParametersPanel(QWidget):
             window to drive data-browser highlighting via
             :signal:`series_selection_changed`.  Pass ``None`` to leave the
             stored map unchanged.
+        short_names_by_id:
+            Optional mapping of ``batch_id → short pill label`` (the run range,
+            disambiguated by the host where two series share one). A series
+            absent from the map — and every caller that omits the argument —
+            keeps its full name on the pill.
         select_id:
             Optional ``batch_id`` to make the active selection (e.g. the
             just-computed batch series). When present and still in the reloaded
@@ -1637,6 +1674,7 @@ class FitParametersPanel(QWidget):
                 composite_parameters=composite_params,
                 knight_observables=observables,
                 phase=(phase_by_id or {}).get(batch_id),
+                short_name=(short_names_by_id or {}).get(batch_id, ""),
             )
 
         # Update per-series run-number map for browser highlighting.
@@ -1724,6 +1762,7 @@ class FitParametersPanel(QWidget):
             composite_parameters=list(self._composite_parameters),
             knight_observables=dict(self._knight_observables),
             phase=current.phase,
+            short_name=current.short_name,
         )
 
     def _selected_group_ids_from_buttons(self) -> list[str]:
@@ -1760,27 +1799,32 @@ class FitParametersPanel(QWidget):
 
         self._group_button_map = {}
         groups = sorted(self._group_fit_results.values(), key=lambda g: g.group_name.lower())
+        strip_metrics = self._group_tabs_widget.fontMetrics()
         for group in groups:
             # A stale group-bound series (live membership ≠ last-fitted set, D1)
             # carries a warning glyph + tooltip on its pill — the same surfacing
             # channel as divergence. The clean ``group_name`` is left untouched so
             # rename/sort/delete still read the user-facing label.
             is_stale = group.group_id in self._stale_series_ids
-            button = QPushButton(f"{group.group_name} ⚠" if is_stale else group.group_name)
+            # Same rule as the y chips: the pill is a short handle capped at a
+            # character count, and the full name lives on the tooltip. A pill that
+            # grew with the series name was what pushed the dock past 13 inches.
+            pill_text = strip_metrics.elidedText(
+                group.short_name, Qt.TextElideMode.ElideRight, metrics.char_width(_CHIP_MAX_CHARS)
+            )
+            button = QPushButton(f"{pill_text} ⚠" if is_stale else pill_text)
             if group.phase is not None:
                 button.setIcon(self._phase_swatch_icon(group.phase.color))
                 button.setIconSize(QSize(10, 10))
-            # Every pill teaches the overlay gesture; a stale one prepends its
-            # own warning to the same tooltip.
-            gesture = (
-                "Click to view this series · Shift+click to overlay it with the selected series."
-            )
+            # Every pill names its series in full and teaches the overlay gesture;
+            # a stale one prepends its own warning to the same tooltip.
+            tooltip = [
+                group.group_name,
+                "Click to view this series · Shift+click to overlay it with the selected series.",
+            ]
             if is_stale:
-                button.setToolTip(
-                    "Membership changed since last fit — re-run to refresh.\n" + gesture
-                )
-            else:
-                button.setToolTip(gesture)
+                tooltip.insert(0, "Membership changed since last fit — re-run to refresh.")
+            button.setToolTip("\n".join(tooltip))
             button.setCheckable(True)
             button.clicked.connect(self._on_group_button_clicked)
             button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1791,7 +1835,6 @@ class FitParametersPanel(QWidget):
             )
             self._group_tabs_layout.addWidget(button)
             self._group_button_map[group.group_id] = button
-        self._group_tabs_layout.addStretch()
         self._group_tabs_widget.setVisible(bool(groups))
         self._refresh_group_button_styles()
 
@@ -1904,6 +1947,24 @@ class FitParametersPanel(QWidget):
             else:
                 state = "unselected"
             style_group_state_button(button, state, base=base, palette="red")
+
+        # Footer row 1 follows the strip: this is the one funnel every path that
+        # changes which series is shown (rebuild, click, delete, rename) reaches.
+        names = [
+            self._group_fit_results[gid].group_name
+            for gid in selected_ids
+            if gid in self._group_fit_results
+        ]
+        if len(names) > 1:
+            self._active_series_label.setText(f"{len(names)} series")
+            # "2 series" never elides, so the names need a tooltip of their own.
+            self._active_series_label.set_hover_text("\n".join(sorted(names)))
+        elif active_gid in self._group_fit_results:
+            self._active_series_label.setText(self._group_fit_results[active_gid].group_name)
+            self._active_series_label.set_hover_text("")
+        else:
+            self._active_series_label.setText("")
+        self._active_series_label.setVisible(bool(self._active_series_label.text()))
 
     def _on_group_button_clicked(self) -> None:
         self._sync_active_group_state()
@@ -5450,7 +5511,9 @@ class FitParametersPanel(QWidget):
         if transform_dropped:
             parts.append(f"⚠ {transform_dropped} dropped by transform")
         label.setText(" · ".join(parts))
-        label.setToolTip(
+        # An explanation, not the squeezed-out text, so it stands whether or not
+        # the line is elided.
+        label.set_hover_text(
             "Excluded points are ringed in grey and drop out of the trend model "
             "fit; flagged points (warning diamonds) still contribute. Points "
             "'dropped by transform' fall where the transform is undefined "

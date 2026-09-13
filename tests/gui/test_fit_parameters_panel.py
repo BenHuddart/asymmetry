@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (  # type: ignore
     QDialog,
     QLabel,
     QMessageBox,
+    QPushButton,
     QScrollArea,
     QSplitter,
     QTableWidget,
@@ -51,6 +52,7 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import CONTEXT_CHIP_OBJECT_NAME
 from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
+from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.windows.fit_results_window import FitResultsWindow
 from tests._qt_helpers import wait_for
 from tests.gui._trend_panel import axes_for, card, select_params
@@ -2606,6 +2608,164 @@ def test_series_buttons_use_red_palette(qapp: QApplication) -> None:
     panel = _panel_with_two_groups(qapp)
     active_btn = panel._group_button_map["g1"]
     assert tokens.ACCENT_RED in active_btn.styleSheet()
+
+
+def _panel_with_long_series(qapp: QApplication, count: int = 3) -> FitParametersPanel:
+    """A panel holding *count* series with long full names and run-range short names."""
+    panel = FitParametersPanel()
+    panel._group_fit_results = {
+        f"s{i}": _GroupFitData(
+            group_id=f"s{i}",
+            group_name=f"StretchedExponential + Constant · {390 + i}–{393 + i} · high",
+            short_name=f"{390 + i}–{393 + i}",
+            rows=[
+                _FitRow(
+                    run_number=390 + i,
+                    run_label=str(390 + i),
+                    field=100.0 * i,
+                    temperature=5.0,
+                    values={"A": 0.2},
+                    errors={"A": 0.01},
+                )
+            ],
+            global_params=None,
+            varying_params=["A"],
+            inferred_x_key="field",
+            model_fits={},
+            plot_annotations=[],
+        )
+        for i in range(count)
+    }
+    panel._active_group_id = "s0"
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["s0"], emit=False)
+    panel._refresh_group_button_styles()
+    return panel
+
+
+def test_series_pill_shows_short_name_with_full_name_on_tooltip(qapp: QApplication) -> None:
+    panel = _panel_with_long_series(qapp)
+    button = panel._group_button_map["s0"]
+    assert button.text() == "390–393"
+    assert button.toolTip().splitlines() == [
+        "StretchedExponential + Constant · 390–393 · high",
+        "Click to view this series · Shift+click to overlay it with the selected series.",
+    ]
+    # The pill is a short handle: it never takes the full name's width.
+    long_pill = QPushButton(panel._group_fit_results["s0"].group_name)
+    assert button.sizeHint().width() < long_pill.sizeHint().width() / 2
+
+
+def test_series_pill_elides_a_long_short_name(qapp: QApplication) -> None:
+    panel = _panel_with_long_series(qapp, count=1)
+    panel._group_fit_results["s0"].short_name = "groups 100000–100031 extra"
+    panel._rebuild_group_buttons()
+
+    text = panel._group_button_map["s0"].text()
+    assert text.endswith("…")
+    assert len(text) < len("groups 100000–100031 extra")
+    # The full name — not the truncated short one — is what hover reveals.
+    assert (
+        panel._group_button_map["s0"]
+        .toolTip()
+        .startswith("StretchedExponential + Constant · 390–393 · high")
+    )
+
+
+def test_stale_series_pill_keeps_glyph_and_warning_on_the_short_pill(qapp: QApplication) -> None:
+    panel = _panel_with_long_series(qapp, count=1)
+    panel._stale_series_ids = {"s0"}
+    panel._rebuild_group_buttons()
+
+    button = panel._group_button_map["s0"]
+    assert button.text() == "390–393 ⚠"
+    assert button.toolTip().splitlines()[0] == (
+        "Membership changed since last fit — re-run to refresh."
+    )
+    assert button.toolTip().splitlines()[1] == "StretchedExponential + Constant · 390–393 · high"
+
+
+def test_series_pill_falls_back_to_full_name_without_short_names(
+    panel: FitParametersPanel,
+) -> None:
+    """Every caller that omits ``short_names_by_id`` keeps today's full-name pill."""
+    row_dicts = [
+        {
+            "run_number": 1,
+            "run_label": "1",
+            "field": 100.0,
+            "temperature": 10.0,
+            "values": {"Lambda": 0.1},
+            "errors": {"Lambda": 0.01},
+        }
+    ]
+    panel.load_representation_series([("batch-1", "Fast damped · 1", row_dicts)])
+    assert panel._group_button_map["batch-1"].text() == "Fast damped · 1"
+
+    panel.load_representation_series(
+        [("batch-1", "Fast damped · 1", row_dicts)],
+        short_names_by_id={"batch-1": "1"},
+    )
+    assert panel._group_button_map["batch-1"].text() == "1"
+
+
+def test_series_strip_wraps_instead_of_widening(qapp: QApplication) -> None:
+    panel = _panel_with_long_series(qapp, count=4)
+    layout = panel._group_tabs_layout
+    assert isinstance(layout, FlowLayout)
+
+    one_row = layout.heightForWidth(1000)
+    assert layout.heightForWidth(180) > one_row
+    # A strip of four pills asks for the width of one, not of the row.
+    assert layout.minimumSize().width() < 150
+
+
+def test_footer_names_the_active_series_and_counts_an_overlay(qapp: QApplication) -> None:
+    panel = _panel_with_long_series(qapp)
+    label = panel._active_series_label
+    assert label.text() == "StretchedExponential + Constant · 390–393 · high"
+
+    panel._set_selected_group_ids(["s0", "s1"], emit=False)
+    panel._apply_group_selection_to_view(sync_active=False)
+    assert label.text() == "2 series"
+    assert label.toolTip().splitlines() == [
+        "StretchedExponential + Constant · 390–393 · high",
+        "StretchedExponential + Constant · 391–394 · high",
+    ]
+
+
+def test_footer_series_line_hidden_without_a_series(qapp: QApplication) -> None:
+    panel = FitParametersPanel()
+    assert panel._active_series_label.text() == ""
+    assert panel._active_series_label.isHidden()
+
+
+def test_footer_global_note_keeps_its_size_hint_at_dock_width(qapp: QApplication) -> None:
+    """At a 13-inch dock width the series line elides; the Global note does not shrink."""
+    panel = _panel_with_long_series(qapp)
+    panel._group_fit_results[
+        "s0"
+    ].group_name = (
+        "StretchedExponential + StretchedExponential + Constant · 394–397 · high transverse field"
+    )
+    panel._rebuild_group_buttons()
+    panel._set_selected_group_ids(["s0"], emit=False)
+    panel._refresh_group_button_styles()
+    panel._global_params = ParameterSet(
+        [Parameter("A_1", value=0.2), Parameter("A_bg", value=0.05)]
+    )
+    panel._update_global_param_hint()
+    panel.show()
+    panel.resize(376, 700)
+    qapp.processEvents()
+
+    note = panel._global_param_hint
+    assert note.text() == "A_1 (%), A_bg (%) Global — held constant"
+    assert note.width() == note.sizeHint().width()
+    series_line = panel._active_series_label
+    assert series_line.width() < series_line.fontMetrics().horizontalAdvance(series_line.text())
+    assert series_line.toolTip() == series_line.text()
+    panel.close()
 
 
 def test_context_menu_rename_emits_signal(

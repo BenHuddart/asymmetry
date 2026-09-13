@@ -40,7 +40,11 @@ The panel reads top to bottom, nothing scrolling at rest. A **series strip**
 lists the recorded fit series for the active representation as coloured pill
 buttons: click one to view it, **Shift+click** a second to overlay it
 (`Overlaying Several Series`_), right-click for rename / select-members /
-delete.
+delete. A pill carries a short handle — the series' run range (``394–397``),
+or the name you renamed it to — and its full name on the tooltip; two series
+over the same runs have the model appended (``394–397 · Exponential``) so the
+pills stay distinct. The strip wraps onto further rows rather than widening
+the panel.
 
 The **x rail** carries the abscissa: the **x** picker (temperature, field,
 run number, angle, a fitted parameter, or a custom logbook column), the **ƒ**
@@ -95,9 +99,12 @@ or double-click it to change its text. Right-clicking near a trend point adds
 that point's **Exclude from trend** / **Include in trend** action (and its
 quality flags) to the same menu.
 
-The footer's left side reports trend provenance (``4 of 4 runs in trend``);
-its right side notes any Global (shared) parameter held constant and so
-excluded from the y rail, with the fix in its tooltip.
+The footer has two rows. The first names the series on screen in full — the
+long name the pills no longer carry, or ``2 series`` (the names on its
+tooltip) while an overlay is selected. The second reports trend provenance on
+the left (``4/4 members in trend``) and, on the right, notes any Global
+(shared) parameter held constant and so excluded from the y rail, with the fix
+in its tooltip.
 
 **Table** opens a non-modal **Fitted parameters** window holding the live
 parameter table (a **Trend** checkbox and a χ²ᵣ flag per row — see
@@ -342,7 +349,8 @@ model-fit controls.
 *Two* :math:`\sigma(T)` *series — a 400 G and a 200 G transverse-field scan —*
 *overlaid on the* ``σ (µs⁻¹)`` *card. Colour encodes the series (legend*
 *top-right, the active series flagged); with two series pills selected, the*
-*card's Fit button reads* **Global fit ×2…** *— see* `Cross-Group Fitting`_
+*footer reads* ``2 series`` *and the card's Fit button reads*
+**Global fit ×2…** *— see* `Cross-Group Fitting`_
 *below. The 200 G plateau sitting below the 400 G one is the pancake-vortex*
 *field dependence of the London second moment.*
 
@@ -355,8 +363,9 @@ Phase-owned series
    :alt: Trending panel showing a phase series with its range shaded and a dashed boundary line
    :width: 100%
 
-*A phase-owned series: the swatch on the series pill matches the plotted*
-*curve's colour, the phase's own run range is shaded beneath the points, and*
+*A phase-owned series: the swatch on the short series pill (its run range;*
+*the footer names the series in full) matches the plotted curve's colour,*
+*the phase's own run range is shaded beneath the points, and*
 *its upper boundary is drawn as a dashed line with a fainter uncertainty band.*
 
 A series recorded for one phase of a Global Fit Wizard partition (see

@@ -83,6 +83,7 @@ import ntpath
 import os
 import time
 import weakref
+from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import nullcontext
 from datetime import datetime
@@ -212,6 +213,7 @@ from asymmetry.core.representation import (
     composite_model_label,
     default_series_label,
     format_run_range,
+    member_range,
 )
 from asymmetry.core.representation.global_fit_study import (
     GlobalFitStudy,
@@ -10824,6 +10826,9 @@ class MainWindow(QMainWindow):
         )
 
         entries: list[tuple[str, str, list[dict]]] = []
+        # (batch_id, series, full name) for the short-pill pass below, which needs
+        # the whole loaded set before it can tell which short names collide.
+        named_series: list[tuple[str, FitSeries, str]] = []
         highlight_map: dict[str, list[int]] = {}
         # The fitted cross-run-shared (role "global") parameters per series, so the
         # trend panel can show the "Global fitting parameters" header. The model owns
@@ -10876,6 +10881,7 @@ class MainWindow(QMainWindow):
             # renamed-chip case on this per-refresh loop.
             name = series.label or self._series_fallback_name(series)
             entries.append((batch_id, name, row_dicts))
+            named_series.append((batch_id, series, name))
             shared = series.shared_parameters()
             if shared:
                 global_params_by_id[batch_id] = shared
@@ -10892,11 +10898,34 @@ class MainWindow(QMainWindow):
             else:
                 highlight_map[batch_id] = list(series.member_run_numbers)
 
+        # Short pill names. A series pill carrying the full default label
+        # ("StretchedExponential + Constant · 394–397 · high") is ~330 px wide, so
+        # two of them push the dock past a 13-inch display. The run range alone
+        # identifies a series in the common case; where it does not, the colliding
+        # pills gain the model, then the browser-group suffix. A user rename is
+        # the name the user chose, so it is never shortened or disambiguated.
+        short_names_by_id = {
+            batch_id: (series.label or member_range(series) or name)
+            for batch_id, series, name in named_series
+        }
+        for extra_part in (
+            lambda s: composite_model_label(s.canonical_model),
+            self._series_group_suffix,
+        ):
+            counts = Counter(short_names_by_id.values())
+            for batch_id, series, _name in named_series:
+                if series.label or counts[short_names_by_id[batch_id]] == 1:
+                    continue
+                part = extra_part(series)
+                if part:
+                    short_names_by_id[batch_id] = f"{short_names_by_id[batch_id]} · {part}"
+
         refreshed = False
         if hasattr(self._fit_parameters_panel, "load_representation_series"):
             self._fit_parameters_panel.load_representation_series(
                 entries,
                 highlight_runs_by_id=highlight_map,
+                short_names_by_id=short_names_by_id,
                 select_id=select_batch_id,
                 global_params_by_id=global_params_by_id,
                 knight_observables_by_id=knight_observables_by_id,
@@ -12546,6 +12575,28 @@ class MainWindow(QMainWindow):
         else:  # Keep fits
             self._data_browser.remove_phases(parent_id, orphan_series=True)
 
+    def _series_group_suffix(self, series) -> str | None:
+        """Browser data-group name the series label takes as its suffix, if any.
+
+        A series recorded with provenance names off that persisted group id
+        directly; older/ad-hoc series fall back to the live run-intersection
+        guess, keyed off ``source_runs()`` so it agrees with the member range
+        ``default_series_label`` renders from (a partial ``member_source_run``
+        map otherwise leaves the two disagreeing — the suffix silently dropped).
+        An *auto*-group name (D3) is the run range itself, so appending it would
+        duplicate the member range ("· 10–11 · Runs 10–11"); only user groups
+        (named for a real coordinate, e.g. "T = 150 K") add a suffix.
+        """
+        group_id = series.group_id or series.source_group_id
+        if group_id and not self._is_auto_group(group_id):
+            name = self._data_group_name(group_id)
+            if name is not None:
+                return name
+        fallback_id = self._common_group_id_for_runs(series.source_runs())
+        if fallback_id and not self._is_auto_group(fallback_id):
+            return self._data_group_name(fallback_id)
+        return None
+
     def _series_fallback_name(self, series) -> str:
         """Default display label for a series the user hasn't renamed.
 
@@ -12557,23 +12608,7 @@ class MainWindow(QMainWindow):
         label, so they only reach the positional "Series N" fallback defensively.
         """
         if not series.is_computed:
-            # A series recorded with provenance names off that persisted group id
-            # directly; older/ad-hoc series fall back to the live run-intersection
-            # guess, keyed off source_runs() so it agrees with the member_range
-            # default_series_label renders from (a partial member_source_run map
-            # otherwise leaves the two disagreeing — the suffix silently dropped).
-            # An *auto*-group name (D3) is the run range itself, so appending it
-            # would duplicate the member range ("· 10–11 · Runs 10–11"); only user
-            # groups (named for a real coordinate, e.g. "T = 150 K") add a suffix.
-            group_id = series.group_id or series.source_group_id
-            group_name = None
-            if group_id and not self._is_auto_group(group_id):
-                group_name = self._data_group_name(group_id)
-            if group_name is None:
-                fallback_id = self._common_group_id_for_runs(series.source_runs())
-                if fallback_id and not self._is_auto_group(fallback_id):
-                    group_name = self._data_group_name(fallback_id)
-            return default_series_label(series, group_name=group_name)
+            return default_series_label(series, group_name=self._series_group_suffix(series))
         # Positional fallback, consistent with the trend panel's series ordering.
         rep_type = series.rep_type
         series_for_rep = sorted(

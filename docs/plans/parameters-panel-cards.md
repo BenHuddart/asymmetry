@@ -22,8 +22,14 @@ fitted table is a dead copy in a dialog.
 
 **Layout, top to bottom, nothing scrolling at rest.**
 
-1. **Series strip** — the existing red series pills, unchanged behaviour
-   (click = view, shift-click = overlay series, right-click menu).
+1. **Series strip** — the red series pills, unchanged behaviour (click = view,
+   shift-click = overlay series, right-click menu). Each pill carries a *short*
+   name — the user's rename if any, else the series' `member_range`, with the
+   model (then the browser-group suffix) appended only where two pills would
+   otherwise read alike — elided at `_CHIP_MAX_CHARS` with the full name on the
+   tooltip. The host computes the short names (only it sees the whole set) and
+   passes them as `load_representation_series(short_names_by_id=…)`. The strip
+   is a `FlowLayout`, so it wraps instead of widening the panel.
 2. **Rail row 1 (x)** — `x` label · x-axis picker (the existing combo) · **ƒ**
    transform button (menu: presets + Custom…, label shows the active lens,
    e.g. `1/x`) · `log` checkbox · `Fold:` combo (Angle x only, as today) ·
@@ -35,8 +41,11 @@ fitted table is a dead copy in a dialog.
 4. **Plot area** — in *Subplots* mode a vertical **card stack**, one
    `ParameterCard` per checked chip; in *Overlay* mode a single canvas
    (today's "Single Axes" drawing, twin y-axis for two parameters, untouched).
-5. **Footer** — trend provenance on the left (`4 of 4 runs in trend`), the
-   Global-held-constant note on the right (short form, full text as tooltip).
+5. **Footer**, two rows — row 1 names the active series in full (`2 series`,
+   names on the tooltip, with an overlay selected), elided, hidden when no
+   series is active; row 2 is trend provenance on the left
+   (`4/4 members in trend`) and the Global-held-constant note on the right
+   (short form, full text as tooltip, never shrunk below its size hint).
 
 **ParameterCard** (`gui/widgets/parameter_card.py`, pure view):
 
@@ -273,6 +282,15 @@ the mockup link and the review checklist.
   `gui/windows/fit_results_window.py::FitResultsWindow` — a non-modal, reusable
   pure view fed a plain `FitResults` snapshot by the panel. Values there use the
   new `format_value_uncertainty` (`35.8(5)`).
+- 2026-09-13 (follow-up): short series pills, full name in the footer. A pill
+  carrying the default `<model> · <run range> · <group>` label is ~330 px wide,
+  so a second series pushed the panel past a 13-inch dock — the strip was the
+  last row whose width followed the data. Pills now show the run range (a
+  rename always wins; collisions escalate to the model, then the group suffix)
+  and wrap in a `FlowLayout`; the footer's new first row names the active
+  series in full, elided, so nothing is lost. `ElidedLabel.set_hover_text`
+  exists for the two footer labels whose tooltip is not simply the squeezed-out
+  text (the provenance explanation, and the names behind `2 series`).
 - 2026-09-13 (follow-up): labels move to one right-click menu on every plot —
   `Add label here…`, `Edit label…` / `Remove label`, `Clear labels`, merged
   with the trend-point membership toggle. The cards' and Overlay's tools rows
