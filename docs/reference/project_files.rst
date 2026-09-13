@@ -20,6 +20,17 @@ data when sending an analysis to a collaborator, or to archive alongside
 paper supplementary material so that readers can reproduce every fit
 shown in the figures.
 
+Because only paths are stored, a project whose data files have since
+moved cannot reload them directly. On open, Asymmetry lists the files it
+could not find in a **Data Files Not Found** prompt and offers to
+**Locate Data Directory**: choose the folder that now holds the files
+and every missing dataset whose file name is present there is loaded
+from it. The look-up matches on file name alone, so it works across
+operating systems — a project saved on Windows with ``C:\...`` paths
+resolves against a folder chosen on macOS or Linux, and vice versa. The
+stored paths are left as written; saving the project afterwards records
+the new locations.
+
 Asymmetry's project file is JSON with an integer schema version, which
 is independent of the package version: opening a project written by an
 older release triggers automatic schema migration, and the loader
