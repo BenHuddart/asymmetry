@@ -744,9 +744,10 @@ _PARAM_ROLE_LABELS = {"global": "Global", "local": "Local", "fixed": "Fixed", "f
 #: (:func:`_make_param_name_item`). One budget so the tables stay aligned.
 _PARAM_NAME_COL_CHARS = 13
 
-#: Character budget every value/seed column asks for. The columns stretch (see
-#: :func:`stretch_value_columns`), so this is their floor in a narrow dock and
-#: the width the ↗ pop-out opens them at, not what they normally show.
+#: Character budget every value/seed column asks for. The columns grow into the
+#: viewport's spare width (see :func:`elastic_value_columns`), so this is their
+#: floor in a narrow dock and the width the ↗ pop-out opens them at, not what
+#: they normally show.
 VALUE_COL_CHARS = 12
 
 
@@ -1402,35 +1403,126 @@ class _ValueUncertaintyDelegate(_CommitOnTabDelegate):
         model.setData(index, None, self._MINOS_ROLE)
 
 
-#: Where :func:`stretch_value_columns` records ``[columns, width]`` for
-#: :func:`table_content_width` — a Qt property rather than an attribute, since
-#: the tables it describes are plain ``QTableWidget`` instances.
-_STRETCH_COLUMNS_PROPERTY = "asymmetryStretchColumns"
+class ElasticTable(QTableWidget):
+    """A parameter table whose value columns absorb the viewport's spare width.
+
+    Column dragging behaves the way a spreadsheet's does. Every column is
+    ``Interactive``, so any boundary can be dragged — including the value
+    column's own — and dragging one wider pushes the columns to its right along
+    (a horizontal scrollbar appears once they run past the viewport). What a
+    drag never does is take width out of another column: when it leaves width
+    over, :meth:`fill_elastic_columns` gives that to the elastic columns, so
+    narrowing a fixed column feeds the value column and the table never ends in
+    a band of empty grid.
+
+    The viewport is the one thing that *can* take width back
+    (:meth:`share_viewport_width`): a dock the user narrows, or a column group
+    the rail shows again, re-derives the elastic widths from the room there now
+    is rather than leaving the table scrolling sideways.
+
+    A ``Stretch`` value column did the reverse of all this: dragging any
+    boundary to its right took the space out of the value column instead of
+    moving anything, and its own boundary could not be dragged at all.
+    """
+
+    def __init__(self, rows: int, columns: int, parent: QWidget | None = None) -> None:
+        super().__init__(rows, columns, parent)
+        #: The columns that absorb spare width, and the character budget they
+        #: are reported at (:func:`elastic_value_columns` sets both).
+        self.elastic_columns: tuple[int, ...] = ()
+        self.elastic_width = 0
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        header.sectionResized.connect(self.fill_elastic_columns)
+
+    def viewportEvent(self, event) -> bool:  # noqa: N802 — Qt override
+        # The viewport is resized after the table's own resizeEvent has run, so
+        # a handler there would still be reading the previous width.
+        handled = super().viewportEvent(event)
+        if event.type() == QEvent.Type.Resize:
+            self.share_viewport_width()
+        return handled
+
+    def setColumnHidden(self, column: int, hide: bool) -> None:  # noqa: N802 — Qt override
+        # Showing a column again is the viewport losing width, not a drag.
+        super().setColumnHidden(column, hide)
+        self.share_viewport_width()
+
+    def fill_elastic_columns(self, *_section_resize_args) -> None:
+        """Level the elastic columns up into whatever width is going spare.
+
+        The level is what the spare affords once any elastic column already
+        wider than it keeps its own width (and takes that width out of what the
+        rest share) — so this adds, never shrinks. Each ``setColumnWidth`` below
+        re-enters here through ``sectionResized``; that pass computes the same
+        level, and the last one finds no spare width left and returns.
+        """
+        elastic = self._visible_elastic_columns()
+        if not elastic:
+            return
+        spare = self.viewport().width() - sum(
+            self.columnWidth(column)
+            for column in range(self.columnCount())
+            if not self.isColumnHidden(column)
+        )
+        if spare <= 0:
+            return
+        budget = spare + sum(self.columnWidth(column) for column in elastic)
+        for taken, column in enumerate(sorted(elastic, key=self.columnWidth, reverse=True)):
+            level = budget // (len(elastic) - taken)
+            if self.columnWidth(column) >= level:
+                budget -= self.columnWidth(column)
+                continue
+            self.setColumnWidth(column, level)
+            budget -= level
+
+    def share_viewport_width(self) -> None:
+        """Re-derive the elastic widths for a viewport that changed size.
+
+        Their width belongs to the viewport rather than to the last drag, so a
+        table that loses room — a narrowed dock, or a hidden column group shown
+        again — takes it back out of the elastic columns rather than scrolling
+        sideways, down to the header's own minimum section size. Each column
+        lands at the share the viewport affords, so the ``sectionResized`` fill
+        this re-enters has nothing left to give.
+        """
+        elastic = self._visible_elastic_columns()
+        if not elastic:
+            return
+        fixed = sum(
+            self.columnWidth(column)
+            for column in range(self.columnCount())
+            if not self.isColumnHidden(column) and column not in elastic
+        )
+        share = (self.viewport().width() - fixed) // len(elastic)
+        for column in elastic:
+            self.setColumnWidth(column, share)
+
+    def _visible_elastic_columns(self) -> list[int]:
+        return [column for column in self.elastic_columns if not self.isColumnHidden(column)]
 
 
-def stretch_value_columns(table: QTableWidget, columns: Sequence[int], *, chars: int) -> None:
-    """Let *columns* share whatever width the fixed columns leave over.
+def elastic_value_columns(table: ElasticTable, columns: Sequence[int], *, chars: int) -> None:
+    """Make *columns* the ones that absorb *table*'s spare width.
 
     A parameter table's fixed character widths are chosen to fit the narrow
     inspector dock, so in a wider dock (or the ↗ pop-out) the sum falls short of
     the viewport and the table ends in a band of empty grid. The value columns —
     the ones whose content is open-ended — absorb that slack instead. *chars* is
-    what each still asks for when nothing is spare; a stretched section reports
-    its current width rather than its wish, so the budget is remembered here for
-    :func:`table_content_width`.
+    the width each is worth when the dock is not what decides: what
+    :func:`table_content_width` reports them at, and so the width the ↗ pop-out
+    opens them at.
     """
-    header = table.horizontalHeader()
-    for column in columns:
-        table.setColumnWidth(column, char_width(chars))
-        header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
-    table.setProperty(_STRETCH_COLUMNS_PROPERTY, [list(columns), char_width(chars)])
+    table.elastic_columns = tuple(columns)
+    table.elastic_width = char_width(chars)
+    table.share_viewport_width()
 
 
-def table_content_width(table: QTableWidget) -> int:
-    """Width the table's visible columns want, stretch columns at their budget."""
-    columns, stretch_width = table.property(_STRETCH_COLUMNS_PROPERTY)
+def table_content_width(table: ElasticTable) -> int:
+    """Width the table's visible columns want, elastic columns at their budget."""
     return sum(
-        stretch_width if column in columns else table.columnWidth(column)
+        table.elastic_width if column in table.elastic_columns else table.columnWidth(column)
         for column in range(table.columnCount())
         if not table.isColumnHidden(column)
     )
@@ -1481,7 +1573,7 @@ def _shift_rrf_parameters(
     return shifted
 
 
-class FitParameterTable(QTableWidget):
+class FitParameterTable(ElasticTable):
     """Reusable fit-parameter table: Name·Value·Fix·Min·Max·Batch·Link·Tie.
 
     Shared by the single-fit panel (:class:`SingleFitTab`) and the single
@@ -1518,7 +1610,6 @@ class FitParameterTable(QTableWidget):
         self.setHorizontalHeaderLabels(
             ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
         )
-        self.horizontalHeader().setStretchLastSection(False)
         # Name (col 0) holds formatted "name (unit)" labels; a too-narrow column
         # clips common cases like "f (MHz)" / "A_bg (%)" (tooltip backs the rest).
         # Widths are char-based (metrics.char_width) so they track the UI font
@@ -1529,7 +1620,7 @@ class FitParameterTable(QTableWidget):
             # Min/Max are measured in sans characters but painted in the wider
             # mono font: 7 is the least that shows "-inf" unelided, and the
             # resting set (Name·Value·Fix·Min·Max) still fits a ~300 px dock
-            # because the Value column gives way (it stretches).
+            # because Value asks for no more than its own budget.
             (3, 7),  # Min
             (4, 7),  # Max
             (5, 7),  # Batch, 50 px
@@ -1539,7 +1630,7 @@ class FitParameterTable(QTableWidget):
             self.setColumnWidth(col, char_width(chars))
         # Value is where a long number (or a ±σ overlay and a link/tie badge)
         # actually needs the room, so it takes the dock's leftover width.
-        stretch_value_columns(self, (self.COL_VALUE,), chars=VALUE_COL_CHARS)
+        elastic_value_columns(self, (self.COL_VALUE,), chars=VALUE_COL_CHARS)
         _apply_param_table_style(self)
         # Tab commits the open editor on every editable column; the Value column
         # additionally paints the ±σ overlay.
@@ -2178,8 +2269,14 @@ class FitTabBase(QWidget):
         *,
         chips: Sequence[tuple[str, str, bool, str]],
         settings_key: str,
+        leading: QWidget | None = None,
     ) -> None:
         """Put *chips* and the pop-out on *section*'s header, over *table*.
+
+        A *leading* widget (the Batch tab's ⓘ) rides at the head of the rail
+        rather than as a header item of its own: the rail is one ``FlowLayout``,
+        whose minimum width is its widest single item, so what it holds never
+        adds to the dock's minimum width.
 
         Each chip is ``(label, column group, default, tooltip)`` and drives
         :meth:`_apply_column_group`, which each tab defines over the tables it
@@ -2200,6 +2297,8 @@ class FitTabBase(QWidget):
         policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         policy.setHeightForWidth(True)
         rail.setSizePolicy(policy)
+        if leading is not None:
+            rail_layout.addWidget(leading)
 
         shown = self._stored_column_groups()
         for label, group, _default, tooltip in chips:

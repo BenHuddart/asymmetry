@@ -290,17 +290,19 @@ def test_unknown_column_group_is_a_value_error(qapp):
 def test_resting_columns_fit_a_narrow_inspector_dock(qapp):
     """Name·Value·Fix·Min·Max is what the ~300 px dock shows at rest.
 
-    Value stretches, so what it *has* is whatever the viewport left over; the
-    budget that has to fit the dock is the fixed columns plus what Value asks
-    for. Both are what :func:`table_content_width` reports.
+    Value grows into whatever the viewport leaves over, so what it *has* is a
+    property of the dock; the budget that has to fit the dock is the fixed
+    columns plus what Value asks for. Both are what :func:`table_content_width`
+    reports.
     """
     table = FitParameterTable()
     table.populate(_model())
     # Every fixed column is sized, so the pop-out that shows all eight is readable.
     assert all(table.columnWidth(c) > 0 for c in range(table.columnCount()) if c != table.COL_VALUE)
-    assert (
-        table.horizontalHeader().sectionResizeMode(table.COL_VALUE)
-        == QHeaderView.ResizeMode.Stretch
+    # Every column drags like a spreadsheet's, Value included.
+    assert all(
+        table.horizontalHeader().sectionResizeMode(c) == QHeaderView.ResizeMode.Interactive
+        for c in range(table.columnCount())
     )
     assert table.horizontalHeader().stretchLastSection() is False
 
@@ -309,24 +311,98 @@ def test_resting_columns_fit_a_narrow_inspector_dock(qapp):
     assert table_content_width(table) < char_width(44)
 
 
-def test_the_value_column_takes_the_leftover_width(qapp):
-    """In a dock wider than the columns need, Value absorbs the slack."""
+def _resting_table(qapp, width_chars: int = 60) -> FitParameterTable:
+    """A shown Name·Value·Fix·Min·Max table in a dock wider than it needs."""
     table = FitParameterTable()
     table.populate(_model())
     table.set_column_group_visible("links", False)
     table.set_column_group_visible("batch", False)
-    table.resize(char_width(60), 200)
+    table.resize(char_width(width_chars), 200)
     table.show()
     qapp.processEvents()
+    return table
+
+
+def _fixed_width(table: FitParameterTable) -> int:
+    return sum(
+        table.columnWidth(c)
+        for c in range(table.columnCount())
+        if c != table.COL_VALUE and not table.isColumnHidden(c)
+    )
+
+
+def test_the_value_column_takes_the_leftover_width(qapp):
+    """In a dock wider than the columns need, Value absorbs the slack."""
+    table = _resting_table(qapp)
     try:
-        fixed = sum(
-            table.columnWidth(c)
-            for c in range(table.columnCount())
-            if c != table.COL_VALUE and not table.isColumnHidden(c)
-        )
         assert table.columnWidth(table.COL_VALUE) > char_width(VALUE_COL_CHARS)
-        assert fixed + table.columnWidth(table.COL_VALUE) == table.viewport().width()
+        assert _fixed_width(table) + table.columnWidth(table.COL_VALUE) == table.viewport().width()
         assert table.horizontalScrollBar().maximum() == 0
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_widening_a_column_pushes_the_ones_right_of_it_along(qapp):
+    """Dragging Min wider scrolls the table instead of eating into Value."""
+    table = _resting_table(qapp)
+    try:
+        value = table.columnWidth(table.COL_VALUE)
+        table.horizontalHeader().resizeSection(table.COL_MIN, table.columnWidth(table.COL_MIN) + 40)
+        qapp.processEvents()
+
+        assert table.columnWidth(table.COL_VALUE) == value
+        assert table.horizontalScrollBar().maximum() > 0
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_narrowing_a_column_hands_its_width_to_value(qapp):
+    """The freed width goes to Value rather than leaving a band of empty grid."""
+    table = _resting_table(qapp)
+    try:
+        value = table.columnWidth(table.COL_VALUE)
+        table.horizontalHeader().resizeSection(
+            table.COL_NAME, table.columnWidth(table.COL_NAME) - 20
+        )
+        qapp.processEvents()
+
+        assert table.columnWidth(table.COL_VALUE) == value + 20
+        assert _fixed_width(table) + table.columnWidth(table.COL_VALUE) == table.viewport().width()
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_showing_a_hidden_group_takes_its_width_back_from_value(qapp):
+    """A rail chip switched on borrows from Value rather than scrolling the table."""
+    table = _resting_table(qapp)
+    try:
+        table.set_column_group_visible("links", True)
+        qapp.processEvents()
+
+        assert table.horizontalScrollBar().maximum() == 0
+        assert _fixed_width(table) + table.columnWidth(table.COL_VALUE) == table.viewport().width()
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_value_cannot_be_dragged_narrower_than_the_fill(qapp):
+    """There is never an empty band: Value snaps back to the leftover width."""
+    table = _resting_table(qapp)
+    try:
+        value = table.columnWidth(table.COL_VALUE)
+        table.horizontalHeader().resizeSection(table.COL_VALUE, value - 30)
+        qapp.processEvents()
+        assert table.columnWidth(table.COL_VALUE) == value
+
+        # Wider by hand it stays, and the table scrolls to it.
+        table.horizontalHeader().resizeSection(table.COL_VALUE, value + 30)
+        qapp.processEvents()
+        assert table.columnWidth(table.COL_VALUE) == value + 30
+        assert table.horizontalScrollBar().maximum() > 0
     finally:
         table.close()
         table.deleteLater()

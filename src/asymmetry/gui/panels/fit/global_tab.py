@@ -61,6 +61,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -159,6 +160,7 @@ from asymmetry.gui.widgets.fit_results_card import (
     MemberChip,
 )
 from asymmetry.gui.widgets.flow_layout import FlowLayout
+from asymmetry.gui.widgets.info_popover import InfoPopover
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
 from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
@@ -174,6 +176,7 @@ from .tab_base import (
     TONE_BY_TAG,
     USER,
     VALUE_COL_CHARS,
+    ElasticTable,
     FitParameterTable,
     FitTabBase,
     _apply_domain_mismatch_warning,
@@ -201,9 +204,9 @@ from .tab_base import (
     _value_provenance,
     _wait_for_fit_thread,
     dataset_error_oversampling,
+    elastic_value_columns,
     fit_results_snapshot,
     param_name_col_width,
-    stretch_value_columns,
 )
 from .wizard_cache import GlobalWizardCacheEntry, global_wizard_cache_entry
 
@@ -245,8 +248,10 @@ _COL_MIN = 3
 _COL_MAX = 4
 
 #: How many members the "Batch members" list shows before it scrolls. Past this
-#: the list would crowd out the fit controls in a dock that scrolls anyway.
-_MEMBERS_LIST_MAX_ROWS = 8
+#: the list would crowd out the fit controls in a dock that scrolls anyway — and
+#: the list is a filter, not the batch's contents, so a glance at three runs plus
+#: a scrollbar says as much as a column of twelve.
+_MEMBERS_LIST_MAX_ROWS = 3
 
 #: Hand-off labels on the results card. Named so the construction and the
 #: ``action_triggered`` router cannot drift apart.
@@ -254,12 +259,16 @@ USE_AS_SEEDS_ACTION = "Use as seeds"
 TRENDS_ACTION = "Trends →"
 SEND_TO_BATCH_ACTION = "Send to Batch →"
 
-#: One line naming what each role in the Type column does. Replaces the ``?``
-#: button's message box; the full explanation lives in the docs.
-PARAMETER_ROLE_HINT = (
-    "Global: one value shared by every run · Local: fitted per run · "
-    "Fixed: held at the seed · File: taken from run metadata"
-)
+#: What each role in the Type column does, shown by the ⓘ button beside the
+#: Parameter Classification title. A hint line under the header spent two rows
+#: of a ~300 px dock on text that is read once; the full explanation lives in
+#: the docs.
+PARAMETER_ROLE_ROWS = [
+    ("Global", "one value shared by every run"),
+    ("Local", "fitted separately for each run"),
+    ("Fixed", "held at its seed value"),
+    ("File", "taken from each run's metadata (field, temperature)"),
+]
 
 
 def _read_bounds_cells(
@@ -556,15 +565,27 @@ class GlobalFitTab(FitTabBase):
             self._members_group.setVisible(False)
 
         # Parameter classification table
-        self._param_group = PanelSection("Parameter Classification", hint=PARAMETER_ROLE_HINT)
+        self._param_group = PanelSection("Parameter Classification")
+        # The four roles exist wherever a Type column does — every surface but
+        # the grouped single fit, whose physics table ticks Fix instead — so
+        # that one gets no ⓘ and no popover to explain them.
+        self._role_popover: InfoPopover | None = None
+        self._role_help_btn: QToolButton | None = None
+        if not self._grouped_single:
+            self._role_popover = InfoPopover(self)
+            self._role_popover.set_rows(PARAMETER_ROLE_ROWS)
+            self._role_help_btn = QToolButton()
+            self._role_help_btn.setText("ⓘ")
+            self._role_help_btn.setAutoRaise(True)
+            self._role_help_btn.setToolTip("What Global, Local, Fixed and File mean")
+            self._role_help_btn.clicked.connect(self._show_parameter_role_help)
 
-        self._param_table = QTableWidget(0, 5)
+        self._param_table = ElasticTable(0, 5)
         # "Seed" (not "Value"): this column is the shared initial value applied to
         # every run in the batch, not a per-run fitted result. Per-run fitted
         # values live in the Parameters (trend) tab. Naming it "Value" misled
         # users into reading the static template as per-dataset output.
         self._param_table.setHorizontalHeaderLabels(["Parameter", "Seed", "Type", "Min", "Max"])
-        self._param_table.horizontalHeader().setStretchLastSection(False)
         self._param_table.horizontalHeaderItem(1).setToolTip(
             "Shared seed (initial value) applied to every run in the batch — "
             "not a per-run fitted result.\nSelecting different runs does not "
@@ -574,7 +595,7 @@ class GlobalFitTab(FitTabBase):
         self._param_table.setColumnWidth(0, param_name_col_width())  # Parameter name
         self._param_table.setColumnWidth(2, char_width(12))  # Type (dropdown), 86 px
         # Seed is this table's value column: it takes the dock's leftover width.
-        stretch_value_columns(self._param_table, (1,), chars=VALUE_COL_CHARS)
+        elastic_value_columns(self._param_table, (1,), chars=VALUE_COL_CHARS)
         # Min/Max hold "-inf", "1e6" and the ±∞ glyphs in 6 characters, matching
         # the Single tab's pair so the two surfaces line up.
         self._param_table.setColumnWidth(_COL_MIN, char_width(6))
@@ -600,14 +621,13 @@ class GlobalFitTab(FitTabBase):
 
         self._group_param_group = PanelSection("Per-Group Parameters")
         group_param_layout = self._group_param_group
-        self._group_param_table = QTableWidget(0, 5)
+        self._group_param_table = ElasticTable(0, 5)
         self._group_param_table.setHorizontalHeaderLabels(
             ["Parameter", "Value", "Type", "Min", "Max"]
         )
-        self._group_param_table.horizontalHeader().setStretchLastSection(False)
         self._group_param_table.setColumnWidth(0, param_name_col_width())
         self._group_param_table.setColumnWidth(2, char_width(12))  # 86 px
-        stretch_value_columns(self._group_param_table, (1,), chars=VALUE_COL_CHARS)
+        elastic_value_columns(self._group_param_table, (1,), chars=VALUE_COL_CHARS)
         self._group_param_table.setColumnWidth(_COL_MIN, char_width(6))
         self._group_param_table.setColumnWidth(_COL_MAX, char_width(6))
         _apply_param_table_style(self._group_param_table)
@@ -638,14 +658,13 @@ class GlobalFitTab(FitTabBase):
             self._group_model_table.set_column_group_visible("links", False)
             self._group_model_table.set_column_group_visible("batch", False)
         else:
-            self._group_model_table = QTableWidget(0, 5)
+            self._group_model_table = ElasticTable(0, 5)
             self._group_model_table.setHorizontalHeaderLabels(
                 ["Parameter", "Value", "Type", "Min", "Max"]
             )
-            self._group_model_table.horizontalHeader().setStretchLastSection(False)
             self._group_model_table.setColumnWidth(0, param_name_col_width())
             self._group_model_table.setColumnWidth(2, char_width(12))  # 86 px
-            stretch_value_columns(self._group_model_table, (1,), chars=VALUE_COL_CHARS)
+            elastic_value_columns(self._group_model_table, (1,), chars=VALUE_COL_CHARS)
             self._group_model_table.setColumnWidth(_COL_MIN, char_width(6))
             self._group_model_table.setColumnWidth(_COL_MAX, char_width(6))
             _apply_param_table_style(self._group_model_table)
@@ -668,6 +687,7 @@ class GlobalFitTab(FitTabBase):
             self._group_model_table if grouped else self._param_table,
             chips=_COLUMN_GROUP_CHIPS,
             settings_key=COLUMN_GROUPS_SETTINGS_KEY,
+            leading=self._role_help_btn,
         )
         if grouped:
             self._param_group.addWidget(self._param_table)
@@ -1148,6 +1168,10 @@ class GlobalFitTab(FitTabBase):
         """
         rows = min(self._members_list.count(), _MEMBERS_LIST_MAX_ROWS)
         self._members_list.setFixedHeight(rows * row_height() + 2 * self._members_list.frameWidth())
+
+    def _show_parameter_role_help(self) -> None:
+        """Explain the Type column's four roles under the ⓘ that asked."""
+        self._role_popover.show_below(self._role_help_btn)
 
     def _update_members_visibility(self) -> None:
         """Show the members section only when there is a batch to filter."""
@@ -5046,7 +5070,7 @@ class GlobalFitTab(FitTabBase):
         )
         self._group_param_table.setColumnWidth(0, param_name_col_width())
         # One value column per bound group; they share the leftover width evenly.
-        stretch_value_columns(
+        elastic_value_columns(
             self._group_param_table,
             range(1, 1 + len(value_headers)),
             chars=VALUE_COL_CHARS,

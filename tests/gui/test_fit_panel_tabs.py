@@ -1566,13 +1566,30 @@ def test_global_fit_type_combo_includes_file_for_bl_parameters(
     assert "File" in items
 
 
-def test_parameter_roles_are_explained_by_the_section_hint(qapp: QApplication) -> None:
-    """The roles read off the section itself, not out of a "?" message box."""
+def test_parameter_roles_are_explained_by_the_header_popover(qapp: QApplication) -> None:
+    """The ⓘ beside the title explains the roles — no "?" message box, and no
+    hint line spending two rows of a narrow dock on text read once."""
     tab = GlobalFitTab()
-    shown = [label.text() for label in tab._param_group.findChildren(QLabel) if label.text()]
-    assert global_tab_module.PARAMETER_ROLE_HINT in shown
-    for role in ("Global:", "Local:", "Fixed:", "File:"):
-        assert role in global_tab_module.PARAMETER_ROLE_HINT
+    assert tab._role_help_btn.text() == "ⓘ"
+    assert tab._role_help_btn.toolTip() == "What Global, Local, Fixed and File mean"
+    assert [name for name, _text in global_tab_module.PARAMETER_ROLE_ROWS] == [
+        "Global",
+        "Local",
+        "Fixed",
+        "File",
+    ]
+
+    tab._show_parameter_role_help()
+    shown = [label.text() for label in tab._role_popover.findChildren(QLabel) if label.text()]
+    for name, text in global_tab_module.PARAMETER_ROLE_ROWS:
+        assert name in shown
+        assert text in shown
+    # The section carries no hint line of its own.
+    assert not [
+        label
+        for label in tab._param_group.findChildren(QLabel)
+        if label.text() and label.isVisibleTo(tab._param_group) and "Global" in label.text()
+    ]
 
 
 def test_single_tab_default_model_includes_background(qapp: QApplication) -> None:

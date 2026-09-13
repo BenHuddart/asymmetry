@@ -8,6 +8,7 @@ the windows they open, and the ``seeded from <run>`` tag.
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -31,6 +32,7 @@ from asymmetry.gui.panels.fit.global_tab import (  # noqa: E402
     COLUMN_GROUPS_SETTINGS_KEY,
     GlobalFitTab,
 )
+from asymmetry.gui.panels.fit.tab_base import VALUE_COL_CHARS  # noqa: E402
 from asymmetry.gui.styles.metrics import char_width, row_height  # noqa: E402
 from asymmetry.gui.windows.fit_results_window import FitResultsWindow  # noqa: E402
 
@@ -141,6 +143,38 @@ def test_pop_out_takes_the_live_table_and_gives_it_back(qapp, settings) -> None:
         tab.deleteLater()
 
 
+def test_two_value_columns_share_the_leftover_width(qapp, settings, monkeypatch) -> None:
+    """One value column per detector group: they split the spare width evenly."""
+    tab = GlobalFitTab(member_kind="groups", grouped_single=True, settings=settings)
+    try:
+        groups = [
+            SimpleNamespace(group_id=1, group_name="Forward", counts=np.array([120.0, 118.0])),
+            SimpleNamespace(group_id=2, group_name="Backward", counts=np.array([80.0, 79.0])),
+        ]
+        monkeypatch.setattr(tab, "_grouped_mode_context", lambda: (groups, [], "ready"))
+        tab.resize(char_width(70), 1000)
+        tab.show()
+        tab.set_current_dataset(_dataset(3001))
+        qapp.processEvents()
+
+        table = tab._group_param_table
+        forward, backward = table.columnWidth(1), table.columnWidth(2)
+        # Equal but for the odd pixel a two-way split cannot halve.
+        assert abs(forward - backward) <= 1
+        assert forward > char_width(VALUE_COL_CHARS)
+        assert (
+            sum(
+                table.columnWidth(column)
+                for column in range(table.columnCount())
+                if not table.isColumnHidden(column)
+            )
+            == table.viewport().width()
+        )
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
 def test_the_grouped_surface_rails_its_physics_table(qapp, settings) -> None:
     """A grouped surface hides the classification section, so the rail rides the
     Fit-Function Parameters section it actually shows."""
@@ -148,6 +182,8 @@ def test_the_grouped_surface_rails_its_physics_table(qapp, settings) -> None:
     try:
         assert tab._rail_table is tab._group_model_table
         assert tab._rail_section_layout is tab._group_model_group.body_layout
+        # Its physics table ticks Fix — there are no roles for a ⓘ to explain.
+        assert tab._role_help_btn is None
     finally:
         tab.close()
         tab.deleteLater()
@@ -262,14 +298,14 @@ def test_send_to_batch_tags_the_card_with_the_source_run(qapp, settings) -> None
 
 
 def test_the_members_list_is_as_tall_as_its_runs(qapp, settings) -> None:
-    """Four runs, four rows — not a QListWidget's square default box."""
+    """Two runs, two rows — not a QListWidget's square default box."""
     tab = GlobalFitTab(member_kind="runs", settings=settings)
     try:
-        tab.set_datasets([_dataset(3001 + i) for i in range(4)])
+        tab.set_datasets([_dataset(3001 + i) for i in range(2)])
         members = tab._members_list
 
-        assert members.count() == 4
-        assert members.height() == 4 * row_height() + 2 * members.frameWidth()
+        assert members.count() == 2
+        assert members.height() == 2 * row_height() + 2 * members.frameWidth()
         assert members.verticalScrollBar().maximum() == 0
     finally:
         tab.close()
@@ -277,15 +313,17 @@ def test_the_members_list_is_as_tall_as_its_runs(qapp, settings) -> None:
 
 
 def test_a_long_batch_caps_the_members_list_and_scrolls(qapp, settings) -> None:
+    """Past three runs the list stops growing and scrolls inside itself."""
     tab = GlobalFitTab(member_kind="runs", settings=settings)
     try:
         tab.resize(char_width(_DOCK_CHARS), 1200)
         tab.show()
-        tab.set_datasets([_dataset(3001 + i) for i in range(12)])
+        tab.set_datasets([_dataset(3001 + i) for i in range(4)])
         qapp.processEvents()
         members = tab._members_list
 
-        assert members.count() == 12
+        assert _MEMBERS_LIST_MAX_ROWS == 3
+        assert members.count() == 4
         assert members.height() == _MEMBERS_LIST_MAX_ROWS * row_height() + 2 * members.frameWidth()
         assert members.verticalScrollBar().maximum() > 0
     finally:

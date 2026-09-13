@@ -123,12 +123,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Batch-role columns as a group; hiding a column never loses what it says,
   since a linked or tied row still paints a small `⇄2` / `ƒ` badge in its
   Value cell, and a `↗` button pops the full eight-column table out into its
-  own window with `Copy TSV` and `Close`. A `χ²ᵣ 0.979` verdict chip appears
+  own window with `Copy TSV` and `Close`. Every column drags like a
+  spreadsheet's: widening one pushes the columns to its right along, and
+  whatever width they leave over goes to the value column, so a parameter
+  table never ends in a band of empty grid. A `χ²ᵣ 0.979` verdict chip appears
   beside `Fit` once a run completes and opens that fit's own results window.
   The Batch tab's single `"min, max"` bounds column splits into separate
   `Min` and `Max` columns, matching the Single tab, and its `?`
-  parameter-classification help box becomes the section's own hint line,
-  always visible under the header. `Run Batch Fit` is now `Run batch fit`
+  parameter-classification help box becomes an `ⓘ` button beside the
+  **Parameter Classification** title, whose popover names each role and what
+  it does. `Run Batch Fit` is now `Run batch fit`
   (`Run grouped fit` for a grouped fit), and its run row carries a verdict
   chip once a run completes, reading the count of runs that converged
   cleanly beside the count that failed or converged with a warning
@@ -153,8 +157,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Batch` and `Add to Series...` move to the Results card as `Send to Batch
   →` and `Add to series…`.
 - **The Batch tab's `?` parameter-classification help box** (a `QMessageBox`).
-  Replaced by the Parameter Classification section's own hint line, so the
-  explanation is visible without a click.
+  Replaced by an `ⓘ` button beside the section title whose popover lists the
+  four roles — no dialog to dismiss, and no permanent hint line spending two
+  rows of a narrow dock on text that is read once.
 - **The `#seedingSignpost` frame and the single-fit carry-forward badge.**
   Their content folds into the Results card: the signpost's advisory
   sentence is now part of the card body and arms `Use as seeds`; the

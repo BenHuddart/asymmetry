@@ -953,6 +953,12 @@ Fitting workflow:
    table out into its own window, with **Copy TSV** to copy it to the
    clipboard and **Close** to bring the table back.
 
+   Column widths behave as they do in a spreadsheet: drag any column's right
+   edge to resize it, and the columns to its right move along (the table
+   scrolls sideways once they run past its edge). Whatever width the other
+   columns leave over goes to **Value**, so the table never ends in a band of
+   empty grid — narrow **Name** and **Value** grows by the same amount.
+
    * **Value**: Initial guess for the parameter. Every value starts as a
      *seed* read off the data you are fitting — an amplitude and background
      from the record's own scale, ``field`` and ``B_L`` from the run's applied
@@ -1049,12 +1055,14 @@ per-dataset parameters:
      file). Behaves like **Fixed** for the fit itself, but the value
      differs automatically for each selected dataset.
 
-   The **Parameter Classification** section's hint line names the same four
-   roles at a glance: "Global: one value shared by every run · Local: fitted
-   per run · Fixed: held at the seed · File: taken from run metadata." A
-   **Bounds** chip beside the section header (off by default) shows the same
-   **Min**/**Max** pair the Single tab has; the **↗** button pops the table
-   out with every column shown.
+   The **ⓘ** button beside the **Parameter Classification** title ("What
+   Global, Local, Fixed and File mean") opens a small window naming the same
+   four roles at a glance: "Global — one value shared by every run", "Local —
+   fitted separately for each run", "Fixed — held at its seed value", "File —
+   taken from each run's metadata (field, temperature)". Clicking anywhere
+   else closes it again. A **Bounds** chip beside it (off by default) shows
+   the same **Min**/**Max** pair the Single tab has; the **↗** button pops the
+   table out with every column shown.
 
 5. Set each run's starting values under **Seeding**: the combo chooses how a
    run is seeded — independent seeds for every run, or each run chained from
@@ -1103,10 +1111,11 @@ Fitting a group directly
 Choosing **Fit this group…** from a data group's context menu (rather than
 just selecting its runs) binds the Batch tab to that group: a **Fitting
 group: <name>** banner appears above a new **Batch members** section listing
-every member run with a checkbox. Untick a run to exclude it from *this*
-analysis without removing it from the group — the exclusion is recorded on
-the fit series, not the group, so the same group can still be fit a second
-time with a different model over its full membership. An ordinary run
+every member run with a checkbox (three at a time, scrolling for a longer
+batch). Untick a run to exclude it from *this* analysis without removing it
+from the group — the exclusion is recorded on the fit series, not the group,
+so the same group can still be fit a second time with a different model over
+its full membership. An ordinary run
 selection (rather than **Fit this group…**) clears any existing binding, so
 the next batch fit auto-creates its own group instead of extending the
 previous one.

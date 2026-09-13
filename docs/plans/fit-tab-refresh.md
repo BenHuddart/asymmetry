@@ -510,3 +510,14 @@ the mockup link and the decisions list.
   outcome chip reads `3 ✓ 1 ⚠` with the sentence on its tooltip, because
   the fixed-width chip pushed the grouped dock to 387 px; Min/Max are 7
   characters (6 elided `-inf` in the mono font).
+- 2026-09-13 (second lead fix-up, from Ben's review of the same screenshots):
+  the parameter-role help is a ⓘ button at the head of the Batch rail opening
+  a popover (`gui/widgets/info_popover.py::InfoPopover`, extracted from
+  `PhaseInfoPopover`), not a hint line — a permanent two-line hint costs more
+  of a ~300 px dock than an explanation read once is worth, and riding the
+  rail's `FlowLayout` keeps the ⓘ out of the dock's minimum width; the
+  `Batch members` list caps at 3 rows; and the value columns are `Interactive`
+  with a fill rule (`ElasticTable`) rather than `Stretch`, because a stretched
+  column made every drag to its right pull width *out* of it and could not be
+  dragged itself. Dragging now pushes the columns to the right along, and only
+  a viewport change takes width back.

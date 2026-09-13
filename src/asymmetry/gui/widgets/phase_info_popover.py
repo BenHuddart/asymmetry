@@ -28,22 +28,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from asymmetry.core.representation.group import DataGroup
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.styles.palette import is_dark_surface
-from asymmetry.gui.styles.typography import SIZE_BODY, SIZE_NUMERIC, section_label_font
+from asymmetry.gui.styles.typography import section_label_font
 from asymmetry.gui.utils.phase_colors import (
     format_phase_boundary,
     format_phase_range,
     resolve_phase_color,
 )
-from asymmetry.gui.widgets.key_value_grid import KeyValueGrid
+from asymmetry.gui.widgets.info_popover import InfoPopover
 
 #: Provenance keys the popover renders, in display order, with their labels.
 #: ``model_title`` / ``confidence`` are written by the wizard when it applies a
@@ -59,30 +56,18 @@ _FOUND_AT_KEY = "found_at"
 _BREAKS_KEY = "selected_breaks"
 _GAINS_KEY = "gains"
 
-#: Ceiling on the value column, in characters of the monospaced font the grid
-#: renders values in. The frame otherwise sizes itself to its content
-#: (``adjustSize`` after each populate): a fixed width truncates the model title
-#: and the boundary estimates on a perfectly ordinary phase (the longest row a
-#: real phase carries, "Found by", is 43 characters). The cap only bites on a
-#: pathological model title, which the fit panel spells out in full anyway.
-_POPOVER_MAX_VALUE_CHARS = 60
-#: Horizontal chrome outside the two text columns: the frame's two 12 px content
-#: margins, the grid's 12 px column gap, and its 1 px border either side.
-_POPOVER_CHROME_PX = 12 + 12 + 12 + 2
-
 
 def _format_gains(gains: Any) -> str:
     """Spell the penalty-path marginal gains as ``"12.4, 3.1"``."""
     return ", ".join(f"{float(gain):.1f}" for gain in gains)
 
 
-class PhaseInfoPopover(QFrame):
-    """Frameless ``Qt.Popup`` detailing one phase (or a series' partition).
+class PhaseInfoPopover(InfoPopover):
+    """The shared ⓘ card, detailing one phase (or a series' partition).
 
-    A ``Qt.Popup`` window grabs the mouse and closes itself on the first click
-    outside its own frame, which is exactly the dismissal a header indicator
-    wants — no outside-click filter and no "is it still open" flag to keep in
-    sync with the table.
+    :class:`~asymmetry.gui.widgets.info_popover.InfoPopover` brings the frame,
+    the row grid and the popup dismissal; this subclass adds the coloured phase
+    title, the subtitle and the action row.
 
     The three action buttons re-emit through this widget's signals rather than
     acting; the Data Browser routes them to the very same panel signals its
@@ -98,30 +83,17 @@ class PhaseInfoPopover(QFrame):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setObjectName("phaseInfoPopover")
-        self.setStyleSheet(
-            f"QFrame#phaseInfoPopover {{ background: {tokens.SURFACE}; "
-            f"border: 1px solid {tokens.BORDER}; }}"
-        )
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(8)
+        layout = self.body_layout
 
         self._title = QLabel()
         self._title.setFont(section_label_font())
         self._title.setWordWrap(True)
-        layout.addWidget(self._title)
+        layout.insertWidget(0, self._title)
 
         self._subtitle = QLabel()
         self._subtitle.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
         self._subtitle.setWordWrap(True)
-        layout.addWidget(self._subtitle)
-
-        self._grid = KeyValueGrid(self)
-        layout.addWidget(self._grid)
+        layout.insertWidget(1, self._subtitle)
 
         self._actions = QWidget(self)
         actions_layout = QHBoxLayout(self._actions)
@@ -145,32 +117,6 @@ class PhaseInfoPopover(QFrame):
         self._rename_button.clicked.connect(self._on_rename)
 
     # ── content ─────────────────────────────────────────────────────────────
-
-    def _set_rows(self, rows: list[tuple[str, str]]) -> None:
-        """Fill the grid, eliding any value that would push past the width cap.
-
-        ``KeyValueGrid``'s value labels do not wrap, so their text sets the
-        layout's *minimum* width — which outranks ``setMaximumWidth`` and would
-        stretch the frame across the window for a long model title. Eliding the
-        text instead keeps the cap real, and every row short of it (all of them,
-        for the wizard's own titles) is still shown in full.
-
-        The frame's own maximum follows from the two columns it ends up with,
-        measured in the grid's fonts rather than the proportional UI font — the
-        value column is monospaced and around a third wider per character.
-        """
-        label_metrics = QFontMetrics(mono_font(SIZE_BODY))
-        value_font = mono_font(SIZE_NUMERIC)
-        value_metrics = QFontMetrics(value_font)
-        label_column = max((label_metrics.horizontalAdvance(name) for name, _ in rows), default=0)
-        budget = char_width(_POPOVER_MAX_VALUE_CHARS, value_font)
-        self.setMaximumWidth(budget + label_column + _POPOVER_CHROME_PX)
-        self._grid.set_rows(
-            [
-                (name, value_metrics.elidedText(value, Qt.TextElideMode.ElideRight, budget))
-                for name, value in rows
-            ]
-        )
 
     def show_phase(self, phase: DataGroup, *, run_count: int) -> None:
         """Populate the frame for one *phase* and its member count."""
@@ -215,7 +161,7 @@ class PhaseInfoPopover(QFrame):
             found_bits.append(f"gains {_format_gains(provenance[_GAINS_KEY])}")
         if found_bits:
             rows.append(("Found by", " · ".join(found_bits)))
-        self._set_rows(rows)
+        self.set_rows(rows)
 
         self._actions.setVisible(True)
         self.adjustSize()
@@ -250,7 +196,7 @@ class PhaseInfoPopover(QFrame):
         }
         if dates:
             rows.append(("Found by", " · ".join(sorted(dates))))
-        self._set_rows(rows)
+        self.set_rows(rows)
 
         self._actions.setVisible(False)
         self.adjustSize()

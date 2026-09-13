@@ -204,12 +204,19 @@ class PanelSection(QWidget):
         wraps under it once the panel is narrower than the rail. Mouse events
         stop at the widget, so pressing a chip in a collapsible section's header
         never also toggles the section.
+
+        The title hangs from the top of the row from here on: a rail that wraps
+        to two lines then starts on the title's own line and continues beneath
+        it, rather than straddling a title floating in the middle.
         """
         layout = self._header_row.layout()
         layout.removeItem(self._header_stretch)
+        layout.setAlignment(self._header_label, Qt.AlignmentFlag.AlignTop)
         widget.setParent(self._header_row)
         widget.setAttribute(Qt.WidgetAttribute.WA_NoMousePropagation, True)
-        layout.insertWidget(layout.indexOf(self._suffix_label), widget, 1)
+        layout.insertWidget(
+            layout.indexOf(self._suffix_label), widget, 1, Qt.AlignmentFlag.AlignTop
+        )
 
     def set_title_suffix(self, html: str | None) -> None:
         """Set a small right-aligned rich-text suffix (chip/count) in the header.
