@@ -727,8 +727,14 @@ class MainWindow(QMainWindow):
     #: marker on this project's tab.
     dirty_changed = Signal(bool)
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        # QMainWindow forces the Window flag on. A hosted page must lose it
+        # before the native (macOS) menu bar built below hands the page its own
+        # native window, which would survive into the shell and mis-map every
+        # click in the tab by the shell's client origin.
+        if parent is not None:
+            self.setWindowFlags(Qt.WindowType.Widget)
         # Includes Qt's [*] window-modified placeholder so the unsaved-changes
         # guard's setWindowModified() shows/hides a "*" without retitling.
         self.setWindowTitle("Asymmetry — μSR Data Analysis[*]")
@@ -756,7 +762,8 @@ class MainWindow(QMainWindow):
         if icon is not None:
             self.setWindowIcon(icon)
 
-        place_window_on_screen(self)
+        if parent is None:
+            place_window_on_screen(self)
 
         #: The ProjectShell hosting this window as a tab, or None when the
         #: window is the top-level window in its own right.
