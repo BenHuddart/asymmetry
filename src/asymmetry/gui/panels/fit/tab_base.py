@@ -41,9 +41,11 @@ Navigation map
    ``parameters_state``/``restore_parameters`` serialize/restore table state
    for project persistence.
 9. **``FitTabBase(QWidget)``** — the shared base both ``SingleFitTab`` and
-   ``GlobalFitTab`` subclass: common formula-box/fit-range/run-control
-   construction (``_build_formula_box``, ``_build_fit_range_fields``,
-   ``_build_run_controls``) and fit-range display sync
+   ``GlobalFitTab`` subclass: common formula-box/model-row/fit-range/run-control
+   construction (``_build_formula_box``, ``_build_model_row``,
+   ``_build_fit_range_fields``, ``_build_run_controls``), the Parameters rail
+   and its ``↗`` pop-out (``_build_parameters_rail`` over each tab's own
+   ``_apply_column_group``), and fit-range display sync
    (``_apply_fit_range_domain``, ``set_fit_range_display``,
    ``current_fit_range_text``). Deliberately thin — see
    ``docs/audit/shared-foundations/FOLLOW-UPS.md`` (Phase 2 H3) for the
@@ -51,10 +53,11 @@ Navigation map
 """
 
 import copy
+import functools
 import html
 import math
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 
 import numpy as np
@@ -80,6 +83,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -104,6 +108,7 @@ from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.metrics import char_width
+from asymmetry.gui.styles.typography import footer_font
 from asymmetry.gui.styles.widgets import (
     FIT_VERDICT_CHIP_COLOURS,
     NEUTRAL_CHIP_COLOURS,
@@ -111,6 +116,7 @@ from asymmetry.gui.styles.widgets import (
     build_segmented_button_qss,
     configure_formula_label,
     make_formula_box,
+    style_group_state_button,
     warning_html,
 )
 from asymmetry.gui.utils.formatting import format_param_label
@@ -118,6 +124,8 @@ from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
+from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.windows.fit_results_window import (
     FitParameterRow,
     FitRangeResults,
@@ -451,7 +459,6 @@ def _configure_fraction_rows_in_table(
     *,
     min_column: int | None = None,
     max_column: int | None = None,
-    bounds_column: int | None = None,
     type_column: int | None = None,
 ) -> None:
     """Set [0, 1] bounds and a hint tooltip on every FREE fraction row.
@@ -493,10 +500,6 @@ def _configure_fraction_rows_in_table(
             max_item = table.item(row, max_column)
             if max_item is not None:
                 max_item.setText("1.0")
-        if bounds_column is not None:
-            bounds_item = table.item(row, bounds_column)
-            if bounds_item is not None:
-                bounds_item.setText("0, 1")
 
 
 def _get_file_value_for_parameter(
@@ -1114,15 +1117,56 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
         box.refresh_height()
 
 
-def _format_bounds_pair(min_val: float, max_val: float) -> str:
-    def _format(value: float) -> str:
-        if value == float("inf"):
-            return "inf"
-        if value == -float("inf"):
-            return "-inf"
-        return f"{float(value):.6g}"
+def _split_bounds_text(text: object) -> tuple[str, str]:
+    """Split a stored ``"<min>, <max>"`` bounds string into its two cell texts.
 
-    return f"{_format(min_val)}, {_format(max_val)}"
+    The saved project shape and the tables' carried row state both describe a
+    parameter's limits as one string; the Batch tab's tables show them as a Min
+    and a Max cell. A string with no comma is read as a lower bound alone, which
+    is what a half-typed cell means.
+    """
+    minimum, _, maximum = str(text).partition(",")
+    return minimum.strip() or "-inf", maximum.strip() or "inf"
+
+
+def table_as_tsv(table: QTableWidget) -> str:
+    """A parameter table as tab-separated text: the header row, then one per row.
+
+    Serves the rail's pop-out for the Batch tab's combo-role tables, whose Type
+    cell is a ``QComboBox`` rather than an item. :meth:`FitParameterTable.as_tsv`
+    covers its own richer set of cell widgets instead.
+    """
+    columns = range(table.columnCount())
+    lines = ["\t".join(table.horizontalHeaderItem(column).text() for column in columns)]
+    for row in range(table.rowCount()):
+        cells: list[str] = []
+        for column in columns:
+            item = table.item(row, column)
+            widget = table.cellWidget(row, column)
+            if item is not None:
+                cells.append(item.text())
+            elif isinstance(widget, QComboBox):
+                cells.append(widget.currentText())
+            else:
+                cells.append("")
+        lines.append("\t".join(cells))
+    return "\n".join(lines)
+
+
+#: Tag a read-out replayed from a saved state goes back onto the results card
+#: under when the state predates the tag being persisted: a fit that happened,
+#: whose verdict the file does not record.
+RESTORED_TAG = "Recorded"
+
+#: Card tone per results-card tag, for replaying a saved read-out. Anything else
+#: — including :data:`RESTORED_TAG` — is neutral.
+TONE_BY_TAG = {
+    "Fit ✓": "ok",
+    "Fit ⚠": "warn",
+    "Batch ✓": "ok",
+    "Batch ⚠": "warn",
+    "Error": "error",
+}
 
 
 def _format_fit_worker_exception(exc: Exception) -> str:
@@ -1138,22 +1182,6 @@ def _format_fit_worker_exception(exc: Exception) -> str:
     if text == exc_name:
         return text
     return f"{exc_name}: {text}"
-
-
-_GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT = (
-    "Specify how each parameter behaves across datasets:\n\n"
-    "Global: Same value for all datasets. Use this for shared physical parameters "
-    "that should be fitted once across the full selection.\n\n"
-    "Local: Different value for each dataset. Use this when the parameter is "
-    "expected to vary from run to run.\n\n"
-    "Fixed: Held constant at the specified value for every dataset. Use this for "
-    "known values or parameters you want excluded from optimization.\n\n"
-    "File: Use the value from dataset metadata where available. This is offered for "
-    "field-like parameters such as B_L when the run file already stores the relevant value.\n\n"
-    "The Seed column is the shared initial value applied to every run in the batch — "
-    "it is not a per-run fitted result and does not change when you select different "
-    "runs. Per-run fitted values appear in the Parameters tab after the batch fit completes."
-)
 
 
 def _fit_curve_sample_count(
@@ -2077,6 +2105,171 @@ class FitTabBase(QWidget):
             button.setStyleSheet(build_segmented_button_qss())
             row_layout.addWidget(button)
         return row
+
+    # ------------------------------------------------------------------
+    # Shared Parameters rail: column-group chips and the ↗ pop-out
+    # ------------------------------------------------------------------
+    def _build_parameters_rail(
+        self,
+        section: PanelSection,
+        table: QTableWidget,
+        *,
+        chips: Sequence[tuple[str, str, bool, str]],
+        settings_key: str,
+    ) -> None:
+        """Put *chips* and the pop-out on *section*'s header, over *table*.
+
+        Each chip is ``(label, column group, default, tooltip)`` and drives
+        :meth:`_apply_column_group`, which each tab defines over the tables it
+        shows. The persisted state is one boolean per group under
+        ``<settings_key>/<group>``, so ``QSettings`` coerces the value and an
+        absent key falls back to the default — nothing the store could hold needs
+        interpreting. The table and its pop-out placeholder go into the section
+        body here, since the rail owns the swap between them.
+        """
+        self._column_group_chips = chips
+        self._column_settings_key = settings_key
+        self._column_chips: dict[str, QPushButton] = {}
+        self._rail_table = table
+
+        rail = QWidget()
+        rail_layout = FlowLayout(rail)
+        rail_layout.setContentsMargins(0, 0, 0, 0)
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        rail.setSizePolicy(policy)
+
+        shown = self._stored_column_groups()
+        for label, group, _default, tooltip in chips:
+            chip = QPushButton(label, rail)
+            chip.setCheckable(True)
+            chip.setFont(footer_font())
+            chip.setToolTip(tooltip)
+            chip.setChecked(shown[group])
+            style_group_state_button(
+                chip, "active" if shown[group] else "unselected", palette="blue"
+            )
+            # The chips are the only thing that hides a column, so the tables are
+            # put into the persisted state here rather than awaiting a toggle.
+            self._apply_column_group(group, shown[group])
+            chip.toggled.connect(functools.partial(self._on_column_chip_toggled, group))
+            rail_layout.addWidget(chip)
+            self._column_chips[group] = chip
+
+        pop_out = QToolButton(rail)
+        pop_out.setText("↗")
+        pop_out.setToolTip("Show every column in a window")
+        pop_out.clicked.connect(self._show_param_table_dialog)
+        rail_layout.addWidget(pop_out)
+
+        section.add_header_widget(rail)
+        section.addWidget(table)
+        self._popped_out_note = QLabel("Shown in the pop-out window")
+        self._popped_out_note.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
+        self._popped_out_note.hide()
+        section.addWidget(self._popped_out_note)
+        #: Where the table goes back to when the pop-out closes.
+        self._rail_section_layout = section.body_layout
+        self._param_table_dialog = self._build_param_table_dialog()
+
+    def _stored_column_groups(self) -> dict[str, bool]:
+        """The rail's persisted chip states, with the defaults filling the gaps."""
+        return {
+            group: self._settings.value(f"{self._column_settings_key}/{group}", default, type=bool)
+            for _label, group, default, _tooltip in self._column_group_chips
+        }
+
+    def _apply_column_groups(self) -> None:
+        """Re-apply every chip's state — after a table rebuilds its columns."""
+        for group, chip in self._column_chips.items():
+            self._apply_column_group(group, chip.isChecked())
+
+    def _on_column_chip_toggled(self, group: str, checked: bool) -> None:
+        """Show or hide *group*'s columns and remember the rail's new state."""
+        style_group_state_button(
+            self._column_chips[group], "active" if checked else "unselected", palette="blue"
+        )
+        # The pop-out shows every column; the chips take effect again when the
+        # table comes back into the tab.
+        if not self._param_table_dialog.isVisible():
+            self._apply_column_group(group, checked)
+        self._settings.setValue(f"{self._column_settings_key}/{group}", checked)
+
+    def _build_param_table_dialog(self) -> QDialog:
+        """The pop-out that hosts the live parameter table, every column shown."""
+        dialog = QDialog(self)
+        dialog.setModal(False)
+        dialog_layout = QVBoxLayout(dialog)
+        buttons = QHBoxLayout()
+        copy_button = QPushButton("Copy TSV", dialog)
+        copy_button.setToolTip("Copy the parameter table to the clipboard.")
+        copy_button.clicked.connect(self._copy_param_table_tsv)
+        buttons.addWidget(copy_button)
+        buttons.addStretch(1)
+        close_button = QPushButton("Close", dialog)
+        close_button.clicked.connect(dialog.close)
+        buttons.addWidget(close_button)
+        dialog_layout.addLayout(buttons)
+        # Close, the window button and Escape all land on reject(), which is what
+        # `finished` reports — so the table comes home whichever the user uses.
+        dialog.finished.connect(self._return_param_table)
+        return dialog
+
+    def _show_param_table_dialog(self) -> None:
+        """Move the live table into the pop-out and show every column."""
+        self._param_table_dialog.setWindowTitle(f"Fit parameters — {self._run_label()}")
+        for group in self._column_chips:
+            self._apply_column_group(group, True)
+        self._param_table_dialog.layout().insertWidget(0, self._rail_table)
+        self._popped_out_note.show()
+        self._size_param_table_dialog()
+        self._param_table_dialog.show()
+        self._param_table_dialog.raise_()
+        self._param_table_dialog.activateWindow()
+
+    def _return_param_table(self) -> None:
+        """Put the table back above its placeholder and re-apply the rail's chips."""
+        self._rail_section_layout.insertWidget(0, self._rail_table)
+        self._popped_out_note.hide()
+        self._apply_column_groups()
+
+    def _size_param_table_dialog(self) -> None:
+        """Open the pop-out at the width its columns actually need.
+
+        A ``QTableWidget``'s size hint is a scrolling hint, so the dialog would
+        open with a horizontal scrollbar over columns that are already sized to
+        their contents. The floor is the dialog's current size, so a pop-out the
+        user has widened only ever grows (as in the Parameters panel).
+        """
+        layout = self._param_table_dialog.layout()
+        margins = layout.contentsMargins()
+        items = [layout.itemAt(index) for index in range(layout.count())]
+        width = (
+            self._rail_table.horizontalHeader().length()
+            + self._rail_table.verticalHeader().width()
+            + 2 * self._rail_table.frameWidth()
+            + margins.left()
+            + margins.right()
+        )
+        height = (
+            margins.top()
+            + margins.bottom()
+            + layout.spacing() * (len(items) - 1)
+            + sum(item.sizeHint().height() for item in items)
+        )
+        resize_to_available(
+            self._param_table_dialog,
+            width,
+            height,
+            min_width=self._param_table_dialog.width(),
+            min_height=self._param_table_dialog.height(),
+        )
+
+    def _copy_param_table_tsv(self) -> None:
+        """Put the parameter table on the clipboard as tab-separated text."""
+        table = self._rail_table
+        text = table.as_tsv() if isinstance(table, FitParameterTable) else table_as_tsv(table)
+        QApplication.clipboard().setText(text)
 
     # ------------------------------------------------------------------
     # Shared fit-range spinbox pair

@@ -67,11 +67,10 @@ def _freq_result() -> FitResult:
 def _emit(tab, monkeypatch, result: FitResult) -> FitResult:
     """Drive the frequency-domain emit path and return the single emitted result.
 
-    Isolates the rebuild: skip HTML rendering and curve generation, and let the
-    emitted results pass through unchanged so we can inspect them off the signal.
+    Isolates the rebuild: skip curve generation and let the emitted results pass
+    through unchanged so we can inspect them off the signal.
     """
     tab._domain = "frequency"
-    monkeypatch.setattr(tab, "_render_global_fit_success", lambda **kwargs: None)
     monkeypatch.setattr(tab, "_results_with_curves", lambda model, results: results)
 
     captured: dict[int, FitResult] = {}
@@ -80,8 +79,9 @@ def _emit(tab, monkeypatch, result: FitResult) -> FitResult:
     tab._emit_global_fit_success(
         model=object(),
         results_dict={10: result},
+        successful={10: result},
         fitted_global=ParameterSet(),
-        global_param_names=[],
+        detail_html="",
     )
     return captured[10]
 

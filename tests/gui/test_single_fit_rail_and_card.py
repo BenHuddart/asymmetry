@@ -161,7 +161,7 @@ def test_pop_out_takes_the_live_table_and_gives_it_back(qapp, settings) -> None:
 
         tab._param_table_dialog.reject()
 
-        assert tab._param_section_layout.indexOf(table) == 0
+        assert tab._rail_section_layout.indexOf(table) == 0
         assert not tab._popped_out_note.isVisibleTo(tab)
         # The chips are back in charge of what is shown.
         assert table.column_group_visible("links") is False

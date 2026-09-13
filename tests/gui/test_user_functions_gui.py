@@ -94,7 +94,7 @@ def test_global_fit_restore_and_fit_block_with_missing_user_component(qapp):
     assert model.missing_component_names == ("UserGoneDecay",)
 
     tab._run_global_fit()
-    text = tab._result_text.toPlainText()
+    text = tab._results_card.content_html()
     assert "missing user function" in text
     assert "UserGoneDecay" in text
 

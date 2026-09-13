@@ -1062,7 +1062,7 @@ class TestMainWindowFourier:
         """F17: computing for a selection must refresh fit enable-state.
 
         Regression: computing spectra for a selection (via the old "Apply to
-        selection") left "Run Batch Fit" stale-disabled until an unrelated
+        selection") left the batch Fit button stale-disabled until an unrelated
         browser-selection change happened to trigger `_update_fit_block_state`
         (same class as the PR #89 fix). `_finish_compute_fourier_for_selection`
         must keep calling it directly rather than relying on some other event.

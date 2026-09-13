@@ -310,7 +310,7 @@ def test_fit_panel_frequency_global_missing_spectra_status(qapp) -> None:
 
     panel.set_frequency_missing_spectra_status([3, 4], cached_count=2)
 
-    status = panel._global_tab._result_text.toPlainText()
+    status = panel._global_tab._results_card.content_html()
     assert "2 cached frequency spectra selected" in status
     assert "Compute a Fourier spectrum for run(s) 3, 4" in status
 

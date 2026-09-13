@@ -44,7 +44,7 @@ from asymmetry.gui.styles.widgets import (
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 
-__all__ = ["FitCardSummary", "FitResultsCard", "MemberChip"]
+__all__ = ["TONE_COLOURS", "FitCardSummary", "FitResultsCard", "MemberChip"]
 
 #: objectName so the card's chrome targets only the surface frame (a bare
 #: ``QFrame { … }`` rule would cascade onto the child labels and buttons).
@@ -55,8 +55,10 @@ CardTone = Literal["ok", "warn", "error", "neutral"]
 
 #: Tag (background, border, text) per tone. "ok"/"error" are the χ² verdict
 #: chip's own green/red so a card and a verdict chip never disagree; "warn" is
-#: the amber non-blocking banner convention (a flagged-but-usable fit).
-_TAG_COLOURS: dict[str, tuple[str, str, str]] = {
+#: the amber non-blocking banner convention (a flagged-but-usable fit). Public
+#: so a verdict chip *beside* a card (the Batch tab's run row) reads the same
+#: triple rather than restating it.
+TONE_COLOURS: dict[str, tuple[str, str, str]] = {
     "ok": FIT_VERDICT_CHIP_COLOURS["good"],
     "warn": (tokens.WARN_BANNER_BG, tokens.WARN, tokens.WARN_BANNER_TEXT),
     "error": FIT_VERDICT_CHIP_COLOURS["poor"],
@@ -265,7 +267,7 @@ class FitResultsCard(QWidget):
 
     def _apply_tag(self, text: str, tone: CardTone) -> None:
         self._tag.setText(text)
-        self._tag.setStyleSheet(verdict_chip_qss(_TAG_COLOURS[tone], widget="QLabel"))
+        self._tag.setStyleSheet(verdict_chip_qss(TONE_COLOURS[tone], widget="QLabel"))
 
     def _apply_meta(self) -> None:
         # The header's right-hand slot holds one of the two: a tag wins, since

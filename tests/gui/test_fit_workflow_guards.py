@@ -109,8 +109,8 @@ def test_global_fit_refuses_domain_mismatch(qapp: QApplication) -> None:
     tab.set_datasets([_frequency_dataset(1), _frequency_dataset(2)])
     assert tab._domain == "time"
     tab._run_global_fit()
-    assert tab._result_text.toPlainText().lower().startswith("error")
-    assert "frequency-domain spectrum" in tab._result_text.toPlainText()
+    assert tab._results_card.tag_text() == "Error"
+    assert "frequency-domain spectrum" in tab._results_card.content_html()
 
 
 # ── (b) multi-period browser cue ─────────────────────────────────────────────

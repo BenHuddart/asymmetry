@@ -21,16 +21,12 @@ from collections.abc import Callable, Sequence
 import numpy as np
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
-    QDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -63,25 +59,24 @@ from asymmetry.core.fitting.spectral import default_frequency_model
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.typography import SIZE_NUMERIC, footer_font
+from asymmetry.gui.styles.typography import SIZE_NUMERIC
 from asymmetry.gui.styles.widgets import (
     VERDICT_CHIP_OBJECT_NAME,
     build_primary_button_qss,
     fit_quality_chip_html,
     make_section_header,
-    style_group_state_button,
     verdict_chip_qss,
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.formatting import format_value_uncertainty
 from asymmetry.gui.widgets.fit_results_card import FitCardSummary, FitResultsCard
-from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.panel_section import PanelSection
-from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
 from .tab_base import (
+    RESTORED_TAG,
+    TONE_BY_TAG,
     USER,
     FitParameterTable,
     FitTabBase,
@@ -125,15 +120,6 @@ _COLUMN_GROUP_CHIPS = (
 DIAGNOSTIC_ACTION = "Diagnostic…"
 ADD_TO_SERIES_ACTION = "Add to series…"
 SEND_TO_BATCH_ACTION = "Send to Batch →"
-
-#: Tag a saved read-out goes back on the card under. A state written before the
-#: tag was persisted carries none, so it is replayed as a neutral ``Recorded``:
-#: a fit that happened, whose verdict this file does not record.
-RESTORED_TAG = "Recorded"
-
-#: Tone per results-card tag, for replaying a saved read-out. Anything else —
-#: including ``RESTORED_TAG`` — is neutral.
-_TONE_BY_TAG = {"Fit ✓": "ok", "Fit ⚠": "warn", "Error": "error"}
 
 
 class SingleFitTab(FitTabBase):
@@ -256,16 +242,12 @@ class SingleFitTab(FitTabBase):
         # It self-connects itemChanged for fraction sync.
         param_group = PanelSection("Parameters")
         self._param_table = FitParameterTable()
-        self._column_chips: dict[str, QPushButton] = {}
-        param_group.add_header_widget(self._build_column_rail())
-        param_group.addWidget(self._param_table)
-        self._popped_out_note = QLabel("Shown in the pop-out window")
-        self._popped_out_note.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
-        self._popped_out_note.hide()
-        param_group.addWidget(self._popped_out_note)
-        #: Where the table goes back to when the pop-out closes.
-        self._param_section_layout = param_group.body_layout
-        self._param_table_dialog = self._build_param_table_dialog()
+        self._build_parameters_rail(
+            param_group,
+            self._param_table,
+            chips=_COLUMN_GROUP_CHIPS,
+            settings_key=COLUMN_GROUPS_SETTINGS_KEY,
+        )
         layout.addWidget(param_group)
 
         # ── Run row ─────────────────────────────────────────────────────────
@@ -334,140 +316,9 @@ class SingleFitTab(FitTabBase):
         self._set_composite_model(self._composite_model)
         self._update_card_actions()
 
-    # ── Parameters rail and its pop-out ────────────────────────────────────
-
-    def _build_column_rail(self) -> QWidget:
-        """The Parameters header rail: one chip per column group, then the pop-out.
-
-        The chips are the only thing that hides a column, so the table is put
-        into the persisted state here rather than relying on a toggle firing.
-        """
-        rail = QWidget()
-        rail_layout = FlowLayout(rail)
-        rail_layout.setContentsMargins(0, 0, 0, 0)
-        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        policy.setHeightForWidth(True)
-        rail.setSizePolicy(policy)
-
-        shown = self._stored_column_groups()
-        for label, group, _default, tooltip in _COLUMN_GROUP_CHIPS:
-            chip = QPushButton(label, rail)
-            chip.setCheckable(True)
-            chip.setFont(footer_font())
-            chip.setToolTip(tooltip)
-            chip.setChecked(shown[group])
-            style_group_state_button(
-                chip, "active" if shown[group] else "unselected", palette="blue"
-            )
-            self._param_table.set_column_group_visible(group, shown[group])
-            chip.toggled.connect(functools.partial(self._on_column_chip_toggled, group))
-            rail_layout.addWidget(chip)
-            self._column_chips[group] = chip
-
-        pop_out = QToolButton(rail)
-        pop_out.setText("↗")
-        pop_out.setToolTip("Show every column in a window")
-        pop_out.clicked.connect(self._show_param_table_dialog)
-        rail_layout.addWidget(pop_out)
-        return rail
-
-    def _stored_column_groups(self) -> dict[str, bool]:
-        """The rail's persisted chip states, with the defaults filling the gaps.
-
-        One boolean key per group, so the store holds nothing that could need
-        interpreting: ``QSettings`` coerces to ``bool`` and falls back to the
-        default for a key it does not have.
-        """
-        return {
-            group: self._settings.value(f"{COLUMN_GROUPS_SETTINGS_KEY}/{group}", default, type=bool)
-            for _label, group, default, _tooltip in _COLUMN_GROUP_CHIPS
-        }
-
-    def _on_column_chip_toggled(self, group: str, checked: bool) -> None:
-        """Show or hide *group*'s columns and remember the rail's new state."""
-        style_group_state_button(
-            self._column_chips[group], "active" if checked else "unselected", palette="blue"
-        )
-        # The pop-out shows every column; the chips take effect again when the
-        # table comes back into the tab.
-        if not self._param_table_dialog.isVisible():
-            self._param_table.set_column_group_visible(group, checked)
-        self._settings.setValue(f"{COLUMN_GROUPS_SETTINGS_KEY}/{group}", checked)
-
-    def _build_param_table_dialog(self) -> QDialog:
-        """The pop-out that hosts the live parameter table, every column shown."""
-        dialog = QDialog(self)
-        dialog.setModal(False)
-        dialog_layout = QVBoxLayout(dialog)
-        buttons = QHBoxLayout()
-        copy_button = QPushButton("Copy TSV", dialog)
-        copy_button.setToolTip("Copy the parameter table to the clipboard.")
-        copy_button.clicked.connect(self._copy_param_table_tsv)
-        buttons.addWidget(copy_button)
-        buttons.addStretch(1)
-        close_button = QPushButton("Close", dialog)
-        close_button.clicked.connect(dialog.close)
-        buttons.addWidget(close_button)
-        dialog_layout.addLayout(buttons)
-        # Close, the window button and Escape all land on reject(), which is what
-        # `finished` reports — so the table comes home whichever the user uses.
-        dialog.finished.connect(self._return_param_table)
-        return dialog
-
-    def _show_param_table_dialog(self) -> None:
-        """Move the live table into the pop-out and show every column."""
-        self._param_table_dialog.setWindowTitle(f"Fit parameters — {self._run_label()}")
-        for group in self._column_chips:
-            self._param_table.set_column_group_visible(group, True)
-        self._param_table_dialog.layout().insertWidget(0, self._param_table)
-        self._popped_out_note.show()
-        self._size_param_table_dialog()
-        self._param_table_dialog.show()
-        self._param_table_dialog.raise_()
-        self._param_table_dialog.activateWindow()
-
-    def _return_param_table(self) -> None:
-        """Put the table back above its placeholder and re-apply the rail's chips."""
-        self._param_section_layout.insertWidget(0, self._param_table)
-        self._popped_out_note.hide()
-        for group, chip in self._column_chips.items():
-            self._param_table.set_column_group_visible(group, chip.isChecked())
-
-    def _size_param_table_dialog(self) -> None:
-        """Open the pop-out at the width its columns actually need.
-
-        A ``QTableWidget``'s size hint is a scrolling hint, so the dialog would
-        open with a horizontal scrollbar over columns that are already sized to
-        their contents. The floor is the dialog's current size, so a pop-out the
-        user has widened only ever grows (as in the Parameters panel).
-        """
-        layout = self._param_table_dialog.layout()
-        margins = layout.contentsMargins()
-        items = [layout.itemAt(index) for index in range(layout.count())]
-        width = (
-            self._param_table.horizontalHeader().length()
-            + self._param_table.verticalHeader().width()
-            + 2 * self._param_table.frameWidth()
-            + margins.left()
-            + margins.right()
-        )
-        height = (
-            margins.top()
-            + margins.bottom()
-            + layout.spacing() * (len(items) - 1)
-            + sum(item.sizeHint().height() for item in items)
-        )
-        resize_to_available(
-            self._param_table_dialog,
-            width,
-            height,
-            min_width=self._param_table_dialog.width(),
-            min_height=self._param_table_dialog.height(),
-        )
-
-    def _copy_param_table_tsv(self) -> None:
-        """Put the parameter table on the clipboard as tab-separated text."""
-        QApplication.clipboard().setText(self._param_table.as_tsv())
+    def _apply_column_group(self, group: str, visible: bool) -> None:
+        """Show or hide one rail column group on the single-fit parameter table."""
+        self._param_table.set_column_group_visible(group, visible)
 
     # ── Results card and the χ²ᵣ chip ──────────────────────────────────────
 
@@ -1604,7 +1455,7 @@ class SingleFitTab(FitTabBase):
             tag = state.get("result_tag")
             tag = tag if isinstance(tag, str) and tag else RESTORED_TAG
             self._results_card.set_message(
-                result_html, tag=tag, tone=_TONE_BY_TAG.get(tag, "neutral")
+                result_html, tag=tag, tone=TONE_BY_TAG.get(tag, "neutral")
             )
 
         # Accepts both shapes: the session handle (no work — the recommendation

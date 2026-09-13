@@ -1402,7 +1402,7 @@ class TestFitPanelState:
 
         panel = FitPanel()
         panel._single_tab._results_card.set_message("<b>Saved Single Fit</b>", tag="Fit ✓")
-        panel._global_tab._result_text.setHtml("<b>Saved Global Fit</b>")
+        panel._global_tab._results_card.set_message("<b>Saved Global Fit</b>", tag="Batch ✓")
         panel._tabs.setCurrentIndex(1)
 
         single_state = panel.get_single_state()
@@ -1419,7 +1419,9 @@ class TestFitPanelState:
         # under the "No fit yet" placeholder.
         assert single_state["result_tag"] == "Fit ✓"
         assert panel2._single_tab._results_card.tag_text() == "Fit ✓"
-        assert "Saved Global Fit" in panel2._global_tab._result_text.toPlainText()
+        assert "Saved Global Fit" in panel2._global_tab._results_card.content_html()
+        assert global_state["result_tag"] == "Batch ✓"
+        assert panel2._global_tab._results_card.tag_text() == "Batch ✓"
         assert panel2._tabs.currentIndex() == 1
 
     def test_restore_domain_state_keeps_time_form_free_of_frequency_model(self, qapp):
@@ -1614,6 +1616,7 @@ class _StubMultiGroupFitWindowWithState(QWidget):
         self.grouped_preview_requested = SimpleNamespace(connect=lambda _callback: None)
         self.count_fit_completed = SimpleNamespace(connect=lambda _callback: None)
         self.count_grouping_promoted = SimpleNamespace(connect=lambda _callback: None)
+        self.trends_requested = SimpleNamespace(connect=lambda _callback: None)
         self._state = {"model_name": "Composite", "parameters": [], "result_html": ""}
         self.restored_state = None
 

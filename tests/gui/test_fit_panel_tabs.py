@@ -18,7 +18,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QMessageBox, QSizePolicy
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QLabel,
+    QSizePolicy,
+)
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -681,7 +687,7 @@ def test_partial_batch_failure_emits_converged_series_and_warns(
     tab._on_fit_finished({10: ok, 11: failed}, [])
 
     assert set(emitted["results_with_curves"]) == {10}
-    assert "failed to converge" in tab._result_text.toPlainText()
+    assert "failed to converge" in tab._results_card.content_html()
 
 
 def test_batch_to_single_view_switch_preserves_model(
@@ -1169,11 +1175,11 @@ def test_global_tab_set_datasets_states(qapp: QApplication, dataset: MuonDataset
 
     tab.set_datasets([])
     assert tab._fit_btn.isEnabled() is False
-    assert "No datasets selected" in tab._result_text.toPlainText()
+    assert "No datasets selected" in tab._results_card.content_html()
 
     tab.set_datasets([dataset])
     assert tab._fit_btn.isEnabled() is False
-    assert "requires at least 2 datasets" in tab._result_text.toPlainText()
+    assert "requires at least 2 datasets" in tab._results_card.content_html()
 
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
     tab.set_datasets([dataset, d2])
@@ -1271,7 +1277,7 @@ def test_global_fit_rejects_non_finite_value(qapp: QApplication, dataset: MuonDa
     tab._param_table.item(0, 1).setText("nan")
     tab._run_global_fit()
 
-    assert "must be finite" in tab._result_text.toPlainText()
+    assert "must be finite" in tab._results_card.content_html()
 
 
 def test_global_fit_rejects_invalid_bounds(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -1279,10 +1285,11 @@ def test_global_fit_rejects_invalid_bounds(qapp: QApplication, dataset: MuonData
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
     tab.set_datasets([dataset, d2])
 
-    tab._param_table.item(0, 3).setText("2, 1")
+    tab._param_table.item(0, 3).setText("2")
+    tab._param_table.item(0, 4).setText("1")
     tab._run_global_fit()
 
-    assert "invalid bounds" in tab._result_text.toPlainText()
+    assert "invalid bounds" in tab._results_card.content_html()
 
 
 def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -1309,7 +1316,7 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
 
     tab._on_fit_finished({101: result, 102: result}, fitted_global)
 
-    assert "Batch fit converged" in tab._result_text.toHtml()
+    assert tab._results_card.tag_text() == "Batch ✓"
     assert set(emitted["res"]) == {101, 102}
 
 
@@ -1322,7 +1329,7 @@ def test_global_fit_finished_failure_lists_failed_runs(
     fail = FitResult(success=False, message="x")
 
     tab._on_fit_finished({101: fail}, ParameterSet())
-    assert "Batch fit failed" in tab._result_text.toPlainText()
+    assert "Batch fit failed" in tab._results_card.content_html()
 
 
 def test_global_fit_error_sets_message(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -1336,8 +1343,8 @@ def test_global_fit_error_sets_message(qapp: QApplication, dataset: MuonDataset)
     tab._fit_btn.setEnabled(False)
     tab._on_fit_error("boom")
     assert tab._fit_btn.isEnabled() is True
-    assert "Error during global fit" in tab._result_text.toPlainText()
-    assert "boom" in tab._result_text.toPlainText()
+    assert "Error during global fit" in tab._results_card.content_html()
+    assert "boom" in tab._results_card.content_html()
 
 
 def test_grouped_fit_error_formats_keyerror_message(
@@ -1355,9 +1362,9 @@ def test_grouped_fit_error_formats_keyerror_message(
 
     tab._on_fit_error(fit_panel_module._format_fit_worker_exception(KeyError(1651)))
 
-    assert "Error during grouped fit" in tab._result_text.toPlainText()
-    assert "Missing fit parameter mapping" in tab._result_text.toPlainText()
-    assert "1651" in tab._result_text.toPlainText()
+    assert "Error during grouped fit" in tab._results_card.content_html()
+    assert "Missing fit parameter mapping" in tab._results_card.content_html()
+    assert "1651" in tab._results_card.content_html()
 
 
 def test_grouped_fit_finished_updates_grouped_tables(
@@ -1491,7 +1498,7 @@ def test_grouped_fit_finished_updates_grouped_tables(
     assert float(tab._group_model_table.item(group_model_rows["phase"], 1).text()) == pytest.approx(
         0.42
     )
-    assert "Grouped fit converged" in tab._result_text.toPlainText()
+    assert tab._results_card.tag_text() == "Fit ✓"
 
 
 def test_global_fit_parses_type_combo_defaults(qapp: QApplication) -> None:
@@ -1559,29 +1566,13 @@ def test_global_fit_type_combo_includes_file_for_bl_parameters(
     assert "File" in items
 
 
-def test_global_fit_parameter_help_button_opens_dialog(
-    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_parameter_roles_are_explained_by_the_section_hint(qapp: QApplication) -> None:
+    """The roles read off the section itself, not out of a "?" message box."""
     tab = GlobalFitTab()
-    captured: dict[str, object] = {}
-
-    def _fake_information(parent, title, text):
-        captured["parent"] = parent
-        captured["title"] = title
-        captured["text"] = text
-        return QMessageBox.StandardButton.Ok
-
-    monkeypatch.setattr(fit_panel_module.QMessageBox, "information", _fake_information)
-
-    assert tab._param_help_btn.text() == "?"
-    tab._param_help_btn.click()
-
-    assert captured["parent"] is tab
-    assert captured["title"] == "Parameter Classification Help"
-    assert "Global: Same value for all datasets" in str(captured["text"])
-    assert "Local: Different value for each dataset" in str(captured["text"])
-    assert "Fixed: Held constant at the specified value" in str(captured["text"])
-    assert "File: Use the value from dataset metadata" in str(captured["text"])
+    shown = [label.text() for label in tab._param_group.findChildren(QLabel) if label.text()]
+    assert global_tab_module.PARAMETER_ROLE_HINT in shown
+    for role in ("Global:", "Local:", "Fixed:", "File:"):
+        assert role in global_tab_module.PARAMETER_ROLE_HINT
 
 
 def test_single_tab_default_model_includes_background(qapp: QApplication) -> None:
@@ -1627,7 +1618,7 @@ def test_grouped_tab_shows_one_value_column_per_group(
         fit_panel_module._seed_group_background_and_n0(np.array([80.0, 79.0]))
     )
 
-    assert headers == ["Parameter", "Forward", "Backward", "Type", "Bounds"]
+    assert headers == ["Parameter", "Forward", "Backward", "Type", "Min", "Max"]
     assert float(tab._group_param_table.item(row_by_name["N0"], 1).text()) == pytest.approx(
         forward_n0
     )
@@ -1979,10 +1970,9 @@ def test_grouped_single_nuisance_phase_seeds_are_absolute(
     # Phase bounds span beyond the principal (-pi, pi] range so an absolute seed
     # near +/-pi (e.g. a backward F-B group) has wrap-around room and is not
     # trapped on a limit.
-    bounds_text = tab._group_param_table.item(rp_row, tab._group_param_bounds_column()).text()
-    lo_text, hi_text = (part.strip() for part in bounds_text.split(",", maxsplit=1))
-    assert float(lo_text) <= -2.0 * np.pi + 1e-6
-    assert float(hi_text) >= 2.0 * np.pi - 1e-6
+    min_column = tab._group_param_min_column()
+    assert float(tab._group_param_table.item(rp_row, min_column).text()) <= -2.0 * np.pi + 1e-6
+    assert float(tab._group_param_table.item(rp_row, min_column + 1).text()) >= 2.0 * np.pi - 1e-6
 
 
 def test_grouped_tab_reset_button_restores_estimated_values(
@@ -2516,7 +2506,7 @@ def test_grouped_mode_ui_refresh_rebuilds_group_value_columns_when_groups_appear
     monkeypatch.setattr(tab, "_grouped_mode_context", _context)
 
     tab.set_current_dataset(dataset)
-    assert tab._group_param_table.columnCount() == 4
+    assert tab._group_param_table.columnCount() == 5
 
     state["ready"] = True
     tab._update_mode_ui(preserve_result=True)
@@ -2532,7 +2522,7 @@ def test_grouped_mode_ui_refresh_rebuilds_group_value_columns_when_groups_appear
     _background_seed, backward_n0_seed, _amplitude_seed = (
         fit_panel_module._seed_group_background_and_n0(np.array([80.0, 79.0]))
     )
-    assert headers == ["Parameter", "Forward", "Backward", "Type", "Bounds"]
+    assert headers == ["Parameter", "Forward", "Backward", "Type", "Min", "Max"]
     assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
         backward_n0_seed
     )
@@ -3265,7 +3255,7 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
     lambda_combo = tab._param_table.cellWidget(lambda_row, 2)
     assert isinstance(lambda_combo, QComboBox)
     assert lambda_combo.currentText() == "Local"
-    assert "Global Fit Wizard" in tab._result_text.toPlainText()
+    assert "Global Fit Wizard" in tab._results_card.content_html()
     assert "results" in emitted
 
 
@@ -3386,8 +3376,8 @@ def test_global_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplicatio
         item = tab._param_table.item(row_by_name[free_name], 1)
         assert item is not None
         assert bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
-        bounds_item = tab._param_table.item(row_by_name[free_name], 3)
-        assert bounds_item is not None and bounds_item.text() == "0, 1"
+        assert tab._param_table.item(row_by_name[free_name], 3).text() == "0.0"
+        assert tab._param_table.item(row_by_name[free_name], 4).text() == "1.0"
     derived_item = tab._param_table.item(row_by_name["f_Constant"], 1)
     assert derived_item is not None
     assert not bool(derived_item.flags() & Qt.ItemFlag.ItemIsEditable)
@@ -4296,12 +4286,12 @@ def _two_tier_row(table, param_name: str) -> int:
 
 
 def _two_tier_state(table, param_name: str) -> tuple[float, str, str]:
-    """``(value, type, bounds)`` of a Name·Value·Type·Bounds table row."""
+    """``(value, type, "min, max")`` of a Name·Value·Type·Min·Max table row."""
     row = _two_tier_row(table, param_name)
     return (
         float(table.item(row, 1).text()),
         table.cellWidget(row, 2).currentText(),
-        table.item(row, 3).text(),
+        f"{table.item(row, 3).text()}, {table.item(row, 4).text()}",
     )
 
 
@@ -4319,7 +4309,9 @@ def _set_two_tier_state(
     if type_text is not None:
         table.cellWidget(row, 2).setCurrentText(type_text)
     if bounds is not None:
-        table.item(row, 3).setText(bounds)
+        minimum, maximum = (part.strip() for part in bounds.split(","))
+        table.item(row, 3).setText(minimum)
+        table.item(row, 4).setText(maximum)
 
 
 def _seeded_global_tab() -> GlobalFitTab:

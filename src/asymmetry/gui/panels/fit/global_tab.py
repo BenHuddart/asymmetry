@@ -7,7 +7,8 @@ Navigation map
 ~5.0k lines. Module-level constants precede the class: ``BATCH_SEEDING_MODES``
 (the ``(label, mode)`` pairs shared by the on-tab selector and the
 ``Analysis > Batch seeding`` menu so they cannot drift), ``BATCH_SEEDING_LABELS``
-(reverse lookup), and ``BATCH_SEEDING_TOOLTIP``. Everything else lives on
+(reverse lookup), ``BATCH_SEEDING_TOOLTIP``, the Parameters rail's settings key
+and chips, and the results card's hand-off labels. Everything else lives on
 ``GlobalFitTab(FitTabBase)`` — one large class with no section-comment
 markers; methods cluster thematically in roughly this order:
 
@@ -15,6 +16,9 @@ markers; methods cluster thematically in roughly this order:
   parameter-classification table, and per-group model tables (deliberately
   *not* sharing a factory with ``SingleFitTab``'s single table — see
   ``docs/audit/shared-foundations/FOLLOW-UPS.md`` Phase 2 H2).
+- **Rail, results card and outcome chip** — ``_card_actions``,
+  ``_apply_column_group`` (the rail's three tables), ``_render_fit_summary``
+  (every converged multi-member read-out) and the per-member results windows.
 - **Grouped model dialog** — ``_open_grouped_initial_values_dialog``.
 - **Per-run wizard-cache lookups** — ``_single_fit_wizard_cache_for_run``.
 - **Fraction-value linking** — ``_synchronize_fraction_value_rows`` (the
@@ -44,23 +48,19 @@ import os
 from collections.abc import Mapping, Sequence
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
-    QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -132,25 +132,35 @@ from asymmetry.core.fitting.spectral import (
 )
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
-from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.metrics import char_width, row_height
+from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.metrics import char_width
+from asymmetry.gui.styles.typography import SIZE_NUMERIC
 from asymmetry.gui.styles.widgets import (
-    RESULT_BOX_NEUTRAL_STYLE,
-    RESULT_BOX_OBJECT_NAME,
-    RESULT_BOX_SUCCESS_STYLE,
+    FIT_VERDICT_CHIP_COLOURS,
+    NEUTRAL_CHIP_COLOURS,
+    VERDICT_CHIP_OBJECT_NAME,
     build_primary_button_qss,
+    build_segmented_button_qss,
     error_html,
     fit_quality_chip_html,
-    fit_quality_tooltip,
     info_html,
     make_section_header,
     success_html,
+    verdict_chip_qss,
     warning_html,
 )
 from asymmetry.gui.tasks import TaskRunner, TaskWorker
 from asymmetry.gui.utils.formatting import format_param_label
+from asymmetry.gui.widgets.fit_results_card import (
+    TONE_COLOURS,
+    FitCardSummary,
+    FitResultsCard,
+    MemberChip,
+)
+from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
 from .seeding import (
@@ -158,8 +168,9 @@ from .seeding import (
     _seed_group_background_and_n0,
 )
 from .tab_base import (
-    _GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT,
+    RESTORED_TAG,
     SEEDED,
+    TONE_BY_TAG,
     USER,
     FitParameterTable,
     FitTabBase,
@@ -171,7 +182,6 @@ from .tab_base import (
     _fit_domain_mismatch_message,
     _fit_summary,
     _format_bound,
-    _format_bounds_pair,
     _format_seed_value,
     _get_file_value_for_parameter,
     _grouped_formula_string,
@@ -183,11 +193,13 @@ from .tab_base import (
     _set_formula_label_text,
     _set_value_provenance,
     _size_param_table_to_content,
+    _split_bounds_text,
     _start_fit_call,
     _synchronize_fraction_group_values_in_table,
     _value_provenance,
     _wait_for_fit_thread,
     dataset_error_oversampling,
+    fit_results_snapshot,
     param_name_col_width,
 )
 from .wizard_cache import GlobalWizardCacheEntry, global_wizard_cache_entry
@@ -213,6 +225,77 @@ BATCH_SEEDING_TOOLTIP = (
     "• Chain from previous run — each run starts from the previous run's fit "
     "(best for an ordered temperature/field scan)."
 )
+
+#: ``QSettings`` prefix under which the Parameters rail persists its chips —
+#: one boolean key per column group, ``fit/batch/columns/<group>``.
+COLUMN_GROUPS_SETTINGS_KEY = "fit/batch/columns"
+
+#: The Batch tab's Parameters rail: chip label, column group, whether it starts
+#: on, and its hover text. Min and Max rest hidden — a batch is configured by
+#: role far more often than by limits, and the dock is ~300 px wide.
+_COLUMN_GROUP_CHIPS = (("Bounds", "bounds", False, "Show the Min and Max columns."),)
+
+#: Min/Max column indices in the combo-role tables whose shape is fixed: the
+#: classification table (Parameter · Seed · Type · Min · Max) and the batch
+#: grouped physics table (Parameter · Value · Type · Min · Max).
+_COL_MIN = 3
+_COL_MAX = 4
+
+#: Hand-off labels on the results card. Named so the construction and the
+#: ``action_triggered`` router cannot drift apart.
+USE_AS_SEEDS_ACTION = "Use as seeds"
+TRENDS_ACTION = "Trends →"
+SEND_TO_BATCH_ACTION = "Send to Batch →"
+
+#: One line naming what each role in the Type column does. Replaces the ``?``
+#: button's message box; the full explanation lives in the docs.
+PARAMETER_ROLE_HINT = (
+    "Global: one value shared by every run · Local: fitted per run · "
+    "Fixed: held at the seed · File: taken from run metadata"
+)
+
+
+def _read_bounds_cells(
+    table: QTableWidget, row: int, *, min_column: int = _COL_MIN
+) -> tuple[float, float]:
+    """Read one row's Min/Max cells as floats, unbounded where they do not parse.
+
+    A half-typed or blank limit is a real "no bound" case mid-edit, so it reads
+    as ±inf rather than refusing the fit.
+    """
+    bounds: list[float] = []
+    for column, unbounded in ((min_column, -float("inf")), (min_column + 1, float("inf"))):
+        item = table.item(row, column)
+        try:
+            bounds.append(float(item.text()))
+        except (AttributeError, ValueError):
+            bounds.append(unbounded)
+    return bounds[0], bounds[1]
+
+
+def _write_bounds_cells(
+    table: QTableWidget, row: int, minimum: float, maximum: float, *, min_column: int = _COL_MIN
+) -> None:
+    """Write a fitted parameter's limits into one row's Min/Max cells."""
+    for column, value, open_text in (
+        (min_column, minimum, "-inf"),
+        (min_column + 1, maximum, "inf"),
+    ):
+        text = open_text if not np.isfinite(value) else f"{float(value):g}"
+        table.item(row, column).setText(text)
+
+
+def _joined_bounds_text(table: QTableWidget, row: int, *, min_column: int = _COL_MIN) -> str:
+    """One row's Min/Max cells as the ``"<min>, <max>"`` string state is kept in.
+
+    The saved project shape and the carried row state describe limits as one
+    string — shared with :class:`FitParameterTable`'s own state — so the split
+    into two cells stops at the table.
+    """
+    cells = [table.item(row, column) for column in (min_column, min_column + 1)]
+    minimum = cells[0].text() if cells[0] is not None else "-inf"
+    maximum = cells[1].text() if cells[1] is not None else "inf"
+    return f"{minimum}, {maximum}"
 
 
 def _fit_table_restore_entries(
@@ -288,15 +371,24 @@ class GlobalFitTab(FitTabBase):
     # Analysis ▸ Batch seeding menu can mirror it (two-way sync).
     batch_seeding_mode_changed = Signal(str)
 
+    # Emitted when the results card's ``Trends →`` hand-off is pressed: show this
+    # surface's last recorded batch in the Parameters panel. Which batch that is
+    # is the main window's bookkeeping, so the tab only asks.
+    trends_requested = Signal()
+
     def __init__(
         self,
         parent: QWidget | None = None,
         *,
         member_kind: str = "runs",
         grouped_single: bool = False,
+        settings: QSettings | None = None,
     ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
+        #: Where the Parameters rail's chip states live. Injectable so a test can
+        #: use a scratch scope (mirrors ``SingleFitTab`` and ``gui/fit_settings``).
+        self._settings = settings if settings is not None else QSettings()
         # Member kind is fixed per instance and follows the active representation:
         # the groups surface (Individual-groups representation) is group-membered,
         # every other surface is run-membered. (Phase 3: scope is derived, not selected.)
@@ -402,29 +494,13 @@ class GlobalFitTab(FitTabBase):
         model_layout.setContentsMargins(0, 0, 0, 0)
         model_group.addLayout(model_layout)
         self._build_formula_box()
-        self._fit_wizard_btn = QPushButton("Global Wizard...")
+        self._fit_wizard_btn = QPushButton("Wizard…")
         self._fit_wizard_btn.setToolTip("Open the Global Fit Wizard.")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
-        # Single column of natural-width buttons (mirrors SingleFitTab): a
-        # side-by-side grid forced both button columns to set the tab's minimum
-        # width; stacking them left-aligned at natural width lets the Batch tab
-        # get as narrow as the Single tab on a 13" screen.
-        model_button_layout = QVBoxLayout()
-        model_button_layout.setContentsMargins(0, 0, 0, 0)
-        model_button_layout.setSpacing(4)
-        for _model_btn in (self._edit_model_btn, self._fit_wizard_btn):
-            model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
-        if self._grouped_single:
-            self._send_to_batch_btn = QPushButton("Send to Batch")
-            self._send_to_batch_btn.setToolTip(
-                "Copy this grouped fit function and its seeds to the Batch surface."
-            )
-            self._send_to_batch_btn.clicked.connect(self.send_grouped_model_to_batch_requested.emit)
-            model_button_layout.addWidget(self._send_to_batch_btn, 0, Qt.AlignmentFlag.AlignLeft)
         self._formula_row_label = QLabel("A(t):")
         model_layout.addRow(self._formula_row_label, self._formula_box)
-        model_layout.addRow("", model_button_layout)
+        model_group.addWidget(self._build_model_row(self._fit_wizard_btn))
         layout.addWidget(model_group)
 
         # Fit range section
@@ -470,37 +546,28 @@ class GlobalFitTab(FitTabBase):
             self._members_group.setVisible(False)
 
         # Parameter classification table
-        self._param_group = PanelSection("Parameter Classification")
-        param_layout = self._param_group
+        self._param_group = PanelSection("Parameter Classification", hint=PARAMETER_ROLE_HINT)
 
-        param_header_layout = QHBoxLayout()
-        param_header_layout.addStretch()
-        self._param_help_btn = QPushButton("?")
-        self._param_help_btn.setFixedWidth(char_width(4))
-        self._param_help_btn.setToolTip("Explain Global, Local, Fixed, and File parameter roles")
-        self._param_help_btn.clicked.connect(self._show_parameter_classification_help)
-        param_header_layout.addWidget(self._param_help_btn)
-        param_layout.addLayout(param_header_layout)
-
-        self._param_table = QTableWidget(0, 4)
+        self._param_table = QTableWidget(0, 5)
         # "Seed" (not "Value"): this column is the shared initial value applied to
         # every run in the batch, not a per-run fitted result. Per-run fitted
         # values live in the Parameters (trend) tab. Naming it "Value" misled
         # users into reading the static template as per-dataset output.
-        self._param_table.setHorizontalHeaderLabels(["Parameter", "Seed", "Type", "Bounds"])
+        self._param_table.setHorizontalHeaderLabels(["Parameter", "Seed", "Type", "Min", "Max"])
         self._param_table.horizontalHeader().setStretchLastSection(False)
-        _seed_header = self._param_table.horizontalHeaderItem(1)
-        if _seed_header is not None:
-            _seed_header.setToolTip(
-                "Shared seed (initial value) applied to every run in the batch — "
-                "not a per-run fitted result.\nSelecting different runs does not "
-                "change it. Per-run fitted values appear in the Parameters tab "
-                "after the batch fit completes."
-            )
+        self._param_table.horizontalHeaderItem(1).setToolTip(
+            "Shared seed (initial value) applied to every run in the batch — "
+            "not a per-run fitted result.\nSelecting different runs does not "
+            "change it. Per-run fitted values appear in the Parameters tab "
+            "after the batch fit completes."
+        )
         self._param_table.setColumnWidth(0, param_name_col_width())  # Parameter name
         self._param_table.setColumnWidth(1, char_width(11))  # Shared seed value, 76 px
         self._param_table.setColumnWidth(2, char_width(12))  # Type (dropdown), 86 px
-        self._param_table.setColumnWidth(3, char_width(15))  # Bounds, 104 px
+        # Min/Max hold "-inf", "1e6" and the ±∞ glyphs in 6 characters, matching
+        # the Single tab's pair so the two surfaces line up.
+        self._param_table.setColumnWidth(_COL_MIN, char_width(6))
+        self._param_table.setColumnWidth(_COL_MAX, char_width(6))
         _apply_param_table_style(self._param_table)
         # Tab commits the open editor on the editable columns (Value, Bounds);
         # without this Qt's focus traversal jumps to the Type combo and the
@@ -513,7 +580,6 @@ class GlobalFitTab(FitTabBase):
         self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._param_table.setWordWrap(False)
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
-        param_layout.addWidget(self._param_table)
         layout.addWidget(self._param_group)
 
         self._grouped_context_label = QLabel()
@@ -523,13 +589,16 @@ class GlobalFitTab(FitTabBase):
 
         self._group_param_group = PanelSection("Per-Group Parameters")
         group_param_layout = self._group_param_group
-        self._group_param_table = QTableWidget(0, 4)
-        self._group_param_table.setHorizontalHeaderLabels(["Parameter", "Value", "Type", "Bounds"])
+        self._group_param_table = QTableWidget(0, 5)
+        self._group_param_table.setHorizontalHeaderLabels(
+            ["Parameter", "Value", "Type", "Min", "Max"]
+        )
         self._group_param_table.horizontalHeader().setStretchLastSection(False)
         self._group_param_table.setColumnWidth(0, param_name_col_width())
         self._group_param_table.setColumnWidth(1, char_width(11))  # 78 px
         self._group_param_table.setColumnWidth(2, char_width(12))  # 86 px
-        self._group_param_table.setColumnWidth(3, char_width(15))  # 104 px
+        self._group_param_table.setColumnWidth(_COL_MIN, char_width(6))
+        self._group_param_table.setColumnWidth(_COL_MAX, char_width(6))
         _apply_param_table_style(self._group_param_table)
         self._group_param_table.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -548,7 +617,6 @@ class GlobalFitTab(FitTabBase):
         layout.addWidget(self._group_param_group)
 
         self._group_model_group = PanelSection("Fit-Function Parameters")
-        group_model_layout = self._group_model_group
         if self._grouped_single:
             # Single grouped fit: every detector group shares one fit-function,
             # so the physics params take the single-fit-style Fix tickbox instead
@@ -559,15 +627,16 @@ class GlobalFitTab(FitTabBase):
             self._group_model_table.set_column_group_visible("links", False)
             self._group_model_table.set_column_group_visible("batch", False)
         else:
-            self._group_model_table = QTableWidget(0, 4)
+            self._group_model_table = QTableWidget(0, 5)
             self._group_model_table.setHorizontalHeaderLabels(
-                ["Parameter", "Value", "Type", "Bounds"]
+                ["Parameter", "Value", "Type", "Min", "Max"]
             )
             self._group_model_table.horizontalHeader().setStretchLastSection(False)
             self._group_model_table.setColumnWidth(0, param_name_col_width())
             self._group_model_table.setColumnWidth(1, char_width(11))  # 78 px
             self._group_model_table.setColumnWidth(2, char_width(12))  # 86 px
-            self._group_model_table.setColumnWidth(3, char_width(15))  # 104 px
+            self._group_model_table.setColumnWidth(_COL_MIN, char_width(6))
+            self._group_model_table.setColumnWidth(_COL_MAX, char_width(6))
             _apply_param_table_style(self._group_model_table)
             self._group_model_table.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -577,8 +646,22 @@ class GlobalFitTab(FitTabBase):
             )
             self._group_model_table.setWordWrap(False)
             self._group_model_table.itemChanged.connect(self._on_group_model_table_item_changed)
-        group_model_layout.addWidget(self._group_model_table)
         layout.addWidget(self._group_model_group)
+
+        # The rail rides the section this surface actually shows: the run-batch
+        # surface shows the classification table, a grouped surface the physics
+        # table (its classification section is hidden for the tab's lifetime).
+        grouped = self._member_kind == "groups"
+        self._build_parameters_rail(
+            self._group_model_group if grouped else self._param_group,
+            self._group_model_table if grouped else self._param_table,
+            chips=_COLUMN_GROUP_CHIPS,
+            settings_key=COLUMN_GROUPS_SETTINGS_KEY,
+        )
+        if grouped:
+            self._param_group.addWidget(self._param_table)
+        else:
+            self._group_model_group.addWidget(self._group_model_table)
 
         # In-batch co-add (WiMDA BatchFit Smooth/Bin): co-add successive members
         # through combine_runs before each series fit. Grouped-series mode only.
@@ -615,18 +698,36 @@ class GlobalFitTab(FitTabBase):
         self._coadd_group.hide()
         layout.addWidget(self._coadd_group)
 
-        # Batch-series seeding selector, on the tab it governs (the same control
-        # also lives in Analysis ▸ Batch seeding; the two stay in sync). Surfacing
-        # it here makes "Chain from previous run" discoverable for ordered scans.
-        # Omitted on the single grouped surface, which fits one dataset's groups —
-        # there is no run series to seed across, so the control would be meaningless
-        # (the same reason _grouped_single hides the Batch/Link/Tie columns).
+        # Seeding row: the mode selector beside the per-member seed editor, one
+        # wrapping row. The grouped batch surface hides the per-group table, so
+        # its per-(run, group) nuisances are edited only through that dialog —
+        # name the button for that.
+        batch_grouped = self._member_kind == "groups" and not self._grouped_single
+        self._initial_values_btn = QPushButton(
+            "Edit per-group initial values…" if batch_grouped else "Per-run seeds…"
+        )
+        self._initial_values_btn.setToolTip(
+            "Edit each (run, group)'s initial nuisance values (auto-seeded per dataset)."
+            if batch_grouped
+            else "Edit each run's starting (seed) parameter values for the batch fit."
+        )
+        self._initial_values_btn.setStyleSheet(build_segmented_button_qss())
+        self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
+
+        seeding_row = QWidget()
+        seeding_layout = FlowLayout(seeding_row)
+        seeding_layout.setContentsMargins(0, 0, 0, 0)
+        seeding_policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        seeding_policy.setHeightForWidth(True)
+        seeding_row.setSizePolicy(seeding_policy)
+        # The mode selector also lives in Analysis ▸ Batch seeding; the two stay in
+        # sync, and having it here makes "Chain from previous run" discoverable for
+        # ordered scans. Omitted on the single grouped surface, which fits one
+        # dataset's groups — there is no run series to seed across, so the control
+        # would be meaningless (the same reason it hides the Batch/Link/Tie columns).
         self._seeding_combo: QComboBox | None = None
         if not self._grouped_single:
-            seeding_layout = QHBoxLayout()
-            seeding_layout.setContentsMargins(0, 0, 0, 0)
-            seeding_layout.setSpacing(6)
-            self._seeding_label = QLabel("Seeding:")
+            self._seeding_label = QLabel("Seeding")
             self._seeding_label.setToolTip(BATCH_SEEDING_TOOLTIP)
             self._seeding_combo = QComboBox()
             self._seeding_combo.setToolTip(BATCH_SEEDING_TOOLTIP)
@@ -638,18 +739,11 @@ class GlobalFitTab(FitTabBase):
             self._seeding_combo.currentIndexChanged.connect(self._on_seeding_combo_changed)
             seeding_layout.addWidget(self._seeding_label)
             seeding_layout.addWidget(self._seeding_combo)
-            seeding_layout.addStretch()
-            layout.addLayout(seeding_layout)
+        seeding_layout.addWidget(self._initial_values_btn)
+        layout.addWidget(seeding_row)
 
-        # Fit buttons. A single-row HBox of these long-labelled actions
-        # ("Run Batch Fit" + "Preview" + "Per-run seeds…" + the checkbox) set
-        # the Batch tab's minimum width far past the Single tab; a compact grid
-        # (mirroring SingleFitTab) keeps the widest row to two buttons.
-        btn_layout = QGridLayout()
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setHorizontalSpacing(6)
-        btn_layout.setVerticalSpacing(6)
-        self._fit_btn = QPushButton("Run Batch Fit")
+        # ── Run row ─────────────────────────────────────────────────────────
+        self._fit_btn = QPushButton("Run batch fit")
         self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
@@ -658,83 +752,44 @@ class GlobalFitTab(FitTabBase):
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview_requested)
         self._preview_btn.setEnabled(False)
-        # The grouped batch surface hides the per-group table, so its per-(run,
-        # group) nuisances are edited only through this dialog — name it for that.
-        batch_grouped = self._member_kind == "groups" and not self._grouped_single
-        self._initial_values_btn = QPushButton(
-            "Edit per-group initial values…" if batch_grouped else "Per-run seeds…"
-        )
-        if batch_grouped:
-            _tip = "Edit each (run, group)'s initial nuisance values (auto-seeded per dataset)."
-        else:
-            _tip = (
-                "Edit each run's starting (seed) parameter values for the batch fit "
-                "(the warm-start the outlier signpost points at)."
-            )
-        self._initial_values_btn.setToolTip(_tip)
-        self._initial_values_btn.clicked.connect(self._open_initial_values_dialog)
+
+        #: How the last completed run went, at a glance ("4 runs · 3 ✓ 1 ⚠");
+        #: hidden until a run completes.
+        self._outcome_chip = QLabel()
+        self._outcome_chip.setObjectName(VERDICT_CHIP_OBJECT_NAME)
+        self._outcome_chip.setFont(mono_font(SIZE_NUMERIC))
+        self._outcome_chip.hide()
+
+        run_row = QHBoxLayout()
+        run_row.setContentsMargins(0, 0, 0, 0)
+        run_row.setSpacing(6)
+        for button in (self._fit_btn, self._stop_btn, self._preview_btn):
+            run_row.addWidget(button)
+        run_row.addStretch(1)
+        run_row.addWidget(self._outcome_chip)
+        layout.addLayout(run_row)
+
         self._minos_checkbox = QCheckBox("Asymmetric errors")
         self._minos_checkbox.setToolTip(
             "After fitting, report asymmetric +/− 1σ MINOS intervals (slower; most "
             "useful at low statistics or near parameter bounds)."
         )
-        btn_layout.addWidget(self._fit_btn, 0, 0)
-        btn_layout.addWidget(self._stop_btn, 0, 0)
-        btn_layout.addWidget(self._preview_btn, 0, 1)
-        btn_layout.addWidget(self._initial_values_btn, 1, 0, 1, 2)
-        btn_layout.addWidget(self._minos_checkbox, 2, 0, 1, 2)
-        btn_layout.setColumnStretch(2, 1)
-        layout.addLayout(btn_layout)
+        layout.addWidget(self._minos_checkbox)
 
-        # Results display
-        layout.addWidget(make_section_header("Batch Fit Results"))
-        self._results_group = QFrame()
-        self._results_group.setObjectName(RESULT_BOX_OBJECT_NAME)
-        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-        results_layout = QVBoxLayout(self._results_group)
-        self._result_text = QTextEdit()
-        self._result_text.setReadOnly(True)
-        self._result_text.setMaximumHeight(row_height() * 10)
-        self._result_text.setText("No fit performed yet")
-        results_layout.addWidget(self._result_text)
-        layout.addWidget(self._results_group)
-
-        # Seeding signpost — hidden until a batch's ν(T)/A(T) trend shows the
-        # near-transition collapse/outlier signature. It points a struggling user
-        # at the per-run "Per-run seeds…" warm-start and offers to apply the
-        # descending-frequency seeds the diagnostics computed.
-        self._seeding_signpost = QFrame()
-        self._seeding_signpost.setObjectName("seedingSignpost")
-        self._seeding_signpost.setStyleSheet(
-            f"#seedingSignpost {{ border: 1px solid {tokens.WARN}; border-radius: 4px; }}"
-        )
-        signpost_layout = QVBoxLayout(self._seeding_signpost)
-        signpost_layout.setContentsMargins(8, 6, 8, 6)
-        signpost_layout.setSpacing(4)
-        self._seeding_signpost_label = QLabel("")
-        self._seeding_signpost_label.setWordWrap(True)
-        signpost_layout.addWidget(self._seeding_signpost_label)
-        signpost_btn_row = QHBoxLayout()
-        signpost_btn_row.setSpacing(6)
-        self._apply_suggested_seeds_btn = QPushButton("Use suggested per-run seeds")
-        self._apply_suggested_seeds_btn.setToolTip(
-            "Fill the per-run seed table with descending frequency seeds "
-            "interpolated from the runs that fit cleanly, then re-run the batch."
-        )
-        self._apply_suggested_seeds_btn.clicked.connect(self._apply_suggested_series_seeds)
-        self._open_initial_values_from_signpost_btn = QPushButton("Open per-run seeds…")
-        self._open_initial_values_from_signpost_btn.setToolTip(
-            "Open the per-run seed table to edit warm-start values by hand."
-        )
-        self._open_initial_values_from_signpost_btn.clicked.connect(
-            self._open_initial_values_dialog
-        )
-        signpost_btn_row.addWidget(self._apply_suggested_seeds_btn)
-        signpost_btn_row.addWidget(self._open_initial_values_from_signpost_btn)
-        signpost_btn_row.addStretch(1)
-        signpost_layout.addLayout(signpost_btn_row)
-        self._seeding_signpost.hide()
-        layout.addWidget(self._seeding_signpost)
+        # ── Results ─────────────────────────────────────────────────────────
+        layout.addWidget(make_section_header("Results"))
+        self._results_card = FitResultsCard(actions=self._card_actions())
+        self._results_card.action_triggered.connect(self._on_results_card_action)
+        self._results_card.member_requested.connect(self._show_member_results_window)
+        self._results_card.set_message("No fit performed yet")
+        layout.addWidget(self._results_card)
+        #: The last run's per-member results, keyed as the member chips are, and
+        #: the window each chip opens. Refreshed wholesale on the next run.
+        self._member_results: dict[int, FitResult] = {}
+        self._member_windows: dict[int, FitResultsWindow] = {}
+        if not self._grouped_single:
+            self._results_card.set_action_enabled(USE_AS_SEEDS_ACTION, False)
+            self._results_card.set_action_enabled(TRENDS_ACTION, False)
 
         layout.addStretch()
 
@@ -750,6 +805,173 @@ class GlobalFitTab(FitTabBase):
         self._setup_group_nuisance_table()
         self._set_composite_model(self._composite_model)
         self._update_mode_ui(preserve_result=False)
+
+    # ── Parameters rail, results card and the outcome chip ─────────────────
+
+    def _card_actions(self) -> tuple[tuple[str, str], ...]:
+        """The hand-offs this surface's results card carries.
+
+        A batch re-seeds itself and hands its series to the Parameters panel; the
+        single grouped surface fits one run, so it hands its model to the batch.
+        """
+        if self._grouped_single:
+            return (
+                (
+                    SEND_TO_BATCH_ACTION,
+                    "Copy this grouped fit function and its seeds to the Batch surface.",
+                ),
+            )
+        return (
+            (
+                USE_AS_SEEDS_ACTION,
+                "Fill the per-run seed table with descending frequency seeds "
+                "interpolated from the runs that fit cleanly, then re-run the batch.",
+            ),
+            (TRENDS_ACTION, "Show this batch's trends in the Parameters panel"),
+        )
+
+    def _on_results_card_action(self, label: str) -> None:
+        """Route a results-card hand-off to its owner."""
+        if label == USE_AS_SEEDS_ACTION:
+            self._apply_suggested_series_seeds()
+        elif label == TRENDS_ACTION:
+            self.trends_requested.emit()
+        else:
+            self.send_grouped_model_to_batch_requested.emit()
+
+    def set_trends_available(self, available: bool) -> None:
+        """Arm ``Trends →`` once the host has recorded a batch for this surface."""
+        self._results_card.set_action_enabled(TRENDS_ACTION, available)
+
+    def show_seeded_from(self, run: int) -> None:
+        """Tag the results card: this function arrived through Send to Batch."""
+        self._results_card.set_meta_tag(
+            f"seeded from {run}",
+            f"Fit function and seeds copied from run {run}.",
+        )
+
+    def _apply_column_group(self, group: str, visible: bool) -> None:
+        """Show or hide one rail column group across every table on this surface.
+
+        The three combo-role tables are plain ``QTableWidget``s whose Min/Max pair
+        is addressed by index; the single grouped physics table is a
+        :class:`FitParameterTable` and owns the same call.
+        """
+        for table in (self._param_table, self._group_model_table):
+            if isinstance(table, FitParameterTable):
+                table.set_column_group_visible(group, visible)
+            else:
+                table.setColumnHidden(_COL_MIN, not visible)
+                table.setColumnHidden(_COL_MAX, not visible)
+        minimum = self._group_param_min_column()
+        self._group_param_table.setColumnHidden(minimum, not visible)
+        self._group_param_table.setColumnHidden(minimum + 1, not visible)
+
+    def _run_label(self) -> str:
+        """How this surface names what it fits, for the parameter pop-out's title."""
+        members = self._seed_member_datasets()
+        if len(members) == 1:
+            return str(members[0].metadata.get("run_number", "?"))
+        return f"{len(members)} runs"
+
+    def _render_fit_summary(
+        self,
+        results_by_member: dict[int, FitResult],
+        *,
+        tag_prefix: str,
+        detail_html: str,
+    ) -> None:
+        """Render a completed multi-member fit on the results card and run row.
+
+        One member chip per result, marked ``✓`` only when that member converged
+        *and* carries no advisory flag, so the card, the outcome chip and the
+        per-member results windows all read the batch the same way.
+        """
+        self._member_results = dict(results_by_member)
+        member_flags = self.last_batch_member_flags()
+        chips: list[MemberChip] = []
+        chi2_values: list[float] = []
+        n_ok = 0
+        for member, result in results_by_member.items():
+            flags = sorted(set(member_flags.get(member) or member_quality_flags(result)))
+            good = bool(result.success) and not flags
+            n_ok += good
+            chi2 = float(result.reduced_chi_squared)
+            if np.isfinite(chi2):
+                chi2_values.append(chi2)
+            quality = _fit_summary(result).get("quality")
+            chips.append(
+                MemberChip(
+                    run=int(member),
+                    text=f"{member} {'✓' if good else '⚠'} {chi2:.3g}",
+                    colours=(
+                        FIT_VERDICT_CHIP_COLOURS[quality["verdict"]]
+                        if quality is not None
+                        else NEUTRAL_CHIP_COLOURS
+                    ),
+                    tooltip=", ".join(flags) if flags else "converged",
+                )
+            )
+
+        total = len(results_by_member)
+        warned = total - n_ok
+        meta = (
+            f"χ²ᵣ {min(chi2_values):.3g}–{max(chi2_values):.3g}"
+            if len(chi2_values) > 1
+            else (f"χ²ᵣ {chi2_values[0]:.3g}" if chi2_values else "")
+        )
+        self._results_card.set_summary(
+            FitCardSummary(
+                tag=f"{tag_prefix} {'✓' if not warned else '⚠'}",
+                tone="ok" if not warned else "warn",
+                headline=f"{n_ok} of {total} converged",
+                meta=meta,
+                detail_html=detail_html,
+                members=tuple(chips),
+            )
+        )
+        noun = "groups" if self._member_kind == "groups" else "runs"
+        text = f"{total} {noun} · {n_ok} ✓"
+        if warned:
+            text += f" {warned} ⚠"
+        self._outcome_chip.setText(text)
+        self._outcome_chip.setStyleSheet(
+            verdict_chip_qss(
+                TONE_COLOURS["ok" if not warned else "warn"],
+                widget="QLabel",
+            )
+        )
+        self._outcome_chip.show()
+        self._refresh_member_results_windows()
+
+    def _member_snapshot(self, member: int) -> FitResults:
+        """Freeze one member's fit for its results window."""
+        return fit_results_snapshot(
+            self._member_results[member],
+            title=f"Fit results — {member}",
+            model=self._composite_model.formula_string(),
+            fit_range=self.current_fit_range_text() or "",
+            runs=str(member),
+        )
+
+    def _refresh_member_results_windows(self) -> None:
+        """Point every open member window at the run that just replaced its own."""
+        for member, window in list(self._member_windows.items()):
+            if member in self._member_results:
+                window.set_results(self._member_snapshot(member))
+            else:
+                window.close()
+                del self._member_windows[member]
+
+    def _show_member_results_window(self, member: int) -> None:
+        """Open (or raise) the read-out for one member of the last run."""
+        window = self._member_windows.get(member)
+        if window is None:
+            window = FitResultsWindow(self._member_snapshot(member), self, editable=False)
+            self._member_windows[member] = window
+        window.show()
+        window.raise_()
+        window.activateWindow()
 
     def _default_composite_model(self) -> CompositeModel:
         """Return the initial composite model for the allowed fitting modes."""
@@ -779,13 +1001,6 @@ class GlobalFitTab(FitTabBase):
             self._fit_wizard_btn.setToolTip("")
         self._set_composite_model(self._default_composite_model())
         self._update_mode_ui(preserve_result=False)
-
-    def _show_parameter_classification_help(self) -> None:
-        QMessageBox.information(
-            self,
-            "Parameter Classification Help",
-            _GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT,
-        )
 
     def register_single_fit_seed(
         self, run_number: int, model: CompositeModel, fit_result: object
@@ -963,8 +1178,9 @@ class GlobalFitTab(FitTabBase):
             if cached_count > 0
             else "No cached frequency spectra selected.\n"
         )
-        self._result_text.setText(
-            f"{prefix}Compute a Fourier spectrum for run(s) {preview} before global frequency fitting."
+        self._results_card.set_message(
+            f"{prefix}Compute a Fourier spectrum for run(s) {preview} "
+            "before global frequency fitting."
         )
 
     def set_current_dataset(self, dataset: MuonDataset | None) -> None:
@@ -1427,11 +1643,10 @@ class GlobalFitTab(FitTabBase):
         state: dict[str, dict[str, str]] = {}
         for row, param_name in _iter_named_parameter_rows(self._param_table, skip_unnamed=True):
             value_item = self._param_table.item(row, 1)
-            bounds_item = self._param_table.item(row, 3)
             type_combo = self._param_table.cellWidget(row, 2)
             state[param_name] = {
                 "value": value_item.text() if value_item is not None else "",
-                "bounds": bounds_item.text() if bounds_item is not None else "-inf, inf",
+                "bounds": _joined_bounds_text(self._param_table, row),
                 "type": type_combo.currentText() if isinstance(type_combo, QComboBox) else "",
                 # Carried with the value: a row that still holds a seed keeps
                 # following the data after the model edit that moved it.
@@ -1603,13 +1818,15 @@ class GlobalFitTab(FitTabBase):
                 bounds_text = previous.get("bounds") or (
                     f"{_format_bound(seed.min, '-inf')}, {_format_bound(seed.max, 'inf')}"
                 )
-            bounds_item = QTableWidgetItem(bounds_text)
-            self._param_table.setItem(i, 3, bounds_item)
+            minimum, maximum = _split_bounds_text(bounds_text)
+            self._param_table.setItem(i, _COL_MIN, QTableWidgetItem(minimum))
+            self._param_table.setItem(i, _COL_MAX, QTableWidgetItem(maximum))
 
         _configure_fraction_rows_in_table(
             self._param_table,
             model,
-            bounds_column=3,
+            min_column=_COL_MIN,
+            max_column=_COL_MAX,
             type_column=2,
         )
         _size_param_table_to_content(self._param_table)
@@ -1735,29 +1952,37 @@ class GlobalFitTab(FitTabBase):
     def _open_fit_wizard(self) -> None:
         """Launch or refresh the non-modal global fit wizard window."""
         if self.is_grouped_time_domain_mode():
-            self._result_text.setText(
+            self._results_card.set_message(
                 "Grouped time-domain mode uses its own parameter blocks. "
-                "The Global Fit Wizard is unavailable in this mode."
+                "The Global Fit Wizard is unavailable in this mode.",
+                tag="Error",
+                tone="error",
             )
             return
         if self._domain == "frequency":
-            self._result_text.setText(
-                "Global Fit Wizard is currently available for time-domain fits."
+            self._results_card.set_message(
+                "Global Fit Wizard is currently available for time-domain fits.",
+                tag="Error",
+                tone="error",
             )
             return
         if self._fit_blocked:
-            self._result_text.setText(
-                self._fit_block_reason or "Global fit is unavailable for the current selection."
+            self._results_card.set_message(
+                self._fit_block_reason or "Global fit is unavailable for the current selection.",
+                tag="Error",
+                tone="error",
             )
             return
         if len(self._datasets) < 2:
-            self._result_text.setText("Global fit wizard requires at least 2 datasets.")
+            self._results_card.set_message(
+                "Global fit wizard requires at least 2 datasets.", tag="Error", tone="error"
+            )
             return
 
         try:
             parsed = self._parse_parameter_configuration()
         except ValueError as exc:
-            self._result_text.setText(str(exc))
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
 
         if self._fit_wizard_window is None:
@@ -1865,9 +2090,7 @@ class GlobalFitTab(FitTabBase):
             except (TypeError, ValueError):
                 continue
 
-            bounds_item = self._param_table.item(row, 4)
-            if bounds_item is not None:
-                bounds_item.setText(_format_bounds_pair(min_val, max_val))
+            _write_bounds_cells(self._param_table, row, min_val, max_val)
 
             value_item = self._param_table.item(row, 1)
             if value_item is None:
@@ -1912,15 +2135,7 @@ class GlobalFitTab(FitTabBase):
                     )
             param_values[pname] = value
 
-            bounds_text = self._param_table.item(i, 3).text()
-            try:
-                parts = bounds_text.split(",")
-                lo = parts[0].strip()
-                hi = parts[1].strip()
-                min_val = float(lo) if lo != "-inf" else -float("inf")
-                max_val = float(hi) if hi != "inf" else float("inf")
-            except (ValueError, IndexError):
-                min_val, max_val = -float("inf"), float("inf")
+            min_val, max_val = _read_bounds_cells(self._param_table, i)
 
             if np.isfinite(min_val) and np.isfinite(max_val) and min_val > max_val:
                 raise ValueError(
@@ -2047,7 +2262,7 @@ class GlobalFitTab(FitTabBase):
         try:
             config = self._parse_grouped_parameter_configuration()
         except ValueError as exc:
-            self._result_text.setText(str(exc))
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
         group_values = dict(config.get("group_values", {}))  # param -> {group_id: value}
         # Default each (run, group) to its OWN dataset's auto-seed (per-dataset
@@ -2091,7 +2306,7 @@ class GlobalFitTab(FitTabBase):
         try:
             parsed = self._parse_parameter_configuration()
         except ValueError as exc:
-            self._result_text.setText(str(exc))
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
         types = dict(parsed.get("types", {}))
         params: list[tuple[str, str, str]] = []
@@ -2121,10 +2336,12 @@ class GlobalFitTab(FitTabBase):
         """Execute global fit on all datasets."""
         missing = getattr(self._composite_model, "missing_component_names", ())
         if missing:
-            self._result_text.setText(
+            self._results_card.set_message(
                 "Error: the model requires missing user function(s): "
                 f"{', '.join(missing)}. Register them (Setup → User functions…) "
-                "and reload the project."
+                "and reload the project.",
+                tag="Error",
+                tone="error",
             )
             return
 
@@ -2133,29 +2350,33 @@ class GlobalFitTab(FitTabBase):
             return
 
         if self._fit_blocked:
-            self._result_text.setText(
-                self._fit_block_reason or "Global fit is unavailable for the current selection."
+            self._results_card.set_message(
+                self._fit_block_reason or "Global fit is unavailable for the current selection.",
+                tag="Error",
+                tone="error",
             )
             return
 
         if len(self._datasets) < 2:
-            self._result_text.setText("Error: Need at least 2 datasets for global fitting")
+            self._results_card.set_message(
+                "Error: Need at least 2 datasets for global fitting", tag="Error", tone="error"
+            )
             return
 
         mismatch = _fit_domain_mismatch_message(self._domain, self._datasets[0])
         if mismatch is not None:
-            self._result_text.setText(f"Error: {mismatch}")
+            self._results_card.set_message(f"Error: {mismatch}", tag="Error", tone="error")
             return
 
         if self._composite_model is None:
-            self._result_text.setText("Error: No function defined")
+            self._results_card.set_message("Error: No function defined", tag="Error", tone="error")
             return
         model = self._composite_model
 
         try:
             parsed = self._parse_parameter_configuration()
         except ValueError as exc:
-            self._result_text.setText(str(exc))
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
 
         global_params = list(parsed["global"])
@@ -2200,8 +2421,9 @@ class GlobalFitTab(FitTabBase):
 
         # Run the global fit on the shared TaskRunner; the GUI (and Stop
         # button) stay live.
-        self._result_text.setText("Fitting... This may take a moment for many datasets...")
-        self._result_text.setToolTip("")
+        self._results_card.set_message(
+            "Fitting… This may take a moment for many datasets.", tag="Fitting"
+        )
         self._set_series_busy(True)
 
         # Store model for later use in callbacks (read by _on_fit_finished).
@@ -2327,9 +2549,11 @@ class GlobalFitTab(FitTabBase):
     def _run_grouped_time_domain_fit(self) -> None:
         """Execute grouped time-domain fitting for the active dataset."""
         if self._fit_blocked:
-            self._result_text.setText(
+            self._results_card.set_message(
                 self._fit_block_reason
-                or "Grouped time-domain fit is unavailable for the current selection."
+                or "Grouped time-domain fit is unavailable for the current selection.",
+                tag="Error",
+                tone="error",
             )
             return
 
@@ -2342,13 +2566,13 @@ class GlobalFitTab(FitTabBase):
 
         grouped_groups, grouped_datasets, message = self._grouped_mode_context()
         if grouped_groups is None or grouped_datasets is None:
-            self._result_text.setText(message)
+            self._results_card.set_message(message, tag="Error", tone="error")
             return
 
         try:
             grouped_config = self._parse_grouped_parameter_configuration()
         except ValueError as exc:
-            self._result_text.setText(str(exc))
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
         grouped_model = self._grouped_fit_model()
         try:
@@ -2358,7 +2582,7 @@ class GlobalFitTab(FitTabBase):
                 fixed_params=set(grouped_config["fixed"]),
             )
         except ValueError as exc:
-            self._result_text.setText(str(exc))
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
 
         global_params = list(grouped_config["global"])
@@ -2376,8 +2600,7 @@ class GlobalFitTab(FitTabBase):
             grouped_groups, grouped_config, run_number=single_run
         )
 
-        self._result_text.setText("Fitting grouped time-domain data...")
-        self._result_text.setToolTip("")
+        self._results_card.set_message("Fitting grouped time-domain data…", tag="Fitting")
         self._set_series_busy(True)
         self._current_model = grouped_model
         self._current_global_params = global_params
@@ -2456,10 +2679,16 @@ class GlobalFitTab(FitTabBase):
 
         dataset = self._current_dataset
         if self._last_count_dt0 is None or self._last_count_group is None:
-            self._result_text.setText("Run a deadtime count fit first, then promote DT0.")
+            self._results_card.set_message(
+                "Run a deadtime count fit first, then promote DT0.", tag="Error", tone="error"
+            )
             return
         if dataset is None or dataset.run is None or not dataset.run.histograms:
-            self._result_text.setText("Promote needs the active run with detector histograms.")
+            self._results_card.set_message(
+                "Promote needs the active run with detector histograms.",
+                tag="Error",
+                tone="error",
+            )
             return
         grouping = dataset.run.grouping if isinstance(dataset.run.grouping, dict) else {}
         indices = effective_group_indices(grouping, int(self._last_count_group))
@@ -2472,16 +2701,12 @@ class GlobalFitTab(FitTabBase):
         )
         before = next(iter(change["before"].values()), 0.0)
         after = next(iter(change["after"].values()), 0.0)
-        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_text.setHtml(
-            success_html(
-                "Deadtime promoted to grouping",
-                detail=(
-                    f"Group {self._last_count_group} detectors: "
-                    f"{before:.5g} → {after:.5g} µs ({'added' if additive else 'replaced'}). "
-                    "Re-reduce the run to apply."
-                ),
-            )
+        self._results_card.set_message(
+            f"Group {self._last_count_group} detectors: "
+            f"{before:.5g} → {after:.5g} µs ({'added' if additive else 'replaced'}). "
+            "Re-reduce the run to apply.",
+            tag="Deadtime promoted",
+            tone="ok",
         )
         self.count_grouping_promoted.emit(dataset)
 
@@ -2607,33 +2832,36 @@ class GlobalFitTab(FitTabBase):
         """Run a forward/backward free-alpha or single-histogram count fit."""
         dataset = self._current_dataset
         if dataset is None or dataset.run is None or not dataset.run.histograms:
-            self._result_text.setText(
-                "Count-domain fits need an active run with detector histograms."
+            self._results_card.set_message(
+                "Count-domain fits need an active run with detector histograms.",
+                tag="Error",
+                tone="error",
             )
             return
         if len(self._member_datasets) > 1:
-            self._result_text.setText(
+            self._results_card.set_message(
                 "Count-domain α / single-histogram fits run on one run. "
-                "Use the Single surface (the active run)."
+                "Use the Single surface (the active run).",
+                tag="Error",
+                tone="error",
             )
             return
         if self._composite_model is None:
-            self._result_text.setText("Error: No function defined")
+            self._results_card.set_message("Error: No function defined", tag="Error", tone="error")
             return
 
         model = self._grouped_fit_model()
         try:
             params = self._count_fit_seed_params(dataset, model, mode=self._count_fit_mode)
         except ValueError as exc:
-            self._result_text.setText(str(exc))
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
 
         t_min, t_max = self._count_fit_range()
         cost = self._count_fit_cost
         forward, backward = self._count_fb_groups(dataset)
 
-        self._result_text.setText("Fitting count-domain data…")
-        self._result_text.setToolTip("")
+        self._results_card.set_message("Fitting count-domain data…", tag="Fitting")
         minos = self._minos_checkbox.isChecked()
         # Launch-time context (dataset, groups, cost, side) is bound into the
         # result closures: the user may flip the cost/side controls or switch
@@ -2694,9 +2922,9 @@ class GlobalFitTab(FitTabBase):
     def _on_count_fit_error(self, message: str) -> None:
         self._set_series_busy(False)
         self._count_fit_worker = None
-        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-        self._result_text.setHtml(error_html(f"Count-domain fit failed: {message}"))
-        self._result_text.setToolTip("")
+        self._results_card.set_message(
+            error_html(f"Count-domain fit failed: {message}"), tag="Error", tone="error"
+        )
 
     def _on_count_fit_cancelled(self) -> None:
         """Handle a cancelled count-domain fit: restore the panel, record nothing."""
@@ -2708,9 +2936,11 @@ class GlobalFitTab(FitTabBase):
     ) -> None:
         cost = cost if cost is not None else self._count_fit_cost
         if not result.success:
-            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-            self._result_text.setHtml(error_html(result.message or "Forward/backward fit failed"))
-            self._result_text.setToolTip("")
+            self._results_card.set_message(
+                error_html(result.message or "Forward/backward fit failed"),
+                tag="Error",
+                tone="error",
+            )
             return
         fwd = result.group_results[forward]
         self._store_count_deadtime(fwd, forward)
@@ -2724,12 +2954,10 @@ class GlobalFitTab(FitTabBase):
             f"α = {self._fmt_value(alpha, alpha_err)} · χ²/ν = {fwd.reduced_chi_squared:.4f}{chip} "
             f"(cost: {cost})<br>" + "<br>".join(rows)
         )
-        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_text.setHtml(
-            success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail)
-        )
-        self._result_text.setToolTip(
-            fit_quality_tooltip(fwd_summary.get("quality"), fwd_summary.get("params_at_bound"))
+        self._results_card.set_message(
+            success_html(f"Forward/backward fit · groups {forward}/{backward}", detail=detail),
+            tag="Fit ✓",
+            tone="ok",
         )
         if self._current_dataset is dataset:
             self.count_fit_completed.emit(
@@ -2752,9 +2980,11 @@ class GlobalFitTab(FitTabBase):
         cost = cost if cost is not None else self._count_fit_cost
         side = side if side is not None else self._count_single_side
         if not result.success:
-            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-            self._result_text.setHtml(error_html(result.message or "Single-histogram fit failed"))
-            self._result_text.setToolTip("")
+            self._results_card.set_message(
+                error_html(result.message or "Single-histogram fit failed"),
+                tag="Error",
+                tone="error",
+            )
             return
         self._store_count_deadtime(result, group_id)
         self._store_count_single_extras(dataset, result, group_id)
@@ -2764,15 +2994,10 @@ class GlobalFitTab(FitTabBase):
         detail = f"χ²/ν = {result.reduced_chi_squared:.4f}{chip} (cost: {cost})<br>" + "<br>".join(
             rows
         )
-        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_text.setHtml(
-            success_html(
-                f"Single-histogram fit · group {group_id} ({side})",
-                detail=detail,
-            )
-        )
-        self._result_text.setToolTip(
-            fit_quality_tooltip(summary.get("quality"), summary.get("params_at_bound"))
+        self._results_card.set_message(
+            success_html(f"Single-histogram fit · group {group_id} ({side})", detail=detail),
+            tag="Fit ✓",
+            tone="ok",
         )
         if self._current_dataset is dataset:
             self.count_fit_completed.emit(
@@ -2920,8 +3145,10 @@ class GlobalFitTab(FitTabBase):
         if grouping is None:
             return
         if self._last_count_alpha is None:
-            self._result_text.setText(
-                "Run a Forward + Backward (free α) count fit first, then promote α."
+            self._results_card.set_message(
+                "Run a Forward + Backward (free α) count fit first, then promote α.",
+                tag="Error",
+                tone="error",
             )
             return
         alpha, alpha_err = self._last_count_alpha
@@ -2942,13 +3169,19 @@ class GlobalFitTab(FitTabBase):
         if grouping is None:
             return
         if self._last_count_t0_us is None:
-            self._result_text.setText(
-                "Run a count fit with the t₀ offset nuisance enabled first, then promote t₀."
+            self._results_card.set_message(
+                "Run a count fit with the t₀ offset nuisance enabled first, then promote t₀.",
+                tag="Error",
+                tone="error",
             )
             return
         bin_width = self._last_count_bin_width
         if not bin_width or bin_width <= 0.0:
-            self._result_text.setText("Promote needs the run's bin width to convert t₀ to bins.")
+            self._results_card.set_message(
+                "Promote needs the run's bin width to convert t₀ to bins.",
+                tag="Error",
+                tone="error",
+            )
             return
         change = promote_t0_to_grouping(
             grouping,
@@ -2974,8 +3207,10 @@ class GlobalFitTab(FitTabBase):
         if grouping is None:
             return
         if self._last_count_bg is None:
-            self._result_text.setText(
-                "Run a count fit with a free background first, then promote the background."
+            self._results_card.set_message(
+                "Run a count fit with a free background first, then promote the background.",
+                tag="Error",
+                tone="error",
             )
             return
         forward, backward = self._last_count_bg
@@ -2998,7 +3233,11 @@ class GlobalFitTab(FitTabBase):
         """
         dataset = self._current_dataset
         if dataset is None or dataset.run is None or not dataset.run.histograms:
-            self._result_text.setText("Promote needs the active run with detector histograms.")
+            self._results_card.set_message(
+                "Promote needs the active run with detector histograms.",
+                tag="Error",
+                tone="error",
+            )
             return None
         if not isinstance(dataset.run.grouping, dict):
             dataset.run.grouping = {}
@@ -3006,8 +3245,9 @@ class GlobalFitTab(FitTabBase):
 
     def _announce_promote(self, title: str, detail: str) -> None:
         """Render a success banner for a calibration promote and notify the host."""
-        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_text.setHtml(success_html(title, detail=detail))
+        self._results_card.set_message(
+            success_html(title, detail=detail), tag="Promoted", tone="ok"
+        )
         if self._current_dataset is not None:
             self.count_grouping_promoted.emit(self._current_dataset)
 
@@ -3089,11 +3329,11 @@ class GlobalFitTab(FitTabBase):
         """Swap the Fit button for a Stop button (and back) around a worker fit."""
         self._toggle_fit_stop_buttons(busy)
         if busy:
-            # A new fit is starting: clear any stale seeding signpost until the
-            # fresh results are diagnosed.
-            signpost = getattr(self, "_seeding_signpost", None)
-            if signpost is not None:
-                signpost.hide()
+            # A new fit is starting: the previous batch's seeding advice is stale
+            # until the fresh results are diagnosed.
+            self._suggested_series_seeds = {}
+            if not self._grouped_single:
+                self._results_card.set_action_enabled(USE_AS_SEEDS_ACTION, False)
         else:
             # Re-derive Fit/Preview enabled state from the real gating contract
             # (member count, grouped readiness, _fit_blocked) rather than
@@ -3108,15 +3348,14 @@ class GlobalFitTab(FitTabBase):
         worker = self._count_fit_worker or self._fit_worker
         if worker is not None and hasattr(worker, "cancel"):
             self._stop_btn.setEnabled(False)
-            self._result_text.setText("Cancelling fit…")
+            self._results_card.set_message("Cancelling fit…", tag="Fitting")
             worker.cancel()
 
     def _on_series_fit_cancelled(self) -> None:
         """Handle a cancelled series fit: restore the panel, record nothing."""
         self._set_series_busy(False)
         self._fit_worker = None
-        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-        self._result_text.setText("Fit cancelled — no result recorded.")
+        self._results_card.set_message("Fit cancelled — no result recorded.", tag="Cancelled")
 
     @staticmethod
     def _grouped_series_order_key(members: dict) -> dict[int, float] | None:
@@ -3165,7 +3404,7 @@ class GlobalFitTab(FitTabBase):
         physics_roles = dict(grouped_config.get("physics_roles", {}))
         relationship, mixing_error = self._derive_grouped_relationship(physics_roles, len(members))
         if mixing_error:
-            self._result_text.setText(mixing_error)
+            self._results_card.set_message(mixing_error, tag="Error", tone="error")
             self._fit_btn.setEnabled(True)
             return
         # Physics with the "local" role are fitted per run (shared across that run's
@@ -3177,8 +3416,7 @@ class GlobalFitTab(FitTabBase):
             for run, groups in members.items()
         }
 
-        self._result_text.setText("Fitting grouped time-domain series...")
-        self._result_text.setToolTip("")
+        self._results_card.set_message("Fitting grouped time-domain series…", tag="Fitting")
         self._set_series_busy(True)
         self._current_model = grouped_model
         self._current_global_params = global_params
@@ -3270,34 +3508,37 @@ class GlobalFitTab(FitTabBase):
         seeding_reason = getattr(series_result, "seeding_reason", "")
         if seeding_reason:
             stats += f"<br>Seeding: {seeding_reason}"
-        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_text.setHtml(success_html("Grouped series fit converged", detail=stats))
+        self._render_fit_summary(member_results, tag_prefix="Batch", detail_html=stats)
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
     def _on_preview_requested(self) -> None:
         """Preview grouped time-domain curves using the current parameter values."""
         if not self.is_grouped_time_domain_mode():
-            self._result_text.setText(
-                "Preview is currently available only in grouped time-domain mode."
+            self._results_card.set_message(
+                "Preview is currently available only in grouped time-domain mode.",
+                tag="Error",
+                tone="error",
             )
             return
 
         if self._fit_blocked:
-            self._result_text.setText(
+            self._results_card.set_message(
                 self._fit_block_reason
-                or "Grouped time-domain preview is unavailable for the current selection."
+                or "Grouped time-domain preview is unavailable for the current selection.",
+                tag="Error",
+                tone="error",
             )
             return
 
         grouped_groups, grouped_datasets, message = self._grouped_mode_context()
         if grouped_groups is None or grouped_datasets is None:
-            self._result_text.setText(message)
+            self._results_card.set_message(message, tag="Error", tone="error")
             return
 
         try:
             grouped_config = self._parse_grouped_parameter_configuration()
         except ValueError as exc:
-            self._result_text.setText(str(exc))
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
         grouped_model = self._grouped_fit_model()
         try:
@@ -3307,7 +3548,7 @@ class GlobalFitTab(FitTabBase):
                 fixed_params=set(grouped_config["fixed"]),
             )
         except ValueError as exc:
-            self._result_text.setText(str(exc))
+            self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
 
         preview_curves = self._build_grouped_preview_curves(
@@ -3315,8 +3556,9 @@ class GlobalFitTab(FitTabBase):
             grouped_datasets=grouped_datasets,
             grouped_config=grouped_config,
         )
-        self._result_text.setText(
-            f"Previewing grouped time-domain curves for {len(grouped_datasets)} groups."
+        self._results_card.set_message(
+            f"Previewing grouped time-domain curves for {len(grouped_datasets)} groups.",
+            tag="Preview",
         )
         self.grouped_preview_requested.emit(grouped_datasets, preview_curves)
 
@@ -3445,19 +3687,47 @@ class GlobalFitTab(FitTabBase):
 
         return preview_curves
 
-    def _render_global_fit_success(
+    def _batch_detail_html(
         self,
-        *,
         results_dict: dict[int, FitResult],
-        fitted_global: ParameterSet,
+        successful: dict[int, FitResult],
+        run_label_by_number: dict,
         global_param_names: list[str],
-    ) -> None:
-        n_datasets = len(results_dict)
-        avg_red_chi2 = sum(r.reduced_chi_squared for r in results_dict.values()) / n_datasets
-        npar = len(global_param_names)
-        stats = f"avg χ²/ν = {avg_red_chi2:.4f} · {n_datasets} datasets · npar = {npar}"
-        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_text.setHtml(success_html("Batch fit converged", detail=stats))
+        advice_html: str,
+    ) -> str:
+        """The batch card's body: statistics, accounting, advisories, in one block.
+
+        The card renders its detail as one rich-text line, so everything the old
+        results box appended after the success banner — the engine's advisory
+        warnings, the fitted/failed/flagged accounting, the resolved seeding mode
+        and the near-transition advice — is composed here instead.
+        """
+        avg_red_chi2 = sum(r.reduced_chi_squared for r in successful.values()) / len(successful)
+        lines = [
+            f"avg χ²/ν = {avg_red_chi2:.4f} · {len(successful)} datasets · "
+            f"npar = {len(global_param_names)}"
+        ]
+        # The same trap typically fires for every run, so dedupe to one row per
+        # distinct message (first-seen order) rather than repeating it per dataset.
+        seen: set[str] = set()
+        for run_result in successful.values():
+            for message in getattr(run_result, "warnings", None) or []:
+                if message not in seen:
+                    seen.add(message)
+                    lines.append(warning_html("⚠ " + html.escape(str(message))))
+        # F2: a one-line accounting of the batch — fitted / failed / flagged — so a
+        # silently dropped or garbage member is visible, not just in the log.
+        summary_line = self._batch_outcome_summary_line(results_dict, run_label_by_number)
+        if summary_line:
+            lines.append(info_html(summary_line))
+        failed = [run for run, result in results_dict.items() if not result.success]
+        if failed:
+            labels = [run_label_by_number.get(run, str(run)) for run in failed]
+            lines.append(warning_html(f"{len(failed)} run(s) failed to converge: {labels}"))
+        lines.extend(self._series_seeding_notes())
+        if advice_html:
+            lines.append(advice_html)
+        return "<br>".join(lines)
 
     def _results_with_curves(
         self,
@@ -3501,25 +3771,14 @@ class GlobalFitTab(FitTabBase):
         *,
         model: CompositeModel,
         results_dict: dict[int, FitResult],
+        successful: dict[int, FitResult],
         fitted_global: ParameterSet,
-        global_param_names: list[str],
+        detail_html: str,
     ) -> None:
-        self._render_global_fit_success(
-            results_dict=results_dict,
-            fitted_global=fitted_global,
-            global_param_names=global_param_names,
-        )
-        # Surface the engine's advisory warnings (scale / fixed-frequency traps)
-        # beneath the success line. The same trap typically fires for every run,
-        # so dedupe to one row per distinct message (first-seen order) rather than
-        # repeating it per dataset.
-        seen: set[str] = set()
-        for run_result in results_dict.values():
-            for message in getattr(run_result, "warnings", None) or []:
-                if message not in seen:
-                    seen.add(message)
-                    self._result_text.append(warning_html("⚠ " + html.escape(str(message))))
-        emitted_results = results_dict
+        # The card shows every member (a failed run still gets a chip); only the
+        # converged ones are emitted as a series.
+        self._render_fit_summary(results_dict, tag_prefix="Batch", detail_html=detail_html)
+        emitted_results = successful
         emitted_global = fitted_global
         if self._domain == "frequency":
             emitted_results = {}
@@ -3557,7 +3816,9 @@ class GlobalFitTab(FitTabBase):
         if not isinstance(assessment, GlobalCandidateAssessment):
             return
         if not assessment.is_successful:
-            self._result_text.setText("<b>Global Fit Wizard failed</b>")
+            self._results_card.set_message(
+                "<b>Global Fit Wizard failed</b>", tag="Error", tone="error"
+            )
             return
         try:
             parsed = self._parse_parameter_configuration()
@@ -3628,11 +3889,8 @@ class GlobalFitTab(FitTabBase):
                 # A fitted value is the user's result, never a re-seedable seed.
                 _set_value_provenance(value_item, USER)
 
-            bounds_item = self._param_table.item(row, 3)
-            if bounds_item is not None and fitted is not None:
-                min_text = "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
-                max_text = "inf" if not np.isfinite(fitted.max) else f"{float(fitted.max):g}"
-                bounds_item.setText(f"{min_text}, {max_text}")
+            if fitted is not None:
+                _write_bounds_cells(self._param_table, row, fitted.min, fitted.max)
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
 
@@ -3704,7 +3962,7 @@ class GlobalFitTab(FitTabBase):
         if assessment.series_warnings:
             lines.append("<br><b>Warnings:</b>")
             lines.extend(f"  {warning}" for warning in assessment.series_warnings)
-        self._result_text.setHtml("<br>".join(lines))
+        self._results_card.set_message("<br>".join(lines), tag="Fit ✓", tone="ok")
 
     def _on_fit_finished(self, results_dict: dict, fitted_global: list) -> None:
         """Handle successful fit completion."""
@@ -3719,40 +3977,34 @@ class GlobalFitTab(FitTabBase):
         # the series from the successful members and surface the failures as a
         # non-blocking warning. Only an all-failed batch takes the abort branch.
         successful = {run: r for run, r in results_dict.items() if r.success}
-        failed = [run for run, r in results_dict.items() if not r.success]
         run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
-        failed_labels = [run_label_by_number.get(run, str(run)) for run in failed]
+
+        # Diagnose the per-run trend before anything is rendered: a near-transition
+        # collapse is advice the card's own body carries, and it is what arms the
+        # "Use as seeds" hand-off.
+        advice_html = self._series_seeding_advice(model, results_dict)
 
         if successful:
             self._emit_global_fit_success(
                 model=model,
-                results_dict=successful,
+                results_dict=results_dict,
+                successful=successful,
                 fitted_global=fitted_global,
-                global_param_names=global_params,
+                detail_html=self._batch_detail_html(
+                    results_dict, successful, run_label_by_number, global_params, advice_html
+                ),
             )
-            # F2: a one-line accounting of the batch — fitted / failed / flagged —
-            # so a silently dropped or garbage member is visible in the results
-            # block, not just the log.
-            summary_line = self._batch_outcome_summary_line(results_dict, run_label_by_number)
-            if summary_line:
-                self._result_text.append(info_html(summary_line))
-            if failed:
-                # _emit_global_fit_success rendered the success box; append the
-                # failure warning as a new paragraph beneath it rather than
-                # overwriting it (non-blocking surfacing).
-                self._result_text.append(
-                    warning_html(f"{len(failed)} run(s) failed to converge: {failed_labels}")
-                )
-            self._append_series_seeding_note()
         else:
-            self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-            self._result_text.setText(
-                f"<b>Batch fit failed</b><br>Failed datasets: {failed_labels}"
+            # Nothing converged, so every member is a failed one.
+            labels = [run_label_by_number.get(run, str(run)) for run in results_dict]
+            self._results_card.set_message(
+                f"<b>Batch fit failed</b><br>Failed datasets: {labels}",
+                tag="Error",
+                tone="error",
             )
-
-        # Inspect the per-run trend for the near-transition collapse/outlier
-        # signature and signpost the per-run warm-start when it is present.
-        self._update_seeding_signpost(model, results_dict)
+        self._results_card.set_action_enabled(
+            USE_AS_SEEDS_ACTION, bool(self._suggested_series_seeds)
+        )
 
     def last_batch_member_flags(self) -> dict[int, list[str]]:
         """Per-run advisory quality flags from the most recent F-B series fit.
@@ -3807,41 +4059,39 @@ class GlobalFitTab(FitTabBase):
             parts.append(f"{len(flagged)} flagged ({_labels(flagged)})")
         return " · ".join(parts)
 
-    def _append_series_seeding_note(self) -> None:
-        """Append the resolved seeding mode/reason and any reseeded runs."""
+    def _series_seeding_notes(self) -> list[str]:
+        """The resolved seeding mode/reason and any reseeded runs, as card rows."""
         meta = self._series_seeding_meta
         if not meta:
-            return
+            return []
+        notes: list[str] = []
         reason = str(meta.get("seeding_reason") or "")
         if reason:
-            self._result_text.append(info_html(f"Seeding: {reason}"))
+            notes.append(info_html(f"Seeding: {reason}"))
         reseeded = meta.get("reseeded_runs") or ()
         if reseeded:
             runs = ", ".join(str(r) for r in reseeded)
-            self._result_text.append(
+            notes.append(
                 info_html(f"Reseeded {len(reseeded)} run(s) off the spurious branch: {runs}")
             )
+        return notes
 
-    def _update_seeding_signpost(self, model: object, results_dict: dict) -> None:
-        """Diagnose the batch trend and show/hide the per-run-seed signpost.
+    def _series_seeding_advice(self, model: object, results_dict: dict) -> str:
+        """Diagnose the batch trend; return the per-run-seed advice, or ``""``.
 
         Builds per-run summaries (scan order + fitted amplitude/frequency) and runs
-        the shared :func:`diagnose_series`. When a run collapsed to ~0 amplitude, sits
-        off the frequency trend, or failed, the signpost is shown with the
-        descending-frequency seeds the diagnostics computed; otherwise it is hidden.
+        the shared :func:`diagnose_series`. When a run collapsed to ~0 amplitude,
+        sits off the frequency trend, or failed, the descending-frequency seeds the
+        diagnostics computed are kept for ``Use as seeds`` and the sentence goes on
+        the results card; otherwise there is nothing to say.
         """
         self._suggested_series_seeds = {}
-        signpost = getattr(self, "_seeding_signpost", None)
-        if signpost is None:
-            return
         param_names = list(getattr(model, "param_names", []) or [])
         if not param_names or len(results_dict) < 3:
-            signpost.hide()
-            return
+            return ""
         amplitude_param, frequency_param = resolve_series_params(param_names)
         if amplitude_param is None and frequency_param is None:
-            signpost.hide()
-            return
+            return ""
         order_key = self._asymmetry_series_order_key() or {}
         points: list[SeriesPoint] = []
         for run, result in results_dict.items():
@@ -3860,21 +4110,17 @@ class GlobalFitTab(FitTabBase):
             points, amplitude_param=amplitude_param, frequency_param=frequency_param
         )
         if not diagnostics.has_issues:
-            signpost.hide()
-            return
+            return ""
         self._suggested_series_seeds = dict(diagnostics.suggested_seeds)
-        message = (
+        return info_html(
             f"<b>The {self._trend_axis_label()} trend has outliers.</b> "
             f"{diagnostics.reason[:1].upper() + diagnostics.reason[1:]}. "
             "Near-transition oscillatory fits are bistable — a per-run warm-start "
             "fixes it."
         )
-        self._seeding_signpost_label.setText(info_html(message))
-        self._apply_suggested_seeds_btn.setEnabled(bool(self._suggested_series_seeds))
-        signpost.show()
 
     def _trend_axis_label(self) -> str:
-        """Friendly name for the leading oscillatory parameter, for the signpost."""
+        """Friendly name for the leading oscillatory parameter, for the advice."""
         amplitude_param, frequency_param = resolve_series_params(
             list(getattr(self._current_model, "param_names", []) or [])
         )
@@ -3901,12 +4147,6 @@ class GlobalFitTab(FitTabBase):
         # the menu via the existing sync signal.
         self.set_batch_seeding_mode("as_provided")
         self.batch_seeding_mode_changed.emit("as_provided")
-        self._seeding_signpost.hide()
-        self._result_text.append(
-            info_html(
-                "Applied descending per-run frequency seeds (Independent seeds). Re-running batch…"
-            )
-        )
         self._run_global_fit()
 
     def _on_fit_error(self, error_msg: str) -> None:
@@ -3914,9 +4154,10 @@ class GlobalFitTab(FitTabBase):
         self._set_series_busy(False)
         self._fit_worker = None
         self._update_mode_ui(preserve_result=True)
-        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
         mode_label = "grouped fit" if self.is_grouped_time_domain_mode() else "global fit"
-        self._result_text.setText(f"<b>Error during {mode_label}:</b><br>{error_msg}")
+        self._results_card.set_message(
+            f"<b>Error during {mode_label}:</b><br>{error_msg}", tag="Error", tone="error"
+        )
 
     def _cache_grouped_simulate_seed(self, grouped_result) -> None:
         """Cache a multi-group simulate seed from a converged grouped fit.
@@ -4030,11 +4271,8 @@ class GlobalFitTab(FitTabBase):
                     value_item.setText(f"{float(display_shared_values[pname]):.6g}")
                     # A fitted value is the user's result, not a seed.
                     _set_value_provenance(value_item, USER)
-                bounds_item = self._group_model_table.item(row, 3)
-                if bounds_item is not None and fitted is not None:
-                    min_text = "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
-                    max_text = "inf" if not np.isfinite(fitted.max) else f"{float(fitted.max):g}"
-                    bounds_item.setText(f"{min_text}, {max_text}")
+                if fitted is not None:
+                    _write_bounds_cells(self._group_model_table, row, fitted.min, fitted.max)
         finally:
             self._group_model_table.blockSignals(previous_model_signal_state)
         self._synchronize_grouped_model_fraction_rows()
@@ -4064,17 +4302,14 @@ class GlobalFitTab(FitTabBase):
                         parameter.name: parameter for parameter in first_fit.parameters
                     }
                     fitted = fitted_by_name.get(pname)
-                    bounds_item = self._group_param_table.item(
-                        row, self._group_param_bounds_column()
-                    )
-                    if bounds_item is not None and fitted is not None:
-                        min_text = (
-                            "-inf" if not np.isfinite(fitted.min) else f"{float(fitted.min):g}"
+                    if fitted is not None:
+                        _write_bounds_cells(
+                            self._group_param_table,
+                            row,
+                            fitted.min,
+                            fitted.max,
+                            min_column=self._group_param_min_column(),
                         )
-                        max_text = (
-                            "inf" if not np.isfinite(fitted.max) else f"{float(fitted.max):g}"
-                        )
-                        bounds_item.setText(f"{min_text}, {max_text}")
         finally:
             self._group_param_table.blockSignals(previous_group_signal_state)
 
@@ -4114,8 +4349,9 @@ class GlobalFitTab(FitTabBase):
         )
         n_shared = len(grouped_result.shared_parameters)
         stats = f"{n_groups} groups · avg χ²/ν = {avg_red_chi2:.4f} · shared = {n_shared}"
-        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_text.setHtml(success_html("Grouped fit converged", detail=stats))
+        self._render_fit_summary(
+            dict(grouped_result.group_results), tag_prefix="Fit", detail_html=stats
+        )
         self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
 
         # Publish the run's shared physics so the batch grouped surface can
@@ -4176,6 +4412,9 @@ class GlobalFitTab(FitTabBase):
         rather than hanging closeEvent for the rest of a long migrad/MINOS step.
         """
         self._fit_call_runner.shutdown()
+        self._param_table_dialog.close()
+        for window in self._member_windows.values():
+            window.close()
 
     def wait_for_fit(self, timeout_ms: int = 30_000) -> bool:
         """Block (with a live event loop) until the launched fit completes."""
@@ -4214,15 +4453,12 @@ class GlobalFitTab(FitTabBase):
             type_combo = self._param_table.cellWidget(i, 2)
             type_text = type_combo.currentText() if isinstance(type_combo, QComboBox) else "Local"
 
-            bounds_item = self._param_table.item(i, 3)
-            bounds_text = bounds_item.text() if bounds_item else "-inf, inf"
-
             params.append(
                 {
                     "name": param_name,
                     "value": value,
                     "type": type_text,
-                    "bounds": bounds_text,
+                    "bounds": _joined_bounds_text(self._param_table, i),
                     "seeded": value_item is not None and _value_provenance(value_item) == SEEDED,
                 }
             )
@@ -4239,7 +4475,10 @@ class GlobalFitTab(FitTabBase):
                 {**entry, "value": normalized_values.get(str(entry["name"]), entry["value"])}
                 for entry in params
             ],
-            "result_html": self._result_text.toHtml(),
+            "result_html": self._results_card.content_html(),
+            # The tag travels with the line so a replayed read-out still says how
+            # the fit went instead of reading as "No fit yet".
+            "result_tag": self._results_card.tag_text(),
             "group_parameters": [
                 {
                     "name": name,
@@ -4293,10 +4532,12 @@ class GlobalFitTab(FitTabBase):
                 self._set_composite_model(restored, seed_from_record=False)
                 if restored.missing_component_names:
                     names = ", ".join(restored.missing_component_names)
-                    self._result_text.setText(
+                    self._results_card.set_message(
                         f"Missing user function(s): {names}. The saved model is "
                         "preserved (missing components plot as zero) but cannot be "
-                        "fitted until they are registered — see Setup → User functions…"
+                        "fitted until they are registered — see Setup → User functions…",
+                        tag="Error",
+                        tone="error",
                     )
 
         params_data = {p["name"]: p for p in state.get("parameters", [])}
@@ -4335,13 +4576,14 @@ class GlobalFitTab(FitTabBase):
                 if idx >= 0:
                     type_combo.setCurrentIndex(idx)
 
-            bounds_item = self._param_table.item(i, 3)
-            if bounds_item:
-                bounds_item.setText(p_data.get("bounds", "-inf, inf"))
+            minimum, maximum = _split_bounds_text(p_data.get("bounds", "-inf, inf"))
+            self._param_table.item(i, _COL_MIN).setText(minimum)
+            self._param_table.item(i, _COL_MAX).setText(maximum)
         _configure_fraction_rows_in_table(
             self._param_table,
             self._composite_model,
-            bounds_column=3,
+            min_column=_COL_MIN,
+            max_column=_COL_MAX,
             type_column=2,
         )
         self._updating_fraction_values = False
@@ -4350,10 +4592,6 @@ class GlobalFitTab(FitTabBase):
         self._restore_group_param_table_state(state.get("group_parameters"))
         self._restore_table_state(self._group_model_table, state.get("group_model_parameters"))
         if isinstance(self._group_model_table, FitParameterTable):
-            # The single grouped physics table has separate min/max columns (not a
-            # single "min, max" bounds column), so the fraction 0–1 bounds must go
-            # into COL_MIN/COL_MAX — matching the populate() path. Passing
-            # bounds_column=3 here would write "0, 1" into the min field.
             _configure_fraction_rows_in_table(
                 self._group_model_table,
                 self._grouped_fit_model(),
@@ -4364,14 +4602,22 @@ class GlobalFitTab(FitTabBase):
             _configure_fraction_rows_in_table(
                 self._group_model_table,
                 self._grouped_fit_model(),
-                bounds_column=3,
+                min_column=_COL_MIN,
+                max_column=_COL_MAX,
                 type_column=2,
             )
         self._synchronize_grouped_model_fraction_rows()
 
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:
-            self._result_text.setHtml(result_html)
+            # A state written before the tag was persisted carries none; it is
+            # still a recorded read-out, so it goes back under RESTORED_TAG
+            # rather than under the "no fit" placeholder.
+            tag = state.get("result_tag")
+            tag = tag if isinstance(tag, str) and tag else RESTORED_TAG
+            self._results_card.set_message(
+                result_html, tag=tag, tone=TONE_BY_TAG.get(tag, "neutral")
+            )
 
         wizard_state_by_run_set = state.get("wizard_state_by_run_set")
         if isinstance(wizard_state_by_run_set, list):
@@ -4408,7 +4654,7 @@ class GlobalFitTab(FitTabBase):
         self._group_model_group.setVisible(grouped)
         # In-batch co-add only applies to grouped-series fits (≥2 members).
         self._coadd_group.setVisible(grouped)
-        self._fit_btn.setText("Run Grouped Fit" if grouped else "Run Batch Fit")
+        self._fit_btn.setText("Run grouped fit" if grouped else "Run batch fit")
         self._preview_btn.setVisible(grouped)
         _set_formula_label_text(
             self._formula_label,
@@ -4441,7 +4687,7 @@ class GlobalFitTab(FitTabBase):
                 "Global Fit Wizard is unavailable in grouped time-domain mode."
             )
             if not preserve_result:
-                self._result_text.setText(message)
+                self._results_card.set_message(message)
             return
 
         n = len(self._datasets)
@@ -4460,17 +4706,17 @@ class GlobalFitTab(FitTabBase):
         if preserve_result:
             return
         if n == 0:
-            self._result_text.setText(
-                "No datasets selected.\nSelect datasets in the browser to run a global fit."
+            self._results_card.set_message(
+                "No datasets selected. Select datasets in the browser to run a batch fit."
             )
         elif n == 1:
-            self._result_text.setText(
-                "Batch fitting requires at least 2 datasets.\nCurrently have 1 selected dataset."
+            self._results_card.set_message(
+                "Batch fitting requires at least 2 datasets. Currently have 1 selected dataset."
             )
         else:
             domain_label = "frequency spectra" if self._domain == "frequency" else "datasets"
-            self._result_text.setText(
-                f"{n} {domain_label} selected. Configure parameters and click Run Batch Fit."
+            self._results_card.set_message(
+                f"{n} {domain_label} selected. Configure parameters and click Run batch fit."
             )
 
     def _grouped_mode_context(
@@ -4690,7 +4936,8 @@ class GlobalFitTab(FitTabBase):
     def _group_param_type_column(self) -> int:
         return 1 + self._group_param_value_column_count()
 
-    def _group_param_bounds_column(self) -> int:
+    def _group_param_min_column(self) -> int:
+        """Min column of the per-group table, which grows a column per group."""
         return self._group_param_type_column() + 1
 
     def _group_param_value_column_entries(self) -> list[object]:
@@ -4702,7 +4949,7 @@ class GlobalFitTab(FitTabBase):
         state: dict[str, dict[str, object]] = {}
         value_entries = self._group_param_value_column_entries()
         type_column = self._group_param_type_column()
-        bounds_column = self._group_param_bounds_column()
+        min_column = self._group_param_min_column()
         for row in range(self._group_param_table.rowCount()):
             name_item = self._group_param_table.item(row, 0)
             if name_item is None:
@@ -4719,11 +4966,10 @@ class GlobalFitTab(FitTabBase):
                 if offset == 1:
                     fallback_value = value_text
             type_combo = self._group_param_table.cellWidget(row, type_column)
-            bounds_item = self._group_param_table.item(row, bounds_column)
             state[param_name] = {
                 "value": fallback_value,
                 "group_values": group_values,
-                "bounds": bounds_item.text() if bounds_item is not None else "-inf, inf",
+                "bounds": _joined_bounds_text(self._group_param_table, row, min_column=min_column),
                 "type": type_combo.currentText() if isinstance(type_combo, QComboBox) else "",
             }
         return state
@@ -4748,7 +4994,7 @@ class GlobalFitTab(FitTabBase):
         grouped_groups = grouped_groups or []
         self._group_param_group_specs = self._grouped_parameter_specs(grouped_groups)
         value_headers = [name for _group_id, name in self._group_param_group_specs] or ["Value"]
-        column_count = 1 + len(value_headers) + 2
+        column_count = 1 + len(value_headers) + 3
         previous_signal_state = self._group_param_table.blockSignals(True)
         previous_rows = self._group_param_table.rowCount()
         previous_columns = self._group_param_table.columnCount()
@@ -4759,13 +5005,14 @@ class GlobalFitTab(FitTabBase):
         self._group_param_table.clearContents()
         self._group_param_table.setColumnCount(column_count)
         self._group_param_table.setHorizontalHeaderLabels(
-            ["Parameter", *value_headers, "Type", "Bounds"]
+            ["Parameter", *value_headers, "Type", "Min", "Max"]
         )
         self._group_param_table.setColumnWidth(0, param_name_col_width())
         for offset in range(len(value_headers)):
             self._group_param_table.setColumnWidth(1 + offset, char_width(11))  # 78 px
         self._group_param_table.setColumnWidth(self._group_param_type_column(), char_width(12))
-        self._group_param_table.setColumnWidth(self._group_param_bounds_column(), char_width(15))
+        self._group_param_table.setColumnWidth(self._group_param_min_column(), char_width(6))
+        self._group_param_table.setColumnWidth(self._group_param_min_column() + 1, char_width(6))
         self._group_param_table.setRowCount(len(GROUP_NUISANCE_PARAMS))
 
         n0_defaults_by_group: dict[str, float] = {}
@@ -4843,13 +5090,15 @@ class GlobalFitTab(FitTabBase):
                 lambda _text, row=row: self._on_group_param_type_changed(row)
             )
             self._group_param_table.setCellWidget(row, self._group_param_type_column(), type_combo)
-            self._group_param_table.setItem(
-                row,
-                self._group_param_bounds_column(),
-                QTableWidgetItem(str(previous.get("bounds") or bounds)),
-            )
+            minimum, maximum = _split_bounds_text(previous.get("bounds") or bounds)
+            min_column = self._group_param_min_column()
+            self._group_param_table.setItem(row, min_column, QTableWidgetItem(minimum))
+            self._group_param_table.setItem(row, min_column + 1, QTableWidgetItem(maximum))
             self._sync_group_param_row_values(row)
         self._group_param_table.blockSignals(previous_signal_state)
+        # The header just changed shape, so the rail's chips are re-applied over
+        # the new Min/Max indices.
+        self._apply_column_groups()
         _size_param_table_to_content(self._group_param_table)
 
     def _sync_group_param_row_values(self, row: int, edited_column: int | None = None) -> None:
@@ -4982,19 +5231,22 @@ class GlobalFitTab(FitTabBase):
                 previous_type = "Global"
             type_combo.setCurrentText(previous_type)
             self._group_model_table.setCellWidget(row, 2, type_combo)
-            bounds_text = str(
+            minimum, maximum = _split_bounds_text(
                 previous.get("bounds")
                 or f"{_format_bound(seed.min, '-inf')}, {_format_bound(seed.max, 'inf')}"
             )
-            self._group_model_table.setItem(row, 3, QTableWidgetItem(bounds_text))
+            self._group_model_table.setItem(row, _COL_MIN, QTableWidgetItem(minimum))
+            self._group_model_table.setItem(row, _COL_MAX, QTableWidgetItem(maximum))
         _configure_fraction_rows_in_table(
             self._group_model_table,
             grouped_model,
-            bounds_column=3,
+            min_column=_COL_MIN,
+            max_column=_COL_MAX,
             type_column=2,
         )
         self._updating_group_model_fraction_values = False
         self._synchronize_grouped_model_fraction_rows()
+        self._apply_column_groups()
         _size_param_table_to_content(self._group_model_table)
 
     def _rebuild_grouped_single_model_table(
@@ -5044,7 +5296,7 @@ class GlobalFitTab(FitTabBase):
 
         group_value_entries = self._group_param_value_column_entries()
         group_type_column = self._group_param_type_column()
-        group_bounds_column = self._group_param_bounds_column()
+        group_min_column = self._group_param_min_column()
         actual_group_ids = [group_id for group_id, _name in self._group_param_group_specs]
         for row in range(self._group_param_table.rowCount()):
             name_item = self._group_param_table.item(row, 0)
@@ -5069,13 +5321,9 @@ class GlobalFitTab(FitTabBase):
                     first_value = value
                 row_values[entry] = value
 
-            bounds_text = self._group_param_table.item(row, group_bounds_column).text()
-            try:
-                lo_text, hi_text = [part.strip() for part in bounds_text.split(",", maxsplit=1)]
-                min_val = float(lo_text) if lo_text != "-inf" else -float("inf")
-                max_val = float(hi_text) if hi_text != "inf" else float("inf")
-            except (TypeError, ValueError):
-                min_val, max_val = -float("inf"), float("inf")
+            min_val, max_val = _read_bounds_cells(
+                self._group_param_table, row, min_column=group_min_column
+            )
 
             for value in row_values.values():
                 if np.isfinite(min_val) and value < min_val:
@@ -5159,13 +5407,7 @@ class GlobalFitTab(FitTabBase):
                         f"Error: Parameter {format_param_label(pname)} must be finite, got {value}"
                     )
 
-                bounds_text = self._group_model_table.item(row, 3).text()
-                try:
-                    lo_text, hi_text = [part.strip() for part in bounds_text.split(",", maxsplit=1)]
-                    min_val = float(lo_text) if lo_text != "-inf" else -float("inf")
-                    max_val = float(hi_text) if hi_text != "inf" else float("inf")
-                except (TypeError, ValueError):
-                    min_val, max_val = -float("inf"), float("inf")
+                min_val, max_val = _read_bounds_cells(self._group_model_table, row)
 
                 if np.isfinite(min_val) and value < min_val:
                     raise ValueError(
@@ -5233,11 +5475,10 @@ class GlobalFitTab(FitTabBase):
             return state
         for row, param_name in _iter_named_parameter_rows(table, skip_unnamed=True):
             value_item = table.item(row, 1)
-            bounds_item = table.item(row, 3)
             type_combo = table.cellWidget(row, 2)
             state[param_name] = {
                 "value": value_item.text() if value_item is not None else "",
-                "bounds": bounds_item.text() if bounds_item is not None else "-inf, inf",
+                "bounds": _joined_bounds_text(table, row),
                 "type": type_combo.currentText() if isinstance(type_combo, QComboBox) else "",
                 # Carried with the value, so a rebuilt row keeps knowing whether
                 # its number is still a seed the next context change may replace.
@@ -5287,16 +5528,16 @@ class GlobalFitTab(FitTabBase):
                 idx = type_combo.findText(str(entry.get("type", "")))
                 if idx >= 0:
                     type_combo.setCurrentIndex(idx)
-            bounds_item = table.item(row, 3)
-            if bounds_item is not None:
-                bounds_item.setText(str(entry.get("bounds", "-inf, inf")))
+            minimum, maximum = _split_bounds_text(entry.get("bounds", "-inf, inf"))
+            table.item(row, _COL_MIN).setText(minimum)
+            table.item(row, _COL_MAX).setText(maximum)
 
     def _restore_group_param_table_state(self, payload: object) -> None:
         if not isinstance(payload, list):
             return
         by_name = {str(entry.get("name")): entry for entry in payload if isinstance(entry, dict)}
         type_column = self._group_param_type_column()
-        bounds_column = self._group_param_bounds_column()
+        min_column = self._group_param_min_column()
         self._updating_group_param_values = True
         try:
             for row in range(self._group_param_table.rowCount()):
@@ -5320,9 +5561,9 @@ class GlobalFitTab(FitTabBase):
                     idx = type_combo.findText(str(entry.get("type", "")))
                     if idx >= 0:
                         type_combo.setCurrentIndex(idx)
-                bounds_item = self._group_param_table.item(row, bounds_column)
-                if bounds_item is not None:
-                    bounds_item.setText(str(entry.get("bounds", "-inf, inf")))
+                minimum, maximum = _split_bounds_text(entry.get("bounds", "-inf, inf"))
+                self._group_param_table.item(row, min_column).setText(minimum)
+                self._group_param_table.item(row, min_column + 1).setText(maximum)
                 self._sync_group_param_row_values(row)
         finally:
             self._updating_group_param_values = False

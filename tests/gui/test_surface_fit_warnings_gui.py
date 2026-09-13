@@ -80,12 +80,13 @@ def test_batch_fit_surfaces_engine_warnings_deduped(qapp: QApplication) -> None:
     tab._emit_global_fit_success(
         model=model,
         results_dict=results_dict,
+        successful=results_dict,
         fitted_global=ParameterSet(),
-        global_param_names=[],
+        detail_html=tab._batch_detail_html(results_dict, results_dict, {}, [], ""),
     )
 
-    rendered = tab._result_text.toHtml()
-    assert "Batch fit converged" in rendered
+    rendered = tab._results_card.content_html()
+    assert tab._results_card.tag_text() == "Batch ✓"
     assert "Fixed-frequency trap" in rendered
     # Deduped: the identical warning fired for both runs but is shown a single time.
     assert rendered.count("Fixed-frequency trap") == 1

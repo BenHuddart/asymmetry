@@ -114,6 +114,9 @@ class FitPanel(QWidget):
     # Forwarded from the Batch tab's on-tab seeding selector so the main window's
     # Analysis ▸ Batch seeding menu can mirror it (two-way sync).
     batch_seeding_mode_changed = Signal(str)
+    # Forwarded from the Batch tab's results card: show its last recorded batch in
+    # the Parameters panel (the main window owns which batch that is).
+    trends_requested = Signal()
     # Emitted whenever the Single/Batch tab selection changes, so the main
     # window can re-evaluate fit-block/enable state (F17) — switching tabs
     # does not itself change what is fittable, but nothing else re-runs that
@@ -198,6 +201,7 @@ class FitPanel(QWidget):
         self._global_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
         self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
         self._global_tab.batch_seeding_mode_changed.connect(self.batch_seeding_mode_changed.emit)
+        self._global_tab.trends_requested.connect(self.trends_requested.emit)
         self._tabs.addTab(self._global_tab, "Batch")
 
         # Preserve the single-fit form across a Single↔Batch view switch (see #3
@@ -1223,12 +1227,20 @@ class FitPanel(QWidget):
             seed_bounds=seed_bounds,
             origins=self._global_tab.aligned_origins(model),
         )
+        # The run is named here rather than parsed back out of the batch tab: this
+        # panel is what knows which run the Single tab was showing.
+        if self._active_single_run_number is not None:
+            self._global_tab.show_seeded_from(self._active_single_run_number)
         return True
 
     def _on_send_model_to_batch(self) -> None:
         """Handle the Single tab's 'Send Model to Batch' action."""
         if self.send_single_model_to_batch():
             self._tabs.setCurrentWidget(self._global_tab)
+
+    def set_trends_available(self, available: bool) -> None:
+        """Arm the Batch tab's ``Trends →`` hand-off (a batch has been recorded)."""
+        self._global_tab.set_trends_available(available)
 
     def restore_global_state(self, state: dict) -> None:
         """Restore global-fit tab state from a saved dict."""

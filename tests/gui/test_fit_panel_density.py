@@ -31,12 +31,13 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMenu, QPushButton, QToolButton
 
+from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit.single_tab import (
     ADD_TO_SERIES_ACTION,
     DIAGNOSTIC_ACTION,
     SEND_TO_BATCH_ACTION,
 )
-from asymmetry.gui.panels.fit_panel import SingleFitTab
+from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
 from asymmetry.gui.styles.metrics import char_width
 
 _DECK_DEFAULT_WIDTH = 360  # INSPECTOR_DOCK_DEFAULT_WIDTH
@@ -126,6 +127,30 @@ def test_resting_parameter_table_does_not_scroll_sideways_in_the_dock(app):
         assert table.column_group_visible("batch") is False
         assert table.horizontalScrollBar().maximum() == 0
         assert tab.minimumSizeHint().width() <= char_width(40)
+    finally:
+        tab.close()
+        tab.deleteLater()
+        settings.clear()
+
+
+def test_batch_tab_parameter_tables_do_not_scroll_sideways_in_the_dock(app):
+    """The Batch tab's tables fit the same dock as the Single tab's.
+
+    Parameter · Seed · Type is what rests visible; the rail's ``Bounds`` chip is
+    off, so Min and Max are not part of the resting budget.
+    """
+    settings = QSettings("AsymmetryTest", "BatchPanelDensity")
+    settings.clear()
+    tab = GlobalFitTab(member_kind="runs", settings=settings)
+    try:
+        tab.resize(char_width(_DOCK_CHARS), 1200)
+        tab.show()
+        app.processEvents()
+
+        assert tab._param_table.isColumnHidden(global_tab_module._COL_MIN)
+        assert tab._param_table.isColumnHidden(global_tab_module._COL_MAX)
+        assert tab._param_table.horizontalScrollBar().maximum() == 0
+        assert tab.minimumSizeHint().width() <= char_width(_DOCK_CHARS)
     finally:
         tab.close()
         tab.deleteLater()
