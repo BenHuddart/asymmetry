@@ -301,3 +301,16 @@ def test_card_focus_button_toggles_focus_through_the_stack(qapp: QApplication) -
     stack.card("b").focus_button.click()
     assert stack.focused() is None
     stack.deleteLater()
+
+
+def test_stack_focus_does_not_announce_expansion_changes(qapp: QApplication) -> None:
+    stack = _stack("a", "b")
+    seen: list[tuple[str, bool]] = []
+    for each in stack.cards():
+        each.expanded_changed.connect(lambda name, on: seen.append((name, on)))
+
+    stack.set_focus("b")
+    stack.set_focus(None)
+
+    assert seen == []
+    stack.deleteLater()

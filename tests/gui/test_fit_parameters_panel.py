@@ -3106,3 +3106,84 @@ def test_data_revision_bumps_at_trend_input_choke_points(qapp: QApplication) -> 
     # clear() drops all rows — a trend-input change.
     panel.clear()
     assert panel.data_revision > after_relink
+
+
+def test_focus_leaves_the_persisted_collapse_alone(panel: FitParametersPanel) -> None:
+    select_params(panel, ["A0", "Lambda"])
+
+    panel._card_stack.set_focus("A0")
+    assert panel._collapsed_params == set()
+    assert panel.get_state()["collapsed_params"] == []
+
+    panel._card_stack.set_focus(None)
+    assert card(panel, "Lambda").is_expanded()
+
+
+def test_restoring_an_empty_selection_checks_no_chip(panel: FitParametersPanel) -> None:
+    state = panel.get_state()
+    state["selected_y_params"] = []
+
+    restored = FitParametersPanel()
+    restored.restore_state(state)
+
+    assert not any(chip.isChecked() for chip in restored._y_chips.values())
+    assert restored._card_stack.cards() == []
+
+
+def test_one_card_redraw_keeps_the_other_cards_labels_draggable(
+    panel: FitParametersPanel,
+) -> None:
+    select_params(panel, ["A0", "Lambda"])
+    panel._plot_annotations = [
+        {"x": 150.0, "y": 0.2, "text": "a", "axis_tag": "A0", "artist": None},
+        {"x": 150.0, "y": 0.1, "text": "l", "axis_tag": "Lambda", "artist": None},
+    ]
+    panel._refresh_plot()
+    assert all(ann["artist"] is not None for ann in panel._plot_annotations)
+
+    panel._draw_card("A0")
+
+    assert all(ann["artist"] is not None for ann in panel._plot_annotations)
+
+
+def test_clear_drops_the_lenses_and_labels(panel: FitParametersPanel) -> None:
+    select_params(panel, ["Lambda"])
+    panel._set_x_transform(AxisTransform.custom("x**2"))
+    panel._set_y_transform("Lambda", AxisTransform.custom("1/x"))
+    panel._plot_annotations = [{"x": 1.0, "y": 1.0, "text": "a", "axis_tag": "Lambda"}]
+
+    panel.clear()
+
+    assert panel._x_transform.is_identity
+    assert panel._y_transforms == {}
+    assert panel._plot_annotations == []
+    assert panel._x_transform_button.text() == "ƒ"
+
+
+def test_table_globals_follow_every_table_refresh(panel: FitParametersPanel) -> None:
+    panel._global_params = ParameterSet([Parameter("A_bg", value=3.5)])
+    panel._global_param_uncertainties = {"A_bg": 0.25}
+
+    panel._refresh_table()
+
+    assert "A_bg = 3.5 ± 0.25" in panel._table_globals_label.text()
+
+
+def test_refit_completion_for_a_replaced_fit_set_is_dropped(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    select_params(panel, ["Lambda"])
+    panel._model_fits["Lambda"] = _active_linear_fit("Lambda")
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        panel._tasks,
+        "start",
+        lambda fn, on_finished, on_error: captured.update(fn=fn, done=on_finished),
+    )
+
+    panel.refit_active_model_fits()
+    panel.clear()
+    captured["done"](captured["fn"](None))
+
+    assert panel._model_fits == {}
+    assert not panel._refit_in_progress

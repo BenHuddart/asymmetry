@@ -830,6 +830,9 @@ class FitParametersPanel(QWidget):
         self._plot_refresh_timer.setSingleShot(True)
         self._plot_refresh_timer.setInterval(120)
         self._plot_refresh_timer.timeout.connect(self._refresh_plot)
+        # Focus re-expands and collapses cards without expanded_changed (see the
+        # stack), so it asks for the stack redraw itself.
+        self._card_stack.focus_changed.connect(self._plot_refresh_timer.start)
 
         # ── Footer: trend provenance left, the Global-held note right ────────
         footer_row = QHBoxLayout()
@@ -978,6 +981,11 @@ class FitParametersPanel(QWidget):
         self._card_order = []
         self._collapsed_params = set()
         self._log_y_params = set()
+        self._x_transform = AxisTransform.identity()
+        self._y_transforms = {}
+        self._axis_transform_custom_memory = {}
+        self._model_fit_transform_sig = {}
+        self._plot_annotations = []
         self._rebuild_group_buttons()
         self._update_row_dependent_controls()
         self._rebuild_y_controls()
@@ -1931,7 +1939,7 @@ class FitParametersPanel(QWidget):
             self._model_fits = {}
             self._plot_annotations = []
             self._update_row_dependent_controls()
-            self._rebuild_y_controls(preferred_selected=previous_selected_y)
+            self._rebuild_y_controls(preferred_selected=previous_selected_y or None)
             self._refresh_model_fit_button_labels()
             self._update_x_axis_auto_hint()
             self._refresh_views()
@@ -1994,7 +2002,7 @@ class FitParametersPanel(QWidget):
         display_params = set(self._display_y_parameters())
         self._model_fits = {k: v for k, v in self._model_fits.items() if k in display_params}
 
-        self._rebuild_y_controls(preferred_selected=previous_selected_y)
+        self._rebuild_y_controls(preferred_selected=previous_selected_y or None)
         self._refresh_model_fit_button_labels()
         self._update_x_axis_auto_hint()
         self._refresh_group_button_styles()
@@ -3017,13 +3025,21 @@ class FitParametersPanel(QWidget):
             armed.setChecked(False)
         self._refresh_plot()
 
-    def _draw_plot_annotations(self, axes_by_tag: dict[str, object]) -> None:
-        """Draw stored annotations on currently visible parameter axes."""
+    def _draw_plot_annotations(
+        self, axes_by_tag: dict[str, object], *, keep_missing: bool = False
+    ) -> None:
+        """Draw stored annotations on the axes in *axes_by_tag*.
+
+        A full redraw drops the artist of every annotation whose axes are gone;
+        a one-card redraw (*keep_missing*) leaves the other cards' artists,
+        which are still painted, in place so they stay draggable.
+        """
         for ann in self._plot_annotations:
             axis_tag = str(ann.get("axis_tag", "main"))
             ax = axes_by_tag.get(axis_tag)
             if ax is None:
-                ann["artist"] = None
+                if not keep_missing:
+                    ann["artist"] = None
                 continue
             artist = ax.text(
                 float(ann.get("x", 0.0)),
@@ -3531,14 +3547,19 @@ class FitParametersPanel(QWidget):
         # set changes (group switch, new fit, restore).
         self._update_global_param_hint()
 
-        preferred = [name for name in (preferred_selected or []) if name in display_params]
-        if not preferred:
-            still_checked = [
+        # None is "no preference" (keep what is checked, else the first); a list
+        # is exact — an empty one leaves every chip off — unless none of its
+        # names survive a series switch, where the first parameter stands in.
+        if preferred_selected is None:
+            preferred = [
                 name
                 for name in display_params
                 if name in self._y_chips and self._y_chips[name].isChecked()
-            ]
-            preferred = still_checked or display_params[:1]
+            ] or display_params[:1]
+        else:
+            preferred = [name for name in preferred_selected if name in display_params]
+            if preferred_selected and not preferred:
+                preferred = display_params[:1]
         checked = set(preferred)
 
         clear_layout(self._y_chip_layout)
@@ -4936,6 +4957,23 @@ class FitParametersPanel(QWidget):
 
         self._table.resizeColumnsToContents()
 
+        if self._global_params is None:
+            self._table_globals_label.setText("None")
+        else:
+            lines = []
+            for param in self._global_params:
+                unit = get_param_info(param.name).unit
+                unit_text = f" {unit}" if unit else ""
+                err = self._global_param_uncertainties.get(param.name)
+                if err is not None:
+                    lines.append(f"{param.name} = {param.value:.6g} \u00b1 {err:.6g}{unit_text}")
+                else:
+                    lines.append(f"{param.name} = {param.value:.6g}{unit_text}")
+            self._table_globals_label.setText("\n".join(lines) if lines else "None")
+        fraction_note = self._fraction_weights_note()
+        self._table_fraction_note.setText(fraction_note)
+        self._table_fraction_note.setVisible(bool(fraction_note))
+
     def _included_trend_rows(self, x_key: str) -> list[_FitRow]:
         """Rows currently included in the trend, in ascending-x order.
 
@@ -4963,6 +5001,8 @@ class FitParametersPanel(QWidget):
         # Snapshot the per-parameter x/y/err arrays on the GUI thread (cheap: no
         # minimisation, just reading already-materialised _FitRow attributes) so
         # the worker touches no widget state.
+        # The fit lives in the plotted coordinates (the x lens and the parameter's
+        # own y lens), exactly as the Model Fit dialog solved it.
         jobs: dict[
             str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, ParameterModelFit]
         ] = {}
@@ -4970,18 +5010,22 @@ class FitParametersPanel(QWidget):
             rows = self._included_trend_rows(fit.x_key)
             if not rows or not fit.ranges:
                 continue
-            x_vals = np.array([self._x_value(r, fit.x_key) for r in rows], dtype=float)
-            y_vals = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
-            y_err = np.array([r.errors.get(name, np.nan) for r in rows], dtype=float)
-            x_err = self._x_error_array(rows, fit.x_key) if fit.use_x_errors else None
+            x_vals, x_err = self._apply_x_transform(
+                np.array([self._x_value(r, fit.x_key) for r in rows], dtype=float),
+                self._x_error_array(rows, fit.x_key) if fit.use_x_errors else None,
+            )
+            y_vals, y_err = self._series_y_arrays(rows, name)
             jobs[name] = (x_vals, y_vals, y_err, x_err, fit)
         if not jobs:
             return
 
         self._refit_in_progress = True
+        # The fits the jobs were cut from; a group switch, restore or clear
+        # replaces this dict, and a completion for the old one is then dropped.
+        started_from = self._model_fits
 
         def _run(_worker) -> dict[str, ParameterModelFit]:
-            updated: dict[str, ParameterModelFit] = dict(self._model_fits)
+            updated: dict[str, ParameterModelFit] = {}
             for name, (x_vals, y_vals, y_err, x_err, fit) in jobs.items():
                 new_ranges: list[ModelFitRange] = []
                 for rng in fit.ranges:
@@ -5010,7 +5054,11 @@ class FitParametersPanel(QWidget):
 
         def _on_done(updated: dict[str, ParameterModelFit]) -> None:
             self._refit_in_progress = False
-            self._model_fits = updated
+            if self._model_fits is not started_from:
+                return
+            self._model_fits.update(updated)
+            for name in updated:
+                self._model_fit_transform_sig[name] = self._transform_signature(name)
             self._sync_active_group_state()
             self._refresh_model_fit_button_labels()
             self._refresh_plot()
@@ -5461,7 +5509,7 @@ class FitParametersPanel(QWidget):
             x_label=self._transformed_x_axis_label(x_key) if card is expanded[-1] else None,
             show_legend=card is expanded[0],
         )
-        self._draw_plot_annotations({name: ax})
+        self._draw_plot_annotations({name: ax}, keep_missing=True)
         card.canvas.draw_idle()
 
     def _draw_param_axes(
@@ -6056,25 +6104,6 @@ class FitParametersPanel(QWidget):
             # lens, so say so rather than let a user read the table as transformed.
             title += " (raw values — transforms apply to the plot)"
         self._table_dialog.setWindowTitle(title)
-
-        if self._global_params is None:
-            self._table_globals_label.setText("None")
-        else:
-            lines = []
-            for param in self._global_params:
-                unit = get_param_info(param.name).unit
-                unit_text = f" {unit}" if unit else ""
-                err = self._global_param_uncertainties.get(param.name)
-                if err is not None:
-                    lines.append(f"{param.name} = {param.value:.6g} \u00b1 {err:.6g}{unit_text}")
-                else:
-                    lines.append(f"{param.name} = {param.value:.6g}{unit_text}")
-            self._table_globals_label.setText("\n".join(lines) if lines else "None")
-
-        fraction_note = self._fraction_weights_note()
-        self._table_fraction_note.setText(fraction_note)
-        self._table_fraction_note.setVisible(bool(fraction_note))
-
         self._table_dialog.show()
         self._table_dialog.raise_()
         self._table_dialog.activateWindow()

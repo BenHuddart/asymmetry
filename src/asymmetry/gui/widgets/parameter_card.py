@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-from PySide6.QtCore import QMimeData, QPoint, QPointF, QSize, Qt, Signal
+from PySide6.QtCore import QMimeData, QPoint, QPointF, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QDrag,
@@ -451,7 +451,8 @@ class ParameterCardStack(QWidget):
         self._cards[card.name] = card
         if self._focused is not None:
             self._remembered[card.name] = card.is_expanded()
-            card.set_expanded(False)
+            with QSignalBlocker(card):
+                card.set_expanded(False)
         card.focus_toggled.connect(self._on_card_focus_toggled)
         card.expanded_changed.connect(self._on_card_expanded_changed)
         self._layout.insertWidget(self._layout.count() - 1, card)
@@ -509,11 +510,15 @@ class ParameterCardStack(QWidget):
         """
         if name == self._focused:
             return
+        # Focus expansion is transient chrome, so the cards do not announce it
+        # as ``expanded_changed`` (the owner would persist it as a collapse);
+        # ``focus_changed`` below is the one signal for the whole change.
         if name is None:
             for card in self.cards():
                 card.set_focused(False)
                 card.set_tools_visible(False)
-                card.set_expanded(self._remembered[card.name])
+                with QSignalBlocker(card):
+                    card.set_expanded(self._remembered[card.name])
             self._remembered = {}
         else:
             if self._focused is None:
@@ -522,7 +527,8 @@ class ParameterCardStack(QWidget):
                 focused = card.name == name
                 card.set_focused(focused)
                 card.set_tools_visible(focused)
-                card.set_expanded(focused)
+                with QSignalBlocker(card):
+                    card.set_expanded(focused)
         self._focused = name
         self._apply_stretch()
         self.focus_changed.emit(name)

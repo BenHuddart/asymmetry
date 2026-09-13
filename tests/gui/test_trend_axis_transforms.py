@@ -624,3 +624,47 @@ def test_multi_series_draw_smoke(qapp):
     assert ax.get_xlabel() == "B² (G²)"
     # One scatter collection per series.
     assert len(ax.collections) >= 2
+
+
+def test_refit_after_an_exclusion_solves_in_the_lens_coordinates(
+    qapp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from asymmetry.core.fitting.parameter_models import (
+        ModelFitRange,
+        ParameterModelFit,
+        ParameterModelFitResult,
+    )
+
+    # λ falls with B, so 1/λ rises: the refit's slope sign tells which
+    # coordinates it solved in.
+    panel = _panel_with_rows(_lambda_series([1.0, 2.0, 3.0, 4.0, 5.0], [4.0, 2.0, 1.0, 0.5, 0.4]))
+    panel._set_y_transform("Lambda", AxisTransform.custom("1/x"))
+    params = ParameterSet([Parameter("m", value=0.1), Parameter("b", value=0.1)])
+    panel._model_fits["Lambda"] = ParameterModelFit(
+        parameter_name="Lambda",
+        x_key="field",
+        ranges=[
+            ModelFitRange(
+                x_min=None,
+                x_max=None,
+                model=ParameterCompositeModel(["Linear"]),
+                parameters=params,
+                result=ParameterModelFitResult(success=True, parameters=params),
+            )
+        ],
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        panel._tasks,
+        "start",
+        lambda fn, on_finished, on_error: captured.update(fn=fn, done=on_finished),
+    )
+    panel._rows[-1].include_in_trend = False
+
+    panel.refit_active_model_fits()
+    captured["done"](captured["fn"](None))
+
+    refit = panel._model_fits["Lambda"].ranges[0]
+    assert refit.result.success
+    assert refit.result.parameters["m"].value > 0
+    assert panel._model_fit_transform_sig["Lambda"] == panel._transform_signature("Lambda")
