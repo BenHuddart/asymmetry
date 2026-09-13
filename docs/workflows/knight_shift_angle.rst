@@ -65,8 +65,8 @@ Walkthrough
    through the scan and the trend follows one site at a time.
 
 #. **Convert to the Knight shift.** With the fitted frequencies trended, open
-   the **Knight shift analysis** window — the **Knight shift window…** button
-   in the *Derived parameters* section of the Fit Parameters panel, or
+   the **Knight shift analysis** window — the **Knight shift window…** action
+   in the Fit Parameters panel's y rail **+** menu (or its **⋯** menu), or
    **Analysis → Knight shift analysis…** — and reference against the
    **Applied field** in the *Conversion* section of its sidebar. Each frequency
    trace becomes a branch in the *Branches* section, converted live as you edit

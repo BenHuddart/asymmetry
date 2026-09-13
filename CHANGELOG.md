@@ -45,6 +45,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approximation the two-cut-off form makes (and when to fall back to `OverhauserPowder` instead),
   and the literature references.
 
+### Changed
+
+- **The Fit Parameters panel is now a stack of per-parameter cards instead of
+  a Y-parameter table above one shared plot.** Checking a chip on the new y
+  rail opens (or closes) that parameter's **card**, which carries its own
+  `Fit`, `log`, and `ƒ` (axis-transform) controls next to the figure they
+  act on, plus a one-line fit summary underneath it; collapsing a card
+  replaces the figure with a small sparkline, and dragging its grip reorders
+  the stack. The `Fit` button now reads `Fit…` / `Fit ✓` / `Fit ⚠` /
+  `Global fit ×N…` in place of the old `Model Fit` / `Model Fit*` labels. A
+  `Subplots` │ `Overlay` toggle replaces the old `Plot mode` combo (`Overlay`
+  is `Single Axes` renamed), and the fitted-parameter table moves into a
+  non-modal `Fitted parameters` pop-out (the rail's `Table` button, with
+  `Copy TSV` and `Export…` beneath it) in place of the old `Show table`
+  dialog. Exports, `Show components`, and the Knight-shift shortcut move into
+  the rail's `⋯` and `+` menus; a derived parameter's `New/Edit composite`
+  and `Remove` buttons become `Edit derived…` / `Remove` on its card's
+  right-click menu. The removed `Axis transforms` and `Derived parameters`
+  sections and the `Add Label` / `Clear Labels` bar are folded into the ƒ
+  buttons and the focused card's own tools row. See
+  `docs/reference/parameter_trending.rst`.
+
+- **A parameter's y-axis transform (Redfield, Arrhenius, a custom expression)
+  is now set per parameter instead of once for every selected Y parameter.**
+  x is one shared coordinate across every card, but y is a different physical
+  quantity per card, so one lens across dimensionally unlike parameters (σ²
+  beside a raw β, ln ν beside a linear λ) was only coherent while the panel
+  was used one parameter at a time; each card's `ƒ` button now sets and shows
+  only that parameter's own lens. A project saved before this change migrates
+  on load: a `plot_mode` of `Single Axes` reads as `Overlay`, and a legacy
+  single `y_transform` applies only to the parameters that project had
+  selected at save time (a parameter that was not selected never showed the
+  old lens).
+
 ### Fixed
 
 - **Locating moved data files now works for a project saved on Windows and opened on

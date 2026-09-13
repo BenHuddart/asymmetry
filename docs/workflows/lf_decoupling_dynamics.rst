@@ -182,9 +182,10 @@ Step 4 — The Redfield linearisation (headline)
    :width: 100%
 
    The headline result: :math:`1/\lambda` against :math:`B^2` (paper
-   Fig. 2(b)), built in the real trending panel with the **Axis transforms**
-   set to ``1/x  (reciprocal)`` on the Y axis and ``x²  (square)`` on the X
-   axis, and a ``Linear`` model fit run on the transformed plateau. The
+   Fig. 2(b)), built in the real trending panel with the card's **ƒ** button
+   set to ``1/y  (reciprocal)`` (reading ``1/y``) and the x rail's **ƒ**
+   button set to ``x²  (square)`` (reading ``x²``), and a ``Linear`` model
+   fit run on the transformed plateau. The
    included plateau points fall on a straight line; the provenance line reads
    ``8/10 members in trend · 2 excluded (0.4 T, 3.8 T)`` and the two excluded
    points are ringed in grey — the 0.4 T point near the intercept (sub-plateau,
@@ -371,8 +372,9 @@ Common pitfalls
 - **Confusing the axis-scale log toggle with a transform.** The Redfield
   linearisation needs the plotted *values* transformed (reciprocal Y, square
   X), not merely the tick spacing changed. The **log** checkbox rescales the
-  ticks and leaves the numbers alone; use the **Axis transforms** section for
-  the linearisation (:doc:`/reference/parameter_trending`).
+  ticks and leaves the numbers alone; use the **ƒ** transform buttons (the x
+  rail's, and each card's own) for the linearisation
+  (:doc:`/reference/parameter_trending`).
 
 Further reading
 ---------------

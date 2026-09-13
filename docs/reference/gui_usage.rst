@@ -1131,12 +1131,15 @@ Fit Parameters panel
 --------------------
 
 After a global fit, the Fit Parameters panel shows how the varying
-(per-dataset) parameters change across runs. It provides:
+(per-dataset) parameters change across runs. See :doc:`parameter_trending`
+for the full anatomy (series strip, x/y rails, parameter cards, the
+``Fitted parameters`` pop-out); the essentials:
 
 Parameter table
 ~~~~~~~~~~~~~~~
 
-A tabular view of all fitted varying parameters, with columns for:
+The rail's **Table** button opens a non-modal ``Fitted parameters`` window
+holding a tabular view of every fitted varying parameter, with columns for:
 
 * Run number
 * :math:`B` (G) — applied magnetic field
@@ -1146,17 +1149,22 @@ A tabular view of all fitted varying parameters, with columns for:
 Parameter trend plot
 ~~~~~~~~~~~~~~~~~~~~
 
-A plot of one selected parameter versus a sweep variable. Controls include:
+*Subplots* mode (the default) gives each checked y-rail chip its own
+**ParameterCard**; *Overlay* draws every checked parameter on one shared
+canvas. Controls include:
 
-* **X axis**: Choose between Auto (inferred from data), :math:`B` (G), :math:`T` (K), or Run number.
+* **x**: Choose between Auto (inferred from data), :math:`B` (G), :math:`T` (K), or Run number.
   Auto mode detects whether field or temperature varies across the datasets.
-* **Y parameter**: Select which varying parameter to plot
-* **Scale**: Check **Log X** and/or **Log Y** to use logarithmic axes —
-  useful for power-law behaviour or data spanning several orders of magnitude
-* **Model components**: Enable **Show components** to stack additive parameter-model
-   components under fitted overlays (for visual decomposition)
-* **Plot labels**: Use **Add Label** and **Clear Labels** to annotate exported and
-   on-screen parameter-trend plots
+* **y chips**: Check a chip to open (or close) that parameter's card
+* **Scale**: Check the x rail's **log** and/or a card's own **log** for
+  logarithmic axes — useful for power-law behaviour or data spanning several
+  orders of magnitude
+* **Model components**: Enable **⋯ → Show components** to stack additive
+  parameter-model components under fitted overlays (for visual decomposition)
+* **Plot labels**: Focus a card (its **⤢** button) and use its **Add label**
+  and **Clear labels** tools row to annotate exported and on-screen
+  parameter-trend plots (Overlay mode carries its own **Add label** /
+  **Clear labels** row beneath the canvas)
 
 When **Show components** is enabled, y-axes are forced to linear scale with a
 zero baseline so stacked component areas remain physically interpretable.
@@ -1164,30 +1172,31 @@ zero baseline so stacked component areas remain physically interpretable.
 Exporting data
 ~~~~~~~~~~~~~~
 
-**Export TSV**: Save the parameter table to a tab-separated (``.tsv``) file for
+The rail's **⋯** menu offers:
+
+**Export TSV…**: Save the parameter table to a tab-separated (``.tsv``) file for
 use in spreadsheets or other analysis software. A comment header records the
 fitted model and the shared global-parameter values, and per-run reduced χ² and
 χ² columns are appended after the parameter columns.
 
-**Export to GLE**: Generate a publication-quality figure using the
-`GLE Graphics Layout Engine <http://glx.sourceforge.io/>`_ via the
-``gleplot`` Python library:
+**Export GLE (PDF)…** / **Export GLE (EPS)…**: Generate a publication-quality
+figure using the `GLE Graphics Layout Engine <http://glx.sourceforge.io/>`_
+via the ``gleplot`` Python library:
 
-1. Click **"Export to GLE"**
+1. Click **"Export GLE (PDF)…"** or **"Export GLE (EPS)…"** for the format you want
 2. Choose a name for the ``.gleplot`` export folder
-3. Select the output format from the **Format** dropdown (PDF or EPS)
-4. The export creates the named ``.gleplot`` folder and writes:
+3. The export creates the named ``.gleplot`` folder and writes:
 
    * A ``<name>.gle`` script for the selected plot
    * A ``.dat`` data file with column headers and the globally shared
      parameters recorded as comments at the top of the file
    * Any optional ``.fit`` sidecars needed for active model overlays
 
-5. If GLE is installed on your system, the script is compiled automatically
+4. If GLE is installed on your system, the script is compiled automatically
    to PDF or EPS and the exported ``.gle`` script opens in the gleplot figure
    editor (falling back to a read-only static preview dialog against
    ``gleplot`` < 1.6)
-6. If GLE is not installed, the script and data files are still saved — and
+5. If GLE is not installed, the script and data files are still saved — and
    still open in the figure editor for editing — you can compile them later
    with ``gle -d pdf <name>.gle`` from inside the ``.gleplot`` folder
 

@@ -203,8 +203,8 @@ menu) and selecting all the runs populates a trend table; choosing
 
    The EuO order parameter: the spontaneous zero-field precession
    frequency :math:`\nu(T)` from eighteen real per-run fits (1.6 → 68.7 K),
-   with the fitted ``OrderParameter`` power law overlaid (the **Model
-   Fit\*** button flags the active fit). The frequency starts at
+   with the fitted ``OrderParameter`` power law overlaid (the card's **Fit
+   ✓** button flags the active fit). The frequency starts at
    :math:`\sim 30\;\mathrm{MHz}` at base temperature and falls with
    downward concavity toward zero at :math:`T_C \approx 69\;\mathrm{K}`.
    The fitted curve reproduces the paper's Fig. 1(d) — but see the caveat
@@ -213,8 +213,8 @@ menu) and selecting all the runs populates a trend table; choosing
 Step 5 — Fit the order parameter to a power law
 -----------------------------------------------
 
-In the trend panel, click **Model Fit** on the ``f (MHz)`` row and fit the
-built-in ``OrderParameter`` model,
+In the trend panel, check the ``f (MHz)`` chip and click **Fit…** on its
+card to fit the built-in ``OrderParameter`` model,
 
 .. math::
 
@@ -257,7 +257,7 @@ sound. But the exponent from this fit is **not** the reliable critical
 
 .. dropdown:: Reproducing the trend fit outside the GUI
 
-   The trend can be exported (**Export TSV**) and refitted with
+   The trend can be exported (**⋯ → Export TSV…**) and refitted with
    ``scipy.optimize.curve_fit``. Using the per-run frequencies from the
    scan:
 
