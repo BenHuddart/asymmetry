@@ -668,3 +668,30 @@ def test_refit_after_an_exclusion_solves_in_the_lens_coordinates(
     assert refit.result.success
     assert refit.result.parameters["m"].value > 0
     assert panel._model_fit_transform_sig["Lambda"] == panel._transform_signature("Lambda")
+
+
+def test_overlay_legend_carries_each_parameters_lens(qapp) -> None:
+    rows = _two_param_rows()
+    for i, row in enumerate(rows):
+        row.values["A"] = 0.2 + 0.01 * i
+        row.errors["A"] = 0.01
+    panel = FitParametersPanel()
+    panel._rows = rows
+    panel._varying_params = ["Lambda", "Beta", "A"]
+    panel._inferred_x_key = "field"
+    panel._rebuild_y_controls(preferred_selected=["Lambda", "Beta", "A"])
+    panel._set_y_transform("Lambda", AxisTransform.custom("1/x"))
+    panel._overlay_button.setChecked(True)
+
+    panel._draw_plot()
+
+    ax = panel._figure.axes[0]
+    labels = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert panel._transformed_y_axis_label("Lambda") in labels
+    assert fpp._format_plot_legend_label("Beta") in labels
+    assert ax.get_ylabel() == "Parameter value"
+    # The export legend says the same thing about the same parameter.
+    assert panel._legend_param_label("Lambda", gle=True) == panel._transformed_y_export_header(
+        "Lambda"
+    )
+    assert panel._legend_param_label("Beta", gle=True) == fpp._format_gle_legend_label("Beta")

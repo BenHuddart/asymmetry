@@ -89,7 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on load: a `plot_mode` of `Single Axes` reads as `Overlay`, and a legacy
   single `y_transform` applies only to the parameters that project had
   selected at save time (a parameter that was not selected never showed the
-  old lens).
+  old lens). With three or more parameters overlaid on one axis, each
+  legend entry now names that parameter's lens (`1/λ (µs)`, `ln σ`) in the
+  plot and the GLE export, and the shared axis reads `Parameter value`.
 
 ### Fixed
 

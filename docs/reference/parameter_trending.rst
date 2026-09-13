@@ -256,6 +256,9 @@ in the previous coordinate: its curve is hidden and its card's **Fit** button
 changes to **Fit ⚠** until you re-fit under the new axes. Only the fits
 actually affected are stranded — a new lens on :math:`\lambda` leaves
 :math:`\beta`'s fit alone, while a change of x axis reaches every parameter.
+In *Overlay* mode with three or more parameters on one axis, the axis reads
+``Parameter value`` and each legend entry names that parameter's lens
+(``1/λ (µs)`` beside a raw ``β``), in the plot and in the GLE export alike.
 
 The **field** axis is labelled in gauss (the loaders' native field unit), so a
 transform squares or inverts that unit accordingly (``B² (G²)``); a dataset held

@@ -3329,3 +3329,19 @@ def test_refit_completion_for_a_replaced_fit_set_is_dropped(
 
     assert panel._model_fits == {}
     assert not panel._refit_in_progress
+
+
+def test_panel_minimum_width_does_not_follow_parameter_names(panel: FitParametersPanel) -> None:
+    panel.show()
+    narrow = panel.minimumSizeHint().width()
+    for row in panel._rows:
+        row.values["sigma_KT_fast_component_rate"] = 0.3
+        row.errors["sigma_KT_fast_component_rate"] = 0.01
+    panel._varying_params = ["A0", "Lambda", "sigma_KT_fast_component_rate"]
+
+    panel._rebuild_y_controls(preferred_selected=["A0"])
+
+    assert panel.minimumSizeHint().width() == narrow
+    chip = panel._y_chips["sigma_KT_fast_component_rate"]
+    assert chip.text().endswith("…")
+    assert chip.toolTip() == _format_param_label("sigma_KT_fast_component_rate")

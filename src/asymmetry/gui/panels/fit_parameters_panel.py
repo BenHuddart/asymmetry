@@ -156,7 +156,7 @@ from asymmetry.gui.export_paths import default_export_path, remember_export_path
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     build_segmented_button_qss,
@@ -182,6 +182,11 @@ _IDENTITY_TRANSFORM_GLYPH = "ƒ"
 #: Title of the pop-out fitted-parameter table (a suffix is appended while a
 #: transform is active — the table always shows raw values).
 _TABLE_DIALOG_TITLE = "Fitted parameters"
+#: Widths of the x picker and of a y chip, in characters of the live font. A
+#: longer label elides on the chip (the tooltip carries it in full) and shows in
+#: the picker's popup, so neither grows the panel's minimum width.
+_X_PICKER_CHARS = 8
+_CHIP_MAX_CHARS = 14
 #: Share of the screen's work area the table pop-out may open at — the table is
 #: as wide as the fit has parameters, so a wide series must stop somewhere.
 _TABLE_DIALOG_SCREEN_FRACTION = 0.9
@@ -272,8 +277,7 @@ def _fit_overlay_color(index: int) -> str:
     return colors[index % len(colors)]
 
 
-def _fit_overlay_label(param_name: str, index: int, total: int, *, gle: bool) -> str:
-    base = _format_gle_legend_label(param_name) if gle else _format_plot_legend_label(param_name)
+def _fit_overlay_label(base: str, index: int, total: int) -> str:
     suffix = "" if index == 0 else f" #{index + 1}"
     if total <= 1:
         suffix = ""
@@ -695,6 +699,13 @@ class FitParametersPanel(QWidget):
         x_row.addWidget(QLabel("x"))
 
         self._x_combo = QComboBox()
+        # Sized to a fixed character count, not to its entries: fitted-parameter
+        # names join this list, and the panel's minimum width (hence the dock's
+        # default) must not follow the longest of them.
+        self._x_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._x_combo.setMinimumContentsLength(_X_PICKER_CHARS)
         self._x_combo.addItems(["Auto", "𝐵 (G)", "𝑇 (K)", "Run"])
         self._x_combo.currentTextChanged.connect(self._on_x_axis_changed)
         x_row.addWidget(self._x_combo)
@@ -3563,11 +3574,17 @@ class FitParametersPanel(QWidget):
 
         clear_layout(self._y_chip_layout)
         self._y_chips = {}
+        chip_metrics = self._y_chip_strip.fontMetrics()
         for name in display_params:
-            chip = QPushButton(format_param_label(name))
+            label = format_param_label(name)
+            chip = QPushButton(
+                chip_metrics.elidedText(
+                    label, Qt.TextElideMode.ElideRight, metrics.char_width(_CHIP_MAX_CHARS)
+                )
+            )
             chip.setCheckable(True)
             chip.setChecked(name in checked)
-            chip.setToolTip(format_param_label(name))
+            chip.setToolTip(label)
             self._style_chip(chip, name in checked)
             chip.toggled.connect(lambda on, p=name: self._on_chip_toggled(p, on))
             self._y_chip_layout.addWidget(chip)
@@ -5794,7 +5811,7 @@ class FitParametersPanel(QWidget):
             for idx, y_name in enumerate(y_params):
                 y_vals, y_err = self._series_y_arrays(rows, y_name)
                 color = self._single_series_color() if len(y_params) == 1 else f"C{idx % 10}"
-                label = _format_plot_legend_label(y_name) if len(y_params) > 1 else None
+                label = self._legend_param_label(y_name) if len(y_params) > 1 else None
 
                 self._draw_model_overlay_mpl(ax, y_name, color=color)
 
@@ -5822,7 +5839,7 @@ class FitParametersPanel(QWidget):
                 else:
                     ax.set_yscale("log" if self._is_log_y_for(y_params[0]) else "linear")
             else:
-                ax.set_ylabel("Parameter Value")
+                ax.set_ylabel("Parameter value")
                 if len(y_params) > 2:
                     ax.legend(loc="best")
                 if self._show_components_action.isChecked():
@@ -5873,7 +5890,7 @@ class FitParametersPanel(QWidget):
                 self._plot_series_param(ax, s, x_key, y_name, marker=marker, label=label)
         ax.set_xlabel(x_label)
         ax.set_ylabel(
-            self._transformed_y_axis_label(y_params[0]) if not multi_param else "Parameter Value"
+            self._transformed_y_axis_label(y_params[0]) if not multi_param else "Parameter value"
         )
         ax.set_xscale("log" if log_x else "linear")
         if multi_param:
@@ -5896,8 +5913,20 @@ class FitParametersPanel(QWidget):
     ) -> str:
         name = self._series_legend_name(series)
         if multi_param:
-            return f"{name} · {format_param_label(y_name)}"
+            return f"{name} · {self._legend_param_label(y_name)}"
         return name
+
+    def _legend_param_label(self, y_name: str, *, gle: bool = False) -> str:
+        """A parameter's legend entry: its symbol, or its lens when one is set.
+
+        Several parameters on one Overlay axis share a neutral axis label, so
+        the legend is the only place a per-parameter lens (1/λ, ln σ) can show.
+        """
+        if self._y_transform_for(y_name).is_identity:
+            return _format_gle_legend_label(y_name) if gle else _format_plot_legend_label(y_name)
+        if gle:
+            return self._transformed_y_export_header(y_name)
+        return self._transformed_y_axis_label(y_name)
 
     def _plot_series_param(
         self,
@@ -7035,7 +7064,7 @@ class FitParametersPanel(QWidget):
         for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
             line_label = (
-                _fit_overlay_label(param_name, idx, len(curves), gle=True)
+                _fit_overlay_label(self._legend_param_label(param_name, gle=True), idx, len(curves))
                 if include_labels
                 else None
             )
@@ -7404,7 +7433,7 @@ class FitParametersPanel(QWidget):
                 if len(y_params) == 1:
                     ax.set_ylabel(self._gle_effective_y_label(y_params[0]))
                 else:
-                    ax.set_ylabel("Parameter Value")
+                    ax.set_ylabel("Parameter value")
                     if show_fit_legend:
                         ax.legend(loc="best")
 
