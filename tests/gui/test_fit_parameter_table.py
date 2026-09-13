@@ -17,11 +17,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QHeaderView
 
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.parameters import AffineTie
 from asymmetry.core.fitting.seeding import Seed
+from asymmetry.gui.panels.fit.tab_base import VALUE_COL_CHARS, table_content_width
 from asymmetry.gui.panels.fit_panel import FitParameterTable
 from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
@@ -287,18 +288,48 @@ def test_unknown_column_group_is_a_value_error(qapp):
 
 
 def test_resting_columns_fit_a_narrow_inspector_dock(qapp):
-    """Name·Value·Fix·Min·Max is what the ~300 px dock shows at rest."""
+    """Name·Value·Fix·Min·Max is what the ~300 px dock shows at rest.
+
+    Value stretches, so what it *has* is whatever the viewport left over; the
+    budget that has to fit the dock is the fixed columns plus what Value asks
+    for. Both are what :func:`table_content_width` reports.
+    """
     table = FitParameterTable()
     table.populate(_model())
-    # All eight columns are sized, so the pop-out that shows every one is readable.
-    assert all(table.columnWidth(c) > 0 for c in range(table.columnCount()))
+    # Every fixed column is sized, so the pop-out that shows all eight is readable.
+    assert all(table.columnWidth(c) > 0 for c in range(table.columnCount()) if c != table.COL_VALUE)
+    assert (
+        table.horizontalHeader().sectionResizeMode(table.COL_VALUE)
+        == QHeaderView.ResizeMode.Stretch
+    )
+    assert table.horizontalHeader().stretchLastSection() is False
 
     table.set_column_group_visible("links", False)
     table.set_column_group_visible("batch", False)
-    shown = sum(
-        table.columnWidth(c) for c in range(table.columnCount()) if not table.isColumnHidden(c)
-    )
-    assert shown < char_width(42)
+    assert table_content_width(table) < char_width(42)
+
+
+def test_the_value_column_takes_the_leftover_width(qapp):
+    """In a dock wider than the columns need, Value absorbs the slack."""
+    table = FitParameterTable()
+    table.populate(_model())
+    table.set_column_group_visible("links", False)
+    table.set_column_group_visible("batch", False)
+    table.resize(char_width(60), 200)
+    table.show()
+    qapp.processEvents()
+    try:
+        fixed = sum(
+            table.columnWidth(c)
+            for c in range(table.columnCount())
+            if c != table.COL_VALUE and not table.isColumnHidden(c)
+        )
+        assert table.columnWidth(table.COL_VALUE) > char_width(VALUE_COL_CHARS)
+        assert fixed + table.columnWidth(table.COL_VALUE) == table.viewport().width()
+        assert table.horizontalScrollBar().maximum() == 0
+    finally:
+        table.close()
+        table.deleteLater()
 
 
 def test_value_badge_shows_the_link_group_then_the_tie(qapp):

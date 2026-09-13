@@ -74,6 +74,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -743,6 +744,11 @@ _PARAM_ROLE_LABELS = {"global": "Global", "local": "Local", "fixed": "Fixed", "f
 #: (:func:`_make_param_name_item`). One budget so the tables stay aligned.
 _PARAM_NAME_COL_CHARS = 13
 
+#: Character budget every value/seed column asks for. The columns stretch (see
+#: :func:`stretch_value_columns`), so this is their floor in a narrow dock and
+#: the width the ↗ pop-out opens them at, not what they normally show.
+VALUE_COL_CHARS = 12
+
 
 def param_name_col_width() -> int:
     """Return the shared "Name"/"Parameter" column width at the current UI scale.
@@ -1396,6 +1402,40 @@ class _ValueUncertaintyDelegate(_CommitOnTabDelegate):
         model.setData(index, None, self._MINOS_ROLE)
 
 
+#: Where :func:`stretch_value_columns` records ``[columns, width]`` for
+#: :func:`table_content_width` — a Qt property rather than an attribute, since
+#: the tables it describes are plain ``QTableWidget`` instances.
+_STRETCH_COLUMNS_PROPERTY = "asymmetryStretchColumns"
+
+
+def stretch_value_columns(table: QTableWidget, columns: Sequence[int], *, chars: int) -> None:
+    """Let *columns* share whatever width the fixed columns leave over.
+
+    A parameter table's fixed character widths are chosen to fit the narrow
+    inspector dock, so in a wider dock (or the ↗ pop-out) the sum falls short of
+    the viewport and the table ends in a band of empty grid. The value columns —
+    the ones whose content is open-ended — absorb that slack instead. *chars* is
+    what each still asks for when nothing is spare; a stretched section reports
+    its current width rather than its wish, so the budget is remembered here for
+    :func:`table_content_width`.
+    """
+    header = table.horizontalHeader()
+    for column in columns:
+        table.setColumnWidth(column, char_width(chars))
+        header.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+    table.setProperty(_STRETCH_COLUMNS_PROPERTY, [list(columns), char_width(chars)])
+
+
+def table_content_width(table: QTableWidget) -> int:
+    """Width the table's visible columns want, stretch columns at their budget."""
+    columns, stretch_width = table.property(_STRETCH_COLUMNS_PROPERTY)
+    return sum(
+        stretch_width if column in columns else table.columnWidth(column)
+        for column in range(table.columnCount())
+        if not table.isColumnHidden(column)
+    )
+
+
 def _size_param_table_to_content(table: QTableWidget) -> None:
     """Fix a parameter table's height to exactly its rows.
 
@@ -1485,7 +1525,6 @@ class FitParameterTable(QTableWidget):
         # scale instead of freezing at their old design pixels.
         for col, chars in (
             (0, _PARAM_NAME_COL_CHARS),  # Name, 92 px at design font
-            (1, 12),  # Value, 88 px
             (2, 4),  # Fix, 30 px
             # Min/Max hold "-inf", "1e6" and the ±∞ glyphs in 6 characters; the
             # resting set (Name·Value·Fix·Min·Max) has to fit a ~300 px dock.
@@ -1496,6 +1535,9 @@ class FitParameterTable(QTableWidget):
             (7, 5),  # Tie, 40 px
         ):
             self.setColumnWidth(col, char_width(chars))
+        # Value is where a long number (or a ±σ overlay and a link/tie badge)
+        # actually needs the room, so it takes the dock's leftover width.
+        stretch_value_columns(self, (self.COL_VALUE,), chars=VALUE_COL_CHARS)
         _apply_param_table_style(self)
         # Tab commits the open editor on every editable column; the Value column
         # additionally paints the ±σ overlay.
@@ -2106,6 +2148,24 @@ class FitTabBase(QWidget):
             row_layout.addWidget(button)
         return row
 
+    def _build_run_row(self, *widgets: QWidget) -> QWidget:
+        """Return the run controls and their outcome chip as one wrapping row.
+
+        The chip that appears after a fit ("2 ✓ 2 ⚠", "χ²ᵣ 1.07") is as wide as
+        a button, so on a `QHBoxLayout` it pushed the row — and with it the
+        whole dock — past the ~300 px a 13-inch inspector has. Here it wraps
+        under the buttons instead.
+        """
+        row = QWidget()
+        row_layout = FlowLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        row.setSizePolicy(policy)
+        for widget in widgets:
+            row_layout.addWidget(widget)
+        return row
+
     # ------------------------------------------------------------------
     # Shared Parameters rail: column-group chips and the ↗ pop-out
     # ------------------------------------------------------------------
@@ -2238,14 +2298,17 @@ class FitTabBase(QWidget):
 
         A ``QTableWidget``'s size hint is a scrolling hint, so the dialog would
         open with a horizontal scrollbar over columns that are already sized to
-        their contents. The floor is the dialog's current size, so a pop-out the
-        user has widened only ever grows (as in the Parameters panel).
+        their contents. The width comes from what the columns want rather than
+        the header's current length, because a stretched value column reports
+        whatever the dock last gave it. The floor is the dialog's current size,
+        so a pop-out the user has widened only ever grows (as in the Parameters
+        panel).
         """
         layout = self._param_table_dialog.layout()
         margins = layout.contentsMargins()
         items = [layout.itemAt(index) for index in range(layout.count())]
         width = (
-            self._rail_table.horizontalHeader().length()
+            table_content_width(self._rail_table)
             + self._rail_table.verticalHeader().width()
             + 2 * self._rail_table.frameWidth()
             + margins.left()

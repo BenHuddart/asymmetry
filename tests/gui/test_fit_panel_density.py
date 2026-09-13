@@ -18,6 +18,7 @@ Covers the F3 GUI-review findings, as the Fit tab refresh now answers them:
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -31,6 +32,9 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMenu, QPushButton, QToolButton
 
+from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit.single_tab import (
     ADD_TO_SERIES_ACTION,
@@ -54,6 +58,48 @@ _RETIRED_LABELS = {"Drop background", "More…", "Send to Batch", "Add to Series
 @pytest.fixture
 def app():
     return QApplication.instance() or QApplication([])
+
+
+def _run_stub_fit(tab: SingleFitTab) -> None:
+    """Record a converged fit on *tab* against a stub engine, so the χ²ᵣ chip shows."""
+    names = list(tab._composite_model.param_names)
+
+    def _engine_fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
+        return FitResult(
+            success=True,
+            chi_squared=60.0,
+            reduced_chi_squared=1.0,
+            dof=60,
+            parameters=ParameterSet(
+                [Parameter(name=name, value=float(i + 1)) for i, name in enumerate(names)]
+            ),
+            uncertainties=dict.fromkeys(names, 0.01),
+        )
+
+    time = np.linspace(0.1, 8.0, 64)
+    tab.set_dataset(
+        MuonDataset(
+            time=time,
+            asymmetry=0.2 * np.exp(-0.5 * time),
+            error=np.full_like(time, 0.01),
+            metadata={"run_number": 3001},
+        )
+    )
+    tab._fit_engine = SimpleNamespace(fit=_engine_fit)
+    tab._run_fit()
+    assert tab.wait_for_fit()
+
+
+def _stub_result(chi2: float) -> FitResult:
+    """A converged single-parameter result, enough to render an outcome chip."""
+    return FitResult(
+        success=True,
+        chi_squared=chi2 * 30.0,
+        reduced_chi_squared=chi2,
+        dof=30,
+        parameters=ParameterSet([Parameter(name="Lambda", value=0.5)]),
+        uncertainties={"Lambda": 0.01},
+    )
 
 
 def _find_button(widget, label: str) -> QPushButton:
@@ -127,6 +173,14 @@ def test_resting_parameter_table_does_not_scroll_sideways_in_the_dock(app):
         assert table.column_group_visible("batch") is False
         assert table.horizontalScrollBar().maximum() == 0
         assert tab.minimumSizeHint().width() <= char_width(40)
+
+        # And still once a fit has run: the χ²ᵣ chip joins the run row, which
+        # wraps it under the buttons rather than widening the tab.
+        _run_stub_fit(tab)
+        app.processEvents()
+        assert not tab._chi2_chip.isHidden()
+        assert table.horizontalScrollBar().maximum() == 0
+        assert tab.minimumSizeHint().width() <= char_width(_DOCK_CHARS)
     finally:
         tab.close()
         tab.deleteLater()
@@ -149,6 +203,17 @@ def test_batch_tab_parameter_tables_do_not_scroll_sideways_in_the_dock(app):
 
         assert tab._param_table.isColumnHidden(global_tab_module._COL_MIN)
         assert tab._param_table.isColumnHidden(global_tab_module._COL_MAX)
+        assert tab._param_table.horizontalScrollBar().maximum() == 0
+        assert tab.minimumSizeHint().width() <= char_width(_DOCK_CHARS)
+
+        # The outcome chip lands on the same run row as ``Run batch fit``.
+        tab._render_fit_summary(
+            {3001: _stub_result(0.98), 3002: _stub_result(1.9)},
+            tag_prefix="Batch",
+            detail_html="",
+        )
+        app.processEvents()
+        assert tab._outcome_chip.isVisible()
         assert tab._param_table.horizontalScrollBar().maximum() == 0
         assert tab.minimumSizeHint().width() <= char_width(_DOCK_CHARS)
     finally:

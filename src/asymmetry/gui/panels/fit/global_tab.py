@@ -48,7 +48,7 @@ import os
 from collections.abc import Mapping, Sequence
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtCore import QSettings, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -133,7 +133,7 @@ from asymmetry.core.fitting.spectral import (
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles.fonts import mono_font
-from asymmetry.gui.styles.metrics import char_width
+from asymmetry.gui.styles.metrics import char_width, row_height
 from asymmetry.gui.styles.typography import SIZE_NUMERIC
 from asymmetry.gui.styles.widgets import (
     FIT_VERDICT_CHIP_COLOURS,
@@ -173,6 +173,7 @@ from .tab_base import (
     SEEDED,
     TONE_BY_TAG,
     USER,
+    VALUE_COL_CHARS,
     FitParameterTable,
     FitTabBase,
     _apply_domain_mismatch_warning,
@@ -202,6 +203,7 @@ from .tab_base import (
     dataset_error_oversampling,
     fit_results_snapshot,
     param_name_col_width,
+    stretch_value_columns,
 )
 from .wizard_cache import GlobalWizardCacheEntry, global_wizard_cache_entry
 
@@ -241,6 +243,10 @@ _COLUMN_GROUP_CHIPS = (("Bounds", "bounds", False, "Show the Min and Max columns
 #: grouped physics table (Parameter · Value · Type · Min · Max).
 _COL_MIN = 3
 _COL_MAX = 4
+
+#: How many members the "Batch members" list shows before it scrolls. Past this
+#: the list would crowd out the fit controls in a dock that scrolls anyway.
+_MEMBERS_LIST_MAX_ROWS = 8
 
 #: Hand-off labels on the results card. Named so the construction and the
 #: ``action_triggered`` router cannot drift apart.
@@ -542,6 +548,9 @@ class GlobalFitTab(FitTabBase):
                 "Untick a run to exclude it from this batch fit without removing it from the group."
             )
             self._members_list.itemChanged.connect(self._on_member_check_changed)
+            # Sized to its rows by _size_members_list; without that a QListWidget
+            # claims a square-ish default height and the section reads as a big
+            # empty box above three ticked runs.
             self._members_group.addWidget(self._members_list)
             layout.addWidget(self._members_group)
             self._members_group.setVisible(False)
@@ -563,8 +572,9 @@ class GlobalFitTab(FitTabBase):
             "after the batch fit completes."
         )
         self._param_table.setColumnWidth(0, param_name_col_width())  # Parameter name
-        self._param_table.setColumnWidth(1, char_width(11))  # Shared seed value, 76 px
         self._param_table.setColumnWidth(2, char_width(12))  # Type (dropdown), 86 px
+        # Seed is this table's value column: it takes the dock's leftover width.
+        stretch_value_columns(self._param_table, (1,), chars=VALUE_COL_CHARS)
         # Min/Max hold "-inf", "1e6" and the ±∞ glyphs in 6 characters, matching
         # the Single tab's pair so the two surfaces line up.
         self._param_table.setColumnWidth(_COL_MIN, char_width(6))
@@ -596,8 +606,8 @@ class GlobalFitTab(FitTabBase):
         )
         self._group_param_table.horizontalHeader().setStretchLastSection(False)
         self._group_param_table.setColumnWidth(0, param_name_col_width())
-        self._group_param_table.setColumnWidth(1, char_width(11))  # 78 px
         self._group_param_table.setColumnWidth(2, char_width(12))  # 86 px
+        stretch_value_columns(self._group_param_table, (1,), chars=VALUE_COL_CHARS)
         self._group_param_table.setColumnWidth(_COL_MIN, char_width(6))
         self._group_param_table.setColumnWidth(_COL_MAX, char_width(6))
         _apply_param_table_style(self._group_param_table)
@@ -634,8 +644,8 @@ class GlobalFitTab(FitTabBase):
             )
             self._group_model_table.horizontalHeader().setStretchLastSection(False)
             self._group_model_table.setColumnWidth(0, param_name_col_width())
-            self._group_model_table.setColumnWidth(1, char_width(11))  # 78 px
             self._group_model_table.setColumnWidth(2, char_width(12))  # 86 px
+            stretch_value_columns(self._group_model_table, (1,), chars=VALUE_COL_CHARS)
             self._group_model_table.setColumnWidth(_COL_MIN, char_width(6))
             self._group_model_table.setColumnWidth(_COL_MAX, char_width(6))
             _apply_param_table_style(self._group_model_table)
@@ -761,14 +771,11 @@ class GlobalFitTab(FitTabBase):
         self._outcome_chip.setFont(mono_font(SIZE_NUMERIC))
         self._outcome_chip.hide()
 
-        run_row = QHBoxLayout()
-        run_row.setContentsMargins(0, 0, 0, 0)
-        run_row.setSpacing(6)
-        for button in (self._fit_btn, self._stop_btn, self._preview_btn):
-            run_row.addWidget(button)
-        run_row.addStretch(1)
-        run_row.addWidget(self._outcome_chip)
-        layout.addLayout(run_row)
+        layout.addWidget(
+            self._build_run_row(
+                self._fit_btn, self._stop_btn, self._preview_btn, self._outcome_chip
+            )
+        )
 
         self._minos_checkbox = QCheckBox("Asymmetric errors")
         self._minos_checkbox.setToolTip(
@@ -938,9 +945,14 @@ class GlobalFitTab(FitTabBase):
             )
         )
         noun = "groups" if self._member_kind == "groups" else "runs"
-        text = f"{total} {noun} · {n_clean} ✓"
+        # Counts only — the chip shares the run row with the buttons, and the
+        # "N runs" prefix cost the row more width than a 13-inch dock has. The
+        # sentence it stands for is on the tooltip.
+        text = f"{n_clean} ✓" + (f" {warned} ⚠" if warned else "")
+        sentence = f"{n_clean} converged without flags"
         if warned:
-            text += f" {warned} ⚠"
+            sentence += f", {warned} flagged"
+        self._outcome_chip.setToolTip(f"{total} {noun}: {sentence}")
         self._outcome_chip.setText(text)
         self._outcome_chip.setStyleSheet(
             verdict_chip_qss(
@@ -1111,6 +1123,9 @@ class GlobalFitTab(FitTabBase):
                 except (TypeError, ValueError):
                     continue
                 item = QListWidgetItem(str(getattr(dataset, "run_label", run_number)))
+                # The shared table row height, so the list's fixed height in
+                # _size_members_list is exactly the rows it shows.
+                item.setSizeHint(QSize(0, row_height()))
                 item.setData(Qt.ItemDataRole.UserRole, run_number)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(
@@ -1121,7 +1136,18 @@ class GlobalFitTab(FitTabBase):
                 self._members_list.addItem(item)
         finally:
             self._suppress_member_signals = False
+        self._size_members_list()
         self._update_members_visibility()
+
+    def _size_members_list(self) -> None:
+        """Fix the members list to its rows, scrolling past ``_MEMBERS_LIST_MAX_ROWS``.
+
+        The inspector dock scrolls vertically as a whole, so a short batch shows
+        every run with no empty space; a long one stops growing and scrolls
+        inside the list rather than pushing the fit controls below the fold.
+        """
+        rows = min(self._members_list.count(), _MEMBERS_LIST_MAX_ROWS)
+        self._members_list.setFixedHeight(rows * row_height() + 2 * self._members_list.frameWidth())
 
     def _update_members_visibility(self) -> None:
         """Show the members section only when there is a batch to filter."""
@@ -5019,8 +5045,12 @@ class GlobalFitTab(FitTabBase):
             ["Parameter", *value_headers, "Type", "Min", "Max"]
         )
         self._group_param_table.setColumnWidth(0, param_name_col_width())
-        for offset in range(len(value_headers)):
-            self._group_param_table.setColumnWidth(1 + offset, char_width(11))  # 78 px
+        # One value column per bound group; they share the leftover width evenly.
+        stretch_value_columns(
+            self._group_param_table,
+            range(1, 1 + len(value_headers)),
+            chars=VALUE_COL_CHARS,
+        )
         self._group_param_table.setColumnWidth(self._group_param_type_column(), char_width(12))
         self._group_param_table.setColumnWidth(self._group_param_min_column(), char_width(6))
         self._group_param_table.setColumnWidth(self._group_param_min_column() + 1, char_width(6))

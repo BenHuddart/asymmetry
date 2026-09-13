@@ -270,14 +270,15 @@ class SingleFitTab(FitTabBase):
         self._chi2_chip.clicked.connect(self._show_fit_results_window)
         self._chi2_chip.hide()
 
-        run_row = QHBoxLayout()
-        run_row.setContentsMargins(0, 0, 0, 0)
-        run_row.setSpacing(6)
-        for button in (self._fit_btn, self._stop_btn, self._reset_btn, self._preview_btn):
-            run_row.addWidget(button)
-        run_row.addStretch(1)
-        run_row.addWidget(self._chi2_chip)
-        layout.addLayout(run_row)
+        layout.addWidget(
+            self._build_run_row(
+                self._fit_btn,
+                self._stop_btn,
+                self._reset_btn,
+                self._preview_btn,
+                self._chi2_chip,
+            )
+        )
 
         self._minos_checkbox = QCheckBox("Asymmetric errors")
         self._minos_checkbox.setToolTip(

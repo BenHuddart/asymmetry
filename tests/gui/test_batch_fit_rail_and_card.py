@@ -27,10 +27,15 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet  # noqa: E
 from asymmetry.gui.panels.fit.global_tab import (  # noqa: E402
     _COL_MAX,
     _COL_MIN,
+    _MEMBERS_LIST_MAX_ROWS,
     COLUMN_GROUPS_SETTINGS_KEY,
     GlobalFitTab,
 )
+from asymmetry.gui.styles.metrics import char_width, row_height  # noqa: E402
 from asymmetry.gui.windows.fit_results_window import FitResultsWindow  # noqa: E402
+
+#: The inspector dock the Fit tabs are designed against, in characters (~320 px).
+_DOCK_CHARS = 46
 
 
 @pytest.fixture(scope="module")
@@ -167,8 +172,9 @@ def test_a_converged_batch_renders_one_chip_per_member(qapp, settings) -> None:
         assert any(text.startswith("3001 ✓") for text in chips)
         assert any(text.startswith("3003 ⚠") for text in chips)
         assert tab._outcome_chip.isVisibleTo(tab)
-        assert tab._outcome_chip.text().startswith("3 runs · ")
-        assert "⚠" in tab._outcome_chip.text()
+        # Counts only on the chip; the sentence they stand for is on the tooltip.
+        assert tab._outcome_chip.text() == "2 ✓ 1 ⚠"
+        assert tab._outcome_chip.toolTip() == "3 runs: 2 converged without flags, 1 flagged"
     finally:
         tab.close()
         tab.deleteLater()
@@ -191,7 +197,8 @@ def test_a_flagged_but_converged_member_still_counts_as_converged(qapp, settings
         chips = [button.text() for button in card._members.findChildren(QPushButton)]
         assert [text.split()[1] for text in chips] == ["✓", "⚠"]
         assert card.tag_text() == "Batch ⚠"
-        assert tab._outcome_chip.text() == "2 runs · 1 ✓ 1 ⚠"
+        assert tab._outcome_chip.text() == "1 ✓ 1 ⚠"
+        assert tab._outcome_chip.toolTip() == "2 runs: 1 converged without flags, 1 flagged"
     finally:
         tab.close()
         tab.deleteLater()
@@ -206,7 +213,8 @@ def test_an_all_good_batch_reads_as_ok(qapp, settings) -> None:
             detail_html="",
         )
         assert tab._results_card.tag_text() == "Batch ✓"
-        assert tab._outcome_chip.text() == "2 runs · 2 ✓"
+        assert tab._outcome_chip.text() == "2 ✓"
+        assert tab._outcome_chip.toolTip() == "2 runs: 2 converged without flags"
     finally:
         tab.close()
         tab.deleteLater()
@@ -245,6 +253,73 @@ def test_send_to_batch_tags_the_card_with_the_source_run(qapp, settings) -> None
         tab.show_seeded_from(3001)
         assert tab._results_card._meta_tag.text() == "seeded from 3001"
         assert "3001" in tab._results_card._meta_tag.toolTip()
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+# ── the members list ────────────────────────────────────────────────────────
+
+
+def test_the_members_list_is_as_tall_as_its_runs(qapp, settings) -> None:
+    """Four runs, four rows — not a QListWidget's square default box."""
+    tab = GlobalFitTab(member_kind="runs", settings=settings)
+    try:
+        tab.set_datasets([_dataset(3001 + i) for i in range(4)])
+        members = tab._members_list
+
+        assert members.count() == 4
+        assert members.height() == 4 * row_height() + 2 * members.frameWidth()
+        assert members.verticalScrollBar().maximum() == 0
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+def test_a_long_batch_caps_the_members_list_and_scrolls(qapp, settings) -> None:
+    tab = GlobalFitTab(member_kind="runs", settings=settings)
+    try:
+        tab.resize(char_width(_DOCK_CHARS), 1200)
+        tab.show()
+        tab.set_datasets([_dataset(3001 + i) for i in range(12)])
+        qapp.processEvents()
+        members = tab._members_list
+
+        assert members.count() == 12
+        assert members.height() == _MEMBERS_LIST_MAX_ROWS * row_height() + 2 * members.frameWidth()
+        assert members.verticalScrollBar().maximum() > 0
+    finally:
+        tab.close()
+        tab.deleteLater()
+
+
+# ── the run row ─────────────────────────────────────────────────────────────
+
+
+def test_the_grouped_run_row_wraps_instead_of_widening_the_dock(qapp, settings) -> None:
+    """After a grouped fit the outcome chip wraps under the buttons.
+
+    ``Run grouped fit`` · ``Preview`` · the chip on one line came to more than
+    the ~300 px a 13-inch inspector dock has, so the whole tab demanded a
+    horizontal scrollbar once a fit had run.
+    """
+    tab = GlobalFitTab(member_kind="groups", grouped_single=True, settings=settings)
+    try:
+        tab.resize(char_width(_DOCK_CHARS), 1200)
+        tab.show()
+        qapp.processEvents()
+
+        tab._render_fit_summary(
+            {0: _result(0.98), 1: _result(1.9), 2: _result(1.0, success=False), 3: _result(1.1)},
+            tag_prefix="Batch",
+            detail_html="",
+        )
+        qapp.processEvents()
+
+        assert tab._outcome_chip.isVisible()
+        assert tab._outcome_chip.toolTip().startswith("4 groups: ")
+        assert tab._rail_table.horizontalScrollBar().maximum() == 0
+        assert tab.minimumSizeHint().width() <= char_width(_DOCK_CHARS)
     finally:
         tab.close()
         tab.deleteLater()
