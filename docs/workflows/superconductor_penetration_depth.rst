@@ -179,8 +179,8 @@ Step 3 — Trend σ(T) through T_c
    :math:`\lambda_L = \sqrt{75780/\sigma} \approx 255\;\mathrm{nm}` — noted
    on the plot as indicative only (see below).
 
-Loading each run's fit result into the trend panel and selecting
-``σ (µs⁻¹)`` from **Y parameters** plots the depolarisation rate against
+Loading each run's fit result into the trend panel and checking the
+``σ (µs⁻¹)`` chip on the y rail plots the depolarisation rate against
 temperature. The curve has the canonical mixed-state form: a low-:math:`T`
 plateau where the superfluid density is fully developed, a monotonic fall
 on warming as :math:`\rho_s` melts, and a collapse to the nuclear-dipolar
@@ -230,8 +230,8 @@ conventional, weakly-anisotropic superconductor deep in the mixed state,
 signature of dimensional crossover: below :math:`B^*` the pancake vortices
 in adjacent CuO₂ planes decouple, the lattice order softens, and the
 measured second moment shrinks. The overlay is a plot-only comparison;
-**Export TSV** writes both series, while GLE export and any trend
-**Model Fit** apply to the active series alone.
+**⋯ → Export TSV…** writes both series, while GLE export and any card
+**Fit** apply to the active series alone.
 
 Fitting a gap model
 -------------------
@@ -256,8 +256,8 @@ dialog:
 The ``_Q`` variants (``SC_SWave_Q``, ``SC_DWave_Q``) combine the
 superconducting and normal linewidth contributions in quadrature rather
 than linearly, appropriate when the two sources are independent. Fit these
-in the trend panel by selecting ``σ (µs⁻¹)`` and clicking **Model Fit**, or
-export the trend (**Export TSV**) and fit outside the GUI with
+in the trend panel by checking the ``σ (µs⁻¹)`` chip and clicking **Fit…** on
+its card, or export the trend (**⋯ → Export TSV…**) and fit outside the GUI with
 ``scipy.optimize.curve_fit``. In every case, include a few points above
 :math:`T_c` so the high-:math:`T` tail anchors both :math:`T_c` and the
 nuclear-dipolar background :math:`\sigma_{bg}`, and subtract

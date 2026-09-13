@@ -20,6 +20,7 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
+from tests.gui._trend_panel import select_params
 
 pytestmark = [pytest.mark.gui]
 
@@ -67,19 +68,11 @@ def _garbage_rows() -> list[dict]:
     ]
 
 
-def _select_param(panel: FitParametersPanel) -> None:
-    # Select the frequency parameter as the trend Y so the plot/model-fit paths
-    # operate on it.
-    for r in range(panel._y_selector_table.rowCount()):
-        item = panel._y_selector_table.item(r, 0)
-        if item is not None and item.data(Qt.ItemDataRole.UserRole) == _PARAM:
-            panel._y_selector_table.selectRow(r)
-            return
-
-
 def _load(panel: FitParametersPanel, rows: list[dict]) -> None:
     panel.load_representation_series([("b1", "EuO", rows)])
-    _select_param(panel)
+    # Check the frequency chip as the trend Y so the plot/model-fit paths
+    # operate on it.
+    select_params(panel, [_PARAM])
 
 
 # ── table columns (F14) ───────────────────────────────────────────────────────

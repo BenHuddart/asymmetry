@@ -6,6 +6,11 @@ subsystems or days.
 
 ## Active
 
+### Parameters panel: parameter cards, chip rail, pop-out table
+
+Status: implemented 2026-09-13; single PR on `feat/parameters-panel-cards`
+awaiting review. Full plan: [docs/plans/parameters-panel-cards.md](plans/parameters-panel-cards.md).
+
 ### Global Fit Wizard: transition breaks, phases, and a separable role search
 
 Status: implemented 2026-09-07 on `feat/global-wizard-transitions`; single PR

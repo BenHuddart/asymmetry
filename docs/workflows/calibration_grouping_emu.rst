@@ -356,9 +356,10 @@ transcribed from the run log — and select it as the trend's X axis.
 
    The **Fit Parameters** panel plotting the Ag-mask initial asymmetry
    :math:`a_0` against **Steering current (A)** — the manual column, chosen
-   on the **X axis** selector. The nine per-run :math:`a_0` values rise from
-   ≈ 7 % at ±1 A to a shallow minimum near zero, and a **Model Fit** cubic
-   is overlaid on the points. The fitted minimum falls at
+   on the x rail's abscissa picker. The nine per-run :math:`a_0` values rise
+   from ≈ 7 % at ±1 A to a shallow minimum near zero, and a **Cubic** fit
+   (the card's **Fit ✓** button) is overlaid on the points. The fitted
+   minimum falls at
    :math:`I = -0.060` A: with the beam centred, muons pass *through* the Ag
    aperture onto the depolarising Fe₂O₃, so the Ag-mask signal is lowest at
    the centred current. That reproduces the WiMDA-graded muon-school answer
@@ -366,8 +367,8 @@ transcribed from the run log — and select it as the trend's X axis.
 
 A **Cubic** model is used, rather than a plain parabola, because the WiMDA
 reference curve is itself a cubic; its minimum at :math:`I = -0.060` A is
-the graded deliverable. The same panel exports the trend (**Export TSV**,
-**Export to GLE**) once you are happy with it.
+the graded deliverable. The same panel exports the trend (**⋯ → Export
+TSV…**, **⋯ → Export GLE (PDF)…**) once you are happy with it.
 
 Reusing the calibration
 --------------------------

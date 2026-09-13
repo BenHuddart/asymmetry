@@ -386,18 +386,21 @@ def test_panel_knight_analysis_snapshot_matches_loaded_rows(qapp):
 
 
 def test_panel_knight_window_button_emits_signal_once_rows_loaded(qapp):
+    # The rail "+" menu's Knight-shift shortcut (the main-GUI shortcut action,
+    # not the always-available "⋯" menu entry) is hidden until the active
+    # series' model has a Knight-convertible component.
     panel = FitParametersPanel()
     captured: list[object] = []
     panel.knight_window_requested.connect(lambda: captured.append(True))
 
-    assert not panel._knight_window_btn.isEnabled()
+    assert not panel._add_knight_action.isVisible()
     panel.load_representation_series(
         [("batch-1", "Series", [_row(1, 7000.0, {"field_1": 7050.0})])],
         knight_observables_by_id={"batch-1": {"field_1": "field"}},
     )
-    assert panel._knight_window_btn.isEnabled()
+    assert panel._add_knight_action.isVisible()
 
-    panel._knight_window_btn.click()
+    panel._add_knight_action.trigger()
     assert captured == [True]
 
 

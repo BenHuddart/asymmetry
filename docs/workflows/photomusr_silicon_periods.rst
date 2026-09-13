@@ -195,7 +195,7 @@ which appears as a straight line whose slope is the exponent
 
    The **Fit Parameters** trending panel with :math:`\lambda` on the y-axis
    against :math:`\Delta n` on the x-axis, both on **log** scales, across
-   the ten calibration runs (103277–103286). The power-law **Model Fit\***
+   the ten calibration runs (103277–103286). The power-law **Fit ✓**
    overlay is a straight line on these axes. The fitted exponent is
    :math:`\alpha = 0.65`, against the paper's :math:`0.68(4)` — within one
    standard deviation; the prefactor :math:`\beta = 1.30\;\mathrm{\mu s^{-1}}`
@@ -242,7 +242,7 @@ experiment's primary deliverable:
 
    Excess carrier density :math:`\Delta n` against laser delay
    :math:`\Delta T` across the delay scan (runs 103287–103298), with the
-   single-exponential **Model Fit\*** overlay. The recovered lifetime is
+   single-exponential **Fit ✓** overlay. The recovered lifetime is
    :math:`\tau_0 = 10.75\;\mathrm{\mu s}`, against the published
    :math:`11.1(9)\;\mathrm{\mu s}` — agreement to within one standard
    deviation — and the fitted intercept

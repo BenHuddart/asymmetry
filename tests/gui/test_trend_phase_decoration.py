@@ -32,6 +32,7 @@ from asymmetry.core.representation.group import PhaseSpec
 from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, PhaseDecoration
 from asymmetry.gui.utils.phase_colors import phase_color
+from tests.gui._trend_panel import axes_for
 
 _PHASE = PhaseDecoration(
     color="#2F4DA0",
@@ -119,7 +120,7 @@ def test_draw_single_series_shows_band_and_boundary_for_phase_series(
 ) -> None:
     panel.select_series(["s-phase"])
     panel._draw_plot()
-    (ax,) = panel._figure.axes
+    ax = axes_for(panel, "sigma")
     # One range span (alpha 0.12) plus one boundary (only "upper" is set) — a
     # dashed line at its estimate and a fainter (alpha 0.08) uncertainty span.
     assert len(_band_patches(ax, _PHASE.color, 0.12)) == 1
@@ -130,7 +131,7 @@ def test_draw_single_series_shows_band_and_boundary_for_phase_series(
 def test_draw_single_series_no_band_for_plain_series(panel: FitParametersPanel) -> None:
     panel.select_series(["s-plain"])
     panel._draw_plot()
-    (ax,) = panel._figure.axes
+    ax = axes_for(panel, "sigma")
     assert _band_patches(ax, _PHASE.color, 0.12) == []
     assert _dashed_lines(ax, _PHASE.color) == []
 
@@ -141,7 +142,7 @@ def test_draw_multi_series_bands_only_the_active_phase_series(
     # Active = "s-phase" (first argument); overlaid with the plain series.
     panel.select_series(["s-phase", "s-plain"])
     panel._draw_plot()
-    (ax,) = panel._figure.axes
+    ax = axes_for(panel, "sigma")
     assert len(_band_patches(ax, _PHASE.color, 0.12)) == 1
     assert len(_dashed_lines(ax, _PHASE.color)) == 1
 
@@ -149,7 +150,7 @@ def test_draw_multi_series_bands_only_the_active_phase_series(
     # phase series is still on the plot (overlaid, not active).
     panel.select_series(["s-plain", "s-phase"])
     panel._draw_plot()
-    (ax2,) = panel._figure.axes
+    ax2 = axes_for(panel, "sigma")
     assert _band_patches(ax2, _PHASE.color, 0.12) == []
 
 
@@ -157,7 +158,7 @@ def test_log_x_suppresses_the_band(panel: FitParametersPanel) -> None:
     panel.select_series(["s-phase"])
     panel._log_x_check.setChecked(True)
     panel._draw_plot()
-    (ax,) = panel._figure.axes
+    ax = axes_for(panel, "sigma")
     assert _band_patches(ax, _PHASE.color, 0.12) == []
     assert _dashed_lines(ax, _PHASE.color) == []
 
@@ -166,7 +167,7 @@ def test_axis_transform_suppresses_the_band(panel: FitParametersPanel) -> None:
     panel.select_series(["s-phase"])
     panel._x_transform = AxisTransform.preset(RECIPROCAL)
     panel._draw_plot()
-    (ax,) = panel._figure.axes
+    ax = axes_for(panel, "sigma")
     assert _band_patches(ax, _PHASE.color, 0.12) == []
 
 
@@ -175,7 +176,7 @@ def test_wrong_axis_suppresses_the_band(panel: FitParametersPanel) -> None:
     panel.select_series(["s-phase"])
     panel._x_combo.setCurrentText("\U0001d435 (G)")  # "𝐵 (G)"
     panel._draw_plot()
-    (ax,) = panel._figure.axes
+    ax = axes_for(panel, "sigma")
     assert _band_patches(ax, _PHASE.color, 0.12) == []
 
 

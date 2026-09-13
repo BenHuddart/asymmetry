@@ -10,6 +10,7 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
+from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QApplication
 
 from asymmetry.core.fitting.knight_shift import (
@@ -24,21 +25,6 @@ from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel
 @pytest.fixture(scope="module")
 def qapp() -> QApplication:
     return QApplication.instance() or QApplication([])
-
-
-def _select_y(panel: FitParametersPanel, names: list[str]) -> None:
-    """Select the given Y-trace names in the Y-selector table."""
-    from PySide6.QtCore import Qt
-
-    wanted = set(names)
-    table = panel._y_selector_table
-    for i in range(table.rowCount()):
-        item = table.item(i, 0)
-        if item is None:
-            continue
-        pname = item.data(Qt.ItemDataRole.UserRole)
-        item.setSelected(isinstance(pname, str) and pname in wanted)
-    panel._selected_y_param_names = panel._selected_y_parameters()
 
 
 def _row(run: int, field: float, values: dict[str, float]) -> dict:
@@ -300,14 +286,22 @@ def test_remove_button_deletes_selected_knight_trace(qapp, monkeypatch):
     traces = sorted(panel._knight_shift_names)
     assert len(traces) == 2
 
-    _select_y(panel, [traces[0]])
-    panel._update_composite_action_buttons()
-    assert panel._remove_composite_btn.isEnabled()  # K traces are removable
+    # A K trace's card offers only "Remove" on its header context menu (no
+    # "Edit derived…" — it is not a composite parameter).
+    menu_actions: list[str] = []
+    original_exec_menu = panel._exec_menu
 
+    def _capture_and_choose_remove(menu, pos):
+        menu_actions.extend(a.text() for a in menu.actions())
+        return next(a for a in menu.actions() if a.text() == "Remove")
+
+    panel._exec_menu = _capture_and_choose_remove  # type: ignore[method-assign]
     monkeypatch.setattr(
         QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
     )
-    panel._remove_selected_composite_parameters()
+    panel._show_card_context_menu(traces[0], QPoint(0, 0))
+    panel._exec_menu = original_exec_menu
+    assert menu_actions == ["Remove"]
 
     # The deleted trace is gone and excluded from the conversion so it won't regenerate.
     assert traces[0] not in panel._knight_shift_names
@@ -341,28 +335,25 @@ def test_config_round_trips_through_state(qapp):
 
 
 def test_knight_window_button_visible_when_series_has_knight_observables(qapp):
-    # bed-next-angle-knight-shift.md §4.3: the button is the main-GUI shortcut,
-    # shown only when the active series' model has a Knight-convertible
-    # component (non-empty _knight_observables), unlike the always-available
-    # menu action.
+    # bed-next-angle-knight-shift.md §4.3: the rail "+" menu's shortcut action is
+    # the main-GUI shortcut, shown only when the active series' model has a
+    # Knight-convertible component (non-empty _knight_observables), unlike the
+    # always-available "⋯" menu entry.
     panel = FitParametersPanel()
     panel.load_representation_series(
         [("batch-1", "S", [_row(1, 7000.0, {"field_1": 7050.0})])],
         knight_observables_by_id={"batch-1": {"field_1": "field"}},
     )
-    # isHidden() reflects the explicit visibility flag without a shown ancestor
-    # (isVisible() is always False until the top-level window is shown).
-    assert not panel._knight_window_btn.isHidden()
-    assert panel._knight_window_btn.isEnabled()
+    assert panel._add_knight_action.isVisible()
 
 
 def test_knight_window_button_hidden_without_knight_observables(qapp):
     # Rows exist, but the fitted model has no Knight-convertible component
-    # (no knight_observables_by_id passed): the button must stay hidden even
+    # (no knight_observables_by_id passed): the action must stay hidden even
     # though the old behaviour (bool(self._rows)) would have enabled it.
     panel = FitParametersPanel()
     _load(panel, [_row(1, 7000.0, {"frequency": 94.0})])
-    assert panel._knight_window_btn.isHidden()
+    assert not panel._add_knight_action.isVisible()
 
 
 def test_knight_window_button_hidden_after_clear(qapp):
@@ -371,12 +362,12 @@ def test_knight_window_button_hidden_after_clear(qapp):
         [("batch-1", "S", [_row(1, 7000.0, {"field_1": 7050.0})])],
         knight_observables_by_id={"batch-1": {"field_1": "field"}},
     )
-    assert not panel._knight_window_btn.isHidden()  # sanity: visible before clear
+    assert panel._add_knight_action.isVisible()  # sanity: visible before clear
 
     panel.clear()
-    assert panel._knight_window_btn.isHidden()
+    assert not panel._add_knight_action.isVisible()
 
 
 def test_knight_window_button_hidden_on_fresh_panel(qapp):
     panel = FitParametersPanel()
-    assert panel._knight_window_btn.isHidden()
+    assert not panel._add_knight_action.isVisible()

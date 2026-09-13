@@ -45,6 +45,26 @@ def test_tooltip_only_while_elided(qapp) -> None:
     label.close()
 
 
+def test_hover_text_overrides_the_elision_rule(qapp) -> None:
+    label = ElidedLabel("2 series")
+    label.show()
+    label.resize(400, 18)
+    # Nothing is hidden, so the default rule would leave no tooltip at all.
+    assert label.toolTip() == ""
+
+    label.set_hover_text("Series A\nSeries B")
+    assert label.toolTip() == "Series A\nSeries B"
+    # It survives both a relayout and a new text.
+    label.resize(20, 18)
+    assert label.toolTip() == "Series A\nSeries B"
+    label.setText("3 series")
+    assert label.toolTip() == "Series A\nSeries B"
+
+    label.set_hover_text("")
+    assert label.toolTip() == "3 series"
+    label.close()
+
+
 def test_pen_color_override_and_default(qapp) -> None:
     label = ElidedLabel("x")
     default = label.pen_color()

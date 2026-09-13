@@ -2,10 +2,11 @@
 
 Captures the real :class:`~asymmetry.gui.panels.fit_parameters_panel.
 FitParametersPanel` with a longitudinal-field relaxation-rate scan
-:math:`\\lambda(B)` plotted as the **Redfield** linearisation — the Y axis
-transformed to ``1/x  (reciprocal)`` and the X axis to ``x²  (square)``, so
-:math:`1/\\lambda` versus :math:`(\\mu_0 H)^2` is a straight line whose slope and
-intercept give the field-fluctuation rate and width. A ``Linear`` model fit runs
+:math:`\\lambda(B)` plotted as the **Redfield** linearisation — the card's ƒ
+button set to ``1/y  (reciprocal)`` and the x rail's ƒ button set to
+``x²  (square)``, so :math:`1/\\lambda` versus :math:`(\\mu_0 H)^2` is a
+straight line whose slope and intercept give the field-fluctuation rate and
+width. A ``Linear`` model fit runs
 on the transformed coordinates (the transform feeds the fit, not just the plot),
 and the high-field saturated point is excluded from the trend so it sits off the
 line. This is the µSR presentation the axis-transform feature exists for
@@ -94,8 +95,8 @@ def _build_redfield_linear_fit(payload: dict):
 class ParameterTrendingRedfieldScenario(Scenario):
     name = "parameter_trending_redfield"
     description = (
-        "Fit Parameters trending panel: Redfield linearisation with the Y axis "
-        "transformed to 1/λ and the X axis to B², a Linear fit on the plateau."
+        "Fit Parameters trending panel: Redfield linearisation with the card's ƒ "
+        "set to 1/λ and the x rail's ƒ set to B², a Linear fit on the plateau."
     )
     size = (1240, 760)
     requires_fit = True  # runs the real iminuit-backed Linear trend fit
@@ -132,14 +133,14 @@ class ParameterTrendingRedfieldScenario(Scenario):
         )
 
         # The Redfield linearisation: reciprocal Y, square X.
-        panel._set_axis_transform("y", AxisTransform.preset("reciprocal"))
-        panel._set_axis_transform("x", AxisTransform.preset("square"))
+        panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
+        panel._set_x_transform(AxisTransform.preset("square"))
 
         # Inject the real Linear fit computed on the transformed plateau, tagged
         # with the active transform so its overlay is drawn (not suppressed).
         fit = _build_redfield_linear_fit(payload)
         panel._model_fits["Lambda"] = fit
-        panel._model_fit_transform_sig["Lambda"] = panel._transform_signature()
+        panel._model_fit_transform_sig["Lambda"] = panel._transform_signature("Lambda")
         panel._sync_active_group_state()
         panel._refresh_model_fit_button_labels()
         _process_events_for(milliseconds=80)

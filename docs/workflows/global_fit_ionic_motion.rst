@@ -299,10 +299,12 @@ to it.
       points and five plateau points excluded.
 
    The :math:`\nu(T)` trend as a native Arrhenius plot. The abscissa is
-   transformed to :math:`1/T` (reciprocal) and the ordinate to
-   :math:`\log(\nu - 0.274324)` via a **Custom** transform; the section chip
-   reads ``1/x · log(y - 0.274324)``. A ``Linear`` model fit (**Model Fit\***)
-   runs on the eight activated-branch points (:math:`T \ge 264` K), whose slope
+   transformed to :math:`1/T` (reciprocal) via a **Custom** transform on the
+   x rail's ƒ button (reading ``1/x``) and the ordinate to
+   :math:`\log(\nu - 0.274324)` via a **Custom** transform on the card's own
+   ƒ button (reading ``log(y - 0.274324)``). A ``Linear`` model fit
+   (the card's **Fit ✓**) runs on the eight activated-branch points
+   (:math:`T \ge 264` K), whose slope
    is :math:`-E_a/k_B`. The five plateau points are excluded from the trend
    (``8/13 members in trend · 5 excluded``): three sit low with large
    propagated error bars and two fall below the baseline and drop out entirely.

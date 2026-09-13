@@ -534,12 +534,8 @@ def _labelled_on_off(window, run: int):
 
 def _select_axes(panel, *, y_param: str, x_key: str) -> None:
     """Select the y-parameter row and set the trend x-axis on a FitParametersPanel."""
-    table = panel._y_selector_table
-    for row in range(table.rowCount()):
-        item = table.item(row, 0)
-        if item is not None and item.data(Qt.ItemDataRole.UserRole) == y_param:
-            table.selectRow(row)
-            break
+    for name, chip in panel._y_chips.items():
+        chip.setChecked(name == y_param)
     _process_events_for(milliseconds=30)
     idx = panel._x_combo.findData(x_key)
     if idx >= 0:
@@ -548,12 +544,8 @@ def _select_axes(panel, *, y_param: str, x_key: str) -> None:
 
 
 def _set_y_log(panel, y_param: str, enabled: bool) -> None:
-    """Enable log scaling on one y-parameter's per-row control, if present."""
-    controls = panel._y_controls.get(y_param)
-    if controls is not None and getattr(controls, "log", None) is not None:
-        controls.log.setChecked(enabled)
-    else:
-        panel._log_y_check.setChecked(enabled)
+    """Enable log scaling on one y-parameter's card."""
+    panel._card_stack.card(y_param).log_check.setChecked(enabled)
 
 
 def _settle_trend(widget: QWidget) -> None:
