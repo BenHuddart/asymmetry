@@ -35,6 +35,7 @@ from asymmetry.core.fitting.parameter_models import (
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.export_paths import resolve_gle_export_paths
+from asymmetry.gui.mainwindow import _inspector_scroll_area
 from asymmetry.gui.panels.fit_parameters_panel import (
     FitParametersPanel,
     _FitRow,
@@ -508,12 +509,37 @@ def test_focus_expands_one_card_and_restores_on_exit(panel: FitParametersPanel) 
     panel._card_stack.set_focus("A0")
     assert card(panel, "A0").is_expanded()
     assert not card(panel, "Lambda").is_expanded()
-    assert card(panel, "A0")._tools_row.isVisibleTo(card(panel, "A0"))
+    assert card(panel, "A0").is_focused()
 
     panel._card_stack.set_focus(None)
     assert card(panel, "A0").is_expanded()
     assert not card(panel, "Lambda").is_expanded()
     assert panel._collapsed_params == {"Lambda"}
+
+
+def test_expanded_cards_share_the_dock_height_without_scrolling(
+    panel: FitParametersPanel, qapp: QApplication
+) -> None:
+    """Two cards must divide the dock's viewport, not overflow it.
+
+    The stack used to pass each card's figure-sized height preference up through
+    the panel's height-for-width chain, so the dock's scroll area grew the panel
+    past its own viewport and the whole panel scrolled while the cards sat at
+    their preferred height. 376 × 585 is the Parameters dock's viewport on a
+    13-inch MacBook at UI scale 1.
+    """
+    area = _inspector_scroll_area(panel)
+    area.resize(376, 585)
+    area.show()
+    select_params(panel, ["A0", "Lambda"])
+    for _ in range(4):
+        qapp.processEvents()
+
+    assert not area.verticalScrollBar().isVisible()
+    assert panel.height() <= area.viewport().height()
+    for name in ("A0", "Lambda"):
+        assert card(panel, name).height() > card(panel, name).minimumSizeHint().height()
+    area.deleteLater()
 
 
 def test_card_fit_button_labels_track_the_fit_state(panel: FitParametersPanel) -> None:
@@ -635,6 +661,122 @@ def test_table_dialog_hosts_the_live_table(panel: FitParametersPanel) -> None:
     panel._set_x_transform(AxisTransform.preset("square"))
     panel._show_table_dialog()
     assert "raw values" in panel._table_dialog.windowTitle()
+
+
+def test_table_dialog_opens_at_its_content_width(panel: FitParametersPanel) -> None:
+    """The pop-out must fit its columns rather than open at the layout's hint."""
+    panel._refresh_table()
+    panel._show_table_dialog()
+
+    header = panel._table.horizontalHeader()
+    assert not panel._table.horizontalScrollBar().isVisible()
+    assert panel._table_dialog.width() >= header.length() + panel._table.verticalHeader().width()
+
+    # A pop-out the user has widened is never shrunk back by a later show.
+    widened = panel._table_dialog.width() + 120
+    panel._table_dialog.resize(widened, panel._table_dialog.height())
+    panel._show_table_dialog()
+    assert panel._table_dialog.width() == widened
+
+
+# ── Plot right-click menu ────────────────────────────────────────────────────
+
+
+def _menu_texts(panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record the actions one right-click offers, and dismiss the menu."""
+    captured: list[str] = []
+
+    def _capture(_self, menu, _pos):
+        captured.extend(action.text() or "—" for action in menu.actions())
+        return None
+
+    monkeypatch.setattr(FitParametersPanel, "_exec_menu", _capture)
+    return captured
+
+
+def _press_event(panel: FitParametersPanel, name: str, x: float, y: float):
+    """A right-press on *name*'s axes at the data position (*x*, *y*)."""
+    axes = axes_for(panel, name)
+    px, py = axes.transData.transform((x, y))
+    return SimpleNamespace(
+        button=3, inaxes=axes, x=px, y=py, xdata=x, ydata=y, canvas=card(panel, name).canvas
+    )
+
+
+def test_right_click_on_empty_plot_offers_add_label(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    select_params(panel, ["A0"])
+    texts = _menu_texts(panel, monkeypatch)
+
+    panel._on_plot_button_press(_press_event(panel, "A0", 150.0, 0.30))
+    assert texts == ["Add label here…"]
+
+    # Clear labels appears only once a label exists.
+    panel._plot_annotations.append(
+        {"x": 150.0, "y": 0.3, "text": "note", "axis_tag": "A0", "artist": None}
+    )
+    texts.clear()
+    panel._on_plot_button_press(_press_event(panel, "A0", 150.0, 0.30))
+    assert texts == ["Add label here…", "Clear labels"]
+
+
+def test_right_click_on_a_label_offers_edit_and_remove(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    select_params(panel, ["A0"])
+    panel._plot_annotations.append(
+        {"x": 150.0, "y": 0.3, "text": "note", "axis_tag": "A0", "artist": None}
+    )
+    monkeypatch.setattr(FitParametersPanel, "_detect_annotation_hit", lambda _self, _event: 0)
+    texts = _menu_texts(panel, monkeypatch)
+
+    panel._on_plot_button_press(_press_event(panel, "A0", 150.0, 0.30))
+
+    assert texts == ["Edit label…", "Remove label", "Clear labels"]
+
+
+def test_right_click_near_a_trend_point_also_offers_the_trend_toggle(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    panel._rows[1].batch_id = "batch"
+    panel._rows[1].trend_member_key = 7
+    panel._rows[1].quality_flags = ["failed"]
+    select_params(panel, ["A0"])
+    texts = _menu_texts(panel, monkeypatch)
+
+    # The second row sits at field 100 G, A0 = 0.20 — right on the cursor.
+    panel._on_plot_button_press(_press_event(panel, "A0", 100.0, 0.20))
+
+    assert texts == [
+        "Add label here…",
+        "—",
+        "Exclude from trend",
+        "Flags: fit did not converge",
+    ]
+
+
+def test_add_label_here_places_an_annotation_on_the_clicked_axes(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    select_params(panel, ["A0", "Lambda"])
+    monkeypatch.setattr(
+        FitParametersPanel,
+        "_exec_menu",
+        lambda _self, menu, _pos: menu.actions()[0],
+    )
+    monkeypatch.setattr(
+        "asymmetry.gui.panels.fit_parameters_panel.QInputDialog.getText",
+        staticmethod(lambda *_args, **_kwargs: ("T_N", True)),
+    )
+
+    panel._on_plot_button_press(_press_event(panel, "Lambda", 150.0, 0.11))
+
+    assert len(panel._plot_annotations) == 1
+    annotation = panel._plot_annotations[0]
+    assert annotation["text"] == "T_N"
+    assert annotation["axis_tag"] == "Lambda"
+    assert annotation["x"] == pytest.approx(150.0)
 
 
 def test_copy_table_tsv_writes_the_data_columns(panel: FitParametersPanel, qapp) -> None:

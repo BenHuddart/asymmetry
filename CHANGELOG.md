@@ -63,9 +63,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rail's `⋯` and `+` menus; a derived parameter's `New/Edit composite`
   and `Remove` buttons become `Edit derived…` / `Remove` on its card's
   right-click menu. The removed `Axis transforms` and `Derived parameters`
-  sections and the `Add Label` / `Clear Labels` bar are folded into the ƒ
-  buttons and the focused card's own tools row. See
+  sections fold into the ƒ buttons, and the `Add Label` / `Clear Labels` bar
+  becomes a right-click menu on every plot — a card's figure or the Overlay
+  canvas — offering `Add label here…`, `Edit label…` / `Remove label` over an
+  existing label, and `Clear labels`; a trend point's
+  `Exclude from trend` / `Include in trend` action joins the same menu.
+  Focusing a card (**⤢**) is now purely a size gesture. See
   `docs/reference/parameter_trending.rst`.
+
+- **The Parameters dock and the `Fitted parameters` pop-out now open at the
+  size their contents need.** The cards in the dock divide its height between
+  them instead of overflowing it into a scrollbar, the right-hand deck opens
+  at least as wide as the Parameters panel's rails require (so it no longer
+  opens with a horizontal scrollbar on a 13-inch screen), and the pop-out
+  table opens at its full column width — capped to the screen, and never
+  shrinking a window you have already resized.
 
 - **A parameter's y-axis transform (Redfield, Arrhenius, a custom expression)
   is now set per parameter instead of once for every selected Y parameter.**

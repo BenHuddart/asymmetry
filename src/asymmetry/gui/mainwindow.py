@@ -117,6 +117,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QStackedWidget,
+    QStyle,
     QTabBar,
     QTabWidget,
     QToolBar,
@@ -6369,15 +6370,23 @@ class MainWindow(QMainWindow):
         of the window width in between, all read from the live UI font so the
         deck tracks the UI-scale setting. On a laptop the fraction lands near the
         minimum (plot stays dominant); on a 27-inch monitor it opens wider so the
-        FFT/MaxEnt panels are not cramped. ``resizeDocks`` still caps the result
-        to the room the plot and left dock can yield, so this is an upper request,
-        not a guarantee.
+        FFT/MaxEnt panels are not cramped.
+
+        The floor is raised again to what the Parameters panel itself needs plus
+        the dock scroll area's vertical scrollbar: it is the widest pane in the
+        deck (its x rail carries the abscissa picker, ``Table`` and ``⋯`` on one
+        line), and a 13-inch window's fraction lands under that, opening the deck
+        with a horizontal scrollbar. ``resizeDocks`` still caps the result to the
+        room the plot and left dock can yield, so this is an upper request, not a
+        guarantee.
         """
         minimum = metrics.char_width(_INSPECTOR_DOCK_MIN_CHARS)
         maximum = metrics.char_width(_INSPECTOR_DOCK_MAX_CHARS)
         window_width = self.width() or self.sizeHint().width()
         fraction = round(window_width * _INSPECTOR_DOCK_WIDTH_FRACTION)
-        return max(minimum, min(maximum, fraction))
+        scrollbar = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        parameters_width = self._fit_parameters_panel.minimumSizeHint().width() + scrollbar
+        return max(minimum, parameters_width, min(maximum, fraction))
 
     def _apply_dock_min_widths(self) -> None:
         """Set the char-based minimum widths on the browser and inspector docks.

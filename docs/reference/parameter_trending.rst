@@ -67,12 +67,18 @@ a small sparkline. A derived parameter's card carries a ``derived`` tag;
 right-click its header for **Edit derived…** (composite parameters only) and
 **Remove**. Beneath the figure, a one-line summary reports the active fit —
 model, χ²ᵣ, and each fitted parameter as ``name = value ± error`` — or reads
-``no model fit yet``. Focusing a card reveals a tools row: **Add label**
-(checkable — click the plot to drop a draggable text label, double-click one
-to edit it, right-click to remove it) and **Clear labels**. *Overlay* instead
-draws every checked parameter on one shared canvas (a twin y-axis for exactly
-two — see `Overlaying Several Series`_), with its own **Add label** /
-**Clear labels** row beneath it.
+``no model fit yet``. *Overlay* instead draws every checked parameter on one
+shared canvas (a twin y-axis for exactly two — see `Overlaying Several
+Series`_).
+
+Every plot — each card's figure and the Overlay canvas alike — carries the
+same right-click menu for text labels. Over bare axes it offers **Add label
+here…**, which prompts for the text and drops the label where you clicked;
+over an existing label it offers **Edit label…** and **Remove label**; and
+**Clear labels** appears whenever the plot holds any. Drag a label to move it,
+or double-click it to change its text. Right-clicking near a trend point adds
+that point's **Exclude from trend** / **Include in trend** action (and its
+quality flags) to the same menu.
 
 The footer's left side reports trend provenance (``4 of 4 runs in trend``);
 its right side notes any Global (shared) parameter held constant and so

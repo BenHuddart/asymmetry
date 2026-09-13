@@ -37,7 +37,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QScrollArea
+from PySide6.QtWidgets import QApplication, QScrollArea, QStyle
 
 from asymmetry.gui.mainwindow import MainWindow
 
@@ -164,3 +164,20 @@ def test_clipped_panels_keep_a_scroll_fallback_in_the_dock(
     while ancestor is not None and not isinstance(ancestor, QScrollArea):
         ancestor = ancestor.parentWidget()
     assert isinstance(ancestor, QScrollArea)
+
+
+def test_default_width_clears_the_parameters_panel_minimum(shown_window) -> None:
+    """The deck's default must fit the widest pane in it, not just the fraction.
+
+    On a 13-inch window ``0.20 × width`` lands under what the Parameters panel's
+    rails need, so the deck opened with a horizontal scrollbar over the x rail.
+    The default now floors at that panel's own minimum plus the dock scroll
+    area's vertical scrollbar.
+    """
+    window, app = shown_window
+    window.resize(1470, 850)
+    _settle(app, 3)
+    panel = window._fit_parameters_panel
+    scrollbar = window.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+
+    assert window._inspector_default_width() >= panel.minimumSizeHint().width() + scrollbar

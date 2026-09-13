@@ -75,12 +75,12 @@ _SPARKLINE_PAD = 2.0
 _SPARKLINE_PEN_WIDTH = 1.2
 _SPARKLINE_DOT_RADIUS = 1.4
 
-#: Card body (canvas + summary + tools) minimum height, in table-row heights.
+#: Card body (canvas + summary) minimum height, in table-row heights.
 _BODY_ROWS = 6
-#: Figure size (inches) a card asks for. The canvas's preferred size is its
-#: figure size, and the dock's scroll area grows the panel to the sum of those
-#: preferences, so a small figure is what lets several cards share the dock
-#: instead of each claiming matplotlib's 6.4 × 4.8 in default.
+#: Figure size (inches) a card asks for — the aspect ratio a card opens at when
+#: the stack has room to honour it, rather than matplotlib's 6.4 × 4.8 in
+#: default. It is only a preference: :meth:`ParameterCardStack.sizeHint` floors
+#: the stack's request, so the cards divide the dock's height between them.
 _FIGURE_INCHES = (4.0, 2.2)
 
 
@@ -181,7 +181,7 @@ class _DragGrip(QLabel):
 
 
 class ParameterCard(QFrame):
-    """Header (name + per-parameter controls) over a figure, summary and tools."""
+    """Header (name + per-parameter controls) over a figure and a fit summary."""
 
     #: The card's Fit button was pressed.
     fit_requested = Signal(str)
@@ -297,22 +297,6 @@ class ParameterCard(QFrame):
         self._summary_label.set_pen_color(tokens.TEXT_MUTED)
         body_layout.addWidget(self._summary_label)
 
-        self._tools_row = QWidget(self._body)
-        tools_layout = QHBoxLayout(self._tools_row)
-        tools_layout.setContentsMargins(0, 0, 0, 0)
-        tools_layout.setSpacing(6)
-        body_layout.addWidget(self._tools_row)
-
-        self.add_label_button = QPushButton("Add label", self._tools_row)
-        self.add_label_button.setCheckable(True)
-        self.add_label_button.setStyleSheet(build_segmented_button_qss())
-        tools_layout.addWidget(self.add_label_button)
-
-        self.clear_labels_button = QPushButton("Clear labels", self._tools_row)
-        tools_layout.addWidget(self.clear_labels_button)
-        tools_layout.addStretch(1)
-        self._tools_row.setVisible(False)
-
         self._apply_expanded()
         self.set_focused(False)
 
@@ -381,10 +365,6 @@ class ParameterCard(QFrame):
     def is_focused(self) -> bool:
         return self._focused
 
-    def set_tools_visible(self, visible: bool) -> None:
-        """Show the Add label / Clear labels row (the focused card's tools)."""
-        self._tools_row.setVisible(visible)
-
     # ── Internals ───────────────────────────────────────────────────────────
 
     def _apply_expanded(self) -> None:
@@ -448,6 +428,18 @@ class ParameterCardStack(QWidget):
         self._layout.addStretch(0)
 
         self.setAcceptDrops(True)
+
+    def sizeHint(self) -> QSize:  # noqa: N802 — Qt override
+        """Ask for no more than the stack's floor.
+
+        Each expanded card prefers its figure's height, and the dock's scroll
+        area grows the panel to the sum of those preferences — so two cards
+        already ask for more than a 13-inch dock's viewport and the panel
+        scrolls even though the cards are vertically Expanding. Asking for the
+        floor keeps the panel inside the viewport; the expanding cards then
+        share whatever height the dock actually gives.
+        """
+        return self.minimumSizeHint()
 
     # ── Membership ──────────────────────────────────────────────────────────
 
@@ -521,7 +513,6 @@ class ParameterCardStack(QWidget):
         if name is None:
             for card in self.cards():
                 card.set_focused(False)
-                card.set_tools_visible(False)
                 with QSignalBlocker(card):
                     card.set_expanded(self._remembered[card.name])
             self._remembered = {}
@@ -531,7 +522,6 @@ class ParameterCardStack(QWidget):
             for card in self.cards():
                 focused = card.name == name
                 card.set_focused(focused)
-                card.set_tools_visible(focused)
                 with QSignalBlocker(card):
                     card.set_expanded(focused)
         self._focused = name

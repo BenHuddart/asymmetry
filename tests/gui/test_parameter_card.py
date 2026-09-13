@@ -143,18 +143,6 @@ def test_card_labels_and_focus_chrome(qapp: QApplication) -> None:
     card.deleteLater()
 
 
-def test_card_tools_row_is_hidden_until_asked_for(qapp: QApplication) -> None:
-    card = ParameterCard("lambda", "λ")
-    assert not card._tools_row.isVisibleTo(card)
-
-    card.set_tools_visible(True)
-
-    assert card._tools_row.isVisibleTo(card)
-    assert card.add_label_button.isCheckable()
-    assert card.clear_labels_button.text() == "Clear labels"
-    card.deleteLater()
-
-
 # ── Sparkline ────────────────────────────────────────────────────────────────
 
 
@@ -269,7 +257,6 @@ def test_stack_focus_expands_one_and_restores_on_exit(qapp: QApplication) -> Non
     assert stack.focused() == "b"
     assert [card.is_expanded() for card in stack.cards()] == [False, True, False]
     assert [card.is_focused() for card in stack.cards()] == [False, True, False]
-    assert stack.card("b")._tools_row.isVisibleTo(stack.card("b"))
 
     stack.set_focus(None)
 

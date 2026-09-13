@@ -172,6 +172,7 @@ from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.parameter_card import ParameterCard, ParameterCardStack
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -181,6 +182,9 @@ _IDENTITY_TRANSFORM_GLYPH = "ƒ"
 #: Title of the pop-out fitted-parameter table (a suffix is appended while a
 #: transform is active — the table always shows raw values).
 _TABLE_DIALOG_TITLE = "Fitted parameters"
+#: Share of the screen's work area the table pop-out may open at — the table is
+#: as wide as the fit has parameters, so a wide series must stop somewhere.
+_TABLE_DIALOG_SCREEN_FRACTION = 0.9
 #: The ⋯ and + rail buttons are their glyph; Qt's menu-indicator arrow would double it.
 _MENU_BUTTON_QSS = "QToolButton::menu-indicator { image: none; }"
 
@@ -811,18 +815,6 @@ class FitParametersPanel(QWidget):
         self._figure, self._canvas = create_canvas(layout="constrained", figsize=(4.0, 3.0))
         self._connect_plot_events(self._canvas)
         overlay_layout.addWidget(self._canvas, 1)
-        overlay_tools = QHBoxLayout()
-        overlay_tools.setContentsMargins(0, 0, 0, 0)
-        overlay_tools.setSpacing(6)
-        self._overlay_add_label_button = QPushButton("Add label")
-        self._overlay_add_label_button.setCheckable(True)
-        self._overlay_add_label_button.setStyleSheet(build_segmented_button_qss())
-        overlay_tools.addWidget(self._overlay_add_label_button)
-        overlay_clear_labels_button = QPushButton("Clear labels")
-        overlay_clear_labels_button.clicked.connect(self._clear_plot_labels)
-        overlay_tools.addWidget(overlay_clear_labels_button)
-        overlay_tools.addStretch(1)
-        overlay_layout.addLayout(overlay_tools)
         self._plot_pages.addWidget(overlay_page)
         layout.addWidget(self._plot_pages, 1)
         # Covers the whole plot area while the overlay curves recompute off-thread.
@@ -2856,39 +2848,13 @@ class FitParametersPanel(QWidget):
         canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
         canvas.mpl_connect("button_release_event", self._on_plot_button_release)
 
-    def _armed_add_label_button(self) -> QPushButton | None:
-        """The checked Add label button, if any.
-
-        Subplots keeps the button on the focused card's tools row (so at most one
-        card is armed, and only while the stack is focused); Overlay has its own
-        under the shared canvas.
-        """
-        if self._plot_mode() == "Overlay":
-            button = self._overlay_add_label_button
-        else:
-            focused = self._card_stack.focused()
-            if focused is None:
-                return None
-            button = self._card_stack.card(focused).add_label_button
-        return button if button.isChecked() else None
-
     def _on_plot_button_press(self, event) -> None:
         """Handle click interactions for parameter-plot labels."""
         if event.button == 3:
-            idx = self._detect_annotation_hit(event)
-            if idx is not None:
-                self._plot_annotations.pop(idx)
-                self._refresh_plot()
-                return
-            # No annotation under the cursor → offer the trend-point exclude menu.
-            self._show_member_context_menu(event)
+            self._show_plot_context_menu(event)
             return
 
         if event.button != 1:
-            return
-
-        if self._armed_add_label_button() is not None:
-            self._add_annotation_at_event(event)
             return
 
         idx = self._detect_annotation_hit(event)
@@ -2929,28 +2895,55 @@ class FitParametersPanel(QWidget):
             return best_row
         return None
 
-    def _show_member_context_menu(self, event) -> None:
-        """Right-click a trend point → Exclude from / Include in the trend fit."""
-        row = self._detect_member_hit(event)
-        if row is None or row.batch_id is None or row.trend_member_key is None:
+    def _show_plot_context_menu(self, event) -> None:
+        """Right-click anywhere on any parameter plot: labels, and trend membership.
+
+        Every plot surface — each card's canvas and the Overlay canvas — offers
+        the same menu, so placing a label no longer means focusing a card first.
+        What it contains depends on what the cursor is over: a label offers Edit
+        / Remove, bare axes offer Add, and a trend point under the cursor adds
+        the membership toggle (with its quality flags) below a separator.
+        """
+        if event.inaxes is None:
             return
         menu = QMenu(self)
-        if row.include_in_trend:
-            toggle = menu.addAction("Exclude from trend")
-            target = False
+        hit = self._detect_annotation_hit(event)
+        add_action = edit_action = remove_action = None
+        if hit is None:
+            add_action = menu.addAction("Add label here…")
         else:
-            toggle = menu.addAction("Include in trend")
-            target = True
-        if row.quality_flags:
+            edit_action = menu.addAction("Edit label…")
+            remove_action = menu.addAction("Remove label")
+        clear_action = menu.addAction("Clear labels") if self._plot_annotations else None
+
+        toggle_action = None
+        row = self._detect_member_hit(event)
+        if row is not None and row.batch_id is not None and row.trend_member_key is not None:
             menu.addSeparator()
-            info = menu.addAction(
-                "Flags: " + ", ".join(_QUALITY_FLAG_LABELS.get(f, f) for f in row.quality_flags)
+            toggle_action = menu.addAction(
+                "Exclude from trend" if row.include_in_trend else "Include in trend"
             )
-            info.setEnabled(False)
-        chosen = menu.exec(QCursor.pos())
-        if chosen is toggle:
+            if row.quality_flags:
+                info = menu.addAction(
+                    "Flags: " + ", ".join(_QUALITY_FLAG_LABELS.get(f, f) for f in row.quality_flags)
+                )
+                info.setEnabled(False)
+
+        chosen = self._exec_menu(menu, QCursor.pos())
+        if chosen is None:
+            return
+        if chosen is add_action:
+            self._add_annotation_at_event(event)
+        elif chosen is edit_action:
+            self._prompt_annotation_text(hit)
+        elif chosen is remove_action:
+            self._plot_annotations.pop(hit)
+            self._refresh_plot()
+        elif chosen is clear_action:
+            self._clear_plot_labels()
+        elif chosen is toggle_action:
             self.member_trend_inclusion_changed.emit(
-                str(row.batch_id), int(row.trend_member_key), bool(target)
+                str(row.batch_id), int(row.trend_member_key), not row.include_in_trend
             )
 
     def _on_plot_motion(self, event) -> None:
@@ -2988,11 +2981,15 @@ class FitParametersPanel(QWidget):
         self._annotation_drag_started = False
 
         if not was_drag and event.button == 1 and getattr(event, "dblclick", False):
-            current = str(self._plot_annotations[idx].get("text", ""))
-            text, ok = QInputDialog.getText(self, "Edit Label", "Label text:", text=current)
-            if ok and text.strip():
-                self._plot_annotations[idx]["text"] = text.strip()
-                self._refresh_plot()
+            self._prompt_annotation_text(idx)
+
+    def _prompt_annotation_text(self, index: int) -> None:
+        """Re-ask for a label's text — the double-click and Edit label… gestures."""
+        current = str(self._plot_annotations[index].get("text", ""))
+        text, ok = QInputDialog.getText(self, "Edit Label", "Label text:", text=current)
+        if ok and text.strip():
+            self._plot_annotations[index]["text"] = text.strip()
+            self._refresh_plot()
 
     def _detect_annotation_hit(self, event) -> int | None:
         """Return annotation index under cursor, if any."""
@@ -3025,9 +3022,6 @@ class FitParametersPanel(QWidget):
                 "artist": None,
             }
         )
-        armed = self._armed_add_label_button()
-        if armed is not None:
-            armed.setChecked(False)
         self._refresh_plot()
 
     def _draw_plot_annotations(
@@ -3611,7 +3605,6 @@ class FitParametersPanel(QWidget):
             card.transform_menu_requested.connect(self._show_y_transform_menu)
             card.expanded_changed.connect(self._on_card_expanded_changed)
             card.context_menu_requested.connect(self._show_card_context_menu)
-            card.clear_labels_button.clicked.connect(self._clear_plot_labels)
             self._connect_plot_events(card.canvas)
             self._card_stack.add_card(card)
         self._card_stack.set_order(wanted)
@@ -6109,9 +6102,52 @@ class FitParametersPanel(QWidget):
             # lens, so say so rather than let a user read the table as transformed.
             title += " (raw values — transforms apply to the plot)"
         self._table_dialog.setWindowTitle(title)
+        self._size_table_dialog_to_content()
         self._table_dialog.show()
         self._table_dialog.raise_()
         self._table_dialog.activateWindow()
+
+    def _size_table_dialog_to_content(self) -> None:
+        """Open the pop-out at the width its columns actually need.
+
+        A ``QTableWidget``'s size hint is a scrolling hint, so the dialog would
+        open with a horizontal scrollbar over columns that are already sized to
+        their contents — the user has to widen it before reading a fit with more
+        than a couple of parameters. Everything below comes from the table's own
+        headers and from the sibling widgets' hints, and the floor is the
+        dialog's current size, so a pop-out the user has resized only ever grows.
+        """
+        layout = self._table_dialog.layout()
+        margins = layout.contentsMargins()
+        frame = 2 * self._table.frameWidth()
+        width = (
+            self._table.horizontalHeader().length()
+            + self._table.verticalHeader().width()
+            + frame
+            + margins.left()
+            + margins.right()
+        )
+        table_height = (
+            self._table.horizontalHeader().height()
+            + self._table.rowCount() * self._table.verticalHeader().defaultSectionSize()
+            + frame
+        )
+        items = [layout.itemAt(index) for index in range(layout.count())]
+        height = (
+            margins.top() + margins.bottom() + layout.spacing() * (len(items) - 1) + table_height
+        )
+        height += sum(
+            item.sizeHint().height() for item in items if item.widget() is not self._table
+        )
+        resize_to_available(
+            self._table_dialog,
+            width,
+            height,
+            width_fraction=_TABLE_DIALOG_SCREEN_FRACTION,
+            height_fraction=_TABLE_DIALOG_SCREEN_FRACTION,
+            min_width=self._table_dialog.width(),
+            min_height=self._table_dialog.height(),
+        )
 
     def _copy_table_tsv(self) -> None:
         """Put the table's data columns (what Export TSV writes) on the clipboard."""

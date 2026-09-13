@@ -51,9 +51,9 @@ fitted table is a dead copy in a dialog.
 - Collapsed: header only, with a QPainter sparkline (no Matplotlib) in place
   of the right-hand controls; `Fit`/`log`/`ƒ` hidden; a `derived` tag stays.
 - Focused: the card takes all the stack's height, every other card collapses
-  beneath it (their previous expanded state is restored on exit); a tools row
-  appears under the summary: **Add label** (checkable, today's Add Label
-  gesture) · **Clear labels**.
+  beneath it (their previous expanded state is restored on exit). Focus is
+  purely a size gesture — labels are placed from the plot's right-click menu,
+  which every card and the Overlay canvas carry.
 - Drag the grip to reorder cards (stack-internal drag/drop).
 - Derived (composite) cards: header right-click menu `Edit derived…`,
   `Remove`. Knight-shift K traces: `Remove` only (as today's Remove button).
@@ -191,7 +191,7 @@ The card is a pure view: it owns its canvas/figure, emits
 `focus_toggled(name)`, `expanded_changed(name, bool)`, `context_menu_requested(name, QPoint)`;
 the stack owns order, focus, drag reorder and emits `order_changed(list[str])`.
 `set_fit_label(text, tooltip)`, `set_summary(text)`, `set_transform_label(text)`,
-`set_sparkline(xs, ys, color)`, `set_swatch(color)`, `set_tools_visible(bool)`.
+`set_sparkline(xs, ys, color)`, `set_swatch(color)`.
 Card chrome follows `RangeCard` (`gui/widgets/range_card.py`) for surface,
 border and active-state styling; Fit button uses the segmented QSS builders.
 
@@ -248,3 +248,22 @@ the mockup link and the review checklist.
 - 2026-09-13: y transform per parameter, x global (advisor rationale above).
 - 2026-09-13: table stays a pop-out; hover-linking deferred.
 - 2026-09-13: tests rewritten to the new widgets, no aliases.
+- 2026-09-13 (follow-up): `ParameterCardStack.sizeHint` returns
+  `minimumSizeHint`. Each expanded card prefers its figure height, and the
+  dock's scroll area summed those preferences, so two cards already asked for
+  more than a 13-inch viewport and the panel scrolled while the cards sat at
+  their preferred height. The stack now asks for its floor and the expanding
+  cards divide whatever height the dock gives.
+- 2026-09-13 (follow-up): `MainWindow._inspector_default_width` floors at the
+  Parameters panel's own `minimumSizeHint().width()` plus the style's scrollbar
+  extent. The 0.20 window-width fraction lands under that on a 13-inch window,
+  so the deck opened with a horizontal scrollbar over the x rail.
+- 2026-09-13 (follow-up): the `Fitted parameters` pop-out sizes itself to the
+  table's header length and row count (via the shared `resize_to_available`,
+  capped to 90 % of the work area) on every show, and only ever grows, so a
+  window the user widened is not fought.
+- 2026-09-13 (follow-up): labels move to one right-click menu on every plot —
+  `Add label here…`, `Edit label…` / `Remove label`, `Clear labels`, merged
+  with the trend-point membership toggle. The cards' and Overlay's tools rows
+  and the armed-button gesture are gone; in Subplots mode a label no longer
+  needs a focused card.

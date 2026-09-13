@@ -1161,10 +1161,10 @@ canvas. Controls include:
   orders of magnitude
 * **Model components**: Enable **⋯ → Show components** to stack additive
   parameter-model components under fitted overlays (for visual decomposition)
-* **Plot labels**: Focus a card (its **⤢** button) and use its **Add label**
-  and **Clear labels** tools row to annotate exported and on-screen
-  parameter-trend plots (Overlay mode carries its own **Add label** /
-  **Clear labels** row beneath the canvas)
+* **Plot labels**: Right-click any parameter plot — a card's figure or the
+  Overlay canvas — for **Add label here…**, **Edit label…** / **Remove label**
+  over an existing label, and **Clear labels**; drag a label to move it, or
+  double-click it to change its text
 
 When **Show components** is enabled, y-axes are forced to linear scale with a
 zero baseline so stacked component areas remain physically interpretable.
