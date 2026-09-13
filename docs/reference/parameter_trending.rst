@@ -152,14 +152,17 @@ trend: the **Redfield** analysis plots :math:`1/\lambda` against
 fluctuation rate and field width; the **Arrhenius** analysis plots
 :math:`\ln\lambda` against :math:`1/T` so the slope is an activation energy.
 The collapsible **Axis transforms** section (below the Y-parameter list)
-applies such a transform to either axis independently.
+applies such a transform to either axis independently. The x lens is shared —
+one abscissa carries every trace — while the y lens belongs to each parameter
+on its own, so :math:`1/\lambda` and a raw :math:`\beta` can share a plot
+without one parameter's linearisation distorting the other.
 
 .. image:: /_generated/screenshots/parameter_trending_redfield.png
    :alt: The trending panel showing a Redfield linearisation — 1/λ versus B² with a straight-line Linear fit
    :width: 100%
 
 *A Redfield linearisation of a longitudinal-field* :math:`\lambda(B)` *scan:*
-*the Y axis transformed to* ``1/x  (reciprocal)`` *and the X axis to*
+:math:`\lambda`\ *'s Y lens set to* ``1/y  (reciprocal)`` *and the X axis to*
 ``x²  (square)`` *turn the three-regime* :math:`\lambda(B)` *falloff into a*
 *straight line, and a* ``Linear`` *model fit on the transformed plateau gives*
 *the Redfield slope and intercept. The high-field saturated point is excluded*
@@ -167,11 +170,19 @@ applies such a transform to either axis independently.
 
 Each axis has its own chooser — **X:** and **Y:** — offering ``None``,
 ``1/x  (reciprocal)``, ``x²  (square)``, ``ln x``, ``log₁₀ x``, ``√x`` and
-``Custom…``. Choosing ``Custom…`` opens a small **Custom X transform** /
-**Custom Y transform** dialog with one field, *Expression in x:* (placeholder
+``Custom…`` (the **Y:** menu names the same presets in *y*:
+``1/y  (reciprocal)``, ``y²  (square)``, ``ln y``, …). **X:** sets the shared
+abscissa lens. **Y:** sets the lens of the parameters currently selected in the
+Y-parameter list, and shows theirs: the active lens when they agree, ``None``
+when they carry different ones (each parameter keeps what it was given). Select
+a parameter to see — and change — its own lens.
+
+Choosing ``Custom…`` opens a small **Custom X transform** / **Custom Y
+transform** dialog with one field, *Expression in x:* (placeholder
 ``e.g. 1000/x``); the expression is validated live and previewed on a
 representative data value. The accepted expression then labels the combo item
-itself, and the last-used custom expression is remembered per axis.
+itself, and the last-used custom expression is remembered for the abscissa and
+per y parameter.
 
 The transform is applied at the point where the panel assembles its data, so it
 governs the plotted points, the propagated error bars **and the trend fit**:
@@ -182,7 +193,9 @@ whose transform is undefined (``1/0``, ``ln`` of a non-positive value) is droppe
 and the count surfaces on the trend-provenance line beneath the plot
 ("⚠ 1 dropped by transform"). Changing a transform strands an existing trend fit
 in the previous coordinate: its curve is hidden and its **Model Fit** button
-changes to **Model Fit ⚠** until you re-fit under the new axes.
+changes to **Model Fit ⚠** until you re-fit under the new axes. Only the fits
+actually affected are stranded — a new lens on :math:`\lambda` leaves
+:math:`\beta`'s fit alone, while a change of x axis reaches every parameter.
 
 The **field** axis is labelled in gauss (the loaders' native field unit), so a
 transform squares or inverts that unit accordingly (``B² (G²)``); a dataset held
@@ -192,8 +205,9 @@ A transform is distinct from the **log** axis-scale checkbox next to the **X:**
 selector (and the per-parameter **log** checkbox in the Y-parameter list): those
 change the axis *tick spacing* while leaving the numbers alone, whereas the
 transform changes the plotted values (which is what a straight-line Arrhenius fit
-needs). To keep the two from compounding, selecting ``ln x`` / ``log₁₀ x`` on an
-axis disables that axis's ``log`` checkbox until the transform is cleared.
+needs). To keep the two from compounding, selecting ``ln x`` / ``log₁₀ x``
+disables the matching ``log`` checkbox — the x one, or that parameter's own —
+until the transform is cleared.
 
 .. note::
 
@@ -218,7 +232,8 @@ axis disables that axis's ``log`` checkbox until the transform is cleared.
 
 **Exports under a transform.** ``Export TSV`` keeps every raw column (the durable
 record) and *appends* the transformed columns that match the on-screen axes,
-with ``# X transform`` / ``# Y transform`` provenance comments; with several
+with a ``# X transform`` provenance comment and one
+``# Y transform [<parameter>]`` comment per transformed parameter; with several
 series overlaid it gains a leading ``Series`` column and writes every selected
 series. ``Export to GLE`` likewise appends transformed columns (and points its
 plot and fitted curve at them, so the figure matches the screen), but currently

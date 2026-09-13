@@ -132,14 +132,14 @@ class ParameterTrendingRedfieldScenario(Scenario):
         )
 
         # The Redfield linearisation: reciprocal Y, square X.
-        panel._set_axis_transform("y", AxisTransform.preset("reciprocal"))
+        panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
         panel._set_axis_transform("x", AxisTransform.preset("square"))
 
         # Inject the real Linear fit computed on the transformed plateau, tagged
         # with the active transform so its overlay is drawn (not suppressed).
         fit = _build_redfield_linear_fit(payload)
         panel._model_fits["Lambda"] = fit
-        panel._model_fit_transform_sig["Lambda"] = panel._transform_signature()
+        panel._model_fit_transform_sig["Lambda"] = panel._transform_signature("Lambda")
         panel._sync_active_group_state()
         panel._refresh_model_fit_button_labels()
         _process_events_for(milliseconds=80)

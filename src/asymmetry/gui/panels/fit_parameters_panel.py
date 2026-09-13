@@ -165,6 +165,9 @@ from asymmetry.gui.widgets.panel_section import PanelSection
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
+#: The lens of a y parameter with no transform of its own.
+_IDENTITY_TRANSFORM = AxisTransform.identity()
+
 #: Sentinel distinguishing "x_domain not provided" (GUI callers — read it live
 #: from the rows) from an explicitly-passed snapshot that may itself be ``None``
 #: (the off-thread worker — must never read ``self`` for it).
@@ -552,14 +555,17 @@ class FitParametersPanel(QWidget):
         #: does not leak across unrelated projects; persisted via
         #: get_state/restore_state below.
         self._trend_model_memory: dict[str, str] = {}
-        #: Per-axis display+fit transforms (Redfield 1/λ vs B², Arrhenius ln λ vs
-        #: 1/T, …). Applied at the data-assembly boundary so the plotted points,
-        #: the error bars, *and* the Model-Fit input all share one transformed
-        #: coordinate system; persisted via get_state/restore_state.
+        #: Display+fit transforms (Redfield 1/λ vs B², Arrhenius ln λ vs 1/T, …).
+        #: Applied at the data-assembly boundary so the plotted points, the error
+        #: bars, *and* the Model-Fit input all share one transformed coordinate
+        #: system; persisted via get_state/restore_state. X is one shared
+        #: abscissa, so it has one transform; y is a different physical quantity
+        #: per parameter, so each carries its own lens (identity = no entry).
         self._x_transform: AxisTransform = AxisTransform.identity()
-        self._y_transform: AxisTransform = AxisTransform.identity()
-        #: Last-used custom expression per axis ("x"/"y"), so re-opening the
-        #: Custom… dialog pre-fills it (project-scoped, not QSettings).
+        self._y_transforms: dict[str, AxisTransform] = {}
+        #: Last-used custom expression per target ("x", "y:<param>"), so
+        #: re-opening the Custom… dialog pre-fills it (project-scoped, not
+        #: QSettings).
         self._axis_transform_custom_memory: dict[str, str] = {}
         #: The transform signature each stored model-fit was computed under, so a
         #: transform change suppresses now-mismatched overlays (mirrors the
@@ -1047,10 +1053,11 @@ class FitParametersPanel(QWidget):
             # ``model_memory`` kwarg. Kept here (not QSettings) so it does not
             # leak across unrelated projects.
             "trend_model_memory": dict(self._trend_model_memory),
-            # Per-axis transforms (identity serialises away); the last-used custom
-            # expressions are remembered per axis to pre-fill the Custom… dialog.
+            # Axis transforms (identity serialises away — the y map only ever
+            # holds non-identity lenses); the last-used custom expressions are
+            # remembered per target to pre-fill the Custom… dialog.
             "x_transform": self._x_transform.to_dict(),
-            "y_transform": self._y_transform.to_dict(),
+            "y_transforms": {name: t.to_dict() for name, t in self._y_transforms.items()},
             "axis_transform_custom_memory": dict(self._axis_transform_custom_memory),
         }
 
@@ -1091,6 +1098,28 @@ class FitParametersPanel(QWidget):
             cleaned["model_fits"] = {k: v for k, v in model_fits.items() if not is_track(k)}
 
         return cleaned
+
+    @staticmethod
+    def _deserialize_y_transforms(state: dict) -> dict[str, AxisTransform]:
+        """Rebuild the per-parameter y lenses from a saved state.
+
+        Projects written before the lens became per parameter carry a single
+        ``y_transform``; it was only ever visible on the parameters that state
+        had selected, so it migrates onto exactly those.
+        """
+        transforms: dict[str, AxisTransform] = {}
+        raw = state.get("y_transforms")
+        if isinstance(raw, dict):
+            for name, payload in raw.items():
+                transform = AxisTransform.from_dict(payload)
+                if not transform.is_identity:
+                    transforms[str(name)] = transform
+        legacy = AxisTransform.from_dict(state.get("y_transform"))
+        if not legacy.is_identity:
+            selected = state.get("selected_y_params")
+            for name in selected if isinstance(selected, list) else []:
+                transforms[str(name)] = legacy
+        return transforms
 
     def restore_state(self, state: dict, *, defer_refresh: bool = False) -> None:
         # Suppress the heavy synchronous plot draws each intermediate restore step
@@ -1134,10 +1163,10 @@ class FitParametersPanel(QWidget):
             state.get("composite_parameters", [])
         )
         self._knight_shift_config = KnightShiftConfig.from_dict(state.get("knight_shift"))
-        # Restore the per-axis transforms early so the log-scale guard applies to
-        # the Y checkboxes when they are rebuilt below.
+        # Restore the axis transforms early so the log-scale guard applies to the
+        # Y checkboxes when they are rebuilt below.
         self._x_transform = AxisTransform.from_dict(state.get("x_transform"))
-        self._y_transform = AxisTransform.from_dict(state.get("y_transform"))
+        self._y_transforms = self._deserialize_y_transforms(state)
         raw_custom_memory = state.get("axis_transform_custom_memory")
         self._axis_transform_custom_memory = (
             {str(k): str(v) for k, v in raw_custom_memory.items()}
@@ -1145,8 +1174,6 @@ class FitParametersPanel(QWidget):
             else {}
         )
         self._sync_axis_transform_combo("x")
-        self._sync_axis_transform_combo("y")
-        self._update_transform_suffix()
         restored_rows: list[_FitRow] = []
         if isinstance(rows_data, list):
             for entry in rows_data:
@@ -1230,6 +1257,10 @@ class FitParametersPanel(QWidget):
                 continue
             item.setSelected(pname in selected_y if selected_y else i == 0)
         self._selected_y_param_names = self._selected_y_parameters()
+        # The y combo and the header chip read the restored selection and rows,
+        # so they can only be built once both are in place.
+        self._sync_axis_transform_combo("y")
+        self._update_transform_suffix()
 
         log_y_state = state.get("log_y_params", [])
         log_y = set(log_y_state if isinstance(log_y_state, list) else [])
@@ -1261,10 +1292,12 @@ class FitParametersPanel(QWidget):
         self._plot_annotations = restored_annotations
 
         self._model_fits = self._deserialize_model_fits(state.get("model_fits", {}))
-        # Restored fits were saved under the restored transform, so bind their
-        # overlay-transform signature to it (a later transform change re-stales).
-        restored_sig = self._transform_signature()
-        self._model_fit_transform_sig = {name: restored_sig for name in self._model_fits}
+        # Restored fits were saved under the restored transforms, so bind each
+        # one's overlay signature to its parameter's lens (a later transform
+        # change re-stales it).
+        self._model_fit_transform_sig = {
+            name: self._transform_signature(name) for name in self._model_fits
+        }
         self._group_fit_results = self._deserialize_group_fit_results(
             state.get("group_fit_results", {})
         )
@@ -1995,6 +2028,9 @@ class FitParametersPanel(QWidget):
     def _on_y_selection_changed(self) -> None:
         self._selected_y_param_names = self._selected_y_parameters()
         self._update_composite_action_buttons()
+        # The Y transform combo drives the selected parameters, so it follows the
+        # selection to the lens those parameters are actually plotted through.
+        self._sync_axis_transform_combo("y")
         self._plot_refresh_timer.start()
 
     def _copy_parameter_set(self, source: ParameterSet) -> ParameterSet:
@@ -3066,8 +3102,43 @@ class FitParametersPanel(QWidget):
     def _axis_transform_combo(self, axis: str) -> QComboBox:
         return self._x_transform_combo if axis == "x" else self._y_transform_combo
 
+    def _y_transform_for(self, name: str) -> AxisTransform:
+        """The lens one y parameter is plotted through (identity by default)."""
+        return self._y_transforms.get(name, _IDENTITY_TRANSFORM)
+
+    def _transformed_y_params(self) -> list[str]:
+        """Selected y parameters carrying a non-identity lens, in display order."""
+        return [
+            n for n in self._selected_y_parameters() if not self._y_transform_for(n).is_identity
+        ]
+
     def _axis_transform(self, axis: str) -> AxisTransform:
-        return self._x_transform if axis == "x" else self._y_transform
+        """The transform the axis's combo represents.
+
+        X has one; the y combo drives the selected parameters, so it shows their
+        lens when they agree and falls back to identity when they differ (or
+        when nothing is selected) rather than claim one parameter's lens for all.
+        """
+        if axis == "x":
+            return self._x_transform
+        lenses = {self._y_transform_for(name) for name in self._selected_y_parameters()}
+        return lenses.pop() if len(lenses) == 1 else AxisTransform.identity()
+
+    def _axis_custom_memory_keys(self, axis: str) -> list[str]:
+        """Custom-expression memory keys the axis's combo writes to."""
+        if axis == "x":
+            return ["x"]
+        return [f"y:{name}" for name in self._selected_y_parameters()]
+
+    def _apply_axis_transform(self, axis: str, transform: AxisTransform) -> None:
+        """Route a combo pick to its target(s): the x axis, or every selected
+        y parameter (each parameter keeps its own lens thereafter)."""
+        if axis == "x":
+            self._set_axis_transform("x", transform)
+            return
+        for name in self._selected_y_parameters():
+            self._store_y_transform(name, transform)
+        self._transform_changed("y")
 
     def _on_axis_transform_activated(self, axis: str) -> None:
         combo = self._axis_transform_combo(axis)
@@ -3076,15 +3147,17 @@ class FitParametersPanel(QWidget):
             self._prompt_custom_axis_transform(axis)
             return
         transform = AxisTransform.identity() if kind == "identity" else AxisTransform.preset(kind)
-        self._set_axis_transform(axis, transform)
+        self._apply_axis_transform(axis, transform)
 
     def _prompt_custom_axis_transform(self, axis: str) -> None:
         from asymmetry.gui.panels.axis_transform_dialog import AxisTransformDialog
 
         sample_value, sample_error = self._axis_sample_point(axis)
+        memory_keys = self._axis_custom_memory_keys(axis)
+        memory = self._axis_transform_custom_memory
         dialog = AxisTransformDialog(
             axis_label=axis.upper(),
-            initial_expression=self._axis_transform_custom_memory.get(axis, ""),
+            initial_expression=next((memory[key] for key in memory_keys if key in memory), ""),
             sample_value=sample_value,
             sample_error=sample_error,
             parent=self,
@@ -3094,8 +3167,9 @@ class FitParametersPanel(QWidget):
             self._sync_axis_transform_combo(axis)
             return
         expression = dialog.expression()
-        self._axis_transform_custom_memory[axis] = expression
-        self._set_axis_transform(axis, AxisTransform.custom(expression))
+        for key in memory_keys:
+            memory[key] = expression
+        self._apply_axis_transform(axis, AxisTransform.custom(expression))
 
     def _axis_sample_point(self, axis: str) -> tuple[float | None, float | None]:
         """A representative (value, error) for the custom-transform preview."""
@@ -3126,10 +3200,22 @@ class FitParametersPanel(QWidget):
         return float(values[idx]), error
 
     def _set_axis_transform(self, axis: str, transform: AxisTransform) -> None:
-        if axis == "x":
-            self._x_transform = transform
+        """Set the shared abscissa transform (``axis`` is always ``"x"``)."""
+        self._x_transform = transform
+        self._transform_changed(axis)
+
+    def _store_y_transform(self, name: str, transform: AxisTransform) -> None:
+        """Record one parameter's lens; identity is absence, never an entry."""
+        if transform.is_identity:
+            self._y_transforms.pop(name, None)
         else:
-            self._y_transform = transform
+            self._y_transforms[name] = transform
+
+    def _set_y_transform(self, name: str, transform: AxisTransform) -> None:
+        self._store_y_transform(name, transform)
+        self._transform_changed("y")
+
+    def _transform_changed(self, axis: str) -> None:
         self._sync_axis_transform_combo(axis)
         self._apply_transform_log_guard()
         self._update_transform_suffix()
@@ -3166,8 +3252,6 @@ class FitParametersPanel(QWidget):
     def _apply_transform_log_guard(self) -> None:
         """A log-*transform* already log-scales the numbers; disable the log-*axis*
         checkbox on that axis so the two can't compound into nonsense."""
-        if not hasattr(self, "_log_x_check"):
-            return
         x_is_log = self._x_transform.kind in (_TRANSFORM_LOG, _TRANSFORM_LOG10)
         if x_is_log and self._log_x_check.isChecked():
             blocker = QSignalBlocker(self._log_x_check)
@@ -3179,8 +3263,8 @@ class FitParametersPanel(QWidget):
             if x_is_log
             else "Logarithmic axis scale (display only — values unchanged)."
         )
-        y_is_log = self._y_transform.kind in (_TRANSFORM_LOG, _TRANSFORM_LOG10)
-        for controls in self._y_controls.values():
+        for name, controls in self._y_controls.items():
+            y_is_log = self._y_transform_for(name).kind in (_TRANSFORM_LOG, _TRANSFORM_LOG10)
             check = controls.log
             if y_is_log and check.isChecked():
                 blocker = QSignalBlocker(check)
@@ -3199,17 +3283,22 @@ class FitParametersPanel(QWidget):
         parts: list[str] = []
         if not self._x_transform.is_identity:
             parts.append(self._x_transform.describe("x"))
-        if not self._y_transform.is_identity:
-            parts.append(self._y_transform.describe("y"))
+        for name in self._display_y_parameters():
+            transform = self._y_transform_for(name)
+            if not transform.is_identity:
+                symbol = self._axis_symbol(format_param_label(name))
+                parts.append(f"y[{symbol}]: {transform.describe('y')}")
         self._transforms_section.set_title_suffix(" · ".join(parts) if parts else None)
 
-    def _transform_signature(self) -> tuple:
-        """Identity of the current transforms, for cache/overlay invalidation."""
+    def _transform_signature(self, name: str) -> tuple:
+        """Identity of the transforms one parameter is plotted under, for
+        cache/overlay invalidation."""
+        y_transform = self._y_transform_for(name)
         return (
             self._x_transform.kind,
             self._x_transform.expression,
-            self._y_transform.kind,
-            self._y_transform.expression,
+            y_transform.kind,
+            y_transform.expression,
         )
 
     def _angle_axis_active(self) -> bool:
@@ -3621,8 +3710,10 @@ class FitParametersPanel(QWidget):
         self._selected_y_param_names = self._selected_y_parameters()
         self._update_composite_action_buttons()
         # Freshly-built per-parameter log checkboxes must honour an active
-        # ln/log₁₀ Y transform (which owns the log-scaling instead).
+        # ln/log₁₀ Y transform (which owns the log-scaling instead), and the
+        # combo must show the lens of whatever ended up selected.
         self._apply_transform_log_guard()
+        self._sync_axis_transform_combo("y")
 
     def _set_y_table_visible_rows(self, visible_rows: int = 3) -> None:
         """Set selector table height to show at most ``visible_rows`` rows."""
@@ -4025,7 +4116,7 @@ class FitParametersPanel(QWidget):
                 self._model_fits[param_name] = fit
                 # Record the transform this fit was computed under so a later
                 # transform change suppresses its now-mismatched overlay.
-                self._model_fit_transform_sig[param_name] = self._transform_signature()
+                self._model_fit_transform_sig[param_name] = self._transform_signature(param_name)
                 # Item B: surface this single fit's per-range outputs as a
                 # trendable results series (one row per range), so a single fit's
                 # outputs can themselves be trended.
@@ -5066,14 +5157,17 @@ class FitParametersPanel(QWidget):
         return bool(controls.log.isChecked() or self._log_y_check.isChecked())
 
     def _overlay_suppressed_for_transform(self, param_name: str) -> bool:
-        """Suppress a stored fit's overlay when the axes are transformed but the
-        fit was computed under a *different* transform (its ranges live in the
-        old coordinate). No-op when both axes are untransformed, so the common
-        path is unchanged; the fit's pill/table stay usable — only the curve
-        waits for a re-fit under the current transform."""
-        if self._x_transform.is_identity and self._y_transform.is_identity:
+        """Suppress a stored fit's overlay when this parameter's axes are
+        transformed but the fit was computed under a *different* transform (its
+        ranges live in the old coordinate). No-op when both the abscissa and this
+        parameter's lens are identity, so the common path is unchanged — and
+        another parameter's lens never touches it; the fit's pill/table stay
+        usable, only the curve waits for a re-fit under the current transform."""
+        if self._x_transform.is_identity and self._y_transform_for(param_name).is_identity:
             return False
-        return self._model_fit_transform_sig.get(param_name) != self._transform_signature()
+        return self._model_fit_transform_sig.get(param_name) != self._transform_signature(
+            param_name
+        )
 
     def _draw_model_overlay_mpl(self, ax, param_name: str, color: str = "red") -> None:
         fit = self._model_fits.get(param_name)
@@ -5215,9 +5309,12 @@ class FitParametersPanel(QWidget):
             bool(self._show_components_check.isChecked()),
             self._x_domain_for_sampling(x_key),
             # A transform change moves the sampling domain and the fit coordinate,
-            # so the cached curves must be recomputed.
-            self._transform_signature(),
-            tuple((name, id(self._model_fits.get(name))) for name in active),
+            # so the cached curves must be recomputed — per parameter, since each
+            # carries its own y lens (the signature also covers the shared x one).
+            tuple(
+                (name, id(self._model_fits.get(name)), self._transform_signature(name))
+                for name in active
+            ),
         )
 
     def _update_empty_state_hint(self) -> None:
@@ -5256,18 +5353,20 @@ class FitParametersPanel(QWidget):
         transformed value is not is silently omitted by matplotlib; this counts
         them so the provenance line can say why some points vanished. Zero when no
         transform is active."""
-        if self._x_transform.is_identity and self._y_transform.is_identity:
+        if self._x_transform.is_identity and not self._y_transforms:
             return 0
         dropped: set[int] = set()
         if not self._x_transform.is_identity:
             raw_x = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
             tx, _ = self._x_transform.apply(raw_x)
             dropped.update(np.where(np.isfinite(raw_x) & ~np.isfinite(tx))[0].tolist())
-        if not self._y_transform.is_identity:
-            for name in y_params:
-                raw_y = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
-                ty, _ = self._y_transform.apply(raw_y)
-                dropped.update(np.where(np.isfinite(raw_y) & ~np.isfinite(ty))[0].tolist())
+        for name in y_params:
+            transform = self._y_transform_for(name)
+            if transform.is_identity:
+                continue
+            raw_y = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
+            ty, _ = transform.apply(raw_y)
+            dropped.update(np.where(np.isfinite(raw_y) & ~np.isfinite(ty))[0].tolist())
         return len(dropped)
 
     def _update_trend_provenance(self, rows: list[_FitRow], *, transform_dropped: int = 0) -> None:
@@ -5836,9 +5935,10 @@ class FitParametersPanel(QWidget):
         """Build (and transform) one parameter's value/error arrays for *rows*."""
         y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
         y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
-        if self._y_transform.is_identity:
+        transform = self._y_transform_for(y_name)
+        if transform.is_identity:
             return y_vals, y_err
-        return self._y_transform.apply(y_vals, y_err)
+        return transform.apply(y_vals, y_err)
 
     @staticmethod
     def _axis_symbol(label: str) -> str:
@@ -5862,10 +5962,11 @@ class FitParametersPanel(QWidget):
         return self._x_transform.describe_with_unit(symbol, unit)
 
     def _transformed_y_axis_label(self, y_name: str) -> str:
-        if self._y_transform.is_identity:
+        transform = self._y_transform_for(y_name)
+        if transform.is_identity:
             return _format_plot_label(y_name)
         symbol, unit = self._axis_symbol_and_unit(format_param_label(y_name))
-        return self._y_transform.describe_with_unit(symbol, unit)
+        return transform.describe_with_unit(symbol, unit)
 
     def _transformed_x_display_label(self, x_key: str) -> str:
         """Plain-text transformed x label (for dialog titles / Model-Fit axis).
@@ -5989,7 +6090,7 @@ class FitParametersPanel(QWidget):
 
         dialog = QDialog(self)
         title = "Fitted Variable Parameters"
-        if not (self._x_transform.is_identity and self._y_transform.is_identity):
+        if not self._x_transform.is_identity or self._y_transforms:
             # The table always shows raw fitted values; the transform is a plot
             # lens, so say so rather than let a user read the table as transformed.
             title += " (raw values — transforms apply to the plot)"
@@ -6072,7 +6173,7 @@ class FitParametersPanel(QWidget):
 
     def _transformed_y_export_header(self, name: str) -> str:
         symbol, unit = self._axis_symbol_and_unit(format_param_label(name))
-        return self._y_transform.describe_with_unit(symbol, unit)
+        return self._y_transform_for(name).describe_with_unit(symbol, unit)
 
     @staticmethod
     def _export_float(value: object) -> str:
@@ -6099,11 +6200,10 @@ class FitParametersPanel(QWidget):
         x_key = self._effective_x_key()
         multi = len(series) > 1
         y_params = self._display_y_parameters()
-        selected_y = self._selected_y_parameters()
         abscissa = self._export_abscissa_column()
         abscissa_key = abscissa[0] if abscissa is not None else None
         x_active = not self._x_transform.is_identity
-        y_active = not self._y_transform.is_identity
+        transformed_y = self._transformed_y_params()
 
         # Raw columns stay verbatim (the durable provenance record); a Series
         # column leads only when >1 series is overlaid, and transformed columns
@@ -6121,10 +6221,9 @@ class FitParametersPanel(QWidget):
         headers.extend(["reduced_chi2", "chi2"])
         if x_active:
             headers.append(self._transformed_x_export_header(x_key))
-        if y_active:
-            for name in selected_y:
-                header = self._transformed_y_export_header(name)
-                headers.extend([header, f"err_{header}"])
+        for name in transformed_y:
+            header = self._transformed_y_export_header(name)
+            headers.extend([header, f"err_{header}"])
 
         model_label = self._export_model_label()
 
@@ -6135,11 +6234,13 @@ class FitParametersPanel(QWidget):
             if model_label:
                 tsvfile.write(f"# Model: {model_label}\n")
             # Record the active transforms (re-executable expressions in x) so the
-            # transformed columns are self-describing.
+            # transformed columns are self-describing; the y lens is per parameter,
+            # so it is named alongside its expression.
             if x_active:
                 tsvfile.write(f"# X transform: {self._x_transform.expression_text}\n")
-            if y_active:
-                tsvfile.write(f"# Y transform: {self._y_transform.expression_text}\n")
+            for name in transformed_y:
+                expression = self._y_transform_for(name).expression_text
+                tsvfile.write(f"# Y transform [{name}]: {expression}\n")
             if self._global_params is not None:
                 tsvfile.write("# Global fitting parameters:\n")
                 for param in self._global_params:
@@ -6163,11 +6264,7 @@ class FitParametersPanel(QWidget):
                     if x_active
                     else None
                 )
-                y_transformed = (
-                    {name: self._series_y_arrays(rows, name) for name in selected_y}
-                    if y_active
-                    else {}
-                )
+                y_transformed = {name: self._series_y_arrays(rows, name) for name in transformed_y}
                 for i, src in enumerate(rows):
                     record: list[str] = [plot_series.name] if multi else []
                     record += [str(int(src.run_number)), fmt(src.field), fmt(src.temperature)]
@@ -6178,10 +6275,9 @@ class FitParametersPanel(QWidget):
                     record += [fmt(src.reduced_chi_squared), fmt(src.chi_squared)]
                     if x_active:
                         record.append(fmt(x_transformed[i]))
-                    if y_active:
-                        for name in selected_y:
-                            vals, errs = y_transformed[name]
-                            record += [fmt(vals[i]), fmt(errs[i])]
+                    for name in transformed_y:
+                        vals, errs = y_transformed[name]
+                        record += [fmt(vals[i]), fmt(errs[i])]
                     writer.writerow(record)
 
     def _serialize_model_fits(self) -> dict:
@@ -6751,12 +6847,11 @@ class FitParametersPanel(QWidget):
                 f.write(f"! Model: {model_label}\n")
 
             x_active = not self._x_transform.is_identity
-            y_active = not self._y_transform.is_identity
-            selected_y = self._selected_y_parameters()
+            transformed_y = self._transformed_y_params()
             if x_active:
                 f.write(f"! X transform: {self._x_transform.expression_text}\n")
-            if y_active:
-                f.write(f"! Y transform: {self._y_transform.expression_text}\n")
+            for name in transformed_y:
+                f.write(f"! Y transform [{name}]: {self._y_transform_for(name).expression_text}\n")
             if len(self._series_to_plot()) > 1:
                 f.write("! Note: overlaid series not exported; active series only.\n")
 
@@ -6795,10 +6890,9 @@ class FitParametersPanel(QWidget):
             # _gle_transformed_x_column / _gle_transformed_columns_for_param.
             if x_active:
                 headers.append(self._transformed_x_export_header(x_key))
-            if y_active:
-                for name in selected_y:
-                    header = self._transformed_y_export_header(name)
-                    headers.extend([header, f"err_{header}"])
+            for name in transformed_y:
+                header = self._transformed_y_export_header(name)
+                headers.extend([header, f"err_{header}"])
 
             x_transformed = (
                 self._apply_x_transform(
@@ -6807,9 +6901,7 @@ class FitParametersPanel(QWidget):
                 if x_active
                 else None
             )
-            y_transformed = (
-                {name: self._series_y_arrays(rows, name) for name in selected_y} if y_active else {}
-            )
+            y_transformed = {name: self._series_y_arrays(rows, name) for name in transformed_y}
 
             f.write("! Column map:\n")
             for col_idx, name in enumerate(headers, start=1):
@@ -6841,10 +6933,9 @@ class FitParametersPanel(QWidget):
                 values.append(row.chi_squared if row.chi_squared is not None else np.nan)
                 if x_active:
                     values.append(float(x_transformed[i]))
-                if y_active:
-                    for name in selected_y:
-                        vals, errs = y_transformed[name]
-                        values.extend([float(vals[i]), float(errs[i])])
+                for name in transformed_y:
+                    vals, errs = y_transformed[name]
+                    values.extend([float(vals[i]), float(errs[i])])
                 f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
 
     def _gle_x_column(self, x_key: str) -> int:
@@ -6887,16 +6978,18 @@ class FitParametersPanel(QWidget):
         return self._gle_base_column_count() + 1
 
     def _gle_transformed_columns_for_param(self, name: str) -> tuple[int, int] | None:
-        """1-indexed (value, err) transformed columns for a plotted param."""
-        if self._y_transform.is_identity:
-            return None
-        selected = self._selected_y_parameters()
-        if name not in selected:
+        """1-indexed (value, err) transformed columns for a plotted param.
+
+        ``None`` for a parameter plotted through the identity lens: the data file
+        writes a transformed column pair only for the transformed parameters.
+        """
+        transformed = self._transformed_y_params()
+        if name not in transformed:
             return None
         base = self._gle_base_column_count()
         if not self._x_transform.is_identity:
             base += 1  # the transformed-x column is written first
-        value_col = base + 1 + selected.index(name) * 2
+        value_col = base + 1 + transformed.index(name) * 2
         return value_col, value_col + 1
 
     def _gle_effective_x_column(self, x_key: str) -> int:
@@ -6913,7 +7006,7 @@ class FitParametersPanel(QWidget):
         return self._transformed_x_export_header(x_key)
 
     def _gle_effective_y_label(self, name: str) -> str:
-        if self._y_transform.is_identity:
+        if self._y_transform_for(name).is_identity:
             return _format_gle_label(name)
         return self._transformed_y_export_header(name)
 
