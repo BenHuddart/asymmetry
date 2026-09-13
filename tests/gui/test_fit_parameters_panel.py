@@ -2699,8 +2699,9 @@ def test_series_pill_falls_back_to_full_name_without_short_names(
             "errors": {"Lambda": 0.01},
         }
     ]
-    panel.load_representation_series([("batch-1", "Fast damped · 1", row_dicts)])
-    assert panel._group_button_map["batch-1"].text() == "Fast damped · 1"
+    # Short enough to sit under the elision cap in any font (CI's differs from macOS).
+    panel.load_representation_series([("batch-1", "Fast · 1", row_dicts)])
+    assert panel._group_button_map["batch-1"].text() == "Fast · 1"
 
     panel.load_representation_series(
         [("batch-1", "Fast damped · 1", row_dicts)],
