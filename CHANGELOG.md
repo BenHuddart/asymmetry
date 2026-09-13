@@ -167,6 +167,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **"Recursive repaint detected" on startup and after every trend redraw.**
+  The Parameters panel's hover ring re-blitted each canvas from inside the
+  draw that had just completed; the Qt canvas runs a pending draw from its
+  own paint event, and a blit is a synchronous repaint, so Qt logged the
+  recursion (and a painter with no engine) three times per redraw. The
+  post-draw ring is now put back by the hover timer instead.
+
 - **Locating moved data files now works for a project saved on Windows and opened on
   macOS or Linux.** The "Locate Data Directory" fallback took each stored path's file
   name with the host's path rules, so a `C:\...\run.root` path had no separator on POSIX
