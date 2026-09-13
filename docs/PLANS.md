@@ -8,9 +8,8 @@ subsystems or days.
 
 ### Parameters panel: parameter cards, chip rail, pop-out table
 
-Status: design settled with maintainer 2026-09-13; single PR on
-`feat/parameters-panel-cards`, phased subagent work with a lead review gate
-per phase. Full plan: [docs/plans/parameters-panel-cards.md](plans/parameters-panel-cards.md).
+Status: implemented 2026-09-13; single PR on `feat/parameters-panel-cards`
+awaiting review. Full plan: [docs/plans/parameters-panel-cards.md](plans/parameters-panel-cards.md).
 
 ### Global Fit Wizard: transition breaks, phases, and a separable role search
 

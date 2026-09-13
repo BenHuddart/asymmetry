@@ -1,9 +1,10 @@
 # Parameters panel: parameter cards, chip rail, pop-out table
 
-Status: design settled with maintainer 2026-09-13 (mockups:
-https://claude.ai/code/artifact/66458740-3fc1-423b-9b68-4c5e11f4f5b4, page
-"Recommended"); single PR on `feat/parameters-panel-cards`, built phase by
-phase by subagents with a lead review gate after every phase.
+Status: implemented 2026-09-13 on `feat/parameters-panel-cards`, one PR
+awaiting review; built phase by phase by subagents with a lead review gate
+after every phase. Mockups:
+https://claude.ai/code/artifact/66458740-3fc1-423b-9b68-4c5e11f4f5b4 (page
+"Recommended" is what shipped).
 
 ## Problem
 
