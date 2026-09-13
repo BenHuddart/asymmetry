@@ -10,8 +10,9 @@ the abort branch.
 
 Desired behaviour: on partial success, still build the series from the converged
 members and surface the failures as a warning. This test asserts
-``_emit_global_fit_success`` is invoked with *only* the successful runs when one
-member fails. It is RED today (the abort branch never calls it).
+``_emit_global_fit_success`` is invoked with its ``successful`` kwarg holding
+*only* the converged runs when one member fails (``results_dict`` carries every
+member, converged or not, so the results card can show a chip per run).
 """
 
 from __future__ import annotations
@@ -98,7 +99,11 @@ def test_partial_batch_failure_still_emits_series_for_successes(mw, monkeypatch)
 
     def _record(**kwargs):
         captured["called"] = True
+        # ``results_dict`` now carries every member (the results card shows a
+        # chip per run, failures included); ``successful`` is the filtered set
+        # that actually becomes the emitted series.
         captured["results_dict"] = kwargs.get("results_dict")
+        captured["successful"] = kwargs.get("successful")
 
     monkeypatch.setattr(panel, "_emit_global_fit_success", _record)
 
@@ -107,4 +112,5 @@ def test_partial_batch_failure_still_emits_series_for_successes(mw, monkeypatch)
     panel._on_fit_finished(results_dict, [])
 
     assert captured.get("called"), "no series emitted — the whole batch was discarded"
-    assert set(captured["results_dict"]) == {10}, "series must keep only the converged run(s)"
+    assert set(captured["successful"]) == {10}, "series must keep only the converged run(s)"
+    assert set(captured["results_dict"]) == {10, 11}, "the card must still see every member"
