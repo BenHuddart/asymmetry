@@ -45,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approximation the two-cut-off form makes (and when to fall back to `OverhauserPowder` instead),
   and the literature references.
 
+### Fixed
+
+- **Locating moved data files now works for a project saved on Windows and opened on
+  macOS or Linux.** The "Locate Data Directory" fallback took each stored path's file
+  name with the host's path rules, so a `C:\...\run.root` path had no separator on POSIX
+  and the whole path was joined onto the chosen folder; the files were never found and
+  every run was skipped. File names are now split with Windows-aware rules on every
+  platform, and the "Data Files Not Found" prompt lists bare file names instead of
+  full paths.
+
 ## [0.18.0] - 2026-09-06
 
 ### Added

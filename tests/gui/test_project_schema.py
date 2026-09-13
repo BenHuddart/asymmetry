@@ -2668,6 +2668,61 @@ class TestMainWindowProjectState:
         assert os.path.basename(loaded_paths[0]) == "run42.nxs"
         assert str(new_data_dir) in loaded_paths[0]
 
+    def test_restore_project_state_locates_moved_files_from_windows_path(
+        self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
+    ) -> None:
+        """A backslash path saved on Windows still resolves in the fallback folder on POSIX.
+
+        Regression guard: ``os.path.basename`` on POSIX treats a Windows path as
+        one filename, so the candidate joined onto the chosen folder never existed.
+        """
+        monkeypatch.setattr(mw_module, "DataBrowserPanel", _StubDataBrowserWithState)
+        monkeypatch.setattr(mw_module, "FitPanel", _StubFitPanelWithState)
+        monkeypatch.setattr(mw_module, "PlotPanel", _StubPlotPanelWithState)
+        monkeypatch.setattr(mw_module, "LogPanel", _StubLogPanel)
+        monkeypatch.setattr(mw_module, "FourierPanel", _StubFourierWithState)
+        monkeypatch.setattr(mw_module, "FitParametersPanel", _StubFitParamsClear)
+
+        new_data_dir = tmp_path / "moved_data"
+        new_data_dir.mkdir()
+        (new_data_dir / "run42.nxs").write_bytes(b"\x00")
+
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+        prompts: list[str] = []
+
+        def _question(parent, title, text, *a, **kw):
+            prompts.append(text)
+            return QMessageBox.StandardButton.Yes
+
+        monkeypatch.setattr(QMessageBox, "question", staticmethod(_question))
+        monkeypatch.setattr(
+            QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **kw: str(new_data_dir))
+        )
+        loaded_paths: list[str] = []
+
+        def _stub_load_file(self_inner, path):
+            loaded_paths.append(path)
+            return None
+
+        monkeypatch.setattr(mw_module.MainWindow, "_load_file", _stub_load_file)
+
+        window = mw_module.MainWindow()
+        state = _minimal_state()
+        state["datasets"] = [
+            {
+                "run_number": 42,
+                "source_file": "C:\\Users\\someone\\Data\\run42.nxs",
+                "metadata_overrides": {"field": 100.0},
+            }
+        ]
+        window.restore_project_state(state, str(tmp_path / "test.asymp"))
+
+        assert loaded_paths == [str(new_data_dir / "run42.nxs")]
+        # The prompt names the file, not the whole foreign path.
+        assert "  run42.nxs" in prompts[0]
+        assert "C:\\" not in prompts[0]
+
     def test_restore_project_state_opens_fit_and_params_docks_when_results_exist(
         self, monkeypatch: pytest.MonkeyPatch, qapp: QApplication, tmp_path
     ) -> None:
