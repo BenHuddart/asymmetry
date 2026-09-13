@@ -239,7 +239,7 @@ class ParameterCard(QFrame):
         # from a QSS `color:` rule; the weight still rides on the widget font.
         self._name_label.set_pen_color(tokens.TEXT)
         self._name_label.setStyleSheet("font-weight: 600;")
-        header_layout.addWidget(self._name_label, 1)
+        header_layout.addWidget(self._name_label)
 
         self.fit_button = QPushButton("Fit…", self._header)
         self.fit_button.setStyleSheet(build_segmented_button_qss())

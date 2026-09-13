@@ -486,6 +486,7 @@ def test_subplots_draws_axes_per_expanded_card_and_a_sparkline_when_collapsed(
     assert panel._figure.axes == []
 
     card(panel, "Lambda").set_expanded(False)
+    panel._refresh_plot()  # a collapse redraws the stack behind the debounce timer
     assert card(panel, "Lambda").figure.axes == []
     assert not card(panel, "Lambda")._sparkline_label.pixmap().isNull()
     assert panel._collapsed_params == {"Lambda"}

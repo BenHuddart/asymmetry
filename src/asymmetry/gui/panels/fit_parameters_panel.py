@@ -180,6 +180,8 @@ _IDENTITY_TRANSFORM_GLYPH = "ƒ"
 #: Title of the pop-out fitted-parameter table (a suffix is appended while a
 #: transform is active — the table always shows raw values).
 _TABLE_DIALOG_TITLE = "Fitted parameters"
+#: The ⋯ and + rail buttons are their glyph; Qt's menu-indicator arrow would double it.
+_MENU_BUTTON_QSS = "QToolButton::menu-indicator { image: none; }"
 
 #: Summary line under a card with no model fit attached.
 _NO_FIT_SUMMARY = "no model fit yet"
@@ -743,6 +745,7 @@ class FitParametersPanel(QWidget):
         self._more_button.setToolTip("Exports and plot options")
         self._more_button.setMenu(self._more_menu)
         self._more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._more_button.setStyleSheet(_MENU_BUTTON_QSS)
         x_row.addWidget(self._more_button)
         layout.addLayout(x_row)
 
@@ -776,6 +779,7 @@ class FitParametersPanel(QWidget):
         self._add_button.setToolTip("Add a derived parameter")
         self._add_button.setMenu(self._add_menu)
         self._add_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._add_button.setStyleSheet(_MENU_BUTTON_QSS)
         y_row.addWidget(self._add_button)
 
         self._subplots_button = QPushButton("Subplots")
@@ -802,6 +806,18 @@ class FitParametersPanel(QWidget):
         self._figure, self._canvas = create_canvas(layout="constrained")
         self._connect_plot_events(self._canvas)
         overlay_layout.addWidget(self._canvas, 1)
+        overlay_tools = QHBoxLayout()
+        overlay_tools.setContentsMargins(0, 0, 0, 0)
+        overlay_tools.setSpacing(6)
+        self._overlay_add_label_button = QPushButton("Add label")
+        self._overlay_add_label_button.setCheckable(True)
+        self._overlay_add_label_button.setStyleSheet(build_segmented_button_qss())
+        overlay_tools.addWidget(self._overlay_add_label_button)
+        overlay_clear_labels_button = QPushButton("Clear labels")
+        overlay_clear_labels_button.clicked.connect(self._clear_plot_labels)
+        overlay_tools.addWidget(overlay_clear_labels_button)
+        overlay_tools.addStretch(1)
+        overlay_layout.addLayout(overlay_tools)
         self._plot_pages.addWidget(overlay_page)
         layout.addWidget(self._plot_pages, 1)
         # Covers the whole plot area while the overlay curves recompute off-thread.
@@ -891,10 +907,6 @@ class FitParametersPanel(QWidget):
         self._update_empty_state_hint()
         self._update_row_dependent_controls()
         self._sync_transform_buttons()
-
-        self._update_x_axis_auto_hint()
-        self._refresh_group_button_styles()
-        self._update_empty_state_hint()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -2831,17 +2843,21 @@ class FitParametersPanel(QWidget):
         canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
         canvas.mpl_connect("button_release_event", self._on_plot_button_release)
 
-    def _add_label_armed_card(self) -> ParameterCard | None:
-        """The focused card whose Add label button is armed, if any.
+    def _armed_add_label_button(self) -> QPushButton | None:
+        """The checked Add label button, if any.
 
-        Add label lives on the focused card's tools row, so exactly one card can
-        be armed and only while the stack is focused.
+        Subplots keeps the button on the focused card's tools row (so at most one
+        card is armed, and only while the stack is focused); Overlay has its own
+        under the shared canvas.
         """
-        focused = self._card_stack.focused()
-        if focused is None:
-            return None
-        card = self._card_stack.card(focused)
-        return card if card.add_label_button.isChecked() else None
+        if self._plot_mode() == "Overlay":
+            button = self._overlay_add_label_button
+        else:
+            focused = self._card_stack.focused()
+            if focused is None:
+                return None
+            button = self._card_stack.card(focused).add_label_button
+        return button if button.isChecked() else None
 
     def _on_plot_button_press(self, event) -> None:
         """Handle click interactions for parameter-plot labels."""
@@ -2858,7 +2874,7 @@ class FitParametersPanel(QWidget):
         if event.button != 1:
             return
 
-        if self._add_label_armed_card() is not None:
+        if self._armed_add_label_button() is not None:
             self._add_annotation_at_event(event)
             return
 
@@ -2996,9 +3012,9 @@ class FitParametersPanel(QWidget):
                 "artist": None,
             }
         )
-        armed = self._add_label_armed_card()
+        armed = self._armed_add_label_button()
         if armed is not None:
-            armed.add_label_button.setChecked(False)
+            armed.setChecked(False)
         self._refresh_plot()
 
     def _draw_plot_annotations(self, axes_by_tag: dict[str, object]) -> None:
@@ -3589,21 +3605,18 @@ class FitParametersPanel(QWidget):
             self._log_y_params.add(name)
         else:
             self._log_y_params.discard(name)
-        self._redraw_param(name)
+        if self._plot_mode() == "Subplots":
+            self._draw_card(name)
+        else:
+            self._refresh_plot()
 
     def _on_card_expanded_changed(self, name: str, expanded: bool) -> None:
         if expanded:
             self._collapsed_params.discard(name)
         else:
             self._collapsed_params.add(name)
-        self._redraw_param(name)
-
-    def _redraw_param(self, name: str) -> None:
-        """Redraw just *name*'s card, or the whole figure in Overlay mode."""
-        if self._plot_mode() == "Subplots":
-            self._draw_card(name)
-        else:
-            self._refresh_plot()
+        # The x label sits on the last expanded card, so this is a stack-wide redraw.
+        self._plot_refresh_timer.start()
 
     def _show_card_context_menu(self, name: str, position: QPoint) -> None:
         """Offer the derived-quantity actions a card's header supports."""
@@ -5400,6 +5413,7 @@ class FitParametersPanel(QWidget):
             card.set_swatch(color)
             if not card.is_expanded():
                 card.set_sparkline(x_vals, self._series_y_arrays(rows, card.name)[0], color)
+                card.figure.clear()
                 continue
             card.figure.clear()
             ax = card.figure.add_subplot(111)
