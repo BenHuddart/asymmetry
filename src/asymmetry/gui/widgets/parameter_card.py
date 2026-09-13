@@ -7,9 +7,7 @@ and its chrome, renders what the panel hands it, and emits a signal (carrying
 the parameter name) for every gesture. It imports nothing from
 ``asymmetry.core`` or from the panels, so it can be built and tested in
 isolation. :class:`ParameterCardStack` owns the ordering, the focus mode, and
-the drag-to-reorder — a plain mouse drag it tracks itself, never a native
-``QDrag`` session (one begun from the grip left Qt's mouse state stuck and the
-whole application deaf to clicks).
+the drag-to-reorder.
 """
 
 from __future__ import annotations
@@ -17,10 +15,19 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-from PySide6.QtCore import QPoint, QPointF, QSignalBlocker, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPixmap
+from PySide6.QtCore import QMimeData, QPoint, QPointF, QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QDrag,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -37,7 +44,15 @@ from asymmetry.gui.styles.widgets import build_segmented_button_qss, make_contex
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
-__all__ = ["ParameterCard", "ParameterCardStack", "sparkline_pixmap"]
+__all__ = [
+    "PARAMETER_CARD_MIME",
+    "ParameterCard",
+    "ParameterCardStack",
+    "sparkline_pixmap",
+]
+
+#: Mime type carrying a dragged card's parameter name during a stack reorder.
+PARAMETER_CARD_MIME = "application/x-asymmetry-parameter-card"
 
 #: objectName so the focused/unfocused stylesheet targets only the surface frame
 #: (a bare ``QFrame { … }`` rule would cascade onto the child controls).
@@ -144,37 +159,25 @@ class _CardHeader(QWidget):
 
 
 class _DragGrip(QLabel):
-    """The reorder handle: reports the cursor while it is dragged past the threshold.
+    """The reorder handle; a left press starts the card's drag.
 
-    Accepting the press (rather than delegating to ``QLabel``) keeps a grab on
-    the grip from also toggling the header underneath it; right presses fall
-    through so the header's context menu still opens over the grip.
+    Accepts the press (by not delegating to ``QLabel``) so grabbing the grip
+    never also toggles the header underneath it. Right presses fall through so
+    the header's context menu still opens over the grip.
     """
 
     def __init__(self, on_drag, parent: QWidget) -> None:
         super().__init__(_GRIP_GLYPH, parent)
         self._on_drag = on_drag
-        self._press_pos: QPoint | None = None
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setToolTip("Drag to reorder")
         self.setStyleSheet(f"color: {tokens.TEXT_DIM};")
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 — Qt override
         if event.button() == Qt.MouseButton.LeftButton:
-            self._press_pos = event.position().toPoint()
+            self._on_drag()
             return
         super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 — Qt override
-        if self._press_pos is None:
-            return
-        moved = (event.position().toPoint() - self._press_pos).manhattanLength()
-        if moved >= QApplication.startDragDistance():
-            self._on_drag(event.globalPosition().toPoint())
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 — Qt override
-        self._press_pos = None
-        super().mouseReleaseEvent(event)
 
 
 class ParameterCard(QFrame):
@@ -192,8 +195,6 @@ class ParameterCard(QFrame):
     expanded_changed = Signal(str, bool)
     #: The header was right-clicked; carries the global position.
     context_menu_requested = Signal(str, QPoint)
-    #: The grip is being dragged; carries the cursor's global position.
-    reorder_dragged = Signal(str, QPoint)
 
     def __init__(
         self,
@@ -278,7 +279,7 @@ class ParameterCard(QFrame):
         self.focus_button.clicked.connect(self._on_focus_clicked)
         header_layout.addWidget(self.focus_button)
 
-        header_layout.addWidget(_DragGrip(self._on_grip_dragged, self._header))
+        header_layout.addWidget(_DragGrip(self._start_drag, self._header))
 
         # ── Body ────────────────────────────────────────────────────────────
         self._body = QWidget(self._surface)
@@ -399,8 +400,13 @@ class ParameterCard(QFrame):
     def _toggle_expanded(self) -> None:
         self.set_expanded(not self._expanded)
 
-    def _on_grip_dragged(self, global_pos: QPoint) -> None:
-        self.reorder_dragged.emit(self._name, global_pos)
+    def _start_drag(self) -> None:
+        data = QMimeData()
+        data.setData(PARAMETER_CARD_MIME, self._name.encode())
+        drag = QDrag(self)
+        drag.setMimeData(data)
+        drag.setPixmap(self._header.grab())
+        drag.exec(Qt.DropAction.MoveAction)
 
     def _on_fit_clicked(self) -> None:
         self.fit_requested.emit(self._name)
@@ -441,6 +447,8 @@ class ParameterCardStack(QWidget):
         # than spreading; cards are always inserted in front of it.
         self._layout.addStretch(0)
 
+        self.setAcceptDrops(True)
+
     # ── Membership ──────────────────────────────────────────────────────────
 
     def add_card(self, card: ParameterCard) -> None:
@@ -452,7 +460,6 @@ class ParameterCardStack(QWidget):
                 card.set_expanded(False)
         card.focus_toggled.connect(self._on_card_focus_toggled)
         card.expanded_changed.connect(self._on_card_expanded_changed)
-        card.reorder_dragged.connect(self._on_card_dragged)
         self._layout.insertWidget(self._layout.count() - 1, card)
         self._apply_stretch()
 
@@ -464,7 +471,6 @@ class ParameterCardStack(QWidget):
         self._remembered.pop(name, None)
         card.focus_toggled.disconnect(self._on_card_focus_toggled)
         card.expanded_changed.disconnect(self._on_card_expanded_changed)
-        card.reorder_dragged.disconnect(self._on_card_dragged)
         self._layout.removeWidget(card)
         card.setParent(None)
         self._apply_stretch()
@@ -537,17 +543,33 @@ class ParameterCardStack(QWidget):
 
     # ── Drag reorder ────────────────────────────────────────────────────────
 
-    def _on_card_dragged(self, name: str, global_pos: QPoint) -> None:
-        """Swap the dragged card with the neighbour whose centre the cursor crossed."""
-        cards = self.cards()
-        index = next(i for i, card in enumerate(cards) if card.name == name)
-        y = self.mapFromGlobal(global_pos).y()
-        if index > 0 and y < cards[index - 1].geometry().center().y():
-            self.move_card(name, index - 1)
-        elif index < len(cards) - 1 and y > cards[index + 1].geometry().center().y():
-            self.move_card(name, index + 1)
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802 — Qt override
+        if self._dragged_name(event) in self._cards:
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:  # noqa: N802 — Qt override
+        event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802 — Qt override
+        name = self._dragged_name(event)
+        order = [card.name for card in self.cards()]
+        target = len(order)
+        for index, card in enumerate(self.cards()):
+            if event.position().y() < card.geometry().center().y():
+                target = index
+                break
+        # The dragged card still occupies a slot above the target while the drop
+        # index is computed, so dropping below its own position over-counts by one.
+        if order.index(name) < target:
+            target -= 1
+        self.move_card(name, target)
+        event.acceptProposedAction()
 
     # ── Internals ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _dragged_name(event: QDropEvent) -> str:
+        return bytes(event.mimeData().data(PARAMETER_CARD_MIME)).decode()
 
     def _apply_stretch(self) -> None:
         """Give the height to the expanded cards; collapsed cards stay header-tall."""

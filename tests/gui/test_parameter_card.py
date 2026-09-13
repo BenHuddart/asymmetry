@@ -12,11 +12,13 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QPoint, QSize  # type: ignore
+from PySide6.QtCore import QMimeData, QPointF, QSize, Qt  # type: ignore
+from PySide6.QtGui import QDropEvent  # type: ignore
 from PySide6.QtWidgets import QApplication  # type: ignore
 
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.widgets.parameter_card import (
+    PARAMETER_CARD_MIME,
     ParameterCard,
     ParameterCardStack,
     sparkline_pixmap,
@@ -230,23 +232,26 @@ def test_stack_set_order_ignores_unknown_and_trails_unnamed(qapp: QApplication) 
     stack.deleteLater()
 
 
-def test_stack_drag_reorders_past_neighbour_centres(qapp: QApplication) -> None:
+def test_stack_drop_reorders_by_drop_position(qapp: QApplication) -> None:
     stack = _stack("a", "b", "c")
-    stack.resize(200, 300)
     for index, card in enumerate(stack.cards()):
         card.setGeometry(0, index * 100, 200, 100)
     orders: list[list[str]] = []
     stack.order_changed.connect(orders.append)
 
-    # Dragging a's grip down past b's centre swaps them; past c's centre again.
-    stack.card("a").reorder_dragged.emit("a", stack.mapToGlobal(QPoint(10, 160)))
-    assert [card.name for card in stack.cards()] == ["b", "a", "c"]
-    for index, card in enumerate(stack.cards()):
-        card.setGeometry(0, index * 100, 200, 100)
-    stack.card("a").reorder_dragged.emit("a", stack.mapToGlobal(QPoint(10, 260)))
+    mime = QMimeData()
+    mime.setData(PARAMETER_CARD_MIME, b"a")
+    event = QDropEvent(
+        QPointF(10.0, 290.0),
+        Qt.DropAction.MoveAction,
+        mime,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    stack.dropEvent(event)
 
     assert [card.name for card in stack.cards()] == ["b", "c", "a"]
-    assert orders == [["b", "a", "c"], ["b", "c", "a"]]
+    assert orders == [["b", "c", "a"]]
     stack.deleteLater()
 
 
