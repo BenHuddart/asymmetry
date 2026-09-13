@@ -177,6 +177,11 @@ class FitResultsCard(QWidget):
         action_strip, action_layout = _wrapping_strip(self._surface)
         surface_layout.addWidget(action_strip)
 
+        #: What the card currently says, as one rich-text line — see
+        #: :meth:`content_html`. Recorded as it is rendered rather than read back
+        #: off the widgets, which cannot say whether a tag belongs to a summary.
+        self._content_html = ""
+
         self._actions: dict[str, QPushButton] = {}
         for label, tooltip in actions:
             button = QPushButton(label, action_strip)
@@ -205,6 +210,7 @@ class FitResultsCard(QWidget):
         self._detail.setText(text)
         self._set_members(())
         self._apply_meta()
+        self._content_html = text
 
     def set_summary(self, summary: FitCardSummary) -> None:
         """Render a completed fit."""
@@ -214,6 +220,17 @@ class FitResultsCard(QWidget):
         self._detail.setText(summary.detail_html)
         self._set_members(summary.members)
         self._apply_meta()
+        self._content_html = f"<b>{summary.tag}</b> {summary.headline}<br>{summary.detail_html}"
+
+    def content_html(self) -> str:
+        """What the card currently says, as one rich-text line.
+
+        A message is its own text; a summary folds its tag and headline in front
+        of the detail. The fit tabs persist this line as a run's saved read-out
+        and replay it through :meth:`set_message` when the run comes back, so the
+        outcome survives rather than only the statistics.
+        """
+        return self._content_html
 
     def set_meta_tag(self, text: str | None, tooltip: str = "") -> None:
         """Show a tag in place of the mono meta read-out ("seeds from 3001").

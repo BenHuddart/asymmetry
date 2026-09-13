@@ -395,7 +395,7 @@ def test_single_fit_requires_dataset(qapp: QApplication) -> None:
     tab._current_dataset = None
     tab._run_fit()
     assert tab.wait_for_fit()
-    assert "No dataset selected" in tab._result_label.text()
+    assert "No dataset selected" in tab._results_card.content_html()
 
 
 def test_single_fit_fit_wizard_button_tracks_dataset_and_block_state(
@@ -486,7 +486,7 @@ def test_single_fit_apply_fit_wizard_assessment_emits_fit_completed(
 
     tab._apply_fit_wizard_assessment(assessment, recommendation)
 
-    assert "Fit Wizard" in tab._result_label.text()
+    assert "Fit Wizard" in tab._results_card.content_html()
     assert emitted["result"].success is True
     assert tab._composite_model.component_names == ["Exponential", "Constant"]
 
@@ -632,12 +632,12 @@ def test_restore_single_fit_ui_empty_blanks_form(qapp: QApplication, dataset: Mu
     panel._single_tab._set_composite_model(
         CompositeModel(["Gaussian", "Constant"], operators=["+"])
     )
-    panel._single_tab._result_label.setText("a stale fit result")
+    panel._single_tab._results_card.set_message("a stale fit result")
 
     panel.restore_single_fit_ui({})
 
     assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
 
 def test_partial_batch_failure_emits_converged_series_and_warns(
@@ -826,7 +826,7 @@ def test_unseen_dataset_inherits_custom_model_without_result(
         CompositeModel(["Gaussian", "Constant"], operators=["+"])
     )
     panel._single_tab._param_table.item(0, 1).setData(_ValueUncertaintyDelegate._UNC_ROLE, 0.05)
-    panel._single_tab._result_label.setText("Fit converged")
+    panel._single_tab._results_card.set_message("Fit converged")
 
     # Selecting an unseen run must carry the model forward (not reset to the
     # default Exponential + Constant) but drop the previous run's result.
@@ -836,7 +836,7 @@ def test_unseen_dataset_inherits_custom_model_without_result(
     assert (
         panel._single_tab._param_table.item(0, 1).data(_ValueUncertaintyDelegate._UNC_ROLE) is None
     )
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
     # The carry chains to further unseen runs, and each run keeps its own model.
     third = replace(dataset, metadata={"run_number": 303})
@@ -900,7 +900,7 @@ def test_set_dataset_provider_empty_blanks_unfit_projection(
     panel.set_dataset(dataset)
 
     assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
 
 def test_single_fit_invalid_value_shows_error(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -912,7 +912,7 @@ def test_single_fit_invalid_value_shows_error(qapp: QApplication, dataset: MuonD
     tab._run_fit()
     assert tab.wait_for_fit()
 
-    assert "Invalid value" in tab._result_label.text()
+    assert "Invalid value" in tab._results_card.content_html()
 
 
 def test_single_fit_success_emits_and_updates_table(
@@ -942,8 +942,8 @@ def test_single_fit_success_emits_and_updates_table(
     tab._run_fit()
     assert tab.wait_for_fit()
 
-    assert "Fit failed" not in tab._result_label.text()
-    assert "χ²" in tab._result_label.text()
+    assert "Fit failed" not in tab._results_card.content_html()
+    assert "χ²" in tab._results_card.content_html()
     assert emitted["res"].success is True
     assert len(emitted["curve"][0]) == 500
 
@@ -1087,7 +1087,7 @@ def test_single_fit_stop_button_cancels_worker(qapp: QApplication, dataset: Muon
     tab._on_stop_fit()
     assert tab.wait_for_fit()
 
-    assert "cancelled" in tab._result_label.text().lower()
+    assert "cancelled" in tab._results_card.content_html().lower()
     assert not tab._fit_btn.isHidden()
     assert tab._stop_btn.isHidden()
     # Nothing recorded from a cancelled fit.
@@ -1136,7 +1136,7 @@ def test_single_fit_result_not_applied_after_run_switch(
     # Stale result: not emitted (so no FitSlot recorded), diagnostic not armed.
     assert emitted == []
     assert tab._last_fit_result is None
-    assert "not applied" in tab._result_label.text().lower()
+    assert "not applied" in tab._results_card.content_html().lower()
 
 
 def test_single_fit_result_not_applied_after_reset(
@@ -1161,7 +1161,7 @@ def test_single_fit_result_not_applied_after_reset(
 
     assert emitted == []
     assert tab._last_fit_result is None
-    assert "not applied" in tab._result_label.text().lower()
+    assert "not applied" in tab._results_card.content_html().lower()
 
 
 def test_global_tab_set_datasets_states(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -2323,7 +2323,10 @@ def test_send_to_batch_button_copies_model_and_switches_tab(qapp: QApplication) 
     )
     panel._tabs.setCurrentWidget(panel._single_tab)
 
-    panel._single_tab._send_to_batch_action.trigger()
+    # The hand-off is a results-card button, and needs no fit behind it.
+    send = panel._single_tab._results_card._actions[single_tab_module.SEND_TO_BATCH_ACTION]
+    assert send.isEnabled()
+    send.click()
 
     assert (
         panel._global_tab._composite_model.component_names
@@ -2714,19 +2717,19 @@ def test_fit_panel_restores_single_fit_state_per_dataset(
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
 
     panel.set_dataset(d1)
-    panel._single_tab._result_label.setText("fit for run 101")
+    panel._single_tab._results_card.set_message("fit for run 101")
     panel._single_tab._param_table.item(0, 1).setText("0.123")
 
     panel.set_dataset(d2)
-    panel._single_tab._result_label.setText("fit for run 102")
+    panel._single_tab._results_card.set_message("fit for run 102")
     panel._single_tab._param_table.item(0, 1).setText("0.456")
 
     panel.set_dataset(d1)
-    assert "fit for run 101" in panel._single_tab._result_label.text()
+    assert "fit for run 101" in panel._single_tab._results_card.content_html()
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.123)
 
     panel.set_dataset(d2)
-    assert "fit for run 102" in panel._single_tab._result_label.text()
+    assert "fit for run 102" in panel._single_tab._results_card.content_html()
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.456)
 
 
@@ -2739,9 +2742,9 @@ def test_fit_panel_single_state_roundtrip_preserves_per_run_states(
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
 
     panel.set_dataset(d1)
-    panel._single_tab._result_label.setText("saved fit 101")
+    panel._single_tab._results_card.set_message("saved fit 101")
     panel.set_dataset(d2)
-    panel._single_tab._result_label.setText("saved fit 102")
+    panel._single_tab._results_card.set_message("saved fit 102")
 
     saved = panel.get_single_state()
     assert isinstance(saved.get("states_by_run"), dict)
@@ -2751,10 +2754,10 @@ def test_fit_panel_single_state_roundtrip_preserves_per_run_states(
     restored = FitPanel()
     restored.set_dataset(d1)
     restored.restore_single_state(saved)
-    assert "saved fit 101" in restored._single_tab._result_label.text()
+    assert "saved fit 101" in restored._single_tab._results_card.content_html()
 
     restored.set_dataset(d2)
-    assert "saved fit 102" in restored._single_tab._result_label.text()
+    assert "saved fit 102" in restored._single_tab._results_card.content_html()
 
 
 def test_single_tab_state_roundtrip_preserves_cached_wizard_results(
@@ -2895,11 +2898,11 @@ def test_fit_panel_global_fit_results_seed_single_state_per_run(
     stored[101] = panel._single_state_by_run[101]
     stored[102] = panel._single_state_by_run[102]
 
-    assert "Batch fit" in panel._single_tab._result_label.text()
+    assert "Batch fit" in panel._single_tab._results_card.content_html()
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.11)
 
     panel.set_dataset(d2)
-    assert "Batch fit" in panel._single_tab._result_label.text()
+    assert "Batch fit" in panel._single_tab._results_card.content_html()
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.44)
 
     saved = panel.get_single_state()
@@ -3003,12 +3006,12 @@ def test_fit_panel_refresh_carries_fitted_source_and_clears_result(
     assert panel._single_fit_provenance == "carried_from_run"
     assert panel._single_fit_carry_source_run == 101
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.777)
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
     panel.set_dataset(d3)
     assert panel._single_fit_carry_source_run == 101
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.777)
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
 
 def test_fit_panel_refresh_reseeds_bl_from_target_field(
@@ -3077,11 +3080,11 @@ def test_fit_panel_clear_fits_for_runs_removes_cached_fit_state(
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
 
     panel.set_dataset(d1)
-    panel._single_tab._result_label.setText("fit for run 101")
+    panel._single_tab._results_card.set_message("fit for run 101")
     panel._single_state_by_run[101] = panel._single_tab.get_state()
 
     panel.set_dataset(d2)
-    panel._single_tab._result_label.setText("fit for run 102")
+    panel._single_tab._results_card.set_message("fit for run 102")
     panel._single_state_by_run[102] = panel._single_tab.get_state()
 
     panel._global_tab._single_fit_seed_by_run[101] = {"model": {}, "values": {"A": 0.1}}

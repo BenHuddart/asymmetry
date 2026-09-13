@@ -11,8 +11,8 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QSettings  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtCore import QSettings, Qt  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget  # noqa: E402
 
 from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME  # noqa: E402
 from asymmetry.gui.widgets.panel_section import PanelSection  # noqa: E402
@@ -161,3 +161,36 @@ def test_persisted_value_overrides_constructor_default(qapp, settings) -> None:
         "Advanced", collapsible=True, expanded=True, settings_key=key, settings=settings
     )
     assert not section.isExpanded()
+
+
+def test_add_header_widget_sits_between_the_title_and_the_suffix(qapp):
+    section = PanelSection("Parameters")
+    rail = QPushButton("Bounds")
+    section.add_header_widget(rail)
+    section.set_title_suffix("3 shown")
+
+    header = section._header_row.layout()
+    indices = [
+        header.indexOf(section._header_label),
+        header.indexOf(rail),
+        header.indexOf(section._suffix_label),
+    ]
+    assert indices == sorted(indices)
+    # The widget takes the row's slack, so it starts beside the title rather
+    # than floating in the middle of the header.
+    assert header.stretch(header.indexOf(rail)) == 1
+    assert rail.parent() is section._header_row
+
+
+def test_a_header_widget_does_not_toggle_a_collapsible_section(qapp, settings):
+    """A press on the rail stops there rather than reaching the disclosure row."""
+    section = PanelSection(
+        "Parameters", collapsible=True, expanded=True, settings_key="t/p", settings=settings
+    )
+    rail = QWidget()
+    section.add_header_widget(rail)
+
+    assert rail.testAttribute(Qt.WidgetAttribute.WA_NoMousePropagation)
+    # The header row itself still toggles.
+    section._header_row.clicked.emit()
+    assert section.isExpanded() is False

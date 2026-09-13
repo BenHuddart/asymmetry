@@ -52,7 +52,7 @@ def test_single_fit_restore_preserves_model_with_missing_user_component(qapp):
     model = tab._composite_model
     assert model.component_names == ["UserGoneDecay", "Constant"]
     assert model.missing_component_names == ("UserGoneDecay",)
-    assert "UserGoneDecay" in tab._result_label.text()
+    assert "UserGoneDecay" in tab._results_card.content_html()
     # Re-saving emits the original names — nothing silently dropped.
     assert tab.get_state()["composite_model"]["component_names"] == [
         "UserGoneDecay",
@@ -74,7 +74,7 @@ def test_single_fit_blocks_fitting_with_missing_user_component(qapp):
     tab._run_fit()
     assert tab.wait_for_fit()
 
-    text = tab._result_label.text()
+    text = tab._results_card.content_html()
     assert "missing user function" in text
     assert "UserGoneDecay" in text
 

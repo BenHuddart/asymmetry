@@ -288,3 +288,22 @@ def test_snapshot_renders_in_the_window_without_an_edit_button(qapp: QApplicatio
     assert table.rowCount() == 4
     assert [button.text() for button in window.findChildren(QPushButton)] == ["Copy", "Close"]
     window.deleteLater()
+
+
+def test_window_omits_the_footer_segments_a_run_fit_has_none_of(qapp: QApplication) -> None:
+    """A run's asymmetry fit has no trended x axis and no error mode of its own."""
+    solved = _range(bounds="0.15 – 12.0 µs")
+    run_fit = FitResults(
+        title="Fit results — 3001",
+        parameter_name="",
+        x_label="",
+        runs="3001",
+        ranges=(FitRangeResults(**{**solved.__dict__, "error_mode": ""}),),
+    )
+    window = FitResultsWindow(run_fit, editable=False)
+
+    texts = [label.text() for label in window.findChildren(QLabel)]
+    assert "fit range 0.15 – 12.0 µs" in texts
+    assert not any(text.startswith("x: ") for text in texts)
+    assert not any("errors:" in text for text in texts)
+    window.deleteLater()

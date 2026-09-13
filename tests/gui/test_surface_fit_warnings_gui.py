@@ -60,9 +60,10 @@ def test_single_fit_surfaces_engine_warning(qapp: QApplication) -> None:
     tab._run_fit()
     assert tab.wait_for_fit()
 
-    rendered = tab._result_label.text()
-    # The result box shows the converged line AND the advisory warning beneath it.
-    assert "Fit converged" in rendered
+    rendered = tab._results_card.content_html()
+    # The card carries the converged verdict AND the advisory warning beneath it.
+    assert "Fit ✓" in rendered
+    assert "converged" in rendered
     assert "⚠" in rendered
     assert "Fixed-frequency trap" in rendered
 

@@ -16,7 +16,7 @@ Navigation map
    shared by both tabs).
 2. **Fit-result summary/messaging helpers** — ``_fit_summary``,
    ``_fit_range_provenance_text``, ``_apply_fit_range_display``,
-   ``_fit_success_html``/``_fit_warnings_html``, ``fit_results_snapshot``
+   ``_fit_warnings_html``, ``fit_results_snapshot``
    (the frozen snapshot a ``FitResultsWindow`` renders), ``_format_tie_formula``.
 3. **Tie dialog and tie-button helpers** — ``AffineTieDialog`` (modal editor
    for an affine parameter tie), ``_make_tie_button``/``_tie_button_value``/
@@ -108,15 +108,15 @@ from asymmetry.gui.styles.widgets import (
     FIT_VERDICT_CHIP_COLOURS,
     NEUTRAL_CHIP_COLOURS,
     apply_param_table_style,
+    build_segmented_button_qss,
     configure_formula_label,
-    fit_quality_chip_html,
     make_formula_box,
-    success_html,
     warning_html,
 )
 from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
+from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
 from asymmetry.gui.windows.fit_results_window import (
     FitParameterRow,
@@ -609,22 +609,6 @@ def _apply_fit_range_display(
         max_spin.setValue(float(x_max))
 
 
-def _fit_success_html(result) -> str:
-    """Return compact success HTML for the result label, with a χ² verdict chip."""
-    npar = len(result.parameters.free_parameters)
-    ndof = (
-        round(result.chi_squared / result.reduced_chi_squared)
-        if result.reduced_chi_squared > 0
-        else 0
-    )
-    stats = f"χ²/ν = {result.reduced_chi_squared:.4f} · npar = {npar} · ndof = {ndof}"
-    if result.edm is not None:
-        stats += f" · Δ‖p‖ = {result.edm:.2e}"
-    summary = _fit_summary(result)
-    stats += fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
-    return success_html("Fit converged", detail=stats)
-
-
 def fit_results_snapshot(
     result,
     *,
@@ -1108,7 +1092,7 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
     Such models can only come from projects saved before domain filtering (or
     hand-edited files); they are kept loaded and fittable so nothing the user
     saved is destroyed, but the formula label is marked so the mismatch is
-    visible, and Edit Function explains which component is foreign.
+    visible, and Edit… explains which component is foreign.
     """
     foreign = {d for d in model.domains() if d != domain}
     if not foreign:
@@ -1123,7 +1107,7 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
         f"This model contains {'/'.join(sorted(foreign))}-domain component(s) "
         f"({', '.join(foreign_names)}) but the representation is fitted in the "
         f"{domain} domain. The model is kept as saved and can still be fitted; "
-        "use Edit Function to repair it."
+        "use Edit… to repair it."
     )
     box = getattr(label, "_formula_box", None)
     if box is not None:
@@ -1569,6 +1553,35 @@ class FitParameterTable(QTableWidget):
     def column_group_visible(self, group: str) -> bool:
         """Whether *group*'s columns are shown (they are always hidden together)."""
         return not self.isColumnHidden(self._column_group(group)[0])
+
+    def as_tsv(self) -> str:
+        """The table as tab-separated text: the header row, then one line per row.
+
+        Every column is rendered whatever the rail hides, since this serves the
+        pop-out, which shows them all. Fix, Link and Tie are cell *widgets* on a
+        parameter row (a derived-remainder row carries inert items everywhere
+        instead), so those three read off the widget when there is no item.
+        """
+        columns = range(self.columnCount())
+        lines = ["\t".join(self.horizontalHeaderItem(column).text() for column in columns)]
+        for row in range(self.rowCount()):
+            cells: list[str] = []
+            for column in columns:
+                item = self.item(row, column)
+                if item is not None:
+                    cells.append(item.text())
+                elif column == self.COL_FIX:
+                    checkbox = self.cellWidget(row, column).findChild(QCheckBox)
+                    cells.append("fixed" if checkbox.isChecked() else "")
+                elif column == self.COL_LINK:
+                    group = _link_group_combo_value(self.cellWidget(row, column))
+                    cells.append("" if group is None else str(group))
+                else:
+                    tie = _tie_button_value(self.cellWidget(row, column))
+                    name = self.item(row, self.COL_NAME).text()
+                    cells.append("" if tie is None else _format_tie_formula(name, tie))
+            lines.append("\t".join(cells))
+        return "\n".join(lines)
 
     def value_badge(self, row: int) -> str:
         """Return the Value-cell badge for *row*: ``ƒ`` tied, ``⇄N`` linked, else ``""``.
@@ -2069,8 +2082,27 @@ class FitTabBase(QWidget):
         and only calls this helper to build the shared widgets.
         """
         self._formula_box, self._formula_label = _make_formula_box()
-        self._edit_model_btn = QPushButton("Edit Function...")
+        self._edit_model_btn = QPushButton("Edit…")
         self._edit_model_btn.clicked.connect(self._edit_function)
+
+    def _build_model_row(self, *buttons: QPushButton) -> QWidget:
+        """Return the model actions as one wrapping row: ``Edit…`` then *buttons*.
+
+        Segmented is the light action style beside the primary ``Fit`` button,
+        and the row wraps at the dock's width instead of widening it — a
+        vertical stack of full-width buttons used to push the parameter table
+        below the fold on a 13-inch screen.
+        """
+        row = QWidget()
+        row_layout = FlowLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        row.setSizePolicy(policy)
+        for button in (self._edit_model_btn, *buttons):
+            button.setStyleSheet(build_segmented_button_qss())
+            row_layout.addWidget(button)
+        return row
 
     # ------------------------------------------------------------------
     # Shared fit-range spinbox pair

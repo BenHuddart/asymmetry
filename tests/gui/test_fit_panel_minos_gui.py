@@ -53,8 +53,11 @@ def test_single_fit_minos_toggle_threads_and_populates_role(qapp: QApplication) 
     # The first parameter's value cell carries the asymmetric interval role.
     value_item = tab._param_table.item(0, 1)
     assert value_item.data(_ValueUncertaintyDelegate._MINOS_ROLE) == (-0.012, 0.009)
-    # The result label gained a teaching tooltip.
-    assert "quality" in tab._result_label.toolTip().lower()
+    # The χ²ᵣ chip appears and names the verdict and the free parameters.
+    assert tab._chi2_chip.text().startswith("χ²ᵣ")
+    tooltip = tab._chi2_chip.toolTip()
+    assert tooltip.startswith("good fit")
+    assert "A_1 = " in tooltip
 
 
 def test_single_fit_minos_off_clears_role(qapp: QApplication) -> None:

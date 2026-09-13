@@ -169,11 +169,14 @@ class FitResultsWindow(QDialog):
                 )
             self._body.addWidget(_parameter_table(fit_range))
 
-        self._body.addWidget(
-            _muted_label(
-                f"x: {results.x_label} · fit range {first.bounds} · errors: {first.error_mode}"
-            )
-        )
+        # A run's asymmetry fit has neither a trended x axis nor an error mode of
+        # its own, so those segments are simply absent rather than shown empty.
+        footer = [f"fit range {first.bounds}"]
+        if results.x_label:
+            footer.insert(0, f"x: {results.x_label}")
+        if first.error_mode:
+            footer.append(f"errors: {first.error_mode}")
+        self._body.addWidget(_muted_label(" · ".join(footer)))
 
     def _copy(self) -> None:
         lines: list[str] = []

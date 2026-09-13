@@ -69,8 +69,8 @@ def test_rrf_fit_reports_lab_frame_and_annotates(qapp: QApplication) -> None:
     fitted = {p.name: p.value for p in tab._last_fit_result.parameters}
     assert fitted["frequency"] == pytest.approx(NU_LAB, abs=0.05)
     # The result label carries the rotating-frame annotation.
-    assert "frame: ν_RRF" in tab._result_label.text()
-    assert f"{NU_FRAME:.4f}" in tab._result_label.text()
+    assert "frame: ν_RRF" in tab._results_card.content_html()
+    assert f"{NU_FRAME:.4f}" in tab._results_card.content_html()
 
 
 def test_rrf_fit_inactive_when_provider_returns_none(qapp: QApplication) -> None:
@@ -89,7 +89,7 @@ def test_rrf_fit_inactive_when_provider_returns_none(qapp: QApplication) -> None
     assert tab.wait_for_fit()
     fitted = {p.name: p.value for p in tab._last_fit_result.parameters}
     assert fitted["frequency"] == pytest.approx(NU_LAB, abs=0.05)
-    assert "frame: ν_RRF" not in tab._result_label.text()
+    assert "frame: ν_RRF" not in tab._results_card.content_html()
 
 
 def test_rrf_fit_refuses_unsupported_oscillating_model(qapp: QApplication) -> None:
@@ -100,4 +100,4 @@ def test_rrf_fit_refuses_unsupported_oscillating_model(qapp: QApplication) -> No
     tab._run_fit()
     # Refused before launching a worker (no fit to wait for); the message names
     # the rotating frame so the user knows to turn it off.
-    assert "rotating frame" in tab._result_label.text().lower()
+    assert "rotating frame" in tab._results_card.content_html().lower()

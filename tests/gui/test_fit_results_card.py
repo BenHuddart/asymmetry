@@ -210,3 +210,21 @@ def test_card_meta_tag_takes_the_slot_until_it_is_cleared(qapp: QApplication) ->
     assert not card._meta_tag.isVisibleTo(card)
     assert card._meta.isVisibleTo(card)
     card.deleteLater()
+
+
+def test_content_html_reports_what_the_card_says(qapp: QApplication) -> None:
+    """The fit tabs persist this line and replay it through set_message."""
+    card = _card()
+    assert card.content_html() == ""
+
+    card.set_message("<b>Fit failed:</b> singular matrix", tag="Error")
+    assert card.content_html() == "<b>Fit failed:</b> singular matrix"
+
+    card.set_summary(_summary())
+    # A summary folds its tag and headline in, so a restored read-out still
+    # says how the fit went and not only what its statistics were.
+    assert card.content_html() == "<b>Fit ✓</b> converged<br>χ²/ν 0.9794 · good"
+
+    card.set_message(card.content_html())
+    assert card._detail.text() == "<b>Fit ✓</b> converged<br>χ²/ν 0.9794 · good"
+    card.deleteLater()

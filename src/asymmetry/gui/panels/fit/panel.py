@@ -220,7 +220,7 @@ class FitPanel(QWidget):
             self._single_form_snapshot = None
         self._active_single_projection = projection
         if hasattr(self, "_single_fit_provenance"):
-            self._update_single_fit_badge()
+            self._update_single_fit_carry_tag()
         if not hasattr(self, "_projection_echo"):
             return
         if projection:
@@ -512,29 +512,30 @@ class FitPanel(QWidget):
         self._single_state_by_run[run_number] = self._single_tab.get_state()
 
     def _set_single_fit_provenance(self, kind: str | None, source_run: int | None = None) -> None:
-        """Record why the single-fit form holds its current contents and update the badge.
+        """Record why the single-fit form holds its contents and re-tag the card.
 
-        ``kind`` is one of ``own_slot`` / ``representation_default`` (no
-        badge), ``carried_from_run`` (badge names ``source_run`` when known —
-        the session's most recent fitted function), or ``carried_session``
-        (generic badge, no fit exists anywhere yet — this run's own
+        ``kind`` is one of ``own_slot`` / ``representation_default`` (no tag),
+        ``carried_from_run`` (the tag names ``source_run`` when known — the
+        session's most recent fitted function), or ``carried_session``
+        (a generic tag, no fit exists anywhere yet — this run's own
         previously cached but never-fitted form).
         """
         self._single_fit_provenance = kind
         self._single_fit_carry_source_run = source_run if kind == "carried_from_run" else None
-        self._update_single_fit_badge()
+        self._update_single_fit_carry_tag()
 
-    def _update_single_fit_badge(self) -> None:
+    def _update_single_fit_carry_tag(self) -> None:
         kind = self._single_fit_provenance
         if kind not in ("carried_from_run", "carried_session"):
-            self._single_tab.clear_carry_forward_badge()
+            self._single_tab.clear_carry_forward()
             return
         projection = self._active_single_projection
         suffix = f" ({projection})" if projection else ""
         source_run = self._single_fit_carry_source_run
         origin = f" from run {source_run}" if source_run is not None else ""
-        self._single_tab.show_carry_forward_badge(
-            f"Model carried{origin}{suffix} — not fitted for this run"
+        self._single_tab.show_carry_forward(
+            source_run,
+            f"Model carried{origin}{suffix} — not fitted for this run",
         )
 
     def _carry_forward_single_fit_form(self, source_state: dict | None = None) -> None:
@@ -542,8 +543,8 @@ class FitPanel(QWidget):
 
         Reuses the seen-dataset restore path (so the composite model, seeds,
         bounds, fixed/free flags and link groups all transfer faithfully) but
-        clears the fitted uncertainties and result label first — an unseen run
-        has not been fit, so it must not display another run's result.
+        clears the fitted uncertainties and the results card first — an unseen
+        run has not been fit, so it must not display another run's result.
 
         ``source_state`` defaults to the form currently displayed (today's
         last-*displayed* carry-forward, used once no fit exists anywhere in
@@ -562,7 +563,7 @@ class FitPanel(QWidget):
             entry["uncertainty_asymmetric"] = None
         self._single_tab.restore_state(state)
         if not self._single_tab._composite_model.missing_component_names:
-            self._single_tab._result_label.setText("No fit performed yet")
+            self._single_tab._results_card.set_message("No fit performed yet")
         # A run-bound value (the applied field and B_L, a frequency peak)
         # describes the run the form came from, so it is re-seeded from the run
         # the form has landed on; a value the user typed or fitted is kept as
@@ -579,7 +580,7 @@ class FitPanel(QWidget):
             else CompositeModel(["Exponential", "Constant"], operators=["+"])
         )
         self._single_tab._set_composite_model(default_model)
-        self._single_tab._result_label.setText("No fit performed yet")
+        self._single_tab._results_card.set_message("No fit performed yet")
 
     def set_single_fit_restore_provider(
         self, provider: Callable[[MuonDataset | None], dict | None] | None
@@ -725,7 +726,7 @@ class FitPanel(QWidget):
 
         active_run = self._active_single_run_number
         if active_run is not None and active_run in normalized_runs:
-            self._single_tab._result_label.setText("No fit performed yet")
+            self._single_tab._results_card.set_message("No fit performed yet")
 
         # D5: the session's refresh source must not survive its own run's fit
         # being cleared -- otherwise every other unprotected run would keep

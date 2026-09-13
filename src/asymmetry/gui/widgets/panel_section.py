@@ -26,6 +26,8 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QSizePolicy,
+    QSpacerItem,
     QVBoxLayout,
     QWidget,
 )
@@ -129,7 +131,13 @@ class PanelSection(QWidget):
 
         self._header_label = make_section_header(self._title)
         header_layout.addWidget(self._header_label)
-        header_layout.addStretch(1)
+        # Held so :meth:`add_header_widget` can hand the row's slack to the
+        # widget instead — a chip rail that only got half the slack would float
+        # in the middle of the header rather than sit beside the title.
+        self._header_stretch = QSpacerItem(
+            0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+        )
+        header_layout.addItem(self._header_stretch)
 
         self._suffix_label = QLabel("", self._header_row)
         self._suffix_label.setFont(footer_font())
@@ -188,6 +196,20 @@ class PanelSection(QWidget):
         else:
             self._hint_label.clear()
             self._hint_label.hide()
+
+    def add_header_widget(self, widget: QWidget) -> None:
+        """Put *widget* in the header row, after the title and before the suffix.
+
+        It takes the row's slack, so a rail of chips starts beside the title and
+        wraps under it once the panel is narrower than the rail. Mouse events
+        stop at the widget, so pressing a chip in a collapsible section's header
+        never also toggles the section.
+        """
+        layout = self._header_row.layout()
+        layout.removeItem(self._header_stretch)
+        widget.setParent(self._header_row)
+        widget.setAttribute(Qt.WidgetAttribute.WA_NoMousePropagation, True)
+        layout.insertWidget(layout.indexOf(self._suffix_label), widget, 1)
 
     def set_title_suffix(self, html: str | None) -> None:
         """Set a small right-aligned rich-text suffix (chip/count) in the header.

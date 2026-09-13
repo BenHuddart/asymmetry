@@ -194,7 +194,7 @@ def test_frequency_preview_renders_a_visible_peak(qapp) -> None:
 
 @pytest.mark.gui
 def test_frequency_adding_a_second_peak_seeds_both(qapp) -> None:
-    """Switching to a two-peak model (e.g. via Edit Function) seeds both lines.
+    """Switching to a two-peak model (e.g. via Edit…) seeds both lines.
 
     Regression: with duplicate peak components the params are suffixed
     (``nu0_1``/``nu0_2``), so the old single-peak seeder matched only ``bg`` and

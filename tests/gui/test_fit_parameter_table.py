@@ -364,3 +364,21 @@ def test_format_value_error_degenerate_inputs():
     # Pathological scale mismatch falls back to independent rounding rather
     # than an unreadable 16-decimal matched-precision string.
     assert format_value_error(1.0, 1e-15) == "1 ± 1e-15"
+
+
+def test_as_tsv_renders_every_column_including_the_widget_ones(qapp):
+    """The pop-out's Copy TSV dumps the whole table, hidden groups included."""
+    table = FitParameterTable()
+    table.populate(_model())
+    table.set_column_group_visible("links", False)
+    table.cellWidget(0, table.COL_LINK).setCurrentIndex(2)  # link group 2
+    table.cellWidget(1, table.COL_FIX).findChild(QCheckBox).setChecked(True)
+
+    lines = table.as_tsv().splitlines()
+    assert lines[0].split("\t") == ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
+    assert len(lines) == table.rowCount() + 1
+
+    first = lines[1].split("\t")
+    assert first[0] == table.item(0, table.COL_NAME).text()
+    assert first[6] == "2"
+    assert lines[2].split("\t")[2] == "fixed"

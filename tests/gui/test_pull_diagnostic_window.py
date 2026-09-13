@@ -26,6 +26,7 @@ from asymmetry.core.simulate import (
     simulate_run,
     total_events_of,
 )
+from asymmetry.gui.panels.fit.single_tab import DIAGNOSTIC_ACTION
 from asymmetry.gui.windows import pull_diagnostic_window as pull_diagnostic_window_module
 from asymmetry.gui.windows.pull_diagnostic_window import PullDiagnosticWindow, make_engine_refit
 from tests._qt_helpers import wait_for
@@ -221,6 +222,11 @@ def test_total_events_of_sums_histograms(qapp) -> None:
     assert total > 0
 
 
+def _diagnostic(tab):
+    """The Single tab's results-card ``Diagnostic…`` hand-off."""
+    return tab._results_card._actions[DIAGNOSTIC_ACTION]
+
+
 class TestFitPanelHook:
     def test_button_enables_after_successful_fit_and_opens_window(self, qapp) -> None:
         from asymmetry.gui.panels.fit_panel import SingleFitTab
@@ -237,7 +243,7 @@ class TestFitPanelHook:
         dataset = reduce_run_to_dataset(run)
         tab.set_dataset(dataset)
         # No fit yet → diagnostic disabled.
-        assert not tab._pull_diagnostic_btn.isEnabled()
+        assert not _diagnostic(tab).isEnabled()
         assert not tab._can_run_pull_diagnostic()
 
         # Simulate a converged fit having run on this dataset. The fit engine
@@ -285,4 +291,4 @@ class TestFitPanelHook:
         tab._last_fit_parameters = ParameterSet([Parameter(name="x", value=1.0)])
         tab.set_dataset(None)
         assert tab._last_fit_result is None
-        assert not tab._pull_diagnostic_btn.isEnabled()
+        assert not _diagnostic(tab).isEnabled()

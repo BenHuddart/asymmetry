@@ -15,21 +15,22 @@ tab for project persistence.
 import copy
 import functools
 import html
+import json
 import logging
 from collections.abc import Callable, Sequence
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
+    QDialog,
     QFormLayout,
-    QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -62,19 +63,23 @@ from asymmetry.core.fitting.seeding import Seed, SeedContext, seed_parameters
 from asymmetry.core.fitting.spectral import default_frequency_model
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.metrics import char_width
+from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.typography import SIZE_NUMERIC, footer_font
 from asymmetry.gui.styles.widgets import (
-    RESULT_BOX_NEUTRAL_STYLE,
-    RESULT_BOX_OBJECT_NAME,
-    RESULT_BOX_SUCCESS_STYLE,
+    VERDICT_CHIP_OBJECT_NAME,
     build_primary_button_qss,
-    fit_quality_tooltip,
+    fit_quality_chip_html,
     make_section_header,
-    success_html,
-    warning_html,
+    style_group_state_button,
+    verdict_chip_qss,
 )
 from asymmetry.gui.tasks import TaskRunner
+from asymmetry.gui.utils.formatting import format_value_uncertainty
+from asymmetry.gui.widgets.fit_results_card import FitCardSummary, FitResultsCard
+from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.fit_wizard_window import FitWizardWindow
 
 from .tab_base import (
@@ -85,11 +90,9 @@ from .tab_base import (
     _fit_curve_sample_count,
     _fit_domain_mismatch_message,
     _fit_result_is_usable,
-    _fit_success_html,
     _fit_summary,
     _fit_warnings_html,
     _get_file_value_for_parameter,
-    _model_without_trailing_background,
     _normalized_model_param_values,
     _set_formula_label_text,
     _set_param_batch_role_cell,
@@ -99,10 +102,30 @@ from .tab_base import (
     _ValueUncertaintyDelegate,
     _wait_for_fit_thread,
     dataset_error_oversampling,
+    fit_results_snapshot,
 )
 from .wizard_cache import WizardCacheEntry, wizard_cache_entry
 
 logger = logging.getLogger(__name__)
+
+#: ``QSettings`` key holding the Parameters rail's chip states as a JSON
+#: ``{group: shown}`` dict.
+COLUMN_GROUPS_SETTINGS_KEY = "fit/single/columns"
+
+#: The Parameters rail, in header order: chip label, the ``FitParameterTable``
+#: column group it drives, whether it starts on, and its hover text. Only
+#: ``Bounds`` rests on — Name·Value·Fix·Min·Max is what fits a ~300 px dock.
+_COLUMN_GROUP_CHIPS = (
+    ("Bounds", "bounds", True, "Show the Min and Max columns."),
+    ("Links", "links", False, "Show the Link and Tie columns."),
+    ("Batch", "batch", False, "Show the Batch-role column."),
+)
+
+#: Hand-off labels on the results card. Named so the construction and the
+#: ``action_triggered`` router cannot drift apart.
+DIAGNOSTIC_ACTION = "Diagnostic…"
+ADD_TO_SERIES_ACTION = "Add to series…"
+SEND_TO_BATCH_ACTION = "Send to Batch →"
 
 
 class SingleFitTab(FitTabBase):
@@ -132,10 +155,18 @@ class SingleFitTab(FitTabBase):
     send_model_to_batch_requested = Signal()
     add_to_series_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        settings: QSettings | None = None,
+    ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
 
+        #: Where the Parameters rail's chip states live. Injectable so a test can
+        #: use a scratch scope (mirrors ``PanelSection`` and ``gui/fit_settings``).
+        self._settings = settings if settings is not None else QSettings()
         self._current_dataset: MuonDataset | None = None
         self._fit_blocked = False
         self._fit_block_reason = ""
@@ -160,7 +191,10 @@ class SingleFitTab(FitTabBase):
         # single fit, independent of _last_fit_result (this session's transient
         # in-memory result).
         self._has_recorded_fit = False
-        self._pull_diagnostic_btn: QPushButton | None = None
+        #: The recorded fit frozen for the χ²ᵣ chip and its results window; None
+        #: exactly while the chip is hidden.
+        self._last_fit_snapshot: FitResults | None = None
+        self._fit_results_window: FitResultsWindow | None = None
         self._pull_diagnostic_window: QWidget | None = None
         #: Background fits run via the shared TaskRunner machinery; the
         #: worker handle exists only so the Stop button can cancel it.
@@ -172,69 +206,22 @@ class SingleFitTab(FitTabBase):
         #: identity alone would miss it), so the stale result is not applied.
         self._model_generation = 0
 
-        # Model selection
+        # ── Model ───────────────────────────────────────────────────────────
         model_group = PanelSection("Model")
         model_layout = QFormLayout()
         model_layout.setContentsMargins(0, 0, 0, 0)
         model_group.addLayout(model_layout)
         self._build_formula_box()
-        self._fit_wizard_btn = QPushButton("Fit Wizard...")
+        self._fit_wizard_btn = QPushButton("Wizard…")
         self._fit_wizard_btn.clicked.connect(self._open_fit_wizard)
         self._fit_wizard_btn.setEnabled(False)
 
-        # The three advanced model actions (Drop background / Send to Batch /
-        # Add to Series) are collapsed into a single "⋯ More…" overflow menu
-        # instead of full-width button rows. On a 13-inch screen those rows
-        # pushed the PARAMETERS table and the Fit button below the fold;
-        # folding them lifts PARAMETERS into view (P1-2). They remain QActions
-        # so enable-state and tooltips behave as before.
-        self._more_menu = QMenu(self)
-        self._more_menu.setToolTipsVisible(True)
-        self._drop_background_action = self._more_menu.addAction("Drop background")
-        self._drop_background_action.setToolTip(
-            "Remove the constant background term from the model.\n"
-            "For amplitude calibration (e.g. a light-OFF A₀ run) a free background "
-            "absorbs part of the initial asymmetry, splitting the fitted amplitude; "
-            "drop it to fit the full A₀ with a single relaxation term."
-        )
-        self._drop_background_action.triggered.connect(self._on_drop_background)
-        self._drop_background_action.setEnabled(False)
-        self._send_to_batch_action = self._more_menu.addAction("Send to Batch")
-        self._send_to_batch_action.setToolTip(
-            "Copy this fit function into the Batch tab to seed a batch fit over the selected runs."
-        )
-        self._send_to_batch_action.triggered.connect(self.send_model_to_batch_requested.emit)
-        self._add_to_series_action = self._more_menu.addAction("Add to Series...")
-        self._add_to_series_action.triggered.connect(self.add_to_series_requested.emit)
-        self._update_add_to_series_enabled()
-
-        self._more_btn = QToolButton()
-        self._more_btn.setText("More…")
-        self._more_btn.setToolTip("Advanced model actions")
-        self._more_btn.setMenu(self._more_menu)
-        self._more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-
-        # Single column of natural-width buttons. A side-by-side grid forced the
-        # two button columns (~110px each) to set the whole Fit tab's minimum
-        # width; stacking them lets the dock get genuinely narrow on a 13" screen,
-        # and dropping the Expanding policy keeps each button only as wide as its
-        # label needs (left-aligned) instead of stretching to fill the row.
-        model_button_layout = QVBoxLayout()
-        model_button_layout.setContentsMargins(0, 0, 0, 0)
-        model_button_layout.setSpacing(4)
-        for _model_btn in (
-            self._edit_model_btn,
-            self._fit_wizard_btn,
-            self._more_btn,
-        ):
-            model_button_layout.addWidget(_model_btn, 0, Qt.AlignmentFlag.AlignLeft)
-
         self._formula_row_label = QLabel("A(t):")
         model_layout.addRow(self._formula_row_label, self._formula_box)
-        model_layout.addRow("", model_button_layout)
+        model_group.addWidget(self._build_model_row(self._fit_wizard_btn))
         layout.addWidget(model_group)
 
-        # Fit range section
+        # ── Fit range ───────────────────────────────────────────────────────
         fit_range_group = PanelSection("Fit range")
         fit_range_layout = QHBoxLayout()
         fit_range_layout.setContentsMargins(0, 0, 0, 0)
@@ -255,19 +242,25 @@ class SingleFitTab(FitTabBase):
         fit_range_layout.addStretch()
         layout.addWidget(fit_range_group)
 
-        # Parameter table — the shared Name·Value·Fix·Min·Max·Batch·Link·Tie
-        # widget (columns/delegates/Fix-Link-Tie wiring/fraction sync live in
-        # FitParameterTable). It self-connects itemChanged for fraction sync.
+        # ── Parameters ──────────────────────────────────────────────────────
+        # The shared Name·Value·Fix·Min·Max·Batch·Link·Tie widget (columns/
+        # delegates/Fix-Link-Tie wiring/fraction sync live in FitParameterTable).
+        # It self-connects itemChanged for fraction sync.
         param_group = PanelSection("Parameters")
         self._param_table = FitParameterTable()
+        self._column_chips: dict[str, QPushButton] = {}
+        param_group.add_header_widget(self._build_column_rail())
         param_group.addWidget(self._param_table)
+        self._popped_out_note = QLabel("Shown in the pop-out window")
+        self._popped_out_note.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
+        self._popped_out_note.hide()
+        param_group.addWidget(self._popped_out_note)
+        #: Where the table goes back to when the pop-out closes.
+        self._param_section_layout = param_group.body_layout
+        self._param_table_dialog = self._build_param_table_dialog()
         layout.addWidget(param_group)
 
-        # Buttons
-        btn_layout = QGridLayout()
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setHorizontalSpacing(6)
-        btn_layout.setVerticalSpacing(6)
+        # ── Run row ─────────────────────────────────────────────────────────
         self._fit_btn = QPushButton("Fit")
         self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_fit)
@@ -278,13 +271,24 @@ class SingleFitTab(FitTabBase):
         self._preview_btn = QPushButton("Preview")
         self._preview_btn.clicked.connect(self._on_preview)
         self._preview_btn.setEnabled(False)
-        self._pull_diagnostic_btn = QPushButton("Pull diagnostic…")
-        self._pull_diagnostic_btn.setToolTip(
-            "Re-simulate this fit at matched statistics, refit each copy, and "
-            "check that the parameter pulls are standard normal (honest errors)."
-        )
-        self._pull_diagnostic_btn.clicked.connect(self._on_pull_diagnostic)
-        self._pull_diagnostic_btn.setEnabled(False)
+
+        self._chi2_chip = QPushButton()
+        self._chi2_chip.setObjectName(VERDICT_CHIP_OBJECT_NAME)
+        self._chi2_chip.setFlat(True)
+        self._chi2_chip.setFont(mono_font(SIZE_NUMERIC))
+        self._chi2_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._chi2_chip.clicked.connect(self._show_fit_results_window)
+        self._chi2_chip.hide()
+
+        run_row = QHBoxLayout()
+        run_row.setContentsMargins(0, 0, 0, 0)
+        run_row.setSpacing(6)
+        for button in (self._fit_btn, self._stop_btn, self._reset_btn, self._preview_btn):
+            run_row.addWidget(button)
+        run_row.addStretch(1)
+        run_row.addWidget(self._chi2_chip)
+        layout.addLayout(run_row)
+
         self._minos_checkbox = QCheckBox("Asymmetric errors")
         self._minos_checkbox.setToolTip(
             "After fitting, walk the χ² profile of each free parameter to get its "
@@ -292,62 +296,281 @@ class SingleFitTab(FitTabBase):
             "errors; most useful at low statistics, near parameter bounds, or in "
             "strongly correlated fits where the parabolic error is unreliable."
         )
-        btn_layout.addWidget(self._fit_btn, 0, 0)
-        btn_layout.addWidget(self._stop_btn, 0, 0)
-        btn_layout.addWidget(self._reset_btn, 0, 1)
-        btn_layout.addWidget(self._preview_btn, 0, 2)
-        btn_layout.addWidget(self._pull_diagnostic_btn, 1, 0, 1, 3)
-        btn_layout.addWidget(self._minos_checkbox, 2, 0, 1, 3)
-        btn_layout.setColumnStretch(3, 1)
-        layout.addLayout(btn_layout)
+        layout.addWidget(self._minos_checkbox)
 
-        # Carry-forward provenance badge (D2/F6): dismissable notice that the
-        # form currently shown was NOT fitted for the selected run — it was
-        # either carried forward from another run or restored from an
-        # in-session cache of an equally-unfit form. Cleared automatically the
-        # moment a fit is recorded for this run (see FitPanel._on_single_fit_completed).
-        self._carry_forward_badge = QFrame()
-        self._carry_forward_badge.setObjectName("carryForwardBadge")
-        self._carry_forward_badge.setStyleSheet(
-            f"#carryForwardBadge {{ border: 1px solid {tokens.WARN}; border-radius: 4px; }}"
+        # ── Results ─────────────────────────────────────────────────────────
+        layout.addWidget(make_section_header("Results"))
+        self._results_card = FitResultsCard(
+            actions=(
+                (
+                    DIAGNOSTIC_ACTION,
+                    "Re-simulate this fit at matched statistics, refit each copy, and "
+                    "check that the parameter pulls are standard normal (honest errors).",
+                ),
+                (ADD_TO_SERIES_ACTION, ""),
+                (
+                    SEND_TO_BATCH_ACTION,
+                    "Copy this fit function into the Batch tab to seed a batch fit "
+                    "over the selected runs.",
+                ),
+            )
         )
-        badge_layout = QHBoxLayout(self._carry_forward_badge)
-        badge_layout.setContentsMargins(8, 4, 4, 4)
-        badge_layout.setSpacing(4)
-        self._carry_forward_badge_label = QLabel("")
-        self._carry_forward_badge_label.setWordWrap(True)
-        badge_layout.addWidget(self._carry_forward_badge_label, 1)
-        self._carry_forward_badge_dismiss_btn = QPushButton("✕")
-        self._carry_forward_badge_dismiss_btn.setToolTip("Dismiss")
-        self._carry_forward_badge_dismiss_btn.setFixedWidth(char_width(3))
-        # Match the flat, muted "✕" chrome used elsewhere (see dock_header.py's
-        # close button) instead of the default Qt bezel.
-        self._carry_forward_badge_dismiss_btn.setStyleSheet(
-            "QPushButton { border: none; background: transparent; padding: 0 4px;"
-            f" color: {tokens.TEXT_MUTED}; }}"
-            f"QPushButton:hover {{ background-color: {tokens.SURFACE_HI}; border-radius: 3px; }}"
-        )
-        self._carry_forward_badge_dismiss_btn.clicked.connect(self._carry_forward_badge.hide)
-        badge_layout.addWidget(self._carry_forward_badge_dismiss_btn)
-        self._carry_forward_badge.hide()
-        layout.addWidget(self._carry_forward_badge)
+        self._results_card.action_triggered.connect(self._on_results_card_action)
+        self._results_card.set_message("No fit performed yet")
+        layout.addWidget(self._results_card)
 
-        # Results
-        layout.addWidget(make_section_header("Fit Results"))
-        self._results_group = QFrame()
-        self._results_group.setObjectName(RESULT_BOX_OBJECT_NAME)
-        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-        results_layout = QVBoxLayout(self._results_group)
-        self._result_label = QLabel("No fit performed yet")
-        self._result_label.setWordWrap(True)
-        results_layout.addWidget(self._result_label)
-        layout.addWidget(self._results_group)
-
-        # Spare vertical height pools here, below the results box, instead of
+        # Spare vertical height pools here, below the results card, instead of
         # being claimed by an expanding parameter table.
         layout.addStretch(1)
 
         self._set_composite_model(self._composite_model)
+        self._update_card_actions()
+
+    # ── Parameters rail and its pop-out ────────────────────────────────────
+
+    def _build_column_rail(self) -> QWidget:
+        """The Parameters header rail: one chip per column group, then the pop-out.
+
+        The chips are the only thing that hides a column, so the table is put
+        into the persisted state here rather than relying on a toggle firing.
+        """
+        rail = QWidget()
+        rail_layout = FlowLayout(rail)
+        rail_layout.setContentsMargins(0, 0, 0, 0)
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        rail.setSizePolicy(policy)
+
+        shown = self._stored_column_groups()
+        for label, group, _default, tooltip in _COLUMN_GROUP_CHIPS:
+            chip = QPushButton(label, rail)
+            chip.setCheckable(True)
+            chip.setFont(footer_font())
+            chip.setToolTip(tooltip)
+            chip.setChecked(shown[group])
+            style_group_state_button(
+                chip, "active" if shown[group] else "unselected", palette="blue"
+            )
+            self._param_table.set_column_group_visible(group, shown[group])
+            chip.toggled.connect(functools.partial(self._on_column_chip_toggled, group))
+            rail_layout.addWidget(chip)
+            self._column_chips[group] = chip
+
+        pop_out = QToolButton(rail)
+        pop_out.setText("↗")
+        pop_out.setToolTip("Show every column in a window")
+        pop_out.clicked.connect(self._show_param_table_dialog)
+        rail_layout.addWidget(pop_out)
+        return rail
+
+    def _stored_column_groups(self) -> dict[str, bool]:
+        """The rail's persisted chip states, with the defaults filling the gaps."""
+        raw = self._settings.value(COLUMN_GROUPS_SETTINGS_KEY, "")
+        try:
+            # The settings store is written outside this program, so its content
+            # is parsed as foreign data rather than trusted.
+            stored = json.loads(raw) if isinstance(raw, str) and raw else {}
+        except json.JSONDecodeError:
+            stored = {}
+        if not isinstance(stored, dict):
+            stored = {}
+        return {
+            group: bool(stored.get(group, default))
+            for _label, group, default, _tooltip in _COLUMN_GROUP_CHIPS
+        }
+
+    def _on_column_chip_toggled(self, group: str, checked: bool) -> None:
+        """Show or hide *group*'s columns and remember the rail's new state."""
+        style_group_state_button(
+            self._column_chips[group], "active" if checked else "unselected", palette="blue"
+        )
+        # The pop-out shows every column; the chips take effect again when the
+        # table comes back into the tab.
+        if not self._param_table_dialog.isVisible():
+            self._param_table.set_column_group_visible(group, checked)
+        self._settings.setValue(
+            COLUMN_GROUPS_SETTINGS_KEY,
+            json.dumps({name: chip.isChecked() for name, chip in self._column_chips.items()}),
+        )
+
+    def _build_param_table_dialog(self) -> QDialog:
+        """The pop-out that hosts the live parameter table, every column shown."""
+        dialog = QDialog(self)
+        dialog.setModal(False)
+        dialog_layout = QVBoxLayout(dialog)
+        buttons = QHBoxLayout()
+        copy_button = QPushButton("Copy TSV", dialog)
+        copy_button.setToolTip("Copy the parameter table to the clipboard.")
+        copy_button.clicked.connect(self._copy_param_table_tsv)
+        buttons.addWidget(copy_button)
+        buttons.addStretch(1)
+        close_button = QPushButton("Close", dialog)
+        close_button.clicked.connect(dialog.close)
+        buttons.addWidget(close_button)
+        dialog_layout.addLayout(buttons)
+        # Close, the window button and Escape all land on reject(), which is what
+        # `finished` reports — so the table comes home whichever the user uses.
+        dialog.finished.connect(self._return_param_table)
+        return dialog
+
+    def _show_param_table_dialog(self) -> None:
+        """Move the live table into the pop-out and show every column."""
+        self._param_table_dialog.setWindowTitle(f"Fit parameters — {self._run_label()}")
+        for group in self._column_chips:
+            self._param_table.set_column_group_visible(group, True)
+        self._param_table_dialog.layout().insertWidget(0, self._param_table)
+        self._popped_out_note.show()
+        self._size_param_table_dialog()
+        self._param_table_dialog.show()
+        self._param_table_dialog.raise_()
+        self._param_table_dialog.activateWindow()
+
+    def _return_param_table(self) -> None:
+        """Put the table back above its placeholder and re-apply the rail's chips."""
+        self._param_section_layout.insertWidget(0, self._param_table)
+        self._popped_out_note.hide()
+        for group, chip in self._column_chips.items():
+            self._param_table.set_column_group_visible(group, chip.isChecked())
+
+    def _size_param_table_dialog(self) -> None:
+        """Open the pop-out at the width its columns actually need.
+
+        A ``QTableWidget``'s size hint is a scrolling hint, so the dialog would
+        open with a horizontal scrollbar over columns that are already sized to
+        their contents. The floor is the dialog's current size, so a pop-out the
+        user has widened only ever grows (as in the Parameters panel).
+        """
+        layout = self._param_table_dialog.layout()
+        margins = layout.contentsMargins()
+        items = [layout.itemAt(index) for index in range(layout.count())]
+        width = (
+            self._param_table.horizontalHeader().length()
+            + self._param_table.verticalHeader().width()
+            + 2 * self._param_table.frameWidth()
+            + margins.left()
+            + margins.right()
+        )
+        height = (
+            margins.top()
+            + margins.bottom()
+            + layout.spacing() * (len(items) - 1)
+            + sum(item.sizeHint().height() for item in items)
+        )
+        resize_to_available(
+            self._param_table_dialog,
+            width,
+            height,
+            min_width=self._param_table_dialog.width(),
+            min_height=self._param_table_dialog.height(),
+        )
+
+    def _copy_param_table_tsv(self) -> None:
+        """Put the parameter table on the clipboard as tab-separated text."""
+        QApplication.clipboard().setText(self._param_table.as_tsv())
+
+    # ── Results card and the χ²ᵣ chip ──────────────────────────────────────
+
+    def _run_label(self) -> str:
+        """How the bound record names itself, or ``no run`` when none is bound."""
+        if self._current_dataset is None:
+            return "no run"
+        return str(self._current_dataset.metadata.get("run_number", "?"))
+
+    def _on_results_card_action(self, label: str) -> None:
+        """Route a results-card hand-off to its owner."""
+        if label == DIAGNOSTIC_ACTION:
+            self._on_pull_diagnostic()
+        elif label == ADD_TO_SERIES_ACTION:
+            self.add_to_series_requested.emit()
+        else:
+            self.send_model_to_batch_requested.emit()
+
+    def _update_card_actions(self) -> None:
+        """Re-derive which hand-offs this run's state allows.
+
+        ``Send to Batch →`` needs no fit — it copies the *function* — so it is
+        never disabled; the other two need a completed fit for this run (F18).
+        """
+        have_fit = (
+            self._last_fit_result is not None and self._last_fit_result.success
+        ) or self._has_recorded_fit
+        self._results_card.set_action_enabled(
+            ADD_TO_SERIES_ACTION,
+            have_fit,
+            "Add this run's single fit to an existing batch series with a matching model."
+            if have_fit
+            else "Fit this run first — there is no completed single fit to add to a series.",
+        )
+        self._results_card.set_action_enabled(DIAGNOSTIC_ACTION, self._can_run_pull_diagnostic())
+
+    def _show_fit_summary(
+        self,
+        result,
+        *,
+        tag: str,
+        tone: str,
+        headline: str,
+        extra_html: str = "",
+    ) -> None:
+        """Render a solved fit on the results card: stats, verdict and warnings."""
+        npar = len(result.parameters.free_parameters)
+        ndof = (
+            round(result.chi_squared / result.reduced_chi_squared)
+            if result.reduced_chi_squared > 0
+            else 0
+        )
+        detail = f"χ²/ν {result.reduced_chi_squared:.4f}"
+        if result.edm is not None:
+            detail += f" · Δ‖p‖ {result.edm:.2e}"
+        summary = _fit_summary(result)
+        detail += fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
+        self._results_card.set_summary(
+            FitCardSummary(
+                tag=tag,
+                tone=tone,
+                headline=headline,
+                meta=f"ndof {ndof} · npar {npar}",
+                detail_html=detail + extra_html + _fit_warnings_html(result),
+            )
+        )
+
+    def _record_fit_verdict(self, result) -> None:
+        """Arm the χ²ᵣ chip (and refresh any open results window) for *result*."""
+        run = self._run_label()
+        self._last_fit_snapshot = fit_results_snapshot(
+            result,
+            title=f"Fit results — {run}",
+            model=self._composite_model.formula_string(),
+            fit_range=self.current_fit_range_text() or "",
+            runs=run,
+        )
+        solved = self._last_fit_snapshot.ranges[0]
+        self._chi2_chip.setText(solved.chi_squared)
+        self._chi2_chip.setStyleSheet(verdict_chip_qss(solved.colours))
+        self._chi2_chip.setToolTip(
+            "\n".join(
+                [solved.verdict]
+                + [
+                    f"{row.symbol} = "
+                    f"{format_value_uncertainty(row.value, row.error)} {row.unit}".strip()
+                    for row in solved.parameters
+                    if not row.fixed
+                ]
+            )
+        )
+        self._chi2_chip.show()
+        if self._fit_results_window is not None:
+            self._fit_results_window.set_results(self._last_fit_snapshot)
+
+    def _show_fit_results_window(self) -> None:
+        """Open (or raise) this tab's read-out of the recorded fit."""
+        if self._fit_results_window is None:
+            self._fit_results_window = FitResultsWindow(
+                self._last_fit_snapshot, self, editable=False
+            )
+        self._fit_results_window.show()
+        self._fit_results_window.raise_()
+        self._fit_results_window.activateWindow()
 
     def domain(self) -> str:
         """Return the current fitting domain."""
@@ -371,14 +594,20 @@ class SingleFitTab(FitTabBase):
             self._set_composite_model(CompositeModel(["Exponential", "Constant"], operators=["+"]))
         self.set_dataset(self._current_dataset)
 
-    def show_carry_forward_badge(self, text: str) -> None:
-        """Show the dismissable "not fitted for this run" provenance notice."""
-        self._carry_forward_badge_label.setText(text)
-        self._carry_forward_badge.show()
+    def show_carry_forward(self, run: int | None, text: str) -> None:
+        """Tag the results card: this form was carried, not fitted for this run.
 
-    def clear_carry_forward_badge(self) -> None:
-        """Hide the carry-forward provenance notice (e.g. a real fit now exists)."""
-        self._carry_forward_badge.hide()
+        *run* is the run the values came from, which the tag names; ``None`` is
+        the case where nothing has been fitted anywhere yet, so there is no run
+        to point at. *text* is the full sentence, kept as the tag's hover text.
+        """
+        self._results_card.set_meta_tag(
+            "carried seeds" if run is None else f"seeds from {run}", text
+        )
+
+    def clear_carry_forward(self) -> None:
+        """Drop the carry-forward tag (e.g. a real fit now exists for this run)."""
+        self._results_card.set_meta_tag(None)
 
     def set_dataset(self, dataset: MuonDataset | None) -> None:
         """Set the current dataset to fit.
@@ -395,17 +624,17 @@ class SingleFitTab(FitTabBase):
         # A fit result belongs to the dataset it was fit on; drop it on change.
         self._last_fit_result = None
         self._last_fit_parameters = None
+        self._last_fit_snapshot = None
+        self._chi2_chip.hide()
         # Reset to the safe default; FitPanel.set_dataset calls
         # set_has_recorded_fit(True) right after this when the run's own
         # persisted FitSlot (not just this session's in-memory result) is real.
         self._has_recorded_fit = False
-        if self._pull_diagnostic_btn is not None:
-            self._pull_diagnostic_btn.setEnabled(False)
         enabled = dataset is not None and (not self._fit_blocked)
         self._fit_btn.setEnabled(enabled)
         self._preview_btn.setEnabled(enabled)
         self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
-        self._update_add_to_series_enabled()
+        self._update_card_actions()
 
     def set_has_recorded_fit(self, has_fit: bool) -> None:
         """Track whether the active run has a persisted single fit (F18).
@@ -418,19 +647,7 @@ class SingleFitTab(FitTabBase):
         its restore-mediator's ``own_slot`` provenance check.
         """
         self._has_recorded_fit = bool(has_fit)
-        self._update_add_to_series_enabled()
-
-    def _update_add_to_series_enabled(self) -> None:
-        """Enable "Add to Series..." only once this run has a completed fit (F18)."""
-        have_fit = (
-            self._last_fit_result is not None and self._last_fit_result.success
-        ) or self._has_recorded_fit
-        self._add_to_series_action.setEnabled(have_fit)
-        self._add_to_series_action.setToolTip(
-            "Add this run's single fit to an existing batch series with a matching model."
-            if have_fit
-            else "Fit this run first — there is no completed single fit to add to a series."
-        )
+        self._update_card_actions()
 
     def _can_run_pull_diagnostic(self) -> bool:
         """A successful time-domain fit on a run with histograms is required."""
@@ -552,18 +769,6 @@ class SingleFitTab(FitTabBase):
             return
         self._cache_wizard_analysis(recommendation, signature=signature, log_text=log_text)
 
-    def _update_drop_background_enabled(self) -> None:
-        """Enable the Drop-background affordance only when there is one to drop."""
-        reduced = _model_without_trailing_background(self._composite_model)
-        self._drop_background_action.setEnabled(self._domain == "time" and reduced is not None)
-
-    def _on_drop_background(self) -> None:
-        """Drop the constant background term for amplitude calibration."""
-        reduced = _model_without_trailing_background(self._composite_model)
-        if reduced is None:
-            return
-        self._set_composite_model(reduced)
-
     def _seed_context(self, *, from_record: bool = True) -> SeedContext:
         """Describe the data this tab's parameters are being seeded for.
 
@@ -652,7 +857,6 @@ class SingleFitTab(FitTabBase):
         # on top of the freshly seeded rows; components with no predecessor keep
         # the seeds populate() just wrote.
         self._param_table.restore_parameters({entry["name"]: entry for entry in carried})
-        self._update_drop_background_enabled()
 
     def _synchronize_fraction_value_rows(self, edited_param_name: str | None = None) -> None:
         self._param_table.synchronize_fractions(edited_param_name)
@@ -783,7 +987,9 @@ class SingleFitTab(FitTabBase):
 
         result = assessment.fit_result
         if not result.success:
-            self._result_label.setText(f"<b>Fit Wizard failed:</b> {result.message}")
+            self._results_card.set_message(
+                f"<b>Fit Wizard failed:</b> {result.message}", tag="Error"
+            )
             return
 
         self._set_composite_model(assessment.template.model)
@@ -831,12 +1037,14 @@ class SingleFitTab(FitTabBase):
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
 
-        wizard_note = f"Fit Wizard — {assessment.template.title}"
-        if assessment.residual_gate_reasons:
-            wizard_note += " ⚠"
-        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        detail = _fit_success_html(result).split("<br>", 1)[1]
-        self._result_label.setText(success_html(wizard_note, detail=detail))
+        flagged = bool(assessment.residual_gate_reasons)
+        self._show_fit_summary(
+            result,
+            tag="Fit ⚠" if flagged else "Fit ✓",
+            tone="warn" if flagged else "ok",
+            headline=f"Fit Wizard — {assessment.template.title}",
+        )
+        self._record_fit_verdict(result)
 
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
         n_samples = _fit_curve_sample_count(
@@ -973,28 +1181,29 @@ class SingleFitTab(FitTabBase):
         """Execute the fit."""
         if self._fit_blocked:
             message = self._fit_block_reason or "Fit is unavailable for the current selection."
-            self._result_label.setText(f"ERROR: {message}")
+            self._results_card.set_message(f"ERROR: {message}", tag="Error")
             return
 
         if self._current_dataset is None:
-            self._result_label.setText("ERROR: No dataset selected")
+            self._results_card.set_message("ERROR: No dataset selected", tag="Error")
             return
 
         mismatch = _fit_domain_mismatch_message(self._domain, self._current_dataset)
         if mismatch is not None:
-            self._result_label.setText(f"ERROR: {mismatch}")
+            self._results_card.set_message(f"ERROR: {mismatch}", tag="Error")
             return
 
         if self._composite_model is None:
-            self._result_label.setText("ERROR: No function defined")
+            self._results_card.set_message("ERROR: No function defined", tag="Error")
             return
 
         missing = getattr(self._composite_model, "missing_component_names", ())
         if missing:
-            self._result_label.setText(
+            self._results_card.set_message(
                 "ERROR: the model requires missing user function(s): "
                 f"{', '.join(missing)}. Register them (Setup → User functions…) "
-                "and reload the project."
+                "and reload the project.",
+                tag="Error",
             )
             return
 
@@ -1002,7 +1211,7 @@ class SingleFitTab(FitTabBase):
         try:
             parameters = self._parameter_set_from_table()
         except ValueError as exc:
-            self._result_label.setText(f"ERROR: {exc}")
+            self._results_card.set_message(f"ERROR: {exc}", tag="Error")
             return
 
         # Resolve the rotating-reference-frame offset, if the host's RRF display
@@ -1020,9 +1229,10 @@ class SingleFitTab(FitTabBase):
                 # A composite with an oscillating component that is not a pure
                 # frame rotation (muonium, Bessel, …) cannot be safely offset;
                 # refuse rather than silently leave a line in the lab frame.
-                self._result_label.setText(
+                self._results_card.set_message(
                     f"ERROR: cannot fit in the rotating frame — {exc} "
-                    "Turn off the rotating frame (Options → Advanced) to fit this model."
+                    "Turn off the rotating frame (Options → Advanced) to fit this model.",
+                    tag="Error",
                 )
                 return
             except ValueError:
@@ -1035,8 +1245,8 @@ class SingleFitTab(FitTabBase):
         )
 
         # Run the fit on a worker thread; the GUI (and Stop button) stay live.
-        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-        self._result_label.setText("Fitting...")
+        self._chi2_chip.hide()
+        self._results_card.set_message("Fitting…", tag="Fitting")
 
         # Snapshot launch-time context: the user may switch run or model while
         # the worker runs, and the result must be interpreted against what was
@@ -1087,24 +1297,26 @@ class SingleFitTab(FitTabBase):
         worker = self._fit_worker
         if worker is not None:
             self._stop_btn.setEnabled(False)
-            self._result_label.setText("Cancelling fit…")
+            self._results_card.set_message("Cancelling fit…", tag="Fitting")
             worker.cancel()
 
     def _on_single_fit_cancelled(self) -> None:
         """Handle a cancelled single fit: restore the panel, record nothing."""
         self._set_fit_busy(False)
         self._fit_worker = None
-        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-        self._result_label.setText("Fit cancelled — no result recorded.")
+        self._results_card.set_message("Fit cancelled — no result recorded.", tag="Cancelled")
 
     def _on_single_fit_error(self, message: str) -> None:
         self._set_fit_busy(False)
         self._fit_worker = None
-        self._result_label.setText(f"<b>Error during fit:</b><br>{message}")
+        self._results_card.set_message(f"<b>Error during fit:</b><br>{message}", tag="Error")
 
     def shutdown_workers(self) -> None:
-        """Cancel any running fit and wait for its thread (window close)."""
+        """Cancel any running fit and close this tab's own windows (window close)."""
         self._fit_call_runner.shutdown()
+        self._param_table_dialog.close()
+        if self._fit_results_window is not None:
+            self._fit_results_window.close()
 
     def wait_for_fit(self, timeout_ms: int = 30_000) -> bool:
         """Block (with a live event loop) until the launched fit completes."""
@@ -1123,18 +1335,21 @@ class SingleFitTab(FitTabBase):
         (no ``fit_completed``, no ``_last_fit_result``), so it never becomes a
         seed or a persisted slot — the user refines and refits to keep it.
         """
-        detail = f"χ²/ν = {result.reduced_chi_squared:.4f} · {html.escape(str(result.message))}"
         guidance = (
             "Curve shown in grey for inspection — not recorded. Adjust the seeds, "
             "bounds, or model and refit to keep it."
         )
-        self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-        self._result_label.setText(
-            warning_html("⚠ Fit did not fully converge")
-            + f'<br><span style="color:{tokens.TEXT_MUTED};">{detail}</span>'
-            + f'<br><span style="color:{tokens.TEXT_MUTED};"><i>{guidance}</i></span>'
+        self._show_fit_summary(
+            result,
+            tag="Fit ⚠",
+            tone="warn",
+            headline="did not fully converge",
+            extra_html=(
+                f'<br><span style="color:{tokens.TEXT_MUTED};">'
+                f"{html.escape(str(result.message))}</span>"
+                f'<br><span style="color:{tokens.TEXT_MUTED};"><i>{guidance}</i></span>'
+            ),
         )
-        self._result_label.setToolTip("")
 
         # Only overlay the curve when the panel still shows the model and run the
         # fit ran on — otherwise the user navigated away mid-fit and drawing it
@@ -1190,8 +1405,7 @@ class SingleFitTab(FitTabBase):
                     result, dataset, model, model_generation, rrf_offsets=rrf_offsets
                 )
             else:
-                self._results_group.setStyleSheet(RESULT_BOX_NEUTRAL_STYLE)
-                self._result_label.setText(f"<b>Fit failed:</b> {result.message}")
+                self._results_card.set_message(f"<b>Fit failed:</b> {result.message}", tag="Error")
             return
 
         # The engine fitted the rotating-frame offsets δν; shift the result back
@@ -1220,35 +1434,32 @@ class SingleFitTab(FitTabBase):
         )
         dataset_unchanged = self._current_dataset is dataset
 
-        warnings_note = _fit_warnings_html(result)
-        self._results_group.setStyleSheet(RESULT_BOX_SUCCESS_STYLE)
-        self._result_label.setText(_fit_success_html(result) + rrf_note + warnings_note)
-        summary = _fit_summary(result)
-        self._result_label.setToolTip(
-            fit_quality_tooltip(summary.get("quality"), summary.get("params_at_bound"))
-        )
-
         if not (model_unchanged and dataset_unchanged):
             if not model_unchanged:
                 reason = "the model was changed or reset while it ran"
             else:
                 run_id = dataset.metadata.get("run_number", "?")
                 reason = f"run {run_id} is no longer selected"
-            self._result_label.setText(
-                _fit_success_html(result)
-                + rrf_note
-                + warnings_note
+            self._show_fit_summary(
+                result,
+                tag="Fit ⚠",
+                tone="warn",
+                headline="converged",
+                extra_html=rrf_note
                 + f"<br><i>This fit was not applied or recorded because {reason}. "
-                "Restore the original model and run, then refit to keep it.</i>"
+                "Restore the original model and run, then refit to keep it.</i>",
             )
             return
+
+        self._show_fit_summary(
+            result, tag="Fit ✓", tone="ok", headline="converged", extra_html=rrf_note
+        )
 
         # Fresh: remember the converged fit for the pull-distribution diagnostic.
         self._last_fit_result = result
         self._last_fit_parameters = parameters
-        if self._pull_diagnostic_btn is not None:
-            self._pull_diagnostic_btn.setEnabled(self._can_run_pull_diagnostic())
-        self._update_add_to_series_enabled()
+        self._record_fit_verdict(result)
+        self._update_card_actions()
 
         display_values = _normalized_model_param_values(
             model,
@@ -1323,7 +1534,7 @@ class SingleFitTab(FitTabBase):
             # The table serialises its rows (incl. auxiliary non-model params and
             # fraction-value normalisation).
             "parameters": self._param_table.parameters_state(),
-            "result_html": self._result_label.text(),
+            "result_html": self._results_card.content_html(),
         }
         if (
             self._cached_wizard_recommendation is not None
@@ -1367,11 +1578,12 @@ class SingleFitTab(FitTabBase):
                 self._set_composite_model(restored, seed_from_record=False)
                 if restored.missing_component_names:
                     names = ", ".join(restored.missing_component_names)
-                    self._result_label.setText(
+                    self._results_card.set_message(
                         f"<b>Missing user function(s):</b> {names}.<br>"
                         "The saved model is preserved (missing components plot as "
                         "zero) but cannot be fitted until they are registered — "
-                        "see Setup → User functions…"
+                        "see Setup → User functions…",
+                        tag="Error",
                     )
 
         # The table applies the saved values/fix/bounds/link/tie onto its rows
@@ -1382,7 +1594,7 @@ class SingleFitTab(FitTabBase):
 
         result_html = state.get("result_html")
         if isinstance(result_html, str) and result_html:
-            self._result_label.setText(result_html)
+            self._results_card.set_message(result_html)
 
         # Accepts both shapes: the session handle (no work — the recommendation
         # is shared by reference) and a persisted dict from a project file or a

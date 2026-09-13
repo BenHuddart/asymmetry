@@ -6,7 +6,8 @@ evaluation:
 (a) fitting a time-domain model against the FFT spectrum when the workspace is
     in the frequency domain (CdS),
 (b) the default ``Exponential + Constant`` splitting the amplitude during
-    amplitude calibration with no affordance to drop the background (Photo),
+    amplitude calibration (Photo) — the background term is now removed in the
+    function editor, so only the model surgery itself is covered here,
 (c) a buried 2nd period (light ON/OFF) the data browser never surfaced (Photo).
 """
 
@@ -93,8 +94,8 @@ def test_single_fit_refuses_time_fit_against_frequency_data(qapp: QApplication) 
     tab._run_fit()
 
     assert "ran" not in captured  # the engine was never invoked
-    assert tab._result_label.text().startswith("ERROR")
-    assert "frequency-domain spectrum" in tab._result_label.text()
+    assert tab._results_card.content_html().startswith("ERROR")
+    assert "frequency-domain spectrum" in tab._results_card.content_html()
 
 
 def test_single_fit_allows_matching_time_data(qapp: QApplication) -> None:
@@ -113,7 +114,7 @@ def test_global_fit_refuses_domain_mismatch(qapp: QApplication) -> None:
     assert "frequency-domain spectrum" in tab._result_text.toPlainText()
 
 
-# ── (b) drop-background affordance ───────────────────────────────────────────
+# ── (b) dropping a trailing background term ───────────────────────────────────────────
 
 
 def test_model_without_trailing_background_drops_only_a_plain_constant() -> None:
@@ -128,27 +129,6 @@ def test_model_without_trailing_background_drops_only_a_plain_constant() -> None
     assert _model_without_trailing_background(CompositeModel(["Exponential"])) is None
     multiplied = CompositeModel(["Exponential", "Constant"], operators=["*"])
     assert _model_without_trailing_background(multiplied) is None
-
-
-def test_drop_background_button_yields_single_exponential(qapp: QApplication) -> None:
-    """The calibration affordance turns the default Exp+Const into a bare Exp."""
-    tab = SingleFitTab()
-    tab.set_dataset(_time_dataset())
-    # The default model carries a free background, so the affordance is offered.
-    assert tab._composite_model.component_names == ["Exponential", "Constant"]
-    assert tab._drop_background_action.isEnabled()
-
-    tab._on_drop_background()
-
-    assert tab._composite_model.component_names == ["Exponential"]
-    # Nothing left to drop → the affordance disables itself.
-    assert not tab._drop_background_action.isEnabled()
-
-
-def test_drop_background_disabled_in_frequency_domain(qapp: QApplication) -> None:
-    tab = SingleFitTab()
-    tab.set_domain("frequency")
-    assert not tab._drop_background_action.isEnabled()
 
 
 # ── (c) multi-period browser cue ─────────────────────────────────────────────
