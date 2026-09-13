@@ -15,6 +15,7 @@ from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget  # noqa: E402
 
 from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME  # noqa: E402
+from asymmetry.gui.widgets.flow_layout import FlowLayout  # noqa: E402
 from asymmetry.gui.widgets.panel_section import PanelSection  # noqa: E402
 
 
@@ -163,23 +164,27 @@ def test_persisted_value_overrides_constructor_default(qapp, settings) -> None:
     assert not section.isExpanded()
 
 
-def test_add_header_widget_sits_between_the_title_and_the_suffix(qapp):
-    section = PanelSection("Parameters")
+def test_add_header_widget_shares_a_wrapping_row_with_the_title(qapp):
+    """The title and the header widget wrap together, before the suffix.
+
+    A long uppercase title beside a rail of chips must not set the section's
+    minimum width: the two share one flow host, so the header's floor is its
+    widest single item and the rail wraps under the title in a narrow dock.
+    """
+    section = PanelSection("Parameter classification")
     rail = QPushButton("Bounds")
     section.add_header_widget(rail)
     section.set_title_suffix("3 shown")
 
+    host = rail.parent()
+    assert host is section._header_label.parent()
+    assert host.parent() is section._header_row
+    assert isinstance(host.layout(), FlowLayout)
     header = section._header_row.layout()
-    indices = [
-        header.indexOf(section._header_label),
-        header.indexOf(rail),
-        header.indexOf(section._suffix_label),
-    ]
-    assert indices == sorted(indices)
-    # The widget takes the row's slack, so it starts beside the title rather
-    # than floating in the middle of the header.
-    assert header.stretch(header.indexOf(rail)) == 1
-    assert rail.parent() is section._header_row
+    assert header.indexOf(host) < header.indexOf(section._suffix_label)
+    assert header.stretch(header.indexOf(host)) == 1
+    widest = max(section._header_label.minimumSizeHint().width(), rail.minimumSizeHint().width())
+    assert host.minimumSizeHint().width() <= widest
 
 
 def test_a_header_widget_does_not_toggle_a_collapsible_section(qapp, settings):

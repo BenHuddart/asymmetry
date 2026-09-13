@@ -2273,8 +2273,9 @@ class FitTabBase(QWidget):
     ) -> None:
         """Put *chips* and the pop-out on *section*'s header, over *table*.
 
-        A *leading* widget (the Batch tab's ⓘ) rides at the head of the rail
-        rather than as a header item of its own: the rail is one ``FlowLayout``,
+        A *leading* widget (the Batch tab's ⓘ) goes first. Every item joins
+        the section header's own wrapping row one by one, so the row wraps
+        item by item under the title rather than as one block; the row is one ``FlowLayout``,
         whose minimum width is its widest single item, so what it holds never
         adds to the dock's minimum width.
 
@@ -2291,18 +2292,12 @@ class FitTabBase(QWidget):
         self._column_chips: dict[str, QPushButton] = {}
         self._rail_table = table
 
-        rail = QWidget()
-        rail_layout = FlowLayout(rail)
-        rail_layout.setContentsMargins(0, 0, 0, 0)
-        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        policy.setHeightForWidth(True)
-        rail.setSizePolicy(policy)
         if leading is not None:
-            rail_layout.addWidget(leading)
+            section.add_header_widget(leading)
 
         shown = self._stored_column_groups()
         for label, group, _default, tooltip in chips:
-            chip = QPushButton(label, rail)
+            chip = QPushButton(label)
             chip.setCheckable(True)
             chip.setFont(footer_font())
             chip.setToolTip(tooltip)
@@ -2314,16 +2309,14 @@ class FitTabBase(QWidget):
             # put into the persisted state here rather than awaiting a toggle.
             self._apply_column_group(group, shown[group])
             chip.toggled.connect(functools.partial(self._on_column_chip_toggled, group))
-            rail_layout.addWidget(chip)
+            section.add_header_widget(chip)
             self._column_chips[group] = chip
 
-        pop_out = QToolButton(rail)
+        pop_out = QToolButton()
         pop_out.setText("↗")
         pop_out.setToolTip("Show every column in a window")
         pop_out.clicked.connect(self._show_param_table_dialog)
-        rail_layout.addWidget(pop_out)
-
-        section.add_header_widget(rail)
+        section.add_header_widget(pop_out)
         section.addWidget(table)
         self._popped_out_note = QLabel("Shown in the pop-out window")
         self._popped_out_note.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")

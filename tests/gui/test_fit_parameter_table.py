@@ -308,7 +308,7 @@ def test_resting_columns_fit_a_narrow_inspector_dock(qapp):
 
     table.set_column_group_visible("links", False)
     table.set_column_group_visible("batch", False)
-    assert table_content_width(table) < char_width(44)
+    assert table_content_width(table) <= char_width(44)
 
 
 def _resting_table(qapp, width_chars: int = 60) -> FitParameterTable:

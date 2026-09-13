@@ -492,6 +492,14 @@ the mockup link and the decisions list.
 
 ## Decisions recorded
 
+- 2026-09-13 (CI): the width tests bound a tab's `minimumSizeHint` by
+  `char_width(46)`, which is 276 px under the Linux runner's font but ~322 px
+  on macOS, and the section header rows (uppercase title beside the rail's
+  widest chip, 277–288 px) failed there. `PanelSection.add_header_widget`
+  now puts the title and the header widget in one `FlowLayout`, so a
+  header's floor is its widest single item and the rail wraps under the
+  title when the dock is narrow (tab minimums fell to 189–231 px locally).
+
 - 2026-09-13: Min and Max stay separate columns (Ben); no merged Bounds cell
   on either tab. The rail chip that toggles them is still called `Bounds`.
 - 2026-09-13: `Drop background` retired rather than turned into a chip —
