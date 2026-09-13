@@ -1703,10 +1703,14 @@ class TestFitParametersPanelState:
 
         panel.restore_state(state)
 
-        # Simulate a transient UI state where table selection appears empty.
-        panel._y_selector_table.blockSignals(True)
-        panel._y_selector_table.clearSelection()
-        panel._y_selector_table.blockSignals(False)
+        # Simulate a transient UI state where the Lambda chip appears
+        # unchecked without going through _on_chip_toggled (which would
+        # refresh the persisted _selected_y_param_names cache) — get_state
+        # must still fall back to that cache rather than reporting nothing
+        # selected.
+        panel._y_chips["Lambda"].blockSignals(True)
+        panel._y_chips["Lambda"].setChecked(False)
+        panel._y_chips["Lambda"].blockSignals(False)
 
         out = panel.get_state()
         assert "Lambda" in out["selected_y_params"]

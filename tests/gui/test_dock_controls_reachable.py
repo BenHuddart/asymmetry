@@ -130,11 +130,20 @@ def test_reset_layout_restores_controls_fitting_width(shown_window) -> None:
 
 
 @pytest.mark.parametrize(
-    "panel_attr",
-    ["_fit_parameters_panel", "_maxent_panel"],
+    ("panel_attr", "owns_scroll_area"),
+    [
+        # FitParametersPanel dropped its private QScrollArea in Phase 3 of
+        # docs/plans/parameters-panel-cards.md ("no scroll area or splitter of
+        # its own") — the dock's shared _inspector_scroll_area now supplies it.
+        ("_fit_parameters_panel", False),
+        ("_maxent_panel", True),
+    ],
 )
-def test_clipped_panels_keep_a_scroll_fallback_in_the_dock(shown_window, panel_attr) -> None:
-    """Each panel that clipped lives under a QScrollArea, so a narrow dock scrolls.
+def test_clipped_panels_keep_a_scroll_fallback_in_the_dock(
+    shown_window, panel_attr, owns_scroll_area
+) -> None:
+    """Each panel that clipped is reachable through a QScrollArea, so a narrow
+    dock scrolls rather than clipping.
 
     Together with the controls-fitting default width and the widenable splitter,
     this is the design intent: at a usable width the controls show outright, and
@@ -142,8 +151,16 @@ def test_clipped_panels_keep_a_scroll_fallback_in_the_dock(shown_window, panel_a
     """
     window, _app = shown_window
     panel = getattr(window, panel_attr)
-    # Each panel embeds its own QScrollArea, so when the dock is dragged below
-    # the panel's natural width its controls scroll into reach rather than
-    # clipping silently. This is the narrow-width fallback beneath the
-    # controls-fitting default width and the widenable splitter.
-    assert panel.findChild(QScrollArea) is not None
+    if owns_scroll_area:
+        # MaxEntPanel embeds its own QScrollArea, so when the dock is dragged
+        # below the panel's natural width its controls scroll into reach
+        # rather than clipping silently.
+        assert panel.findChild(QScrollArea) is not None
+        return
+    # FitParametersPanel no longer owns one; the fallback comes from an
+    # ancestor QScrollArea (the dock's) instead.
+    assert panel.findChild(QScrollArea) is None
+    ancestor = panel.parentWidget()
+    while ancestor is not None and not isinstance(ancestor, QScrollArea):
+        ancestor = ancestor.parentWidget()
+    assert isinstance(ancestor, QScrollArea)

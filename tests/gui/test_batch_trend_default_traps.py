@@ -238,9 +238,12 @@ def test_global_param_hint_shown_for_shared_amplitude(qapp):
     # isHidden() reflects the explicit hidden flag (the offscreen panel has no
     # shown ancestor, so isVisible() is always False here).
     assert not panel._global_param_hint.isHidden()
+    # Phase 3 of docs/plans/parameters-panel-cards.md moved the footer note to
+    # a short form, with the full explanation (and the fix) on the tooltip.
     text = panel._global_param_hint.text()
     assert "Global" in text
-    assert "Local" in text  # points at the fix
+    tooltip = panel._global_param_hint.toolTip()
+    assert "Local" in tooltip  # points at the fix
     # The shared amplitude is named and is absent from the trendable Y list.
     assert "A" in text
     assert "A_1" not in panel._display_y_parameters()
