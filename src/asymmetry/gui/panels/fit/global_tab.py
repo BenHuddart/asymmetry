@@ -247,6 +247,9 @@ _COLUMN_GROUP_CHIPS = (("Bounds", "bounds", False, "Show the Min and Max columns
 _COL_MIN = 3
 _COL_MAX = 4
 
+#: Character budget of the Min/Max columns, shared with `FitParameterTable`.
+_BOUNDS_COL_CHARS = 7
+
 #: How many members the "Batch members" list shows before it scrolls. Past this
 #: the list would crowd out the fit controls in a dock that scrolls anyway — and
 #: the list is a filter, not the batch's contents, so a glance at three runs plus
@@ -596,10 +599,10 @@ class GlobalFitTab(FitTabBase):
         self._param_table.setColumnWidth(2, char_width(12))  # Type (dropdown), 86 px
         # Seed is this table's value column: it takes the dock's leftover width.
         elastic_value_columns(self._param_table, (1,), chars=VALUE_COL_CHARS)
-        # Min/Max hold "-inf", "1e6" and the ±∞ glyphs in 6 characters, matching
-        # the Single tab's pair so the two surfaces line up.
-        self._param_table.setColumnWidth(_COL_MIN, char_width(6))
-        self._param_table.setColumnWidth(_COL_MAX, char_width(6))
+        # Same character budget as the Single tab's pair so the two surfaces
+        # line up (see FitParameterTable: 7 is the least that shows "-inf").
+        self._param_table.setColumnWidth(_COL_MIN, char_width(_BOUNDS_COL_CHARS))
+        self._param_table.setColumnWidth(_COL_MAX, char_width(_BOUNDS_COL_CHARS))
         _apply_param_table_style(self._param_table)
         # Tab commits the open editor on the editable columns (Value, Bounds);
         # without this Qt's focus traversal jumps to the Type combo and the
@@ -628,8 +631,8 @@ class GlobalFitTab(FitTabBase):
         self._group_param_table.setColumnWidth(0, param_name_col_width())
         self._group_param_table.setColumnWidth(2, char_width(12))  # 86 px
         elastic_value_columns(self._group_param_table, (1,), chars=VALUE_COL_CHARS)
-        self._group_param_table.setColumnWidth(_COL_MIN, char_width(6))
-        self._group_param_table.setColumnWidth(_COL_MAX, char_width(6))
+        self._group_param_table.setColumnWidth(_COL_MIN, char_width(_BOUNDS_COL_CHARS))
+        self._group_param_table.setColumnWidth(_COL_MAX, char_width(_BOUNDS_COL_CHARS))
         _apply_param_table_style(self._group_param_table)
         self._group_param_table.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -665,8 +668,8 @@ class GlobalFitTab(FitTabBase):
             self._group_model_table.setColumnWidth(0, param_name_col_width())
             self._group_model_table.setColumnWidth(2, char_width(12))  # 86 px
             elastic_value_columns(self._group_model_table, (1,), chars=VALUE_COL_CHARS)
-            self._group_model_table.setColumnWidth(_COL_MIN, char_width(6))
-            self._group_model_table.setColumnWidth(_COL_MAX, char_width(6))
+            self._group_model_table.setColumnWidth(_COL_MIN, char_width(_BOUNDS_COL_CHARS))
+            self._group_model_table.setColumnWidth(_COL_MAX, char_width(_BOUNDS_COL_CHARS))
             _apply_param_table_style(self._group_model_table)
             self._group_model_table.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -5076,8 +5079,12 @@ class GlobalFitTab(FitTabBase):
             chars=VALUE_COL_CHARS,
         )
         self._group_param_table.setColumnWidth(self._group_param_type_column(), char_width(12))
-        self._group_param_table.setColumnWidth(self._group_param_min_column(), char_width(6))
-        self._group_param_table.setColumnWidth(self._group_param_min_column() + 1, char_width(6))
+        self._group_param_table.setColumnWidth(
+            self._group_param_min_column(), char_width(_BOUNDS_COL_CHARS)
+        )
+        self._group_param_table.setColumnWidth(
+            self._group_param_min_column() + 1, char_width(_BOUNDS_COL_CHARS)
+        )
         self._group_param_table.setRowCount(len(GROUP_NUISANCE_PARAMS))
 
         n0_defaults_by_group: dict[str, float] = {}
