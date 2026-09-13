@@ -628,7 +628,7 @@ class MaleicArrheniusScenario(CorpusScenario):
             panel._x_combo.setCurrentIndex(idx)
 
         panel._set_y_transform("Lambda", AxisTransform.preset("log"))
-        panel._set_axis_transform("x", AxisTransform.preset("reciprocal"))
+        panel._set_x_transform(AxisTransform.preset("reciprocal"))
 
         panel._model_fits["Lambda"] = fit
         panel._model_fit_transform_sig["Lambda"] = panel._transform_signature("Lambda")

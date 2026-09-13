@@ -11,15 +11,19 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QPoint
+from PySide6.QtWidgets import QApplication, QDialog
 
 import asymmetry.gui.panels.fit_parameters_panel as fpp
 from asymmetry.core.fitting.axis_transforms import AxisTransform
+from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_parameters_panel import (
     FitParametersPanel,
     _FitRow,
     _GroupFitData,
 )
+from tests.gui._trend_panel import card
 
 
 @pytest.fixture(scope="module")
@@ -132,6 +136,7 @@ def test_each_parameter_carries_its_own_lens(qapp):
 
 def test_twin_axes_show_each_parameter_through_its_own_lens(qapp):
     panel = _two_param_panel()
+    panel._overlay_button.setChecked(True)
     panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
     panel._set_y_transform("Beta", AxisTransform.preset("log"))
     panel._draw_plot()
@@ -140,29 +145,45 @@ def test_twin_axes_show_each_parameter_through_its_own_lens(qapp):
     assert right.get_ylabel().startswith("ln")
 
 
-def test_transform_combo_falls_back_to_identity_when_lenses_differ(qapp):
+def test_each_card_shows_its_own_lens(qapp):
     panel = _two_param_panel()
     panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
-    panel._set_y_transform("Beta", AxisTransform.preset("reciprocal"))
-    # Both selected parameters agree → the combo speaks for them.
-    assert panel._axis_transform("y") == AxisTransform.preset("reciprocal")
     panel._set_y_transform("Beta", AxisTransform.preset("log"))
-    assert panel._axis_transform("y").is_identity
+    assert card(panel, "Lambda").transform_button.text() == "1/y"
+    assert card(panel, "Beta").transform_button.text() == "ln y"
 
 
-def test_combo_pick_applies_to_every_selected_parameter(qapp):
+def test_y_transform_menu_applies_to_one_parameter(qapp, monkeypatch):
     panel = _two_param_panel()
-    combo = panel._y_transform_combo
-    combo.setCurrentIndex(combo.findData("reciprocal"))
-    panel._on_axis_transform_activated("y")
+    monkeypatch.setattr(
+        FitParametersPanel,
+        "_exec_menu",
+        lambda _self, menu, _pos: next(a for a in menu.actions() if a.data() == "reciprocal"),
+    )
+    panel._show_y_transform_menu("Lambda", QPoint(0, 0))
     assert panel._y_transform_for("Lambda") == AxisTransform.preset("reciprocal")
-    assert panel._y_transform_for("Beta") == AxisTransform.preset("reciprocal")
+    assert panel._y_transform_for("Beta").is_identity
 
 
-def test_custom_memory_keys_are_per_parameter(qapp):
+def test_custom_memory_key_is_per_parameter(qapp, monkeypatch):
     panel = _two_param_panel()
-    assert panel._axis_custom_memory_keys("x") == ["x"]
-    assert panel._axis_custom_memory_keys("y") == ["y:Lambda", "y:Beta"]
+    import asymmetry.gui.panels.axis_transform_dialog as atd
+
+    class _AcceptingDialog:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def exec(self) -> int:
+            return QDialog.DialogCode.Accepted
+
+        def expression(self) -> str:
+            return "1/x"
+
+    monkeypatch.setattr(atd, "AxisTransformDialog", _AcceptingDialog)
+    panel._prompt_custom_axis_transform("y", name="Beta")
+    assert panel._axis_transform_custom_memory == {"y:Beta": "1/x"}
+    assert panel._y_transform_for("Beta") == AxisTransform.custom("1/x")
+    assert panel._y_transform_for("Lambda").is_identity
 
 
 # ---------------------------------------------------------------------------
@@ -180,15 +201,14 @@ def test_transformed_axis_labels(qapp):
     assert panel._transformed_y_axis_label("Lambda").startswith("1/")
 
 
-def test_transform_suffix_names_the_parameter_each_lens_belongs_to(qapp):
+def test_lens_buttons_name_the_active_transform(qapp):
     panel = _two_param_panel()
-    panel._set_axis_transform("x", AxisTransform.preset("reciprocal"))
+    panel._set_x_transform(AxisTransform.preset("reciprocal"))
     panel._set_y_transform("Lambda", AxisTransform.preset("log"))
-    suffix = panel._transforms_section._suffix_label.text()
-    assert suffix.startswith("1/x · y[")
-    assert ": ln y" in suffix
-    # Untransformed parameters stay out of the chip.
-    assert "Beta" not in suffix
+    assert panel._x_transform_button.text() == "1/x"
+    assert card(panel, "Lambda").transform_button.text() == "ln y"
+    # An untransformed parameter keeps the resting ƒ glyph.
+    assert card(panel, "Beta").transform_button.text() == "ƒ"
 
 
 # ---------------------------------------------------------------------------
@@ -199,11 +219,11 @@ def test_transform_suffix_names_the_parameter_each_lens_belongs_to(qapp):
 def test_log_transform_disables_log_axis_checkbox(qapp):
     panel = _panel_with_rows(_lambda_series([1.0, 2.0], [4.0, 2.0]))
     panel._log_x_check.setChecked(True)
-    panel._set_axis_transform("x", AxisTransform.preset("log"))
+    panel._set_x_transform(AxisTransform.preset("log"))
     assert not panel._log_x_check.isEnabled()
     assert not panel._log_x_check.isChecked()
     # Clearing the transform restores the checkbox.
-    panel._set_axis_transform("x", AxisTransform.identity())
+    panel._set_x_transform(AxisTransform.identity())
     assert panel._log_x_check.isEnabled()
 
 
@@ -242,8 +262,8 @@ def test_one_parameters_lens_does_not_strand_anothers_fit(qapp):
     panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
     assert panel._overlay_suppressed_for_transform("Lambda")
     assert not panel._overlay_suppressed_for_transform("Beta")
-    assert panel._y_controls["Lambda"].fit_button.text() == "Model Fit ⚠"
-    assert panel._y_controls["Beta"].fit_button.text() == "Model Fit*"
+    assert panel._y_controls["Lambda"].fit_button.text() == "Fit ⚠"
+    assert panel._y_controls["Beta"].fit_button.text() == "Fit ✓"
 
 
 # ---------------------------------------------------------------------------
@@ -253,7 +273,7 @@ def test_one_parameters_lens_does_not_strand_anothers_fit(qapp):
 
 def test_transform_state_round_trip(qapp):
     panel = _two_param_panel()
-    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    panel._set_x_transform(AxisTransform.preset("square"))
     panel._set_y_transform("Lambda", AxisTransform.custom("1/x"))
     panel._set_y_transform("Beta", AxisTransform.preset("log"))
     panel._axis_transform_custom_memory["y:Lambda"] = "1/x"
@@ -364,7 +384,7 @@ def _export_tsv(panel, out, monkeypatch):
 
 def test_tsv_export_transformed_columns_and_provenance(qapp, tmp_path, monkeypatch):
     panel = _panel_with_rows(_lambda_series([1.0, 2.0, 3.0], [4.0, 2.0, 1.5]))
-    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    panel._set_x_transform(AxisTransform.preset("square"))
     panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
     comments, header, body = _export_tsv(panel, tmp_path / "t.tsv", monkeypatch)
 
@@ -431,7 +451,7 @@ def test_tsv_export_plain_single_series_no_extra_columns(qapp, tmp_path, monkeyp
 
 def test_gle_data_file_appends_transformed_columns(qapp, tmp_path):
     panel = _panel_with_rows(_lambda_series([1.0, 2.0, 3.0], [4.0, 2.0, 1.5]))
-    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    panel._set_x_transform(AxisTransform.preset("square"))
     panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
     data_path = tmp_path / "fit.dat"
     panel._write_gle_data_file(data_path)
@@ -476,7 +496,7 @@ def test_gle_effective_columns_point_at_transformed(qapp):
     panel = _panel_with_rows(_lambda_series([1.0, 2.0], [4.0, 2.0]))
     # Untransformed: effective == raw.
     assert panel._gle_effective_x_column("field") == panel._gle_x_column("field")
-    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    panel._set_x_transform(AxisTransform.preset("square"))
     panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
     assert panel._gle_effective_x_column("field") == panel._gle_transformed_x_column()
     assert panel._gle_effective_columns_for_param("Lambda") == (
@@ -491,7 +511,7 @@ def test_gle_iter_skips_stale_transform_fits(qapp):
     panel._model_fit_transform_sig["Lambda"] = panel._transform_signature("Lambda")
     assert [p for p, _i, _r in panel._iter_active_fit_ranges("field")] == ["Lambda"]
     # A transform the fit was NOT computed under → the .fit sidecar is skipped.
-    panel._set_axis_transform("x", AxisTransform.preset("square"))
+    panel._set_x_transform(AxisTransform.preset("square"))
     assert list(panel._iter_active_fit_ranges("field")) == []
 
 
@@ -507,6 +527,7 @@ def test_select_series_public_api_arms_overlay(qapp):
 
 def test_active_series_flagged_in_legend(qapp):
     panel = _panel_with_two_series(qapp)
+    panel._overlay_button.setChecked(True)
     panel.select_series(["A", "B"])
     panel._draw_plot()
     ax = panel._figure.axes[0]
@@ -517,10 +538,15 @@ def test_active_series_flagged_in_legend(qapp):
 
 class _StubResult:
     success = True
+    reduced_chi_squared = 1.2
+    parameters = ParameterSet([Parameter("m", value=0.5)])
+    uncertainties = {"m": 0.05}
 
 
 class _StubRange:
     result = _StubResult()
+    model = ParameterCompositeModel(["Linear"])
+    parameters = ParameterSet([Parameter("m", value=0.5)])
 
 
 class _StubFit:
@@ -534,13 +560,13 @@ def test_stale_fit_button_shows_warning_state(qapp):
     panel._model_fits["Lambda"] = _StubFit()
     panel._model_fit_transform_sig["Lambda"] = panel._transform_signature("Lambda")
     panel._refresh_model_fit_button_labels()
-    assert panel._y_controls["Lambda"].fit_button.text() == "Model Fit*"
+    assert panel._y_controls["Lambda"].fit_button.text() == "Fit ✓"
     # A transform the fit was not computed under → stale ⚠ state, not a bare star.
-    panel._set_axis_transform("x", AxisTransform.preset("square"))
-    assert panel._y_controls["Lambda"].fit_button.text() == "Model Fit ⚠"
+    panel._set_x_transform(AxisTransform.preset("square"))
+    assert panel._y_controls["Lambda"].fit_button.text() == "Fit ⚠"
     # Returning to the fit's transform clears the warning.
-    panel._set_axis_transform("x", AxisTransform.identity())
-    assert panel._y_controls["Lambda"].fit_button.text() == "Model Fit*"
+    panel._set_x_transform(AxisTransform.identity())
+    assert panel._y_controls["Lambda"].fit_button.text() == "Fit ✓"
 
 
 def test_transform_dropped_count(qapp):
@@ -588,6 +614,7 @@ def test_component_sort_places_polynomials_by_degree():
 
 def test_multi_series_draw_smoke(qapp):
     panel = _panel_with_two_series(qapp)
+    panel._overlay_button.setChecked(True)
     panel.select_series(["A", "B"])
     panel._x_transform = AxisTransform.preset("square")
     panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))

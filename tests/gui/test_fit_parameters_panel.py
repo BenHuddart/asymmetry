@@ -16,11 +16,13 @@ from PySide6.QtCore import QPoint, Qt  # type: ignore
 from PySide6.QtWidgets import (  # type: ignore
     QApplication,
     QDialog,
+    QLabel,
     QMessageBox,
-    QSizePolicy,
+    QScrollArea,
     QSplitter,
 )
 
+from asymmetry.core.fitting.axis_transforms import AxisTransform
 from asymmetry.core.fitting.composite_parameters import CompositeParameterDefinition
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameter_models import (
@@ -42,9 +44,11 @@ from asymmetry.gui.panels.fit_parameters_panel import (
     _format_plot_legend_label,
     _GroupFitData,
 )
+from asymmetry.gui.styles.widgets import CONTEXT_CHIP_OBJECT_NAME
 from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
 from tests._qt_helpers import wait_for
+from tests.gui._trend_panel import axes_for, card, select_params
 
 
 def _active_linear_fit(param: str, x_key: str = "field") -> ParameterModelFit:
@@ -96,6 +100,8 @@ def panel(qapp: QApplication) -> FitParametersPanel:
     w._varying_params = ["A0", "Lambda"]
     w._inferred_x_key = "field"
     w._x_combo.setCurrentText("Auto")
+    w._rebuild_y_controls()
+    w._update_row_dependent_controls()
     return w
 
 
@@ -401,64 +407,265 @@ def test_exports_embed_model_global_params_and_chi2(
     assert float(cols[-1]) == pytest.approx(42.0)
 
 
-def test_fit_parameters_panel_uses_vertical_splitter(panel: FitParametersPanel) -> None:
-    assert isinstance(panel._content_splitter, QSplitter)
-    assert panel._content_splitter.orientation() == Qt.Orientation.Vertical
-    assert panel._content_splitter.count() == 2
-    assert panel._controls_scroll.minimumHeight() == 0
+def test_panel_layout_is_rail_over_plot_area(panel: FitParametersPanel) -> None:
+    """The dock scrolls the panel, so it owns no scroll area or splitter itself."""
+    assert panel.findChild(QScrollArea) is None
+    assert panel.findChild(QSplitter) is None
+    assert panel._plot_pages.count() == 2
+    assert panel._plot_pages.widget(0) is panel._card_stack
+    assert panel._plot_pages.widget(1).isAncestorOf(panel._canvas)
+    # The Overlay canvas lives on the second page; Subplots is the default.
+    assert panel._plot_mode() == "Subplots"
+    assert panel._plot_pages.currentIndex() == 0
 
 
-def test_secondary_sections_start_collapsed(panel: FitParametersPanel) -> None:
-    assert not panel._derived_section.isExpanded()
+def test_more_menu_actions_call_the_export_paths(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[object] = []
+    # The actions bind their slots at construction, so patch the class first.
+    monkeypatch.setattr(FitParametersPanel, "_export_tsv", lambda _self: calls.append("tsv"))
+    monkeypatch.setattr(FitParametersPanel, "_export_gle", lambda _self, fmt: calls.append(fmt))
+    panel = FitParametersPanel()
+    panel._rows = [_FitRow(1, "1", 100.0, 10.0, {"A0": 0.2}, {"A0": 0.01})]
+    panel._update_row_dependent_controls()
+    texts = [action.text() for action in panel._more_menu.actions() if not action.isSeparator()]
+    assert texts == [
+        "Export TSV…",
+        "Export GLE (PDF)…",
+        "Export GLE (EPS)…",
+        "Show components",
+        "Knight shift window…",
+    ]
+    for action in panel._export_actions:
+        action.trigger()
+    assert calls == ["tsv", "pdf", "eps"]
 
 
-def test_derived_section_expanded_state_persists_across_panels(qapp: QApplication) -> None:
-    """Expanding the Derived-parameters section persists to the next panel.
-
-    The migration to the collapsible ``PanelSection`` gave the section a
-    ``settings_key`` so its state survives a session; previously each panel
-    reset it to collapsed. QSettings is redirected to a per-test temp store by
-    the autouse ``_isolate_qsettings`` fixture, so this only sees state written
-    within the test.
-    """
-    first = FitParametersPanel()
-    assert not first._derived_section.isExpanded()
-    first._derived_section.setExpanded(True)
-
-    second = FitParametersPanel()
-    assert second._derived_section.isExpanded()
-
-    # Collapsing again persists the collapsed state to a further panel.
-    second._derived_section.setExpanded(False)
-    third = FitParametersPanel()
-    assert not third._derived_section.isExpanded()
+def test_add_menu_gates_on_what_the_series_offers(panel: FitParametersPanel) -> None:
+    panel._update_row_dependent_controls()
+    assert panel._derived_action.isEnabled()
+    # No Knight-convertible component on this series → no rail shortcut.
+    assert not panel._add_knight_action.isVisible()
+    panel._knight_observables = {"Nu": "frequency"}
+    panel._update_row_dependent_controls()
+    assert panel._add_knight_action.isVisible()
 
 
-def test_parameter_plot_hosts_label_and_export_controls(panel: FitParametersPanel) -> None:
-    assert panel._plot_group.isAncestorOf(panel._add_label_btn)
-    assert panel._plot_group.isAncestorOf(panel._clear_labels_btn)
-    assert panel._plot_group.isAncestorOf(panel._export_tsv_btn)
-    assert panel._plot_group.isAncestorOf(panel._export_gle_btn)
-    assert panel._plot_group.isAncestorOf(panel._gle_format_combo)
-
-    controls_root = panel._controls_scroll.widget()
-    assert controls_root is not None
-    assert not controls_root.isAncestorOf(panel._add_label_btn)
-    assert not controls_root.isAncestorOf(panel._export_tsv_btn)
-
-
-def test_x_axis_log_checkbox_reserves_label_width(panel: FitParametersPanel) -> None:
-    assert panel._log_x_check.minimumWidth() >= panel._log_x_check.fontMetrics().horizontalAdvance(
-        "log"
-    )
-
-
-def test_y_selector_table_reserves_space_for_log_column(panel: FitParametersPanel) -> None:
-    panel._varying_params = ["A0", "Lambda"]
+def test_chips_build_cards_in_card_order(panel: FitParametersPanel) -> None:
     panel._rebuild_y_controls()
+    assert sorted(panel._y_chips) == ["A0", "Lambda"]
 
-    assert panel._y_selector_table.columnWidth(2) >= panel._y_controls["A0"].log.minimumWidth()
-    assert panel._y_selector_table.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    panel._card_order = ["Lambda", "A0"]
+    select_params(panel, ["A0", "Lambda"])
+    assert [c.name for c in panel._card_stack.cards()] == ["Lambda", "A0"]
+    assert panel._selected_y_parameters() == ["Lambda", "A0"]
+    # Each card keeps the fit/log controls the panel's per-parameter code drives.
+    assert panel._y_controls["A0"].fit_button is card(panel, "A0").fit_button
+    assert panel._y_controls["A0"].log is card(panel, "A0").log_check
+
+
+def test_unchecking_a_chip_removes_its_card(panel: FitParametersPanel) -> None:
+    select_params(panel, ["A0", "Lambda"])
+    assert len(panel._card_stack.cards()) == 2
+    panel._y_chips["Lambda"].setChecked(False)
+    assert [c.name for c in panel._card_stack.cards()] == ["A0"]
+    assert "Lambda" not in panel._y_controls
+    # Re-checking builds it back.
+    panel._y_chips["Lambda"].setChecked(True)
+    assert [c.name for c in panel._card_stack.cards()] == ["A0", "Lambda"]
+
+
+def test_subplots_draws_axes_per_expanded_card_and_a_sparkline_when_collapsed(
+    panel: FitParametersPanel,
+) -> None:
+    select_params(panel, ["A0", "Lambda"])
+    assert len(axes_for(panel, "A0").get_figure().axes) == 1
+    assert len(axes_for(panel, "Lambda").get_figure().axes) == 1
+    # The shared Overlay figure stays untouched in Subplots mode.
+    assert panel._figure.axes == []
+
+    card(panel, "Lambda").set_expanded(False)
+    assert card(panel, "Lambda").figure.axes == []
+    assert not card(panel, "Lambda")._sparkline_label.pixmap().isNull()
+    assert panel._collapsed_params == {"Lambda"}
+
+
+def test_overlay_mode_draws_into_the_shared_figure(panel: FitParametersPanel) -> None:
+    panel._overlay_button.setChecked(True)
+    select_params(panel, ["A0"])
+    assert panel._plot_pages.currentIndex() == 1
+    assert len(panel._figure.axes) == 1
+    assert axes_for(panel, "A0") is panel._figure.axes[0]
+    assert card(panel, "A0").figure.axes == []
+
+
+def test_focus_expands_one_card_and_restores_on_exit(panel: FitParametersPanel) -> None:
+    select_params(panel, ["A0", "Lambda"])
+    card(panel, "Lambda").set_expanded(False)
+
+    panel._card_stack.set_focus("A0")
+    assert card(panel, "A0").is_expanded()
+    assert not card(panel, "Lambda").is_expanded()
+    assert card(panel, "A0")._tools_row.isVisibleTo(card(panel, "A0"))
+
+    panel._card_stack.set_focus(None)
+    assert card(panel, "A0").is_expanded()
+    assert not card(panel, "Lambda").is_expanded()
+    assert panel._collapsed_params == {"Lambda"}
+
+
+def test_card_fit_button_labels_track_the_fit_state(panel: FitParametersPanel) -> None:
+    select_params(panel, ["A0"])
+    assert card(panel, "A0").fit_button.text() == "Fit…"
+
+    panel._model_fits["A0"] = _active_linear_fit("A0")
+    panel._model_fit_transform_sig["A0"] = panel._transform_signature("A0")
+    panel._refresh_model_fit_button_labels()
+    assert card(panel, "A0").fit_button.text() == "Fit ✓"
+    assert card(panel, "A0").fit_button.toolTip() == "Model fit active"
+
+    panel._set_x_transform(AxisTransform.preset("square"))
+    assert card(panel, "A0").fit_button.text() == "Fit ⚠"
+    assert "different axis transform" in card(panel, "A0").fit_button.toolTip()
+
+
+def test_card_summary_line_names_model_chi2_and_parameters(panel: FitParametersPanel) -> None:
+    select_params(panel, ["A0"])
+    assert card(panel, "A0")._summary_label.text() == "no model fit yet"
+
+    panel._model_fits["A0"] = _active_linear_fit("A0")
+    panel._refresh_model_fit_button_labels()
+    summary = card(panel, "A0")._summary_label.text()
+    assert summary.startswith("Linear · χ²ᵣ ")
+    assert " · m = 0.001" in summary
+    assert " · b = 0.2" in summary
+
+
+def test_card_summary_prefixes_the_range_count(panel: FitParametersPanel) -> None:
+    select_params(panel, ["A0"])
+    fit = _active_linear_fit("A0")
+    fit.ranges.append(
+        ModelFitRange(
+            x_min=200.0,
+            x_max=300.0,
+            model=ParameterCompositeModel(["Linear"]),
+            parameters=ParameterSet([Parameter("m", value=0.002)]),
+        )
+    )
+    panel._model_fits["A0"] = fit
+    panel._refresh_model_fit_button_labels()
+    assert card(panel, "A0")._summary_label.text().startswith("2 ranges · Linear · ")
+
+
+def test_y_transform_menu_applies_to_one_card(
+    panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    select_params(panel, ["A0", "Lambda"])
+    monkeypatch.setattr(
+        FitParametersPanel,
+        "_exec_menu",
+        lambda _self, menu, _pos: next(a for a in menu.actions() if a.data() == "reciprocal"),
+    )
+    panel._show_y_transform_menu("A0", QPoint(0, 0))
+    assert panel._y_transform_for("A0") == AxisTransform.preset("reciprocal")
+    assert panel._y_transform_for("Lambda").is_identity
+    assert card(panel, "A0").transform_button.text() == "1/y"
+
+
+def test_plot_mode_card_order_and_collapse_round_trip(panel: FitParametersPanel) -> None:
+    select_params(panel, ["A0", "Lambda"])
+    panel._card_stack.move_card("Lambda", 0)
+    card(panel, "A0").set_expanded(False)
+    panel._overlay_button.setChecked(True)
+
+    state = panel.get_state()
+    assert state["plot_mode"] == "Overlay"
+    assert state["card_order"] == ["Lambda", "A0"]
+    assert state["collapsed_params"] == ["A0"]
+
+    restored = FitParametersPanel()
+    restored.restore_state(state)
+    assert restored._plot_mode() == "Overlay"
+    assert restored._card_order == ["Lambda", "A0"]
+    assert restored._collapsed_params == {"A0"}
+    assert [c.name for c in restored._card_stack.cards()] == ["Lambda", "A0"]
+    assert not card(restored, "A0").is_expanded()
+
+
+def test_restoring_a_collapsed_card_in_subplots_mode_draws_its_sparkline(
+    panel: FitParametersPanel,
+) -> None:
+    select_params(panel, ["A0", "Lambda"])
+    card(panel, "A0").set_expanded(False)
+    state = panel.get_state()
+    assert state["plot_mode"] == "Subplots"
+
+    restored = FitParametersPanel()
+    restored.restore_state(state)
+    restored._refresh_plot()
+    assert not card(restored, "A0").is_expanded()
+    assert card(restored, "A0").figure.axes == []
+    assert len(card(restored, "Lambda").figure.axes) == 1
+
+
+def test_legacy_single_axes_plot_mode_reads_as_overlay(panel: FitParametersPanel) -> None:
+    state = panel.get_state()
+    state["plot_mode"] = "Single Axes"
+    restored = FitParametersPanel()
+    restored.restore_state(state)
+    assert restored._plot_mode() == "Overlay"
+
+
+def test_table_dialog_hosts_the_live_table(panel: FitParametersPanel) -> None:
+    panel._refresh_table()
+    panel._show_table_dialog()
+    assert panel._table_dialog.isAncestorOf(panel._table)
+    assert panel._table_dialog.windowTitle() == "Fitted parameters"
+
+    # A live Trend checkbox in the pop-out still routes back to the panel.
+    toggled: list[tuple[str, int, bool]] = []
+    include_col = panel._table.columnCount() - 1
+    panel._table.item(0, include_col).setData(Qt.ItemDataRole.UserRole, ("batch", 7))
+    panel.member_trend_inclusion_changed.connect(lambda *a: toggled.append(a))
+    panel._table.item(0, include_col).setCheckState(Qt.CheckState.Unchecked)
+    assert toggled == [("batch", 7, False)]
+
+    panel._set_x_transform(AxisTransform.preset("square"))
+    panel._show_table_dialog()
+    assert "raw values" in panel._table_dialog.windowTitle()
+
+
+def test_copy_table_tsv_writes_the_data_columns(panel: FitParametersPanel, qapp) -> None:
+    panel._refresh_table()
+    panel._copy_table_tsv()
+    lines = qapp.clipboard().text().splitlines()
+    assert lines[0].split("\t") == [
+        panel._table.horizontalHeaderItem(col).text() for col in range(panel._table_data_columns)
+    ]
+    # The χ²ᵣ / Trend gate columns are not part of the data block.
+    assert len(lines) == panel._table.rowCount() + 1
+    assert "Trend" not in lines[0]
+
+
+def test_long_parameter_name_does_not_widen_the_rail(panel: FitParametersPanel) -> None:
+    long_name = "A_extremely_long_parameter_name_that_would_overflow_the_dock"
+    panel._rows = [
+        _FitRow(
+            run_number=1,
+            run_label="1",
+            field=100.0,
+            temperature=10.0,
+            values={long_name: 0.2},
+            errors={long_name: 0.01},
+        ),
+    ]
+    panel._varying_params = [long_name]
+    panel._rebuild_y_controls()
+    # The chip carries the full label on hover, and the card's name label elides
+    # rather than imposing its text width as a minimum.
+    assert panel._y_chips[long_name].toolTip() == _format_param_label(long_name)
+    assert card(panel, long_name)._name_label.minimumSizeHint().width() == 0
 
 
 def test_delete_group_fits_removes_group_and_emits_run_numbers(
@@ -635,7 +842,7 @@ def test_export_gle_uses_errorbar_from_file(
     )
     monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
-    panel._export_gle()
+    panel._export_gle("pdf")
 
     assert axis.calls, "Expected at least one errorbar_from_file call"
     first = axis.calls[0]
@@ -683,7 +890,7 @@ def test_export_gle_saves_to_resolved_gle_path(
     monkeypatch.setattr(gle_export, "show_info", lambda p, title, msg: infos.append((title, msg)))
     monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
-    panel._export_gle()
+    panel._export_gle("pdf")
 
     assert fig.requested_paths == [str(gle_path)]
     assert str(gle_path) in fig.saved_paths
@@ -705,7 +912,7 @@ def test_export_gle_warns_for_old_gleplot(
         gle_export, "show_warning", lambda p, title, msg: warnings.append((title, msg))
     )
 
-    panel._export_gle()
+    panel._export_gle("pdf")
 
     assert warnings
     assert warnings[0][0] == "gleplot update required"
@@ -742,9 +949,9 @@ def test_export_gle_subplots_mode_uses_black_series(
         figure=lambda **_kwargs: fig,
     )
 
-    panel._plot_mode_combo.setCurrentText("Subplots")
+    panel._subplots_button.setChecked(True)
     panel._log_x_check.setChecked(True)
-    panel._log_y_check.setChecked(True)
+    panel._log_y_params = {"A0", "Lambda"}
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0", "Lambda"])
 
     monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
@@ -753,7 +960,7 @@ def test_export_gle_subplots_mode_uses_black_series(
     monkeypatch.setattr(gle_export, "show_info", lambda p, title, msg: None)
     monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
-    panel._export_gle()
+    panel._export_gle("pdf")
 
     assert ax1.calls and ax2.calls
     assert ax1.calls[0]["kwargs"]["color"] == "black"
@@ -774,7 +981,7 @@ def test_export_gle_dual_axis_assigns_y_and_y2(
         figure=lambda **_kwargs: fig,
     )
 
-    panel._plot_mode_combo.setCurrentText("Single Axes")
+    panel._overlay_button.setChecked(True)
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0", "Lambda"])
 
     monkeypatch.setitem(sys.modules, "gleplot", fake_glp)
@@ -789,7 +996,7 @@ def test_export_gle_dual_axis_assigns_y_and_y2(
     )
     monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
-    panel._export_gle()
+    panel._export_gle("pdf")
 
     assert len(axis.calls) == 2
     assert axis.calls[0]["kwargs"]["x_col"] == 2
@@ -942,7 +1149,7 @@ def test_export_gle_writes_fit_files_for_active_unselected_fit_param(
     monkeypatch.setattr(gle_export, "show_info", lambda p, title, msg: None)
     monkeypatch.setattr(gle_export, "post_export_view", lambda p, gp: None)
 
-    panel._export_gle()
+    panel._export_gle("pdf")
 
     assert captured["gle_path"] == resolved_gle
     result = captured.get("result")
@@ -1514,57 +1721,6 @@ def test_group_button_styles_refresh_after_scale_change(panel: FitParametersPane
     assert "border-radius: 13px;" in style
 
 
-def test_model_fit_buttons_get_explicit_width(panel: FitParametersPanel) -> None:
-    panel._rebuild_y_controls()
-
-    controls = panel._y_controls["A0"]
-    assert controls.fit_button.minimumWidth() > 0
-    assert panel._y_selector_table.columnWidth(1) >= controls.fit_button.minimumWidth()
-
-
-def test_y_selector_keeps_action_columns_reachable_without_h_scroll(
-    panel: FitParametersPanel,
-) -> None:
-    """A long parameter name must not hide the Model Fit / log action columns.
-
-    Round-10 finding #5: at wider inspector widths the per-parameter Model Fit
-    buttons vanished behind a horizontal scrollbar that would not scroll to
-    them. The name column now stretches and elides; horizontal scrolling is
-    OFF; and — the actual regression — an overlong parameter name no longer
-    inflates the table's minimum width, so it never forces the panel wider than
-    the dock (which is what used to spawn the offending scrollbar).
-    """
-    table = panel._y_selector_table
-
-    panel._varying_params = ["A0"]
-    panel._rebuild_y_controls()
-    short_name_min_width = table.minimumWidth()
-
-    long_name = "A_extremely_long_parameter_name_that_would_overflow_the_dock"
-    panel._rows = [
-        _FitRow(
-            run_number=1,
-            run_label="1",
-            field=100.0,
-            temperature=10.0,
-            values={long_name: 0.2},
-            errors={long_name: 0.01},
-        ),
-    ]
-    panel._varying_params = [long_name]
-    panel._rebuild_y_controls()
-
-    assert table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    assert table.textElideMode() == Qt.TextElideMode.ElideRight
-    # The long name elides into the stretching column rather than widening the
-    # table: the minimum width is unchanged from the short-name case.
-    assert table.minimumWidth() == short_name_min_width
-    # The name item carries the full label so eliding loses nothing on hover.
-    name_item = table.item(0, 0)
-    assert name_item is not None
-    assert name_item.toolTip() == _format_param_label(long_name)
-
-
 def test_shift_click_highlights_group_without_changing_active_selection(
     panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1943,11 +2099,7 @@ def test_group_switch_keeps_selected_y_parameter_when_available(panel: FitParame
     panel._apply_group_selection_to_view(sync_active=False)
 
     # Select Lambda in group A.
-    lambda_row = panel._varying_params.index("Lambda")
-    lambda_item = panel._y_selector_table.item(lambda_row, 0)
-    assert lambda_item is not None
-    panel._y_selector_table.clearSelection()
-    lambda_item.setSelected(True)
+    select_params(panel, ["Lambda"])
     assert panel._selected_y_parameters() == ["Lambda"]
 
     # Switch to group B; Lambda exists there too and should stay selected.
@@ -1986,7 +2138,7 @@ def test_group_variable_value_for_rows_uses_complementary_axis(panel: FitParamet
     assert gv_temp_fit == pytest.approx(20.0)
 
 
-def test_composite_parameter_materializes_and_appears_in_y_selector(
+def test_composite_parameter_materializes_and_gets_a_chip_and_card(
     panel: FitParametersPanel,
 ) -> None:
     panel._composite_parameters = [
@@ -1998,12 +2150,10 @@ def test_composite_parameter_materializes_and_appears_in_y_selector(
     assert "Lambda_eff" in panel._display_y_parameters()
     assert np.isfinite(panel._rows[0].values["Lambda_eff"])
 
-    table_names = []
-    for row in range(panel._y_selector_table.rowCount()):
-        item = panel._y_selector_table.item(row, 0)
-        assert item is not None
-        table_names.append(item.data(Qt.ItemDataRole.UserRole))
-    assert "Lambda_eff" in table_names
+    assert "Lambda_eff" in panel._y_chips
+    assert panel._y_chips["Lambda_eff"].isChecked()
+    # A composite gets the "derived" tag on its card.
+    assert card(panel, "Lambda_eff").findChild(QLabel, CONTEXT_CHIP_OBJECT_NAME) is not None
 
 
 def test_open_composite_dialog_adds_definition_and_values(
@@ -2082,7 +2232,7 @@ def test_set_fit_results_preserves_group_composite_definitions(
     assert np.isfinite(stored.rows[0].values["sum_param"])
 
 
-def test_edit_selected_composite_parameter_updates_definition(
+def test_edit_composite_parameter_updates_definition(
     panel: FitParametersPanel,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2110,7 +2260,7 @@ def test_edit_selected_composite_parameter_updates_definition(
         _FakeDialog,
     )
 
-    panel._edit_selected_composite_parameter()
+    panel._edit_composite_parameter("sum_param")
 
     names = [definition.name for definition in panel._composite_parameters]
     assert "sum_param" not in names
@@ -2119,7 +2269,7 @@ def test_edit_selected_composite_parameter_updates_definition(
     assert np.isfinite(panel._rows[0].values["sum_param_edited"])
 
 
-def test_remove_selected_composite_parameter_drops_values(
+def test_remove_derived_parameter_drops_values(
     panel: FitParametersPanel,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2134,7 +2284,7 @@ def test_remove_selected_composite_parameter_drops_values(
         lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
     )
 
-    panel._remove_selected_composite_parameters()
+    panel._remove_derived_parameters(["sum_param"])
 
     assert panel._composite_parameters == []
     assert "sum_param" not in panel._rows[0].values
@@ -2499,8 +2649,6 @@ def test_trend_curves_recompute_off_thread_behind_overlay(
     panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An active trend fit recomputes its overlay off-thread under the overlay."""
-    if not panel._has_mpl:
-        pytest.skip("matplotlib not available")
     panel._model_fits = {"A0": _active_linear_fit("A0")}
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
 
@@ -2522,16 +2670,16 @@ def test_trend_curves_recompute_off_thread_behind_overlay(
     assert isinstance(panel._precomputed_trend_curves, dict)
     assert "A0" in panel._precomputed_trend_curves
     assert panel._trend_cache_sig is not None
-    drawn = [line for ax in panel._figure.axes for line in ax.get_lines()]
-    assert drawn, "the trend overlay curve should be drawn after the compute"
+    # Subplots is the default mode, so the curve lands on A0's own card figure.
+    assert axes_for(panel, "A0").get_lines(), (
+        "the trend overlay curve should be drawn after the compute"
+    )
 
 
 def test_trend_compute_without_active_fit_draws_synchronously(
     panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With no active overlay to evaluate, the scatter draws synchronously."""
-    if not panel._has_mpl:
-        pytest.skip("matplotlib not available")
     panel._model_fits = {}
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
 
@@ -2546,8 +2694,6 @@ def test_shutdown_workers_joins_trend_compute(
     panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """shutdown_workers tears the trend worker down within the bounded wait."""
-    if not panel._has_mpl:
-        pytest.skip("matplotlib not available")
     panel._model_fits = {"A0": _active_linear_fit("A0")}
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
 
@@ -2570,8 +2716,6 @@ def test_restore_state_defers_trend_overlay_to_async(
     single off-thread recompute.
     """
     src = FitParametersPanel()
-    if not src._has_mpl:
-        pytest.skip("matplotlib not available")
     src._rows = [
         _FitRow(
             run_number=1,
@@ -2644,8 +2788,6 @@ def test_pure_render_refresh_reuses_trend_cache(
     panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A redraw with unchanged inputs reuses the cached curves (no new worker)."""
-    if not panel._has_mpl:
-        pytest.skip("matplotlib not available")
     panel._model_fits = {"A0": _active_linear_fit("A0")}
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
 
@@ -2668,8 +2810,6 @@ def test_show_components_toggle_recomputes_trend_overlay(
     panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Toggling an input (show components) invalidates the cache and recomputes."""
-    if not panel._has_mpl:
-        pytest.skip("matplotlib not available")
     panel._model_fits = {"A0": _active_linear_fit("A0")}
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
 
@@ -2679,7 +2819,7 @@ def test_show_components_toggle_recomputes_trend_overlay(
 
     # Toggling show-components fires _refresh_plot; the signature now differs, so
     # a fresh off-thread recompute is dispatched rather than reusing the cache.
-    panel._show_components_check.setChecked(True)
+    panel._show_components_action.setChecked(True)
     wait_for(lambda: not panel._trend_curve_compute_active, QApplication.instance(), timeout_s=10.0)
     assert panel._trend_cache_sig != sig1
     panel.shutdown_workers()
@@ -2695,8 +2835,6 @@ def test_cache_present_missing_param_does_not_sample_inline(
     key as 'no cache' and re-evaluated the (possibly very slow) model on the GUI
     thread — defeating the off-thread design and re-running on every redraw.
     """
-    if not panel._has_mpl:
-        pytest.skip("matplotlib not available")
     panel._model_fits = {"A0": _active_linear_fit("A0")}
     monkeypatch.setattr(panel, "_selected_y_parameters", lambda: ["A0"])
 
@@ -2812,20 +2950,17 @@ def test_model_fit_button_relabels_for_two_groups(qapp: QApplication) -> None:
     # One group selected → single-series label.
     panel._set_selected_group_ids(["g_a"], emit=False)
     panel._apply_group_selection_to_view(sync_active=False)
+    select_params(panel, ["Lambda"])
     panel._refresh_model_fit_button_labels()
-    assert panel._y_controls["Lambda"].fit_button.text() == "Model Fit"
+    assert card(panel, "Lambda").fit_button.text() == "Fit…"
 
-    # Two groups selected → cross-group "Global fit (N groups)…" label.
+    # Two groups selected → cross-group "Global fit ×N…" label.
     panel._set_selected_group_ids(["g_a", "g_b"], emit=False)
     panel._apply_group_selection_to_view(sync_active=False)
     panel._refresh_model_fit_button_labels()
-    fit_button = panel._y_controls["Lambda"].fit_button
-    assert fit_button.text() == "Global fit (2 groups)…"
-    # Regression: this relabel happens well after _rebuild_y_controls fixed the
-    # column width from "Model Fit"/"Model Fit*" alone. "Global fit (2
-    # groups)…" is wider still, so the column must widen to match or the label
-    # clips (e.g. renders as "Global fit (2 gro").
-    assert panel._y_selector_table.columnWidth(1) >= fit_button.sizeHint().width()
+    fit_button = card(panel, "Lambda").fit_button
+    assert fit_button.text() == "Global fit ×2…"
+    assert "jointly across the selected series" in fit_button.toolTip()
 
 
 def test_setup_overrides_reach_parameter_group_data(

@@ -377,7 +377,7 @@ class LlzNuArrheniusScenario(CorpusScenario):
             panel._x_combo.setCurrentIndex(idx)
 
         panel._set_y_transform("nu", y_transform)
-        panel._set_axis_transform("x", x_transform)
+        panel._set_x_transform(x_transform)
         panel._axis_transform_custom_memory["y:nu"] = y_transform.expression
 
         panel._model_fits["nu"] = fit

@@ -344,9 +344,8 @@ class CuHopRateArrheniusScenario(CorpusScenario):
         _process_events_for(milliseconds=120)
         # ν spans ~0.02 → 2.3 µs⁻¹ (two decades); a log-y axis resolves both the
         # low-T mobility minimum and the activated high-T rise in one frame.
-        control = widget._y_controls.get("nu")
-        if control is not None and hasattr(control, "log"):
-            control.log.setChecked(True)
+        widget._y_chips["nu"].setChecked(True)
+        widget._card_stack.card("nu").log_check.setChecked(True)
         widget._refresh_plot()
         _wait_until(
             lambda: (
