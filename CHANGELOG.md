@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Resting the pointer on a row of the Fitted parameters window now rings that
+  run's point on every trend plot.** Matching a table row to a point was
+  otherwise a matter of counting along the abscissa. The ring follows the
+  pointer on each card in Subplots mode and on both axes of a twin-axis
+  Overlay, tracks whichever lens the axis carries, and marks excluded and
+  flagged members like any other point — it says *where this run is*, not
+  whether it counts. It is drawn straight over the existing plot, so sweeping
+  the table never triggers a redraw.
+
 - **Several `.asymp` projects can now be open at once in the same window,
   switched with tabs, instead of one project per window.** A tab strip sits
   on the menu-bar row, to the right of the menus, so it costs no extra height

@@ -45,6 +45,10 @@ section-comment markers in source):
   Model overlays come from ``_draw_model_overlay_mpl`` and member markers from
   ``_overlay_member_markers``. ``_x_value``/``_x_error`` resolve the selected
   abscissa (run number, field, temperature, angle, or a custom column) per row.
+  Hovering a table row rings that run on every axes: ``_add_hover_ring`` gives
+  each drawn axes one animated ring, ``_apply_hover_ring`` places them, and
+  ``_blit_hover_rings`` paints them over each canvas' cached background, so a
+  hover never costs a redraw.
 - **Async trend-curve sampling** — ``_compute_trend_curves``/
   ``_start_trend_curve_compute`` offload model-curve sampling to a worker;
   ``_on_trend_curves_ready``/``_on_trend_curves_error`` marshal results back.
@@ -67,8 +71,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from matplotlib.backend_bases import FigureCanvasBase
 from matplotlib.colors import to_hex
-from PySide6.QtCore import QPoint, QSignalBlocker, QSize, Qt, QTimer, Signal
+from matplotlib.lines import Line2D
+from PySide6.QtCore import QEvent, QPoint, QSignalBlocker, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -639,6 +645,23 @@ class FitParametersPanel(QWidget):
         self._knight_shift_crossing_x_key: str | None = None
         self._plot_annotations: list[dict[str, object]] = []
         self._axes_tag_map: dict[int, str] = {}
+        #: One hidden hover ring per drawn axes, keyed by ``id(ax)`` alongside the
+        #: tag map above: the mark a hovered table row moves onto that run's
+        #: point. Every ring is ``animated``, so a full draw never paints one and
+        #: a hover costs a background restore plus a blit instead of the
+        #: 200-500 ms redraw. ``_hover_backgrounds`` caches those pixels per
+        #: *canvas* (each canvas → the pixels of its last completed draw) rather
+        #: than per axes: the Overlay's twin shares its host's figure bbox, so
+        #: two per-axes restores would erase each other's ring. It is also the
+        #: set the blit loop walks — a canvas that has not drawn yet is simply
+        #: not in it.
+        self._hover_rings: dict[int, Line2D] = {}
+        self._hover_backgrounds: dict[FigureCanvasBase, object] = {}
+        #: The table row the pointer is resting on, and the x-sorted rows the
+        #: table was last built from (so a hover maps a view row to its
+        #: :class:`_FitRow` without re-sorting per mouse move).
+        self._hovered_row: _FitRow | None = None
+        self._table_rows: list[_FitRow] = []
         self._active_annotation_idx: int | None = None
         self._annotation_drag_started = False
         self._group_fit_results: dict[str, _GroupFitData] = {}
@@ -984,6 +1007,23 @@ class FitParametersPanel(QWidget):
         close_button.clicked.connect(self._table_dialog.close)
         dialog_buttons.addWidget(close_button)
         dialog_layout.addLayout(dialog_buttons)
+
+        # Resting the pointer on a row rings that run's point on every plot. The
+        # ring moves on the drag cadence (30 ms, latest wins), so sweeping the
+        # table costs one blit per tick and never a redraw. Leaving the rows —
+        # or closing the pop-out — takes the rings away again.
+        self._table.setMouseTracking(True)
+        self._table.entered.connect(self._on_table_row_entered)
+        # Held rather than re-fetched in the filter: teardown delivers events to
+        # this panel after the table's C++ side is gone, and an identity test
+        # against the stored wrapper never reaches across that.
+        self._table_viewport = self._table.viewport()
+        self._table_viewport.installEventFilter(self)
+        self._table_dialog.installEventFilter(self)
+        self._hover_ring_timer = QTimer(self)
+        self._hover_ring_timer.setSingleShot(True)
+        self._hover_ring_timer.setInterval(30)
+        self._hover_ring_timer.timeout.connect(self._apply_hover_ring)
 
         self._update_angle_fold_visibility()
         self._update_x_axis_auto_hint()
@@ -2962,6 +3002,119 @@ class FitParametersPanel(QWidget):
         canvas.mpl_connect("button_press_event", self._on_plot_button_press)
         canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
         canvas.mpl_connect("button_release_event", self._on_plot_button_release)
+        canvas.mpl_connect("draw_event", self._on_canvas_drawn)
+
+    # ── Table hover → the ringed run, blitted over a cached background ────────
+    def _add_hover_ring(self, ax) -> None:
+        """Give *ax* the hidden ring a hovered table row moves onto.
+
+        ``animated`` keeps the ring out of every full draw, so the hover path is
+        a restore of the canvas' cached pixels plus a blit. Sized a little above
+        the s=54 exclusion ring so the two read as different marks when they
+        land on the same point.
+        """
+        (ring,) = ax.plot(
+            [],
+            [],
+            linestyle="none",
+            marker="o",
+            markerfacecolor="none",
+            markeredgecolor=tokens.ACCENT,
+            markeredgewidth=1.6,
+            markersize=10.0,
+            animated=True,
+            zorder=8,
+        )
+        ring.set_visible(False)
+        self._hover_rings[id(ax)] = ring
+
+    def _on_canvas_drawn(self, event) -> None:
+        """Cache a canvas' freshly-drawn pixels as the hover rings' background.
+
+        Matplotlib fires this at the end of every completed draw, so the cache is
+        always the current picture — and re-blitting here is what lets a hover
+        that landed while a redraw was in flight survive it, with no second draw.
+        """
+        canvas = event.canvas
+        background = canvas.copy_from_bbox(canvas.figure.bbox)
+        self._hover_backgrounds[canvas] = background
+        self._blit_canvas_hover_rings(canvas, background)
+
+    def _blit_canvas_hover_rings(self, canvas, background) -> None:
+        """Repaint one canvas' *background* plus whichever of its rings show.
+
+        The whole figure bbox, not one axes': the Overlay's twin shares its
+        host's bbox, so two per-axes restores would erase each other's ring.
+        """
+        canvas.restore_region(background)
+        for ring in self._hover_rings.values():
+            if ring.get_visible() and ring.axes.figure.canvas is canvas:
+                ring.axes.draw_artist(ring)
+        canvas.blit(canvas.figure.bbox)
+
+    def _blit_hover_rings(self) -> None:
+        """Repaint every canvas whose pixels are cached, each of them once."""
+        for canvas, background in self._hover_backgrounds.items():
+            self._blit_canvas_hover_rings(canvas, background)
+
+    def _on_table_row_entered(self, index) -> None:
+        """Note which run the pointer is over; the ring follows on the timer."""
+        self._hovered_row = self._table_rows[index.row()]
+        self._hover_ring_timer.start()
+
+    def _apply_hover_ring(self) -> None:
+        """Ring the hovered run's point(s) on every axes, then blit.
+
+        An axes' tag names the parameter it carries; the shared Overlay axis
+        ("main") carries every selected parameter, and with several series each
+        (series, parameter) pair contributes its own point for that run. The ring
+        locates a run, so excluded and flagged points are ringed like any other.
+        """
+        run_number = self._hovered_row.run_number
+        members = [
+            member
+            for series in self._series_to_plot()
+            for member in series.rows
+            if member.run_number == run_number
+        ]
+        x_key = self._effective_x_key()
+        x_vals, _ = self._apply_x_transform(
+            np.array([self._x_value(member, x_key) for member in members], dtype=float), None
+        )
+        selected = self._selected_y_parameters()
+        for ax_id, ring in self._hover_rings.items():
+            tag = self._axes_tag_map[ax_id]
+            xs: list[float] = []
+            ys: list[float] = []
+            for param in selected if tag == "main" else [tag]:
+                y_vals, _ = self._series_y_arrays(members, param)
+                finite = np.isfinite(x_vals) & np.isfinite(y_vals)
+                xs.extend(x_vals[finite].tolist())
+                ys.extend(y_vals[finite].tolist())
+            ring.set_data(xs, ys)
+            ring.set_visible(bool(xs))
+        self._blit_hover_rings()
+
+    def _clear_hover_rings(self) -> None:
+        """Take every ring away — the pointer left the rows, or the pop-out closed."""
+        self._hover_ring_timer.stop()
+        self._hovered_row = None
+        for ring in self._hover_rings.values():
+            ring.set_visible(False)
+        self._blit_hover_rings()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        """Drop the hover rings when the pointer leaves the rows or the pop-out hides.
+
+        ``viewportEntered`` fires only when the pointer crosses the viewport over
+        empty space, so leaving over a row (or closing the window outright) needs
+        these two events.
+        """
+        leaving_rows = watched is self._table_viewport and event.type() == QEvent.Type.Leave
+        dialog_hidden = watched is self._table_dialog and event.type() == QEvent.Type.Hide
+        if leaving_rows or dialog_hidden:
+            self._clear_hover_rings()
+        return super().eventFilter(watched, event)
 
     def _on_plot_button_press(self, event) -> None:
         """Handle click interactions for parameter-plot labels."""
@@ -3708,6 +3861,10 @@ class FitParametersPanel(QWidget):
         for card in self._card_stack.cards():
             if card.name not in wanted:
                 self._close_fit_results_windows([card.name])
+                # The cache is what the blit loop walks, so a canvas leaves it
+                # with the card it belonged to rather than waiting for the
+                # debounced redraw that follows.
+                self._hover_backgrounds.pop(card.canvas, None)
                 self._card_stack.remove_card(card.name).deleteLater()
         existing = {card.name for card in self._card_stack.cards()}
         for name in wanted:
@@ -5059,12 +5216,16 @@ class FitParametersPanel(QWidget):
 
     def _refresh_table(self) -> None:
         if not self._rows:
+            self._table_rows = []
             self._table.setRowCount(0)
             self._table.setColumnCount(0)
             return
 
         x_key = self._effective_x_key()
         rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+        # Kept so a hover maps a view row straight to its member (see
+        # ``_on_table_row_entered``) without re-sorting per mouse move.
+        self._table_rows = rows
 
         display_params = self._display_y_parameters()
         # Fitted-parameter columns carry a "(fit)" suffix so a fitted parameter
@@ -5575,6 +5736,11 @@ class FitParametersPanel(QWidget):
 
     def _draw_plot(self) -> None:
         self._axes_tag_map = {}
+        # Every figure below is cleared and re-populated, so the rings and the
+        # background caches go with the axes they belonged to — ``id(ax)`` is
+        # reused once a discarded axes is collected.
+        self._hover_rings = {}
+        self._hover_backgrounds = {}
         axes_by_tag: dict[str, object] = {}
 
         y_params = self._selected_y_parameters()
@@ -5649,6 +5815,7 @@ class FitParametersPanel(QWidget):
             card.figure.clear()
             ax = card.figure.add_subplot(111)
             self._axes_tag_map[id(ax)] = card.name
+            self._add_hover_ring(ax)
             axes_by_tag[card.name] = ax
             self._draw_param_axes(
                 ax,
@@ -5674,7 +5841,10 @@ class FitParametersPanel(QWidget):
             np.array([self._x_value(r, x_key) for r in rows], dtype=float),
             self._x_error_array(rows, x_key),
         )
+        stale_axes = {k for k, v in self._axes_tag_map.items() if v == name}
         self._axes_tag_map = {k: v for k, v in self._axes_tag_map.items() if v != name}
+        self._hover_rings = {k: v for k, v in self._hover_rings.items() if k not in stale_axes}
+        self._hover_backgrounds.pop(card.canvas, None)
         if not card.is_expanded():
             card.set_sparkline(x_vals, self._series_y_arrays(rows, name)[0], color)
             card.figure.clear()
@@ -5684,6 +5854,7 @@ class FitParametersPanel(QWidget):
         card.figure.clear()
         ax = card.figure.add_subplot(111)
         self._axes_tag_map[id(ax)] = name
+        self._add_hover_ring(ax)
         self._draw_param_axes(
             ax,
             name,
@@ -5903,6 +6074,7 @@ class FitParametersPanel(QWidget):
         ax = self._figure.add_subplot(111)
         ax.set_xlabel(x_label)
         self._axes_tag_map[id(ax)] = "main"
+        self._add_hover_ring(ax)
         axes_by_tag["main"] = ax
 
         if len(y_params) == 2:
@@ -5913,6 +6085,7 @@ class FitParametersPanel(QWidget):
             ax2 = ax.twinx()
             self._axes_tag_map[id(ax)] = left_name
             self._axes_tag_map[id(ax2)] = right_name
+            self._add_hover_ring(ax2)
             axes_by_tag[left_name] = ax
             axes_by_tag[right_name] = ax2
             left_color = "C0"
@@ -6050,6 +6223,7 @@ class FitParametersPanel(QWidget):
 
         ax = self._figure.add_subplot(111)
         self._axes_tag_map[id(ax)] = "main"
+        self._add_hover_ring(ax)
         axes_by_tag["main"] = ax
         for pj, y_name in enumerate(y_params):
             marker = markers[pj % len(markers)] if multi_param else "o"
