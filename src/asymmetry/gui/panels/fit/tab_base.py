@@ -286,6 +286,10 @@ _DERIVED_FRACTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 #: reads as computed rather than editable.
 _DERIVED_FRACTION_TOOLTIP = "Remainder: 1 − the other fractions in this group"
 
+#: Value-cell hint on a free fraction row. Shared so the Value tooltip can be
+#: recomposed (hint + affine-tie formula) without re-typing the sentence.
+_FRACTION_VALUE_TOOLTIP = "Free fraction in [0, 1]; the group's remainder is 1 − the others."
+
 
 def _is_derived_fraction_row(table: QTableWidget, row: int, name_column: int = 0) -> bool:
     """Return True when ``row`` is a synthesized derived-fraction (remainder) row."""
@@ -456,7 +460,7 @@ def _configure_fraction_rows_in_table(
     )
     row_by_name = _param_table_rows_by_name(table)
     all_free_names = {name for group in model.fraction_parameter_groups() for name in group}
-    tooltip = "Free fraction in [0, 1]; the group's remainder is 1 − the others."
+    tooltip = _FRACTION_VALUE_TOOLTIP
 
     for name in all_free_names:
         row = row_by_name.get(name)
@@ -1268,11 +1272,20 @@ class _ValueUncertaintyDelegate(_CommitOnTabDelegate):
     MINOS asymmetric interval is present (UserRole+2, a ``(lower, upper)`` pair with
     ``lower < 0 < upper``), the cell instead shows ``value  +upper / lower`` — the
     display-only asymmetric overlay. Both roles are cleared when the user edits.
+
+    The row's link/tie badge (:meth:`FitParameterTable.value_badge`) is drawn in
+    accent colour at the cell's right edge, so a linked or tied parameter still
+    says so when the rail hides the Link and Tie columns.
     """
 
     _UNC_ROLE = Qt.ItemDataRole.UserRole + 1
     _MINOS_ROLE = Qt.ItemDataRole.UserRole + 2
     _MUTED = QColor(tokens.TEXT_MUTED)
+    _ACCENT = QColor(tokens.ACCENT)
+
+    def __init__(self, table: "FitParameterTable") -> None:
+        super().__init__(table)
+        self._table = table
 
     def paint(self, painter, option, index) -> None:
         super().paint(painter, option, index)
@@ -1284,21 +1297,31 @@ class _ValueUncertaintyDelegate(_CommitOnTabDelegate):
         elif unc is not None:
             unc_str = f"  ±{float(unc):.4f}"
         else:
+            unc_str = ""
+        badge = self._table.value_badge(index.row())
+        if not unc_str and not badge:
             return
-        val_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         style = option.widget.style() if option.widget else QApplication.style()
         text_opt = QStyleOptionViewItem(option)
         self.initStyleOption(text_opt, index)
         text_rect = style.subElementRect(
             QStyle.SubElement.SE_ItemViewItemText, text_opt, option.widget
         )
-        val_w = painter.fontMetrics().horizontalAdvance(val_text)
-        unc_rect = text_rect.adjusted(val_w, 0, 0, 0)
         painter.save()
-        painter.setPen(self._MUTED)
-        painter.drawText(
-            unc_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, unc_str
-        )
+        if unc_str:
+            val_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+            val_w = painter.fontMetrics().horizontalAdvance(val_text)
+            painter.setPen(self._MUTED)
+            painter.drawText(
+                text_rect.adjusted(val_w, 0, 0, 0),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                unc_str,
+            )
+        if badge:
+            painter.setPen(self._ACCENT)
+            painter.drawText(
+                text_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, badge
+            )
         painter.restore()
 
     def setModelData(self, editor, model, index) -> None:  # noqa: N802
@@ -1320,15 +1343,15 @@ def _size_param_table_to_content(table: QTableWidget) -> None:
     The inspector dock scrolls vertically as a whole, so the table does not need
     to grow and scroll internally; sizing it to its content means a few-parameter
     model leaves no empty rows, while a many-parameter model simply makes the
-    panel taller (and the dock scrolls — the natural axis). The horizontal
-    scrollbar's height is reserved so wide column sets never clip the last row.
+    panel taller (and the dock scrolls — the natural axis). The resting column
+    set fits the dock, so no room is reserved for a horizontal scrollbar; the
+    policy stays ``ScrollBarAsNeeded`` for the wide pop-out, which sizes itself.
     """
     table.resizeRowsToContents()
     rows_height = table.verticalHeader().length()
     header_height = table.horizontalHeader().sizeHint().height()
     frame = 2 * table.frameWidth()
-    scrollbar = table.horizontalScrollBar().sizeHint().height()
-    table.setFixedHeight(rows_height + header_height + frame + scrollbar)
+    table.setFixedHeight(rows_height + header_height + frame)
 
 
 def _shift_rrf_parameters(
@@ -1380,6 +1403,14 @@ class FitParameterTable(QTableWidget):
     COL_LINK = _SINGLE_PARAM_LINK_COLUMN  # 6
     COL_TIE = _SINGLE_PARAM_TIE_COLUMN  # 7
 
+    #: Column groups the parameters rail toggles as a unit, keyed by the chip
+    #: label's slug. Name, Value and Fix are always shown and belong to none.
+    _COLUMN_GROUPS = {
+        "bounds": (COL_MIN, COL_MAX),
+        "links": (COL_LINK, COL_TIE),
+        "batch": (COL_BATCH,),
+    }
+
     #: Emitted with the parameter name whose Value cell the user just edited.
     value_edited = Signal(str)
 
@@ -1397,8 +1428,10 @@ class FitParameterTable(QTableWidget):
             (0, _PARAM_NAME_COL_CHARS),  # Name, 92 px at design font
             (1, 12),  # Value, 88 px
             (2, 4),  # Fix, 30 px
-            (3, 7),  # Min, 52 px
-            (4, 7),  # Max, 52 px
+            # Min/Max hold "-inf", "1e6" and the ±∞ glyphs in 6 characters; the
+            # resting set (Name·Value·Fix·Min·Max) has to fit a ~300 px dock.
+            (3, 6),  # Min
+            (4, 6),  # Max
             (5, 7),  # Batch, 50 px
             (6, 5),  # Link, 40 px
             (7, 5),  # Tie, 40 px
@@ -1440,9 +1473,60 @@ class FitParameterTable(QTableWidget):
     def is_updating(self) -> bool:
         return self._updating
 
-    def set_batch_column_visible(self, visible: bool) -> None:
-        """Show/hide the read-only Batch-role column (hidden for grouped fits)."""
-        self.setColumnHidden(self.COL_BATCH, not visible)
+    # ── column groups ───────────────────────────────────────────────────────
+
+    @classmethod
+    def _column_group(cls, group: str) -> tuple[int, ...]:
+        columns = cls._COLUMN_GROUPS.get(group)
+        if columns is None:
+            known = ", ".join(sorted(cls._COLUMN_GROUPS))
+            raise ValueError(f"Unknown column group {group!r} (known groups: {known})")
+        return columns
+
+    def set_column_group_visible(self, group: str, visible: bool) -> None:
+        """Show or hide one rail column group: ``bounds``, ``links`` or ``batch``.
+
+        Hiding a group only changes what is painted — every row keeps its Fix
+        state, bounds, link group and tie, and re-showing the group brings the
+        same widgets back untouched.
+        """
+        for column in self._column_group(group):
+            self.setColumnHidden(column, not visible)
+
+    def column_group_visible(self, group: str) -> bool:
+        """Whether *group*'s columns are shown (they are always hidden together)."""
+        return not self.isColumnHidden(self._column_group(group)[0])
+
+    def value_badge(self, row: int) -> str:
+        """Return the Value-cell badge for *row*: ``ƒ`` tied, ``⇄N`` linked, else ``""``.
+
+        Tie wins over link because setting a tie clears the row's link group,
+        so the two can never both apply.
+        """
+        if _tie_button_value(self.cellWidget(row, self.COL_TIE)) is not None:
+            return "ƒ"
+        group = _link_group_combo_value(self.cellWidget(row, self.COL_LINK))
+        return "" if group is None else f"⇄{group}"
+
+    def _mirror_tie_on_value_cell(self, row: int, tie: AffineTie | None) -> None:
+        """Repaint the row's Value cell and put the tie's formula on its tooltip.
+
+        Composed from scratch (fraction hint, then formula) rather than appended
+        to, so repeated tie edits cannot stack copies of the equation. Suspended
+        because a tooltip write is an ``itemChanged`` on the Value column, which
+        the edit handler would otherwise read as the user typing a value.
+        """
+        # A row only exists after populate(), which sets the model.
+        name = self.item(row, self.COL_NAME).data(Qt.ItemDataRole.UserRole)
+        fraction_names = {
+            n for group in self._composite_model.fraction_parameter_groups() for n in group
+        }
+        lines = [_FRACTION_VALUE_TOOLTIP] if name in fraction_names else []
+        if tie is not None:
+            lines.append(_format_tie_formula(name, tie))
+        with self.suspend():
+            self.item(row, self.COL_VALUE).setToolTip("\n".join(lines))
+        self.viewport().update()
 
     # ── populate ────────────────────────────────────────────────────────────
 
@@ -1562,6 +1646,7 @@ class FitParameterTable(QTableWidget):
             link_combo.setEnabled(not checked)
 
         def on_link_changed(_index: int) -> None:
+            self.viewport().update()  # the Value cell paints the row's ⇄N badge
             if self._updating:
                 return
             linked = _link_group_combo_value(link_combo) is not None
@@ -1623,6 +1708,7 @@ class FitParameterTable(QTableWidget):
                 return
             tie = dialog.tie()
             _set_tie_button_value(tie_button, tie)
+            self._mirror_tie_on_value_cell(row, tie)
             with self.suspend():
                 if tie is not None:
                     fix_checkbox.setChecked(False)
@@ -1856,6 +1942,7 @@ class FitParameterTable(QTableWidget):
                 raw_tie = p_data.get("tie")
                 tie = AffineTie.from_dict(raw_tie) if isinstance(raw_tie, dict) else None
                 _set_tie_button_value(tie_button, tie)
+                self._mirror_tie_on_value_cell(i, tie)
                 if tie is not None:
                     if fix_checkbox is not None:
                         fix_checkbox.setChecked(False)

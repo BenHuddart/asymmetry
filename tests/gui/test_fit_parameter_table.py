@@ -20,8 +20,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox
 
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.parameters import AffineTie
 from asymmetry.core.fitting.seeding import Seed
 from asymmetry.gui.panels.fit_panel import FitParameterTable
+from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
 
 
@@ -252,12 +254,96 @@ def test_populate_param_names_restricts_rows(qapp):
     assert "A_bg" not in {p.name for p in table.read_parameter_set()}
 
 
-def test_batch_column_can_be_hidden(qapp):
+def test_column_groups_hide_and_show_their_columns_together(qapp):
     table = FitParameterTable()
     table.populate(_model())
-    assert not table.isColumnHidden(table.COL_BATCH)
-    table.set_batch_column_visible(False)
+    assert all(table.column_group_visible(g) for g in ("bounds", "links", "batch"))
+
+    table.set_column_group_visible("batch", False)
     assert table.isColumnHidden(table.COL_BATCH)
+    assert table.column_group_visible("batch") is False
+    assert table.column_group_visible("bounds") is True
+
+    table.set_column_group_visible("links", False)
+    assert table.isColumnHidden(table.COL_LINK)
+    assert table.isColumnHidden(table.COL_TIE)
+
+    table.set_column_group_visible("bounds", False)
+    assert table.isColumnHidden(table.COL_MIN)
+    assert table.isColumnHidden(table.COL_MAX)
+
+    table.set_column_group_visible("bounds", True)
+    assert table.column_group_visible("bounds") is True
+    assert not table.isColumnHidden(table.COL_MIN)
+    assert not table.isColumnHidden(table.COL_MAX)
+
+
+def test_unknown_column_group_is_a_value_error(qapp):
+    table = FitParameterTable()
+    with pytest.raises(ValueError):
+        table.set_column_group_visible("ties", False)
+    with pytest.raises(ValueError):
+        table.column_group_visible("ties")
+
+
+def test_resting_columns_fit_a_narrow_inspector_dock(qapp):
+    """Name·Value·Fix·Min·Max is what the ~300 px dock shows at rest."""
+    table = FitParameterTable()
+    table.populate(_model())
+    # All eight columns are sized, so the pop-out that shows every one is readable.
+    assert all(table.columnWidth(c) > 0 for c in range(table.columnCount()))
+
+    table.set_column_group_visible("links", False)
+    table.set_column_group_visible("batch", False)
+    shown = sum(
+        table.columnWidth(c) for c in range(table.columnCount()) if not table.isColumnHidden(c)
+    )
+    assert shown < char_width(42)
+
+
+def test_value_badge_shows_the_link_group_then_the_tie(qapp):
+    table = FitParameterTable()
+    table.populate(_model())
+    assert table.value_badge(0) == ""
+    assert table.item(0, table.COL_VALUE).toolTip() == ""
+
+    table.cellWidget(0, table.COL_LINK).setCurrentIndex(2)  # link group 2
+    assert table.value_badge(0) == "⇄2"
+
+    state = {s["name"]: s for s in table.parameters_state()}
+    state["A_1"]["tie"] = AffineTie(main="Lambda", scale=2.0).to_dict()
+    table.restore_parameters(state)
+
+    # A tie clears the row's link group, so the tie is what the badge says, and
+    # the formula reaches the Value cell's tooltip (the Tie column may be hidden).
+    assert table.value_badge(0) == "ƒ"
+    assert table.item(0, table.COL_VALUE).toolTip() == "A_1 = 2·Lambda"
+
+    state["A_1"]["tie"] = None
+    state["A_1"]["link_group"] = None
+    table.restore_parameters(state)
+    assert table.value_badge(0) == ""
+    assert table.item(0, table.COL_VALUE).toolTip() == ""
+
+
+def test_hiding_the_links_group_keeps_the_link_and_tie_state(qapp):
+    table = FitParameterTable()
+    table.populate(_model())
+    link = table.cellWidget(0, table.COL_LINK)
+    tie_button = table.cellWidget(0, table.COL_TIE)
+    link.setCurrentIndex(1)
+
+    table.set_column_group_visible("links", False)
+    assert table.cellWidget(0, table.COL_LINK) is link
+    assert table.cellWidget(0, table.COL_TIE) is tie_button
+    assert table.read_parameter_set()["A_1"].link_group == 1
+    assert table.value_badge(0) == "⇄1"  # the hidden state is still readable
+
+    table.set_column_group_visible("links", True)
+    assert table.cellWidget(0, table.COL_LINK) is link
+    assert table.cellWidget(0, table.COL_TIE) is tie_button
+    assert link.currentData() == 1
+    assert table.read_parameter_set()["A_1"].link_group == 1
 
 
 def test_format_value_error_matches_precision_to_uncertainty():

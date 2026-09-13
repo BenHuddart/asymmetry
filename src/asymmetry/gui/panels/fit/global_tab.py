@@ -556,12 +556,8 @@ class GlobalFitTab(FitTabBase):
             # nuisance block). Link/Tie are hidden — the grouped engine does not
             # honour cross-parameter ties — and Batch role has no meaning here.
             self._group_model_table = FitParameterTable()
-            for _hidden in (
-                FitParameterTable.COL_BATCH,
-                FitParameterTable.COL_LINK,
-                FitParameterTable.COL_TIE,
-            ):
-                self._group_model_table.setColumnHidden(_hidden, True)
+            self._group_model_table.set_column_group_visible("links", False)
+            self._group_model_table.set_column_group_visible("batch", False)
         else:
             self._group_model_table = QTableWidget(0, 4)
             self._group_model_table.setHorizontalHeaderLabels(
