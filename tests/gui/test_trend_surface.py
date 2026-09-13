@@ -828,7 +828,7 @@ class TestReviewFindings:
 # ---------------------------------------------------------------------------
 
 
-def _setup_one_series(mw, monkeypatch):
+def _setup_one_series(mw, monkeypatch, model="Exponential"):
     """Add two datasets, run a global fit, and return the resulting FitSeries."""
     for rn in (10, 11):
         mw._data_browser.add_dataset(_dataset(rn))
@@ -837,7 +837,7 @@ def _setup_one_series(mw, monkeypatch):
         mw._fit_panel,
         "get_global_state",
         lambda: {
-            "composite_model": {"component_names": ["Exponential"], "operators": []},
+            "composite_model": {"component_names": [model], "operators": []},
             "parameters": [{"name": "A", "type": "Local"}],
             "result_html": "",
         },
@@ -877,6 +877,54 @@ class TestVisibilityGatedHighlight:
         # the intent — the gate is driven by the visibilityChanged cycle.
 
 
+def _twin_series(mw, first, model: str) -> FitSeries:
+    """A second series over *first*'s runs and results, fitted with another model."""
+    twin = FitSeries(
+        "batch-twin",
+        first.rep_type,
+        member_kind="runs",
+        member_run_numbers=list(first.member_run_numbers),
+        canonical_model={"component_names": [model], "operators": []},
+        results_by_run=dict(first.results_by_run),
+    )
+    mw._project_model.add_batch(twin)
+    mw._refresh_trend_panel()
+    return twin
+
+
+class TestShortSeriesPillNames:
+    """The host computes the short pill label and disambiguates collisions."""
+
+    def test_single_series_pill_is_its_run_range(self, mw, monkeypatch):
+        series = _setup_one_series(mw, monkeypatch)
+        panel = mw._fit_parameters_panel
+        assert panel._group_fit_results[series.batch_id].short_name == "10–11"
+        assert panel._group_button_map[series.batch_id].text() == "10–11"
+
+    def test_two_series_over_the_same_runs_gain_the_model(self, mw, monkeypatch):
+        first = _setup_one_series(mw, monkeypatch)
+        second = _twin_series(mw, first, "Gaussian")
+
+        short = {
+            bid: group.short_name
+            for bid, group in mw._fit_parameters_panel._group_fit_results.items()
+        }
+        assert short[first.batch_id] == "10–11 · Exponential"
+        assert short[second.batch_id] == "10–11 · Gaussian"
+
+    def test_renamed_series_keeps_its_label_as_the_pill(self, mw, monkeypatch):
+        first = _setup_one_series(mw, monkeypatch)
+        second = _twin_series(mw, first, "Gaussian")
+        mw._on_series_rename_requested(first.batch_id, "Cooldown")
+
+        panel = mw._fit_parameters_panel
+        # The user's name is never shortened, and never disambiguated — with the
+        # collision gone, the other series drops back to its bare run range.
+        assert panel._group_fit_results[first.batch_id].short_name == "Cooldown"
+        assert panel._group_button_map[first.batch_id].text() == "Cooldown"
+        assert panel._group_fit_results[second.batch_id].short_name == "10–11"
+
+
 class TestSeriesRenameAndLabel:
     """_on_series_rename_requested updates label and refreshes panel."""
 
@@ -896,9 +944,11 @@ class TestSeriesRenameAndLabel:
         mw._on_series_rename_requested(series.batch_id, "")
         assert mw._project_model.batch(series.batch_id).label is None
         # Clearing the label reverts to the unified default (<model> · <members>),
-        # not a bare positional "Series N".
+        # not a bare positional "Series N": the pill drops to the short run range
+        # and the full default name moves to the tooltip.
         button = mw._fit_parameters_panel._group_button_map.get(series.batch_id)
-        assert button is not None and button.text() == "Exponential · 10–11"
+        assert button is not None and button.text() == "10–11"
+        assert button.toolTip().startswith("Exponential · 10–11\n")
 
     def test_add_to_series_chooser_shows_user_label(self, mw, monkeypatch):
         from PySide6.QtWidgets import QInputDialog

@@ -376,12 +376,12 @@ class LlzNuArrheniusScenario(CorpusScenario):
         if idx >= 0:
             panel._x_combo.setCurrentIndex(idx)
 
-        panel._set_axis_transform("y", y_transform)
-        panel._set_axis_transform("x", x_transform)
-        panel._axis_transform_custom_memory["y"] = y_transform.expression
+        panel._set_y_transform("nu", y_transform)
+        panel._set_x_transform(x_transform)
+        panel._axis_transform_custom_memory["y:nu"] = y_transform.expression
 
         panel._model_fits["nu"] = fit
-        panel._model_fit_transform_sig["nu"] = panel._transform_signature()
+        panel._model_fit_transform_sig["nu"] = panel._transform_signature("nu")
         panel._sync_active_group_state()
         panel._refresh_model_fit_button_labels()
         _process_events_for(milliseconds=80)

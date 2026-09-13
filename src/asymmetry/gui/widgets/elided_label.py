@@ -4,7 +4,8 @@ A plain non-wrapping ``QLabel``'s minimum size hint is its full text width, so
 one long status line ("10.000 ns × 4 detectors · max correction at t=0: …")
 can force a whole scroll column into a horizontal scrollbar. ``ElidedLabel``
 reports a zero minimum width and paints elided ("…") when squeezed, showing
-the full text as a tooltip only while elided. The pen colour is held directly
+the full text as a tooltip only while elided (:meth:`set_hover_text` replaces
+that tooltip with a fixed one). The pen colour is held directly
 (:meth:`set_pen_color`) because the custom paint bypasses QSS colour rules;
 it defaults to the palette's window text.
 """
@@ -24,6 +25,17 @@ class ElidedLabel(QLabel):
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
         super().__init__(text, parent)
         self._pen_color: QColor | None = None
+        self._hover_text = ""
+
+    def set_hover_text(self, text: str) -> None:
+        """Always show *text* on hover, instead of the elision-only full text.
+
+        For a label whose hover value is not simply what was squeezed out — an
+        explanation of the line, or the detail behind a summary ("2 series") that
+        never elides. An empty *text* restores the default rule.
+        """
+        self._hover_text = text
+        self._update_tooltip()
 
     def set_pen_color(self, color: str) -> None:
         """Paint the text in *color* (a ``#rrggbb`` token) instead of the palette."""
@@ -48,6 +60,9 @@ class ElidedLabel(QLabel):
     def _update_tooltip(self) -> None:
         # Full text on hover only when something is actually hidden. Kept out of
         # paintEvent so the tooltip is right even before the first paint.
+        if self._hover_text:
+            self.setToolTip(self._hover_text)
+            return
         self.setToolTip(self.text() if self._elided_text() != self.text() else "")
 
     def setText(self, text: str) -> None:  # noqa: N802 — Qt override

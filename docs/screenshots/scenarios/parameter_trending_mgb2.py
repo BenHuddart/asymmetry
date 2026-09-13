@@ -130,8 +130,8 @@ class ParameterTrendingMgb2Scenario(Scenario):
         fit = _build_sc_two_gap_fit(payload)
         panel._model_fits["sigma"] = fit
         panel._sync_active_group_state()
-        # Reflect the attached fit in the chrome: the Y row's button relabels to
-        # "Model Fit*" the same way it does after a real Model Fit dialog run.
+        # Reflect the attached fit in the chrome: the card's Fit button relabels
+        # to "Fit ✓" the same way it does after a real Model Fit dialog run.
         panel._refresh_model_fit_button_labels()
         _process_events_for(milliseconds=80)
         return panel

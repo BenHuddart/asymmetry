@@ -37,7 +37,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QScrollArea
+from PySide6.QtWidgets import QApplication, QScrollArea, QStyle
 
 from asymmetry.gui.mainwindow import MainWindow
 
@@ -130,11 +130,20 @@ def test_reset_layout_restores_controls_fitting_width(shown_window) -> None:
 
 
 @pytest.mark.parametrize(
-    "panel_attr",
-    ["_fit_parameters_panel", "_maxent_panel"],
+    ("panel_attr", "owns_scroll_area"),
+    [
+        # FitParametersPanel dropped its private QScrollArea in Phase 3 of
+        # docs/plans/parameters-panel-cards.md ("no scroll area or splitter of
+        # its own") — the dock's shared _inspector_scroll_area now supplies it.
+        ("_fit_parameters_panel", False),
+        ("_maxent_panel", True),
+    ],
 )
-def test_clipped_panels_keep_a_scroll_fallback_in_the_dock(shown_window, panel_attr) -> None:
-    """Each panel that clipped lives under a QScrollArea, so a narrow dock scrolls.
+def test_clipped_panels_keep_a_scroll_fallback_in_the_dock(
+    shown_window, panel_attr, owns_scroll_area
+) -> None:
+    """Each panel that clipped is reachable through a QScrollArea, so a narrow
+    dock scrolls rather than clipping.
 
     Together with the controls-fitting default width and the widenable splitter,
     this is the design intent: at a usable width the controls show outright, and
@@ -142,8 +151,33 @@ def test_clipped_panels_keep_a_scroll_fallback_in_the_dock(shown_window, panel_a
     """
     window, _app = shown_window
     panel = getattr(window, panel_attr)
-    # Each panel embeds its own QScrollArea, so when the dock is dragged below
-    # the panel's natural width its controls scroll into reach rather than
-    # clipping silently. This is the narrow-width fallback beneath the
-    # controls-fitting default width and the widenable splitter.
-    assert panel.findChild(QScrollArea) is not None
+    if owns_scroll_area:
+        # MaxEntPanel embeds its own QScrollArea, so when the dock is dragged
+        # below the panel's natural width its controls scroll into reach
+        # rather than clipping silently.
+        assert panel.findChild(QScrollArea) is not None
+        return
+    # FitParametersPanel no longer owns one; the fallback comes from an
+    # ancestor QScrollArea (the dock's) instead.
+    assert panel.findChild(QScrollArea) is None
+    ancestor = panel.parentWidget()
+    while ancestor is not None and not isinstance(ancestor, QScrollArea):
+        ancestor = ancestor.parentWidget()
+    assert isinstance(ancestor, QScrollArea)
+
+
+def test_default_width_clears_the_parameters_panel_minimum(shown_window) -> None:
+    """The deck's default must fit the widest pane in it, not just the fraction.
+
+    On a 13-inch window ``0.20 × width`` lands under what the Parameters panel's
+    rails need, so the deck opened with a horizontal scrollbar over the x rail.
+    The default now floors at that panel's own minimum plus the dock scroll
+    area's vertical scrollbar.
+    """
+    window, app = shown_window
+    window.resize(1470, 850)
+    _settle(app, 3)
+    panel = window._fit_parameters_panel
+    scrollbar = window.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+
+    assert window._inspector_default_width() >= panel.minimumSizeHint().width() + scrollbar

@@ -8,10 +8,11 @@ Navigation map
 Small helper types precede the main class: ``_FitRow`` (one dataset's fitted
 parameter values/errors/provenance for a single trend point), free functions
 for abscissa/float coercion (``_coerce_abscissa``, ``_optional_float``),
-``_YParamControls`` (the per-parameter Y-axis widget group), and
-``_GroupFitData`` (per data-group cross-run model-fit state). The bulk of the
-module is ``FitParametersPanel(QWidget)``, whose methods cluster thematically
-(no section-comment markers in source):
+``_YParamControls`` (a card's Fit button + log checkbox, so the fit-label and
+log-guard code can reach them by parameter name), and ``_GroupFitData`` (per
+data-group cross-run model-fit state). The bulk of the module is
+``FitParametersPanel(QWidget)``, whose methods cluster thematically (no
+section-comment markers in source):
 
 - **Construction / state I/O** — ``__init__``, ``clear``, ``get_state``/
   ``restore_state`` (``_restore_state_locked`` does the heavy lifting),
@@ -31,10 +32,18 @@ module is ``FitParametersPanel(QWidget)``, whose methods cluster thematically
   serialize/deserialize pairs for persisting these secondary fits
   (``_serialize_group_fit_results``, ``_serialize_cross_group_fit_configs``,
   ``_serialize_last_cross_group_fit``).
+- **Chips and cards** — ``_rebuild_y_controls`` builds one chip per trendable
+  parameter and ``_rebuild_cards`` one ``ParameterCard`` per *checked* chip;
+  the checked chips are the y selection (``_selected_y_parameters``) and
+  ``_card_order`` their top-to-bottom order.
 - **Table + plot refresh** — ``_refresh_views`` fans out to ``_refresh_table``
-  and ``_refresh_plot``/``_draw_plot`` (the Matplotlib trend render, including
-  model overlays via ``_draw_model_overlay_mpl`` and member markers via
-  ``_overlay_member_markers``). ``_x_value``/``_x_error`` resolve the selected
+  (the live table, hosted by the ``Table`` pop-out) and
+  ``_refresh_plot``/``_draw_plot``. ``_draw_plot`` dispatches on
+  ``_plot_mode()``: *Subplots* draws one figure per card via ``_draw_cards`` /
+  ``_draw_param_axes`` (``_draw_card`` redraws just one), *Overlay* draws the
+  shared ``_figure`` via ``_draw_single_series`` / ``_draw_multi_series``.
+  Model overlays come from ``_draw_model_overlay_mpl`` and member markers from
+  ``_overlay_member_markers``. ``_x_value``/``_x_error`` resolve the selected
   abscissa (run number, field, temperature, angle, or a custom column) per row.
 - **Async trend-curve sampling** — ``_compute_trend_curves``/
   ``_start_trend_curve_compute`` offload model-curve sampling to a worker;
@@ -52,35 +61,33 @@ from __future__ import annotations
 
 import csv
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QIcon, QPixmap
+from matplotlib.colors import to_hex
+from PySide6.QtCore import QPoint, QSignalBlocker, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
-    QFormLayout,
-    QGridLayout,
     QHBoxLayout,
-    QHeaderView,
     QInputDialog,
     QLabel,
     QMenu,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
-    QSplitter,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -115,6 +122,7 @@ from asymmetry.core.fitting.composite_parameters import (
     CompositeParameterDefinition,
 )
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.fit_quality import assess_fit_quality
 from asymmetry.core.fitting.knight_shift import (
     REFERENCE_APPLIED_FIELD,
     KnightShiftConfig,
@@ -146,24 +154,57 @@ from asymmetry.core.fitting.parameters import (
 )
 from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
+    FIT_VERDICT_CHIP_COLOURS,
+    NEUTRAL_CHIP_COLOURS,
     apply_param_table_style,
+    build_segmented_button_qss,
     clear_layout,
-    make_provenance_label,
     style_group_state_button,
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils import gle_export
-from asymmetry.gui.utils.formatting import format_param_label
+from asymmetry.gui.utils.formatting import format_param_label, format_value_uncertainty
+from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
+from asymmetry.gui.widgets.elided_label import ElidedLabel
+from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
-from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.widgets.parameter_card import ParameterCard, ParameterCardStack
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.windows.fit_results_window import (
+    FitParameterRow,
+    FitRangeResults,
+    FitResults,
+    FitResultsWindow,
+)
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
+
+#: Resting label of a transform button: the identity lens has no formula to show.
+_IDENTITY_TRANSFORM_GLYPH = "ƒ"
+
+#: Title of the pop-out fitted-parameter table (a suffix is appended while a
+#: transform is active — the table always shows raw values).
+_TABLE_DIALOG_TITLE = "Fitted parameters"
+#: Widths of the x picker and of a y chip, in characters of the live font. A
+#: longer label elides on the chip (the tooltip carries it in full) and shows in
+#: the picker's popup, so neither grows the panel's minimum width.
+_X_PICKER_CHARS = 8
+_CHIP_MAX_CHARS = 14
+#: Share of the screen's work area the table pop-out may open at — the table is
+#: as wide as the fit has parameters, so a wide series must stop somewhere.
+_TABLE_DIALOG_SCREEN_FRACTION = 0.9
+#: The ⋯ and + rail buttons are their glyph; Qt's menu-indicator arrow would double it.
+_MENU_BUTTON_QSS = "QToolButton::menu-indicator { image: none; }"
+
+#: The lens of a y parameter with no transform of its own.
+_IDENTITY_TRANSFORM = AxisTransform.identity()
 
 #: Sentinel distinguishing "x_domain not provided" (GUI callers — read it live
 #: from the rows) from an explicitly-passed snapshot that may itself be ``None``
@@ -243,12 +284,54 @@ def _fit_overlay_color(index: int) -> str:
     return colors[index % len(colors)]
 
 
-def _fit_overlay_label(param_name: str, index: int, total: int, *, gle: bool) -> str:
-    base = _format_gle_legend_label(param_name) if gle else _format_plot_legend_label(param_name)
+def _fit_overlay_label(base: str, index: int, total: int) -> str:
     suffix = "" if index == 0 else f" #{index + 1}"
     if total <= 1:
         suffix = ""
     return f"fit {base}{suffix}"
+
+
+def _first_solved_range(fit: ParameterModelFit | None) -> ModelFitRange | None:
+    """The first range of an *active* fit that solved — the card's headline fit."""
+    if fit is None or not fit.active:
+        return None
+    return next((r for r in fit.ranges if r.result is not None and r.result.success), None)
+
+
+def _parameter_rows(fit_range: ModelFitRange) -> tuple[FitParameterRow, ...]:
+    """A solved range's parameters, free ones first (``sorted`` is stable)."""
+    result = fit_range.result
+    free_names = {param.name for param in fit_range.parameters.free_parameters}
+    rows = []
+    for param in result.parameters:
+        info = get_param_info(param.name)
+        rows.append(
+            FitParameterRow(
+                name=param.name,
+                symbol=info.unicode_label(include_unit=False),
+                unit=info.unit or "",
+                value=float(param.value),
+                error=result.uncertainties.get(param.name),
+                fixed=param.name not in free_names,
+            )
+        )
+    return tuple(sorted(rows, key=lambda row: row.fixed))
+
+
+def _bound_text(bound: float | None) -> str:
+    """An open (unbounded) fit-range edge reads as "…", not as a made-up number."""
+    return "…" if bound is None else f"{bound:.6g}"
+
+
+def _transform_button_labels(transform: AxisTransform, base: str) -> tuple[str, str]:
+    """The (label, tooltip) a lens button shows for *transform* of axis *base*."""
+    if transform.is_identity:
+        return _IDENTITY_TRANSFORM_GLYPH, (
+            "Transform the plotted values themselves (error bars are propagated) — "
+            "distinct from the 'log' checkbox, which only changes tick spacing."
+        )
+    described = transform.describe(base)
+    return described, f"Plotting {described}; the table and exports keep the raw values."
 
 
 def _safe_data_name(value: object) -> str:
@@ -368,6 +451,10 @@ def _custom_values_from_row_dict(entry: object) -> dict[str, str]:
     return {}
 
 
+class _PlotPages(CurrentPageSizingMixin, QStackedWidget):
+    """The card stack or the Overlay canvas, sized by whichever page is showing."""
+
+
 @dataclass
 class _YParamControls:
     fit_button: QPushButton
@@ -443,6 +530,16 @@ class _GroupFitData:
     #: since ``MainWindow._refresh_trend_panel`` always re-supplies it via
     #: ``load_representation_series`` immediately after a project restore.
     phase: PhaseDecoration | None = None
+    #: Pill label: the shortest text that still tells this series from the others
+    #: loaded beside it (usually its run range). Only the host sees the whole set,
+    #: so only the host can compute it; like ``phase`` it is derived display state
+    #: and is not serialised. Empty means "no short form" and the full
+    #: ``group_name`` stands in — see :meth:`__post_init__`.
+    short_name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.short_name:
+            self.short_name = self.group_name
 
 
 class FitParametersPanel(QWidget):
@@ -499,6 +596,9 @@ class FitParametersPanel(QWidget):
         self._global_params: ParameterSet | None = None
         self._global_param_uncertainties: dict[str, float] = {}
         self._table_dialog: QDialog | None = None
+        #: One results window per parameter, opened by its card's χ²ᵣ chip and
+        #: kept alive (and refreshed) until the parameter's card goes away.
+        self._fit_results_windows: dict[str, FitResultsWindow] = {}
         self._inferred_x_key = "field"
         #: Data-browser custom columns offered as the trend x-axis, as
         #: ``(display_label, "custom:<id>")`` pairs pushed in by the host. Their
@@ -552,14 +652,17 @@ class FitParametersPanel(QWidget):
         #: does not leak across unrelated projects; persisted via
         #: get_state/restore_state below.
         self._trend_model_memory: dict[str, str] = {}
-        #: Per-axis display+fit transforms (Redfield 1/λ vs B², Arrhenius ln λ vs
-        #: 1/T, …). Applied at the data-assembly boundary so the plotted points,
-        #: the error bars, *and* the Model-Fit input all share one transformed
-        #: coordinate system; persisted via get_state/restore_state.
+        #: Display+fit transforms (Redfield 1/λ vs B², Arrhenius ln λ vs 1/T, …).
+        #: Applied at the data-assembly boundary so the plotted points, the error
+        #: bars, *and* the Model-Fit input all share one transformed coordinate
+        #: system; persisted via get_state/restore_state. X is one shared
+        #: abscissa, so it has one transform; y is a different physical quantity
+        #: per parameter, so each carries its own lens (identity = no entry).
         self._x_transform: AxisTransform = AxisTransform.identity()
-        self._y_transform: AxisTransform = AxisTransform.identity()
-        #: Last-used custom expression per axis ("x"/"y"), so re-opening the
-        #: Custom… dialog pre-fills it (project-scoped, not QSettings).
+        self._y_transforms: dict[str, AxisTransform] = {}
+        #: Last-used custom expression per target ("x", "y:<param>"), so
+        #: re-opening the Custom… dialog pre-fills it (project-scoped, not
+        #: QSettings).
         self._axis_transform_custom_memory: dict[str, str] = {}
         #: The transform signature each stored model-fit was computed under, so a
         #: transform change suppresses now-mismatched overlays (mirrors the
@@ -601,287 +704,26 @@ class FitParametersPanel(QWidget):
         #: single async recompute when it finishes.
         self._suspend_plot_refresh = False
 
+        #: One checkable chip per trendable parameter; a checked chip is a card
+        #: in the stack, and the checked chips *are* the y selection (see
+        #: :meth:`_selected_y_parameters`).
+        self._y_chips: dict[str, QPushButton] = {}
+        #: Card order, top to bottom. Driven by the stack's drag-reorder and
+        #: persisted; a parameter not named here appends in display order.
+        self._card_order: list[str] = []
+        #: Parameters whose card is collapsed to a sparkline.
+        self._collapsed_params: set[str] = set()
+        #: Parameters drawn on a log y axis. Held here rather than read off the
+        #: card, because a card exists only while its chip is checked and the
+        #: choice must survive the chip being turned off and on again.
+        self._log_y_params: set[str] = set()
+
         layout = QVBoxLayout(self)
-
-        controls_group = PanelSection("Parameter settings")
-        controls_layout = controls_group
-        controls_form = QFormLayout()
-        controls_layout.addLayout(controls_form)
-
-        self._group_tabs_widget = QWidget()
-        self._group_tabs_layout = QHBoxLayout(self._group_tabs_widget)
-        self._group_tabs_layout.setContentsMargins(0, 0, 0, 0)
-        self._group_tabs_layout.setSpacing(6)
-        self._group_tabs_widget.setVisible(False)
-        controls_form.addRow(self._group_tabs_widget)
-
-        self._show_table_btn = QPushButton("Show table")
-        self._show_table_btn.setToolTip("Show the fitted parameter table.")
-        self._show_table_btn.setEnabled(False)
-        self._show_table_btn.clicked.connect(self._show_table_dialog)
-        controls_form.addRow(self._show_table_btn)
-
-        self._x_combo = QComboBox()
-        self._x_combo.addItems(["Auto", "𝐵 (G)", "𝑇 (K)", "Run"])
-        self._x_combo.currentTextChanged.connect(self._on_x_axis_changed)
-        self._x_auto_hint = QLabel("")
-        # Fold a periodic Angle abscissa into one period so equivalent crystal
-        # orientations overlay (visible only when Angle is the x-axis).
-        self._angle_fold_label = QLabel("Fold:")
-        self._angle_fold_combo = QComboBox()
-        for text, period in (("Off", None), ("180°", 180.0), ("360°", 360.0)):
-            self._angle_fold_combo.addItem(text, userData=period)
-        self._angle_fold_combo.currentIndexChanged.connect(self._on_angle_fold_changed)
-        self._log_x_check = QCheckBox("log")
-        log_x_width = self._log_x_check.fontMetrics().horizontalAdvance("log") + 28
-        self._log_x_check.setMinimumWidth(log_x_width)
-        self._log_x_check.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-        self._log_x_check.stateChanged.connect(self._refresh_plot)
-        x_row = QHBoxLayout()
-        x_row.setContentsMargins(0, 0, 6, 0)
-        x_row.setSpacing(6)
-        x_row.addWidget(self._x_combo)
-        x_row.addWidget(self._x_auto_hint)
-        x_row.addStretch()
-        x_row.addWidget(self._angle_fold_label)
-        x_row.addWidget(self._angle_fold_combo)
-        x_row.addWidget(self._log_x_check)
-        x_container = QWidget()
-        x_container.setLayout(x_row)
-        controls_form.addRow("X axis:", x_container)
-        self._update_angle_fold_visibility()
-
-        self._y_selector_table = QTableWidget(0, 3)
-        self._y_selector_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._y_selector_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._y_selector_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        # The name column (0) stretches and elides; the Model Fit (1) and log (2)
-        # columns are fixed and pinned to the right. Horizontal scrolling is OFF
-        # so a long parameter name can never push the action columns into an
-        # off-screen scroll region (the round-10 finding: at wider inspector
-        # widths the Model Fit buttons hid behind a horizontal scrollbar that
-        # would not scroll to them). The name elides with "…" instead, with the
-        # full label on the row tooltip.
-        self._y_selector_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._y_selector_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._y_selector_table.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self._y_selector_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._y_selector_table.horizontalHeader().setVisible(False)
-        apply_param_table_style(self._y_selector_table)
-        self._y_selector_table.itemSelectionChanged.connect(self._on_y_selection_changed)
-        # Selection-driven redraws are debounced: clicking through parameters
-        # or drag-selecting fires per row, and each full-figure redraw costs
-        # 200-500 ms in Subplots mode. One redraw after the last change wins.
-        self._plot_refresh_timer = QTimer(self)
-        self._plot_refresh_timer.setSingleShot(True)
-        self._plot_refresh_timer.setInterval(120)
-        self._plot_refresh_timer.timeout.connect(self._refresh_plot)
-
-        y_header = self._y_selector_table.horizontalHeader()
-        y_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        y_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        y_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._y_selector_table.setMinimumWidth(0)
-
-        # Give the selector its own full-width rows rather than the form's
-        # narrower field column: the label sits above and the table spans both
-        # columns, so the Model Fit / log action columns keep room to stay
-        # visible even at the inspector's minimum width.
-        controls_form.addRow(QLabel("Y parameters:"))
-        controls_form.addRow(self._y_selector_table)
-
-        # Hint surfaced when the batch classified a parameter as Global (shared):
-        # that parameter takes one value across every run, so it is held flat and
-        # excluded from the trendable Y list. A user trending an amplitude curve
-        # (where A_1 defaults to Global) would otherwise find their curve missing
-        # with no explanation — point them to set it Local and re-fit.
-        self._global_param_hint = QLabel("")
-        self._global_param_hint.setWordWrap(True)
-        self._global_param_hint.setObjectName("trendGlobalParamHint")
-        self._global_param_hint.setStyleSheet(
-            f"QLabel {{ color: {tokens.TEXT_MUTED}; font-style: italic; }}"
-        )
-        self._global_param_hint.setVisible(False)
-        controls_form.addRow("", self._global_param_hint)
-
-        self._create_composite_btn = QPushButton("New composite")
-        self._create_composite_btn.setToolTip("Create a composite (derived) parameter.")
-        self._create_composite_btn.setEnabled(False)
-        self._create_composite_btn.clicked.connect(self._open_composite_parameter_dialog)
-
-        self._edit_composite_btn = QPushButton("Edit composite")
-        self._edit_composite_btn.setToolTip("Edit the selected composite parameter.")
-        self._edit_composite_btn.setEnabled(False)
-        self._edit_composite_btn.clicked.connect(self._edit_selected_composite_parameter)
-
-        self._remove_composite_btn = QPushButton("Remove")
-        self._remove_composite_btn.setToolTip(
-            "Remove the selected composite parameter(s) or Knight-shift K trace(s)."
-        )
-        self._remove_composite_btn.setEnabled(False)
-        self._remove_composite_btn.clicked.connect(self._remove_selected_composite_parameters)
-
-        # The "Analysis -> Knight shift analysis..." menu action (mainwindow.py)
-        # is the unconditional entry point to the Knight shift window. This
-        # button is the main-GUI shortcut, so it only surfaces when the active
-        # series looks like a Knight-shift use case; see
-        # _update_knight_window_button.
-        self._knight_window_btn = QPushButton("Knight shift window…")
-        self._knight_window_btn.setToolTip(
-            "Open the Knight shift analysis window: convert, inspect branches and "
-            "crossings, and publish K columns back to this table."
-        )
-        self._knight_window_btn.clicked.connect(self.knight_window_requested.emit)
-        self._update_knight_window_button()
-
-        # Axis transforms — a per-axis lens (1/x, x², ln, …) over the plot *and*
-        # the trend fit, so a Redfield (1/λ vs B²) or Arrhenius (ln λ vs 1/T)
-        # linearisation is a straight-line Model Fit. Advanced, so collapsible and
-        # collapsed by default (GUI_GUIDELINES § Panel anatomy); the active
-        # transforms surface in the header chip and on the plot axis labels.
-        self._transforms_section = PanelSection(
-            "Axis transforms",
-            collapsible=True,
-            expanded=False,
-            settings_key="parameters/sections/transforms",
-        )
-        self._transforms_section.setObjectName("fit-parameters-transforms-section")
-        self._transforms_section.set_hint(
-            "Plot transformed values (e.g. 1/T, ln y) to linearise physics. "
-            "Error bars are propagated; the table stays raw and exports carry "
-            "both raw and transformed columns."
-        )
-        transforms_form = QFormLayout()
-        self._x_transform_combo = self._make_axis_transform_combo("x")
-        self._y_transform_combo = self._make_axis_transform_combo("y")
-        transforms_form.addRow("X:", self._x_transform_combo)
-        transforms_form.addRow("Y:", self._y_transform_combo)
-        self._transforms_section.addLayout(transforms_form)
-        controls_layout.addWidget(self._transforms_section)
-
-        self._derived_section = PanelSection(
-            "Derived parameters",
-            collapsible=True,
-            expanded=False,
-            settings_key="parameters/sections/derived",
-        )
-        self._derived_section.setObjectName("fit-parameters-derived-section")
-        composite_row = QGridLayout()
-        composite_row.setContentsMargins(0, 0, 0, 0)
-        composite_row.setHorizontalSpacing(6)
-        composite_row.setVerticalSpacing(6)
-        composite_row.addWidget(self._create_composite_btn, 0, 0)
-        composite_row.addWidget(self._edit_composite_btn, 0, 1)
-        composite_row.addWidget(self._remove_composite_btn, 1, 0, 1, 2)
-        composite_row.addWidget(self._knight_window_btn, 2, 0, 1, 2)
-        composite_row.setColumnStretch(2, 1)
-        self._derived_section.addLayout(composite_row)
-        controls_layout.addWidget(self._derived_section)
-
-        self._plot_mode_combo = QComboBox()
-        self._plot_mode_combo.addItems(["Single Axes", "Subplots"])
-        self._plot_mode_combo.currentTextChanged.connect(self._refresh_plot)
-        controls_form.addRow("Plot mode:", self._plot_mode_combo)
-
-        self._show_components_check = QCheckBox("Show components")
-        self._show_components_check.setChecked(False)
-        self._show_components_check.stateChanged.connect(self._on_show_components_changed)
-        controls_form.addRow("Model components:", self._show_components_check)
-        self._add_label_btn = QPushButton("Add Label")
-        self._add_label_btn.setCheckable(True)
-        self._clear_labels_btn = QPushButton("Clear Labels")
-        self._clear_labels_btn.clicked.connect(self._clear_plot_labels)
-
-        # Hidden global log-y toggle used to mirror selected-series log state.
-        self._log_y_check = QCheckBox("log")
-        self._log_y_check.setVisible(False)
-        self._log_y_check.stateChanged.connect(self._on_global_log_y_changed)
-
-        self._export_tsv_btn = QPushButton("Export TSV")
-        self._export_tsv_btn.setEnabled(False)
-        self._export_tsv_btn.clicked.connect(self._export_tsv)
-
-        self._export_gle_btn = QPushButton("Export to GLE")
-        self._export_gle_btn.setEnabled(False)
-        self._export_gle_btn.clicked.connect(self._export_gle)
-
-        self._gle_format_combo = QComboBox()
-        self._gle_format_combo.addItems(["PDF", "EPS"])
-        self._gle_format_combo.setEnabled(False)
-
-        self._table = QTableWidget(0, 0)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        apply_param_table_style(self._table)
-        # Guard so programmatic table population (which sets the Include check
-        # states) does not re-emit the inclusion-changed signal.
-        self._populating_table = False
-        # Number of leading "data" columns (Run/B/T/params/abscissa) before the
-        # appended χ²ᵣ + Trend trend-gate columns; exports dump only these.
-        self._table_data_columns = 0
-        self._table.itemChanged.connect(self._on_table_item_changed)
-
-        self._plot_group = PanelSection("Parameter plot")
-        plot_layout = self._plot_group.body_layout
-        plot_layout.setSpacing(8)
-
-        # Two-column grids (not a single wide row) so the plot toolbar does not
-        # set the Parameters dock's minimum width past the other tabs on a 13"
-        # screen; the buttons wrap to a second line instead of growing the dock.
-        self._plot_labels_bar = QWidget(self._plot_group)
-        labels_row = QGridLayout(self._plot_labels_bar)
-        labels_row.setContentsMargins(0, 0, 0, 0)
-        labels_row.setHorizontalSpacing(6)
-        labels_row.setVerticalSpacing(4)
-        labels_row.addWidget(QLabel("Plot labels:"), 0, 0, 1, 2)
-        labels_row.addWidget(self._add_label_btn, 1, 0)
-        labels_row.addWidget(self._clear_labels_btn, 1, 1)
-        labels_row.setColumnStretch(2, 1)
-        plot_layout.addWidget(self._plot_labels_bar)
-
-        self._has_mpl = False
-        try:
-            self._figure, self._canvas = create_canvas(layout="constrained")
-            plot_layout.addWidget(self._canvas, 1)
-            self._has_mpl = True
-            self._canvas.mpl_connect("button_press_event", self._on_plot_button_press)
-            self._canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
-            self._canvas.mpl_connect("button_release_event", self._on_plot_button_release)
-            # Covers the trend plot while its overlay curves recompute off-thread.
-            self._trend_overlay: LoadingOverlay | None = LoadingOverlay(self._canvas)
-        except ImportError:
-            plot_layout.addWidget(QLabel("matplotlib not installed - plotting disabled"), 1)
-            self._trend_overlay = None
-
-        # Trend provenance line (Phase 2, mirrors the integral-scan panel): how
-        # many members feed the trend vs. how many the user excluded by click.
-        self._trend_provenance_label = make_provenance_label()
-        plot_layout.addWidget(self._trend_provenance_label)
-
-        self._plot_export_bar = QWidget(self._plot_group)
-        export_row = QGridLayout(self._plot_export_bar)
-        export_row.setContentsMargins(0, 0, 0, 0)
-        export_row.setHorizontalSpacing(6)
-        export_row.setVerticalSpacing(4)
-        export_row.addWidget(self._export_tsv_btn, 0, 0)
-        export_row.addWidget(self._export_gle_btn, 0, 1)
-        export_row.addWidget(QLabel("Format:"), 1, 0)
-        export_row.addWidget(self._gle_format_combo, 1, 1)
-        export_row.setColumnStretch(2, 1)
-        plot_layout.addWidget(self._plot_export_bar)
-
-        controls_group.setMinimumHeight(0)
-        controls_group.setMinimumWidth(0)
-
-        self._controls_scroll = QScrollArea(self)
-        self._controls_scroll.setWidgetResizable(True)
-        self._controls_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self._controls_scroll.setMinimumHeight(0)
-        self._controls_scroll.setWidget(controls_group)
 
         # Empty-state hint: until a batch series is loaded the whole panel is a
         # wall of greyed controls with no cue as to where the data comes from.
-        # This one-liner sits above the controls and hides itself the moment any
-        # fitted rows arrive (P3-3).
+        # This one-liner sits above the series strip and hides itself the moment
+        # any fitted rows arrive (P3-3).
         self._empty_state_hint = QLabel(
             "No fitted parameters yet — run a batch fit from the Batch tab "
             "(or open a project with batch results) to populate this trend view."
@@ -894,18 +736,261 @@ class FitParametersPanel(QWidget):
         )
         layout.addWidget(self._empty_state_hint)
 
-        self._content_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._content_splitter.setObjectName("fit-parameters-splitter")
-        self._content_splitter.addWidget(self._controls_scroll)
-        self._content_splitter.addWidget(self._plot_group)
-        self._content_splitter.setStretchFactor(0, 0)
-        self._content_splitter.setStretchFactor(1, 1)
-        self._content_splitter.setSizes([240, 600])
-        layout.addWidget(self._content_splitter)
+        # ── Series strip ─────────────────────────────────────────────────────
+        self._group_tabs_widget = QWidget()
+        self._group_tabs_layout = FlowLayout(self._group_tabs_widget)
+        self._group_tabs_layout.setContentsMargins(0, 0, 0, 0)
+        # Like the y chip strip: the pills wrap, so the strip's height follows the
+        # width the dock gives it rather than the panel widening to fit the row.
+        strip_policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        strip_policy.setHeightForWidth(True)
+        self._group_tabs_widget.setSizePolicy(strip_policy)
+        self._group_tabs_widget.setVisible(False)
+        layout.addWidget(self._group_tabs_widget)
 
+        # ── Rail row 1: the abscissa, the table pop-out and the ⋯ menu ───────
+        x_row = QHBoxLayout()
+        x_row.setContentsMargins(0, 0, 0, 0)
+        x_row.setSpacing(6)
+        x_row.addWidget(QLabel("x"))
+
+        self._x_combo = QComboBox()
+        # Sized to a fixed character count, not to its entries: fitted-parameter
+        # names join this list, and the panel's minimum width (hence the dock's
+        # default) must not follow the longest of them.
+        self._x_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self._x_combo.setMinimumContentsLength(_X_PICKER_CHARS)
+        self._x_combo.addItems(["Auto", "𝐵 (G)", "𝑇 (K)", "Run"])
+        self._x_combo.currentTextChanged.connect(self._on_x_axis_changed)
+        x_row.addWidget(self._x_combo)
+
+        self._x_auto_hint = QLabel("")
+        x_row.addWidget(self._x_auto_hint)
+
+        self._x_transform_button = QToolButton()
+        self._x_transform_button.clicked.connect(self._show_x_transform_menu)
+        x_row.addWidget(self._x_transform_button)
+
+        self._log_x_check = QCheckBox("log")
+        self._log_x_check.stateChanged.connect(self._refresh_plot)
+        x_row.addWidget(self._log_x_check)
+
+        # Fold a periodic Angle abscissa into one period so equivalent crystal
+        # orientations overlay (visible only when Angle is the x-axis).
+        self._angle_fold_label = QLabel("Fold:")
+        self._angle_fold_combo = QComboBox()
+        for text, period in (("Off", None), ("180°", 180.0), ("360°", 360.0)):
+            self._angle_fold_combo.addItem(text, userData=period)
+        self._angle_fold_combo.currentIndexChanged.connect(self._on_angle_fold_changed)
+        x_row.addWidget(self._angle_fold_label)
+        x_row.addWidget(self._angle_fold_combo)
+        x_row.addStretch(1)
+
+        self._table_button = QPushButton("Table")
+        self._table_button.setToolTip("Show the fitted parameter table.")
+        self._table_button.setEnabled(False)
+        self._table_button.clicked.connect(self._show_table_dialog)
+        x_row.addWidget(self._table_button)
+
+        self._more_menu = QMenu(self)
+        #: Menu entries that only mean anything once the panel holds rows.
+        self._export_actions: list[QAction] = []
+        export_tsv_action = self._more_menu.addAction("Export TSV…")
+        export_tsv_action.triggered.connect(self._export_tsv)
+        self._export_actions.append(export_tsv_action)
+        for label, output_format in (("Export GLE (PDF)…", "pdf"), ("Export GLE (EPS)…", "eps")):
+            gle_action = self._more_menu.addAction(label)
+            gle_action.triggered.connect(
+                lambda _checked=False, fmt=output_format: self._export_gle(fmt)
+            )
+            self._export_actions.append(gle_action)
+        self._more_menu.addSeparator()
+        self._show_components_action = self._more_menu.addAction("Show components")
+        self._show_components_action.setCheckable(True)
+        self._show_components_action.toggled.connect(self._on_show_components_changed)
+        self._more_menu.addSeparator()
+        # The unconditional entry point to the Knight shift window (the rail's +
+        # menu offers it only when the active series looks like a Knight case).
+        more_knight_action = self._more_menu.addAction("Knight shift window…")
+        more_knight_action.triggered.connect(self.knight_window_requested.emit)
+
+        self._more_button = QToolButton()
+        self._more_button.setText("⋯")
+        self._more_button.setToolTip("Exports and plot options")
+        self._more_button.setMenu(self._more_menu)
+        self._more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._more_button.setStyleSheet(_MENU_BUTTON_QSS)
+        x_row.addWidget(self._more_button)
+        layout.addLayout(x_row)
+
+        # ── Rail row 2: the parameter chips, + menu and the mode toggle ──────
+        y_row = QHBoxLayout()
+        y_row.setContentsMargins(0, 0, 0, 0)
+        y_row.setSpacing(6)
+        y_row.addWidget(QLabel("y"))
+
+        self._y_chip_strip = QWidget()
+        self._y_chip_layout = FlowLayout(self._y_chip_strip)
+        self._y_chip_layout.setContentsMargins(0, 0, 0, 0)
+        # The strip wraps, so its height depends on the width the row gives it.
+        chip_policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        chip_policy.setHeightForWidth(True)
+        self._y_chip_strip.setSizePolicy(chip_policy)
+        y_row.addWidget(self._y_chip_strip, 1)
+
+        self._add_menu = QMenu(self)
+        self._derived_action = self._add_menu.addAction("Derived parameter…")
+        self._derived_action.triggered.connect(self._open_composite_parameter_dialog)
+        self._add_knight_action = self._add_menu.addAction("Knight shift window…")
+        self._add_knight_action.setToolTip(
+            "Open the Knight shift analysis window: convert, inspect branches and "
+            "crossings, and publish K columns back to this table."
+        )
+        self._add_knight_action.triggered.connect(self.knight_window_requested.emit)
+
+        self._add_button = QToolButton()
+        self._add_button.setText("+")
+        self._add_button.setToolTip("Add a derived parameter")
+        self._add_button.setMenu(self._add_menu)
+        self._add_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._add_button.setStyleSheet(_MENU_BUTTON_QSS)
+        y_row.addWidget(self._add_button)
+
+        self._subplots_button = QPushButton("Subplots")
+        self._overlay_button = QPushButton("Overlay")
+        self._plot_mode_group = QButtonGroup(self)
+        for button in (self._subplots_button, self._overlay_button):
+            button.setCheckable(True)
+            button.setStyleSheet(build_segmented_button_qss())
+            self._plot_mode_group.addButton(button)
+            y_row.addWidget(button)
+        self._subplots_button.setChecked(True)
+        self._subplots_button.toggled.connect(self._on_plot_mode_changed)
+        layout.addLayout(y_row)
+
+        # ── Plot area: the card stack, or the single Overlay canvas ──────────
+        self._plot_pages = _PlotPages()
+        self._card_stack = ParameterCardStack()
+        self._card_stack.order_changed.connect(self._on_card_order_changed)
+        self._plot_pages.addWidget(self._card_stack)
+
+        overlay_page = QWidget()
+        overlay_layout = QVBoxLayout(overlay_page)
+        overlay_layout.setContentsMargins(0, 0, 0, 0)
+        self._figure, self._canvas = create_canvas(layout="constrained", figsize=(4.0, 3.0))
+        self._connect_plot_events(self._canvas)
+        overlay_layout.addWidget(self._canvas, 1)
+        self._plot_pages.addWidget(overlay_page)
+        layout.addWidget(self._plot_pages, 1)
+        # Covers the whole plot area while the overlay curves recompute off-thread.
+        self._trend_overlay = LoadingOverlay(self._plot_pages)
+
+        # Selection-driven redraws are debounced: clicking through parameters
+        # fires per chip, and each full redraw costs 200-500 ms in Subplots mode.
+        # One redraw after the last change wins.
+        self._plot_refresh_timer = QTimer(self)
+        self._plot_refresh_timer.setSingleShot(True)
+        self._plot_refresh_timer.setInterval(120)
+        self._plot_refresh_timer.timeout.connect(self._refresh_plot)
+        # Focus re-expands and collapses cards without expanded_changed (see the
+        # stack), so it asks for the stack redraw itself.
+        self._card_stack.focus_changed.connect(self._plot_refresh_timer.start)
+
+        # ── Footer row 1: the active series, named in full ───────────────────
+        # The pills are short handles, so the panel says somewhere which series
+        # is on screen. Elided (never wrapped) so the name cannot widen the dock.
+        self._active_series_label = ElidedLabel("")
+        self._active_series_label.set_pen_color(tokens.TEXT_MUTED)
+        self._active_series_label.hide()
+        layout.addWidget(self._active_series_label)
+
+        # ── Footer row 2: trend provenance left, the Global-held note right ──
+        footer_row = QHBoxLayout()
+        footer_row.setContentsMargins(0, 0, 0, 0)
+        footer_row.setSpacing(6)
+        # Trend provenance line (Phase 2, mirrors the integral-scan panel): how
+        # many members feed the trend vs. how many the user excluded by click.
+        # Elided rather than wrapped: the footer stays one row tall, and the
+        # Global note keeps its width whatever the provenance line says.
+        self._trend_provenance_label = ElidedLabel("")
+        self._trend_provenance_label.set_pen_color(tokens.TEXT_MUTED)
+        self._trend_provenance_label.hide()
+        footer_row.addWidget(self._trend_provenance_label, 1)
+        # Surfaced when the batch classified a parameter as Global (shared): that
+        # parameter takes one value across every run, so it is held flat and
+        # excluded from the trendable Y list. A user trending an amplitude curve
+        # (where A_1 defaults to Global) would otherwise find their curve missing
+        # with no explanation — the tooltip points them at Local + re-fit.
+        self._global_param_hint = QLabel("")
+        self._global_param_hint.setObjectName("trendGlobalParamHint")
+        self._global_param_hint.setStyleSheet(
+            f"QLabel {{ color: {tokens.TEXT_MUTED}; font-style: italic; }}"
+        )
+        self._global_param_hint.setVisible(False)
+        # Fixed: the note is the footer's actionable half, so a long provenance
+        # line beside it must elide rather than squeeze it out.
+        self._global_param_hint.setSizePolicy(
+            QSizePolicy.Policy.Fixed, self._global_param_hint.sizePolicy().verticalPolicy()
+        )
+        footer_row.addWidget(self._global_param_hint)
+        layout.addLayout(footer_row)
+
+        # ── The fitted-parameter table and its pop-out ───────────────────────
+        self._table = QTableWidget(0, 0)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        apply_param_table_style(self._table)
+        # Guard so programmatic table population (which sets the Include check
+        # states) does not re-emit the inclusion-changed signal.
+        self._populating_table = False
+        # Number of leading "data" columns (Run/B/T/params/abscissa) before the
+        # appended χ²ᵣ + Trend trend-gate columns; exports dump only these.
+        self._table_data_columns = 0
+        self._table.itemChanged.connect(self._on_table_item_changed)
+
+        # The table is live (Trend checkboxes, χ²ᵣ flags), so the pop-out hosts
+        # the widget itself and is built once rather than re-filled per show.
+        self._table_dialog = QDialog(self)
+        self._table_dialog.setWindowTitle(_TABLE_DIALOG_TITLE)
+        self._table_dialog.setModal(False)
+        dialog_layout = QVBoxLayout(self._table_dialog)
+        dialog_layout.addWidget(QLabel("Global fitting parameters"))
+        self._table_globals_label = QLabel("None")
+        self._table_globals_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self._table_globals_label.setWordWrap(True)
+        dialog_layout.addWidget(self._table_globals_label)
+        self._table_fraction_note = QLabel("")
+        self._table_fraction_note.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self._table_fraction_note.setWordWrap(True)
+        self._table_fraction_note.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._table_fraction_note.setVisible(False)
+        dialog_layout.addWidget(self._table_fraction_note)
+        dialog_layout.addWidget(self._table, 1)
+        dialog_buttons = QHBoxLayout()
+        copy_button = QPushButton("Copy TSV")
+        copy_button.setToolTip("Copy the table's data columns to the clipboard.")
+        copy_button.clicked.connect(self._copy_table_tsv)
+        dialog_buttons.addWidget(copy_button)
+        export_button = QPushButton("Export…")
+        export_button.clicked.connect(self._export_tsv)
+        dialog_buttons.addWidget(export_button)
+        dialog_buttons.addStretch(1)
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self._table_dialog.close)
+        dialog_buttons.addWidget(close_button)
+        dialog_layout.addLayout(dialog_buttons)
+
+        self._update_angle_fold_visibility()
         self._update_x_axis_auto_hint()
         self._refresh_group_button_styles()
         self._update_empty_state_hint()
+        self._update_row_dependent_controls()
+        self._sync_transform_buttons()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -924,32 +1009,35 @@ class FitParametersPanel(QWidget):
     def _on_ui_scale_changed(self, _ui_scale: float, effective_scale: float) -> None:
         self._group_button_style_scale = max(0.8, float(effective_scale))
         self._refresh_group_button_styles()
-        # The parameter/selector tables carry an explicit mono cell font (and
+        # The fitted-parameter table carries an explicit mono cell font (and
         # explicit row height) that ignore the (now re-scaled) application font,
         # and QSS cannot reach a per-cell font, so re-derive them from the
         # builders at the active scale. apply_param_table_style rebuilds the cell
         # font via mono_font() and the row height via metrics.row_height(), both
         # of which read the scale the UIManager has just published.
-        for table in (self._table, self._y_selector_table):
-            apply_param_table_style(table)
+        apply_param_table_style(self._table)
 
-    def _update_knight_window_button(self) -> None:
-        """Show/enable the "Knight shift window…" button only when it likely applies.
+    def _update_row_dependent_controls(self) -> None:
+        """Gate every control that only means something once rows are loaded.
 
-        The menu action (``Analysis -> Knight shift analysis…``, mainwindow.py)
-        stays the unconditional entry point regardless of the active series.
-        This button is the main-GUI shortcut in the *Derived parameters*
-        section, so it is hidden — not just disabled — whenever there is no
-        active series (``self._rows`` empty) or the active series' model has
-        no Knight-convertible component (``self._knight_observables`` empty).
-        Call this from every path that changes either of those two attributes.
+        The Table button and the ⋯ menu's exports need rows; "Derived
+        parameter…" needs them to build an expression from. The + menu's
+        Knight-shift shortcut is hidden — not just disabled — whenever there is
+        no active series or the active series' model has no Knight-convertible
+        component (``self._knight_observables`` empty); the ⋯ menu's entry (and
+        ``Analysis -> Knight shift analysis…`` in mainwindow.py) stay
+        unconditional. Call this from every path that changes either attribute.
         """
-        likely_knight_case = bool(self._rows) and bool(self._knight_observables)
-        self._knight_window_btn.setVisible(likely_knight_case)
-        self._knight_window_btn.setEnabled(likely_knight_case)
+        has_rows = bool(self._rows)
+        self._table_button.setEnabled(has_rows)
+        for action in self._export_actions:
+            action.setEnabled(has_rows)
+        self._derived_action.setEnabled(has_rows)
+        self._add_knight_action.setVisible(has_rows and bool(self._knight_observables))
 
     def clear(self) -> None:
         self._bump_data_revision()
+        self._close_fit_results_windows(list(self._fit_results_windows))
         self._rows = []
         self._varying_params = []
         self._global_params = None
@@ -972,12 +1060,16 @@ class FitParametersPanel(QWidget):
         self._trend_model_memory = {}
         self._selected_y_param_names = []
         self._series_run_numbers = {}
+        self._card_order = []
+        self._collapsed_params = set()
+        self._log_y_params = set()
+        self._x_transform = AxisTransform.identity()
+        self._y_transforms = {}
+        self._axis_transform_custom_memory = {}
+        self._model_fit_transform_sig = {}
+        self._plot_annotations = []
         self._rebuild_group_buttons()
-        self._show_table_btn.setEnabled(False)
-        self._create_composite_btn.setEnabled(False)
-        self._edit_composite_btn.setEnabled(False)
-        self._remove_composite_btn.setEnabled(False)
-        self._update_knight_window_button()
+        self._update_row_dependent_controls()
         self._rebuild_y_controls()
         self._refresh_plot()
 
@@ -1002,7 +1094,7 @@ class FitParametersPanel(QWidget):
         ]
 
         selected_y = list(self._selected_y_param_names) or self._selected_y_parameters()
-        log_y = [name for name, c in self._y_controls.items() if c.log.isChecked()]
+        display_params = self._display_y_parameters()
 
         return {
             "rows": rows,
@@ -1016,10 +1108,12 @@ class FitParametersPanel(QWidget):
             "x_axis_key": self._effective_x_key(),
             "angle_wrap_period": self._angle_wrap_period,
             "selected_y_params": selected_y,
+            "card_order": [name for name in self._card_order if name in display_params],
+            "collapsed_params": [n for n in display_params if n in self._collapsed_params],
             "log_x": bool(self._log_x_check.isChecked()),
-            "log_y_params": log_y,
-            "show_components": bool(self._show_components_check.isChecked()),
-            "plot_mode": self._plot_mode_combo.currentText(),
+            "log_y_params": [n for n in display_params if n in self._log_y_params],
+            "show_components": bool(self._show_components_action.isChecked()),
+            "plot_mode": self._plot_mode(),
             "plot_annotations": [
                 {
                     "x": float(ann.get("x", 0.0)),
@@ -1047,10 +1141,11 @@ class FitParametersPanel(QWidget):
             # ``model_memory`` kwarg. Kept here (not QSettings) so it does not
             # leak across unrelated projects.
             "trend_model_memory": dict(self._trend_model_memory),
-            # Per-axis transforms (identity serialises away); the last-used custom
-            # expressions are remembered per axis to pre-fill the Custom… dialog.
+            # Axis transforms (identity serialises away — the y map only ever
+            # holds non-identity lenses); the last-used custom expressions are
+            # remembered per target to pre-fill the Custom… dialog.
             "x_transform": self._x_transform.to_dict(),
-            "y_transform": self._y_transform.to_dict(),
+            "y_transforms": {name: t.to_dict() for name, t in self._y_transforms.items()},
             "axis_transform_custom_memory": dict(self._axis_transform_custom_memory),
         }
 
@@ -1081,7 +1176,13 @@ class FitParametersPanel(QWidget):
                 new_rows.append(entry)
             cleaned["rows"] = new_rows
 
-        for list_key in ("varying_params", "selected_y_params", "log_y_params"):
+        for list_key in (
+            "varying_params",
+            "selected_y_params",
+            "log_y_params",
+            "card_order",
+            "collapsed_params",
+        ):
             values = state.get(list_key)
             if isinstance(values, list):
                 cleaned[list_key] = [v for v in values if not is_track(v)]
@@ -1091,6 +1192,28 @@ class FitParametersPanel(QWidget):
             cleaned["model_fits"] = {k: v for k, v in model_fits.items() if not is_track(k)}
 
         return cleaned
+
+    @staticmethod
+    def _deserialize_y_transforms(state: dict) -> dict[str, AxisTransform]:
+        """Rebuild the per-parameter y lenses from a saved state.
+
+        Projects written before the lens became per parameter carry a single
+        ``y_transform``; it was only ever visible on the parameters that state
+        had selected, so it migrates onto exactly those.
+        """
+        transforms: dict[str, AxisTransform] = {}
+        raw = state.get("y_transforms")
+        if isinstance(raw, dict):
+            for name, payload in raw.items():
+                transform = AxisTransform.from_dict(payload)
+                if not transform.is_identity:
+                    transforms[str(name)] = transform
+        legacy = AxisTransform.from_dict(state.get("y_transform"))
+        if not legacy.is_identity:
+            selected = state.get("selected_y_params")
+            for name in selected if isinstance(selected, list) else []:
+                transforms[str(name)] = legacy
+        return transforms
 
     def restore_state(self, state: dict, *, defer_refresh: bool = False) -> None:
         # Suppress the heavy synchronous plot draws each intermediate restore step
@@ -1134,19 +1257,16 @@ class FitParametersPanel(QWidget):
             state.get("composite_parameters", [])
         )
         self._knight_shift_config = KnightShiftConfig.from_dict(state.get("knight_shift"))
-        # Restore the per-axis transforms early so the log-scale guard applies to
-        # the Y checkboxes when they are rebuilt below.
+        # Restore the axis transforms early so the log-scale guard applies to the
+        # Y checkboxes when they are rebuilt below.
         self._x_transform = AxisTransform.from_dict(state.get("x_transform"))
-        self._y_transform = AxisTransform.from_dict(state.get("y_transform"))
+        self._y_transforms = self._deserialize_y_transforms(state)
         raw_custom_memory = state.get("axis_transform_custom_memory")
         self._axis_transform_custom_memory = (
             {str(k): str(v) for k, v in raw_custom_memory.items()}
             if isinstance(raw_custom_memory, dict)
             else {}
         )
-        self._sync_axis_transform_combo("x")
-        self._sync_axis_transform_combo("y")
-        self._update_transform_suffix()
         restored_rows: list[_FitRow] = []
         if isinstance(rows_data, list):
             for entry in rows_data:
@@ -1179,18 +1299,11 @@ class FitParametersPanel(QWidget):
                     continue
 
         self._rows = restored_rows
-        self._show_table_btn.setEnabled(bool(self._rows))
-        self._export_tsv_btn.setEnabled(bool(self._rows))
-        self._export_gle_btn.setEnabled(bool(self._rows))
-        self._gle_format_combo.setEnabled(bool(self._rows))
-        self._create_composite_btn.setEnabled(bool(self._rows))
-        self._edit_composite_btn.setEnabled(False)
-        self._remove_composite_btn.setEnabled(False)
         # _knight_observables isn't restored until the caller's follow-up
         # load_representation_series() re-derivation runs (see restore_state's
-        # docstring), so this may under- or over-show transiently; that call
-        # re-invokes _update_knight_window_button with the correct value.
-        self._update_knight_window_button()
+        # docstring), so the + menu's Knight entry may under- or over-show
+        # transiently; that call re-invokes this with the correct value.
+        self._update_row_dependent_controls()
 
         varying = state.get("varying_params", [])
         if isinstance(varying, list) and all(isinstance(v, str) for v in varying):
@@ -1218,27 +1331,22 @@ class FitParametersPanel(QWidget):
         else:
             self._selected_y_param_names = []
 
-        self._rebuild_y_controls(preferred_selected=self._selected_y_param_names)
-
-        selected_y = set(self._selected_y_param_names)
-        for i in range(self._y_selector_table.rowCount()):
-            item = self._y_selector_table.item(i, 0)
-            if item is None:
-                continue
-            pname = item.data(Qt.ItemDataRole.UserRole)
-            if not isinstance(pname, str):
-                continue
-            item.setSelected(pname in selected_y if selected_y else i == 0)
-        self._selected_y_param_names = self._selected_y_parameters()
-
+        # Card order, collapse and log-y are read by _rebuild_y_controls as it
+        # builds the cards, so they are restored before it runs.
+        card_order = state.get("card_order", [])
+        self._card_order = [str(v) for v in card_order] if isinstance(card_order, list) else []
+        collapsed = state.get("collapsed_params", [])
+        self._collapsed_params = (
+            {str(v) for v in collapsed} if isinstance(collapsed, list) else set()
+        )
         log_y_state = state.get("log_y_params", [])
-        log_y = set(log_y_state if isinstance(log_y_state, list) else [])
-        for name, controls in self._y_controls.items():
-            controls.log.setChecked(name in log_y)
+        self._log_y_params = (
+            {str(v) for v in log_y_state} if isinstance(log_y_state, list) else set()
+        )
+        self._show_components_action.setChecked(bool(state.get("show_components", False)))
 
-        self._log_y_check.setChecked(bool(log_y))
-
-        self._show_components_check.setChecked(bool(state.get("show_components", False)))
+        self._rebuild_y_controls(preferred_selected=self._selected_y_param_names)
+        self._selected_y_param_names = self._selected_y_parameters()
 
         ann_state = state.get("plot_annotations", [])
         restored_annotations: list[dict[str, object]] = []
@@ -1261,10 +1369,12 @@ class FitParametersPanel(QWidget):
         self._plot_annotations = restored_annotations
 
         self._model_fits = self._deserialize_model_fits(state.get("model_fits", {}))
-        # Restored fits were saved under the restored transform, so bind their
-        # overlay-transform signature to it (a later transform change re-stales).
-        restored_sig = self._transform_signature()
-        self._model_fit_transform_sig = {name: restored_sig for name in self._model_fits}
+        # Restored fits were saved under the restored transforms, so bind each
+        # one's overlay signature to its parameter's lens (a later transform
+        # change re-stales it).
+        self._model_fit_transform_sig = {
+            name: self._transform_signature(name) for name in self._model_fits
+        }
         self._group_fit_results = self._deserialize_group_fit_results(
             state.get("group_fit_results", {})
         )
@@ -1321,13 +1431,15 @@ class FitParametersPanel(QWidget):
         self._log_x_check.setChecked(bool(state.get("log_x", False)))
         self._restore_angle_fold(state.get("angle_wrap_period"))
 
-        plot_mode = state.get("plot_mode")
-        if isinstance(plot_mode, str):
-            idx = self._plot_mode_combo.findText(plot_mode)
-            if idx >= 0:
-                self._plot_mode_combo.setCurrentIndex(idx)
+        # "Single Axes" was this mode's name before the Subplots │ Overlay
+        # toggle replaced the combo.
+        subplots = state.get("plot_mode") not in ("Overlay", "Single Axes")
+        self._subplots_button.setChecked(bool(subplots))
+        self._overlay_button.setChecked(not subplots)
+        self._plot_pages.setCurrentIndex(0 if subplots else 1)
 
         self._update_x_axis_auto_hint()
+        self._sync_transform_buttons()
 
     def set_fit_results(
         self,
@@ -1439,6 +1551,7 @@ class FitParametersPanel(QWidget):
         series_entries: list[tuple[str, str, list[dict]]],
         *,
         highlight_runs_by_id: dict[str, list[int]] | None = None,
+        short_names_by_id: dict[str, str] | None = None,
         select_id: str | None = None,
         global_params_by_id: dict[str, dict[str, dict[str, float]]] | None = None,
         knight_observables_by_id: dict[str, dict[str, str]] | None = None,
@@ -1464,6 +1577,11 @@ class FitParametersPanel(QWidget):
             window to drive data-browser highlighting via
             :signal:`series_selection_changed`.  Pass ``None`` to leave the
             stored map unchanged.
+        short_names_by_id:
+            Optional mapping of ``batch_id → short pill label`` (the run range,
+            disambiguated by the host where two series share one). A series
+            absent from the map — and every caller that omits the argument —
+            keeps its full name on the pill.
         select_id:
             Optional ``batch_id`` to make the active selection (e.g. the
             just-computed batch series). When present and still in the reloaded
@@ -1556,6 +1674,7 @@ class FitParametersPanel(QWidget):
                 composite_parameters=composite_params,
                 knight_observables=observables,
                 phase=(phase_by_id or {}).get(batch_id),
+                short_name=(short_names_by_id or {}).get(batch_id, ""),
             )
 
         # Update per-series run-number map for browser highlighting.
@@ -1643,6 +1762,7 @@ class FitParametersPanel(QWidget):
             composite_parameters=list(self._composite_parameters),
             knight_observables=dict(self._knight_observables),
             phase=current.phase,
+            short_name=current.short_name,
         )
 
     def _selected_group_ids_from_buttons(self) -> list[str]:
@@ -1679,27 +1799,32 @@ class FitParametersPanel(QWidget):
 
         self._group_button_map = {}
         groups = sorted(self._group_fit_results.values(), key=lambda g: g.group_name.lower())
+        strip_metrics = self._group_tabs_widget.fontMetrics()
         for group in groups:
             # A stale group-bound series (live membership ≠ last-fitted set, D1)
             # carries a warning glyph + tooltip on its pill — the same surfacing
             # channel as divergence. The clean ``group_name`` is left untouched so
             # rename/sort/delete still read the user-facing label.
             is_stale = group.group_id in self._stale_series_ids
-            button = QPushButton(f"{group.group_name} ⚠" if is_stale else group.group_name)
+            # Same rule as the y chips: the pill is a short handle capped at a
+            # character count, and the full name lives on the tooltip. A pill that
+            # grew with the series name was what pushed the dock past 13 inches.
+            pill_text = strip_metrics.elidedText(
+                group.short_name, Qt.TextElideMode.ElideRight, metrics.char_width(_CHIP_MAX_CHARS)
+            )
+            button = QPushButton(f"{pill_text} ⚠" if is_stale else pill_text)
             if group.phase is not None:
                 button.setIcon(self._phase_swatch_icon(group.phase.color))
                 button.setIconSize(QSize(10, 10))
-            # Every pill teaches the overlay gesture; a stale one prepends its
-            # own warning to the same tooltip.
-            gesture = (
-                "Click to view this series · Shift+click to overlay it with the selected series."
-            )
+            # Every pill names its series in full and teaches the overlay gesture;
+            # a stale one prepends its own warning to the same tooltip.
+            tooltip = [
+                group.group_name,
+                "Click to view this series · Shift+click to overlay it with the selected series.",
+            ]
             if is_stale:
-                button.setToolTip(
-                    "Membership changed since last fit — re-run to refresh.\n" + gesture
-                )
-            else:
-                button.setToolTip(gesture)
+                tooltip.insert(0, "Membership changed since last fit — re-run to refresh.")
+            button.setToolTip("\n".join(tooltip))
             button.setCheckable(True)
             button.clicked.connect(self._on_group_button_clicked)
             button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1710,7 +1835,6 @@ class FitParametersPanel(QWidget):
             )
             self._group_tabs_layout.addWidget(button)
             self._group_button_map[group.group_id] = button
-        self._group_tabs_layout.addStretch()
         self._group_tabs_widget.setVisible(bool(groups))
         self._refresh_group_button_styles()
 
@@ -1824,6 +1948,24 @@ class FitParametersPanel(QWidget):
                 state = "unselected"
             style_group_state_button(button, state, base=base, palette="red")
 
+        # Footer row 1 follows the strip: this is the one funnel every path that
+        # changes which series is shown (rebuild, click, delete, rename) reaches.
+        names = [
+            self._group_fit_results[gid].group_name
+            for gid in selected_ids
+            if gid in self._group_fit_results
+        ]
+        if len(names) > 1:
+            self._active_series_label.setText(f"{len(names)} series")
+            # "2 series" never elides, so the names need a tooltip of their own.
+            self._active_series_label.set_hover_text("\n".join(sorted(names)))
+        elif active_gid in self._group_fit_results:
+            self._active_series_label.setText(self._group_fit_results[active_gid].group_name)
+            self._active_series_label.set_hover_text("")
+        else:
+            self._active_series_label.setText("")
+        self._active_series_label.setVisible(bool(self._active_series_label.text()))
+
     def _on_group_button_clicked(self) -> None:
         self._sync_active_group_state()
 
@@ -1908,15 +2050,8 @@ class FitParametersPanel(QWidget):
             self._inferred_x_key = "run"
             self._model_fits = {}
             self._plot_annotations = []
-            self._show_table_btn.setEnabled(False)
-            self._export_tsv_btn.setEnabled(False)
-            self._export_gle_btn.setEnabled(False)
-            self._gle_format_combo.setEnabled(False)
-            self._create_composite_btn.setEnabled(False)
-            self._edit_composite_btn.setEnabled(False)
-            self._remove_composite_btn.setEnabled(False)
-            self._update_knight_window_button()
-            self._rebuild_y_controls(preferred_selected=previous_selected_y)
+            self._update_row_dependent_controls()
+            self._rebuild_y_controls(preferred_selected=previous_selected_y or None)
             self._refresh_model_fit_button_labels()
             self._update_x_axis_auto_hint()
             self._refresh_views()
@@ -1968,33 +2103,39 @@ class FitParametersPanel(QWidget):
             self._knight_observables = dict(active_group.knight_observables)
             self._plot_annotations = list(active_group.plot_annotations)
 
-        has_rows = bool(self._rows)
-
         self._apply_composite_parameters_to_rows(
             self._rows,
             self._composite_parameters,
             self._global_param_uncertainties,
         )
 
-        self._show_table_btn.setEnabled(has_rows)
-        self._export_tsv_btn.setEnabled(has_rows)
-        self._export_gle_btn.setEnabled(has_rows)
-        self._gle_format_combo.setEnabled(has_rows)
-        self._create_composite_btn.setEnabled(has_rows)
-        self._update_knight_window_button()
+        self._update_row_dependent_controls()
 
         display_params = set(self._display_y_parameters())
         self._model_fits = {k: v for k, v in self._model_fits.items() if k in display_params}
 
-        self._rebuild_y_controls(preferred_selected=previous_selected_y)
+        self._rebuild_y_controls(preferred_selected=previous_selected_y or None)
         self._refresh_model_fit_button_labels()
         self._update_x_axis_auto_hint()
         self._refresh_group_button_styles()
         self._refresh_views()
 
-    def _on_y_selection_changed(self) -> None:
+    def _on_chip_toggled(self, name: str, checked: bool) -> None:
+        """A chip went on or off: build or drop that parameter's card."""
+        self._style_chip(self._y_chips[name], checked)
+        if checked and name not in self._card_order:
+            self._card_order.append(name)
+        self._rebuild_cards()
         self._selected_y_param_names = self._selected_y_parameters()
-        self._update_composite_action_buttons()
+        self._plot_refresh_timer.start()
+
+    def _on_plot_mode_changed(self, subplots: bool) -> None:
+        self._plot_pages.setCurrentIndex(0 if subplots else 1)
+        self._refresh_plot()
+
+    def _on_card_order_changed(self, order: list) -> None:
+        self._card_order = [str(name) for name in order]
+        self._selected_y_param_names = self._selected_y_parameters()
         self._plot_refresh_timer.start()
 
     def _copy_parameter_set(self, source: ParameterSet) -> ParameterSet:
@@ -2427,34 +2568,8 @@ class FitParametersPanel(QWidget):
                 params.append(kname)
         return params
 
-    def _selected_composite_parameter_names(self) -> list[str]:
-        selected = set(self._selected_y_parameters())
-        composite_names = {definition.name for definition in self._composite_parameters}
-        return [
-            name
-            for name in self._display_y_parameters()
-            if name in selected and name in composite_names
-        ]
-
-    def _selected_knight_trace_names(self) -> list[str]:
-        """Currently-selected Knight-shift K traces (removable derived quantities)."""
-        selected = set(self._selected_y_parameters())
-        return [
-            name
-            for name in self._display_y_parameters()
-            if name in selected and name in self._knight_shift_names
-        ]
-
-    def _update_composite_action_buttons(self) -> None:
-        has_rows = bool(self._rows)
-        selected_composites = self._selected_composite_parameter_names()
-        selected_knight = self._selected_knight_trace_names()
-        # Edit only applies to composite (expression) parameters.
-        self._edit_composite_btn.setEnabled(has_rows and len(selected_composites) == 1)
-        # Remove deletes composites and/or Knight-shift K traces.
-        self._remove_composite_btn.setEnabled(
-            has_rows and bool(selected_composites or selected_knight)
-        )
+    def _is_composite_parameter(self, name: str) -> bool:
+        return any(definition.name == name for definition in self._composite_parameters)
 
     def _available_composite_source_parameters(self) -> list[str]:
         composite_names = {definition.name for definition in self._composite_parameters}
@@ -2826,32 +2941,13 @@ class FitParametersPanel(QWidget):
             return "run"
         return self._inferred_x_key
 
-    def _on_global_log_y_changed(self, _state: int) -> None:
-        enabled = self._log_y_check.isChecked()
-        if enabled and self._show_components_check.isChecked():
-            self._log_y_check.setChecked(False)
-            enabled = False
-        selected = set(self._selected_y_parameters())
-        for name, controls in self._y_controls.items():
-            if name in selected:
-                controls.log.setChecked(enabled)
-        self._refresh_plot()
-
-    def _on_show_components_changed(self, _state: int) -> None:
-        """Enable/disable component shading for parameter-model overlays."""
-        show_components = self._show_components_check.isChecked()
-        if show_components:
-            self._log_y_check.blockSignals(True)
-            self._log_y_check.setChecked(False)
-            self._log_y_check.blockSignals(False)
-            for controls in self._y_controls.values():
-                controls.log.blockSignals(True)
-                controls.log.setChecked(False)
-                controls.log.blockSignals(False)
-
-        for controls in self._y_controls.values():
-            controls.log.setEnabled(not show_components)
-
+    def _on_show_components_changed(self, checked: bool) -> None:
+        """Component shading stacks additive terms, so a log y axis is meaningless
+        beside it; turning it on clears every log-y choice and the log guard
+        keeps the checkboxes disabled while it is on."""
+        if checked:
+            self._log_y_params = set()
+        self._apply_transform_log_guard()
         self._refresh_plot()
 
     def _clear_plot_labels(self) -> None:
@@ -2861,26 +2957,19 @@ class FitParametersPanel(QWidget):
         self._annotation_drag_started = False
         self._refresh_plot()
 
+    def _connect_plot_events(self, canvas) -> None:
+        """Route one canvas' mouse events to the shared annotation handlers."""
+        canvas.mpl_connect("button_press_event", self._on_plot_button_press)
+        canvas.mpl_connect("motion_notify_event", self._on_plot_motion)
+        canvas.mpl_connect("button_release_event", self._on_plot_button_release)
+
     def _on_plot_button_press(self, event) -> None:
         """Handle click interactions for parameter-plot labels."""
-        if not self._has_mpl:
-            return
-
         if event.button == 3:
-            idx = self._detect_annotation_hit(event)
-            if idx is not None:
-                self._plot_annotations.pop(idx)
-                self._refresh_plot()
-                return
-            # No annotation under the cursor → offer the trend-point exclude menu.
-            self._show_member_context_menu(event)
+            self._show_plot_context_menu(event)
             return
 
         if event.button != 1:
-            return
-
-        if self._add_label_btn.isChecked():
-            self._add_annotation_at_event(event)
             return
 
         idx = self._detect_annotation_hit(event)
@@ -2921,28 +3010,55 @@ class FitParametersPanel(QWidget):
             return best_row
         return None
 
-    def _show_member_context_menu(self, event) -> None:
-        """Right-click a trend point → Exclude from / Include in the trend fit."""
-        row = self._detect_member_hit(event)
-        if row is None or row.batch_id is None or row.trend_member_key is None:
+    def _show_plot_context_menu(self, event) -> None:
+        """Right-click anywhere on any parameter plot: labels, and trend membership.
+
+        Every plot surface — each card's canvas and the Overlay canvas — offers
+        the same menu, so placing a label no longer means focusing a card first.
+        What it contains depends on what the cursor is over: a label offers Edit
+        / Remove, bare axes offer Add, and a trend point under the cursor adds
+        the membership toggle (with its quality flags) below a separator.
+        """
+        if event.inaxes is None:
             return
         menu = QMenu(self)
-        if row.include_in_trend:
-            toggle = menu.addAction("Exclude from trend")
-            target = False
+        hit = self._detect_annotation_hit(event)
+        add_action = edit_action = remove_action = None
+        if hit is None:
+            add_action = menu.addAction("Add label here…")
         else:
-            toggle = menu.addAction("Include in trend")
-            target = True
-        if row.quality_flags:
+            edit_action = menu.addAction("Edit label…")
+            remove_action = menu.addAction("Remove label")
+        clear_action = menu.addAction("Clear labels") if self._plot_annotations else None
+
+        toggle_action = None
+        row = self._detect_member_hit(event)
+        if row is not None and row.batch_id is not None and row.trend_member_key is not None:
             menu.addSeparator()
-            info = menu.addAction(
-                "Flags: " + ", ".join(_QUALITY_FLAG_LABELS.get(f, f) for f in row.quality_flags)
+            toggle_action = menu.addAction(
+                "Exclude from trend" if row.include_in_trend else "Include in trend"
             )
-            info.setEnabled(False)
-        chosen = menu.exec(QCursor.pos())
-        if chosen is toggle:
+            if row.quality_flags:
+                info = menu.addAction(
+                    "Flags: " + ", ".join(_QUALITY_FLAG_LABELS.get(f, f) for f in row.quality_flags)
+                )
+                info.setEnabled(False)
+
+        chosen = self._exec_menu(menu, QCursor.pos())
+        if chosen is None:
+            return
+        if chosen is add_action:
+            self._add_annotation_at_event(event)
+        elif chosen is edit_action:
+            self._prompt_annotation_text(hit)
+        elif chosen is remove_action:
+            self._plot_annotations.pop(hit)
+            self._refresh_plot()
+        elif chosen is clear_action:
+            self._clear_plot_labels()
+        elif chosen is toggle_action:
             self.member_trend_inclusion_changed.emit(
-                str(row.batch_id), int(row.trend_member_key), bool(target)
+                str(row.batch_id), int(row.trend_member_key), not row.include_in_trend
             )
 
     def _on_plot_motion(self, event) -> None:
@@ -2967,7 +3083,7 @@ class FitParametersPanel(QWidget):
         artist = ann.get("artist")
         if artist is not None:
             artist.set_position((ann["x"], ann["y"]))
-            self._canvas.draw_idle()
+            event.canvas.draw_idle()
 
     def _on_plot_button_release(self, event) -> None:
         """Finish drag, edit label on double click."""
@@ -2980,11 +3096,15 @@ class FitParametersPanel(QWidget):
         self._annotation_drag_started = False
 
         if not was_drag and event.button == 1 and getattr(event, "dblclick", False):
-            current = str(self._plot_annotations[idx].get("text", ""))
-            text, ok = QInputDialog.getText(self, "Edit Label", "Label text:", text=current)
-            if ok and text.strip():
-                self._plot_annotations[idx]["text"] = text.strip()
-                self._refresh_plot()
+            self._prompt_annotation_text(idx)
+
+    def _prompt_annotation_text(self, index: int) -> None:
+        """Re-ask for a label's text — the double-click and Edit label… gestures."""
+        current = str(self._plot_annotations[index].get("text", ""))
+        text, ok = QInputDialog.getText(self, "Edit Label", "Label text:", text=current)
+        if ok and text.strip():
+            self._plot_annotations[index]["text"] = text.strip()
+            self._refresh_plot()
 
     def _detect_annotation_hit(self, event) -> int | None:
         """Return annotation index under cursor, if any."""
@@ -3017,16 +3137,23 @@ class FitParametersPanel(QWidget):
                 "artist": None,
             }
         )
-        self._add_label_btn.setChecked(False)
         self._refresh_plot()
 
-    def _draw_plot_annotations(self, axes_by_tag: dict[str, object]) -> None:
-        """Draw stored annotations on currently visible parameter axes."""
+    def _draw_plot_annotations(
+        self, axes_by_tag: dict[str, object], *, keep_missing: bool = False
+    ) -> None:
+        """Draw stored annotations on the axes in *axes_by_tag*.
+
+        A full redraw drops the artist of every annotation whose axes are gone;
+        a one-card redraw (*keep_missing*) leaves the other cards' artists,
+        which are still painted, in place so they stay draggable.
+        """
         for ann in self._plot_annotations:
             axis_tag = str(ann.get("axis_tag", "main"))
             ax = axes_by_tag.get(axis_tag)
             if ax is None:
-                ann["artist"] = None
+                if not keep_missing:
+                    ann["artist"] = None
                 continue
             artist = ax.text(
                 float(ann.get("x", 0.0)),
@@ -3044,60 +3171,84 @@ class FitParametersPanel(QWidget):
         self._refresh_views()
 
     # ── Axis transforms ───────────────────────────────────────────────────────
-    def _make_axis_transform_combo(self, axis: str) -> QComboBox:
-        """Build one axis's transform chooser (None / 1/x / x² / … / Custom…)."""
-        combo = QComboBox()
+    def _y_transform_for(self, name: str) -> AxisTransform:
+        """The lens one y parameter is plotted through (identity by default)."""
+        return self._y_transforms.get(name, _IDENTITY_TRANSFORM)
+
+    def _transformed_y_params(self) -> list[str]:
+        """Selected y parameters carrying a non-identity lens, in display order."""
+        return [
+            n for n in self._selected_y_parameters() if not self._y_transform_for(n).is_identity
+        ]
+
+    def _pick_transform_kind(self, position, current: AxisTransform, axis: str) -> str | None:
+        """Pop the preset lens menu at *position*; return the chosen kind or None.
+
+        The menu is presented in terms of the axis it drives, so a y card offers
+        ``1/y`` rather than ``1/x``, and the active lens is ticked.
+        """
+        menu = QMenu(self)
         for kind in _TRANSFORM_PRESET_ORDER:
             label = _TRANSFORM_PRESET_LABELS[kind]
-            if axis == "y":
-                # Present the menu in terms of the axis it drives.
-                label = label.replace("x", "y")
-            combo.addItem(label, userData=kind)
-        combo.setToolTip(
-            "Transforms the plotted values themselves (error bars are "
-            "propagated) — distinct from the 'log' axis-scale checkbox, which "
-            "only changes tick spacing."
+            action = menu.addAction(label.replace("x", "y") if axis == "y" else label)
+            action.setCheckable(True)
+            action.setChecked(kind == current.kind)
+            action.setData(kind)
+        chosen = self._exec_menu(menu, position)
+        return chosen.data() if chosen is not None else None
+
+    def _show_x_transform_menu(self) -> None:
+        below = QPoint(0, self._x_transform_button.height())
+        kind = self._pick_transform_kind(
+            self._x_transform_button.mapToGlobal(below), self._x_transform, "x"
         )
-        # ``activated`` fires on every user pick (even re-selecting the current
-        # item), so re-choosing Custom… always re-opens the editor.
-        combo.activated.connect(lambda _index, a=axis: self._on_axis_transform_activated(a))
-        return combo
-
-    def _axis_transform_combo(self, axis: str) -> QComboBox:
-        return self._x_transform_combo if axis == "x" else self._y_transform_combo
-
-    def _axis_transform(self, axis: str) -> AxisTransform:
-        return self._x_transform if axis == "x" else self._y_transform
-
-    def _on_axis_transform_activated(self, axis: str) -> None:
-        combo = self._axis_transform_combo(axis)
-        kind = combo.currentData()
-        if kind == _TRANSFORM_CUSTOM:
-            self._prompt_custom_axis_transform(axis)
+        if kind is None:
             return
-        transform = AxisTransform.identity() if kind == "identity" else AxisTransform.preset(kind)
-        self._set_axis_transform(axis, transform)
+        if kind == _TRANSFORM_CUSTOM:
+            self._prompt_custom_axis_transform("x")
+            return
+        self._set_x_transform(
+            AxisTransform.identity() if kind == "identity" else AxisTransform.preset(kind)
+        )
 
-    def _prompt_custom_axis_transform(self, axis: str) -> None:
+    def _show_y_transform_menu(self, name: str, position: QPoint) -> None:
+        kind = self._pick_transform_kind(position, self._y_transform_for(name), "y")
+        if kind is None:
+            return
+        if kind == _TRANSFORM_CUSTOM:
+            self._prompt_custom_axis_transform("y", name=name)
+            return
+        self._set_y_transform(
+            name,
+            AxisTransform.identity() if kind == "identity" else AxisTransform.preset(kind),
+        )
+
+    def _prompt_custom_axis_transform(self, axis: str, name: str | None = None) -> None:
+        """Edit the custom expression for the abscissa, or for one y parameter."""
         from asymmetry.gui.panels.axis_transform_dialog import AxisTransformDialog
 
-        sample_value, sample_error = self._axis_sample_point(axis)
+        memory_key = "x" if axis == "x" else f"y:{name}"
+        sample_value, sample_error = self._axis_sample_point(axis, name)
         dialog = AxisTransformDialog(
             axis_label=axis.upper(),
-            initial_expression=self._axis_transform_custom_memory.get(axis, ""),
+            initial_expression=self._axis_transform_custom_memory.get(memory_key, ""),
             sample_value=sample_value,
             sample_error=sample_error,
             parent=self,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
-            # Revert the combo to whatever transform is actually active.
-            self._sync_axis_transform_combo(axis)
             return
         expression = dialog.expression()
-        self._axis_transform_custom_memory[axis] = expression
-        self._set_axis_transform(axis, AxisTransform.custom(expression))
+        self._axis_transform_custom_memory[memory_key] = expression
+        transform = AxisTransform.custom(expression)
+        if axis == "x":
+            self._set_x_transform(transform)
+        else:
+            self._set_y_transform(str(name), transform)
 
-    def _axis_sample_point(self, axis: str) -> tuple[float | None, float | None]:
+    def _axis_sample_point(
+        self, axis: str, name: str | None = None
+    ) -> tuple[float | None, float | None]:
         """A representative (value, error) for the custom-transform preview."""
         rows = self._included_trend_rows(self._effective_x_key())
         if not rows:
@@ -3109,10 +3260,6 @@ class FitParametersPanel(QWidget):
             values = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
             errors = self._x_error_array(rows, x_key)
         else:
-            y_params = self._selected_y_parameters()
-            if not y_params:
-                return None, None
-            name = y_params[0]
             values = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
             errors = np.array([r.errors.get(name, np.nan) for r in rows], dtype=float)
         finite = values[np.isfinite(values)]
@@ -3125,49 +3272,50 @@ class FitParametersPanel(QWidget):
             error = float(errors[idx])
         return float(values[idx]), error
 
-    def _set_axis_transform(self, axis: str, transform: AxisTransform) -> None:
-        if axis == "x":
-            self._x_transform = transform
+    def _set_x_transform(self, transform: AxisTransform) -> None:
+        """Set the shared abscissa lens."""
+        self._x_transform = transform
+        self._transform_changed()
+
+    def _store_y_transform(self, name: str, transform: AxisTransform) -> None:
+        """Record one parameter's lens; identity is absence, never an entry."""
+        if transform.is_identity:
+            self._y_transforms.pop(name, None)
         else:
-            self._y_transform = transform
-        self._sync_axis_transform_combo(axis)
+            self._y_transforms[name] = transform
+
+    def _set_y_transform(self, name: str, transform: AxisTransform) -> None:
+        self._store_y_transform(name, transform)
+        self._transform_changed()
+
+    def _transform_changed(self) -> None:
+        """Re-label the lens buttons, re-apply the log guard and redraw.
+
+        The redraw is whole-plot even for a single parameter's lens: the lens is
+        part of that parameter's overlay-cache signature, so its curves have to
+        be re-sampled off-thread before anything is drawn.
+        """
+        self._sync_transform_buttons()
         self._apply_transform_log_guard()
-        self._update_transform_suffix()
         # A transform change can strand an existing fit in the old coordinate;
-        # relabel its button (Model Fit* → Model Fit ⚠) so the stale state shows.
+        # relabel its button (Fit ✓ → Fit ⚠) so the stale state shows.
         self._refresh_model_fit_button_labels()
         self._refresh_plot()
 
-    def _sync_axis_transform_combo(self, axis: str) -> None:
-        """Make the combo's shown item match the active transform.
-
-        A custom transform relabels the Custom… item to the expression itself, so
-        the control is self-documenting; presets restore the plain menu labels.
-        """
-        combo = self._axis_transform_combo(axis)
-        transform = self._axis_transform(axis)
-        custom_index = combo.count() - 1
-        if transform.kind == _TRANSFORM_CUSTOM:
-            combo.setItemText(custom_index, transform.expression)
-            target_kind = _TRANSFORM_CUSTOM
-        else:
-            base_label = _TRANSFORM_PRESET_LABELS[_TRANSFORM_CUSTOM]
-            combo.setItemText(
-                custom_index, base_label.replace("x", "y") if axis == "y" else base_label
-            )
-            target_kind = transform.kind
-        blocker = QSignalBlocker(combo)
-        for i in range(combo.count()):
-            if combo.itemData(i) == target_kind:
-                combo.setCurrentIndex(i)
-                break
-        del blocker
+    def _sync_transform_buttons(self) -> None:
+        """Show the active lens on the x rail button and on every card's ƒ."""
+        text, tooltip = _transform_button_labels(self._x_transform, "x")
+        self._x_transform_button.setText(text)
+        self._x_transform_button.setToolTip(tooltip)
+        for card in self._card_stack.cards():
+            text, tooltip = _transform_button_labels(self._y_transform_for(card.name), "y")
+            card.set_transform_label(text)
+            card.transform_button.setToolTip(tooltip)
 
     def _apply_transform_log_guard(self) -> None:
-        """A log-*transform* already log-scales the numbers; disable the log-*axis*
-        checkbox on that axis so the two can't compound into nonsense."""
-        if not hasattr(self, "_log_x_check"):
-            return
+        """A log-*transform* already log-scales the numbers, and component shading
+        stacks additive terms; disable the log-*axis* checkbox in either case so
+        the two can't compound into nonsense."""
         x_is_log = self._x_transform.kind in (_TRANSFORM_LOG, _TRANSFORM_LOG10)
         if x_is_log and self._log_x_check.isChecked():
             blocker = QSignalBlocker(self._log_x_check)
@@ -3179,14 +3327,19 @@ class FitParametersPanel(QWidget):
             if x_is_log
             else "Logarithmic axis scale (display only — values unchanged)."
         )
-        y_is_log = self._y_transform.kind in (_TRANSFORM_LOG, _TRANSFORM_LOG10)
-        for controls in self._y_controls.values():
+        show_components = self._show_components_action.isChecked()
+        self._log_y_params -= {
+            name
+            for name in self._display_y_parameters()
+            if self._y_transform_for(name).kind in (_TRANSFORM_LOG, _TRANSFORM_LOG10)
+        }
+        for name, controls in self._y_controls.items():
+            y_is_log = self._y_transform_for(name).kind in (_TRANSFORM_LOG, _TRANSFORM_LOG10)
             check = controls.log
-            if y_is_log and check.isChecked():
-                blocker = QSignalBlocker(check)
-                check.setChecked(False)
-                del blocker
-            check.setEnabled(not y_is_log)
+            blocker = QSignalBlocker(check)
+            check.setChecked(name in self._log_y_params)
+            del blocker
+            check.setEnabled(not y_is_log and not show_components)
             check.setToolTip(
                 "Values are already log-transformed — clear the Y transform to "
                 "use a log axis scale."
@@ -3194,22 +3347,15 @@ class FitParametersPanel(QWidget):
                 else "Logarithmic axis scale (display only — values unchanged)."
             )
 
-    def _update_transform_suffix(self) -> None:
-        """Surface the active transforms in the collapsed section header."""
-        parts: list[str] = []
-        if not self._x_transform.is_identity:
-            parts.append(self._x_transform.describe("x"))
-        if not self._y_transform.is_identity:
-            parts.append(self._y_transform.describe("y"))
-        self._transforms_section.set_title_suffix(" · ".join(parts) if parts else None)
-
-    def _transform_signature(self) -> tuple:
-        """Identity of the current transforms, for cache/overlay invalidation."""
+    def _transform_signature(self, name: str) -> tuple:
+        """Identity of the transforms one parameter is plotted under, for
+        cache/overlay invalidation."""
+        y_transform = self._y_transform_for(name)
         return (
             self._x_transform.kind,
             self._x_transform.expression,
-            self._y_transform.kind,
-            self._y_transform.expression,
+            y_transform.kind,
+            y_transform.expression,
         )
 
     def _angle_axis_active(self) -> bool:
@@ -3485,7 +3631,7 @@ class FitParametersPanel(QWidget):
         return names
 
     def _update_global_param_hint(self) -> None:
-        """Show/hide the hint pointing at Global params that won't trend."""
+        """Show/hide the footer note pointing at Global params that won't trend."""
         names = self._shared_held_constant_params()
         if not names:
             self._global_param_hint.setText("")
@@ -3493,202 +3639,265 @@ class FitParametersPanel(QWidget):
             return
         labels = ", ".join(format_param_label(name) for name in names)
         subject = "it is" if len(names) == 1 else "they are"
-        self._global_param_hint.setText(
+        self._global_param_hint.setText(f"{labels} Global — held constant")
+        self._global_param_hint.setToolTip(
             f"{labels} fitted as Global (one shared value), so {subject} held "
             "constant and not shown as a trend. To trend across runs, set to "
             "Local in the Batch tab and re-fit."
         )
         self._global_param_hint.setVisible(True)
 
+    def _style_chip(self, chip: QPushButton, checked: bool) -> None:
+        style_group_state_button(chip, "active" if checked else "unselected", palette="blue")
+
     def _rebuild_y_controls(self, *, preferred_selected: list[str] | None = None) -> None:
-        self._y_selector_table.blockSignals(True)
-        self._y_selector_table.clearContents()
-        self._y_selector_table.setRowCount(0)
-
-        self._y_controls = {}
-
+        """Rebuild the chip rail and, from the checked chips, the card stack."""
         display_params = self._display_y_parameters()
 
         # Keep the X-axis selector's parameter entries in sync with the
         # trendable parameters (param-vs-param trending, item 1).
         self._rebuild_x_axis_combo()
-        # Refresh the "shared param held constant" hint whenever the trendable
-        # set changes (group switch, new fit, restore) — both exit paths below.
+        # Refresh the "shared param held constant" note whenever the trendable
+        # set changes (group switch, new fit, restore).
         self._update_global_param_hint()
 
-        if not display_params:
-            self._set_y_table_visible_rows(3)
-            self._y_selector_table.blockSignals(False)
-            return
-
-        self._y_selector_table.setRowCount(len(display_params))
-
-        for idx, name in enumerate(display_params):
-            name_item = QTableWidgetItem(format_param_label(name))
-            name_item.setData(Qt.ItemDataRole.UserRole, name)
-            # The name column elides; back the truncated text with the full label
-            # on hover so nothing is lost when the inspector is narrow.
-            name_item.setToolTip(format_param_label(name))
-            self._y_selector_table.setItem(idx, 0, name_item)
-
-            fit_button = QPushButton("Model Fit")
-            fit_button.setMinimumWidth(
-                fit_button.fontMetrics().horizontalAdvance("Model Fit*") + 36
-            )
-            # Keep keyboard focus on the table's selection model: a focusable cell
-            # widget steals focus on interaction and can collapse a multi-row
-            # selection built with Shift+Arrow.
-            fit_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            fit_button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
-            fit_button.clicked.connect(
-                lambda _checked=False, p=name: self._open_model_fit_dialog(p)
-            )
-            self._y_selector_table.setCellWidget(idx, 1, fit_button)
-
-            log_check = QCheckBox("log")
-            log_check.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            log_check.stateChanged.connect(self._refresh_plot)
-            log_check.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-            log_control_width = log_check.fontMetrics().horizontalAdvance("log") + 28
-            log_check.setMinimumWidth(log_control_width)
-
-            log_container = QWidget()
-            log_container.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-            log_container.setMinimumWidth(log_control_width + 8)
-            log_layout = QHBoxLayout(log_container)
-            log_layout.setContentsMargins(0, 0, 0, 0)
-            log_layout.addWidget(log_check)
-            log_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._y_selector_table.setCellWidget(idx, 2, log_container)
-
-            self._y_controls[name] = _YParamControls(
-                fit_button=fit_button,
-                log=log_check,
-            )
-
-        self._y_selector_table.resizeColumnsToContents()
-        fit_column_width = max(
-            (
-                max(
-                    controls.fit_button.minimumWidth(),
-                    controls.fit_button.minimumSizeHint().width(),
-                )
-                for controls in self._y_controls.values()
-            ),
-            default=120,
-        )
-        log_column_width = max(
-            (
-                max(
-                    controls.log.minimumWidth(),
-                    controls.log.sizeHint().width(),
-                )
-                + 12
-                for controls in self._y_controls.values()
-            ),
-            default=56,
-        )
-        self._y_selector_table.setColumnWidth(1, fit_column_width)
-        self._y_selector_table.setColumnWidth(2, log_column_width)
-        # Floor the table just wide enough for the two fixed action columns, a
-        # short name stub, and the vertical scrollbar — NOT the full longest
-        # name. The name column stretches and elides, so a long parameter name
-        # must not force the table (and panel) wider than the dock; that is what
-        # used to spawn the horizontal scrollbar that hid the action columns.
-        frame = 2 * self._y_selector_table.frameWidth()
-        vscroll_width = self._y_selector_table.style().pixelMetric(
-            self._y_selector_table.style().PixelMetric.PM_ScrollBarExtent,
-        )
-        name_stub_width = 48
-        minimum_width = (
-            name_stub_width + fit_column_width + log_column_width + frame + vscroll_width + 8
-        )
-        self._y_selector_table.setMinimumWidth(minimum_width)
-        self._set_y_table_visible_rows(3)
-
-        preferred = [name for name in (preferred_selected or []) if name in display_params]
-        if preferred:
-            for idx, name in enumerate(display_params):
-                item = self._y_selector_table.item(idx, 0)
-                if item is not None and name in preferred:
-                    item.setSelected(True)
-        elif self._y_selector_table.rowCount() > 0:
-            item = self._y_selector_table.item(0, 0)
-            if item is not None:
-                item.setSelected(True)
-
-        self._y_selector_table.blockSignals(False)
-        self._selected_y_param_names = self._selected_y_parameters()
-        self._update_composite_action_buttons()
-        # Freshly-built per-parameter log checkboxes must honour an active
-        # ln/log₁₀ Y transform (which owns the log-scaling instead).
-        self._apply_transform_log_guard()
-
-    def _set_y_table_visible_rows(self, visible_rows: int = 3) -> None:
-        """Set selector table height to show at most ``visible_rows`` rows."""
-        row_count = self._y_selector_table.rowCount()
-        if row_count <= 0:
-            rows = 1
+        # None is "no preference" (keep what is checked, else the first); a list
+        # is exact — an empty one leaves every chip off — unless none of its
+        # names survive a series switch, where the first parameter stands in.
+        if preferred_selected is None:
+            preferred = [
+                name
+                for name in display_params
+                if name in self._y_chips and self._y_chips[name].isChecked()
+            ] or display_params[:1]
         else:
-            rows = min(max(1, visible_rows), row_count)
-        row_height = self._y_selector_table.verticalHeader().defaultSectionSize()
-        if self._y_selector_table.rowCount() > 0:
-            row_height = max(row_height, self._y_selector_table.rowHeight(0))
-        frame = 2 * self._y_selector_table.frameWidth()
-        height = row_height * rows + frame + 2
-        self._y_selector_table.setMinimumHeight(0)
-        self._y_selector_table.setMaximumHeight(height)
+            preferred = [name for name in preferred_selected if name in display_params]
+            if preferred_selected and not preferred:
+                preferred = display_params[:1]
+        checked = set(preferred)
+
+        clear_layout(self._y_chip_layout)
+        self._y_chips = {}
+        chip_metrics = self._y_chip_strip.fontMetrics()
+        for name in display_params:
+            label = format_param_label(name)
+            chip = QPushButton(
+                chip_metrics.elidedText(
+                    label, Qt.TextElideMode.ElideRight, metrics.char_width(_CHIP_MAX_CHARS)
+                )
+            )
+            chip.setCheckable(True)
+            chip.setChecked(name in checked)
+            chip.setToolTip(label)
+            self._style_chip(chip, name in checked)
+            chip.toggled.connect(lambda on, p=name: self._on_chip_toggled(p, on))
+            self._y_chip_layout.addWidget(chip)
+            self._y_chips[name] = chip
+
+        known = set(display_params)
+        self._card_order = [name for name in self._card_order if name in known]
+        self._card_order += [name for name in display_params if name not in self._card_order]
+        self._collapsed_params &= known
+
+        self._rebuild_cards()
+        self._selected_y_param_names = self._selected_y_parameters()
+
+    def _rebuild_cards(self) -> None:
+        """Make the stack hold exactly one card per checked chip, in card order."""
+        wanted = self._selected_y_parameters()
+        for card in self._card_stack.cards():
+            if card.name not in wanted:
+                self._close_fit_results_windows([card.name])
+                self._card_stack.remove_card(card.name).deleteLater()
+        existing = {card.name for card in self._card_stack.cards()}
+        for name in wanted:
+            if name in existing:
+                continue
+            card = ParameterCard(
+                name,
+                format_param_label(name),
+                derived=self._is_composite_parameter(name) or name in self._knight_shift_names,
+            )
+            # Restore the persisted collapse before wiring expanded_changed: the
+            # initial state is not a gesture, and its redraw would run before the
+            # stack has the card.
+            card.set_expanded(name not in self._collapsed_params)
+            card.fit_requested.connect(self._open_model_fit_dialog)
+            card.results_requested.connect(self._show_fit_results_window)
+            card.log_toggled.connect(self._on_card_log_toggled)
+            card.transform_menu_requested.connect(self._show_y_transform_menu)
+            card.expanded_changed.connect(self._on_card_expanded_changed)
+            card.context_menu_requested.connect(self._show_card_context_menu)
+            self._connect_plot_events(card.canvas)
+            self._card_stack.add_card(card)
+        self._card_stack.set_order(wanted)
+
+        self._y_controls = {
+            card.name: _YParamControls(fit_button=card.fit_button, log=card.log_check)
+            for card in self._card_stack.cards()
+        }
+        # Freshly-built cards must honour an active ln/log₁₀ lens (which owns the
+        # log-scaling instead) and show the lens on their ƒ button.
+        self._apply_transform_log_guard()
+        self._sync_transform_buttons()
+        self._refresh_model_fit_button_labels()
+
+    def _on_card_log_toggled(self, name: str, checked: bool) -> None:
+        if checked:
+            self._log_y_params.add(name)
+        else:
+            self._log_y_params.discard(name)
+        if self._plot_mode() == "Subplots":
+            self._draw_card(name)
+        else:
+            self._refresh_plot()
+
+    def _on_card_expanded_changed(self, name: str, expanded: bool) -> None:
+        if expanded:
+            self._collapsed_params.discard(name)
+        else:
+            self._collapsed_params.add(name)
+        # The x label sits on the last expanded card, so this is a stack-wide redraw.
+        self._plot_refresh_timer.start()
+
+    def _show_card_context_menu(self, name: str, position: QPoint) -> None:
+        """Offer the derived-quantity actions a card's header supports."""
+        is_composite = self._is_composite_parameter(name)
+        if not (is_composite or name in self._knight_shift_names):
+            return
+        menu = QMenu(self)
+        edit_action = menu.addAction("Edit derived…") if is_composite else None
+        remove_action = menu.addAction("Remove")
+        chosen = self._exec_menu(menu, position)
+        if chosen is remove_action:
+            self._remove_derived_parameters([name])
+        elif chosen is edit_action:
+            self._edit_composite_parameter(name)
 
     def _refresh_model_fit_button_labels(self) -> None:
-        # When ≥2 group buttons are selected the per-row button drives a
+        """Relabel every card's Fit button, χ²ᵣ chip and open results window."""
+        # When ≥2 series pills are selected the card's button drives a
         # cross-group *global* fit instead of a single-series model fit, so it
-        # relabels to make that mode obvious (Phase 4). One (or zero) group
-        # selected keeps the single-series "Model Fit" / "Model Fit*" labels.
+        # relabels to make that mode obvious. One (or zero) selected keeps the
+        # single-series labels.
         n_groups = len(self._selected_group_ids_from_buttons())
-        for name, controls in self._y_controls.items():
+        for card in self._card_stack.cards():
+            solved = _first_solved_range(self._model_fits.get(card.name))
             if n_groups >= 2:
-                controls.fit_button.setText(f"Global fit ({n_groups} groups)…")
-                controls.fit_button.setToolTip(
+                card.set_fit_label(
+                    f"Global fit ×{n_groups}…",
                     "Fit this parameter jointly across the selected series "
-                    "(shared / per-series parameters)."
+                    "(shared / per-series parameters).",
                 )
-                continue
-            fit = self._model_fits.get(name)
-            if fit is not None and fit.active and self._has_successful_fit_curve(fit):
-                if self._overlay_suppressed_for_transform(name):
+            elif solved is not None:
+                if self._overlay_suppressed_for_transform(card.name):
                     # The fit lives in a previous axis transform's coordinate, so
                     # its curve is hidden and left out of the export — flag it
-                    # rather than leave a starred button over an empty plot.
-                    controls.fit_button.setText("Model Fit ⚠")
-                    controls.fit_button.setToolTip(
+                    # rather than leave a ticked button over an empty plot.
+                    card.set_fit_label(
+                        "Fit ⚠",
                         "This fit was computed under a different axis transform — "
-                        "its curve is hidden. Re-fit to update it."
+                        "its curve is hidden. Re-fit to update it.",
                     )
                 else:
-                    controls.fit_button.setText("Model Fit*")
-                    controls.fit_button.setToolTip("Model fit active")
+                    card.set_fit_label("Fit ✓", "Model fit active")
             else:
-                controls.fit_button.setText("Model Fit")
-                controls.fit_button.setToolTip("")
-        # The relabel above can widen the button past the column width that was
-        # fixed in _rebuild_y_controls (which only ever saw "Model Fit"/"Model
-        # Fit*") — "Global fit (N groups)…" is wider still. Re-pin the column to
-        # whatever the buttons need *now*, in their post-relabel state, so the
-        # text never clips (round-10 regression: column width was set once at
-        # populate time and never revisited on a later relabel).
-        if self._y_controls:
-            fit_column_width = max(
-                max(controls.fit_button.minimumWidth(), controls.fit_button.sizeHint().width())
-                for controls in self._y_controls.values()
-            )
-            if fit_column_width > self._y_selector_table.columnWidth(1):
-                self._y_selector_table.setColumnWidth(1, fit_column_width)
+                card.set_fit_label("Fit…", "")
 
-    def _has_successful_fit_curve(self, fit: ParameterModelFit) -> bool:
+            if solved is None:
+                # No fit, no results: the chip and its window are the fit's own
+                # chrome, so both go rather than linger over nothing.
+                card.set_result(None, "", None)
+                self._close_fit_results_windows([card.name])
+                continue
+            chi_squared, verdict, colours = self._fit_verdict(solved)
+            lines = [f"{chi_squared} · {verdict}"]
+            lines += [
+                f"{row.symbol} = {format_value_uncertainty(row.value, row.error)}"
+                f"{' ' + row.unit if row.unit else ''}"
+                for row in _parameter_rows(solved)
+                if not row.fixed
+            ]
+            lines.append("Click for the fit results.")
+            card.set_result(chi_squared, "\n".join(lines), colours)
+            window = self._fit_results_windows.get(card.name)
+            if window is not None:
+                window.set_results(self._fit_results(card.name))
+
+    def _fit_verdict(self, fit_range: ModelFitRange) -> tuple[str, str, tuple[str, str, str]]:
+        """Return ``(χ²ᵣ text, verdict phrase, chip colours)`` for a solved range.
+
+        The same verdict path the Model Fit dialog's range chips take, so a
+        card's chip and that dialog can never disagree: χ²ᵣ carries goodness
+        information only against real per-point errors, so unit/scatter weights
+        (and ν < 1) return the neutral "no verdict" chip.
+        """
+        result = fit_range.result
+        chi_squared = f"χ²ᵣ {result.reduced_chi_squared:.3g}"
+        quality = assess_fit_quality(
+            result.chi_squared,
+            result.n_points - len(fit_range.parameters.free_parameters),
+            fit_quality_confidence(),
+        )
+        if quality.verdict is None or result.error_mode in (
+            ErrorMode.NONE.value,
+            ErrorMode.SCATTER.value,
+        ):
+            return chi_squared, "no verdict", NEUTRAL_CHIP_COLOURS
+        band = f"{quality.band_low:.2g}–{quality.band_high:.2g}"
+        return (
+            chi_squared,
+            f"{quality.verdict} fit (band {band} at {quality.confidence * 100:g} %)",
+            FIT_VERDICT_CHIP_COLOURS[quality.verdict],
+        )
+
+    def _fit_results(self, name: str) -> FitResults:
+        """Snapshot *name*'s model fit for its :class:`FitResultsWindow`."""
+        fit = self._model_fits[name]
+        included = len(self._included_trend_rows(fit.x_key))
+        ranges = []
         for fit_range in fit.ranges:
-            if fit_range.result is not None and fit_range.result.success:
-                return True
-        return False
+            if fit_range.result is None or not fit_range.result.success:
+                continue
+            chi_squared, verdict, colours = self._fit_verdict(fit_range)
+            low, high = effective_range_bounds(fit_range)
+            ranges.append(
+                FitRangeResults(
+                    model=fit_range.model.component_expression_string(),
+                    chi_squared=chi_squared,
+                    verdict=verdict,
+                    colours=colours,
+                    bounds=f"{_bound_text(low)} – {_bound_text(high)}",
+                    error_mode=fit_range.result.error_mode,
+                    parameters=_parameter_rows(fit_range),
+                )
+            )
+        return FitResults(
+            parameter_name=name,
+            x_label=self._x_axis_display_label(fit.x_key),
+            runs=f"{included} / {len(self._rows)} runs · {len(fit.ranges)} range(s)",
+            ranges=tuple(ranges),
+        )
+
+    def _show_fit_results_window(self, name: str) -> None:
+        """Open (or raise) the results window for *name*'s model fit."""
+        window = self._fit_results_windows.get(name)
+        if window is None:
+            window = FitResultsWindow(self._fit_results(name), parent=self)
+            window.edit_requested.connect(self._open_model_fit_dialog)
+            self._fit_results_windows[name] = window
+        else:
+            window.set_results(self._fit_results(name))
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _close_fit_results_windows(self, names: Iterable[str]) -> None:
+        """Close and drop the results windows of *names* that have one open."""
+        for name in [n for n in names if n in self._fit_results_windows]:
+            window = self._fit_results_windows.pop(name)
+            window.close()
+            window.deleteLater()
 
     def _show_composite_parameter_dialog(
         self,
@@ -3818,27 +4027,13 @@ class FitParametersPanel(QWidget):
         preferred.extend(n for n in self._knight_shift_names if n not in preferred)
         self._refresh_after_composite_change(preferred_selected=preferred)
 
-    def _edit_selected_composite_parameter(self) -> None:
-        selected = self._selected_composite_parameter_names()
-        if len(selected) != 1:
-            QMessageBox.information(
-                self,
-                "Edit Composite Parameter",
-                "Select exactly one composite parameter to edit.",
-            )
-            return
-
-        selected_name = selected[0]
+    def _edit_composite_parameter(self, selected_name: str) -> None:
+        """Re-open the composite editor for one card's derived parameter."""
         initial_definition = next(
-            (
-                definition
-                for definition in self._composite_parameters
-                if definition.name == selected_name
-            ),
-            None,
+            definition
+            for definition in self._composite_parameters
+            if definition.name == selected_name
         )
-        if initial_definition is None:
-            return
 
         updated_definition = self._show_composite_parameter_dialog(
             initial_definition=initial_definition,
@@ -3873,12 +4068,10 @@ class FitParametersPanel(QWidget):
 
         self._refresh_after_composite_change(preferred_selected=preferred_selected)
 
-    def _remove_selected_composite_parameters(self) -> None:
-        composites = self._selected_composite_parameter_names()
-        knight = self._selected_knight_trace_names()
-        selected = composites + knight
-        if not selected:
-            return
+    def _remove_derived_parameters(self, selected: list[str]) -> None:
+        """Remove composite parameters and/or Knight-shift K traces by name."""
+        composites = [name for name in selected if self._is_composite_parameter(name)]
+        knight = [name for name in selected if name in self._knight_shift_names]
 
         if len(selected) == 1:
             message = f"Remove '{selected[0]}'?"
@@ -4025,7 +4218,7 @@ class FitParametersPanel(QWidget):
                 self._model_fits[param_name] = fit
                 # Record the transform this fit was computed under so a later
                 # transform change suppresses its now-mismatched overlay.
-                self._model_fit_transform_sig[param_name] = self._transform_signature()
+                self._model_fit_transform_sig[param_name] = self._transform_signature(param_name)
                 # Item B: surface this single fit's per-range outputs as a
                 # trendable results series (one row per range), so a single fit's
                 # outputs can themselves be trended.
@@ -4945,6 +5138,23 @@ class FitParametersPanel(QWidget):
 
         self._table.resizeColumnsToContents()
 
+        if self._global_params is None:
+            self._table_globals_label.setText("None")
+        else:
+            lines = []
+            for param in self._global_params:
+                unit = get_param_info(param.name).unit
+                unit_text = f" {unit}" if unit else ""
+                err = self._global_param_uncertainties.get(param.name)
+                if err is not None:
+                    lines.append(f"{param.name} = {param.value:.6g} \u00b1 {err:.6g}{unit_text}")
+                else:
+                    lines.append(f"{param.name} = {param.value:.6g}{unit_text}")
+            self._table_globals_label.setText("\n".join(lines) if lines else "None")
+        fraction_note = self._fraction_weights_note()
+        self._table_fraction_note.setText(fraction_note)
+        self._table_fraction_note.setVisible(bool(fraction_note))
+
     def _included_trend_rows(self, x_key: str) -> list[_FitRow]:
         """Rows currently included in the trend, in ascending-x order.
 
@@ -4972,6 +5182,8 @@ class FitParametersPanel(QWidget):
         # Snapshot the per-parameter x/y/err arrays on the GUI thread (cheap: no
         # minimisation, just reading already-materialised _FitRow attributes) so
         # the worker touches no widget state.
+        # The fit lives in the plotted coordinates (the x lens and the parameter's
+        # own y lens), exactly as the Model Fit dialog solved it.
         jobs: dict[
             str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None, ParameterModelFit]
         ] = {}
@@ -4979,18 +5191,22 @@ class FitParametersPanel(QWidget):
             rows = self._included_trend_rows(fit.x_key)
             if not rows or not fit.ranges:
                 continue
-            x_vals = np.array([self._x_value(r, fit.x_key) for r in rows], dtype=float)
-            y_vals = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
-            y_err = np.array([r.errors.get(name, np.nan) for r in rows], dtype=float)
-            x_err = self._x_error_array(rows, fit.x_key) if fit.use_x_errors else None
+            x_vals, x_err = self._apply_x_transform(
+                np.array([self._x_value(r, fit.x_key) for r in rows], dtype=float),
+                self._x_error_array(rows, fit.x_key) if fit.use_x_errors else None,
+            )
+            y_vals, y_err = self._series_y_arrays(rows, name)
             jobs[name] = (x_vals, y_vals, y_err, x_err, fit)
         if not jobs:
             return
 
         self._refit_in_progress = True
+        # The fits the jobs were cut from; a group switch, restore or clear
+        # replaces this dict, and a completion for the old one is then dropped.
+        started_from = self._model_fits
 
         def _run(_worker) -> dict[str, ParameterModelFit]:
-            updated: dict[str, ParameterModelFit] = dict(self._model_fits)
+            updated: dict[str, ParameterModelFit] = {}
             for name, (x_vals, y_vals, y_err, x_err, fit) in jobs.items():
                 new_ranges: list[ModelFitRange] = []
                 for rng in fit.ranges:
@@ -5019,7 +5235,11 @@ class FitParametersPanel(QWidget):
 
         def _on_done(updated: dict[str, ParameterModelFit]) -> None:
             self._refit_in_progress = False
-            self._model_fits = updated
+            if self._model_fits is not started_from:
+                return
+            self._model_fits.update(updated)
+            for name in updated:
+                self._model_fit_transform_sig[name] = self._transform_signature(name)
             self._sync_active_group_state()
             self._refresh_model_fit_button_labels()
             self._refresh_plot()
@@ -5048,32 +5268,33 @@ class FitParametersPanel(QWidget):
         self.member_trend_inclusion_changed.emit(str(batch_id), int(member_key), bool(include))
 
     def _selected_y_parameters(self) -> list[str]:
-        params: list[str] = []
-        for row in sorted({index.row() for index in self._y_selector_table.selectedIndexes()}):
-            item = self._y_selector_table.item(row, 0)
-            if item is None:
-                continue
-            pname = item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(pname, str) and pname:
-                params.append(pname)
-        display_params = self._display_y_parameters()
-        return [p for p in display_params if p in params]
+        """The checked chips, in card order (the stack's top-to-bottom order)."""
+        checked = {name for name, chip in self._y_chips.items() if chip.isChecked()}
+        ordered = [name for name in self._card_order if name in checked]
+        ordered += [
+            name for name in self._display_y_parameters() if name in checked and name not in ordered
+        ]
+        return ordered
+
+    def _plot_mode(self) -> str:
+        """``"Subplots"`` (the card stack) or ``"Overlay"`` (the single canvas)."""
+        return "Subplots" if self._subplots_button.isChecked() else "Overlay"
 
     def _is_log_y_for(self, name: str) -> bool:
-        controls = self._y_controls.get(name)
-        if controls is None:
-            return bool(self._log_y_check.isChecked())
-        return bool(controls.log.isChecked() or self._log_y_check.isChecked())
+        return name in self._log_y_params
 
     def _overlay_suppressed_for_transform(self, param_name: str) -> bool:
-        """Suppress a stored fit's overlay when the axes are transformed but the
-        fit was computed under a *different* transform (its ranges live in the
-        old coordinate). No-op when both axes are untransformed, so the common
-        path is unchanged; the fit's pill/table stay usable — only the curve
-        waits for a re-fit under the current transform."""
-        if self._x_transform.is_identity and self._y_transform.is_identity:
+        """Suppress a stored fit's overlay when this parameter's axes are
+        transformed but the fit was computed under a *different* transform (its
+        ranges live in the old coordinate). No-op when both the abscissa and this
+        parameter's lens are identity, so the common path is unchanged — and
+        another parameter's lens never touches it; the fit's pill/table stay
+        usable, only the curve waits for a re-fit under the current transform."""
+        if self._x_transform.is_identity and self._y_transform_for(param_name).is_identity:
             return False
-        return self._model_fit_transform_sig.get(param_name) != self._transform_signature()
+        return self._model_fit_transform_sig.get(param_name) != self._transform_signature(
+            param_name
+        )
 
     def _draw_model_overlay_mpl(self, ax, param_name: str, color: str = "red") -> None:
         fit = self._model_fits.get(param_name)
@@ -5084,7 +5305,7 @@ class FitParametersPanel(QWidget):
         if self._overlay_suppressed_for_transform(param_name):
             return
 
-        show_components = self._show_components_check.isChecked()
+        show_components = self._show_components_action.isChecked()
         component_colors = ["#8ecae6", "#90be6d", "#f4a261", "#e5989b", "#bdb2ff", "#ffd166"]
 
         # Consume the off-thread cache when present. A missing key means the
@@ -5212,19 +5433,20 @@ class FitParametersPanel(QWidget):
         x_key = self._effective_x_key()
         return (
             x_key,
-            bool(self._show_components_check.isChecked()),
+            bool(self._show_components_action.isChecked()),
             self._x_domain_for_sampling(x_key),
             # A transform change moves the sampling domain and the fit coordinate,
-            # so the cached curves must be recomputed.
-            self._transform_signature(),
-            tuple((name, id(self._model_fits.get(name))) for name in active),
+            # so the cached curves must be recomputed — per parameter, since each
+            # carries its own y lens (the signature also covers the shared x one).
+            tuple(
+                (name, id(self._model_fits.get(name)), self._transform_signature(name))
+                for name in active
+            ),
         )
 
     def _update_empty_state_hint(self) -> None:
         """Show the 'load a batch series' hint only while no rows are loaded."""
-        hint = getattr(self, "_empty_state_hint", None)
-        if hint is not None:
-            hint.setVisible(not self._rows)
+        self._empty_state_hint.setVisible(not self._rows)
 
     def _refresh_plot(self) -> None:
         """Redraw the trend plot, recomputing overlay curves off-thread if stale.
@@ -5236,8 +5458,6 @@ class FitParametersPanel(QWidget):
         overlays) draw synchronously now.
         """
         self._update_empty_state_hint()
-        if not self._has_mpl:
-            return
         if self._suspend_plot_refresh:
             # A bulk state change (project restore) is in progress; it issues a
             # single recompute when done. Skip the intermediate draw.
@@ -5256,26 +5476,26 @@ class FitParametersPanel(QWidget):
         transformed value is not is silently omitted by matplotlib; this counts
         them so the provenance line can say why some points vanished. Zero when no
         transform is active."""
-        if self._x_transform.is_identity and self._y_transform.is_identity:
+        if self._x_transform.is_identity and not self._y_transforms:
             return 0
         dropped: set[int] = set()
         if not self._x_transform.is_identity:
             raw_x = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
             tx, _ = self._x_transform.apply(raw_x)
             dropped.update(np.where(np.isfinite(raw_x) & ~np.isfinite(tx))[0].tolist())
-        if not self._y_transform.is_identity:
-            for name in y_params:
-                raw_y = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
-                ty, _ = self._y_transform.apply(raw_y)
-                dropped.update(np.where(np.isfinite(raw_y) & ~np.isfinite(ty))[0].tolist())
+        for name in y_params:
+            transform = self._y_transform_for(name)
+            if transform.is_identity:
+                continue
+            raw_y = np.array([r.values.get(name, np.nan) for r in rows], dtype=float)
+            ty, _ = transform.apply(raw_y)
+            dropped.update(np.where(np.isfinite(raw_y) & ~np.isfinite(ty))[0].tolist())
         return len(dropped)
 
     def _update_trend_provenance(self, rows: list[_FitRow], *, transform_dropped: int = 0) -> None:
         """Summarise trend membership: contributors vs excluded / flagged (F5),
         plus any points a transform dropped to NaN."""
-        label = getattr(self, "_trend_provenance_label", None)
-        if label is None:
-            return
+        label = self._trend_provenance_label
         total = len(rows)
         excluded = [r for r in rows if not r.include_in_trend]
         flagged = [r for r in rows if r.include_in_trend and r.quality_flags]
@@ -5291,7 +5511,9 @@ class FitParametersPanel(QWidget):
         if transform_dropped:
             parts.append(f"⚠ {transform_dropped} dropped by transform")
         label.setText(" · ".join(parts))
-        label.setToolTip(
+        # An explanation, not the squeezed-out text, so it stands whether or not
+        # the line is elided.
+        label.set_hover_text(
             "Excluded points are ringed in grey and drop out of the trend model "
             "fit; flagged points (warning diamonds) still contribute. Points "
             "'dropped by transform' fall where the transform is undefined "
@@ -5341,10 +5563,17 @@ class FitParametersPanel(QWidget):
                 linewidths=1.6,
             )
 
-    def _draw_plot(self) -> None:
-        if not self._has_mpl:
-            return
+    def _card_series_color(self) -> str:
+        """Hex colour of the points a card draws — the active series' identity.
 
+        Resolved through matplotlib so a cycle slot ("C0") becomes a colour Qt
+        can paint into the card's swatch and sparkline.
+        """
+        series = self._series_to_plot()
+        active = next((s.color for s in series if s.is_active), None)
+        return to_hex(active) if active is not None else tokens.TEXT_MUTED
+
+    def _draw_plot(self) -> None:
         self._axes_tag_map = {}
         axes_by_tag: dict[str, object] = {}
 
@@ -5362,23 +5591,179 @@ class FitParametersPanel(QWidget):
 
         x_key = self._effective_x_key()
         series = self._series_to_plot()
-        self._figure.clear()
-        plot_mode = self._plot_mode_combo.currentText()
+        # The skip note reports genuine empty/non-numeric custom-x values, so it
+        # must see the *raw* abscissa — a transform-induced NaN (1/0, ln≤0) is a
+        # different cause, counted separately on the provenance line.
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+        self._update_custom_x_skip_note(
+            x_key, np.array([self._x_value(r, x_key) for r in rows], dtype=float)
+        )
+        self._update_trend_provenance(
+            self._rows,
+            transform_dropped=self._transform_dropped_count(self._rows, x_key, y_params),
+        )
 
+        if self._plot_mode() == "Subplots":
+            self._draw_cards(series, x_key, axes_by_tag)
+            self._draw_plot_annotations(axes_by_tag)
+            for card in self._card_stack.cards():
+                card.canvas.draw_idle()
+            return
+
+        self._figure.clear()
         if len(series) > 1:
-            self._draw_multi_series(series, y_params, x_key, plot_mode, axes_by_tag)
+            self._draw_multi_series(series, y_params, x_key, axes_by_tag)
         else:
-            self._draw_single_series(y_params, x_key, plot_mode, axes_by_tag)
+            self._draw_single_series(y_params, x_key, axes_by_tag)
 
         self._draw_plot_annotations(axes_by_tag)
 
-        if getattr(self._figure, "get_constrained_layout", lambda: False)():
-            layout_engine = getattr(self._figure, "get_layout_engine", lambda: None)()
-            if layout_engine is not None and hasattr(layout_engine, "set"):
+        if self._figure.get_constrained_layout():
+            layout_engine = self._figure.get_layout_engine()
+            if layout_engine is not None:
                 layout_engine.set(w_pad=0.04, h_pad=0.04, hspace=0.05, wspace=0.05)
         else:
             self._figure.tight_layout(pad=1.2)
         self._canvas.draw_idle()
+
+    def _draw_cards(
+        self, series: list[_PlotSeries], x_key: str, axes_by_tag: dict[str, object]
+    ) -> None:
+        """Draw every card: axes for an expanded one, a sparkline for a collapsed one."""
+        x_label = self._transformed_x_axis_label(x_key)
+        color = self._card_series_color()
+        cards = self._card_stack.cards()
+        expanded = [card for card in cards if card.is_expanded()]
+        last_expanded = expanded[-1] if expanded else None
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+        x_vals, _ = self._apply_x_transform(
+            np.array([self._x_value(r, x_key) for r in rows], dtype=float),
+            self._x_error_array(rows, x_key),
+        )
+        for card in cards:
+            card.set_swatch(color)
+            if not card.is_expanded():
+                card.set_sparkline(x_vals, self._series_y_arrays(rows, card.name)[0], color)
+                card.figure.clear()
+                continue
+            card.figure.clear()
+            ax = card.figure.add_subplot(111)
+            self._axes_tag_map[id(ax)] = card.name
+            axes_by_tag[card.name] = ax
+            self._draw_param_axes(
+                ax,
+                card.name,
+                x_key,
+                series,
+                x_label=x_label if card is last_expanded else None,
+                show_legend=card is expanded[0],
+            )
+
+    def _draw_card(self, name: str) -> None:
+        """Redraw one card after a change that only touches it (log, collapse).
+
+        Its annotations are re-created here too; every other card and the
+        Overlay canvas keep the artists they already have.
+        """
+        card = self._card_stack.card(name)
+        color = self._card_series_color()
+        card.set_swatch(color)
+        x_key = self._effective_x_key()
+        rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+        x_vals, _ = self._apply_x_transform(
+            np.array([self._x_value(r, x_key) for r in rows], dtype=float),
+            self._x_error_array(rows, x_key),
+        )
+        self._axes_tag_map = {k: v for k, v in self._axes_tag_map.items() if v != name}
+        if not card.is_expanded():
+            card.set_sparkline(x_vals, self._series_y_arrays(rows, name)[0], color)
+            card.figure.clear()
+            card.canvas.draw_idle()
+            return
+        expanded = [c for c in self._card_stack.cards() if c.is_expanded()]
+        card.figure.clear()
+        ax = card.figure.add_subplot(111)
+        self._axes_tag_map[id(ax)] = name
+        self._draw_param_axes(
+            ax,
+            name,
+            x_key,
+            self._series_to_plot(),
+            x_label=self._transformed_x_axis_label(x_key) if card is expanded[-1] else None,
+            show_legend=card is expanded[0],
+        )
+        self._draw_plot_annotations({name: ax}, keep_missing=True)
+        card.canvas.draw_idle()
+
+    def _draw_param_axes(
+        self,
+        ax,
+        y_name: str,
+        x_key: str,
+        series: list[_PlotSeries],
+        *,
+        x_label: str | None,
+        show_legend: bool,
+    ) -> None:
+        """Draw one parameter's trend onto *ax* — the body of a Subplots panel.
+
+        One series is the parameter's own curve (series identity, so it takes the
+        active series' phase colour); several are overlaid by colour with the
+        series legend carried by the first expanded card only.
+        """
+        if len(series) > 1:
+            for plot_series in series:
+                self._plot_series_param(
+                    ax,
+                    plot_series,
+                    x_key,
+                    y_name,
+                    marker="o",
+                    label=self._series_legend_name(plot_series) if show_legend else None,
+                )
+            phase = self._gated_phase_decoration(
+                next((s.phase for s in series if s.is_active), None), x_key
+            )
+            if show_legend:
+                ax.legend(loc="best", fontsize="small")
+        else:
+            rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
+            x_vals, x_err = self._apply_x_transform(
+                np.array([self._x_value(r, x_key) for r in rows], dtype=float),
+                self._x_error_array(rows, x_key),
+            )
+            y_vals, y_err = self._series_y_arrays(rows, y_name)
+            self._draw_model_overlay_mpl(ax, y_name)
+            series_color = self._single_series_color()
+            ax.scatter(x_vals, y_vals, s=16, zorder=6, color=series_color)
+            self._overlay_member_markers(ax, x_vals, y_vals, rows)
+            ye = y_err if np.any(np.isfinite(y_err) & (y_err > 0)) else None
+            if ye is not None or x_err is not None:
+                ax.errorbar(
+                    x_vals,
+                    y_vals,
+                    yerr=ye,
+                    xerr=x_err,
+                    fmt="none",
+                    ecolor="gray",
+                    capsize=2,
+                    elinewidth=1,
+                    zorder=5,
+                )
+            phase = self._active_phase_decoration_for_axis(x_key)
+
+        if x_label is not None:
+            ax.set_xlabel(x_label)
+        ax.set_ylabel(self._transformed_y_axis_label(y_name))
+        ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
+        if self._show_components_action.isChecked():
+            ax.set_yscale("linear")
+            ax.set_ylim(bottom=0.0)
+        else:
+            ax.set_yscale("log" if self._is_log_y_for(y_name) else "linear")
+        ax.grid(True, alpha=0.3)
+        if phase is not None:
+            self._draw_phase_band(ax, phase)
 
     def _series_to_plot(self) -> list[_PlotSeries]:
         """The series to render: every checked group pill (overlay), else the one
@@ -5506,39 +5891,99 @@ class FitParametersPanel(QWidget):
         return QIcon(swatch)
 
     def _draw_single_series(
-        self, y_params: list[str], x_key: str, plot_mode: str, axes_by_tag: dict[str, object]
+        self, y_params: list[str], x_key: str, axes_by_tag: dict[str, object]
     ) -> None:
+        """Draw one series onto the Overlay canvas (twin y axis for two params)."""
         rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
         raw_x = np.array([self._x_value(r, x_key) for r in rows], dtype=float)
         x_vals, x_err = self._apply_x_transform(raw_x, self._x_error_array(rows, x_key))
         x_label = self._transformed_x_axis_label(x_key)
-        # The skip note reports genuine empty/non-numeric custom-x values, so it
-        # must see the *raw* abscissa — a transform-induced NaN (1/0, ln≤0) is a
-        # different cause, counted separately on the provenance line below.
-        self._update_custom_x_skip_note(x_key, raw_x)
-        self._update_trend_provenance(
-            rows, transform_dropped=self._transform_dropped_count(rows, x_key, y_params)
-        )
         phase = self._active_phase_decoration_for_axis(x_key)
 
-        if plot_mode == "Subplots" and len(y_params) > 1:
-            num_params = len(y_params)
-            num_cols = 2
-            num_rows = (num_params + num_cols - 1) // num_cols
+        ax = self._figure.add_subplot(111)
+        ax.set_xlabel(x_label)
+        self._axes_tag_map[id(ax)] = "main"
+        axes_by_tag["main"] = ax
 
+        if len(y_params) == 2:
+            left_name, right_name = y_params
+            left_vals, left_err = self._series_y_arrays(rows, left_name)
+            right_vals, right_err = self._series_y_arrays(rows, right_name)
+
+            ax2 = ax.twinx()
+            self._axes_tag_map[id(ax)] = left_name
+            self._axes_tag_map[id(ax2)] = right_name
+            axes_by_tag[left_name] = ax
+            axes_by_tag[right_name] = ax2
+            left_color = "C0"
+            right_color = "C1"
+
+            self._draw_model_overlay_mpl(ax, left_name, color=left_color)
+            self._draw_model_overlay_mpl(ax2, right_name, color=right_color)
+
+            ax.scatter(x_vals, left_vals, s=16, zorder=6, color=left_color)
+            self._overlay_member_markers(ax, x_vals, left_vals, rows)
+            ye_left = left_err if np.any(np.isfinite(left_err) & (left_err > 0)) else None
+            if ye_left is not None or x_err is not None:
+                ax.errorbar(
+                    x_vals,
+                    left_vals,
+                    yerr=ye_left,
+                    xerr=x_err,
+                    fmt="none",
+                    ecolor=left_color,
+                    capsize=2,
+                    elinewidth=1,
+                    zorder=5,
+                )
+
+            ax2.scatter(x_vals, right_vals, s=16, zorder=6, color=right_color)
+            self._overlay_member_markers(ax2, x_vals, right_vals, rows)
+            ye_right = right_err if np.any(np.isfinite(right_err) & (right_err > 0)) else None
+            if ye_right is not None or x_err is not None:
+                ax2.errorbar(
+                    x_vals,
+                    right_vals,
+                    yerr=ye_right,
+                    xerr=x_err,
+                    fmt="none",
+                    ecolor=right_color,
+                    capsize=2,
+                    elinewidth=1,
+                    zorder=5,
+                )
+
+            ax.set_ylabel(self._transformed_y_axis_label(left_name), color=left_color)
+            ax2.set_ylabel(self._transformed_y_axis_label(right_name), color=right_color)
+            ax.tick_params(axis="y", colors=left_color)
+            ax2.tick_params(axis="y", colors=right_color)
+            if self._show_components_action.isChecked():
+                ax.set_yscale("linear")
+                ax2.set_yscale("linear")
+                ax.set_ylim(bottom=0.0)
+                ax2.set_ylim(bottom=0.0)
+            else:
+                ax.set_yscale("log" if self._is_log_y_for(left_name) else "linear")
+                ax2.set_yscale("log" if self._is_log_y_for(right_name) else "linear")
+            ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
+            ax.grid(True, alpha=0.3)
+            if phase is not None:
+                # Shared x-axis (twinx): one band on the primary axis suffices.
+                self._draw_phase_band(ax, phase)
+        else:
+            axes_by_tag["main"] = ax
+            # A single parameter on this axis is the whole series' curve
+            # (series identity); several share the axis to distinguish
+            # *parameters*, so only the single-parameter case takes the
+            # phase colour.
             for idx, y_name in enumerate(y_params):
-                ax = self._figure.add_subplot(num_rows, num_cols, idx + 1)
-                self._axes_tag_map[id(ax)] = y_name
-                axes_by_tag[y_name] = ax
                 y_vals, y_err = self._series_y_arrays(rows, y_name)
+                color = self._single_series_color() if len(y_params) == 1 else f"C{idx % 10}"
+                label = self._legend_param_label(y_name) if len(y_params) > 1 else None
 
-                self._draw_model_overlay_mpl(ax, y_name)
+                self._draw_model_overlay_mpl(ax, y_name, color=color)
 
-                # One subplot per parameter, one series drawn on each — the
-                # colour here is pure series identity, so a phase-owned series
-                # takes its phase colour.
-                series_color = self._single_series_color()
-                ax.scatter(x_vals, y_vals, s=16, zorder=6, color=series_color)
+                ax.scatter(x_vals, y_vals, s=16, zorder=6, label=label, color=color)
                 self._overlay_member_markers(ax, x_vals, y_vals, rows)
                 ye = y_err if np.any(np.isfinite(y_err) & (y_err > 0)) else None
                 if ye is not None or x_err is not None:
@@ -5548,171 +5993,53 @@ class FitParametersPanel(QWidget):
                         yerr=ye,
                         xerr=x_err,
                         fmt="none",
-                        ecolor="gray",
+                        ecolor=color,
                         capsize=2,
                         elinewidth=1,
                         zorder=5,
                     )
 
-                ax.set_xlabel(x_label)
-                ax.set_ylabel(self._transformed_y_axis_label(y_name))
-                ax.set_title(_format_plot_label(y_name))
-                ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
-                if self._show_components_check.isChecked():
+            if len(y_params) == 1:
+                ax.set_ylabel(self._transformed_y_axis_label(y_params[0]))
+                if self._show_components_action.isChecked():
                     ax.set_yscale("linear")
                     ax.set_ylim(bottom=0.0)
                 else:
-                    ax.set_yscale("log" if self._is_log_y_for(y_name) else "linear")
-                ax.grid(True, alpha=0.3)
-                if phase is not None:
-                    self._draw_phase_band(ax, phase)
-        else:
-            ax = self._figure.add_subplot(111)
-            ax.set_xlabel(x_label)
-            self._axes_tag_map[id(ax)] = "main"
-            axes_by_tag["main"] = ax
-
-            if len(y_params) == 2:
-                left_name, right_name = y_params
-                left_vals, left_err = self._series_y_arrays(rows, left_name)
-                right_vals, right_err = self._series_y_arrays(rows, right_name)
-
-                ax2 = ax.twinx()
-                self._axes_tag_map[id(ax)] = left_name
-                self._axes_tag_map[id(ax2)] = right_name
-                axes_by_tag[left_name] = ax
-                axes_by_tag[right_name] = ax2
-                left_color = "C0"
-                right_color = "C1"
-
-                self._draw_model_overlay_mpl(ax, left_name, color=left_color)
-                self._draw_model_overlay_mpl(ax2, right_name, color=right_color)
-
-                ax.scatter(x_vals, left_vals, s=16, zorder=6, color=left_color)
-                self._overlay_member_markers(ax, x_vals, left_vals, rows)
-                ye_left = left_err if np.any(np.isfinite(left_err) & (left_err > 0)) else None
-                if ye_left is not None or x_err is not None:
-                    ax.errorbar(
-                        x_vals,
-                        left_vals,
-                        yerr=ye_left,
-                        xerr=x_err,
-                        fmt="none",
-                        ecolor=left_color,
-                        capsize=2,
-                        elinewidth=1,
-                        zorder=5,
-                    )
-
-                ax2.scatter(x_vals, right_vals, s=16, zorder=6, color=right_color)
-                self._overlay_member_markers(ax2, x_vals, right_vals, rows)
-                ye_right = right_err if np.any(np.isfinite(right_err) & (right_err > 0)) else None
-                if ye_right is not None or x_err is not None:
-                    ax2.errorbar(
-                        x_vals,
-                        right_vals,
-                        yerr=ye_right,
-                        xerr=x_err,
-                        fmt="none",
-                        ecolor=right_color,
-                        capsize=2,
-                        elinewidth=1,
-                        zorder=5,
-                    )
-
-                ax.set_ylabel(self._transformed_y_axis_label(left_name), color=left_color)
-                ax2.set_ylabel(self._transformed_y_axis_label(right_name), color=right_color)
-                ax.tick_params(axis="y", colors=left_color)
-                ax2.tick_params(axis="y", colors=right_color)
-                if self._show_components_check.isChecked():
-                    ax.set_yscale("linear")
-                    ax2.set_yscale("linear")
-                    ax.set_ylim(bottom=0.0)
-                    ax2.set_ylim(bottom=0.0)
-                else:
-                    ax.set_yscale("log" if self._is_log_y_for(left_name) else "linear")
-                    ax2.set_yscale("log" if self._is_log_y_for(right_name) else "linear")
-                ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
-                ax.grid(True, alpha=0.3)
-                if phase is not None:
-                    # Shared x-axis (twinx): one band on the primary axis suffices.
-                    self._draw_phase_band(ax, phase)
+                    ax.set_yscale("log" if self._is_log_y_for(y_params[0]) else "linear")
             else:
-                axes_by_tag["main"] = ax
-                # A single parameter on this axis is the whole series' curve
-                # (series identity); several share the axis to distinguish
-                # *parameters*, so only the single-parameter case takes the
-                # phase colour.
-                for idx, y_name in enumerate(y_params):
-                    y_vals, y_err = self._series_y_arrays(rows, y_name)
-                    color = self._single_series_color() if len(y_params) == 1 else f"C{idx % 10}"
-                    label = _format_plot_legend_label(y_name) if len(y_params) > 1 else None
-
-                    self._draw_model_overlay_mpl(ax, y_name, color=color)
-
-                    ax.scatter(x_vals, y_vals, s=16, zorder=6, label=label, color=color)
-                    self._overlay_member_markers(ax, x_vals, y_vals, rows)
-                    ye = y_err if np.any(np.isfinite(y_err) & (y_err > 0)) else None
-                    if ye is not None or x_err is not None:
-                        ax.errorbar(
-                            x_vals,
-                            y_vals,
-                            yerr=ye,
-                            xerr=x_err,
-                            fmt="none",
-                            ecolor=color,
-                            capsize=2,
-                            elinewidth=1,
-                            zorder=5,
-                        )
-
-                if len(y_params) == 1:
-                    ax.set_ylabel(self._transformed_y_axis_label(y_params[0]))
-                    if self._show_components_check.isChecked():
-                        ax.set_yscale("linear")
-                        ax.set_ylim(bottom=0.0)
-                    else:
-                        ax.set_yscale("log" if self._is_log_y_for(y_params[0]) else "linear")
+                ax.set_ylabel("Parameter value")
+                if len(y_params) > 2:
+                    ax.legend(loc="best")
+                if self._show_components_action.isChecked():
+                    ax.set_yscale("linear")
+                    ax.set_ylim(bottom=0.0)
                 else:
-                    ax.set_ylabel("Parameter Value")
-                    if len(y_params) > 2:
-                        ax.legend(loc="best")
-                    if self._show_components_check.isChecked():
-                        ax.set_yscale("linear")
-                        ax.set_ylim(bottom=0.0)
-                    else:
-                        ax.set_yscale(
-                            "log"
-                            if any(self._is_log_y_for(name) for name in y_params)
-                            else "linear"
-                        )
+                    ax.set_yscale(
+                        "log" if any(self._is_log_y_for(name) for name in y_params) else "linear"
+                    )
 
-                ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
-                ax.grid(True, alpha=0.3)
-                if phase is not None:
-                    self._draw_phase_band(ax, phase)
+            ax.set_xscale("log" if self._log_x_check.isChecked() else "linear")
+            ax.grid(True, alpha=0.3)
+            if phase is not None:
+                self._draw_phase_band(ax, phase)
 
     def _draw_multi_series(
         self,
         series: list[_PlotSeries],
         y_params: list[str],
         x_key: str,
-        plot_mode: str,
         axes_by_tag: dict[str, object],
     ) -> None:
-        """Overlay several selected series (colour = series). Parameter identity,
-        when several are also selected, is carried by the layout (Subplots) or by
-        marker shape — never by a second colour dimension. Twin-axis is suppressed
-        (its colour-codes-the-axis scheme collides with colour-codes-the-series);
+        """Overlay several selected series on one axis (colour = series).
+
+        Parameter identity, when several are also selected, is carried by marker
+        shape — never by a second colour dimension. Twin-axis is suppressed (its
+        colour-codes-the-axis scheme collides with colour-codes-the-series);
         per-series model-fit overlays are drawn only for the active series (whose
         curves ride the off-thread cache)."""
         multi_param = len(y_params) > 1
         markers = ["o", "s", "^", "D", "v", "P", "X", "*"]
         x_label = self._transformed_x_axis_label(x_key)
-        self._update_trend_provenance(
-            self._rows,
-            transform_dropped=self._transform_dropped_count(self._rows, x_key, y_params),
-        )
         log_x = self._log_x_check.isChecked()
         # Only the *active* series' phase decorates the overlay — the others'
         # ranges/boundaries would compete visually and are already implied by
@@ -5720,35 +6047,6 @@ class FitParametersPanel(QWidget):
         active_phase = self._gated_phase_decoration(
             next((s.phase for s in series if s.is_active), None), x_key
         )
-
-        if plot_mode == "Subplots" and multi_param:
-            num_cols = 2
-            num_rows = (len(y_params) + num_cols - 1) // num_cols
-            for pj, y_name in enumerate(y_params):
-                ax = self._figure.add_subplot(num_rows, num_cols, pj + 1)
-                self._axes_tag_map[id(ax)] = y_name
-                axes_by_tag[y_name] = ax
-                for s in series:
-                    self._plot_series_param(
-                        ax,
-                        s,
-                        x_key,
-                        y_name,
-                        marker="o",
-                        label=self._series_legend_name(s) if pj == 0 else None,
-                    )
-                ax.set_xlabel(x_label)
-                ax.set_ylabel(self._transformed_y_axis_label(y_name))
-                ax.set_title(_format_plot_label(y_name))
-                ax.set_xscale("log" if log_x else "linear")
-                ax.set_yscale("log" if self._is_log_y_for(y_name) else "linear")
-                ax.grid(True, alpha=0.3)
-                if active_phase is not None:
-                    self._draw_phase_band(ax, active_phase)
-            handles, labels = self._figure.axes[0].get_legend_handles_labels()
-            if handles:
-                self._figure.legend(handles, labels, loc="upper right", fontsize="small")
-            return
 
         ax = self._figure.add_subplot(111)
         self._axes_tag_map[id(ax)] = "main"
@@ -5760,7 +6058,7 @@ class FitParametersPanel(QWidget):
                 self._plot_series_param(ax, s, x_key, y_name, marker=marker, label=label)
         ax.set_xlabel(x_label)
         ax.set_ylabel(
-            self._transformed_y_axis_label(y_params[0]) if not multi_param else "Parameter Value"
+            self._transformed_y_axis_label(y_params[0]) if not multi_param else "Parameter value"
         )
         ax.set_xscale("log" if log_x else "linear")
         if multi_param:
@@ -5783,8 +6081,20 @@ class FitParametersPanel(QWidget):
     ) -> str:
         name = self._series_legend_name(series)
         if multi_param:
-            return f"{name} · {format_param_label(y_name)}"
+            return f"{name} · {self._legend_param_label(y_name)}"
         return name
+
+    def _legend_param_label(self, y_name: str, *, gle: bool = False) -> str:
+        """A parameter's legend entry: its symbol, or its lens when one is set.
+
+        Several parameters on one Overlay axis share a neutral axis label, so
+        the legend is the only place a per-parameter lens (1/λ, ln σ) can show.
+        """
+        if self._y_transform_for(y_name).is_identity:
+            return _format_gle_legend_label(y_name) if gle else _format_plot_legend_label(y_name)
+        if gle:
+            return self._transformed_y_export_header(y_name)
+        return self._transformed_y_axis_label(y_name)
 
     def _plot_series_param(
         self,
@@ -5836,9 +6146,10 @@ class FitParametersPanel(QWidget):
         """Build (and transform) one parameter's value/error arrays for *rows*."""
         y_vals = np.array([r.values.get(y_name, np.nan) for r in rows], dtype=float)
         y_err = np.array([r.errors.get(y_name, np.nan) for r in rows], dtype=float)
-        if self._y_transform.is_identity:
+        transform = self._y_transform_for(y_name)
+        if transform.is_identity:
             return y_vals, y_err
-        return self._y_transform.apply(y_vals, y_err)
+        return transform.apply(y_vals, y_err)
 
     @staticmethod
     def _axis_symbol(label: str) -> str:
@@ -5862,10 +6173,11 @@ class FitParametersPanel(QWidget):
         return self._x_transform.describe_with_unit(symbol, unit)
 
     def _transformed_y_axis_label(self, y_name: str) -> str:
-        if self._y_transform.is_identity:
+        transform = self._y_transform_for(y_name)
+        if transform.is_identity:
             return _format_plot_label(y_name)
         symbol, unit = self._axis_symbol_and_unit(format_param_label(y_name))
-        return self._y_transform.describe_with_unit(symbol, unit)
+        return transform.describe_with_unit(symbol, unit)
 
     def _transformed_x_display_label(self, x_key: str) -> str:
         """Plain-text transformed x label (for dialog titles / Model-Fit axis).
@@ -5980,79 +6292,68 @@ class FitParametersPanel(QWidget):
         )
 
     def _show_table_dialog(self) -> None:
-        if self._table.rowCount() == 0 or self._table.columnCount() == 0:
-            return
-
-        if self._table_dialog is not None:
-            self._table_dialog.close()
-            self._table_dialog = None
-
-        dialog = QDialog(self)
-        title = "Fitted Variable Parameters"
-        if not (self._x_transform.is_identity and self._y_transform.is_identity):
+        """Raise the pop-out holding the live fitted-parameter table."""
+        title = _TABLE_DIALOG_TITLE
+        if not self._x_transform.is_identity or self._y_transforms:
             # The table always shows raw fitted values; the transform is a plot
             # lens, so say so rather than let a user read the table as transformed.
             title += " (raw values — transforms apply to the plot)"
-        dialog.setWindowTitle(title)
-        dialog.resize(1000, 600)
-        dialog.setModal(False)
+        self._table_dialog.setWindowTitle(title)
+        self._size_table_dialog_to_content()
+        self._table_dialog.show()
+        self._table_dialog.raise_()
+        self._table_dialog.activateWindow()
 
-        layout = QVBoxLayout(dialog)
-        header_title = QLabel("Global fitting parameters")
-        layout.addWidget(header_title)
+    def _size_table_dialog_to_content(self) -> None:
+        """Open the pop-out at the width its columns actually need.
 
-        if self._global_params is not None:
-            lines = []
-            for param in self._global_params:
-                unit = get_param_info(param.name).unit
-                unit_text = f" {unit}" if unit else ""
-                err = self._global_param_uncertainties.get(param.name)
-                if err is not None:
-                    lines.append(f"{param.name} = {param.value:.6g} \u00b1 {err:.6g}{unit_text}")
-                else:
-                    lines.append(f"{param.name} = {param.value:.6g}{unit_text}")
-            header_text = "\n".join(lines) if lines else "None"
-        else:
-            header_text = "None"
+        A ``QTableWidget``'s size hint is a scrolling hint, so the dialog would
+        open with a horizontal scrollbar over columns that are already sized to
+        their contents — the user has to widen it before reading a fit with more
+        than a couple of parameters. Everything below comes from the table's own
+        headers and from the sibling widgets' hints, and the floor is the
+        dialog's current size, so a pop-out the user has resized only ever grows.
+        """
+        layout = self._table_dialog.layout()
+        margins = layout.contentsMargins()
+        frame = 2 * self._table.frameWidth()
+        width = (
+            self._table.horizontalHeader().length()
+            + self._table.verticalHeader().width()
+            + frame
+            + margins.left()
+            + margins.right()
+        )
+        table_height = (
+            self._table.horizontalHeader().height()
+            + self._table.rowCount() * self._table.verticalHeader().defaultSectionSize()
+            + frame
+        )
+        items = [layout.itemAt(index) for index in range(layout.count())]
+        height = (
+            margins.top() + margins.bottom() + layout.spacing() * (len(items) - 1) + table_height
+        )
+        height += sum(
+            item.sizeHint().height() for item in items if item.widget() is not self._table
+        )
+        resize_to_available(
+            self._table_dialog,
+            width,
+            height,
+            width_fraction=_TABLE_DIALOG_SCREEN_FRACTION,
+            height_fraction=_TABLE_DIALOG_SCREEN_FRACTION,
+            min_width=self._table_dialog.width(),
+            min_height=self._table_dialog.height(),
+        )
 
-        header_label = QLabel(header_text)
-        header_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        header_label.setWordWrap(True)
-        layout.addWidget(header_label)
-
-        fraction_note = self._fraction_weights_note()
-        if fraction_note:
-            note_label = QLabel(fraction_note)
-            note_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            note_label.setWordWrap(True)
-            note_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-            layout.addWidget(note_label)
-
-        table_view = QTableWidget(self._table.rowCount(), self._table.columnCount(), dialog)
-        table_view.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-
-        headers = [
-            self._table.horizontalHeaderItem(col).text() for col in range(self._table.columnCount())
-        ]
-        table_view.setHorizontalHeaderLabels(headers)
-
+    def _copy_table_tsv(self) -> None:
+        """Put the table's data columns (what Export TSV writes) on the clipboard."""
+        columns = range(self._table_data_columns)
+        lines = ["\t".join(self._table.horizontalHeaderItem(col).text() for col in columns)]
         for row in range(self._table.rowCount()):
-            for col in range(self._table.columnCount()):
-                source_item = self._table.item(row, col)
-                text = source_item.text() if source_item is not None else ""
-                table_view.setItem(row, col, QTableWidgetItem(text))
-
-        table_view.resizeColumnsToContents()
-        layout.addWidget(table_view)
-
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(dialog.close)
-        layout.addWidget(close_btn)
-
-        self._table_dialog = dialog
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+            cells = [self._table.item(row, col) for col in columns]
+            lines.append("\t".join("" if cell is None else cell.text() for cell in cells))
+        QApplication.clipboard().setText("\n".join(lines))
 
     def _export_model_label(self) -> str:
         """Return the originating fit model common to the displayed rows.
@@ -6072,7 +6373,7 @@ class FitParametersPanel(QWidget):
 
     def _transformed_y_export_header(self, name: str) -> str:
         symbol, unit = self._axis_symbol_and_unit(format_param_label(name))
-        return self._y_transform.describe_with_unit(symbol, unit)
+        return self._y_transform_for(name).describe_with_unit(symbol, unit)
 
     @staticmethod
     def _export_float(value: object) -> str:
@@ -6099,11 +6400,10 @@ class FitParametersPanel(QWidget):
         x_key = self._effective_x_key()
         multi = len(series) > 1
         y_params = self._display_y_parameters()
-        selected_y = self._selected_y_parameters()
         abscissa = self._export_abscissa_column()
         abscissa_key = abscissa[0] if abscissa is not None else None
         x_active = not self._x_transform.is_identity
-        y_active = not self._y_transform.is_identity
+        transformed_y = self._transformed_y_params()
 
         # Raw columns stay verbatim (the durable provenance record); a Series
         # column leads only when >1 series is overlaid, and transformed columns
@@ -6121,10 +6421,9 @@ class FitParametersPanel(QWidget):
         headers.extend(["reduced_chi2", "chi2"])
         if x_active:
             headers.append(self._transformed_x_export_header(x_key))
-        if y_active:
-            for name in selected_y:
-                header = self._transformed_y_export_header(name)
-                headers.extend([header, f"err_{header}"])
+        for name in transformed_y:
+            header = self._transformed_y_export_header(name)
+            headers.extend([header, f"err_{header}"])
 
         model_label = self._export_model_label()
 
@@ -6135,11 +6434,13 @@ class FitParametersPanel(QWidget):
             if model_label:
                 tsvfile.write(f"# Model: {model_label}\n")
             # Record the active transforms (re-executable expressions in x) so the
-            # transformed columns are self-describing.
+            # transformed columns are self-describing; the y lens is per parameter,
+            # so it is named alongside its expression.
             if x_active:
                 tsvfile.write(f"# X transform: {self._x_transform.expression_text}\n")
-            if y_active:
-                tsvfile.write(f"# Y transform: {self._y_transform.expression_text}\n")
+            for name in transformed_y:
+                expression = self._y_transform_for(name).expression_text
+                tsvfile.write(f"# Y transform [{name}]: {expression}\n")
             if self._global_params is not None:
                 tsvfile.write("# Global fitting parameters:\n")
                 for param in self._global_params:
@@ -6163,11 +6464,7 @@ class FitParametersPanel(QWidget):
                     if x_active
                     else None
                 )
-                y_transformed = (
-                    {name: self._series_y_arrays(rows, name) for name in selected_y}
-                    if y_active
-                    else {}
-                )
+                y_transformed = {name: self._series_y_arrays(rows, name) for name in transformed_y}
                 for i, src in enumerate(rows):
                     record: list[str] = [plot_series.name] if multi else []
                     record += [str(int(src.run_number)), fmt(src.field), fmt(src.temperature)]
@@ -6178,10 +6475,9 @@ class FitParametersPanel(QWidget):
                     record += [fmt(src.reduced_chi_squared), fmt(src.chi_squared)]
                     if x_active:
                         record.append(fmt(x_transformed[i]))
-                    if y_active:
-                        for name in selected_y:
-                            vals, errs = y_transformed[name]
-                            record += [fmt(vals[i]), fmt(errs[i])]
+                    for name in transformed_y:
+                        vals, errs = y_transformed[name]
+                        record += [fmt(vals[i]), fmt(errs[i])]
                     writer.writerow(record)
 
     def _serialize_model_fits(self) -> dict:
@@ -6581,8 +6877,6 @@ class FitParametersPanel(QWidget):
         / ``sig`` are passed in to avoid recomputing them; when omitted (a direct
         force-recompute) they are derived here.
         """
-        if not self._has_mpl:
-            return
         if active is None:
             active = self._active_overlay_params()
         if sig is None:
@@ -6590,8 +6884,7 @@ class FitParametersPanel(QWidget):
         if not active:
             # Nothing heavy to draw. Drop any stale overlay from an earlier
             # in-flight compute, mark the (empty) cache current, and draw now.
-            if self._trend_overlay is not None:
-                self._trend_overlay.hide()
+            self._trend_overlay.hide()
             self._precomputed_trend_curves = None
             self._trend_cache_sig = sig
             self._draw_plot()
@@ -6606,9 +6899,8 @@ class FitParametersPanel(QWidget):
         model_fits = dict(self._model_fits)
         x_key = self._effective_x_key()
         x_domain = self._x_domain_for_sampling(x_key)
-        show_components = self._show_components_check.isChecked()
-        if self._trend_overlay is not None:
-            self._trend_overlay.show_message("Computing trend curves…")
+        show_components = self._show_components_action.isChecked()
+        self._trend_overlay.show_message("Computing trend curves…")
         self._trend_curve_compute_active = True
         self._tasks.start(
             lambda _worker: self._compute_trend_curves(
@@ -6632,8 +6924,7 @@ class FitParametersPanel(QWidget):
         if self._redispatch_pending_trend_compute():
             # Inputs changed mid-compute; this result is stale — skip drawing it.
             return
-        if self._trend_overlay is not None:
-            self._trend_overlay.hide()
+        self._trend_overlay.hide()
         # Cache the curves (keyed by the signature they were computed for) so
         # pure-render redraws reuse them instead of re-evaluating the model.
         self._precomputed_trend_curves = curves if isinstance(curves, dict) else {}
@@ -6644,8 +6935,7 @@ class FitParametersPanel(QWidget):
         self._trend_curve_compute_active = False
         if self._redispatch_pending_trend_compute():
             return
-        if self._trend_overlay is not None:
-            self._trend_overlay.hide()
+        self._trend_overlay.hide()
         # Draw the data points without overlay curves; mark the (empty) cache
         # current so the failure isn't retried on every redraw for this signature.
         self._precomputed_trend_curves = {}
@@ -6659,6 +6949,7 @@ class FitParametersPanel(QWidget):
     def closeEvent(self, event) -> None:
         self.shutdown_workers()
         self._unregister_knight_labels()
+        self._close_fit_results_windows(list(self._fit_results_windows))
         super().closeEvent(event)
 
     def _write_fit_files(
@@ -6751,12 +7042,11 @@ class FitParametersPanel(QWidget):
                 f.write(f"! Model: {model_label}\n")
 
             x_active = not self._x_transform.is_identity
-            y_active = not self._y_transform.is_identity
-            selected_y = self._selected_y_parameters()
+            transformed_y = self._transformed_y_params()
             if x_active:
                 f.write(f"! X transform: {self._x_transform.expression_text}\n")
-            if y_active:
-                f.write(f"! Y transform: {self._y_transform.expression_text}\n")
+            for name in transformed_y:
+                f.write(f"! Y transform [{name}]: {self._y_transform_for(name).expression_text}\n")
             if len(self._series_to_plot()) > 1:
                 f.write("! Note: overlaid series not exported; active series only.\n")
 
@@ -6795,10 +7085,9 @@ class FitParametersPanel(QWidget):
             # _gle_transformed_x_column / _gle_transformed_columns_for_param.
             if x_active:
                 headers.append(self._transformed_x_export_header(x_key))
-            if y_active:
-                for name in selected_y:
-                    header = self._transformed_y_export_header(name)
-                    headers.extend([header, f"err_{header}"])
+            for name in transformed_y:
+                header = self._transformed_y_export_header(name)
+                headers.extend([header, f"err_{header}"])
 
             x_transformed = (
                 self._apply_x_transform(
@@ -6807,9 +7096,7 @@ class FitParametersPanel(QWidget):
                 if x_active
                 else None
             )
-            y_transformed = (
-                {name: self._series_y_arrays(rows, name) for name in selected_y} if y_active else {}
-            )
+            y_transformed = {name: self._series_y_arrays(rows, name) for name in transformed_y}
 
             f.write("! Column map:\n")
             for col_idx, name in enumerate(headers, start=1):
@@ -6841,10 +7128,9 @@ class FitParametersPanel(QWidget):
                 values.append(row.chi_squared if row.chi_squared is not None else np.nan)
                 if x_active:
                     values.append(float(x_transformed[i]))
-                if y_active:
-                    for name in selected_y:
-                        vals, errs = y_transformed[name]
-                        values.extend([float(vals[i]), float(errs[i])])
+                for name in transformed_y:
+                    vals, errs = y_transformed[name]
+                    values.extend([float(vals[i]), float(errs[i])])
                 f.write(" ".join(f"{v:>16.8g}" for v in values) + "\n")
 
     def _gle_x_column(self, x_key: str) -> int:
@@ -6887,16 +7173,18 @@ class FitParametersPanel(QWidget):
         return self._gle_base_column_count() + 1
 
     def _gle_transformed_columns_for_param(self, name: str) -> tuple[int, int] | None:
-        """1-indexed (value, err) transformed columns for a plotted param."""
-        if self._y_transform.is_identity:
-            return None
-        selected = self._selected_y_parameters()
-        if name not in selected:
+        """1-indexed (value, err) transformed columns for a plotted param.
+
+        ``None`` for a parameter plotted through the identity lens: the data file
+        writes a transformed column pair only for the transformed parameters.
+        """
+        transformed = self._transformed_y_params()
+        if name not in transformed:
             return None
         base = self._gle_base_column_count()
         if not self._x_transform.is_identity:
             base += 1  # the transformed-x column is written first
-        value_col = base + 1 + selected.index(name) * 2
+        value_col = base + 1 + transformed.index(name) * 2
         return value_col, value_col + 1
 
     def _gle_effective_x_column(self, x_key: str) -> int:
@@ -6913,7 +7201,7 @@ class FitParametersPanel(QWidget):
         return self._transformed_x_export_header(x_key)
 
     def _gle_effective_y_label(self, name: str) -> str:
-        if self._y_transform.is_identity:
+        if self._y_transform_for(name).is_identity:
             return _format_gle_label(name)
         return self._transformed_y_export_header(name)
 
@@ -6934,7 +7222,7 @@ class FitParametersPanel(QWidget):
         if self._overlay_suppressed_for_transform(param_name):
             return
 
-        show_components = self._show_components_check.isChecked()
+        show_components = self._show_components_action.isChecked()
         component_colors = ["lightblue", "lightgreen", "pink", "lightgray", "cyan", "yellow"]
 
         curves = self._sampled_fit_curves(
@@ -6945,7 +7233,7 @@ class FitParametersPanel(QWidget):
         for idx, (range_index, xs, ys) in enumerate(curves):
             line_color = _fit_overlay_color(idx) if len(curves) > 1 else color
             line_label = (
-                _fit_overlay_label(param_name, idx, len(curves), gle=True)
+                _fit_overlay_label(self._legend_param_label(param_name, gle=True), idx, len(curves))
                 if include_labels
                 else None
             )
@@ -7087,7 +7375,7 @@ class FitParametersPanel(QWidget):
                 alpha=0.08,
             )
 
-    def _export_gle(self) -> None:
+    def _export_gle(self, output_format: str) -> None:
         if not self._rows:
             return
 
@@ -7110,7 +7398,7 @@ class FitParametersPanel(QWidget):
             tasks=self._tasks,
             dialog_title="Export to GLE",
             default_name="fit_parameters.gleplot",
-            output_format=self._gle_format_combo.currentText().lower(),
+            output_format=output_format,
             build=self._build_gle_export,
         )
 
@@ -7153,7 +7441,7 @@ class FitParametersPanel(QWidget):
         x_label = self._gle_effective_x_label(x_key)
         data_file_ref = data_path.name
         x_col = self._gle_effective_x_column(x_key)
-        plot_mode = self._plot_mode_combo.currentText()
+        plot_mode = self._plot_mode()
         rows = sorted(self._rows, key=lambda r: self._x_value(r, x_key))
         show_fit_legend = self._count_fit_curves(x_key, y_params) > 1
 
@@ -7197,9 +7485,9 @@ class FitParametersPanel(QWidget):
                 ax.set_ylabel(self._gle_effective_y_label(y_name))
                 if self._log_x_check.isChecked():
                     ax.set_xscale("log")
-                if not self._show_components_check.isChecked() and self._is_log_y_for(y_name):
+                if not self._show_components_action.isChecked() and self._is_log_y_for(y_name):
                     ax.set_yscale("log")
-                if self._show_components_check.isChecked():
+                if self._show_components_action.isChecked():
                     ax.set_ylim(0.0, None)
                 self._add_gle_annotations(ax, y_name)
                 if phase is not None:
@@ -7266,7 +7554,7 @@ class FitParametersPanel(QWidget):
                 )
                 ax.set_ylabel(self._gle_effective_y_label(left_name), axis="y")
                 ax.set_ylabel(self._gle_effective_y_label(right_name), axis="y2")
-                if self._show_components_check.isChecked():
+                if self._show_components_action.isChecked():
                     ax.set_ylim(0.0, None, axis="y")
                     ax.set_ylim(0.0, None, axis="y2")
                 self._add_gle_annotations(ax, left_name)
@@ -7314,11 +7602,11 @@ class FitParametersPanel(QWidget):
                 if len(y_params) == 1:
                     ax.set_ylabel(self._gle_effective_y_label(y_params[0]))
                 else:
-                    ax.set_ylabel("Parameter Value")
+                    ax.set_ylabel("Parameter value")
                     if show_fit_legend:
                         ax.legend(loc="best")
 
-                if self._show_components_check.isChecked():
+                if self._show_components_action.isChecked():
                     ax.set_ylim(0.0, None)
                 elif len(y_params) == 1 and self._is_log_y_for(y_params[0]):
                     ax.set_yscale("log")

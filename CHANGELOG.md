@@ -45,6 +45,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   approximation the two-cut-off form makes (and when to fall back to `OverhauserPowder` instead),
   and the literature references.
 
+### Changed
+
+- **The Fit Parameters panel is now a stack of per-parameter cards instead of
+  a Y-parameter table above one shared plot.** Checking a chip on the new y
+  rail opens (or closes) that parameter's **card**, which carries its own
+  `Fit`, `log`, and `ƒ` (axis-transform) controls next to the figure they
+  act on; collapsing a card replaces the figure with a small sparkline, and
+  dragging its grip reorders the stack. The `Fit` button now reads `Fit…` /
+  `Fit ✓` / `Fit ⚠` / `Global fit ×N…` in place of the old `Model Fit` /
+  `Model Fit*` labels. A fitted card also carries a `χ²ᵣ 0.89` chip coloured
+  by the fit-quality verdict, whose tooltip names the verdict band and every
+  fitted parameter, and which opens a non-modal per-parameter
+  `Fit results — λ (µs⁻¹)` window: the model and verdict chips over a
+  `Parameter` / `Value` / `Unit` table in the parenthesised-uncertainty
+  convention (`35.8(5)`), the fit's provenance, range and error mode, and
+  `Copy` / `Edit model fit…` / `Close`. A
+  `Subplots` │ `Overlay` toggle replaces the old `Plot mode` combo (`Overlay`
+  is `Single Axes` renamed), and the fitted-parameter table moves into a
+  non-modal `Fitted parameters` pop-out (the rail's `Table` button, with
+  `Copy TSV` and `Export…` beneath it) in place of the old `Show table`
+  dialog. Exports, `Show components`, and the Knight-shift shortcut move into
+  the rail's `⋯` and `+` menus; a derived parameter's `New/Edit composite`
+  and `Remove` buttons become `Edit derived…` / `Remove` on its card's
+  right-click menu. The removed `Axis transforms` and `Derived parameters`
+  sections fold into the ƒ buttons, and the `Add Label` / `Clear Labels` bar
+  becomes a right-click menu on every plot — a card's figure or the Overlay
+  canvas — offering `Add label here…`, `Edit label…` / `Remove label` over an
+  existing label, and `Clear labels`; a trend point's
+  `Exclude from trend` / `Include in trend` action joins the same menu.
+  Focusing a card (**⤢**) is now purely a size gesture. The series pills are
+  now short handles — a series' run range (`394–397`), or the name you gave
+  it, with the full name on the tooltip and the model appended when two series
+  share a run range — and the strip wraps instead of widening the panel, so a
+  second series no longer pushes the dock off a 13-inch screen; the footer
+  gained a first row naming the series on screen in full (`2 series`, names on
+  its tooltip, while an overlay is selected). See
+  `docs/reference/parameter_trending.rst`.
+
+- **The Parameters dock and the `Fitted parameters` pop-out now open at the
+  size their contents need.** The cards in the dock divide its height between
+  them instead of overflowing it into a scrollbar, the right-hand deck opens
+  at least as wide as the Parameters panel's rails require (so it no longer
+  opens with a horizontal scrollbar on a 13-inch screen), and the pop-out
+  table opens at its full column width — capped to the screen, and never
+  shrinking a window you have already resized.
+
+- **A parameter's y-axis transform (Redfield, Arrhenius, a custom expression)
+  is now set per parameter instead of once for every selected Y parameter.**
+  x is one shared coordinate across every card, but y is a different physical
+  quantity per card, so one lens across dimensionally unlike parameters (σ²
+  beside a raw β, ln ν beside a linear λ) was only coherent while the panel
+  was used one parameter at a time; each card's `ƒ` button now sets and shows
+  only that parameter's own lens. A project saved before this change migrates
+  on load: a `plot_mode` of `Single Axes` reads as `Overlay`, and a legacy
+  single `y_transform` applies only to the parameters that project had
+  selected at save time (a parameter that was not selected never showed the
+  old lens). With three or more parameters overlaid on one axis, each
+  legend entry now names that parameter's lens (`1/λ (µs)`, `ln σ`) in the
+  plot and the GLE export, and the shared axis reads `Parameter value`.
+
 ### Fixed
 
 - **Locating moved data files now works for a project saved on Windows and opened on

@@ -5,12 +5,13 @@ Parameter trending
    :alt: Fit Parameters trending panel showing MgB₂ σ(T) points with the fitted two-gap SC_TwoGap_SS curve
    :width: 100%
 
-*The Fit Parameters trending panel with synthetic MgB₂ σ(T) data (Tc = 36 K)*
-*loaded as the* ``σ(T) — MgB₂`` *series and* ``σ (µs⁻¹)`` *selected on the*
-*y-axis. The smooth trend curve is a* ``SC_TwoGap_SS`` *two-gap fit (Model Fit\**
-*button), an MgB₂ alpha-model decomposition (small and large gap ratios;*
-*Niedermayer et al. Phys. Rev. B 65, 094512, 2002); the fit recovers*
-*σ₀ ≈ 1.24 µs⁻¹ and Tc ≈ 35.8 K. The σ(T) → λ(T) inversion that follows from*
+*The Fit Parameters panel with synthetic MgB₂ σ(T) data (Tc = 36 K) loaded as*
+*the* ``σ(T) — MgB₂`` *series and the* ``σ (µs⁻¹)`` *chip checked on the y*
+*rail, opening its card. The smooth trend curve is a* ``SC_TwoGap_SS`` *two-gap*
+*fit (the card's* **Fit ✓** *button), an MgB₂ alpha-model decomposition (small*
+*and large gap ratios; Niedermayer et al. Phys. Rev. B 65, 094512, 2002),*
+*recovering σ₀ ≈ 1.24 µs⁻¹ and Tc ≈ 35.8 K; the card's* ``χ²ᵣ`` *chip grades*
+*it and opens the full results. The σ(T) → λ(T) inversion that follows from*
 *this fit is discussed in* :doc:`sc_penetration_depth`.
 
 Parameter trending is the second stage of any temperature or field scan
@@ -29,6 +30,86 @@ Frequency-domain global fits use the same panel.  Peak centres and widths from
 Fourier spectra appear as ``nu0`` and ``fwhm`` in MHz, with derived field
 equivalents ``B0`` and ``Bwid`` for plotting or fitting spectral shifts and
 broadening directly against field, temperature, or run number.
+
+.. _trend-panel-layout:
+
+Panel layout
+------------
+
+The panel reads top to bottom, nothing scrolling at rest. A **series strip**
+lists the recorded fit series for the active representation as coloured pill
+buttons: click one to view it, **Shift+click** a second to overlay it
+(`Overlaying Several Series`_), right-click for rename / select-members /
+delete. A pill carries a short handle — the series' run range (``394–397``),
+or the name you renamed it to — and its full name on the tooltip; two series
+over the same runs have the model appended (``394–397 · Exponential``) so the
+pills stay distinct. The strip wraps onto further rows rather than widening
+the panel.
+
+The **x rail** carries the abscissa: the **x** picker (temperature, field,
+run number, angle, a fitted parameter, or a custom logbook column), the **ƒ**
+transform button (`Axis Transforms`_), a **log** axis-scale checkbox,
+**Fold:** (Angle x only), and, on the right, **Table** (opens the pop-out
+below) and **⋯** (``Export TSV…``, ``Export GLE (PDF)…``,
+``Export GLE (EPS)…``, checkable ``Show components``, and the unconditional
+``Knight shift window…``).
+
+The **y rail** carries one checkable chip per trendable parameter — checking
+one opens that parameter's card — the **+** menu (``Derived parameter…``;
+``Knight shift window…`` too, once the active series has a Knight-convertible
+component), and the **Subplots │ Overlay** toggle. The chip row wraps as it
+overflows.
+
+*Subplots* (the default) stacks one **card** per checked chip. A card's
+header carries a disclosure arrow, a colour swatch, the parameter's name, its
+**Fit** button (`Fitting a Trend Model`_), a **log** checkbox, its own **ƒ**
+transform button (`Axis Transforms`_), a focus button (**⤢**, grows the card
+to fill the stack — the rest collapse beneath it and are restored on exit)
+and a drag grip (**⠿**, reorders the stack). Collapsing a card (its
+disclosure arrow, or a click anywhere on the header) replaces the figure with
+a small sparkline. A derived parameter's card carries a ``derived`` tag;
+right-click its header for **Edit derived…** (composite parameters only) and
+**Remove**. *Overlay* instead draws every checked parameter on one shared
+canvas (a twin y-axis for exactly two — see `Overlaying Several Series`_).
+
+Once a parameter carries a converged model fit, a **χ²ᵣ chip** (``χ²ᵣ 0.89``)
+appears in its card header beside the **Fit** button, coloured by the same
+quality verdict the Model Fit window reports — green for *good*, red for
+*poor*, blue for *overdone*, and neutral grey where χ²ᵣ carries no goodness
+information (unit or scatter-estimated errors, or fewer points than
+parameters; see :ref:`assessing a fit <assessing-a-fit>`). Hovering it names
+the verdict, its target band and confidence, and each fitted parameter in the
+parenthesised-uncertainty convention (``T꜀ = 35.8(5) K`` is 35.8 ± 0.5 K).
+
+Clicking the chip opens that parameter's **Fit results** window (titled, for
+example, ``Fit results — λ (µs⁻¹)``): the model and verdict chips over a
+read-only ``Parameter`` / ``Value`` / ``Unit`` table — one row per fitted
+parameter, with any parameters held fixed listed after them — the trend
+provenance, the x axis, fitted range and error mode, and **Copy** (the table
+as tab-separated text), **Edit model fit…** (reopens the Model Fit window)
+and **Close**. The window is non-modal, updates itself whenever the fit
+changes, and a fit with several ranges gets one section per range.
+
+Every plot — each card's figure and the Overlay canvas alike — carries the
+same right-click menu for text labels. Over bare axes it offers **Add label
+here…**, which prompts for the text and drops the label where you clicked;
+over an existing label it offers **Edit label…** and **Remove label**; and
+**Clear labels** appears whenever the plot holds any. Drag a label to move it,
+or double-click it to change its text. Right-clicking near a trend point adds
+that point's **Exclude from trend** / **Include in trend** action (and its
+quality flags) to the same menu.
+
+The footer has two rows. The first names the series on screen in full — the
+long name the pills no longer carry, or ``2 series`` (the names on its
+tooltip) while an overlay is selected. The second reports trend provenance on
+the left (``4/4 members in trend``) and, on the right, notes any Global
+(shared) parameter held constant and so excluded from the y rail, with the fix
+in its tooltip.
+
+**Table** opens a non-modal **Fitted parameters** window holding the live
+parameter table (a **Trend** checkbox and a χ²ᵣ flag per row — see
+:ref:`assessing a fit <assessing-a-fit>`), the shared Global parameter values
+above it, and **Copy TSV** / **Export…** below.
 
 .. _trending-data-model:
 
@@ -135,8 +216,8 @@ as before. A run with no recorded temperature or field stays *off that axis*
 existed re-plot against the browser's currently displayed value when their
 runs are still loaded.
 
-Beyond temperature, field, and run number, the **X:** selector also offers any
-fitted parameter (parameter-vs-parameter trending) and any **custom data-browser
+Beyond temperature, field, and run number, the x rail's abscissa picker also
+offers any fitted parameter (parameter-vs-parameter trending) and any **custom data-browser
 column** (:ref:`logbook-columns`). Custom columns hold free-form text, so when
 one is the x-axis each value is coerced to a number and runs whose value is empty
 or non-numeric are dropped, with a note reporting how many were skipped.
@@ -151,27 +232,39 @@ trend: the **Redfield** analysis plots :math:`1/\lambda` against
 :math:`(\mu_0 H)^2` so a straight line's slope and intercept give the
 fluctuation rate and field width; the **Arrhenius** analysis plots
 :math:`\ln\lambda` against :math:`1/T` so the slope is an activation energy.
-The collapsible **Axis transforms** section (below the Y-parameter list)
-applies such a transform to either axis independently.
+The **ƒ** button applies such a transform to an axis: one sits on the x rail,
+beside the abscissa picker, and one sits on every parameter card's header.
+The x lens is shared — one abscissa carries every trace — while the y lens
+belongs to each card's own parameter, so :math:`1/\lambda` and a raw
+:math:`\beta` can sit in cards side by side without one parameter's
+linearisation distorting the other.
 
 .. image:: /_generated/screenshots/parameter_trending_redfield.png
    :alt: The trending panel showing a Redfield linearisation — 1/λ versus B² with a straight-line Linear fit
    :width: 100%
 
 *A Redfield linearisation of a longitudinal-field* :math:`\lambda(B)` *scan:*
-*the Y axis transformed to* ``1/x  (reciprocal)`` *and the X axis to*
-``x²  (square)`` *turn the three-regime* :math:`\lambda(B)` *falloff into a*
-*straight line, and a* ``Linear`` *model fit on the transformed plateau gives*
-*the Redfield slope and intercept. The high-field saturated point is excluded*
+:math:`\lambda`\ *'s card ƒ button set to* ``1/y  (reciprocal)`` *(reading*
+``1/y``\ *) and the x rail's ƒ button set to* ``x²  (square)`` *(reading*
+``x²``\ *) turn the three-regime* :math:`\lambda(B)` *falloff into a straight*
+*line, and a* ``Linear`` *model fit on the transformed plateau gives the*
+*Redfield slope and intercept. The high-field saturated point is excluded*
 *from the trend, so it sits off the line.*
 
-Each axis has its own chooser — **X:** and **Y:** — offering ``None``,
-``1/x  (reciprocal)``, ``x²  (square)``, ``ln x``, ``log₁₀ x``, ``√x`` and
-``Custom…``. Choosing ``Custom…`` opens a small **Custom X transform** /
-**Custom Y transform** dialog with one field, *Expression in x:* (placeholder
+Clicking **ƒ** pops a menu of presets — ``None``, ``1/x  (reciprocal)``,
+``x²  (square)``, ``ln x``, ``log₁₀ x``, ``√x`` and ``Custom…`` — named in
+*y* on a card (``1/y  (reciprocal)``, ``y²  (square)``, ``ln y``, …) with the
+active choice ticked. The button itself shows the result: **ƒ** at rest
+(identity, no transform), or the transform's own notation once one is set
+(``1/x``, ``x²``, ``ln y``, …). The x rail's button sets the shared abscissa
+lens; a card's button sets that one parameter's own lens and nothing else's.
+
+Choosing ``Custom…`` opens a small **Custom X transform** / **Custom Y
+transform** dialog with one field, *Expression in x:* (placeholder
 ``e.g. 1000/x``); the expression is validated live and previewed on a
-representative data value. The accepted expression then labels the combo item
-itself, and the last-used custom expression is remembered per axis.
+representative data value. The accepted expression then labels the ƒ button
+itself, and the last-used custom expression is remembered separately for the
+abscissa and for each y parameter.
 
 The transform is applied at the point where the panel assembles its data, so it
 governs the plotted points, the propagated error bars **and the trend fit**:
@@ -181,19 +274,25 @@ read straight from the :ref:`model-fit dialog <trend-model-fit-dialog>`. A point
 whose transform is undefined (``1/0``, ``ln`` of a non-positive value) is dropped,
 and the count surfaces on the trend-provenance line beneath the plot
 ("⚠ 1 dropped by transform"). Changing a transform strands an existing trend fit
-in the previous coordinate: its curve is hidden and its **Model Fit** button
-changes to **Model Fit ⚠** until you re-fit under the new axes.
+in the previous coordinate: its curve is hidden and its card's **Fit** button
+changes to **Fit ⚠** until you re-fit under the new axes. Only the fits
+actually affected are stranded — a new lens on :math:`\lambda` leaves
+:math:`\beta`'s fit alone, while a change of x axis reaches every parameter.
+In *Overlay* mode with three or more parameters on one axis, the axis reads
+``Parameter value`` and each legend entry names that parameter's lens
+(``1/λ (µs)`` beside a raw ``β``), in the plot and in the GLE export alike.
 
 The **field** axis is labelled in gauss (the loaders' native field unit), so a
 transform squares or inverts that unit accordingly (``B² (G²)``); a dataset held
 in tesla should be trended via a custom column carrying its own unit.
 
-A transform is distinct from the **log** axis-scale checkbox next to the **X:**
-selector (and the per-parameter **log** checkbox in the Y-parameter list): those
-change the axis *tick spacing* while leaving the numbers alone, whereas the
-transform changes the plotted values (which is what a straight-line Arrhenius fit
-needs). To keep the two from compounding, selecting ``ln x`` / ``log₁₀ x`` on an
-axis disables that axis's ``log`` checkbox until the transform is cleared.
+A transform is distinct from the **log** axis-scale checkbox next to the x
+rail's abscissa picker (and each card's own **log** checkbox): those change
+the axis *tick spacing* while leaving the numbers alone, whereas the transform
+changes the plotted values (which is what a straight-line Arrhenius fit
+needs). To keep the two from compounding, selecting ``ln x`` / ``log₁₀ x``
+disables the matching **log** checkbox — the x rail's, or that card's own —
+until the transform is cleared.
 
 .. note::
 
@@ -216,14 +315,15 @@ axis disables that axis's ``log`` checkbox until the transform is cleared.
    (a low-signal point under ``ln`` or ``1/x``) the true interval is
    asymmetric, so read such error bars as indicative.
 
-**Exports under a transform.** ``Export TSV`` keeps every raw column (the durable
-record) and *appends* the transformed columns that match the on-screen axes,
-with ``# X transform`` / ``# Y transform`` provenance comments; with several
-series overlaid it gains a leading ``Series`` column and writes every selected
-series. ``Export to GLE`` likewise appends transformed columns (and points its
-plot and fitted curve at them, so the figure matches the screen), but currently
-writes only the **active** series — it warns and names that series; export the
-others separately, or use TSV.
+**Exports under a transform.** The rail's **⋯** menu's ``Export TSV…`` keeps
+every raw column (the durable record) and *appends* the transformed columns
+that match the on-screen axes, with a ``# X transform`` provenance comment and
+one ``# Y transform [<parameter>]`` comment per transformed parameter; with
+several series overlaid it gains a leading ``Series`` column and writes every
+selected series. ``Export GLE (PDF)…`` / ``Export GLE (EPS)…`` likewise append
+transformed columns (and point the plot and fitted curve at them, so the
+figure matches the screen), but currently write only the **active** series —
+they warn and name that series; export the others separately, or use TSV.
 
 .. _trend-series-overlay:
 
@@ -247,9 +347,12 @@ model-fit controls.
    :width: 100%
 
 *Two* :math:`\sigma(T)` *series — a 400 G and a 200 G transverse-field scan —*
-*overlaid on one axis. Colour encodes the series (legend top-right, the active*
-*series flagged), and the 200 G plateau sitting below the 400 G one is the*
-*pancake-vortex field dependence of the London second moment.*
+*overlaid on the* ``σ (µs⁻¹)`` *card. Colour encodes the series (legend*
+*top-right, the active series flagged); with two series pills selected, the*
+*footer reads* ``2 series`` *and the card's Fit button reads*
+**Global fit ×2…** *— see* `Cross-Group Fitting`_
+*below. The 200 G plateau sitting below the 400 G one is the pancake-vortex*
+*field dependence of the London second moment.*
 
 .. _trend-phase-owned-series:
 
@@ -260,8 +363,9 @@ Phase-owned series
    :alt: Trending panel showing a phase series with its range shaded and a dashed boundary line
    :width: 100%
 
-*A phase-owned series: the swatch on the series pill matches the plotted*
-*curve's colour, the phase's own run range is shaded beneath the points, and*
+*A phase-owned series: the swatch on the short series pill (its run range;*
+*the footer names the series in full) matches the plotted curve's colour,*
+*the phase's own run range is shaded beneath the points, and*
 *its upper boundary is drawn as a dashed line with a fainter uncertainty band.*
 
 A series recorded for one phase of a Global Fit Wizard partition (see
@@ -340,16 +444,31 @@ parametric model through the selected "parameter versus X" points and shows the
 candidate curve against the data as you set it up, so a converging fit is
 apparent before you commit to it.
 
-Open it from the **Fit Parameters** panel: choose the abscissa in the **X:**
-selector (temperature, field, run number, angle, a fitted parameter, or a custom
-logbook column), then click the **Model Fit** button beside the trended quantity
-in the Y-parameter list. (The button reads **Model Fit\*** once a fit is active,
-and becomes a joint **Global fit** action when two or more group series are
-selected — see `Cross-Group Fitting`_.) The panel hands the dialog the included
-trend points for that parameter — a point excluded from the trend (via its
-context menu or the include checkbox) stays visible on the plot but does not pull
-the fit — together with their propagated errors and, when the abscissa is a
-fitted parameter, its per-point x-uncertainty.
+Open it from the **Fit Parameters** panel: choose the abscissa on the **x**
+rail (temperature, field, run number, angle, a fitted parameter, or a custom
+logbook column), check the trended quantity's chip on the **y** rail, and
+click **Fit…** on its card. The button's label tracks the card's fit state:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - State
+     - Button text
+   * - No active fit
+     - ``Fit…``
+   * - Active fit with a successful curve
+     - ``Fit ✓``
+   * - Fit computed under an axis transform since changed (curve hidden)
+     - ``Fit ⚠``
+   * - Two or more series pills selected
+     - ``Global fit ×N…`` (see `Cross-Group Fitting`_)
+
+Each state's tooltip carries the longer explanation. The panel hands the
+dialog the included trend points for that parameter — a point excluded from
+the trend (via its context menu or the include checkbox) stays visible on the
+plot but does not pull the fit — together with their propagated errors and,
+when the abscissa is a fitted parameter, its per-point x-uncertainty.
 
 .. image:: /_generated/screenshots/trend_model_fit_dialog.png
    :alt: The trend model-fit dialog fitting an OrderParameter form to an EuO ν(T) trend
@@ -487,9 +606,9 @@ Trending one parameter against another
 --------------------------------------
 
 The x-axis need not be a run-level quantity. Below the fixed ``Auto`` / ``B`` /
-``T`` / ``Run`` entries, the **X axis** selector lists every fitted parameter
-in the active series, so any parameter can be trended against any other — for
-example a relaxation rate :math:`\lambda` against a precession frequency
+``T`` / ``Run`` entries, the x rail's abscissa picker lists every fitted
+parameter in the active series, so any parameter can be trended against any
+other — for example a relaxation rate :math:`\lambda` against a precession frequency
 :math:`\nu`, both extracted per run. Internally the choice is the key
 ``param:<name>``; the core fit functions are x-agnostic, so no API change is
 needed — pass the chosen parameter's values as ``x``:
@@ -1183,11 +1302,13 @@ Composite parameters in the Fit Parameters panel
 ------------------------------------------------
 
 In the GUI Fit Parameters panel, you can define a derived parameter from
-existing fitted parameters using **Create Composite Parameter**.
+existing fitted parameters via the y rail's **+** menu → **Derived
+parameter…**, which opens the **Create Composite Parameter** expression
+builder.
 
-After selecting a derived parameter in the Y-parameter list, you can also use
-**Edit Selected Composite** and **Remove Selected Composite** to manage saved
-definitions.
+A derived parameter's chip and card carry a ``derived`` tag; right-click the
+card's header for **Edit derived…** (reopens the builder, retitled **Edit
+Composite Parameter**) and **Remove**.
 
 The expression builder supports:
 
@@ -1204,7 +1325,7 @@ real time against available fitted parameter names.
 Derived parameters are integrated into the same workflow as ordinary fit
 parameters:
 
-- They appear in the Y-parameter selector and fitted-parameter table.
+- They appear as a chip on the y rail and a row in the fitted-parameter table.
 - They can be plotted and used with parameter-model fitting.
 - They are saved/restored with project state.
 - They are recomputed automatically when source fit parameters change.
@@ -1244,9 +1365,10 @@ unit, and component choices, the resulting branches, and the scan's
 crossings are all visible together while you edit them, and nothing is
 written back to the trend table until you ask for it. **Analysis → Knight
 shift analysis…** is the unconditional entry point, always available
-regardless of the active series. The **Knight shift window…** shortcut in
-the *Derived parameters* section of the Fit Parameters panel is narrower: it
-appears only when the active series' fitted model has at least one
+regardless of the active series; the Fit Parameters panel's **⋯** menu
+carries the same unconditional **Knight shift window…** action. The **+**
+menu's own **Knight shift window…** is narrower: it appears only when
+the active series' fitted model has at least one
 Knight-convertible component (a local precession frequency or field, as
 opposed to an applied-field muonium term) — opening it on an unrelated fit
 would have nothing to convert. Its sidebar reads top to bottom as the
@@ -1426,9 +1548,9 @@ on reload, and stays applicable across a **Refresh from trend** as long as
 the branch count is unchanged; a different component selection invalidates
 it.
 
-In the trend panel, select one or more ``K[...]`` traces and use **Remove**
-to delete them: the backing component is dropped from the conversion (via
-``set_knight_shift_config``, so the trace does not regenerate). Removing
+In the trend panel, right-click a ``K[...]`` card's header and choose
+**Remove** to delete it: the backing component is dropped from the conversion
+(via ``set_knight_shift_config``, so the trace does not regenerate). Removing
 every component turns the conversion off.
 
 **Fitting the anisotropy** :math:`K(\theta)`. With **Angle (°)** as the trend

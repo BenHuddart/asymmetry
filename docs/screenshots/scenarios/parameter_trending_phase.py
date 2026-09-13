@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 
+from asymmetry.core.representation.naming import format_run_range
+
 from ..data import make_two_phase_zf_tscan
 from ._base import Scenario, _process_events_for, register
 
@@ -73,6 +75,11 @@ class ParameterTrendingPhaseScenario(Scenario):
             [("phase-1", "Phase I · 4.0 – 18.0 K", row_dicts)],
             select_id="phase-1",
             phase_by_id={"phase-1": phase},
+            # The short pill label the host derives from the members — the pill
+            # is a handle, the full name lives on the tooltip and in the footer.
+            short_names_by_id={
+                "phase-1": format_run_range([rd["run_number"] for rd in row_dicts])
+            },
         )
         _process_events_for(milliseconds=200)
         return panel

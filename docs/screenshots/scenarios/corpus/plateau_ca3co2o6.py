@@ -485,13 +485,13 @@ class PlateauRedfieldScenario(CorpusScenario):
         # The Redfield linearisation: reciprocal Y (1/λ), square X (B²). The
         # transform drives the plotted points, the propagated error bars, AND the
         # trend fit's coordinate system — one lens over all three.
-        panel._set_axis_transform("y", AxisTransform.preset("reciprocal"))
-        panel._set_axis_transform("x", AxisTransform.preset("square"))
+        panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
+        panel._set_x_transform(AxisTransform.preset("square"))
 
         # Inject the Linear fit computed on the transformed plateau, tagged with
         # the active transform so its overlay is drawn (not suppressed as stale).
         panel._model_fits["Lambda"] = fit
-        panel._model_fit_transform_sig["Lambda"] = panel._transform_signature()
+        panel._model_fit_transform_sig["Lambda"] = panel._transform_signature("Lambda")
         panel._sync_active_group_state()
         panel._refresh_model_fit_button_labels()
         _process_events_for(milliseconds=80)

@@ -149,6 +149,9 @@ LOGGED_VALUE_FG = "#b02424"
 # Success state (converged result groups)
 SUCCESS_BG = "#f4f8f4"
 SUCCESS_BORDER = "#cbe1cf"
+# Failure tint — the ERROR-red counterpart of SUCCESS_BG, for a chip whose
+# verdict is bad (a "poor" χ² on a trend card) rather than merely cautionary.
+ERROR_BG = "#fdf3f2"
 
 # ── Data-trace palette ────────────────────────────────────────────────────────
 # Okabe-Ito colour-blind-safe qualitative set, used for multi-run overlays and
