@@ -167,6 +167,7 @@ from asymmetry.gui.styles.widgets import (
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.formatting import format_param_label
+from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
@@ -401,6 +402,10 @@ def _custom_values_from_row_dict(entry: object) -> dict[str, str]:
     if isinstance(raw, dict):
         return {str(key): str(value) for key, value in raw.items()}
     return {}
+
+
+class _PlotPages(CurrentPageSizingMixin, QStackedWidget):
+    """The card stack or the Overlay canvas, sized by whichever page is showing."""
 
 
 @dataclass
@@ -795,7 +800,7 @@ class FitParametersPanel(QWidget):
         layout.addLayout(y_row)
 
         # ── Plot area: the card stack, or the single Overlay canvas ──────────
-        self._plot_pages = QStackedWidget()
+        self._plot_pages = _PlotPages()
         self._card_stack = ParameterCardStack()
         self._card_stack.order_changed.connect(self._on_card_order_changed)
         self._plot_pages.addWidget(self._card_stack)
@@ -803,7 +808,7 @@ class FitParametersPanel(QWidget):
         overlay_page = QWidget()
         overlay_layout = QVBoxLayout(overlay_page)
         overlay_layout.setContentsMargins(0, 0, 0, 0)
-        self._figure, self._canvas = create_canvas(layout="constrained")
+        self._figure, self._canvas = create_canvas(layout="constrained", figsize=(4.0, 3.0))
         self._connect_plot_events(self._canvas)
         overlay_layout.addWidget(self._canvas, 1)
         overlay_tools = QHBoxLayout()
