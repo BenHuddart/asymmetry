@@ -1,6 +1,6 @@
 """ProjectShell: several open projects hosted as tabs in one window.
 
-Each tab is a whole ``MainWindow`` reparented as a plain widget (see
+Each tab is a whole ``MainWindow`` constructed as a plain child widget (see
 ``asymmetry.gui.shell``). These tests pin the behaviour the shell itself is
 responsible for: per-tab isolation with a shared reduction-cache budget, tab
 routing for new/open/close, the quit-time multi-project guard, tab-label and
@@ -22,7 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 import shiboken6  # noqa: E402
-from PySide6.QtCore import QEvent, QSettings  # noqa: E402
+from PySide6.QtCore import QEvent, QPoint, QSettings  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 import asymmetry.gui.mainwindow as mw_module  # noqa: E402
@@ -71,6 +71,35 @@ def _ds(run_number: int = 11) -> MuonDataset:
 
 
 # ── per-tab isolation ────────────────────────────────────────────────────
+
+
+def test_hosted_page_is_a_child_widget_with_no_window_of_its_own(
+    shell: ProjectShell, qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A page must never own a window: on macOS the native menu bar would give a
+    top-level page its own native window, which survives into the shell and
+    offsets every mapToGlobal in the tab, so clicks land on the wrong widget.
+    Offscreen has no native menu bar, so the guard that bites on every platform
+    is the construction order: the page is already a plain widget by the time
+    its menu bar is built.
+    """
+    is_window_at_menu_build: list[bool] = []
+    setup_menus = MainWindow._setup_menus
+
+    def spy(self: MainWindow) -> None:
+        is_window_at_menu_build.append(self.isWindow())
+        setup_menus(self)
+
+    monkeypatch.setattr(MainWindow, "_setup_menus", spy)
+    page = shell.add_project()
+    qapp.processEvents()
+
+    assert is_window_at_menu_build == [False]
+    assert not page.isWindow()
+    assert page.windowHandle() is None
+    assert page.window() is shell
+    origin = page.mapTo(shell, QPoint(0, 0))
+    assert page.mapToGlobal(QPoint(0, 0)) == shell.mapToGlobal(origin)
 
 
 def test_tabs_hold_independent_state(shell: ProjectShell, qapp: QApplication) -> None:
