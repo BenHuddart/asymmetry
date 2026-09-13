@@ -103,7 +103,8 @@ are the light action style beside a `build_primary_button_qss` primary.
 4. **Seeding row** — `Seeding` · combo · stretch · `Per-run seeds…`
    (segmented), one wrapping row.
 5. **Run row** — `Run batch fit` (primary) · stretch · summary verdict chip
-   `4 runs · 3 ✓ 1 ⚠` after a run.
+   `3 ✓ 1 ⚠` (clean count · flagged-or-failed count, full sentence on the
+   tooltip) after a run.
 6. **Results card** — tag `Batch ✓` / `Batch ⚠` · `3 of 4 converged` · χ²ᵣ
    range; body: **one verdict chip per run** (`3001 ✓ 0.98`, `3003 ⚠ 1.9`)
    in a `FlowLayout`, each opening that run's `FitResultsWindow`; footer
@@ -147,7 +148,7 @@ None open — see "Decisions recorded".
 
 - `FitParameterTable` (`tab_base.py:1362`) already has `set_batch_column_visible`;
   the rail generalises it to `set_column_group_visible(group, on)` over the
-  existing eight columns (`COL_MIN`/`COL_MAX` narrow to 6 characters). The
+  existing eight columns (`COL_MIN`/`COL_MAX` at 7 characters). The
   in-dock table and the `↗` pop-out are the same widget — the pop-out shows
   every column regardless of the chips. The grouped-single
   `FitParameterTable` (`global_tab.py:558-565`) hides Batch/Link/Tie today
@@ -396,7 +397,7 @@ results card on the Single tab`.
   wrapping.
 - **Run row**: `Run batch fit` (was `Run Batch Fit`; grouped: `Run grouped
   fit`) / `Stop` · `Preview` (grouped only) · stretch · a summary verdict
-  chip (`QLabel` variant) `4 runs · 3 ✓ 1 ⚠` — ok colours when every member
+  chip (`QLabel` variant) `3 ✓ 1 ⚠` — ok colours when every member
   converged, warn otherwise; hidden until a run completes. `Asymmetric
   errors` keeps its row.
 - **Results card** under `make_section_header("Results")`:
@@ -502,3 +503,10 @@ the mockup link and the decisions list.
   batch's series pill.
 - 2026-09-13: the two Multi-Group `GlobalFitTab` instances get the results
   card and rail in the same PR.
+- 2026-09-13 (lead fix-up, from Ben's screenshot review): the Value / Seed /
+  per-group value columns stretch to the leftover width instead of leaving
+  an empty band; the `Batch members` list sizes itself to its rows (capped
+  at 8, then scrolls); both run rows wrap (`FlowLayout`) and the batch
+  outcome chip reads `3 ✓ 1 ⚠` with the sentence on its tooltip, because
+  the fixed-width chip pushed the grouped dock to 387 px; Min/Max are 7
+  characters (6 elided `-inf` in the mono font).

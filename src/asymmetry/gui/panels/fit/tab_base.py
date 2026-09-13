@@ -1526,10 +1526,12 @@ class FitParameterTable(QTableWidget):
         for col, chars in (
             (0, _PARAM_NAME_COL_CHARS),  # Name, 92 px at design font
             (2, 4),  # Fix, 30 px
-            # Min/Max hold "-inf", "1e6" and the ±∞ glyphs in 6 characters; the
-            # resting set (Name·Value·Fix·Min·Max) has to fit a ~300 px dock.
-            (3, 6),  # Min
-            (4, 6),  # Max
+            # Min/Max are measured in sans characters but painted in the wider
+            # mono font: 7 is the least that shows "-inf" unelided, and the
+            # resting set (Name·Value·Fix·Min·Max) still fits a ~300 px dock
+            # because the Value column gives way (it stretches).
+            (3, 7),  # Min
+            (4, 7),  # Max
             (5, 7),  # Batch, 50 px
             (6, 5),  # Link, 40 px
             (7, 5),  # Tie, 40 px
