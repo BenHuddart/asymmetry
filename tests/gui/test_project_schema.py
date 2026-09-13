@@ -1617,6 +1617,7 @@ class _StubMultiGroupFitWindowWithState(QWidget):
         self.count_fit_completed = SimpleNamespace(connect=lambda _callback: None)
         self.count_grouping_promoted = SimpleNamespace(connect=lambda _callback: None)
         self.trends_requested = SimpleNamespace(connect=lambda _callback: None)
+        self.set_trends_available = lambda _available: None
         self._state = {"model_name": "Composite", "parameters": [], "result_html": ""}
         self.restored_state = None
 

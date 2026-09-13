@@ -10966,6 +10966,28 @@ class MainWindow(QMainWindow):
         self._last_batch_id_by_surface[surface] = batch_id
         panel.set_trends_available(True)
 
+    def _rearm_trends_from_project(self) -> None:
+        """Arm each surface's ``Trends →`` on the newest restored batch of its kind.
+
+        A restored project carries its batches but no record of which fit
+        surface produced them beyond ``member_kind``, so the Fit panel's Batch
+        tab takes the newest ``runs`` series and the Multi-Group window the
+        newest ``groups`` one; a surface with no batch of its kind is disarmed.
+        """
+        self._last_batch_id_by_surface.clear()
+        for surface, member_kind, panel in (
+            ("batch", "runs", self._fit_panel),
+            ("grouped", "groups", self._multi_group_fit_window),
+        ):
+            batch_ids = [
+                series.batch_id
+                for series in self._project_model.batches.values()
+                if series.member_kind == member_kind
+            ]
+            if batch_ids:
+                self._last_batch_id_by_surface[surface] = batch_ids[-1]
+            panel.set_trends_available(bool(batch_ids))
+
     def _on_trends_requested(self, surface: str) -> None:
         """Bring the Parameters panel forward on *surface*'s last recorded batch.
 
@@ -16030,6 +16052,7 @@ class MainWindow(QMainWindow):
         # already populated (``_restore_frequency_representations`` above); the
         # pull preserves per-series trend model-fits for surviving series.
         refreshed = self._refresh_trend_panel(surface=False)
+        self._rearm_trends_from_project()
         if fit_parameters_state and not refreshed and panel_supports_deferred_refresh:
             # No active representation to re-derive from (e.g. a non-fit view was
             # active at save): draw the deferred restore now so the panel isn't
@@ -16166,6 +16189,10 @@ class MainWindow(QMainWindow):
         if hasattr(self._multi_group_fit_window, "clear_grouped_single_state"):
             self._multi_group_fit_window.clear_grouped_single_state()
         self._fit_parameters_panel.clear()
+        # A cleared session has no batch for Trends → to select.
+        self._last_batch_id_by_surface.clear()
+        self._fit_panel.set_trends_available(False)
+        self._multi_group_fit_window.set_trends_available(False)
         # The ALC integral-scan view is not a fit panel; reset its scan data and
         # analysis (baseline model, regions, peaks) so they do not leak into the
         # next project and distort the new scatter's auto-range.
