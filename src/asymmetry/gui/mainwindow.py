@@ -79,6 +79,7 @@ from __future__ import annotations
 import copy
 import functools
 import hashlib
+import ntpath
 import os
 import time
 import weakref
@@ -15528,7 +15529,7 @@ class MainWindow(QMainWindow):
         # If any files are missing, offer the user one chance to redirect to a new directory.
         fallback_dir: str | None = None
         if missing_info:
-            names = ", ".join(os.path.basename(d.get("source_file", "?")) for d in missing_info[:5])
+            names = ", ".join(ntpath.basename(d.get("source_file", "?")) for d in missing_info[:5])
             suffix = f" and {len(missing_info) - 5} more" if len(missing_info) > 5 else ""
             answer = QMessageBox.question(
                 self,
@@ -15546,12 +15547,15 @@ class MainWindow(QMainWindow):
                     project_dir,
                 )
 
-        # Second pass: apply fallback directory for still-missing files.
+        # Second pass: apply fallback directory for still-missing files. The
+        # stored path may come from another OS; ``ntpath.basename`` splits on
+        # both ``\`` and ``/`` everywhere, whereas ``os.path.basename`` on
+        # POSIX treats a Windows path as one long filename.
         if fallback_dir:
             for ds_info in missing_info:
                 sf = ds_info.get("source_file", "")
                 rn = ds_info.get("run_number")
-                candidate = os.path.join(fallback_dir, os.path.basename(sf))
+                candidate = os.path.join(fallback_dir, ntpath.basename(sf))
                 if os.path.exists(candidate):
                     resolved_paths[rn] = candidate
 
