@@ -16,7 +16,8 @@ Navigation map
    shared by both tabs).
 2. **Fit-result summary/messaging helpers** — ``_fit_summary``,
    ``_fit_range_provenance_text``, ``_apply_fit_range_display``,
-   ``_fit_success_html``/``_fit_warnings_html``, ``_format_tie_formula``.
+   ``_fit_success_html``/``_fit_warnings_html``, ``fit_results_snapshot``
+   (the frozen snapshot a ``FitResultsWindow`` renders), ``_format_tie_formula``.
 3. **Tie dialog and tie-button helpers** — ``AffineTieDialog`` (modal editor
    for an affine parameter tie), ``_make_tie_button``/``_tie_button_value``/
    ``_set_tie_button_value``, ``_param_name_from_tie_button``.
@@ -90,6 +91,7 @@ from asymmetry.core.fitting.parameters import (
     AffineTie,
     Parameter,
     ParameterSet,
+    get_param_info,
     split_parameter_name,
 )
 from asymmetry.core.fitting.result_summary import fit_result_summary
@@ -103,6 +105,8 @@ from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.styles.widgets import (
+    FIT_VERDICT_CHIP_COLOURS,
+    NEUTRAL_CHIP_COLOURS,
     apply_param_table_style,
     configure_formula_label,
     fit_quality_chip_html,
@@ -114,6 +118,11 @@ from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
+from asymmetry.gui.windows.fit_results_window import (
+    FitParameterRow,
+    FitRangeResults,
+    FitResults,
+)
 
 
 def _grouped_formula_string(model: CompositeModel) -> str:
@@ -614,6 +623,70 @@ def _fit_success_html(result) -> str:
     summary = _fit_summary(result)
     stats += fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
     return success_html("Fit converged", detail=stats)
+
+
+def fit_results_snapshot(
+    result,
+    *,
+    title: str,
+    model: str,
+    fit_range: str,
+    runs: str,
+) -> FitResults:
+    """Freeze a core :class:`FitResult` into what :class:`FitResultsWindow` renders.
+
+    The tab supplies the strings only it knows — the window title, the model
+    expression, the fitted range and the run provenance — and this builds the
+    one solved range from the result itself. The verdict and its chip colours
+    come from the same :func:`_fit_summary` the result label's chip uses, so the
+    window and the tab can never disagree about a fit.
+    """
+    rows = []
+    free_names = {param.name for param in result.parameters.free_parameters}
+    for param in result.parameters:
+        info = get_param_info(param.name)
+        rows.append(
+            FitParameterRow(
+                name=param.name,
+                symbol=info.unicode_label(include_unit=False),
+                unit=info.unit or "",
+                value=float(param.value),
+                error=result.uncertainties.get(param.name),
+                fixed=param.name not in free_names,
+            )
+        )
+
+    quality = _fit_summary(result).get("quality")
+    if quality is None:
+        verdict, colours = "no verdict", NEUTRAL_CHIP_COLOURS
+    else:
+        band = f"{quality['band_low']:.2g}–{quality['band_high']:.2g}"
+        verdict = f"{quality['verdict']} fit (band {band} at {quality['confidence'] * 100:g} %)"
+        colours = FIT_VERDICT_CHIP_COLOURS[quality["verdict"]]
+
+    return FitResults(
+        title=title,
+        # A run's asymmetry fit has neither a trended parameter nor an x axis of
+        # its own: it is one run against the fitted range, named by `runs`.
+        parameter_name="",
+        x_label="",
+        runs=runs,
+        ranges=(
+            FitRangeResults(
+                model=model,
+                chi_squared=f"χ²ᵣ {result.reduced_chi_squared:.3g}",
+                verdict=verdict,
+                colours=colours,
+                bounds=fit_range,
+                # The engine's FitResult records no error mode — the tabs always
+                # fit against the data's own per-point σ.
+                error_mode="",
+                # Free parameters first ("sorted" is stable, as in the trend
+                # panel's snapshot).
+                parameters=tuple(sorted(rows, key=lambda row: row.fixed)),
+            ),
+        ),
+    )
 
 
 def _fit_result_is_usable(result) -> bool:

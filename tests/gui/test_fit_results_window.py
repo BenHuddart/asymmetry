@@ -14,8 +14,15 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QEvent  # type: ignore
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QTableWidget  # type: ignore
 
+from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.panels.fit.tab_base import fit_results_snapshot
 from asymmetry.gui.styles import tokens
-from asymmetry.gui.styles.widgets import VERDICT_CHIP_OBJECT_NAME
+from asymmetry.gui.styles.widgets import (
+    FIT_VERDICT_CHIP_COLOURS,
+    NEUTRAL_CHIP_COLOURS,
+    VERDICT_CHIP_OBJECT_NAME,
+)
 from asymmetry.gui.windows.fit_results_window import (
     FitParameterRow,
     FitRangeResults,
@@ -60,6 +67,7 @@ def _range(
 
 def _results(*ranges: FitRangeResults) -> FitResults:
     return FitResults(
+        title="Fit results — σ (µs⁻¹)",
         parameter_name="sigma",
         x_label="Temperature (K)",
         runs="12 / 12 runs · 1 range(s)",
@@ -67,7 +75,7 @@ def _results(*ranges: FitRangeResults) -> FitResults:
     )
 
 
-def test_window_titles_itself_after_the_parameter(qapp: QApplication) -> None:
+def test_window_titles_itself_from_the_snapshot(qapp: QApplication) -> None:
     window = FitResultsWindow(_results())
 
     assert window.windowTitle() == "Fit results — σ (µs⁻¹)"
@@ -157,7 +165,7 @@ def test_window_copy_writes_a_tab_separated_table(qapp: QApplication) -> None:
 
 
 def test_window_edit_button_carries_the_parameter_name(qapp: QApplication) -> None:
-    window = FitResultsWindow(_results())
+    window = FitResultsWindow(_results(), editable=True)
     requested: list[str] = []
     window.edit_requested.connect(requested.append)
 
@@ -170,11 +178,20 @@ def test_window_edit_button_carries_the_parameter_name(qapp: QApplication) -> No
     window.deleteLater()
 
 
+def test_window_has_no_edit_button_when_the_fit_is_not_editable(qapp: QApplication) -> None:
+    window = FitResultsWindow(_results())
+
+    labels = [button.text() for button in window.findChildren(QPushButton)]
+    assert labels == ["Copy", "Close"]
+    window.deleteLater()
+
+
 def test_window_set_results_replaces_the_previous_render(qapp: QApplication) -> None:
     window = FitResultsWindow(_results())
 
     window.set_results(
         FitResults(
+            title="Fit results — λ (µs⁻¹)",
             parameter_name="Lambda",
             x_label="Field (G)",
             runs="3 / 4 runs · 1 range(s)",
@@ -188,4 +205,86 @@ def test_window_set_results_replaces_the_previous_render(qapp: QApplication) -> 
     assert len(window.findChildren(QTableWidget)) == 1
     texts = [label.text() for label in window.findChildren(QLabel)]
     assert "3 / 4 runs · 1 range(s)" in texts
+    window.deleteLater()
+
+
+# ── fit_results_snapshot: a core FitResult frozen for this window ────────────
+
+
+def _fit_result(*, chi_squared: float = 595.0, dof: int = 595) -> FitResult:
+    """A fabricated run fit: two free parameters and one held fixed."""
+    parameters = ParameterSet(
+        [
+            Parameter("A0", value=0.2512),
+            Parameter("baseline", value=0.01, fixed=True),
+            Parameter("sigma", value=1.24),
+        ]
+    )
+    return FitResult(
+        success=True,
+        chi_squared=chi_squared,
+        reduced_chi_squared=chi_squared / dof if dof else 0.0,
+        dof=dof,
+        parameters=parameters,
+        uncertainties={"A0": 0.0043, "sigma": 0.03},
+    )
+
+
+def _snapshot(result: FitResult) -> FitResults:
+    return fit_results_snapshot(
+        result,
+        title="Fit results — 3001",
+        model="A0*exp(-lambda*t)",
+        fit_range="0.10–10.00 µs",
+        runs="Run 3001",
+    )
+
+
+def test_snapshot_lists_the_free_parameters_before_the_fixed_ones() -> None:
+    solved = _snapshot(_fit_result()).ranges[0]
+
+    assert [row.name for row in solved.parameters] == ["A0", "sigma", "baseline"]
+    assert solved.parameters[0] == FitParameterRow(
+        name="A0", symbol="A₀", unit="%", value=0.2512, error=0.0043, fixed=False
+    )
+    assert solved.parameters[2] == FitParameterRow(
+        name="baseline", symbol="baseline", unit="%", value=0.01, error=None, fixed=True
+    )
+
+
+def test_snapshot_carries_the_tabs_strings_and_the_chi_squared_chip() -> None:
+    snapshot = _snapshot(_fit_result())
+
+    assert snapshot.title == "Fit results — 3001"
+    assert snapshot.runs == "Run 3001"
+    solved = snapshot.ranges[0]
+    assert solved.model == "A0*exp(-lambda*t)"
+    assert solved.bounds == "0.10–10.00 µs"
+    assert solved.chi_squared == "χ²ᵣ 1"
+    # The engine's FitResult records no error mode.
+    assert solved.error_mode == ""
+
+
+def test_snapshot_takes_its_verdict_and_colours_from_the_fit_summary() -> None:
+    solved = _snapshot(_fit_result()).ranges[0]
+
+    assert solved.verdict.startswith("good fit (band ")
+    assert solved.colours == FIT_VERDICT_CHIP_COLOURS["good"]
+
+
+def test_snapshot_reads_no_verdict_when_the_fit_supports_none() -> None:
+    solved = _snapshot(_fit_result(chi_squared=0.0, dof=0)).ranges[0]
+
+    assert solved.verdict == "no verdict"
+    assert solved.colours == NEUTRAL_CHIP_COLOURS
+
+
+def test_snapshot_renders_in_the_window_without_an_edit_button(qapp: QApplication) -> None:
+    window = FitResultsWindow(_snapshot(_fit_result()))
+
+    assert window.windowTitle() == "Fit results — 3001"
+    table = window.findChild(QTableWidget)
+    # Two free rows, the "held fixed" separator, and the fixed row.
+    assert table.rowCount() == 4
+    assert [button.text() for button in window.findChildren(QPushButton)] == ["Copy", "Close"]
     window.deleteLater()

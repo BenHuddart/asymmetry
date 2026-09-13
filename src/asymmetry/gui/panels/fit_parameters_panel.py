@@ -4037,6 +4037,7 @@ class FitParametersPanel(QWidget):
                 )
             )
         return FitResults(
+            title=f"Fit results — {format_param_label(name)}",
             parameter_name=name,
             x_label=self._x_axis_display_label(fit.x_key),
             runs=f"{included} / {len(self._rows)} runs · {len(fit.ranges)} range(s)",
@@ -4047,7 +4048,7 @@ class FitParametersPanel(QWidget):
         """Open (or raise) the results window for *name*'s model fit."""
         window = self._fit_results_windows.get(name)
         if window is None:
-            window = FitResultsWindow(self._fit_results(name), parent=self)
+            window = FitResultsWindow(self._fit_results(name), parent=self, editable=True)
             window.edit_requested.connect(self._open_model_fit_dialog)
             self._fit_results_windows[name] = window
         else:
