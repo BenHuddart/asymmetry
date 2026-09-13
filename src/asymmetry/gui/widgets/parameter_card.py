@@ -40,7 +40,14 @@ from PySide6.QtWidgets import (
 )
 
 from asymmetry.gui.styles import metrics, tokens
-from asymmetry.gui.styles.widgets import build_segmented_button_qss, make_context_chip
+from asymmetry.gui.styles.fonts import mono_font
+from asymmetry.gui.styles.typography import SIZE_NUMERIC
+from asymmetry.gui.styles.widgets import (
+    VERDICT_CHIP_OBJECT_NAME,
+    build_segmented_button_qss,
+    make_context_chip,
+    verdict_chip_qss,
+)
 from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 
@@ -75,7 +82,7 @@ _SPARKLINE_PAD = 2.0
 _SPARKLINE_PEN_WIDTH = 1.2
 _SPARKLINE_DOT_RADIUS = 1.4
 
-#: Card body (canvas + summary) minimum height, in table-row heights.
+#: Card body (canvas) minimum height, in table-row heights.
 _BODY_ROWS = 6
 #: Figure size (inches) a card asks for — the aspect ratio a card opens at when
 #: the stack has room to honour it, rather than matplotlib's 6.4 × 4.8 in
@@ -181,10 +188,12 @@ class _DragGrip(QLabel):
 
 
 class ParameterCard(QFrame):
-    """Header (name + per-parameter controls) over a figure and a fit summary."""
+    """Header (name + per-parameter controls) over this parameter's figure."""
 
     #: The card's Fit button was pressed.
     fit_requested = Signal(str)
+    #: The card's χ²ᵣ chip was pressed — show this parameter's fit results.
+    results_requested = Signal(str)
     #: The card's log checkbox was toggled (name, checked).
     log_toggled = Signal(str, bool)
     #: The ƒ button was pressed; carries the global position to pop the menu at.
@@ -251,6 +260,14 @@ class ParameterCard(QFrame):
         self.fit_button.clicked.connect(self._on_fit_clicked)
         header_layout.addWidget(self.fit_button)
 
+        self.result_chip = QPushButton(self._header)
+        self.result_chip.setObjectName(VERDICT_CHIP_OBJECT_NAME)
+        self.result_chip.setFlat(True)
+        self.result_chip.setFont(mono_font(SIZE_NUMERIC))
+        self.result_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.result_chip.clicked.connect(self._on_result_clicked)
+        header_layout.addWidget(self.result_chip)
+
         self.log_check = QCheckBox("log", self._header)
         self.log_check.toggled.connect(self._on_log_toggled)
         header_layout.addWidget(self.log_check)
@@ -293,10 +310,6 @@ class ParameterCard(QFrame):
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         body_layout.addWidget(self.canvas, 1)
 
-        self._summary_label = ElidedLabel("", self._body)
-        self._summary_label.set_pen_color(tokens.TEXT_MUTED)
-        body_layout.addWidget(self._summary_label)
-
         self._apply_expanded()
         self.set_focused(False)
 
@@ -322,9 +335,24 @@ class ParameterCard(QFrame):
         """Show the active y lens on the ƒ button ("1/y"), or ƒ for identity."""
         self.transform_button.setText(text)
 
-    def set_summary(self, text: str) -> None:
-        """Set the one-line fit summary under the figure (elided; full on hover)."""
-        self._summary_label.setText(text)
+    def set_result(
+        self,
+        text: str | None,
+        tooltip: str,
+        colours: tuple[str, str, str] | None,
+    ) -> None:
+        """Show the χ²ᵣ verdict chip beside the Fit button, or hide it.
+
+        ``text`` is the chip's label ("χ²ᵣ 0.89") and ``None`` means this
+        parameter has no fit to report; ``colours`` is the chip's
+        ``(background, border, text)`` triple — the owner maps the fit-quality
+        verdict onto it, since only it knows the confidence setting.
+        """
+        self.result_chip.setText(text or "")
+        self.result_chip.setToolTip(tooltip)
+        if colours is not None:
+            self.result_chip.setStyleSheet(verdict_chip_qss(colours))
+        self._apply_expanded()
 
     def set_sparkline(self, xs: Sequence[float], ys: Sequence[float], color: str) -> None:
         """Render the collapsed-card trend glyph for this parameter's points."""
@@ -333,7 +361,7 @@ class ParameterCard(QFrame):
         )
 
     def set_expanded(self, expanded: bool) -> None:
-        """Show (or hide) the figure, summary and per-parameter controls."""
+        """Show (or hide) the figure and the per-parameter controls."""
         if expanded == self._expanded:
             return
         self._expanded = expanded
@@ -373,6 +401,9 @@ class ParameterCard(QFrame):
         )
         self._body.setVisible(self._expanded)
         self.fit_button.setVisible(self._expanded)
+        # A collapsed strip carries only the name, the derived tag and the
+        # sparkline, so the chip rides with the rest of the controls.
+        self.result_chip.setVisible(self._expanded and bool(self.result_chip.text()))
         self.log_check.setVisible(self._expanded)
         self.transform_button.setVisible(self._expanded)
         self._sparkline_label.setVisible(not self._expanded)
@@ -390,6 +421,9 @@ class ParameterCard(QFrame):
 
     def _on_fit_clicked(self) -> None:
         self.fit_requested.emit(self._name)
+
+    def _on_result_clicked(self) -> None:
+        self.results_requested.emit(self._name)
 
     def _on_log_toggled(self, checked: bool) -> None:
         self.log_toggled.emit(self._name, checked)

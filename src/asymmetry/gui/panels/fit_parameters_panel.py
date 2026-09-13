@@ -61,7 +61,7 @@ from __future__ import annotations
 
 import csv
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -122,6 +122,7 @@ from asymmetry.core.fitting.composite_parameters import (
     CompositeParameterDefinition,
 )
 from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.fit_quality import assess_fit_quality
 from asymmetry.core.fitting.knight_shift import (
     REFERENCE_APPLIED_FIELD,
     KnightShiftConfig,
@@ -153,11 +154,14 @@ from asymmetry.core.fitting.parameters import (
 )
 from asymmetry.core.utils.angles import wrap_angle_deg
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
+from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.panels.composite_parameter_dialog import CompositeParameterDialog
 from asymmetry.gui.panels.cross_group_fit_dialog import CrossGroupFitDialog
 from asymmetry.gui.panels.model_fit_dialog import ModelFitDialog
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
+    FIT_VERDICT_CHIP_COLOURS,
+    NEUTRAL_CHIP_COLOURS,
     apply_param_table_style,
     build_segmented_button_qss,
     clear_layout,
@@ -166,13 +170,19 @@ from asymmetry.gui.styles.widgets import (
 )
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils import gle_export
-from asymmetry.gui.utils.formatting import format_param_label
+from asymmetry.gui.utils.formatting import format_param_label, format_value_uncertainty
 from asymmetry.gui.widgets.current_page_sizing import CurrentPageSizingMixin
 from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.loading_overlay import LoadingOverlay
 from asymmetry.gui.widgets.mpl_canvas import create_canvas
 from asymmetry.gui.widgets.parameter_card import ParameterCard, ParameterCardStack
 from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.windows.fit_results_window import (
+    FitParameterRow,
+    FitRangeResults,
+    FitResults,
+    FitResultsWindow,
+)
 
 _PARAMETER_FIT_CURVE_SAMPLE_COUNT = 800
 
@@ -192,9 +202,6 @@ _CHIP_MAX_CHARS = 14
 _TABLE_DIALOG_SCREEN_FRACTION = 0.9
 #: The ⋯ and + rail buttons are their glyph; Qt's menu-indicator arrow would double it.
 _MENU_BUTTON_QSS = "QToolButton::menu-indicator { image: none; }"
-
-#: Summary line under a card with no model fit attached.
-_NO_FIT_SUMMARY = "no model fit yet"
 
 #: The lens of a y parameter with no transform of its own.
 _IDENTITY_TRANSFORM = AxisTransform.identity()
@@ -282,6 +289,38 @@ def _fit_overlay_label(base: str, index: int, total: int) -> str:
     if total <= 1:
         suffix = ""
     return f"fit {base}{suffix}"
+
+
+def _first_solved_range(fit: ParameterModelFit | None) -> ModelFitRange | None:
+    """The first range of an *active* fit that solved — the card's headline fit."""
+    if fit is None or not fit.active:
+        return None
+    return next((r for r in fit.ranges if r.result is not None and r.result.success), None)
+
+
+def _parameter_rows(fit_range: ModelFitRange) -> tuple[FitParameterRow, ...]:
+    """A solved range's parameters, free ones first (``sorted`` is stable)."""
+    result = fit_range.result
+    free_names = {param.name for param in fit_range.parameters.free_parameters}
+    rows = []
+    for param in result.parameters:
+        info = get_param_info(param.name)
+        rows.append(
+            FitParameterRow(
+                name=param.name,
+                symbol=info.unicode_label(include_unit=False),
+                unit=info.unit or "",
+                value=float(param.value),
+                error=result.uncertainties.get(param.name),
+                fixed=param.name not in free_names,
+            )
+        )
+    return tuple(sorted(rows, key=lambda row: row.fixed))
+
+
+def _bound_text(bound: float | None) -> str:
+    """An open (unbounded) fit-range edge reads as "…", not as a made-up number."""
+    return "…" if bound is None else f"{bound:.6g}"
 
 
 def _transform_button_labels(transform: AxisTransform, base: str) -> tuple[str, str]:
@@ -547,6 +586,9 @@ class FitParametersPanel(QWidget):
         self._global_params: ParameterSet | None = None
         self._global_param_uncertainties: dict[str, float] = {}
         self._table_dialog: QDialog | None = None
+        #: One results window per parameter, opened by its card's χ²ᵣ chip and
+        #: kept alive (and refreshed) until the parameter's card goes away.
+        self._fit_results_windows: dict[str, FitResultsWindow] = {}
         self._inferred_x_key = "field"
         #: Data-browser custom columns offered as the trend x-axis, as
         #: ``(display_label, "custom:<id>")`` pairs pushed in by the host. Their
@@ -964,6 +1006,7 @@ class FitParametersPanel(QWidget):
 
     def clear(self) -> None:
         self._bump_data_revision()
+        self._close_fit_results_windows(list(self._fit_results_windows))
         self._rows = []
         self._varying_params = []
         self._global_params = None
@@ -3603,6 +3646,7 @@ class FitParametersPanel(QWidget):
         wanted = self._selected_y_parameters()
         for card in self._card_stack.cards():
             if card.name not in wanted:
+                self._close_fit_results_windows([card.name])
                 self._card_stack.remove_card(card.name).deleteLater()
         existing = {card.name for card in self._card_stack.cards()}
         for name in wanted:
@@ -3618,6 +3662,7 @@ class FitParametersPanel(QWidget):
             # stack has the card.
             card.set_expanded(name not in self._collapsed_params)
             card.fit_requested.connect(self._open_model_fit_dialog)
+            card.results_requested.connect(self._show_fit_results_window)
             card.log_toggled.connect(self._on_card_log_toggled)
             card.transform_menu_requested.connect(self._show_y_transform_menu)
             card.expanded_changed.connect(self._on_card_expanded_changed)
@@ -3669,21 +3714,21 @@ class FitParametersPanel(QWidget):
             self._edit_composite_parameter(name)
 
     def _refresh_model_fit_button_labels(self) -> None:
-        """Relabel every card's Fit button and rewrite its fit summary line."""
+        """Relabel every card's Fit button, χ²ᵣ chip and open results window."""
         # When ≥2 series pills are selected the card's button drives a
         # cross-group *global* fit instead of a single-series model fit, so it
         # relabels to make that mode obvious. One (or zero) selected keeps the
         # single-series labels.
         n_groups = len(self._selected_group_ids_from_buttons())
         for card in self._card_stack.cards():
-            fit = self._model_fits.get(card.name)
+            solved = _first_solved_range(self._model_fits.get(card.name))
             if n_groups >= 2:
                 card.set_fit_label(
                     f"Global fit ×{n_groups}…",
                     "Fit this parameter jointly across the selected series "
                     "(shared / per-series parameters).",
                 )
-            elif fit is not None and fit.active and self._has_successful_fit_curve(fit):
+            elif solved is not None:
                 if self._overlay_suppressed_for_transform(card.name):
                     # The fit lives in a previous axis transform's coordinate, so
                     # its curve is hidden and left out of the export — flag it
@@ -3697,41 +3742,101 @@ class FitParametersPanel(QWidget):
                     card.set_fit_label("Fit ✓", "Model fit active")
             else:
                 card.set_fit_label("Fit…", "")
-            card.set_summary(self._fit_summary(fit))
 
-    def _fit_summary(self, fit: ParameterModelFit | None) -> str:
-        """One line describing *fit*'s first successful range: model, χ²ᵣ, params."""
-        if fit is None or not fit.active:
-            return _NO_FIT_SUMMARY
-        solved = next(
-            (r for r in fit.ranges if r.result is not None and r.result.success),
-            None,
+            if solved is None:
+                # No fit, no results: the chip and its window are the fit's own
+                # chrome, so both go rather than linger over nothing.
+                card.set_result(None, "", None)
+                self._close_fit_results_windows([card.name])
+                continue
+            chi_squared, verdict, colours = self._fit_verdict(solved)
+            lines = [f"{chi_squared} · {verdict}"]
+            lines += [
+                f"{row.symbol} = {format_value_uncertainty(row.value, row.error)}"
+                f"{' ' + row.unit if row.unit else ''}"
+                for row in _parameter_rows(solved)
+                if not row.fixed
+            ]
+            lines.append("Click for the fit results.")
+            card.set_result(chi_squared, "\n".join(lines), colours)
+            window = self._fit_results_windows.get(card.name)
+            if window is not None:
+                window.set_results(self._fit_results(card.name))
+
+    def _fit_verdict(self, fit_range: ModelFitRange) -> tuple[str, str, tuple[str, str, str]]:
+        """Return ``(χ²ᵣ text, verdict phrase, chip colours)`` for a solved range.
+
+        The same verdict path the Model Fit dialog's range chips take, so a
+        card's chip and that dialog can never disagree: χ²ᵣ carries goodness
+        information only against real per-point errors, so unit/scatter weights
+        (and ν < 1) return the neutral "no verdict" chip.
+        """
+        result = fit_range.result
+        chi_squared = f"χ²ᵣ {result.reduced_chi_squared:.3g}"
+        quality = assess_fit_quality(
+            result.chi_squared,
+            result.n_points - len(fit_range.parameters.free_parameters),
+            fit_quality_confidence(),
         )
-        if solved is None:
-            return _NO_FIT_SUMMARY
-        result = solved.result
-        parts = [
-            solved.model.component_expression_string(),
-            f"χ²ᵣ {result.reduced_chi_squared:.3g}",
-        ]
-        for param in solved.parameters.free_parameters:
-            fitted = result.parameters[param.name]
-            error = result.uncertainties.get(param.name)
-            label = format_param_label(param.name)
-            if error is None or not np.isfinite(error):
-                parts.append(f"{label} = {fitted.value:.3g}")
-            else:
-                parts.append(f"{label} = {fitted.value:.3g} ± {error:.2g}")
-        line = " · ".join(parts)
-        if len(fit.ranges) > 1:
-            return f"{len(fit.ranges)} ranges · {line}"
-        return line
+        if quality.verdict is None or result.error_mode in (
+            ErrorMode.NONE.value,
+            ErrorMode.SCATTER.value,
+        ):
+            return chi_squared, "no verdict", NEUTRAL_CHIP_COLOURS
+        band = f"{quality.band_low:.2g}–{quality.band_high:.2g}"
+        return (
+            chi_squared,
+            f"{quality.verdict} fit (band {band} at {quality.confidence * 100:g} %)",
+            FIT_VERDICT_CHIP_COLOURS[quality.verdict],
+        )
 
-    def _has_successful_fit_curve(self, fit: ParameterModelFit) -> bool:
+    def _fit_results(self, name: str) -> FitResults:
+        """Snapshot *name*'s model fit for its :class:`FitResultsWindow`."""
+        fit = self._model_fits[name]
+        included = len(self._included_trend_rows(fit.x_key))
+        ranges = []
         for fit_range in fit.ranges:
-            if fit_range.result is not None and fit_range.result.success:
-                return True
-        return False
+            if fit_range.result is None or not fit_range.result.success:
+                continue
+            chi_squared, verdict, colours = self._fit_verdict(fit_range)
+            low, high = effective_range_bounds(fit_range)
+            ranges.append(
+                FitRangeResults(
+                    model=fit_range.model.component_expression_string(),
+                    chi_squared=chi_squared,
+                    verdict=verdict,
+                    colours=colours,
+                    bounds=f"{_bound_text(low)} – {_bound_text(high)}",
+                    error_mode=fit_range.result.error_mode,
+                    parameters=_parameter_rows(fit_range),
+                )
+            )
+        return FitResults(
+            parameter_name=name,
+            x_label=self._x_axis_display_label(fit.x_key),
+            runs=f"{included} / {len(self._rows)} runs · {len(fit.ranges)} range(s)",
+            ranges=tuple(ranges),
+        )
+
+    def _show_fit_results_window(self, name: str) -> None:
+        """Open (or raise) the results window for *name*'s model fit."""
+        window = self._fit_results_windows.get(name)
+        if window is None:
+            window = FitResultsWindow(self._fit_results(name), parent=self)
+            window.edit_requested.connect(self._open_model_fit_dialog)
+            self._fit_results_windows[name] = window
+        else:
+            window.set_results(self._fit_results(name))
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _close_fit_results_windows(self, names: Iterable[str]) -> None:
+        """Close and drop the results windows of *names* that have one open."""
+        for name in [n for n in names if n in self._fit_results_windows]:
+            window = self._fit_results_windows.pop(name)
+            window.close()
+            window.deleteLater()
 
     def _show_composite_parameter_dialog(
         self,
@@ -6781,6 +6886,7 @@ class FitParametersPanel(QWidget):
     def closeEvent(self, event) -> None:
         self.shutdown_workers()
         self._unregister_knight_labels()
+        self._close_fit_results_windows(list(self._fit_results_windows))
         super().closeEvent(event)
 
     def _write_fit_files(

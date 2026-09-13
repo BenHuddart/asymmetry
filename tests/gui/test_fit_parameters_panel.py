@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (  # type: ignore
     QMessageBox,
     QScrollArea,
     QSplitter,
+    QTableWidget,
 )
 
 from asymmetry.core.fitting.axis_transforms import AxisTransform
@@ -27,6 +28,7 @@ from asymmetry.core.fitting.composite_parameters import CompositeParameterDefini
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameter_models import (
     CrossGroupFitResult,
+    ErrorMode,
     ModelFitRange,
     ParameterCompositeModel,
     ParameterGroupData,
@@ -45,9 +47,11 @@ from asymmetry.gui.panels.fit_parameters_panel import (
     _format_plot_legend_label,
     _GroupFitData,
 )
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.widgets import CONTEXT_CHIP_OBJECT_NAME
 from asymmetry.gui.utils import gle_export
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
+from asymmetry.gui.windows.fit_results_window import FitResultsWindow
 from tests._qt_helpers import wait_for
 from tests.gui._trend_panel import axes_for, card, select_params
 
@@ -56,7 +60,15 @@ def _active_linear_fit(param: str, x_key: str = "field") -> ParameterModelFit:
     """An active model fit with one solved range, for trend-overlay tests."""
     model = ParameterCompositeModel(["Linear"])
     params = ParameterSet([Parameter("m", value=0.001), Parameter("b", value=0.2)])
-    result = ParameterModelFitResult(success=True, parameters=params)
+    # χ² = 4.5 over ν = 5 − 2 → χ²ᵣ = 1.5, a "good" verdict at 95 % confidence.
+    result = ParameterModelFitResult(
+        success=True,
+        parameters=params,
+        chi_squared=4.5,
+        reduced_chi_squared=1.5,
+        n_points=5,
+        uncertainties={"m": 0.0005, "b": 0.01},
+    )
     return ParameterModelFit(
         parameter_name=param,
         x_key=x_key,
@@ -557,32 +569,93 @@ def test_card_fit_button_labels_track_the_fit_state(panel: FitParametersPanel) -
     assert "different axis transform" in card(panel, "A0").fit_button.toolTip()
 
 
-def test_card_summary_line_names_model_chi2_and_parameters(panel: FitParametersPanel) -> None:
+def test_card_result_chip_appears_with_the_fit_and_goes_with_it(
+    panel: FitParametersPanel,
+) -> None:
     select_params(panel, ["A0"])
-    assert card(panel, "A0")._summary_label.text() == "no model fit yet"
+    assert card(panel, "A0").result_chip.text() == ""
 
     panel._model_fits["A0"] = _active_linear_fit("A0")
     panel._refresh_model_fit_button_labels()
-    summary = card(panel, "A0")._summary_label.text()
-    assert summary.startswith("Linear · χ²ᵣ ")
-    assert " · m = 0.001" in summary
-    assert " · b = 0.2" in summary
+
+    chip = card(panel, "A0").result_chip
+    assert chip.text() == "χ²ᵣ 1.5"
+    assert chip.isVisibleTo(card(panel, "A0"))
+    # χ² of 3 over ν = 4 − 2 reads "good" at the default 95 % confidence.
+    assert tokens.OK in chip.styleSheet()
+    tooltip = chip.toolTip().splitlines()
+    assert tooltip[0].startswith("χ²ᵣ 1.5 · good fit (band ")
+    assert tooltip[0].endswith(" %)")
+    assert tooltip[1:3] == ["m = 0.0010(5)", "b = 0.200(10)"]
+    assert tooltip[-1] == "Click for the fit results."
+
+    del panel._model_fits["A0"]
+    panel._refresh_model_fit_button_labels()
+    assert chip.text() == ""
+    assert not chip.isVisibleTo(card(panel, "A0"))
 
 
-def test_card_summary_prefixes_the_range_count(panel: FitParametersPanel) -> None:
+def test_card_result_chip_is_neutral_without_a_verdict(panel: FitParametersPanel) -> None:
     select_params(panel, ["A0"])
     fit = _active_linear_fit("A0")
-    fit.ranges.append(
-        ModelFitRange(
-            x_min=200.0,
-            x_max=300.0,
-            model=ParameterCompositeModel(["Linear"]),
-            parameters=ParameterSet([Parameter("m", value=0.002)]),
-        )
-    )
+    # Scatter-estimated errors force χ²ᵣ toward 1, so it carries no verdict.
+    fit.ranges[0].result.error_mode = ErrorMode.SCATTER.value
     panel._model_fits["A0"] = fit
     panel._refresh_model_fit_button_labels()
-    assert card(panel, "A0")._summary_label.text().startswith("2 ranges · Linear · ")
+
+    chip = card(panel, "A0").result_chip
+    assert chip.toolTip().startswith("χ²ᵣ 1.5 · no verdict")
+    assert tokens.TEXT_MUTED in chip.styleSheet()
+
+
+def test_card_result_chip_opens_and_reuses_one_results_window(
+    panel: FitParametersPanel,
+) -> None:
+    select_params(panel, ["A0"])
+    panel._model_fits["A0"] = _active_linear_fit("A0")
+    panel._refresh_model_fit_button_labels()
+
+    card(panel, "A0").result_chip.click()
+    window = panel._fit_results_windows["A0"]
+
+    assert isinstance(window, FitResultsWindow)
+    assert window.windowTitle() == f"Fit results — {_format_param_label('A0')}"
+    table = window.findChild(QTableWidget)
+    assert table.rowCount() == 2
+    assert [table.item(row, 0).text() for row in range(2)] == ["m", "b"]
+    assert [table.item(row, 1).text() for row in range(2)] == ["0.0010(5)", "0.200(10)"]
+
+    card(panel, "A0").result_chip.click()
+    assert panel._fit_results_windows["A0"] is window
+
+
+def test_results_window_copy_puts_the_table_on_the_clipboard(
+    panel: FitParametersPanel, qapp: QApplication
+) -> None:
+    select_params(panel, ["A0"])
+    panel._model_fits["A0"] = _active_linear_fit("A0")
+    panel._refresh_model_fit_button_labels()
+    card(panel, "A0").result_chip.click()
+
+    panel._fit_results_windows["A0"]._copy()
+
+    lines = qapp.clipboard().text().splitlines()
+    assert lines[0] == "Model: Linear"
+    assert lines[1] == "χ²ᵣ 1.5"
+    assert lines[2].split("\t")[0] == "m"
+    assert "±" in lines[2]
+
+
+def test_results_window_closes_when_the_chip_is_unchecked(panel: FitParametersPanel) -> None:
+    select_params(panel, ["A0", "Lambda"])
+    panel._model_fits["A0"] = _active_linear_fit("A0")
+    panel._refresh_model_fit_button_labels()
+    card(panel, "A0").result_chip.click()
+    assert "A0" in panel._fit_results_windows
+
+    select_params(panel, ["Lambda"])
+
+    assert "A0" not in panel._fit_results_windows
 
 
 def test_y_transform_menu_applies_to_one_card(

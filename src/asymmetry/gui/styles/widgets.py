@@ -619,6 +619,44 @@ def success_html(label: str, *, detail: str | None = None) -> str:
 #: purple scheme onto the Asymmetry palette.
 _FIT_VERDICT_COLOURS = {"good": tokens.OK, "poor": tokens.ERROR, "overdone": tokens.ACCENT}
 
+#: objectName scoping the standalone verdict chip's QSS — a widget carrying the
+#: same verdict as :func:`fit_quality_chip_html` where there is no surrounding
+#: rich-text line to inline it into (the trend card's χ²ᵣ chip, and the same
+#: verdict repeated in the fit-results window).
+VERDICT_CHIP_OBJECT_NAME = "benchVerdictChip"
+
+#: (background, border, text) per χ² verdict. The text colour is the inline
+#: chip's, so both renderings of one verdict always agree.
+FIT_VERDICT_CHIP_COLOURS = {
+    "good": (tokens.SUCCESS_BG, tokens.SUCCESS_BORDER, _FIT_VERDICT_COLOURS["good"]),
+    "poor": (tokens.ERROR_BG, tokens.ERROR, _FIT_VERDICT_COLOURS["poor"]),
+    "overdone": (tokens.ACCENT_SOFT, tokens.ACCENT, _FIT_VERDICT_COLOURS["overdone"]),
+}
+
+#: Verdict-chip colours when no verdict applies — ν < 1, or an error mode for
+#: which χ²ᵣ carries no goodness information.
+NEUTRAL_CHIP_COLOURS = (tokens.SURFACE_ALT, tokens.BORDER, tokens.TEXT_MUTED)
+
+
+def verdict_chip_qss(colours: tuple[str, str, str], *, widget: str = "QPushButton") -> str:
+    """Return per-widget QSS for a flat verdict chip in ``(bg, border, text)``.
+
+    Same pill geometry as :func:`make_confidence_chip`; ``widget`` names the
+    class the chip is built from, since a clickable chip is a ``QPushButton``
+    and a static one a ``QLabel``.
+    """
+    bg, border, fg = colours
+    return (
+        f"{widget}#{VERDICT_CHIP_OBJECT_NAME} {{"
+        f" background-color: {bg};"
+        f" color: {fg};"
+        f" border: 1px solid {border};"
+        " border-radius: 9px;"
+        " padding: 1px 8px;"
+        " font-weight: 600;"
+        " }"
+    )
+
 
 def fit_quality_chip_html(quality: dict | None, params_at_bound: list[str] | None = None) -> str:
     """Return inline coloured verdict chip(s) for a fit summary.

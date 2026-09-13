@@ -44,10 +44,12 @@ fitted table is a dead copy in a dialog.
   elided, full on tooltip) · **Fit** button · `log` checkbox · **ƒ** button
   (per-parameter y transform, label shows the active lens) · stretch · focus
   button (⤢ / ⤡) · drag grip.
-- Body: one Matplotlib canvas from `create_canvas` + a one-line **summary**
-  label under it: `<model> · χ²ᵣ 1.4 · Tₙ = 27.6 ± 0.3 K · …` (fitted
-  parameters as `name = value ± err`, elided to the card width, full text on
-  tooltip); when no fit is active the summary reads `no model fit yet`.
+- Body: one Matplotlib canvas from `create_canvas`. The fit's read-out lives
+  in the header instead: a **χ²ᵣ chip** (`χ²ᵣ 0.89`) right of the Fit button,
+  shown only while the parameter has an active fit with a successful range and
+  coloured by the fit-quality verdict; its tooltip carries the verdict band and
+  every fitted parameter (`T꜀ = 35.8(5) K`), and clicking it opens that
+  parameter's `FitResultsWindow`.
 - Collapsed: header only, with a QPainter sparkline (no Matplotlib) in place
   of the right-hand controls; `Fit`/`log`/`ƒ` hidden; a `derived` tag stays.
 - Focused: the card takes all the stack's height, every other card collapses
@@ -190,7 +192,8 @@ The card is a pure view: it owns its canvas/figure, emits
 `fit_requested(name)`, `log_toggled(name, bool)`, `transform_menu_requested(name, QPoint)`,
 `focus_toggled(name)`, `expanded_changed(name, bool)`, `context_menu_requested(name, QPoint)`;
 the stack owns order, focus, drag reorder and emits `order_changed(list[str])`.
-`set_fit_label(text, tooltip)`, `set_summary(text)`, `set_transform_label(text)`,
+`set_fit_label(text, tooltip)`, `set_result(text, tooltip, colours)`,
+`set_transform_label(text)`,
 `set_sparkline(xs, ys, color)`, `set_swatch(color)`.
 Card chrome follows `RangeCard` (`gui/widgets/range_card.py`) for surface,
 border and active-state styling; Fit button uses the segmented QSS builders.
@@ -262,6 +265,14 @@ the mockup link and the review checklist.
   table's header length and row count (via the shared `resize_to_available`,
   capped to 90 % of the work area) on every show, and only ever grows, so a
   window the user widened is not fought.
+- 2026-09-13 (follow-up): the card's one-line fit summary is gone. It cost a
+  text row under every figure to say what a chip can: the header now carries a
+  `χ²ᵣ 0.89` chip (colours from the same `assess_fit_quality` verdict the Model
+  Fit dialog uses, neutral where χ²ᵣ carries no goodness information), with the
+  fitted parameters in its tooltip, and clicking it opens a per-parameter
+  `gui/windows/fit_results_window.py::FitResultsWindow` — a non-modal, reusable
+  pure view fed a plain `FitResults` snapshot by the panel. Values there use the
+  new `format_value_uncertainty` (`35.8(5)`).
 - 2026-09-13 (follow-up): labels move to one right-click menu on every plot —
   `Add label here…`, `Edit label…` / `Remove label`, `Clear labels`, merged
   with the trend-point membership toggle. The cards' and Overlay's tools rows

@@ -103,17 +103,45 @@ def test_card_set_expanded_is_idempotent(qapp: QApplication) -> None:
     card.deleteLater()
 
 
-def test_card_summary_elides_and_keeps_full_text_on_the_tooltip(qapp: QApplication) -> None:
+def test_card_result_chip_hides_without_a_fit(qapp: QApplication) -> None:
     card = ParameterCard("lambda", "λ")
-    summary = (
-        "Linear · χ²ᵣ 1.4 · m = 0.00123 ± 0.00004 µs⁻¹/K · c = 0.210 ± 0.002 µs⁻¹ · 4 of 4 runs"
+
+    card.set_result(None, "", None)
+
+    assert not card.result_chip.isVisibleTo(card)
+    assert card.result_chip.text() == ""
+    card.deleteLater()
+
+
+def test_card_result_chip_shows_the_value_tooltip_and_colours(qapp: QApplication) -> None:
+    card = ParameterCard("lambda", "λ")
+    tooltip = (
+        "χ²ᵣ 0.89 · good fit (band 0.7–1.3 at 95 %)\nT꜀ = 35.8(5) K\nClick for the fit results."
     )
 
-    card.set_summary(summary)
+    card.set_result("χ²ᵣ 0.89", tooltip, (tokens.SUCCESS_BG, tokens.SUCCESS_BORDER, tokens.OK))
 
-    assert card._summary_label.text() == summary
-    assert card._summary_label.toolTip() == summary
-    assert card._summary_label._elided_text() != summary
+    assert card.result_chip.isVisibleTo(card)
+    assert card.result_chip.text() == "χ²ᵣ 0.89"
+    assert card.result_chip.toolTip() == tooltip
+    assert tokens.SUCCESS_BG in card.result_chip.styleSheet()
+    assert tokens.OK in card.result_chip.styleSheet()
+
+    # The chip is one of the per-parameter controls, so it goes with them.
+    card.set_expanded(False)
+    assert not card.result_chip.isVisibleTo(card)
+    card.deleteLater()
+
+
+def test_card_result_chip_click_emits_results_requested(qapp: QApplication) -> None:
+    card = ParameterCard("lambda", "λ")
+    requested: list[str] = []
+    card.results_requested.connect(requested.append)
+
+    card.set_result("χ²ᵣ 1.2", "tip", (tokens.SURFACE_ALT, tokens.BORDER, tokens.TEXT_MUTED))
+    card.result_chip.click()
+
+    assert requested == ["lambda"]
     card.deleteLater()
 
 

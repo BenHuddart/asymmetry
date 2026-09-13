@@ -16,7 +16,12 @@ from PySide6.QtWidgets import QApplication, QDialog
 
 import asymmetry.gui.panels.fit_parameters_panel as fpp
 from asymmetry.core.fitting.axis_transforms import AxisTransform
-from asymmetry.core.fitting.parameter_models import ParameterCompositeModel
+from asymmetry.core.fitting.parameter_models import (
+    ModelFitRange,
+    ParameterCompositeModel,
+    ParameterModelFit,
+    ParameterModelFitResult,
+)
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_parameters_panel import (
     FitParametersPanel,
@@ -39,6 +44,31 @@ def _row(run_number: int, field: float, lam: float, lam_err: float = 0.02) -> _F
         temperature=10.0,
         values={"Lambda": lam},
         errors={"Lambda": lam_err},
+    )
+
+
+def _linear_fit(name: str) -> ParameterModelFit:
+    """A converged single-range ``Linear`` trend fit of *name* against field."""
+    params = ParameterSet([Parameter("m", value=0.5)])
+    return ParameterModelFit(
+        parameter_name=name,
+        x_key="field",
+        ranges=[
+            ModelFitRange(
+                x_min=None,
+                x_max=None,
+                model=ParameterCompositeModel(["Linear"]),
+                parameters=params,
+                result=ParameterModelFitResult(
+                    success=True,
+                    parameters=params,
+                    chi_squared=2.4,
+                    reduced_chi_squared=1.2,
+                    n_points=3,
+                    uncertainties={"m": 0.05},
+                ),
+            )
+        ],
     )
 
 
@@ -257,7 +287,7 @@ def test_overlay_suppressed_when_transform_changes(qapp):
 def test_one_parameters_lens_does_not_strand_anothers_fit(qapp):
     panel = _two_param_panel()
     for name in ("Lambda", "Beta"):
-        panel._model_fits[name] = _StubFit()
+        panel._model_fits[name] = _linear_fit(name)
         panel._model_fit_transform_sig[name] = panel._transform_signature(name)
     panel._set_y_transform("Lambda", AxisTransform.preset("reciprocal"))
     assert panel._overlay_suppressed_for_transform("Lambda")
@@ -506,7 +536,7 @@ def test_gle_effective_columns_point_at_transformed(qapp):
 
 def test_gle_iter_skips_stale_transform_fits(qapp):
     panel = _panel_with_rows(_lambda_series([1.0, 2.0], [4.0, 2.0]))
-    panel._model_fits["Lambda"] = _StubFit()
+    panel._model_fits["Lambda"] = _linear_fit("Lambda")
     # Recorded under identity → visible under identity.
     panel._model_fit_transform_sig["Lambda"] = panel._transform_signature("Lambda")
     assert [p for p, _i, _r in panel._iter_active_fit_ranges("field")] == ["Lambda"]
@@ -536,28 +566,9 @@ def test_active_series_flagged_in_legend(qapp):
     assert sum(lbl.endswith("(active)") for lbl in labels) == 1
 
 
-class _StubResult:
-    success = True
-    reduced_chi_squared = 1.2
-    parameters = ParameterSet([Parameter("m", value=0.5)])
-    uncertainties = {"m": 0.05}
-
-
-class _StubRange:
-    result = _StubResult()
-    model = ParameterCompositeModel(["Linear"])
-    parameters = ParameterSet([Parameter("m", value=0.5)])
-
-
-class _StubFit:
-    active = True
-    x_key = "field"
-    ranges = [_StubRange()]
-
-
 def test_stale_fit_button_shows_warning_state(qapp):
     panel = _panel_with_rows(_lambda_series([1.0, 2.0], [4.0, 2.0]))
-    panel._model_fits["Lambda"] = _StubFit()
+    panel._model_fits["Lambda"] = _linear_fit("Lambda")
     panel._model_fit_transform_sig["Lambda"] = panel._transform_signature("Lambda")
     panel._refresh_model_fit_button_labels()
     assert panel._y_controls["Lambda"].fit_button.text() == "Fit ✓"

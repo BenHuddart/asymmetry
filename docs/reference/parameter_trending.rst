@@ -9,10 +9,10 @@ Parameter trending
 *the* ``σ(T) — MgB₂`` *series and the* ``σ (µs⁻¹)`` *chip checked on the y*
 *rail, opening its card. The smooth trend curve is a* ``SC_TwoGap_SS`` *two-gap*
 *fit (the card's* **Fit ✓** *button), an MgB₂ alpha-model decomposition (small*
-*and large gap ratios; Niedermayer et al. Phys. Rev. B 65, 094512, 2002); the*
-*card's summary line reports the fit and recovers σ₀ ≈ 1.24 µs⁻¹ and*
-*Tc ≈ 35.8 K. The σ(T) → λ(T) inversion that follows from this fit is*
-*discussed in* :doc:`sc_penetration_depth`.
+*and large gap ratios; Niedermayer et al. Phys. Rev. B 65, 094512, 2002),*
+*recovering σ₀ ≈ 1.24 µs⁻¹ and Tc ≈ 35.8 K; the card's* ``χ²ᵣ`` *chip grades*
+*it and opens the full results. The σ(T) → λ(T) inversion that follows from*
+*this fit is discussed in* :doc:`sc_penetration_depth`.
 
 Parameter trending is the second stage of any temperature or field scan
 analysis. Once a series of runs has been individually (or globally) fitted
@@ -65,11 +65,26 @@ and a drag grip (**⠿**, reorders the stack). Collapsing a card (its
 disclosure arrow, or a click anywhere on the header) replaces the figure with
 a small sparkline. A derived parameter's card carries a ``derived`` tag;
 right-click its header for **Edit derived…** (composite parameters only) and
-**Remove**. Beneath the figure, a one-line summary reports the active fit —
-model, χ²ᵣ, and each fitted parameter as ``name = value ± error`` — or reads
-``no model fit yet``. *Overlay* instead draws every checked parameter on one
-shared canvas (a twin y-axis for exactly two — see `Overlaying Several
-Series`_).
+**Remove**. *Overlay* instead draws every checked parameter on one shared
+canvas (a twin y-axis for exactly two — see `Overlaying Several Series`_).
+
+Once a parameter carries a converged model fit, a **χ²ᵣ chip** (``χ²ᵣ 0.89``)
+appears in its card header beside the **Fit** button, coloured by the same
+quality verdict the Model Fit window reports — green for *good*, red for
+*poor*, blue for *overdone*, and neutral grey where χ²ᵣ carries no goodness
+information (unit or scatter-estimated errors, or fewer points than
+parameters; see :ref:`assessing a fit <assessing-a-fit>`). Hovering it names
+the verdict, its target band and confidence, and each fitted parameter in the
+parenthesised-uncertainty convention (``T꜀ = 35.8(5) K`` is 35.8 ± 0.5 K).
+
+Clicking the chip opens that parameter's **Fit results** window (titled, for
+example, ``Fit results — λ (µs⁻¹)``): the model and verdict chips over a
+read-only ``Parameter`` / ``Value`` / ``Unit`` table — one row per fitted
+parameter, with any parameters held fixed listed after them — the trend
+provenance, the x axis, fitted range and error mode, and **Copy** (the table
+as tab-separated text), **Edit model fit…** (reopens the Model Fit window)
+and **Close**. The window is non-modal, updates itself whenever the fit
+changes, and a fit with several ranges gets one section per range.
 
 Every plot — each card's figure and the Overlay canvas alike — carries the
 same right-click menu for text labels. Over bare axes it offers **Add label

@@ -51,10 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a Y-parameter table above one shared plot.** Checking a chip on the new y
   rail opens (or closes) that parameter's **card**, which carries its own
   `Fit`, `log`, and `ƒ` (axis-transform) controls next to the figure they
-  act on, plus a one-line fit summary underneath it; collapsing a card
-  replaces the figure with a small sparkline, and dragging its grip reorders
-  the stack. The `Fit` button now reads `Fit…` / `Fit ✓` / `Fit ⚠` /
-  `Global fit ×N…` in place of the old `Model Fit` / `Model Fit*` labels. A
+  act on; collapsing a card replaces the figure with a small sparkline, and
+  dragging its grip reorders the stack. The `Fit` button now reads `Fit…` /
+  `Fit ✓` / `Fit ⚠` / `Global fit ×N…` in place of the old `Model Fit` /
+  `Model Fit*` labels. A fitted card also carries a `χ²ᵣ 0.89` chip coloured
+  by the fit-quality verdict, whose tooltip names the verdict band and every
+  fitted parameter, and which opens a non-modal per-parameter
+  `Fit results — λ (µs⁻¹)` window: the model and verdict chips over a
+  `Parameter` / `Value` / `Unit` table in the parenthesised-uncertainty
+  convention (`35.8(5)`), the fit's provenance, range and error mode, and
+  `Copy` / `Edit model fit…` / `Close`. A
   `Subplots` │ `Overlay` toggle replaces the old `Plot mode` combo (`Overlay`
   is `Single Axes` renamed), and the fitted-parameter table moves into a
   non-modal `Fitted parameters` pop-out (the rail's `Table` button, with
