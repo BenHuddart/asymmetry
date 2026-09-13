@@ -842,10 +842,14 @@ Fitting panel
 *derived in Blundell et al. Ch 5.2.*
 
 The fitting panel provides an interactive interface for fitting models to your data.
-It is located in the right dock area next to the plot panel.
+It is located in the right dock area next to the plot panel, with a **Single**
+tab for one dataset and a **Batch** tab for several — both built from the same
+model row, Parameters rail, run row and Results card described below.
 
 The fit function is shown as :math:`A(t)` and is built from components using
-the **Edit Function...** button.
+the **Edit…** button beside it. A **Wizard…** button opens the
+model-recommendation wizard for the active tab — :doc:`fit_wizard` on the
+Single tab, the Global Fit Wizard (:doc:`global_fit_wizard`) on the Batch tab.
 
 **Single dataset fitting**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -857,11 +861,16 @@ By default, the function is:
 
    A(t) = A_1 e^{-\lambda t} + A_{\mathrm{bg}}
 
-where ``A_bg`` is an explicit constant background term.
+where ``A_bg`` is an explicit constant background term. A free background
+absorbs part of the initial asymmetry on a run where it should not be there
+to absorb — for example a light-OFF :math:`A_0` calibration run — splitting
+the fitted amplitude between the background and the relaxation term; remove
+``A_bg`` in the function editor (delete the ``Constant`` component) to fit
+the full :math:`A_0` with a single relaxation term instead.
 
 To edit the model:
 
-1. Click **Edit Function...**
+1. Click **Edit…**
 2. Add/remove components and choose operators (``+``, ``-``, ``*``, ``/``)
 3. Confirm with **OK**
 
@@ -933,8 +942,17 @@ the parameter-trend model editor, and the Simulate dialog.
 Fitting workflow:
 
 1. **Select a dataset** in the data browser (it will be plotted)
-2. **Adjust parameters** in the table:
-   
+2. **Adjust parameters** in the table, below the **Parameters** section
+   header. Three chips beside the header show or hide a pair of columns
+   each: **Bounds** (**Min**/**Max**, on by default), **Links** (**Link**/
+   **Tie**, the equality-group selector and the affine-tie editor described
+   in :doc:`fitting`) and **Batch** (a read-only role a piped-back batch fit
+   classified this parameter as). Hiding a column never loses what it says —
+   a linked or tied parameter still paints a small ``⇄2``/``ƒ`` badge in its
+   Value cell. The **↗** button beside the chips pops the whole eight-column
+   table out into its own window, with **Copy TSV** to copy it to the
+   clipboard and **Close** to bring the table back.
+
    * **Value**: Initial guess for the parameter. Every value starts as a
      *seed* read off the data you are fitting — an amplitude and background
      from the record's own scale, ``field`` and ``B_L`` from the run's applied
@@ -944,21 +962,36 @@ Fitting workflow:
      fitting. As soon as you type a value, or a fit writes one back, it is
      yours and stays put until you **Reset**.
    * **Fix**: Check to hold the parameter constant during fit
-   * **Min/Max**: Set bounds (leave empty for no bounds)
+   * **Min/Max**: Set bounds (leave empty for no bounds) — shown when
+     **Bounds** is checked
 
 3. **Click "Fit"** to execute the fitting
 
    The fit uses the dataset currently shown in the plot panel. Grouping and
    bunching are configured from the Grouping dialog and applied before fitting.
-   Fits run asynchronously, and the dialog shows a "fit in progress" message
-   while fit controls are temporarily disabled.
+   Fits run asynchronously — **Fit** becomes **Stop** while one is running,
+   and stopping it records nothing.
 
 4. **Review results:**
-   
+
    * Fit curve appears on the plot in red
-   * Results box shows χ², χ²ᵣ (reduced chi-squared)
-   * Best-fit parameter values with uncertainties
+   * A **χ²ᵣ** verdict chip appears beside **Fit**, coloured by the fit's
+     quality band; click it to open a window with the full parameter
+     read-out for this fit
+   * The Results card below carries the same outcome as a tag — **Fit ✓**
+     for a clean convergence, **Fit ⚠** for a converged-but-flagged fit,
+     **Error** on failure — plus :math:`\chi^2/\nu`, an ``ndof``/``npar``
+     read-out, and any advisory warnings
    * Log panel shows summary message
+
+The Results card's footer holds this run's hand-offs as buttons:
+**Diagnostic…** opens the pull-distribution diagnostic (:ref:`pull-diagnostic`)
+for the last converged fit; **Add to series…** adds this run's fit to an
+existing trend series; **Send to Batch →** copies the current model, its seed
+values and bounds into the Batch tab to start a batch fit over the selected
+runs. **Send to Batch →** copies the function rather than a result, so it
+needs no fit and is always enabled; the other two need a completed fit for
+the run currently shown.
 
 **Tips for Good Fits:**
 
@@ -987,11 +1020,13 @@ field, and a frequency-domain peak's position, height and width from that
 run's spectrum. Everything else is a starting guess about the physics rather
 than about a particular run, so a rate, an amplitude or a phase you typed —
 or that a fit wrote back — is carried across unchanged and kept until you
-click **Reset**. A results box below the parameter table reads "Model carried from run
-*N* — not fitted for this run" while a refreshed or carried form is showing,
-so it is never mistaken for an actual fit of the displayed run. Only when
-nothing has been fitted anywhere in the session yet does the form fall back
-to carrying forward whatever was last *displayed*.
+click **Reset**. While a refreshed or carried form is showing, the Results
+card carries a **seeds from** *N* tag in place of a fit outcome — hover it
+for the full explanation, "Model carried from run *N* — not fitted for this
+run" — so it is never mistaken for an actual fit of the displayed run. Only
+when nothing has been fitted anywhere in the session yet does the form fall
+back to carrying forward whatever was last *displayed*, tagged **carried
+seeds** instead of naming a run.
 
 .. _batch-tab-groups:
 
@@ -1003,7 +1038,7 @@ per-dataset parameters:
 
 1. **Select multiple datasets** in the data browser (Ctrl+Click or Shift+Click)
 2. Switch to the **Batch** tab in the fit panel
-3. Optionally click **Edit Function...** to customise the composite :math:`A(t)`
+3. Optionally click **Edit…** to customise the composite :math:`A(t)`
 4. **Set parameter type** in the table for each parameter:
 
    * **Global**: shared value across all selected datasets
@@ -1014,14 +1049,39 @@ per-dataset parameters:
      file). Behaves like **Fixed** for the fit itself, but the value
      differs automatically for each selected dataset.
 
-5. **Click "Run Batch Fit"**
+   The **Parameter Classification** section's hint line names the same four
+   roles at a glance: "Global: one value shared by every run · Local: fitted
+   per run · Fixed: held at the seed · File: taken from run metadata." A
+   **Bounds** chip beside the section header (off by default) shows the same
+   **Min**/**Max** pair the Single tab has; the **↗** button pops the table
+   out with every column shown.
+
+5. Set each run's starting values under **Seeding**: the combo chooses how a
+   run is seeded — independent seeds for every run, or each run chained from
+   the previous one's converged fit, which suits an ordered temperature or
+   field scan — and **Per-run seeds…** opens a dialog to edit individual
+   runs' values directly.
+6. **Click "Run batch fit"**
 
    Batch/global fitting follows the same rule: current grouped/bunched
    dataset settings are applied to each selected dataset before fitting.
+   Once a run completes, the run row's outcome chip reads the count of runs
+   that converged cleanly beside the count that failed or converged with a
+   warning — for example ``3 ✓ 1 ⚠`` — with the full sentence on its
+   tooltip.
 
 After a batch or global fit completes:
 
 * Fit curves appear on the plot for all datasets
+* The Results card carries a **Batch ✓**/**Batch ⚠** tag, an "*N* of *M*
+  converged" headline, and one verdict chip per run (for example
+  ``3001 ✓ 0.98``, coloured by that run's own fit quality); click a run's
+  chip to open its fitted-parameter window
+* **Use as seeds** — enabled when the batch's own diagnostics find a cleaner
+  descending-frequency ordering across the runs that fitted well — fills the
+  per-run seed table with values interpolated from that ordering and re-runs
+  the batch; **Trends →** brings the Parameters panel to the front with this
+  batch's series already selected
 * The **Global Parameter Fit** window opens automatically when the fit has at
   least one **Global** parameter (see below)
 * The log panel shows a summary with average χ²ᵣ
@@ -1079,6 +1139,13 @@ In that workflow:
 * the fit UI splits into **Per-Group Parameters** and **Fit-Function Parameters** blocks
 * grouped runs are fitted in count space using lifetime-corrected grouped traces
 * switching the central workspace back to **FB Asymmetry** restores the regular fit dock
+
+The **Multi-Group Fit** window's **Single** and **Batch** tabs use the same
+model row, Parameters rail and Results card as the main fit dock. The
+single-group tab's card offers **Send to Batch →** to copy its model and
+seeds into the grouped **Batch** tab; the grouped **Batch** tab's card offers
+**Use as seeds** and **Trends →** exactly as the plain Batch tab's does, with
+one verdict chip per fitted group series member.
 
 See :doc:`grouped_time_domain_fitting` for the detailed workflow and current
 limitations of this first implementation slice.

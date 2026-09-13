@@ -155,9 +155,10 @@ The single-frequency fit has a spurious low-amplitude minimum, and a seed
 that starts too far below the true frequency collapses into it. Fitting
 in ascending-temperature order, carrying each converged :math:`f` forward
 as the seed for the next run, keeps every fit in the correct minimum. The
-**Fit Wizard…** can be used on a mid-transition run to confirm the model
-choice before committing to the batch; below :math:`T_C` it settles on the
-damped-oscillation family, above :math:`T_C` on a plain exponential.
+Single tab's **Wizard…** button (:doc:`/reference/fit_wizard`) can be used on
+a mid-transition run to confirm the model choice before committing to the
+batch; below :math:`T_C` it settles on the damped-oscillation family, above
+:math:`T_C` on a plain exponential.
 
 The frequency-domain view gives an independent check that only *one*
 precession frequency is present:
