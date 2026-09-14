@@ -53,6 +53,7 @@ from asymmetry.core.utils.constants import (
 from asymmetry.gui.panels import fit_panel as fit_panel_module
 from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit import single_tab as single_tab_module
+from asymmetry.gui.panels.fit.global_tab import FitLaunch
 from asymmetry.gui.panels.fit.wizard_cache import (
     GlobalWizardCacheEntry,
     WizardCacheEntry,
@@ -665,8 +666,11 @@ def test_partial_batch_failure_emits_converged_series_and_warns(
 
     tab = GlobalFitTab(member_kind="runs")
     tab._datasets = [_ds(10), _ds(11)]
-    tab._current_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    tab._current_global_params = []
+    launch = FitLaunch(
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+        global_params=(),
+        datasets=tuple(tab._datasets),
+    )
 
     emitted: dict[str, object] = {}
     tab.global_fit_completed.connect(
@@ -684,7 +688,7 @@ def test_partial_batch_failure_emits_converged_series_and_warns(
     )
     failed = FitResult(success=False, message="call limit reached")
 
-    tab._on_fit_finished({10: ok, 11: failed}, [])
+    tab._on_fit_finished(launch, {10: ok, 11: failed}, [])
 
     assert set(emitted["results_with_curves"]) == {10}
     assert "failed to converge" in tab._results_card.content_html()
@@ -1298,8 +1302,11 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
     tab._datasets = [dataset, d2]
 
     model = tab._composite_model
-    tab._current_model = model
-    tab._current_global_params = [model.param_names[0]]
+    launch = FitLaunch(
+        model=model,
+        global_params=(model.param_names[0],),
+        datasets=tuple(tab._datasets),
+    )
 
     pset = ParameterSet([Parameter(name=p, value=1.0) for p in model.param_names])
     result = FitResult(
@@ -1314,7 +1321,7 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
     emitted = {}
     tab.global_fit_completed.connect(lambda res, glob: emitted.update({"res": res, "glob": glob}))
 
-    tab._on_fit_finished({101: result, 102: result}, fitted_global)
+    tab._on_fit_finished(launch, {101: result, 102: result}, fitted_global)
 
     assert tab._results_card.tag_text() == "Batch ✓"
     assert set(emitted["res"]) == {101, 102}
@@ -1324,11 +1331,10 @@ def test_global_fit_finished_failure_lists_failed_runs(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:
     tab = GlobalFitTab()
-    tab._current_model = tab._composite_model
-    tab._current_global_params = []
+    launch = FitLaunch(model=tab._composite_model, global_params=(), datasets=())
     fail = FitResult(success=False, message="x")
 
-    tab._on_fit_finished({101: fail}, ParameterSet())
+    tab._on_fit_finished(launch, {101: fail}, ParameterSet())
     assert "Batch fit failed" in tab._results_card.content_html()
 
 
@@ -1468,8 +1474,16 @@ def test_grouped_fit_finished_updates_grouped_tables(
         },
     )
 
-    tab._current_model = tab._composite_model
-    tab._on_grouped_fit_finished(grouped_datasets, grouped_result)
+    tab._on_grouped_fit_finished(
+        FitLaunch(
+            model=tab._grouped_fit_model(),
+            global_params=(),
+            datasets=tuple(grouped_datasets),
+            time_span=(0.0, 1.0),
+            run_number=int(dataset.run_number),
+        ),
+        grouped_result,
+    )
 
     group_param_rows = {
         tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row

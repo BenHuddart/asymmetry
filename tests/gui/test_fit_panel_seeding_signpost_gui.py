@@ -18,7 +18,11 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.gui.panels.fit.global_tab import USE_AS_SEEDS_ACTION, GlobalFitTab
+from asymmetry.gui.panels.fit.global_tab import (
+    USE_AS_SEEDS_ACTION,
+    FitLaunch,
+    GlobalFitTab,
+)
 
 pytestmark = [pytest.mark.gui]
 
@@ -42,6 +46,11 @@ def _result(amp: float, freq: float, success: bool = True) -> FitResult:
     return FitResult(success=success, reduced_chi_squared=1.0, parameters=ps)
 
 
+def _launch(tab: GlobalFitTab) -> FitLaunch:
+    """The launch the completion is read against: the stub model and members."""
+    return FitLaunch(model=_MODEL, global_params=(), datasets=tuple(tab._datasets))
+
+
 def _attach_trend(tab: GlobalFitTab) -> dict[int, FitResult]:
     time = np.linspace(0.1, 8.0, 8)
     tab._datasets = [
@@ -53,7 +62,6 @@ def _attach_trend(tab: GlobalFitTab) -> dict[int, FitResult]:
         )
         for run, (temp, _a, _f) in _TREND.items()
     ]
-    tab._current_model = _MODEL
     return {run: _result(amp, freq) for run, (_t, amp, freq) in _TREND.items()}
 
 
@@ -68,7 +76,7 @@ def test_advice_names_the_collapse_and_suggests_seeds(qapp: QApplication) -> Non
     tab = GlobalFitTab(member_kind="runs")
     results = _attach_trend(tab)
 
-    advice = tab._series_seeding_advice(_MODEL, results)
+    advice = tab._series_seeding_advice(_launch(tab), results)
 
     assert "trend has outliers" in advice
     # The collapsed run is offered a descending frequency warm-start.
@@ -82,11 +90,10 @@ def test_converged_batch_card_carries_the_advice_and_arms_use_as_seeds(
     """The signpost's sentence is the card's body, and it arms the hand-off."""
     tab = GlobalFitTab(member_kind="runs")
     results = _attach_trend(tab)
-    tab._current_global_params = []
     # The stub model carries no callable; the card is what is under test.
-    tab._results_with_curves = lambda model, results_dict: {}
+    tab._results_with_curves = lambda model, results_dict, datasets: {}
 
-    tab._on_fit_finished(results, ParameterSet())
+    tab._on_fit_finished(_launch(tab), results, ParameterSet())
 
     assert "trend has outliers" in tab._results_card.content_html()
     assert tab._results_card._actions[USE_AS_SEEDS_ACTION].isEnabled()
@@ -104,10 +111,9 @@ def test_no_advice_on_a_clean_trend(qapp: QApplication) -> None:
         )
         for i in range(6)
     ]
-    tab._current_model = _MODEL
     clean = {100 + i: _result(25.0 - i, 30.0 - 2.0 * i) for i in range(6)}
 
-    assert tab._series_seeding_advice(_MODEL, clean) == ""
+    assert tab._series_seeding_advice(_launch(tab), clean) == ""
     assert tab._suggested_series_seeds == {}
 
 
@@ -116,7 +122,7 @@ def test_apply_suggested_seeds_fills_initial_values_and_switches_mode(
 ) -> None:
     tab = GlobalFitTab(member_kind="runs")
     results = _attach_trend(tab)
-    tab._series_seeding_advice(_MODEL, results)
+    tab._series_seeding_advice(_launch(tab), results)
     assert tab._suggested_series_seeds  # precondition
 
     reran: list[bool] = []
@@ -138,7 +144,6 @@ def test_apply_suggested_seeds_fills_initial_values_and_switches_mode(
 
 def test_advice_skips_short_batches(qapp: QApplication) -> None:
     tab = GlobalFitTab(member_kind="runs")
-    tab._current_model = _MODEL
     tab._datasets = []
     short = {1: _result(25.0, 30.0), 2: _result(0.1, 30.0)}
-    assert tab._series_seeding_advice(_MODEL, short) == ""
+    assert tab._series_seeding_advice(_launch(tab), short) == ""

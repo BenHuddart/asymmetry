@@ -1138,12 +1138,24 @@ class SingleFitTab(FitTabBase):
         self._set_fit_busy(True)
 
     def _set_fit_busy(self, busy: bool) -> None:
-        """Swap the Fit button for a Stop button (and back) around a worker fit."""
+        """Swap the Fit button for a Stop button (and back) around a worker fit.
+
+        The form is frozen for the fit's duration: the result is applied against
+        the model, seeds and run it was launched with, and an edit landing
+        mid-fit would leave the panel describing a function nothing was fitted
+        to. Enables are re-derived from the gating contract rather than
+        force-enabled — the run may have been removed or the panel blocked
+        while the fit ran.
+        """
         self._toggle_fit_stop_buttons(busy)
+        self._edit_model_btn.setEnabled(not busy)
+        self._param_table.setEnabled(not busy)
+        self._reset_btn.setEnabled(not busy)
+        enabled = (not busy) and self._current_dataset is not None and not self._fit_blocked
+        self._preview_btn.setEnabled(enabled)
+        self._fit_wizard_btn.setEnabled(enabled and self._domain == "time")
         if not busy:
-            # Re-derive from the gating contract rather than force-enable: the
-            # run may have been removed or the panel blocked while the fit ran.
-            self._fit_btn.setEnabled(self._current_dataset is not None and not self._fit_blocked)
+            self._fit_btn.setEnabled(enabled)
 
     def _on_stop_fit(self) -> None:
         """Request cancellation of the active worker-based fit."""

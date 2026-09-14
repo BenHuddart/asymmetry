@@ -34,6 +34,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.mainwindow import MainWindow
+from asymmetry.gui.panels.fit.global_tab import FitLaunch
 from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
 
@@ -92,8 +93,11 @@ def test_partial_batch_failure_still_emits_series_for_successes(mw, monkeypatch)
     # The batch completion handler lives on the GlobalFitTab ("Batch" tab).
     panel = mw._fit_panel._global_tab
     panel._datasets = [_dataset(10), _dataset(11)]
-    panel._current_model = object()
-    panel._current_global_params = []
+    launch = FitLaunch(
+        model=panel._composite_model,
+        global_params=(),
+        datasets=tuple(panel._datasets),
+    )
 
     captured: dict[str, object] = {}
 
@@ -109,7 +113,7 @@ def test_partial_batch_failure_still_emits_series_for_successes(mw, monkeypatch)
 
     # Run 10 converged, run 11 failed.
     results_dict = {10: _ok(10), 11: _failed()}
-    panel._on_fit_finished(results_dict, [])
+    panel._on_fit_finished(launch, results_dict, [])
 
     assert captured.get("called"), "no series emitted — the whole batch was discarded"
     assert set(captured["successful"]) == {10}, "series must keep only the converged run(s)"

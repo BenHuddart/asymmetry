@@ -12902,6 +12902,8 @@ class MainWindow(QMainWindow):
             )
 
         self._fit_panel.register_global_fit_results(normalized_payloads)
+        # The Batch tab's form is frozen while its fit runs, so the roles and
+        # model read back off it here are the ones the batch was launched with.
         new_batch_id = self._record_global_fit_batch(normalized_payloads, global_params)
         self._remember_trends_batch("batch", new_batch_id, self._fit_panel)
 
@@ -12985,6 +12987,8 @@ class MainWindow(QMainWindow):
         if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
             return
 
+        # The grouped surface's form is frozen while its fit runs, so the
+        # classification read back off it here is the launch's own.
         new_batch_id = self._record_grouped_fit_series(grouped_datasets, results_dict)
         self._remember_trends_batch("grouped", new_batch_id, self._multi_group_fit_window)
         # Pull-based refresh: surface the newly recorded series in the trend panel

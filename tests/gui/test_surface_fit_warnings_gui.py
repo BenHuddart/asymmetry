@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.panels.fit.global_tab import FitLaunch
 from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
 
 pytestmark = [pytest.mark.gui]
@@ -78,7 +79,7 @@ def test_batch_fit_surfaces_engine_warnings_deduped(qapp: QApplication) -> None:
     }
 
     tab._emit_global_fit_success(
-        model=model,
+        launch=FitLaunch(model=model, global_params=(), datasets=()),
         results_dict=results_dict,
         successful=results_dict,
         fitted_global=ParameterSet(),

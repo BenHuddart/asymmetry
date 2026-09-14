@@ -352,6 +352,44 @@ def _fit_table_restore_entries(
     return entries
 
 
+def _finite_time_span(time_values) -> tuple[float, float]:
+    """Return ``(min, max)`` of *time_values* over its finite samples.
+
+    A grouped count domain can carry non-finite padding at the ends; the fit
+    curve is sampled over the real span, falling back to the raw extremes when
+    nothing is finite.
+    """
+    values = np.asarray(time_values, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size:
+        return float(finite.min()), float(finite.max())
+    return float(values.min()), float(values.max())
+
+
+@dataclasses.dataclass(frozen=True)
+class FitLaunch:
+    """The launch-time context a fit completion is interpreted against.
+
+    A worker fit lands after an arbitrary delay, and the form it was launched
+    from is a live widget tree. Every completion handler therefore reads the
+    model, roles, members and fit span *that were fitted* off this object
+    instead of the tab's current state, so a result can never be rendered,
+    emitted or persisted under a function the user meanwhile switched to.
+
+    ``model`` is the model handed to the engine — for the grouped paths that is
+    already ``with_default_fraction_groups()``-applied, so a handler uses
+    ``launch.model.param_names`` directly. ``time_span`` and ``run_number``
+    describe the active run of a single grouped fit (the only completion that
+    needs them); the other paths leave them ``None``.
+    """
+
+    model: CompositeModel
+    global_params: tuple[str, ...]
+    datasets: tuple[MuonDataset, ...]
+    time_span: tuple[float, float] | None = None
+    run_number: int | None = None
+
+
 class GlobalFitTab(FitTabBase):
     """Global fitting interface for simultaneous multi-dataset fitting.
 
@@ -2486,9 +2524,12 @@ class GlobalFitTab(FitTabBase):
         )
         self._set_series_busy(True)
 
-        # Store model for later use in callbacks (read by _on_fit_finished).
-        self._current_model = self._composite_model
-        self._current_global_params = global_params
+        # The context the completion is interpreted against (see FitLaunch).
+        launch = FitLaunch(
+            model=model,
+            global_params=tuple(global_params),
+            datasets=tuple(self._datasets),
+        )
 
         # The started signal lets listeners snapshot launch-time context (e.g.
         # which frequency representation the datasets came from) before any UI
@@ -2510,7 +2551,7 @@ class GlobalFitTab(FitTabBase):
         # Conditional so time-domain paths (and their test doubles) are unchanged.
         fit_kwargs: dict = {}
         oversampling = max(
-            (dataset_error_oversampling(dataset) for dataset in self._datasets),
+            (dataset_error_oversampling(dataset) for dataset in launch.datasets),
             default=1.0,
         )
         if oversampling > 1.0:
@@ -2521,15 +2562,15 @@ class GlobalFitTab(FitTabBase):
                 self,
                 functools.partial(
                     fit_asymmetry_series,
-                    self._datasets,
-                    self._composite_model.function,
+                    list(launch.datasets),
+                    model.function,
                     global_params,
                     local_params,
                     initial_params,
                     fit_engine=self._fit_engine,
                     minos=self._minos_checkbox.isChecked(),
                     seeding=self._batch_seeding_mode,
-                    order_key=self._asymmetry_series_order_key(),
+                    order_key=self._asymmetry_series_order_key(launch.datasets),
                     amplitude_param=amplitude_param,
                     frequency_param=frequency_param,
                     # Independent (as_provided) batches are embarrassingly parallel; let
@@ -2537,7 +2578,7 @@ class GlobalFitTab(FitTabBase):
                     max_workers=os.cpu_count(),
                     **fit_kwargs,
                 ),
-                on_finished=self._on_asymmetry_series_finished,
+                on_finished=functools.partial(self._on_asymmetry_series_finished, launch),
                 on_error=self._on_fit_error,
                 on_cancelled=self._on_series_fit_cancelled,
             )
@@ -2548,28 +2589,33 @@ class GlobalFitTab(FitTabBase):
                 self,
                 functools.partial(
                     self._fit_engine.global_fit,
-                    self._datasets,
-                    self._composite_model.function,
+                    list(launch.datasets),
+                    model.function,
                     global_params,
                     local_params,
                     initial_params,
                     minos=self._minos_checkbox.isChecked(),
                     **fit_kwargs,
                 ),
-                on_finished=lambda result: self._on_fit_finished(*result),
+                on_finished=lambda result, fit=launch: self._on_fit_finished(fit, *result),
                 on_error=self._on_fit_error,
                 on_cancelled=self._on_series_fit_cancelled,
             )
 
-    def _asymmetry_series_order_key(self) -> dict[int, float] | None:
+    @staticmethod
+    def _asymmetry_series_order_key(
+        datasets: Sequence[MuonDataset],
+    ) -> dict[int, float] | None:
         """Best-effort run → temperature/field order key for the F-B batch.
 
         Chaining follows the physical scan order; Auto only chains when a usable
-        ordered key exists. Returns ``None`` when any selected run lacks scan
-        metadata, so Auto safely falls back to independent seeds.
+        ordered key exists. Returns ``None`` when any of *datasets* lacks scan
+        metadata, so Auto safely falls back to independent seeds. Takes the
+        members explicitly: the completion path diagnoses the batch that ran,
+        which may no longer be the selection.
         """
         order: dict[int, float] = {}
-        for dataset in self._datasets:
+        for dataset in datasets:
             meta = getattr(dataset, "metadata", None) or {}
             value: float | None = None
             for key in ("temperature", "temperature_k", "field", "field_g"):
@@ -2585,7 +2631,7 @@ class GlobalFitTab(FitTabBase):
             order[int(dataset.run_number)] = value
         return order or None
 
-    def _on_asymmetry_series_finished(self, series: object) -> None:
+    def _on_asymmetry_series_finished(self, launch: FitLaunch, series: object) -> None:
         """Adapt a chained F-B series result into the shared finished handler.
 
         Stashes the resolved seeding mode/reason and any reseeded runs so the
@@ -2604,7 +2650,7 @@ class GlobalFitTab(FitTabBase):
                 int(run): sorted(quality.quality_flags) for run, quality in member_quality.items()
             },
         }
-        self._on_fit_finished(series.results, series.fitted_global)
+        self._on_fit_finished(launch, series.results, series.fitted_global)
 
     def _run_grouped_time_domain_fit(self) -> None:
         """Execute grouped time-domain fitting for the active dataset."""
@@ -2655,19 +2701,25 @@ class GlobalFitTab(FitTabBase):
             )
             return
 
-        single_run = int(self._current_dataset.run_number) if self._current_dataset else None
+        active = self._current_dataset
+        single_run = int(active.run_number) if active is not None else None
         initial_params = self._build_grouped_initial_params(
             grouped_groups, grouped_config, run_number=single_run
         )
 
         self._results_card.set_message("Fitting grouped time-domain data…", tag="Fitting")
         self._set_series_busy(True)
-        self._current_model = grouped_model
-        self._current_global_params = global_params
 
-        # grouped_datasets is GUI-side launch context (not produced by the
-        # engine); bind it into the finished closure, mirroring the engine
-        # worker's old (grouped_datasets, result) two-argument emit.
+        # The members, the model and the active run's fit span are GUI-side
+        # launch context (not produced by the engine); bind them into the
+        # finished closure so the completion never reads the live form.
+        launch = FitLaunch(
+            model=grouped_model,
+            global_params=tuple(global_params),
+            datasets=tuple(grouped_datasets),
+            time_span=_finite_time_span(active.time) if active is not None else None,
+            run_number=single_run,
+        )
         self._fit_worker = _start_fit_call(
             self,
             functools.partial(
@@ -2680,9 +2732,7 @@ class GlobalFitTab(FitTabBase):
                 minos=self._minos_checkbox.isChecked(),
                 cost=self._count_fit_cost,
             ),
-            on_finished=lambda result, ds=grouped_datasets: self._on_grouped_fit_finished(
-                ds, result
-            ),
+            on_finished=lambda result, fit=launch: self._on_grouped_fit_finished(fit, result),
             on_error=self._on_fit_error,
             on_cancelled=self._on_series_fit_cancelled,
         )
@@ -2944,8 +2994,8 @@ class GlobalFitTab(FitTabBase):
             )
 
             def on_finished(result, d=dataset, f=forward, b=backward, c=cost):
-                self._set_series_busy(False)
                 self._count_fit_worker = None
+                self._set_series_busy(False)
                 self._render_count_fb_result(d, result, f, b, cost=c)
 
         else:
@@ -2966,8 +3016,8 @@ class GlobalFitTab(FitTabBase):
             )
 
             def on_finished(result, d=dataset, t=target, c=cost, s=side):
-                self._set_series_busy(False)
                 self._count_fit_worker = None
+                self._set_series_busy(False)
                 self._render_count_single_result(d, result, t, cost=c, side=s)
 
         self._count_fit_worker = _start_fit_call(
@@ -2980,8 +3030,8 @@ class GlobalFitTab(FitTabBase):
         self._set_series_busy(True)
 
     def _on_count_fit_error(self, message: str) -> None:
-        self._set_series_busy(False)
         self._count_fit_worker = None
+        self._set_series_busy(False)
         self._results_card.set_message(
             error_html(f"Count-domain fit failed: {message}"), tag="Error", tone="error"
         )
@@ -3389,19 +3439,43 @@ class GlobalFitTab(FitTabBase):
             self._grouped_seed_cache = None
             self._update_mode_ui(preserve_result=False)
 
+    def _set_form_enabled(self, enabled: bool) -> None:
+        """Enable/disable everything that defines *what* the next fit fits.
+
+        A running fit owns the form: its result is rendered, emitted and
+        persisted against the model, roles and seeds it was launched with (the
+        recorder reads the roles straight back off these widgets), so they must
+        not move underneath it. ``_update_mode_ui`` re-derives this from the
+        live worker handles, which is also what restores the form afterwards.
+        """
+        self._edit_model_btn.setEnabled(enabled)
+        self._fit_wizard_btn.setEnabled(enabled)
+        self._preview_btn.setEnabled(enabled)
+        self._param_table.setEnabled(enabled)
+        self._group_param_table.setEnabled(enabled)
+        self._group_model_table.setEnabled(enabled)
+        self._group_param_reset_btn.setEnabled(enabled)
+        self._initial_values_btn.setEnabled(enabled)
+        if self._seeding_combo is not None:
+            self._seeding_label.setEnabled(enabled)
+            self._seeding_combo.setEnabled(enabled)
+
     def _set_series_busy(self, busy: bool) -> None:
         """Swap the Fit button for a Stop button (and back) around a worker fit."""
         self._toggle_fit_stop_buttons(busy)
         if busy:
+            self._set_form_enabled(False)
             # A new fit is starting: the previous batch's seeding advice is stale
             # until the fresh results are diagnosed.
             self._suggested_series_seeds = {}
             if not self._grouped_single:
                 self._results_card.set_action_enabled(USE_AS_SEEDS_ACTION, False)
         else:
-            # Re-derive Fit/Preview enabled state from the real gating contract
-            # (member count, grouped readiness, _fit_blocked) rather than
-            # force-enable — the selection may have changed while the fit ran.
+            # Re-derive the form, Fit and Preview enabled state from the real
+            # gating contract (member count, grouped readiness, _fit_blocked)
+            # rather than force-enable — the selection may have changed while
+            # the fit ran. Callers clear their worker handle first, so this
+            # sees no fit in flight.
             self._update_mode_ui(preserve_result=True)
 
     def _on_stop_fit(self) -> None:
@@ -3417,8 +3491,8 @@ class GlobalFitTab(FitTabBase):
 
     def _on_series_fit_cancelled(self) -> None:
         """Handle a cancelled series fit: restore the panel, record nothing."""
-        self._set_series_busy(False)
         self._fit_worker = None
+        self._set_series_busy(False)
         self._results_card.set_message("Fit cancelled — no result recorded.", tag="Cancelled")
 
     @staticmethod
@@ -3482,11 +3556,14 @@ class GlobalFitTab(FitTabBase):
 
         self._results_card.set_message("Fitting grouped time-domain series…", tag="Fitting")
         self._set_series_busy(True)
-        self._current_model = grouped_model
-        self._current_global_params = global_params
 
-        # grouped_datasets is GUI-side launch context; bind it into the
-        # finished closure (the engine returns only the series result).
+        # The members and the model are GUI-side launch context; bind them into
+        # the finished closure (the engine returns only the series result).
+        launch = FitLaunch(
+            model=grouped_model,
+            global_params=tuple(global_params),
+            datasets=tuple(grouped_datasets),
+        )
         self._fit_worker = _start_fit_call(
             self,
             functools.partial(
@@ -3515,14 +3592,14 @@ class GlobalFitTab(FitTabBase):
                 # over the locals, rather than the cheaper conditional errors.
                 profile_shared_errors=True,
             ),
-            on_finished=lambda result, ds=grouped_datasets: self._on_grouped_series_fit_finished(
-                ds, result
+            on_finished=lambda result, fit=launch: self._on_grouped_series_fit_finished(
+                fit, result
             ),
             on_error=self._on_fit_error,
             on_cancelled=self._on_series_fit_cancelled,
         )
 
-    def _on_grouped_series_fit_finished(self, grouped_datasets, series_result) -> None:
+    def _on_grouped_series_fit_finished(self, launch: FitLaunch, series_result) -> None:
         """Handle a completed multi-run grouped-series fit (persist + plot).
 
         Builds per-(run,group) fit curves keyed by the synthetic member key and
@@ -3530,15 +3607,14 @@ class GlobalFitTab(FitTabBase):
         persists the ``FitSeries(member_kind="groups")``. (Reflecting fitted values
         back into the per-group tables is deferred; the seeds remain shown.)
         """
-        self._set_series_busy(False)
         self._fit_worker = None
-        self._update_mode_ui(preserve_result=True)
+        self._set_series_busy(False)
         member_results = dict(getattr(series_result, "member_results", {}))
         source_run = dict(getattr(series_result, "member_source_run", {}))
-        grouped_model = build_grouped_count_model(self._current_model.function)
+        grouped_model = build_grouped_count_model(launch.model.function)
 
         results_with_curves: dict[int, tuple] = {}
-        for dataset in grouped_datasets:
+        for dataset in launch.datasets:
             try:
                 key = int(dataset.metadata.get("run_number"))
             except (TypeError, ValueError):
@@ -3547,19 +3623,11 @@ class GlobalFitTab(FitTabBase):
             if fit_result is None:
                 continue
             param_dict = {parameter.name: parameter.value for parameter in fit_result.parameters}
-            for pname in self._grouped_fit_model().param_names:
+            for pname in launch.model.param_names:
                 if is_amplitude_parameter(pname):
                     param_dict.setdefault(pname, 1.0)
-            time_values = np.asarray(dataset.time, dtype=float)
-            finite_mask = np.isfinite(time_values)
-            if np.any(finite_mask):
-                fit_t_min = float(np.min(time_values[finite_mask]))
-                fit_t_max = float(np.max(time_values[finite_mask]))
-            else:
-                fit_t_min, fit_t_max = float(dataset.time.min()), float(dataset.time.max())
-            n_samples = _fit_curve_sample_count(
-                self._current_model, param_dict, fit_t_min, fit_t_max
-            )
+            fit_t_min, fit_t_max = _finite_time_span(dataset.time)
+            n_samples = _fit_curve_sample_count(launch.model, param_dict, fit_t_min, fit_t_max)
             t_fit = np.linspace(fit_t_min, fit_t_max, n_samples)
             y_fit = grouped_model(t_fit, **param_dict)
             results_with_curves[key] = (fit_result, (t_fit, y_fit), tuple())
@@ -3573,7 +3641,7 @@ class GlobalFitTab(FitTabBase):
         if seeding_reason:
             stats += f"<br>Seeding: {seeding_reason}"
         self._render_fit_summary(member_results, tag_prefix="Batch", detail_html=stats)
-        self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
+        self.grouped_fit_completed.emit(list(launch.datasets), results_with_curves)
 
     def _on_preview_requested(self) -> None:
         """Preview grouped time-domain curves using the current parameter values."""
@@ -3797,11 +3865,17 @@ class GlobalFitTab(FitTabBase):
         self,
         model: CompositeModel,
         results_dict: dict[int, FitResult],
+        datasets: Sequence[MuonDataset],
     ) -> dict[
         int, tuple[FitResult, tuple[np.ndarray, np.ndarray], tuple[tuple[str, np.ndarray], ...]]
     ]:
+        """Pair each member's result with curves sampled over that member's data.
+
+        *datasets* are the batch's launch members, not the live selection: the
+        user is free to select other runs while the fit runs.
+        """
         results_with_curves = {}
-        for dataset in self._datasets:
+        for dataset in datasets:
             # A partial batch passes only the converged members here; a dataset
             # whose fit failed has no entry, so skip it rather than KeyError.
             result = results_dict.get(int(dataset.run_number))
@@ -3833,7 +3907,7 @@ class GlobalFitTab(FitTabBase):
     def _emit_global_fit_success(
         self,
         *,
-        model: CompositeModel,
+        launch: FitLaunch,
         results_dict: dict[int, FitResult],
         successful: dict[int, FitResult],
         fitted_global: ParameterSet,
@@ -3867,7 +3941,7 @@ class GlobalFitTab(FitTabBase):
                 {},
             )
         self.global_fit_completed.emit(
-            self._results_with_curves(model, emitted_results),
+            self._results_with_curves(launch.model, emitted_results, launch.datasets),
             emitted_global,
         )
 
@@ -3958,8 +4032,6 @@ class GlobalFitTab(FitTabBase):
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
 
-        self._current_model = assessment.template.model
-        self._current_global_params = list(assessment.global_param_names)
         self._status_text_from_global_wizard(assessment, recommendation)
         self.global_fit_completed.emit(
             {
@@ -4028,34 +4100,34 @@ class GlobalFitTab(FitTabBase):
             lines.extend(f"  {warning}" for warning in assessment.series_warnings)
         self._results_card.set_message("<br>".join(lines), tag="Fit ✓", tone="ok")
 
-    def _on_fit_finished(self, results_dict: dict, fitted_global: list) -> None:
+    def _on_fit_finished(self, launch: FitLaunch, results_dict: dict, fitted_global: list) -> None:
         """Handle successful fit completion."""
-        self._set_series_busy(False)
         self._fit_worker = None
-        self._update_mode_ui(preserve_result=True)
-
-        model = self._current_model
-        global_params = self._current_global_params
+        self._set_series_busy(False)
 
         # A partial batch failure must not discard the runs that converged: build
         # the series from the successful members and surface the failures as a
         # non-blocking warning. Only an all-failed batch takes the abort branch.
         successful = {run: r for run, r in results_dict.items() if r.success}
-        run_label_by_number = {ds.run_number: ds.run_label for ds in self._datasets}
+        run_label_by_number = {ds.run_number: ds.run_label for ds in launch.datasets}
 
         # Diagnose the per-run trend before anything is rendered: a near-transition
         # collapse is advice the card's own body carries, and it is what arms the
         # "Use as seeds" hand-off.
-        advice_html = self._series_seeding_advice(model, results_dict)
+        advice_html = self._series_seeding_advice(launch, results_dict)
 
         if successful:
             self._emit_global_fit_success(
-                model=model,
+                launch=launch,
                 results_dict=results_dict,
                 successful=successful,
                 fitted_global=fitted_global,
                 detail_html=self._batch_detail_html(
-                    results_dict, successful, run_label_by_number, global_params, advice_html
+                    results_dict,
+                    successful,
+                    run_label_by_number,
+                    list(launch.global_params),
+                    advice_html,
                 ),
             )
         else:
@@ -4140,7 +4212,7 @@ class GlobalFitTab(FitTabBase):
             )
         return notes
 
-    def _series_seeding_advice(self, model: object, results_dict: dict) -> str:
+    def _series_seeding_advice(self, launch: FitLaunch, results_dict: dict) -> str:
         """Diagnose the batch trend; return the per-run-seed advice, or ``""``.
 
         Builds per-run summaries (scan order + fitted amplitude/frequency) and runs
@@ -4150,13 +4222,13 @@ class GlobalFitTab(FitTabBase):
         the results card; otherwise there is nothing to say.
         """
         self._suggested_series_seeds = {}
-        param_names = list(getattr(model, "param_names", []) or [])
+        param_names = list(getattr(launch.model, "param_names", []) or [])
         if not param_names or len(results_dict) < 3:
             return ""
         amplitude_param, frequency_param = resolve_series_params(param_names)
         if amplitude_param is None and frequency_param is None:
             return ""
-        order_key = self._asymmetry_series_order_key() or {}
+        order_key = self._asymmetry_series_order_key(launch.datasets) or {}
         points: list[SeriesPoint] = []
         for run, result in results_dict.items():
             run = int(run)
@@ -4176,23 +4248,14 @@ class GlobalFitTab(FitTabBase):
         if not diagnostics.has_issues:
             return ""
         self._suggested_series_seeds = dict(diagnostics.suggested_seeds)
+        # The trend is named for whichever oscillatory parameter leads the model.
+        axis_label = "frequency" if frequency_param else "amplitude"
         return info_html(
-            f"<b>The {self._trend_axis_label()} trend has outliers.</b> "
+            f"<b>The {axis_label} trend has outliers.</b> "
             f"{diagnostics.reason[:1].upper() + diagnostics.reason[1:]}. "
             "Near-transition oscillatory fits are bistable — a per-run warm-start "
             "fixes it."
         )
-
-    def _trend_axis_label(self) -> str:
-        """Friendly name for the leading oscillatory parameter, for the advice."""
-        amplitude_param, frequency_param = resolve_series_params(
-            list(getattr(self._current_model, "param_names", []) or [])
-        )
-        if frequency_param:
-            return "frequency"
-        if amplitude_param:
-            return "amplitude"
-        return "parameter"
 
     def _apply_suggested_series_seeds(self) -> None:
         """Apply the diagnostics' descending per-run seeds and re-run the batch.
@@ -4215,32 +4278,28 @@ class GlobalFitTab(FitTabBase):
 
     def _on_fit_error(self, error_msg: str) -> None:
         """Handle fit error."""
-        self._set_series_busy(False)
         self._fit_worker = None
-        self._update_mode_ui(preserve_result=True)
+        self._set_series_busy(False)
         mode_label = "grouped fit" if self.is_grouped_time_domain_mode() else "global fit"
         self._results_card.set_message(
             f"<b>Error during {mode_label}:</b><br>{error_msg}", tag="Error", tone="error"
         )
 
-    def _cache_grouped_simulate_seed(self, grouped_result) -> None:
+    def _cache_grouped_simulate_seed(self, launch: FitLaunch, grouped_result) -> None:
         """Cache a multi-group simulate seed from a converged grouped fit.
 
-        Stores, keyed by the active run number, the shared normalised model,
+        Stores, keyed by the run that was fitted, the shared normalised model,
         its base parameter values (amplitudes forced to 1, backgrounds to 0 —
         the grouped contract) and the per-group amplitude/phase/N0 specs, so the
         Generate Synthetic Run dialog can re-create the ring.
         """
-        if self._current_dataset is None or getattr(self._current_dataset, "run", None) is None:
-            return
-        try:
-            run_number = int(self._current_dataset.run_number)
-        except (TypeError, ValueError):
+        run_number = launch.run_number
+        if run_number is None:
             return
         from asymmetry.core.fitting.grouped_time_domain import normalize_to_grouped_contract
         from asymmetry.core.simulate import group_specs_from_grouped_fit
 
-        model = self._grouped_fit_model()
+        model = launch.model
         shared_values = {
             parameter.name: float(parameter.value)
             for parameter in getattr(grouped_result, "shared_parameters", [])
@@ -4297,26 +4356,23 @@ class GlobalFitTab(FitTabBase):
                 updated = True
         return updated
 
-    def _on_grouped_fit_finished(self, grouped_datasets: list[MuonDataset], grouped_result) -> None:
+    def _on_grouped_fit_finished(self, launch: FitLaunch, grouped_result) -> None:
         """Handle successful grouped fit completion."""
-        self._set_series_busy(False)
         self._fit_worker = None
-        self._update_mode_ui(preserve_result=True)
-        self._cache_grouped_simulate_seed(grouped_result)
+        self._set_series_busy(False)
+        self._cache_grouped_simulate_seed(launch, grouped_result)
 
         results_with_curves: dict[int, tuple[FitResult, tuple[np.ndarray, np.ndarray], tuple]] = {}
-        grouped_model = build_grouped_count_model(self._current_model.function)
+        grouped_model = build_grouped_count_model(launch.model.function)
         datasets_by_group_id = {
-            dataset.metadata.get("group_id"): dataset for dataset in grouped_datasets
+            dataset.metadata.get("group_id"): dataset for dataset in launch.datasets
         }
 
         shared_values = {
             parameter.name: parameter.value
             for parameter in getattr(grouped_result, "shared_parameters", [])
         }
-        display_shared_values = _normalized_model_param_values(
-            self._grouped_fit_model(), shared_values
-        )
+        display_shared_values = _normalized_model_param_values(launch.model, shared_values)
         shared_by_name = {
             parameter.name: parameter
             for parameter in getattr(grouped_result, "shared_parameters", [])
@@ -4382,22 +4438,14 @@ class GlobalFitTab(FitTabBase):
             if dataset is None:
                 continue
             param_dict = {parameter.name: parameter.value for parameter in fit_result.parameters}
-            for pname in self._grouped_fit_model().param_names:
+            for pname in launch.model.param_names:
                 if is_amplitude_parameter(pname):
                     param_dict.setdefault(pname, 1.0)
-            fit_source_time = np.asarray(
-                self._current_dataset.time if self._current_dataset is not None else dataset.time,
-                dtype=float,
-            )
-            finite_mask = np.isfinite(fit_source_time)
-            if np.any(finite_mask):
-                fit_t_min = float(np.min(fit_source_time[finite_mask]))
-                fit_t_max = float(np.max(fit_source_time[finite_mask]))
-            else:
-                fit_t_min = float(dataset.time.min())
-                fit_t_max = float(dataset.time.max())
+            # Every group was fitted over the launch run's span; a member with no
+            # run behind it (no active dataset) falls back to its own samples.
+            fit_t_min, fit_t_max = launch.time_span or _finite_time_span(dataset.time)
             n_samples = _fit_curve_sample_count(
-                self._current_model,
+                launch.model,
                 param_dict,
                 fit_t_min,
                 fit_t_max,
@@ -4416,24 +4464,24 @@ class GlobalFitTab(FitTabBase):
         self._render_fit_summary(
             dict(grouped_result.group_results), tag_prefix="Fit", detail_html=stats
         )
-        self.grouped_fit_completed.emit(grouped_datasets, results_with_curves)
+        self.grouped_fit_completed.emit(list(launch.datasets), results_with_curves)
 
         # Publish the run's shared physics so the batch grouped surface can
         # chain-seed each run from its own single grouped fit (FB parity).
-        if self._grouped_single and self._current_dataset is not None:
+        if self._grouped_single and launch.run_number is not None:
             physics_values = {
                 str(parameter.name): float(parameter.value)
                 for parameter in getattr(grouped_result, "shared_parameters", [])
                 if isinstance(getattr(parameter, "name", None), str)
                 and np.isfinite(float(getattr(parameter, "value", float("nan"))))
             }
-            try:
-                run_number = int(self._current_dataset.run_number)
-            except (TypeError, ValueError):
-                run_number = None
-            if run_number is not None and physics_values and self._composite_model is not None:
+            if physics_values:
+                # The *form's* model, not the launch's: the batch surface adopts
+                # this one as its own displayed function, and the grouped fraction
+                # semantics launch.model carries are a fitting detail. The form is
+                # frozen for the fit's duration, so the two agree by construction.
                 self.single_grouped_fit_recorded.emit(
-                    run_number, self._composite_model, physics_values
+                    launch.run_number, self._composite_model, physics_values
                 )
 
     def register_grouped_single_fit_seed(
@@ -4708,6 +4756,10 @@ class GlobalFitTab(FitTabBase):
         return self._member_kind == "groups"
 
     def _update_mode_ui(self, *, preserve_result: bool) -> None:
+        # A fit in flight owns the form (see _set_form_enabled); a selection
+        # change while it runs must not hand the model back to the user.
+        editable = self._fit_worker is None and self._count_fit_worker is None
+        self._set_form_enabled(editable)
         grouped = self.is_grouped_time_domain_mode()
         self._param_group.setVisible(not grouped)
         self._grouped_context_label.setVisible(grouped)
@@ -4742,9 +4794,9 @@ class GlobalFitTab(FitTabBase):
                 )
             ready = grouped_groups is not None and grouped_datasets is not None
             self._grouped_context_label.setText(message)
-            self._fit_btn.setEnabled(ready and (not self._fit_blocked))
+            self._fit_btn.setEnabled(ready and (not self._fit_blocked) and editable)
             self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else message)
-            self._preview_btn.setEnabled(ready and (not self._fit_blocked))
+            self._preview_btn.setEnabled(ready and (not self._fit_blocked) and editable)
             self._preview_btn.setToolTip(self._fit_block_reason if self._fit_blocked else message)
             self._fit_wizard_btn.setEnabled(False)
             self._fit_wizard_btn.setToolTip(
@@ -4755,11 +4807,11 @@ class GlobalFitTab(FitTabBase):
             return
 
         n = len(self._datasets)
-        self._fit_btn.setEnabled((n > 1) and (not self._fit_blocked))
+        self._fit_btn.setEnabled((n > 1) and (not self._fit_blocked) and editable)
         self._fit_btn.setToolTip(self._fit_block_reason if self._fit_blocked else "")
         self._preview_btn.setEnabled(False)
         self._preview_btn.setToolTip("Preview is available only in grouped time-domain mode.")
-        wizard_enabled = (n > 1) and (not self._fit_blocked) and self._domain == "time"
+        wizard_enabled = (n > 1) and (not self._fit_blocked) and self._domain == "time" and editable
         self._fit_wizard_btn.setEnabled(wizard_enabled)
         if self._domain == "frequency":
             self._fit_wizard_btn.setToolTip(
