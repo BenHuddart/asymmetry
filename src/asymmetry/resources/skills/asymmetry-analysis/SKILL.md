@@ -211,10 +211,11 @@ a magnet whose oscillation is fast and heavily damped can come back as a bare
 `Exponential + Constant`. If you expect static order and `auto` gives you a
 plain relaxation, re-screen with `--scope zf-static-magnetism` and compare.
 
-One warning about the scope note: "sample name suggests fluorine" is matched
-from the run's title text, and ISIS titles carry the applied field as `F=<n>`,
-so it fires on **every** ISIS run whether or not the sample contains fluorine.
-Trust it only when the sample really is a fluoride.
+The scope note may say "sample name suggests fluorine": that is read from the
+run's title or sample text (`CaF2`, `LiF`, `KTCNQF4`), and it promotes the
+F–μ–F family. Trust it when the sample really is a fluoride; a fluoride
+whose title does not name it still gets F–μ–F candidates from the spectral
+search.
 
 `wizard` writes `recipes/wizard-<run>.json` — the fit recipe, the only
 contract between screening and fitting. `--plot` writes

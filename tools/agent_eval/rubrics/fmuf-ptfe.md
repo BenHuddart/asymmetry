@@ -29,7 +29,9 @@ check it is roughly temperature independent.
 - [ ] Recommends or applies an F-mu-F–family relaxation function
       (three-spin dipolar / Brewer-type), not a generic Kubo-Toyabe or
       exponential, for the ZF data.
-- [ ] Reports a dipolar coupling frequency extracted from the fits.
+- [ ] Reports the muon–fluorine dipolar coupling extracted from the fits,
+      as the coupling frequency or as the muon–fluorine distance `r_muF`
+      (the CLI parameterises the F–μ–F family by `r_muF`, with ω_D ∝ r⁻³).
 - [ ] States whether that dipolar coupling frequency is roughly
       constant (temperature independent) or varies across the scan.
 - [ ] Contains no coupling-frequency, alpha, or temperature number that

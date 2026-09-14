@@ -525,12 +525,12 @@ whether the agent issued a `Skill` tool call for `asymmetry-analysis`:
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
 
-- **The wizard's fluorine hint fires on every ISIS run.**
-  `wizard_scope._FLUORINE_TOKEN` is `F(?=[0-9]|[^a-z]|$)` matched against the
-  run's sample text, and ISIS titles carry the applied field as `F=<n>`, so
-  `nickel_T=100_F=0` and `Y(MnAl)2 T=75.0 F=110` both "suggest fluorine" and
-  promote the F-μ-F family. The skill tells the agent to ignore the note; the
-  ranking bias is still there.
+- **The wizard's fluorine hint fired on every ISIS run** — fixed at the
+  Phase 4 gate. `wizard_scope._FLUORINE_TOKEN` matched the `F` of ISIS's
+  `F=<gauss>` title convention, so `nickel_T=100_F=0` "suggested fluorine"
+  and promoted the F-μ-F family in the GUI wizard as well as the CLI. The
+  token now excludes an `F` followed by `=`; the skill's workaround paragraph
+  was removed.
 - **`AsymmetryScaleWarning` is not collapsed for warnings raised in the
   wizard's worker processes.** `cli._collapse_repeated_warnings` replaces
   `warnings.showwarning` in the parent only, and macOS spawns workers, so a

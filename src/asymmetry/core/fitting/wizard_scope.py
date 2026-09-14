@@ -100,7 +100,9 @@ _COST_FIT_WEIGHT: dict[ComputationalCost, int] = {
 #: (followed by a stoichiometry digit, a non-lowercase char, or end-of-string).
 #: Matches ``PbF2``/``CaF2``/``LiF``/``NaF``; rejects ``Fe``/``FeSe``/``Fer``.
 #: Case-sensitive on purpose — a lowercase ``f`` is never the fluorine element.
-_FLUORINE_TOKEN = re.compile(r"F(?=[0-9]|[^a-z]|$)")
+#: An ``F`` followed by ``=`` is excluded: ISIS run titles carry the applied
+#: field as ``F=<gauss>`` (``nickel T=100 F=0``), which is not a formula.
+_FLUORINE_TOKEN = re.compile(r"F(?=[0-9]|[^a-z=]|$)")
 
 
 class WizardScopePreset(str, Enum):
