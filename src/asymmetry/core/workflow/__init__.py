@@ -29,6 +29,7 @@ from asymmetry.core.workflow.screen import (
 )
 from asymmetry.core.workflow.series import (
     ORDER_KEYS,
+    SeriesBranch,
     SeriesOutcome,
     TrendTable,
     build_trend_table,
@@ -75,6 +76,7 @@ __all__ = [
     "ScanGroup",
     "ScreenCandidate",
     "ScreenResult",
+    "SeriesBranch",
     "SeriesOutcome",
     "TrendTable",
     "WorkDir",

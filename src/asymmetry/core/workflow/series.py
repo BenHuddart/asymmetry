@@ -8,6 +8,30 @@ warm-starts from the previous good run, and a run that lands on the spurious
 near-transition branch (amplitude collapsed, frequency off the trend) is
 reseeded from the trend and refitted.
 
+Where the chain starts
+----------------------
+
+A chain is only as good as the run it starts from, and the coldest run of a
+scan is rarely the best one: a recipe screened at 300 K, walked down to 100 K
+one run at a time, arrives at each run from a neighbour that was itself fitted
+from a poor start. ``start_run`` names the run to chain *outward* from, so the
+recipe's own values seed the run they were measured on and every other run
+warm-starts from a neighbour nearer to it.
+
+That is the recommended way to use this: screen the run with the clearest
+structure, then start the series there.
+
+The split is done here rather than in
+:func:`~asymmetry.core.fitting.series.fit_asymmetry_series`, which needs no
+change: the batch is block-separable, so two chains over disjoint halves of a
+scan are as valid as one over the whole of it. The scan is cut at the start run
+into a descending branch (the start run, then every run below it) and an
+ascending branch (the start run, then every run above it); each is chained in
+its own direction and the per-run results are merged back into scan order. A
+branch holding only the start run is not fitted, so starting at the first run
+of a scan is one chain over the whole scan — exactly what omitting
+``start_run`` does.
+
 What ``global_params`` means here
 --------------------------------
 
@@ -133,6 +157,38 @@ def _csv_cell(value: Any) -> str:
 
 
 @dataclass(frozen=True)
+class SeriesBranch:
+    """One chain of a series: the runs it covered and how it was seeded.
+
+    A series started at its first run has one branch; one started in the middle
+    has two, and they can resolve their seeding differently — a branch with too
+    few members to chain falls back to independent seeds while the other one
+    chains (see
+    :func:`~asymmetry.core.fitting.series_seeding.recommend_series_seeding`).
+    That is why the seeding is reported per branch rather than once.
+
+    ``seeding_reason`` quotes the branch's *chaining* coordinate, which on a
+    descending branch is the scan coordinate negated (that is what makes the
+    chain run downward); ``runs`` names the members it actually covered.
+    """
+
+    direction: str
+    #: The branch's runs in chaining order — starting at the series' start run.
+    runs: list[int]
+    seeding_used: str
+    seeding_reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict."""
+        return {
+            "direction": self.direction,
+            "runs": list(self.runs),
+            "seeding_used": self.seeding_used,
+            "seeding_reason": self.seeding_reason,
+        }
+
+
+@dataclass(frozen=True)
 class SeriesOutcome:
     """Everything :func:`fit_series` produced for one scan."""
 
@@ -141,8 +197,13 @@ class SeriesOutcome:
     expression: str
     global_params: list[str]
     free_params: list[str]
-    seeding_used: str
-    seeding_reason: str
+    #: The run the chain started from, and ``None`` when it started at the
+    #: first run in scan order.
+    start_run: int | None
+    #: One entry per chain — one branch, or two when the series started in the
+    #: middle of the scan.
+    branches: list[SeriesBranch]
+    #: Runs reseeded mid-chain, in scan order.
     reseeded_runs: list[int]
     #: One entry per run, in scan order: ``fit_result_summary`` output plus
     #: ``run``, ``x``, ``reseeded`` and the series' own ``member_quality``.
@@ -157,8 +218,8 @@ class SeriesOutcome:
             "expression": self.expression,
             "global_params": list(self.global_params),
             "free_params": list(self.free_params),
-            "seeding_used": self.seeding_used,
-            "seeding_reason": self.seeding_reason,
+            "start_run": self.start_run,
+            "branches": [branch.to_dict() for branch in self.branches],
             "reseeded_runs": list(self.reseeded_runs),
             "results": [dict(entry) for entry in self.results],
             "trend": self.trend.to_dict(),
@@ -223,22 +284,57 @@ def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
     }
 
 
+def _branches(runs: Sequence[int], start_run: int | None) -> list[tuple[str, list[int]]]:
+    """Split *runs* (in scan order) into the chains to fit, in fitting order.
+
+    Descending first, so that merging the branches in this order leaves the
+    *ascending* branch's fit of the start run standing — the two fit it from
+    identical values, and keeping one of them by a fixed rule is what makes the
+    merge deterministic. A branch that would hold only the start run is
+    dropped: there is nothing to chain, and the other branch fits that run.
+    """
+    if start_run is None:
+        return [("ascending", list(runs))]
+    if start_run not in runs:
+        raise ValueError(
+            f"Start run {start_run} is not in this series "
+            f"(it holds {', '.join(str(run) for run in runs)})."
+        )
+    index = list(runs).index(start_run)
+    descending = list(runs[index::-1])
+    ascending = list(runs[index:])
+    chains: list[tuple[str, list[int]]] = []
+    if len(descending) > 1:
+        chains.append(("descending", descending))
+    if len(ascending) > 1 or not chains:
+        chains.append(("ascending", ascending))
+    return chains
+
+
 def fit_series(
     datasets_by_run: Mapping[int, MuonDataset],
     recipe: FitRecipe,
     *,
     order_key: str = "run",
     global_params: Iterable[str] = (),
+    start_run: int | None = None,
     name: str,
 ) -> SeriesOutcome:
-    """Fit *recipe* across every run, chained along *order_key*.
+    """Fit *recipe* across every run, chained outward from *start_run*.
+
+    ``start_run`` is the run the chain starts at — the one the recipe was
+    screened on, normally. Runs below it are chained downward and runs above it
+    upward, so every fit warm-starts from a neighbour nearer the run the recipe
+    describes. ``None`` starts at the first run in scan order, which is one
+    chain over the whole scan. The start run itself is fitted by both branches
+    from identical values and the ascending branch's result is the one kept.
 
     ``global_params`` names the parameters held identical across the scan (see
     the module docstring — they are pinned, not jointly fitted). Each run's
     run-bound values are re-seeded from its own record first, as that section
-    describes. Raises :class:`ValueError` for an unknown order key or a run
-    that does not record it, and :class:`KeyError` for a global parameter the
-    recipe does not carry.
+    describes. Raises :class:`ValueError` for an unknown order key, a run that
+    does not record it, or a *start_run* outside the series, and
+    :class:`KeyError` for a global parameter the recipe does not carry.
     """
     global_params = list(global_params)
     unknown = sorted(set(global_params) - set(recipe.parameter_names))
@@ -257,36 +353,59 @@ def fit_series(
     amplitude_param, frequency_param = resolve_series_params(model.param_names)
 
     records = {run: _prepared(datasets_by_run[run], recipe) for run in runs}
-    initial_params = {
-        run: _run_parameter_set(recipe, model, records[run], global_params=global_params)
-        for run in runs
-    }
-    free_params = [parameter.name for parameter in initial_params[runs[0]].free_parameters]
+    free_params = [
+        parameter.name
+        for parameter in _run_parameter_set(
+            recipe, model, records[runs[0]], global_params=global_params
+        ).free_parameters
+    ]
 
-    outcome = fit_asymmetry_series(
-        [records[run] for run in runs],
-        model.function,
-        global_params,
-        local_params,
-        initial_params,
-        t_min=recipe.t_min,
-        t_max=recipe.t_max,
-        seeding="auto",
-        order_key=order,
-        amplitude_param=amplitude_param,
-        frequency_param=frequency_param,
-    )
+    fitted: dict[int, Any] = {}
+    quality_by_run: dict[int, Any] = {}
+    reseeded: set[int] = set()
+    branches: list[SeriesBranch] = []
+    for direction, chain in _branches(runs, start_run):
+        # The chaining coordinate runs forward along the branch, which for the
+        # descending one means the scan coordinate negated: that is the whole
+        # mechanism by which fit_asymmetry_series walks a scan downward.
+        sign = -1.0 if direction == "descending" else 1.0
+        outcome = fit_asymmetry_series(
+            [records[run] for run in chain],
+            model.function,
+            global_params,
+            local_params,
+            # A fresh set per branch: the start run is in both, and both must
+            # fit it from the recipe's values rather than from each other's.
+            {
+                run: _run_parameter_set(recipe, model, records[run], global_params=global_params)
+                for run in chain
+            },
+            t_min=recipe.t_min,
+            t_max=recipe.t_max,
+            seeding="auto",
+            order_key={run: sign * order[run] for run in chain},
+            amplitude_param=amplitude_param,
+            frequency_param=frequency_param,
+        )
+        fitted.update(outcome.results)
+        quality_by_run.update(outcome.member_quality)
+        reseeded.update(outcome.reseeded_runs)
+        branches.append(
+            SeriesBranch(
+                direction=direction,
+                runs=list(chain),
+                seeding_used=outcome.seeding_used,
+                seeding_reason=outcome.seeding_reason,
+            )
+        )
 
-    reseeded = set(outcome.reseeded_runs)
     results: list[dict[str, Any]] = []
     for run in runs:
-        quality = outcome.member_quality[run]
+        quality = quality_by_run[run]
         # The series' flag set is the trend-aware one (it alone can see the
         # scan), so the summary is asked for those flags rather than
         # re-deriving a narrower set from the result on its own.
-        summary = fit_result_summary(
-            outcome.results[run], extra_flags=tuple(sorted(quality.quality_flags))
-        )
+        summary = fit_result_summary(fitted[run], extra_flags=tuple(sorted(quality.quality_flags)))
         results.append(
             {
                 "run": int(run),
@@ -303,9 +422,11 @@ def fit_series(
         expression=recipe.expression,
         global_params=global_params,
         free_params=free_params,
-        seeding_used=outcome.seeding_used,
-        seeding_reason=outcome.seeding_reason,
-        reseeded_runs=list(outcome.reseeded_runs),
+        start_run=start_run,
+        branches=branches,
+        # In scan order, which for a single ascending chain is the order the
+        # chain hit them.
+        reseeded_runs=[run for run in runs if run in reseeded],
         results=results,
         trend=build_trend_table(results, free_params, order_key),
     )
@@ -339,6 +460,7 @@ def build_trend_table(
 
 __all__ = [
     "ORDER_KEYS",
+    "SeriesBranch",
     "SeriesOutcome",
     "TrendTable",
     "build_trend_table",

@@ -41,6 +41,19 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     parser.add_argument(
+        "--start",
+        type=int,
+        default=None,
+        metavar="RUN",
+        help=(
+            "Chain outward from this run in both directions, instead of from "
+            "the first run in scan order. Screen the run with the clearest "
+            "structure ('asymmetry wizard --run N'), then start the series "
+            "there ('--start N'): every fit then warm-starts from a neighbour "
+            "nearer the run the recipe describes"
+        ),
+    )
+    parser.add_argument(
         "--name",
         default=None,
         help="Name to store the series under (default: series-<recipe stem>)",
@@ -76,6 +89,11 @@ def run(args: argparse.Namespace) -> None:
             f"--global names {', '.join(unknown)}, which {recipe.expression!r} does not "
             f"have (it has {', '.join(recipe.parameter_names)})."
         )
+    if args.start is not None and args.start not in datasets:
+        raise UserError(
+            f"--start {args.start} is not in the series "
+            f"(it holds {', '.join(str(run) for run in sorted(datasets))})."
+        )
     try:
         order_values(datasets, args.order)
     except ValueError as exc:
@@ -86,6 +104,7 @@ def run(args: argparse.Namespace) -> None:
         recipe,
         order_key=args.order,
         global_params=global_params,
+        start_run=args.start,
         name=name,
     )
     series_path = workdir.write_series(name, outcome.to_dict())
@@ -116,13 +135,18 @@ def _render(outcome, series_path: Path) -> str:
     flagged = sum(1 for entry in outcome.results if entry["quality_flags"])
     lines = [
         f"{outcome.name} — {outcome.expression}, {len(outcome.results)} run(s) "
-        f"ordered by {outcome.order_key}",
+        f"ordered by {outcome.order_key}"
+        + (f", chained outward from run {outcome.start_run}" if outcome.start_run else ""),
         "",
         render_table(headers, rows),
         "",
-        f"seeding  : {outcome.seeding_used}"
-        + (f" ({outcome.seeding_reason})" if outcome.seeding_reason else ""),
     ]
+    for branch in outcome.branches:
+        label = f"seeding ({branch.direction}, {len(branch.runs)} run(s))"
+        lines.append(
+            f"{label}: {branch.seeding_used}"
+            + (f" — {branch.seeding_reason}" if branch.seeding_reason else "")
+        )
     if outcome.reseeded_runs:
         lines.append("reseeded : " + ", ".join(str(run) for run in outcome.reseeded_runs))
     if outcome.global_params:

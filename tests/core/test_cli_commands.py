@@ -512,6 +512,64 @@ def test_fit_series_defaults_its_name_from_the_recipe(
     assert (fitting_workdir / "series" / "series-relax.json").exists()
 
 
+def test_fit_series_start_chains_outward_from_the_named_run(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "fit-series",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}",
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--start",
+            str(SCAN_RUNS[2]),
+            "--name",
+            "outward",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    series = _json_output(capsys)["series"]
+    assert series["start_run"] == SCAN_RUNS[2]
+    assert [branch["direction"] for branch in series["branches"]] == [
+        "descending",
+        "ascending",
+    ]
+    assert series["branches"][0]["runs"] == list(reversed(SCAN_RUNS[:3]))
+    assert series["branches"][1]["runs"] == list(SCAN_RUNS[2:])
+    # Every run still has exactly one row, in scan order.
+    assert [entry["run"] for entry in series["results"]] == list(SCAN_RUNS)
+
+
+def test_fit_series_rejects_a_start_run_outside_the_series(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "fit-series",
+                str(workflow_folder),
+                "--runs",
+                f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+                "--recipe",
+                "relax",
+                "--order",
+                "temperature",
+                "--start",
+                "999",
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert "--start 999 is not in the series" in capsys.readouterr().err
+
+
 def test_fit_series_rejects_a_global_the_recipe_does_not_have(
     workflow_folder: Path, fitting_workdir: Path, capsys
 ) -> None:

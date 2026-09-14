@@ -98,8 +98,8 @@ def test_fit_series_recovers_the_simulated_rate_curve(outcome) -> None:
 
 
 def test_fit_series_chains_along_the_scan_and_reports_its_seeding(outcome) -> None:
-    assert outcome.seeding_used == "chain"
-    assert outcome.seeding_reason
+    assert [branch.seeding_used for branch in outcome.branches] == ["chain"]
+    assert outcome.branches[0].seeding_reason
     assert [entry["run"] for entry in outcome.results] == list(ZF_RUNS)
     assert [entry["x"] for entry in outcome.results] == pytest.approx([*SCAN_TEMPERATURES, 60.0])
 
@@ -151,6 +151,89 @@ def test_the_outcome_round_trips_through_its_dict(outcome) -> None:
     assert data["expression"] == _EXPRESSION
     assert data["trend"]["columns"] == outcome.trend.columns
     assert [entry["run"] for entry in data["results"]] == list(ZF_RUNS)
+
+
+# -- where the chain starts --------------------------------------------------
+
+
+def _parameters_by_run(outcome) -> dict[int, dict[str, float]]:
+    return {entry["run"]: entry["parameters"] for entry in outcome.results}
+
+
+def test_a_default_series_is_one_chain_over_the_whole_scan(outcome) -> None:
+    assert outcome.start_run is None
+    assert [branch.direction for branch in outcome.branches] == ["ascending"]
+    assert outcome.branches[0].runs == list(ZF_RUNS)
+    assert outcome.branches[0].seeding_used == "chain"
+
+
+def test_starting_at_the_first_run_is_the_default(
+    reduced_workdir: WorkDir, recipe: FitRecipe, outcome
+) -> None:
+    # The descending branch would hold only that run, so there is nothing to
+    # chain downward and the whole scan is one ascending chain — the same fits,
+    # in the same order, as omitting --start entirely.
+    datasets = {run: reduced_workdir.reduced(run) for run in ZF_RUNS}
+    started = fit_series(datasets, recipe, order_key="temperature", start_run=ZF_RUNS[0], name="zf")
+
+    assert [branch.direction for branch in started.branches] == ["ascending"]
+    assert _parameters_by_run(started) == _parameters_by_run(outcome)
+    assert started.trend.to_dict() == outcome.trend.to_dict()
+    assert started.reseeded_runs == outcome.reseeded_runs
+
+
+def test_starting_mid_scan_merges_the_two_branches_unchanged(
+    reduced_workdir: WorkDir, recipe: FitRecipe
+) -> None:
+    # The merge must be exactly the two branches, not a re-fit of anything: each
+    # branch is reproduced here on its own runs (where the start run sits at one
+    # end, so that call is a single chain in the same direction) and every
+    # fitted value must match.
+    datasets = {run: reduced_workdir.reduced(run) for run in ZF_RUNS}
+    start = ZF_RUNS[2]
+    below = {run: datasets[run] for run in ZF_RUNS[: ZF_RUNS.index(start) + 1]}
+    above = {run: datasets[run] for run in ZF_RUNS[ZF_RUNS.index(start) :]}
+
+    merged = fit_series(datasets, recipe, order_key="temperature", start_run=start, name="outward")
+    descending = fit_series(below, recipe, order_key="temperature", start_run=start, name="down")
+    ascending = fit_series(above, recipe, order_key="temperature", start_run=start, name="up")
+
+    assert [branch.direction for branch in merged.branches] == ["descending", "ascending"]
+    assert merged.branches[0].runs == list(reversed(below))
+    assert merged.branches[1].runs == list(above)
+    assert [branch.direction for branch in descending.branches] == ["descending"]
+    assert [branch.direction for branch in ascending.branches] == ["ascending"]
+
+    values = _parameters_by_run(merged)
+    assert [entry["run"] for entry in merged.results] == list(ZF_RUNS)
+    for run, expected in _parameters_by_run(descending).items():
+        # The start run belongs to the ascending branch in the merge.
+        if run != start:
+            assert values[run] == expected, run
+    for run, expected in _parameters_by_run(ascending).items():
+        assert values[run] == expected, run
+
+
+def test_the_start_run_is_fitted_from_the_recipe_itself(
+    reduced_workdir: WorkDir, recipe: FitRecipe
+) -> None:
+    # Nothing chains into the start run, so it must land exactly where a single
+    # fit of that run with the same recipe lands.
+    datasets = {run: reduced_workdir.reduced(run) for run in ZF_RUNS}
+    start = ZF_RUNS[2]
+
+    merged = fit_series(datasets, recipe, order_key="temperature", start_run=start, name="outward")
+    alone = fit_one(datasets[start], recipe)
+
+    assert _parameters_by_run(merged)[start] == alone["parameters"]
+
+
+def test_a_start_run_outside_the_series_is_rejected(
+    reduced_workdir: WorkDir, recipe: FitRecipe
+) -> None:
+    datasets = {run: reduced_workdir.reduced(run) for run in SCAN_RUNS[:3]}
+    with pytest.raises(ValueError, match="Start run 999 is not in this series"):
+        fit_series(datasets, recipe, order_key="temperature", start_run=999, name="nope")
 
 
 # -- pinned (global) parameters ---------------------------------------------
