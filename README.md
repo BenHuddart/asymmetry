@@ -225,7 +225,7 @@ reference.
 src/asymmetry/
 ├── core/           # Analysis engine, data model, loaders, transforms, fitting, Fourier tools
 ├── gui/            # PySide6 application, panels, dialogs, and windows
-├── cli.py          # Command-line entry point
+├── cli/            # Command-line entry point (survey, alpha, reduce, info)
 └── __main__.py     # python -m asymmetry
 ```
 
