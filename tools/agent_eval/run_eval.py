@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""Run one agent evaluation of the ``asymmetry-analysis`` skill.
+
+Copies a dataset folder into the output directory (the corpus itself is never
+written to), installs the packaged skill beside the copy, runs the Claude Code
+CLI headless in that directory with the fixed analysis prompt, and saves
+everything a human needs to tick the dataset's rubric:
+
+``data/``             the copy the agent worked in (its ``.asymmetry/`` included)
+``workdir/``          the work directory the agent built, copied out
+``transcript.jsonl``  the raw ``stream-json`` event stream
+``summary.md``        the agent's report — the only thing the rubric scores
+``assistant-text.md`` every assistant message, to check the report was picked right
+``commands.txt``      every Bash command the agent ran, in order
+``cost.json``         usage, cost, wall time, and any permission denials
+``rubric.md``         the dataset's rubric, to tick
+
+This script itself creates, modifies and removes nothing outside the output
+directory. The agent it launches is an ordinary Claude Code session, so that
+session's own state (its transcript and any auto-memory it writes) lands under
+``~/.claude/`` keyed on the copied data directory, exactly as for a hand-run
+session in that folder.
+
+Usage::
+
+    python tools/agent_eval/run_eval.py \\
+        --data "~/Documents/WiMDA muon school/.../Data" \\
+        --rubric fmuf-ptfe --out /tmp/evals/pass1-fmuf-ptfe
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+RUBRIC_DIR = Path(__file__).resolve().parent / "rubrics"
+VENV_BIN = REPO_ROOT / ".venv" / "bin"
+
+#: The prompt the plan fixes for every evaluation.
+DEFAULT_PROMPT = (
+    "This directory contains the data from a recent muSR experiment. Can you "
+    "analyse these using Asymmetry and present me a summary of what they show?"
+)
+
+#: Tools the agent may use. Bash is limited to the analysis CLI and two
+#: read-only helpers, so the eval measures the skill rather than the agent's
+#: ability to reach around it (a Python one-liner could invent any number).
+#: ``Skill`` is how a Claude Code agent loads the installed skill at all —
+#: without it the skill is listed at startup and can never be read.
+ALLOWED_TOOLS = (
+    "Bash(asymmetry:*)",
+    "Bash(ls:*)",
+    "Bash(cat:*)",
+    "Read",
+    "Glob",
+    "Grep",
+    "Write",
+    "Skill",
+)
+
+#: Built-in tools the session is given at all, before the allow-list narrows it.
+TOOLS = ("Bash", "Read", "Glob", "Grep", "Write", "Skill")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Command-line arguments, with the paths resolved."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--data", required=True, help="Dataset folder to copy and analyse")
+    parser.add_argument(
+        "--rubric",
+        required=True,
+        help=f"Rubric name (a file stem in {RUBRIC_DIR})",
+    )
+    parser.add_argument("--out", required=True, help="Output directory; must not already exist")
+    parser.add_argument("--model", default="sonnet", help="Model alias for the agent")
+    parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="Prompt to hand the agent")
+    parser.add_argument("--max-turns", type=int, default=80, help="Turn budget for the agent")
+    parser.add_argument(
+        "--claude",
+        default=str(Path.home() / ".local" / "bin" / "claude"),
+        help="Path to the Claude Code CLI",
+    )
+    args = parser.parse_args(argv)
+    args.data = Path(args.data).expanduser().resolve()
+    args.out = Path(args.out).expanduser().resolve()
+    args.rubric_path = RUBRIC_DIR / f"{args.rubric}.md"
+    return args
+
+
+def check_inputs(args: argparse.Namespace) -> None:
+    """Fail before anything is written if an input is not what it must be."""
+    if not args.data.is_dir():
+        sys.exit(f"--data {args.data} is not a directory")
+    if not args.rubric_path.is_file():
+        available = ", ".join(sorted(p.stem for p in RUBRIC_DIR.glob("*.md")))
+        sys.exit(f"--rubric {args.rubric!r} has no file in {RUBRIC_DIR} (have: {available})")
+    if args.out.exists() and any(args.out.iterdir()):
+        sys.exit(f"--out {args.out} already exists and is not empty; choose another directory")
+    if not Path(args.claude).exists():
+        sys.exit(f"Claude Code CLI not found at {args.claude}; pass --claude")
+    if not (VENV_BIN / "asymmetry").exists():
+        sys.exit(f"{VENV_BIN / 'asymmetry'} not found; create the project venv first")
+
+
+def stage_data(args: argparse.Namespace) -> Path:
+    """Copy the dataset into ``<out>/data`` and install the skill beside it."""
+    work = args.out / "data"
+    work.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(args.data, work)
+    subprocess.run(
+        [str(VENV_BIN / "asymmetry"), "skill", "install", "--agent", "claude", "--project"],
+        cwd=work,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return work
+
+
+def agent_env() -> dict[str, str]:
+    """The environment the agent runs in: the project venv first on ``PATH``."""
+    env = dict(os.environ)
+    env["PATH"] = f"{VENV_BIN}{os.pathsep}{env.get('PATH', '')}"
+    return env
+
+
+def run_agent(args: argparse.Namespace, work: Path) -> tuple[list[dict], float]:
+    """Run the agent, streaming its events to ``transcript.jsonl``.
+
+    Returns the parsed events and the wall time in seconds.
+    """
+    command = [
+        args.claude,
+        "-p",
+        args.prompt,
+        "--model",
+        args.model,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--max-turns",
+        str(args.max_turns),
+        "--setting-sources",
+        "project",
+        "--tools",
+        *TOOLS,
+        "--allowedTools",
+        *ALLOWED_TOOLS,
+    ]
+    transcript = args.out / "transcript.jsonl"
+    events: list[dict] = []
+    started = time.monotonic()
+    # The agent's stderr goes straight to its own file rather than a pipe:
+    # this process only drains stdout, so a pipe that filled would deadlock a
+    # long run.
+    with (
+        transcript.open("w", encoding="utf-8") as stream,
+        (args.out / "agent-stderr.txt").open("w", encoding="utf-8") as errors,
+    ):
+        process = subprocess.Popen(
+            command,
+            cwd=work,
+            env=agent_env(),
+            stdout=subprocess.PIPE,
+            stderr=errors,
+            text=True,
+            bufsize=1,
+        )
+        for line in process.stdout:
+            stream.write(line)
+            stream.flush()
+            line = line.strip()
+            if line.startswith("{"):
+                events.append(json.loads(line))
+                print(f"  ... {len(events)} events", end="\r", file=sys.stderr)
+        process.wait()
+    return events, time.monotonic() - started
+
+
+def _content_blocks(event: dict) -> list[dict]:
+    message = event.get("message")
+    if not isinstance(message, dict):
+        return []
+    content = message.get("content")
+    return content if isinstance(content, list) else []
+
+
+def extract_commands(events: list[dict]) -> list[str]:
+    """Every Bash command the agent ran, in order."""
+    commands = []
+    for event in events:
+        for block in _content_blocks(event):
+            if block.get("type") == "tool_use" and block.get("name") == "Bash":
+                commands.append(str(block.get("input", {}).get("command", "")))
+    return commands
+
+
+def assistant_texts(events: list[dict]) -> list[str]:
+    """Every assistant text block, in order."""
+    return [
+        block.get("text", "")
+        for event in events
+        if event.get("type") == "assistant"
+        for block in _content_blocks(event)
+        if block.get("type") == "text" and block.get("text", "").strip()
+    ]
+
+
+def extract_summary(events: list[dict]) -> str:
+    """The agent's report — what the rubric scores.
+
+    The report is the longest assistant message plus everything the agent said
+    after it. Taking the ``result`` event alone is not enough: an agent that
+    writes its summary and then does one more thing (saving a note, tidying up)
+    ends the run on a one-line sign-off, and the report is the message before
+    it. The longest message is the report in every run observed.
+    """
+    texts = assistant_texts(events)
+    if not texts:
+        return ""
+    start = max(range(len(texts)), key=lambda index: len(texts[index]))
+    return "\n\n".join(texts[start:])
+
+
+def skill_was_invoked(events: list[dict]) -> bool:
+    """Whether the agent actually loaded the skill (a ``Skill`` tool use).
+
+    Being *listed* at init only means the skill was installed and discovered;
+    the trigger check is whether the agent chose to read it.
+    """
+    for event in events:
+        for block in _content_blocks(event):
+            if block.get("type") == "tool_use" and block.get("name") == "Skill":
+                if "asymmetry-analysis" in json.dumps(block.get("input", {})):
+                    return True
+    return False
+
+
+def skill_was_available(events: list[dict]) -> bool:
+    """Whether the installed skill was discovered at session start."""
+    return any(
+        event.get("subtype") == "init" and "asymmetry-analysis" in (event.get("skills") or [])
+        for event in events
+    )
+
+
+def write_outputs(args: argparse.Namespace, work: Path, events: list[dict], elapsed: float) -> None:
+    """Save the summary, the command list, the cost record, the work directory and the rubric."""
+    (args.out / "summary.md").write_text(extract_summary(events) + "\n", encoding="utf-8")
+    (args.out / "assistant-text.md").write_text(
+        "\n\n---\n\n".join(assistant_texts(events)) + "\n", encoding="utf-8"
+    )
+    (args.out / "commands.txt").write_text(
+        "\n".join(extract_commands(events)) + "\n", encoding="utf-8"
+    )
+
+    result = next((e for e in reversed(events) if e.get("type") == "result"), {})
+    cost = {
+        "dataset": str(args.data),
+        "rubric": args.rubric,
+        "model": args.model,
+        "prompt": args.prompt,
+        "max_turns": args.max_turns,
+        "wall_seconds": round(elapsed, 1),
+        "num_turns": result.get("num_turns"),
+        "total_cost_usd": result.get("total_cost_usd"),
+        "usage": result.get("usage"),
+        "is_error": result.get("is_error"),
+        "result_subtype": result.get("subtype"),
+        "permission_denials": result.get("permission_denials"),
+        "skill_available": skill_was_available(events),
+        "skill_invoked": skill_was_invoked(events),
+        "n_events": len(events),
+    }
+    (args.out / "cost.json").write_text(json.dumps(cost, indent=2) + "\n", encoding="utf-8")
+
+    produced = work / ".asymmetry"
+    if produced.is_dir():
+        shutil.copytree(produced, args.out / "workdir")
+
+    shutil.copy2(args.rubric_path, args.out / "rubric.md")
+
+
+def report(args: argparse.Namespace) -> None:
+    """Print the rubric to tick and where the evidence is."""
+    cost = json.loads((args.out / "cost.json").read_text(encoding="utf-8"))
+    print("\n" + "=" * 72)
+    print(
+        f"{args.rubric} — {args.model} — {cost['wall_seconds']} s, "
+        f"{cost['num_turns']} turns, ${cost['total_cost_usd']}"
+    )
+    print(f"skill available: {cost['skill_available']}, invoked: {cost['skill_invoked']}")
+    if cost["permission_denials"]:
+        print(f"permission denials: {len(cost['permission_denials'])}")
+    print("=" * 72)
+    print(args.rubric_path.read_text(encoding="utf-8"))
+    print("=" * 72)
+    print(f"summary to score : {args.out / 'summary.md'}")
+    print(f"commands run     : {args.out / 'commands.txt'}")
+    print(f"transcript       : {args.out / 'transcript.jsonl'}")
+    print(f"work directory   : {args.out / 'workdir'}")
+    print(f"rubric to tick   : {args.out / 'rubric.md'}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Stage, run, save, report. Returns an exit code."""
+    args = parse_args(argv)
+    check_inputs(args)
+
+    print(f"staging {args.data.name} -> {args.out / 'data'}", file=sys.stderr)
+    work = stage_data(args)
+    print(f"running {args.model} in {work}", file=sys.stderr)
+    events, elapsed = run_agent(args, work)
+    write_outputs(args, work, events, elapsed)
+    report(args)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

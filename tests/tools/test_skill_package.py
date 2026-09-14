@@ -10,8 +10,11 @@ research data or private paths — everything here is a ``tmp_path``.
 
 from __future__ import annotations
 
+import argparse
 import importlib.resources
+import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,6 +22,35 @@ import pytest
 from asymmetry import __version__, cli
 from asymmetry.cli import skill
 from asymmetry.cli._output import UserError
+
+ROOT = Path(__file__).resolve().parents[2]
+RENDERER_PATH = ROOT / "tools" / "agent_eval" / "render_command_reference.py"
+
+
+def _load_renderer():
+    """The command-reference generator, loaded from ``tools/`` by path."""
+    spec = importlib.util.spec_from_file_location("asymmetry_command_reference", RENDERER_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _subcommand_names() -> list[str]:
+    """Every subcommand the CLI registers, top level and nested."""
+    names: list[str] = []
+
+    def walk(parser: argparse.ArgumentParser) -> None:
+        for action in parser._actions:  # noqa: SLF001 — argparse exposes no public walk
+            if isinstance(action, argparse._SubParsersAction):
+                for name, subparser in action.choices.items():
+                    names.append(name)
+                    walk(subparser)
+
+    walk(cli.build_parser())
+    return names
 
 
 def _parse_frontmatter(text: str) -> dict[str, str]:
@@ -58,6 +90,40 @@ def test_skill_frontmatter_has_a_name_and_a_description() -> None:
     # The description is the trigger text an agent's skill-selection reads;
     # it must actually say what the skill is for.
     assert "asymmetry" in fields["description"].lower()
+    # Skill descriptions are matched, not read: an over-long one is truncated
+    # by the agent before it ever reaches the selection.
+    assert len(fields["description"]) <= 300
+
+
+def test_skill_body_names_every_subcommand() -> None:
+    """A command the skill never mentions is a command the agent never runs."""
+    body = (skill.skill_source_dir() / "SKILL.md").read_text(encoding="utf-8")
+
+    missing = [name for name in _subcommand_names() if name not in body]
+
+    assert missing == []
+
+
+# -- references/commands.md ------------------------------------------------
+
+
+def test_command_reference_is_current() -> None:
+    """The bundled ``--help`` reference matches a fresh render of the parser.
+
+    Regenerate with ``python tools/agent_eval/render_command_reference.py``
+    whenever a flag changes; a stale reference misleads the agent about the
+    exact spelling of an option, which is the one thing it cannot guess.
+    """
+    renderer = _load_renderer()
+    bundled = (skill.skill_source_dir() / "references" / "commands.md").read_text(encoding="utf-8")
+
+    assert bundled == renderer.render()
+
+
+def test_command_reference_ships_with_the_skill(tmp_path: Path) -> None:
+    result = skill.install("claude", into=tmp_path)
+
+    assert (result.path / "references" / "commands.md").is_file()
 
 
 # -- install / uninstall (asymmetry.cli.skill) ---------------------------
