@@ -482,6 +482,26 @@ Skill changes after pass 2:
 
 **Tier A result: all four datasets pass with Sonnet.**
 
+### Pass 4 — 2026-09-15, nickel re-run on the final skill text
+
+| Dataset | Wall | Turns | Cost | Verdict |
+|---|---|---|---|---|
+| ferromagnetic-nickel | 533 s | 41 | $1.42 | **pass** |
+
+Run by the lead after the fluorine-sniff fix, so every Tier A dataset has now
+passed under the final skill text. All seven Musts: the three regimes named
+with their run ranges (ZF 100–380 K, 100 G 340–380 K, a 1200–4000 G field
+scan at 200 K read as LF decoupling), the absence of a calibration run
+stated with the 380 K TF run declared as the stand-in (α = 1.9672, the CLI's
+warning acknowledged), the ZF oscillation resolved in a 325–356 K band with
+the frequency falling 8.83 → 2.80 MHz, the oscillation gone from 358 K, and
+the textbook Curie temperature quoted only as "not a result of this
+analysis". Should lines met: the LF field scan treated as a separate
+decoupling exercise; the low apparent transition flagged as something to
+check against the sample. Should unchecked: critical exponents not raised.
+One `Bash` call was denied by the allow-list (a filesystem-wide `find` for a
+recipe file), which is the harness working as intended.
+
 ### Tier B and C — 2026-09-15, one run each, final skill text
 
 | Dataset | Tier | Wall | Turns | Cost | Verdict |
