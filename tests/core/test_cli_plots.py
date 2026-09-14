@@ -13,9 +13,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from asymmetry import __version__, cli
+from asymmetry.cli import plots
 from asymmetry.cli._output import SCHEMA
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.workdir import WorkDir
@@ -32,6 +34,123 @@ def _json_output(capsys) -> dict:
 def _assert_real_png(path: Path) -> None:
     assert path.is_file(), f"{path} was not written"
     assert path.stat().st_size > _MIN_PNG_BYTES, f"{path} is too small to be a real plot"
+
+
+def _noisy_tail_record(
+    n_points: int = 2000, *, break_time: float = 15.0
+) -> tuple[np.ndarray, np.ndarray]:
+    """Synthetic ``(time, error)`` whose error explodes past *break_time*.
+
+    Flat (informative) below the break, exponentially blown up above it — the
+    shape ``frame_for_record`` exists to truncate, and large enough
+    (``n_points``) to also exercise the display-bunching path.
+    """
+    time = np.linspace(0.0, 32.0, n_points)
+    error = np.where(time < break_time, 1.0, np.exp((time - break_time) / 1.5))
+    return time, np.clip(error, None, 100.0)
+
+
+# -- framing / bunching (asymmetry.cli.plots internals) ----------------------
+
+
+def test_frame_for_record_caps_the_window_at_the_effective_end() -> None:
+    time, error = _noisy_tail_record()
+
+    window_min, window_max = plots.frame_for_record(time, error, t_min=None, t_max=None)
+
+    assert window_min == time[0]
+    # Truncated well before the requested (full) end, and inside the flat
+    # (informative) region rather than out in the exploded tail.
+    assert window_max < time[-1]
+    assert window_max < 20.0
+    assert window_max > 10.0
+
+
+def test_frame_for_record_never_exceeds_an_explicit_t_max() -> None:
+    time, error = _noisy_tail_record()
+
+    _, window_max = plots.frame_for_record(time, error, t_min=None, t_max=5.0)
+
+    # The record is not yet noisy at 5 µs, so the caller's own window wins.
+    assert window_max == pytest.approx(5.0)
+
+
+def test_frame_for_record_does_not_truncate_a_flat_error_record() -> None:
+    time = np.linspace(0.0, 10.0, 50)
+    error = np.full_like(time, 1.0)
+
+    window_min, window_max = plots.frame_for_record(time, error, t_min=None, t_max=None)
+
+    assert window_min == time[0]
+    assert window_max == time[-1]
+
+
+def test_bunch_factor_is_one_for_a_short_record_and_greater_for_a_long_one() -> None:
+    assert plots._bunch_factor(100) == 1
+    assert plots._bunch_factor(400) == 1
+    assert plots._bunch_factor(401) == 2
+    assert plots._bunch_factor(2000) == 5
+    # And it is genuinely the smallest such factor.
+    factor = plots._bunch_factor(1601)
+    assert 1601 / factor <= 400
+    assert 1601 / (factor - 1) > 400
+
+
+def test_trend_frame_ignores_a_wildly_flagged_point_and_reports_it_outside() -> None:
+    y = np.array([1.0, 1.1, 0.9, 1.05, 18.0])
+    y_err = np.array([0.1, 0.1, 0.1, 0.1, 5.0])
+    flagged = np.array([False, False, False, False, True])
+
+    y_lo, y_hi, outside = plots._trend_frame(y, y_err, flagged)
+
+    # Framed on the four clean points (~0.9-1.1), not stretched to the outlier.
+    assert y_lo > 0.5
+    assert y_hi < 1.5
+    assert list(outside) == [False, False, False, False, True]
+
+
+def test_trend_frame_covers_every_point_when_all_are_flagged() -> None:
+    y = np.array([1.0, 5.0, 9.0])
+    y_err = np.array([0.1, 0.1, 0.1])
+    flagged = np.array([True, True, True])
+
+    y_lo, y_hi, outside = plots._trend_frame(y, y_err, flagged)
+
+    assert y_lo <= y.min()
+    assert y_hi >= y.max()
+    assert not outside.any()
+
+
+# -- framing/bunching, end to end (plot_fit on a synthetic noisy-tail record) -
+
+
+def test_fit_plot_on_a_record_with_an_exploding_tail_is_framed_and_bunched(
+    tmp_path: Path,
+) -> None:
+    time, error = _noisy_tail_record()
+    rng = np.random.default_rng(0)
+    asymmetry = 20.0 * np.exp(-0.2 * time) + rng.normal(scale=0.2, size=time.size)
+
+    out_path = plots.plot_fit(
+        time,
+        asymmetry,
+        error,
+        model_function=lambda t, amplitude, rate: amplitude * np.exp(-rate * t),
+        parameters={"amplitude": 20.0, "rate": 0.2},
+        t_min=None,
+        t_max=None,
+        run_number=1,
+        expression="Exponential",
+        out_path=tmp_path / "fit.png",
+    )
+    _assert_real_png(out_path)
+
+    # The same framing/bunching this call used, so the test does not just
+    # trust the drawing code — it checks the numbers behind it too.
+    window_min, window_max = plots.frame_for_record(time, error, t_min=None, t_max=None)
+    assert window_max < time[-1]
+    windowed_points = int(np.count_nonzero((time >= window_min) & (time <= window_max)))
+    assert plots._bunch_factor(windowed_points) > 1
 
 
 @pytest.fixture
