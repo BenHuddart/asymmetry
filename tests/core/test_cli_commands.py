@@ -657,6 +657,65 @@ def test_trend_names_the_series_the_workdir_does_hold(
 # -- dispatcher -------------------------------------------------------------
 
 
+def test_verbose_flag_is_recognised_by_the_parser() -> None:
+    parser = cli.build_parser()
+    assert parser.parse_args(["survey", "somefolder"]).verbose is False
+    assert parser.parse_args(["--verbose", "survey", "somefolder"]).verbose is True
+
+
+def test_a_repeated_warning_prints_once_without_verbose(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    import warnings as warnings_module
+
+    class _Dummy:
+        def summary(self) -> str:
+            return ""
+
+    def _warn_twice(_path: str) -> _Dummy:
+        # `simplefilter("always")` bypasses Python's own per-location dedup
+        # (the "default" action only shows a warning once per module+lineno),
+        # so both calls reach `showwarning` — exactly the repeated-occurrence
+        # flooding `--verbose`/its absence is about, reproduced deterministically.
+        warnings_module.simplefilter("always")
+        warnings_module.warn("boom", UserWarning)
+        warnings_module.warn("boom", UserWarning)
+        return _Dummy()
+
+    monkeypatch.setattr("asymmetry.core.io.load", _warn_twice)
+    cli.main(["info", "unused.nxs"])
+
+    err = capsys.readouterr().err
+    assert err.count("asymmetry: warning:") == 1
+    assert "boom" in err
+
+
+def test_verbose_leaves_pythons_own_warning_handling_in_place(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    # `main()` must not touch `warnings.showwarning` at all under `--verbose` —
+    # proven here by the warning still reaching pytest's own recorder (which
+    # only sees it if nothing upstream of it swallowed or reformatted it),
+    # rather than by re-deriving what Python's literal default prints, which
+    # pytest's own warnings-capture plugin intercepts before it reaches stderr.
+    import warnings as warnings_module
+
+    class _Dummy:
+        def summary(self) -> str:
+            return ""
+
+    def _warn_once(_path: str) -> _Dummy:
+        warnings_module.simplefilter("always")
+        warnings_module.warn("boom", UserWarning)
+        return _Dummy()
+
+    monkeypatch.setattr("asymmetry.core.io.load", _warn_once)
+    with pytest.warns(UserWarning, match="boom"):
+        cli.main(["--verbose", "info", "unused.nxs"])
+
+    assert "asymmetry: warning:" not in capsys.readouterr().err
+
+
 def test_an_internal_error_exits_two_with_a_traceback(
     workflow_folder: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:

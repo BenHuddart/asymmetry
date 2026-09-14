@@ -39,6 +39,9 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         metavar="PRESET",
         help="Candidate-family scope preset (default: auto, from the run's geometry)",
     )
+    parser.add_argument(
+        "--plot", action="store_true", help="Write plots/wizard-<run>.png of data + recommendation"
+    )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     parser.add_argument(
         "--workdir",
@@ -50,6 +53,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace) -> None:
     """Screen the run, store the payload and the recipe, and report both."""
+    from asymmetry.cli import plots
     from asymmetry.core.workflow.screen import SCOPE_PRESETS, screen_run
     from asymmetry.core.workflow.workdir import WorkDir
 
@@ -57,6 +61,8 @@ def run(args: argparse.Namespace) -> None:
         raise UserError(
             f"Unknown scope preset {args.scope!r}; expected one of {', '.join(SCOPE_PRESETS)}."
         )
+    if args.plot:
+        plots.require_matplotlib()
 
     folder = Path(args.folder)
     workdir = WorkDir.for_folder(folder, args.workdir)
@@ -74,6 +80,26 @@ def run(args: argparse.Namespace) -> None:
         None if result.recipe is None else workdir.write_recipe(recipe_name, result.recipe)
     )
 
+    plot_path = None
+    plot_note = None
+    if args.plot:
+        if result.recipe is None:
+            plot_note = "no recommendation to plot"
+        else:
+            recipe = result.recipe
+            plot_path = plots.plot_fit(
+                dataset.time,
+                dataset.asymmetry,
+                dataset.error,
+                model_function=recipe.model().function,
+                parameters={p.name: p.value for p in recipe.parameters},
+                t_min=recipe.t_min,
+                t_max=recipe.t_max,
+                run_number=args.run,
+                expression=recipe.expression,
+                out_path=workdir.plots_dir / f"wizard-{args.run}.png",
+            )
+
     if args.json:
         emit_json(
             payload(
@@ -81,14 +107,22 @@ def run(args: argparse.Namespace) -> None:
                 wizard_path=str(wizard_path),
                 recipe_name=None if recipe_path is None else recipe_name,
                 recipe_path=None if recipe_path is None else str(recipe_path),
+                plots=[] if plot_path is None else [str(plot_path)],
+                plot_note=plot_note,
             )
         )
         return
 
-    print(_render(result, wizard_path, recipe_path))
+    print(_render(result, wizard_path, recipe_path, plot_path, plot_note))
 
 
-def _render(result, wizard_path: Path, recipe_path: Path | None) -> str:
+def _render(
+    result,
+    wizard_path: Path,
+    recipe_path: Path | None,
+    plot_path: Path | None,
+    plot_note: str | None,
+) -> str:
     """The human-readable screening report."""
     geometry = result.geometry or "unknown"
     lines = [
@@ -134,4 +168,8 @@ def _render(result, wizard_path: Path, recipe_path: Path | None) -> str:
         lines.append("No recipe written — there is no recommended model to fit.")
     else:
         lines.append(f"Recipe written to {recipe_path}")
+    if plot_path is not None:
+        lines.append(f"Plot written to {plot_path}")
+    elif plot_note is not None:
+        lines.append(f"No plot written — {plot_note}.")
     return "\n".join(lines)

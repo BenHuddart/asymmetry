@@ -48,6 +48,10 @@ gle = ["gleplot @ git+https://github.com/BenHuddart/gleplot.git@v1.7.0"]
 hdf5 = ["h5py>=3.8,<4"]
 hdf4 = ["pyhdf>=0.10,<1"]  # legacy ISIS muon NeXus v1 in an HDF4 container
 root = ["uproot>=5.0,<6"]
+# For an agent driving `asymmetry` headlessly (see docs/plans/agent-cli-skill.md):
+# `--plot` PNGs plus the ISIS/PSI NeXus loader most agent datasets need. ROOT and
+# HDF4 stay separate extras — they are heavier and dataset-specific.
+agent = ["matplotlib>=3.7,<3.11", "h5py>=3.8,<4"]
 # Optional CUDA acceleration for the MaxEnt engine (MaxEntConfig(backend="cuda"
 # | "auto")).  CUDA-13 wheel; on CUDA-12 systems install cupy-cuda12x instead.
 # The runtime imports plain ``cupy``, so any matching wheel works.  [ctk] bundles
@@ -63,7 +67,7 @@ dev = [
     "sphinx>=7.0,<10",
     "sphinx-rtd-theme>=2.0,<4",
 ]
-all = ["asymmetry[gui,gle,hdf5,hdf4,root,dev]"]
+all = ["asymmetry[gui,gle,hdf5,hdf4,root,agent,dev]"]
 
 [project.scripts]
 asymmetry = "asymmetry.cli:main"
@@ -86,6 +90,8 @@ asymmetry = [
     "resources/*.svg",
     "resources/fonts/*.ttf",
     "resources/fonts/OFL.txt",
+    "resources/skills/*/*.md",
+    "resources/skills/*/*/*.md",
     "gui/styles/*.qss",
 ]
 

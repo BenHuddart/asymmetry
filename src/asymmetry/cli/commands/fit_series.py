@@ -58,6 +58,14 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         default=None,
         help="Name to store the series under (default: series-<recipe stem>)",
     )
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help=(
+            "Write plots/<name>/<run>.png per run and "
+            "plots/<name>-trend-<param>.png per free parameter"
+        ),
+    )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     parser.add_argument(
         "--workdir",
@@ -69,8 +77,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace) -> None:
     """Fit every named run with the recipe and store the series."""
+    from asymmetry.cli import plots
     from asymmetry.core.workflow.series import fit_series, order_values
     from asymmetry.core.workflow.workdir import WorkDir
+
+    if args.plot:
+        plots.require_matplotlib()
 
     folder = Path(args.folder)
     workdir = WorkDir.for_folder(folder, args.workdir)
@@ -107,16 +119,54 @@ def run(args: argparse.Namespace) -> None:
         start_run=args.start,
         name=name,
     )
-    series_path = workdir.write_series(name, outcome.to_dict())
+    # Additive: so that a later `trend --plot` on this series (a separate
+    # invocation, with no recipe in hand) can rebuild the model curve.
+    series_payload = outcome.to_dict() | {"recipe": recipe.to_dict()}
+    series_path = workdir.write_series(name, series_payload)
+
+    plot_paths: list[Path] = []
+    if args.plot:
+        for entry in outcome.results:
+            run_number = entry["run"]
+            plot_paths.append(
+                plots.plot_fit(
+                    datasets[run_number].time,
+                    datasets[run_number].asymmetry,
+                    datasets[run_number].error,
+                    model_function=recipe.model().function,
+                    parameters=entry["parameters"],
+                    t_min=recipe.t_min,
+                    t_max=recipe.t_max,
+                    run_number=run_number,
+                    expression=outcome.expression,
+                    out_path=workdir.plots_dir / name / f"{run_number}.png",
+                )
+            )
+        for param_name in outcome.free_params:
+            plot_paths.append(
+                plots.plot_trend(
+                    outcome.trend.rows,
+                    param_name=param_name,
+                    order_key=outcome.order_key,
+                    out_path=workdir.plots_dir / f"{name}-trend-{param_name}.png",
+                    title=f"{name} — {outcome.expression}: {param_name}",
+                )
+            )
 
     if args.json:
-        emit_json(payload(series=outcome.to_dict(), series_path=str(series_path)))
+        emit_json(
+            payload(
+                series=outcome.to_dict(),
+                series_path=str(series_path),
+                plots=[str(path) for path in plot_paths],
+            )
+        )
         return
 
-    print(_render(outcome, series_path))
+    print(_render(outcome, series_path, plot_paths))
 
 
-def _render(outcome, series_path: Path) -> str:
+def _render(outcome, series_path: Path, plot_paths: list[Path] | None = None) -> str:
     """The human-readable per-run table plus the seeding that was used."""
     headers = ["run", outcome.order_key, "chi2_red", "verdict", "flags"]
     rows = []
@@ -153,4 +203,6 @@ def _render(outcome, series_path: Path) -> str:
         lines.append(f"pinned   : {', '.join(outcome.global_params)}")
     lines.append(f"flagged  : {flagged} of {len(outcome.results)} run(s) — none were dropped")
     lines.append(f"Series written to {series_path}")
+    if plot_paths:
+        lines.append(f"{len(plot_paths)} plot(s) written under {plot_paths[0].parent.parent}")
     return "\n".join(lines)

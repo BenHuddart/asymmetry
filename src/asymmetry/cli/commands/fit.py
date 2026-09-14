@@ -22,6 +22,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     add_recipe_arguments(parser)
     parser.add_argument("--tmin", type=float, default=None, help="Fit only above this time/µs")
     parser.add_argument("--tmax", type=float, default=None, help="Fit only below this time/µs")
+    parser.add_argument("--plot", action="store_true", help="Write plots/fit-<run>.png")
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     parser.add_argument(
         "--workdir",
@@ -33,8 +34,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace) -> None:
     """Fit the named run and report the parameter table and quality verdict."""
+    from asymmetry.cli import plots
     from asymmetry.core.workflow.series import fit_one
     from asymmetry.core.workflow.workdir import WorkDir
+
+    if args.plot:
+        plots.require_matplotlib()
 
     folder = Path(args.folder)
     workdir = WorkDir.for_folder(folder, args.workdir)
@@ -46,14 +51,36 @@ def run(args: argparse.Namespace) -> None:
 
     result = fit_one(dataset, recipe)
 
+    plot_path = None
+    if args.plot:
+        plot_path = plots.plot_fit(
+            dataset.time,
+            dataset.asymmetry,
+            dataset.error,
+            model_function=recipe.model().function,
+            parameters=result["parameters"],
+            t_min=recipe.t_min,
+            t_max=recipe.t_max,
+            run_number=args.run,
+            expression=recipe.expression,
+            out_path=workdir.plots_dir / f"fit-{args.run}.png",
+        )
+
     if args.json:
-        emit_json(payload(fit=result, expression=recipe.expression, recipe=recipe.to_dict()))
+        emit_json(
+            payload(
+                fit=result,
+                expression=recipe.expression,
+                recipe=recipe.to_dict(),
+                plots=[] if plot_path is None else [str(plot_path)],
+            )
+        )
         return
 
-    print(_render(result, recipe))
+    print(_render(result, recipe, plot_path))
 
 
-def _render(result: dict[str, Any], recipe) -> str:
+def _render(result: dict[str, Any], recipe, plot_path: Path | None = None) -> str:
     """The human-readable fit report: parameters, then χ² and flags."""
     free = set(result["free_params"])
     uncertainties = result["uncertainties"]
@@ -85,4 +112,6 @@ def _render(result: dict[str, Any], recipe) -> str:
     if at_bound:
         lines.append(f"at bound : {', '.join(at_bound)}")
     lines.append(f"flags    : {', '.join(flags) if flags else 'none'}")
+    if plot_path is not None:
+        lines.append(f"Plot written to {plot_path}")
     return "\n".join(lines)

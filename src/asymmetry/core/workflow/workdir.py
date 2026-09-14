@@ -9,6 +9,7 @@ Every workflow command reads and writes ``<folder>/.asymmetry/``::
     wizard/<run>.json      # screening payload: recommendation, narrative, recipe
     recipes/<name>.json    # a fit recipe (model + parameters + window)
     series/<name>.json     # per-run results, trend table, quality flags
+    plots/*.png            # headless PNGs written by --plot
 
 so a later command can pick up a reduced spectrum without reloading and
 re-reducing the file, and an agent has state between invocations without a
@@ -187,9 +188,19 @@ class WorkDir:
     def series_dir(self) -> Path:
         return self.root / "series"
 
+    @property
+    def plots_dir(self) -> Path:
+        return self.root / "plots"
+
     def ensure(self) -> None:
         """Create the directory layout."""
-        for directory in (self.reduced_dir, self.wizard_dir, self.recipes_dir, self.series_dir):
+        for directory in (
+            self.reduced_dir,
+            self.wizard_dir,
+            self.recipes_dir,
+            self.series_dir,
+            self.plots_dir,
+        ):
             directory.mkdir(parents=True, exist_ok=True)
 
     # -- survey -------------------------------------------------------------

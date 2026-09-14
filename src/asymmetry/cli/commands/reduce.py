@@ -54,6 +54,9 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--tmax", type=float, default=None, help="Discard points above this time/µs"
     )
+    parser.add_argument(
+        "--plot", action="store_true", help="Write plots/reduced-<run>.png for each run"
+    )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
     parser.add_argument(
         "--workdir",
@@ -65,6 +68,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 
 def run(args: argparse.Namespace) -> None:
     """Reduce every named run, caching each result in the work directory."""
+    from asymmetry.cli import plots
     from asymmetry.core.io import load
     from asymmetry.core.workflow.reduction import (
         ReductionSettings,
@@ -78,6 +82,8 @@ def run(args: argparse.Namespace) -> None:
     folder = Path(args.folder)
     if args.alpha is not None and args.alpha_from is not None:
         raise UserError("Pass either --alpha or --alpha-from, not both.")
+    if args.plot:
+        plots.require_matplotlib()
 
     if args.alpha_from is not None:
         alpha_path = resolve_run(folder, args.alpha_from)
@@ -109,6 +115,7 @@ def run(args: argparse.Namespace) -> None:
     workdir.ensure()
 
     entries: list[dict[str, Any]] = []
+    plot_paths: list[Path] = []
     for run_number, prefix, path in targets:
         result = load(str(path))
         dataset_in = result[0] if isinstance(result, list) else result
@@ -140,6 +147,20 @@ def run(args: argparse.Namespace) -> None:
 
         entries.append(_entry_payload(entry, dataset, recomputed=recomputed))
 
+        if args.plot:
+            plot_paths.append(
+                plots.plot_reduced(
+                    dataset.time,
+                    dataset.asymmetry,
+                    dataset.error,
+                    run_number=run_number,
+                    temperature=entry.run.get("temperature"),
+                    field=entry.run.get("field"),
+                    title=entry.run.get("title", ""),
+                    out_path=workdir.plots_dir / f"reduced-{run_number}.png",
+                )
+            )
+
     workdir.write_manifest(
         folder=folder,
         settings=settings,
@@ -153,11 +174,12 @@ def run(args: argparse.Namespace) -> None:
                 workdir=str(workdir.root),
                 settings=settings.to_dict(),
                 entries=entries,
+                plots=[str(path) for path in plot_paths],
             )
         )
         return
 
-    print(_render(entries, settings, workdir.root))
+    print(_render(entries, settings, workdir.root, plot_paths))
 
 
 def _entry_payload(entry, dataset, *, recomputed: bool) -> dict[str, Any]:
@@ -171,7 +193,9 @@ def _entry_payload(entry, dataset, *, recomputed: bool) -> dict[str, Any]:
     return data
 
 
-def _render(entries: list[dict[str, Any]], settings, workdir_root: Path) -> str:
+def _render(
+    entries: list[dict[str, Any]], settings, workdir_root: Path, plot_paths: list[Path]
+) -> str:
     """The human-readable reduce table plus the settings line."""
     headers = ["run", "T/K", "B/G", "points", "A(0)/%", "err/%", "alpha", "deadtime"]
     rows = [
@@ -188,14 +212,15 @@ def _render(entries: list[dict[str, Any]], settings, workdir_root: Path) -> str:
         for entry in entries
     ]
     reused = sum(1 for entry in entries if not entry["recomputed"])
-    return "\n".join(
-        [
-            render_table(headers, rows),
-            "",
-            f"alpha {settings.alpha:.4f} ({settings.alpha_source}), "
-            f"deadtime {settings.deadtime}, background {settings.background}, "
-            f"rebin {settings.rebin}",
-            f"{len(entries)} run(s) reduced into {workdir_root}"
-            + (f" ({reused} reused from cache)" if reused else ""),
-        ]
-    )
+    lines = [
+        render_table(headers, rows),
+        "",
+        f"alpha {settings.alpha:.4f} ({settings.alpha_source}), "
+        f"deadtime {settings.deadtime}, background {settings.background}, "
+        f"rebin {settings.rebin}",
+        f"{len(entries)} run(s) reduced into {workdir_root}"
+        + (f" ({reused} reused from cache)" if reused else ""),
+    ]
+    if plot_paths:
+        lines.append(f"Plots written: {', '.join(str(path) for path in plot_paths)}")
+    return "\n".join(lines)
