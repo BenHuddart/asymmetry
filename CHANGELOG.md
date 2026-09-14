@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **An `asymmetry` command-line workflow drives a whole μSR analysis without the GUI, for
+  scripting and for AI coding agents.** `survey`, `alpha`, `reduce`, `wizard`, `fit`,
+  `fit-series` and `trend` wrap the same core engine the desktop application uses, in the order
+  an analysis runs, each with a `--json` machine-readable payload and, on the six analysis
+  commands, `--plot` for headless PNGs (framed on the informative window and, for a trend, on
+  its clean points). Every command reads and writes a `<folder>/.asymmetry` work directory —
+  a survey, cached reduced spectra keyed on a digest, wizard screenings, fit recipes, and series
+  results — so state persists between separate invocations without a long-lived process.
+  `wizard` writes a fit recipe (model, parameters, time window) from its recommendation, the
+  sole contract between screening and fitting; `fit-series --start RUN` chains a series outward
+  from the run you screened. Install the new `agent` extra
+  (`pip install "asymmetry[agent]"`, matplotlib + h5py) for the plots and NeXus loading. See
+  `docs/reference/agent_workflow.rst`.
+- **A packaged `asymmetry-analysis` skill teaches an AI coding agent to drive that workflow
+  end to end**, with `asymmetry skill install --agent claude|codex` (`--project` for a
+  per-directory install), `asymmetry skill check`, and `asymmetry skill uninstall`. The skill
+  carries the decision rules an analyst applies at each step — which model family the physics
+  calls for, what a fitted amplitude means, when to fix a parameter from a reference run — and
+  a summary template whose numbers must all come from command output. `tools/agent_eval/`
+  adds the rubric-driven harness used to evaluate an agent against it.
+
+### Fixed
+
+- **The fit wizard's "sample name suggests fluorine" sniff no longer fires on ISIS's
+  `F=<gauss>` title convention.** The token match looked for a bare `F` anywhere in the run's
+  title or sample text, so an ISIS title like `nickel_T=100_F=0` — the field, not a sample name
+  — read as a fluorine hint and promoted the F-μ-F candidate family on every ISIS run, in the
+  GUI wizard as well as the CLI's. The token now excludes an `F` immediately followed by `=`.
+
 ## [0.19.0] - 2026-09-14
 
 ### Added

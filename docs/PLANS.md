@@ -8,9 +8,8 @@ subsystems or days.
 
 ### Agent analysis CLI and skill (proof of concept)
 
-Status: plan agreed with maintainer 2026-09-14; single PR on
-`feat/agent-cli-skill`, phased subagent work with a lead review gate per
-phase, Sonnet-driven evals on the WiMDA muon school data. Full plan:
+Status: implemented 2026-09-15 on `feat/agent-cli-skill`; PR pending; all
+four Tier A rubrics pass with Sonnet. Full plan:
 [docs/plans/agent-cli-skill.md](plans/agent-cli-skill.md).
 
 ### Parameters panel: parameter cards, chip rail, pop-out table

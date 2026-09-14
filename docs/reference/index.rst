@@ -121,19 +121,25 @@ graphical interface where the feature lives.
    * - Find a menu, panel, or keyboard shortcut
      - :doc:`gui_usage`
      - —
+   * - Drive Asymmetry from a shell or an AI agent
+     - :doc:`agent_workflow`
+     - —
 
 Scripting
 ---------
 
 Asymmetry is scriptable: almost everything in the GUI has a Python equivalent.
 The cookbook gathers short, copy-paste recipes for common tasks, each linking
-out to the reference page that explains it in full.
+out to the reference page that explains it in full. A packaged command-line
+workflow and agent skill wrap that same API for driving a whole analysis from
+a shell or an AI coding agent without writing Python at all.
 
 .. toctree::
    :maxdepth: 1
    :caption: Scripting
 
    cookbook
+   agent_workflow
 
 Data and projects
 -----------------
