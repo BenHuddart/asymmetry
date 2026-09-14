@@ -36,21 +36,18 @@ class LfKtGlobalResultsScenario(Scenario):
         from asymmetry.core.fitting.engine import FitEngine
         from asymmetry.core.fitting.parameters import Parameter, ParameterSet
         from asymmetry.gui.mainwindow import MainWindow
+        from asymmetry.gui.panels.fit.global_tab import FitLaunch
 
         window = MainWindow()
         window._on_fit()
-        window.resizeDocks(
-            [window._dock_data_browser], [340], Qt.Orientation.Horizontal
-        )
+        window.resizeDocks([window._dock_data_browser], [340], Qt.Orientation.Horizontal)
 
         datasets = make_ag_lf_decoupling(fields_g=(0.0, 15.0, 50.0, 100.0))
         for dataset in datasets:
             window._data_browser.add_dataset(dataset)
 
         run_numbers = [int(ds.run_number) for ds in datasets]
-        window._data_browser.create_data_group(
-            run_numbers, name="LF decoupling — Ag"
-        )
+        window._data_browser.create_data_group(run_numbers, name="LF decoupling — Ag")
 
         # Configure the global-fit tab and set the model.
         fit_panel = window._fit_panel
@@ -68,14 +65,14 @@ class LfKtGlobalResultsScenario(Scenario):
         engine = FitEngine()
         initial_params: dict[int, ParameterSet] = {}
         for ds in datasets:
-            initial_params[int(ds.run_number)] = ParameterSet([
-                Parameter("A_1", value=24.0, min=0.0, max=40.0),
-                Parameter("Delta", value=0.4, min=0.0, max=2.0),
-                Parameter(
-                    "B_L", value=float(ds.metadata.get("field", 0.0)), fixed=True
-                ),
-                Parameter("A_bg", value=0.3, min=-1.0, max=2.0),
-            ])
+            initial_params[int(ds.run_number)] = ParameterSet(
+                [
+                    Parameter("A_1", value=24.0, min=0.0, max=40.0),
+                    Parameter("Delta", value=0.4, min=0.0, max=2.0),
+                    Parameter("B_L", value=float(ds.metadata.get("field", 0.0)), fixed=True),
+                    Parameter("A_bg", value=0.3, min=-1.0, max=2.0),
+                ]
+            )
 
         global_params = ["A_1", "Delta", "A_bg"]
         local_params = ["B_L"]
@@ -87,7 +84,11 @@ class LfKtGlobalResultsScenario(Scenario):
             initial_params=initial_params,
         )
         global_tab._emit_global_fit_success(
-            model=model,
+            launch=FitLaunch(
+                model=model,
+                global_params=tuple(global_params),
+                datasets=tuple(datasets),
+            ),
             results_dict=results_dict,
             successful=results_dict,
             fitted_global=fitted_global,
