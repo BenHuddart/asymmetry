@@ -293,7 +293,8 @@ trustworthy as its uncertainty, and the only way to test an uncertainty is to
 repeat the measurement many times and see whether the scatter matches. The
 pull diagnostic does exactly that, with synthetic repeats.
 
-After a converged single fit, click **Pull diagnostic…**. The tool
+After a converged single fit, click **Diagnostic…** on the Single tab's Results
+card. The tool
 re-simulates the fitted run many times at matched statistics, refits each copy
 over the same window, and for every free parameter forms the *pull*
 

@@ -1,11 +1,11 @@
-"""Single-fit carry-forward provenance badge (D2/F6) and D5 refresh-unless-fitted.
+"""Single-fit carry-forward provenance tag (D2/F6) and D5 refresh-unless-fitted.
 
 Selecting an unseen run kept showing the previously-fit model *and its fitted
 values* with nothing indicating the new run had never been fit itself (F6);
 after a project reload the mix-up got worse (F21). Carry-forward is useful
 (a run series naturally inherits the model of its neighbours) and is kept,
-but the panel must say so explicitly via a dismissable badge, cleared the
-moment a real fit is recorded for the run.
+but the panel must say so explicitly — a ``seeds from <run>`` tag on the
+results card, cleared the moment a real fit is recorded for the run.
 
 D5 (`docs/studies/datagroup-fitseries-unification.md`) later upgraded this to
 "refresh-unless-fitted": a run with a recorded fit result (single *or*
@@ -29,6 +29,16 @@ from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_panel import FitPanel
 
 pytestmark = [pytest.mark.gui]
+
+
+def _carry_tag(panel: FitPanel) -> str:
+    """The results card's carry-forward tag ("" when the form was fitted here)."""
+    return panel._single_tab._results_card._meta_tag.text()
+
+
+def _carry_note(panel: FitPanel) -> str:
+    """The sentence behind that tag."""
+    return panel._single_tab._results_card._meta_tag.toolTip()
 
 
 def _dataset(run_number: int) -> MuonDataset:
@@ -60,7 +70,7 @@ def test_first_ever_selection_shows_no_badge(qapp: QApplication) -> None:
     panel.set_dataset(_dataset(2960))
 
     assert panel._single_fit_provenance == "representation_default"
-    assert panel._single_tab._carry_forward_badge.isHidden()
+    assert _carry_tag(panel) == ""
 
 
 def test_own_slot_and_unseen_run_carries_with_named_source(qapp: QApplication) -> None:
@@ -74,16 +84,16 @@ def test_own_slot_and_unseen_run_carries_with_named_source(qapp: QApplication) -
     stored[2960] = panel.get_single_form_state()
 
     assert panel._single_fit_provenance == "own_slot"
-    assert panel._single_tab._carry_forward_badge.isHidden()
+    assert _carry_tag(panel) == ""
 
     panel.set_dataset(_dataset(2963))
 
     assert panel._single_fit_provenance == "carried_from_run"
     assert panel._single_fit_carry_source_run == 2960
-    badge_text = panel._single_tab._carry_forward_badge_label.text()
+    badge_text = _carry_note(panel)
     assert "2960" in badge_text
     assert "not fitted for this run" in badge_text
-    assert not panel._single_tab._carry_forward_badge.isHidden()
+    assert _carry_tag(panel) == "seeds from 2960"
 
 
 def test_badge_clears_when_fit_recorded_for_carried_run(qapp: QApplication) -> None:
@@ -92,12 +102,12 @@ def test_badge_clears_when_fit_recorded_for_carried_run(qapp: QApplication) -> N
 
     panel.set_dataset(_dataset(2960))
     panel.set_dataset(_dataset(2963))
-    assert not panel._single_tab._carry_forward_badge.isHidden()
+    assert _carry_tag(panel) != ""
 
     panel._single_tab.fit_completed.emit(_fit_result(), None, None)
 
     assert panel._single_fit_provenance == "own_slot"
-    assert panel._single_tab._carry_forward_badge.isHidden()
+    assert _carry_tag(panel) == ""
 
 
 def test_no_fit_yet_falls_back_to_last_displayed_carry(qapp: QApplication) -> None:
@@ -209,8 +219,8 @@ def test_refresh_replaces_stale_cached_carry_with_latest_fitted_function(
     assert panel._single_fit_provenance == "carried_from_run"
     assert panel._single_fit_carry_source_run == 4003
     assert panel._single_tab._composite_model.component_names == d_model.component_names
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
-    badge_text = panel._single_tab._carry_forward_badge_label.text()
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
+    badge_text = _carry_note(panel)
     assert "4003" in badge_text
 
 
@@ -248,7 +258,7 @@ def test_reload_of_own_slot_shows_no_badge(qapp: QApplication) -> None:
     panel.set_dataset(_dataset(2960))
 
     assert panel._single_fit_provenance == "own_slot"
-    assert panel._single_tab._carry_forward_badge.isHidden()
+    assert _carry_tag(panel) == ""
 
 
 def test_protected_across_reload_with_no_session_cache(qapp: QApplication) -> None:
@@ -295,4 +305,4 @@ def test_representation_default_shows_no_badge(qapp: QApplication) -> None:
     panel.set_dataset(_dataset(2960))
 
     assert panel._single_fit_provenance == "representation_default"
-    assert panel._single_tab._carry_forward_badge.isHidden()
+    assert _carry_tag(panel) == ""

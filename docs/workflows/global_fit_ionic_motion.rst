@@ -184,7 +184,7 @@ made in the **Batch** tab's **Parameter classification** table.
    **Parameter classification** table is the whole story of the fit: each row's
    **Type** decides whether that parameter is shared or per-run. The **Fit
    range** is capped at 12 µs and the guide's seed values are entered in the
-   **Seed** column, with all three runs selected so **Run Batch Fit** acts on
+   **Seed** column, with all three runs selected so **Run batch fit** acts on
    the loaded triplet.
 
 Walk down the classification table row by row — this is the tying picture that
@@ -250,7 +250,7 @@ converge cleanly.
 Step 4 — Run the joint fit
 --------------------------
 
-With the triplet selected and the parameters classified, **Run Batch Fit**
+With the triplet selected and the parameters classified, **Run batch fit**
 performs the simultaneous fit.
 
 .. figure:: /_generated/corpus_screenshots/corpus_llz_global_result.png

@@ -18,7 +18,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QMessageBox, QSizePolicy
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QLabel,
+    QSizePolicy,
+)
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.composite import CompositeModel
@@ -47,6 +53,7 @@ from asymmetry.core.utils.constants import (
 from asymmetry.gui.panels import fit_panel as fit_panel_module
 from asymmetry.gui.panels.fit import global_tab as global_tab_module
 from asymmetry.gui.panels.fit import single_tab as single_tab_module
+from asymmetry.gui.panels.fit.global_tab import FitLaunch
 from asymmetry.gui.panels.fit.wizard_cache import (
     GlobalWizardCacheEntry,
     WizardCacheEntry,
@@ -395,7 +402,7 @@ def test_single_fit_requires_dataset(qapp: QApplication) -> None:
     tab._current_dataset = None
     tab._run_fit()
     assert tab.wait_for_fit()
-    assert "No dataset selected" in tab._result_label.text()
+    assert "No dataset selected" in tab._results_card.content_html()
 
 
 def test_single_fit_fit_wizard_button_tracks_dataset_and_block_state(
@@ -486,7 +493,7 @@ def test_single_fit_apply_fit_wizard_assessment_emits_fit_completed(
 
     tab._apply_fit_wizard_assessment(assessment, recommendation)
 
-    assert "Fit Wizard" in tab._result_label.text()
+    assert "Fit Wizard" in tab._results_card.content_html()
     assert emitted["result"].success is True
     assert tab._composite_model.component_names == ["Exponential", "Constant"]
 
@@ -632,12 +639,12 @@ def test_restore_single_fit_ui_empty_blanks_form(qapp: QApplication, dataset: Mu
     panel._single_tab._set_composite_model(
         CompositeModel(["Gaussian", "Constant"], operators=["+"])
     )
-    panel._single_tab._result_label.setText("a stale fit result")
+    panel._single_tab._results_card.set_message("a stale fit result")
 
     panel.restore_single_fit_ui({})
 
     assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
 
 def test_partial_batch_failure_emits_converged_series_and_warns(
@@ -659,8 +666,11 @@ def test_partial_batch_failure_emits_converged_series_and_warns(
 
     tab = GlobalFitTab(member_kind="runs")
     tab._datasets = [_ds(10), _ds(11)]
-    tab._current_model = CompositeModel(["Exponential", "Constant"], operators=["+"])
-    tab._current_global_params = []
+    launch = FitLaunch(
+        model=CompositeModel(["Exponential", "Constant"], operators=["+"]),
+        global_params=(),
+        datasets=tuple(tab._datasets),
+    )
 
     emitted: dict[str, object] = {}
     tab.global_fit_completed.connect(
@@ -678,10 +688,10 @@ def test_partial_batch_failure_emits_converged_series_and_warns(
     )
     failed = FitResult(success=False, message="call limit reached")
 
-    tab._on_fit_finished({10: ok, 11: failed}, [])
+    tab._on_fit_finished(launch, {10: ok, 11: failed}, [])
 
     assert set(emitted["results_with_curves"]) == {10}
-    assert "failed to converge" in tab._result_text.toPlainText()
+    assert "failed to converge" in tab._results_card.content_html()
 
 
 def test_batch_to_single_view_switch_preserves_model(
@@ -826,7 +836,7 @@ def test_unseen_dataset_inherits_custom_model_without_result(
         CompositeModel(["Gaussian", "Constant"], operators=["+"])
     )
     panel._single_tab._param_table.item(0, 1).setData(_ValueUncertaintyDelegate._UNC_ROLE, 0.05)
-    panel._single_tab._result_label.setText("Fit converged")
+    panel._single_tab._results_card.set_message("Fit converged")
 
     # Selecting an unseen run must carry the model forward (not reset to the
     # default Exponential + Constant) but drop the previous run's result.
@@ -836,7 +846,7 @@ def test_unseen_dataset_inherits_custom_model_without_result(
     assert (
         panel._single_tab._param_table.item(0, 1).data(_ValueUncertaintyDelegate._UNC_ROLE) is None
     )
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
     # The carry chains to further unseen runs, and each run keeps its own model.
     third = replace(dataset, metadata={"run_number": 303})
@@ -900,7 +910,7 @@ def test_set_dataset_provider_empty_blanks_unfit_projection(
     panel.set_dataset(dataset)
 
     assert panel._single_tab._composite_model.component_names == ["Exponential", "Constant"]
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
 
 def test_single_fit_invalid_value_shows_error(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -912,7 +922,7 @@ def test_single_fit_invalid_value_shows_error(qapp: QApplication, dataset: MuonD
     tab._run_fit()
     assert tab.wait_for_fit()
 
-    assert "Invalid value" in tab._result_label.text()
+    assert "Invalid value" in tab._results_card.content_html()
 
 
 def test_single_fit_success_emits_and_updates_table(
@@ -942,8 +952,8 @@ def test_single_fit_success_emits_and_updates_table(
     tab._run_fit()
     assert tab.wait_for_fit()
 
-    assert "Fit failed" not in tab._result_label.text()
-    assert "χ²" in tab._result_label.text()
+    assert "Fit failed" not in tab._results_card.content_html()
+    assert "χ²" in tab._results_card.content_html()
     assert emitted["res"].success is True
     assert len(emitted["curve"][0]) == 500
 
@@ -1087,7 +1097,7 @@ def test_single_fit_stop_button_cancels_worker(qapp: QApplication, dataset: Muon
     tab._on_stop_fit()
     assert tab.wait_for_fit()
 
-    assert "cancelled" in tab._result_label.text().lower()
+    assert "cancelled" in tab._results_card.content_html().lower()
     assert not tab._fit_btn.isHidden()
     assert tab._stop_btn.isHidden()
     # Nothing recorded from a cancelled fit.
@@ -1136,7 +1146,7 @@ def test_single_fit_result_not_applied_after_run_switch(
     # Stale result: not emitted (so no FitSlot recorded), diagnostic not armed.
     assert emitted == []
     assert tab._last_fit_result is None
-    assert "not applied" in tab._result_label.text().lower()
+    assert "not applied" in tab._results_card.content_html().lower()
 
 
 def test_single_fit_result_not_applied_after_reset(
@@ -1161,7 +1171,7 @@ def test_single_fit_result_not_applied_after_reset(
 
     assert emitted == []
     assert tab._last_fit_result is None
-    assert "not applied" in tab._result_label.text().lower()
+    assert "not applied" in tab._results_card.content_html().lower()
 
 
 def test_global_tab_set_datasets_states(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -1169,11 +1179,11 @@ def test_global_tab_set_datasets_states(qapp: QApplication, dataset: MuonDataset
 
     tab.set_datasets([])
     assert tab._fit_btn.isEnabled() is False
-    assert "No datasets selected" in tab._result_text.toPlainText()
+    assert "No datasets selected" in tab._results_card.content_html()
 
     tab.set_datasets([dataset])
     assert tab._fit_btn.isEnabled() is False
-    assert "requires at least 2 datasets" in tab._result_text.toPlainText()
+    assert "requires at least 2 datasets" in tab._results_card.content_html()
 
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
     tab.set_datasets([dataset, d2])
@@ -1271,7 +1281,7 @@ def test_global_fit_rejects_non_finite_value(qapp: QApplication, dataset: MuonDa
     tab._param_table.item(0, 1).setText("nan")
     tab._run_global_fit()
 
-    assert "must be finite" in tab._result_text.toPlainText()
+    assert "must be finite" in tab._results_card.content_html()
 
 
 def test_global_fit_rejects_invalid_bounds(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -1279,10 +1289,11 @@ def test_global_fit_rejects_invalid_bounds(qapp: QApplication, dataset: MuonData
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
     tab.set_datasets([dataset, d2])
 
-    tab._param_table.item(0, 3).setText("2, 1")
+    tab._param_table.item(0, 3).setText("2")
+    tab._param_table.item(0, 4).setText("1")
     tab._run_global_fit()
 
-    assert "invalid bounds" in tab._result_text.toPlainText()
+    assert "invalid bounds" in tab._results_card.content_html()
 
 
 def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -1291,8 +1302,11 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
     tab._datasets = [dataset, d2]
 
     model = tab._composite_model
-    tab._current_model = model
-    tab._current_global_params = [model.param_names[0]]
+    launch = FitLaunch(
+        model=model,
+        global_params=(model.param_names[0],),
+        datasets=tuple(tab._datasets),
+    )
 
     pset = ParameterSet([Parameter(name=p, value=1.0) for p in model.param_names])
     result = FitResult(
@@ -1307,9 +1321,9 @@ def test_global_fit_finished_success_emits(qapp: QApplication, dataset: MuonData
     emitted = {}
     tab.global_fit_completed.connect(lambda res, glob: emitted.update({"res": res, "glob": glob}))
 
-    tab._on_fit_finished({101: result, 102: result}, fitted_global)
+    tab._on_fit_finished(launch, {101: result, 102: result}, fitted_global)
 
-    assert "Batch fit converged" in tab._result_text.toHtml()
+    assert tab._results_card.tag_text() == "Batch ✓"
     assert set(emitted["res"]) == {101, 102}
 
 
@@ -1317,12 +1331,11 @@ def test_global_fit_finished_failure_lists_failed_runs(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:
     tab = GlobalFitTab()
-    tab._current_model = tab._composite_model
-    tab._current_global_params = []
+    launch = FitLaunch(model=tab._composite_model, global_params=(), datasets=())
     fail = FitResult(success=False, message="x")
 
-    tab._on_fit_finished({101: fail}, ParameterSet())
-    assert "Batch fit failed" in tab._result_text.toPlainText()
+    tab._on_fit_finished(launch, {101: fail}, ParameterSet())
+    assert "Batch fit failed" in tab._results_card.content_html()
 
 
 def test_global_fit_error_sets_message(qapp: QApplication, dataset: MuonDataset) -> None:
@@ -1336,8 +1349,8 @@ def test_global_fit_error_sets_message(qapp: QApplication, dataset: MuonDataset)
     tab._fit_btn.setEnabled(False)
     tab._on_fit_error("boom")
     assert tab._fit_btn.isEnabled() is True
-    assert "Error during global fit" in tab._result_text.toPlainText()
-    assert "boom" in tab._result_text.toPlainText()
+    assert "Error during global fit" in tab._results_card.content_html()
+    assert "boom" in tab._results_card.content_html()
 
 
 def test_grouped_fit_error_formats_keyerror_message(
@@ -1355,9 +1368,9 @@ def test_grouped_fit_error_formats_keyerror_message(
 
     tab._on_fit_error(fit_panel_module._format_fit_worker_exception(KeyError(1651)))
 
-    assert "Error during grouped fit" in tab._result_text.toPlainText()
-    assert "Missing fit parameter mapping" in tab._result_text.toPlainText()
-    assert "1651" in tab._result_text.toPlainText()
+    assert "Error during grouped fit" in tab._results_card.content_html()
+    assert "Missing fit parameter mapping" in tab._results_card.content_html()
+    assert "1651" in tab._results_card.content_html()
 
 
 def test_grouped_fit_finished_updates_grouped_tables(
@@ -1461,8 +1474,16 @@ def test_grouped_fit_finished_updates_grouped_tables(
         },
     )
 
-    tab._current_model = tab._composite_model
-    tab._on_grouped_fit_finished(grouped_datasets, grouped_result)
+    tab._on_grouped_fit_finished(
+        FitLaunch(
+            model=tab._grouped_fit_model(),
+            global_params=(),
+            datasets=tuple(grouped_datasets),
+            time_span=(0.0, 1.0),
+            run_number=int(dataset.run_number),
+        ),
+        grouped_result,
+    )
 
     group_param_rows = {
         tab._group_param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
@@ -1491,7 +1512,7 @@ def test_grouped_fit_finished_updates_grouped_tables(
     assert float(tab._group_model_table.item(group_model_rows["phase"], 1).text()) == pytest.approx(
         0.42
     )
-    assert "Grouped fit converged" in tab._result_text.toPlainText()
+    assert tab._results_card.tag_text() == "Fit ✓"
 
 
 def test_global_fit_parses_type_combo_defaults(qapp: QApplication) -> None:
@@ -1559,29 +1580,30 @@ def test_global_fit_type_combo_includes_file_for_bl_parameters(
     assert "File" in items
 
 
-def test_global_fit_parameter_help_button_opens_dialog(
-    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_parameter_roles_are_explained_by_the_header_popover(qapp: QApplication) -> None:
+    """The ⓘ beside the title explains the roles — no "?" message box, and no
+    hint line spending two rows of a narrow dock on text read once."""
     tab = GlobalFitTab()
-    captured: dict[str, object] = {}
+    assert tab._role_help_btn.text() == "ⓘ"
+    assert tab._role_help_btn.toolTip() == "What Global, Local, Fixed and File mean"
+    assert [name for name, _text in global_tab_module.PARAMETER_ROLE_ROWS] == [
+        "Global",
+        "Local",
+        "Fixed",
+        "File",
+    ]
 
-    def _fake_information(parent, title, text):
-        captured["parent"] = parent
-        captured["title"] = title
-        captured["text"] = text
-        return QMessageBox.StandardButton.Ok
-
-    monkeypatch.setattr(fit_panel_module.QMessageBox, "information", _fake_information)
-
-    assert tab._param_help_btn.text() == "?"
-    tab._param_help_btn.click()
-
-    assert captured["parent"] is tab
-    assert captured["title"] == "Parameter Classification Help"
-    assert "Global: Same value for all datasets" in str(captured["text"])
-    assert "Local: Different value for each dataset" in str(captured["text"])
-    assert "Fixed: Held constant at the specified value" in str(captured["text"])
-    assert "File: Use the value from dataset metadata" in str(captured["text"])
+    tab._show_parameter_role_help()
+    shown = [label.text() for label in tab._role_popover.findChildren(QLabel) if label.text()]
+    for name, text in global_tab_module.PARAMETER_ROLE_ROWS:
+        assert name in shown
+        assert text in shown
+    # The section carries no hint line of its own.
+    assert not [
+        label
+        for label in tab._param_group.findChildren(QLabel)
+        if label.text() and label.isVisibleTo(tab._param_group) and "Global" in label.text()
+    ]
 
 
 def test_single_tab_default_model_includes_background(qapp: QApplication) -> None:
@@ -1627,7 +1649,7 @@ def test_grouped_tab_shows_one_value_column_per_group(
         fit_panel_module._seed_group_background_and_n0(np.array([80.0, 79.0]))
     )
 
-    assert headers == ["Parameter", "Forward", "Backward", "Type", "Bounds"]
+    assert headers == ["Parameter", "Forward", "Backward", "Type", "Min", "Max"]
     assert float(tab._group_param_table.item(row_by_name["N0"], 1).text()) == pytest.approx(
         forward_n0
     )
@@ -1979,10 +2001,9 @@ def test_grouped_single_nuisance_phase_seeds_are_absolute(
     # Phase bounds span beyond the principal (-pi, pi] range so an absolute seed
     # near +/-pi (e.g. a backward F-B group) has wrap-around room and is not
     # trapped on a limit.
-    bounds_text = tab._group_param_table.item(rp_row, tab._group_param_bounds_column()).text()
-    lo_text, hi_text = (part.strip() for part in bounds_text.split(",", maxsplit=1))
-    assert float(lo_text) <= -2.0 * np.pi + 1e-6
-    assert float(hi_text) >= 2.0 * np.pi - 1e-6
+    min_column = tab._group_param_min_column()
+    assert float(tab._group_param_table.item(rp_row, min_column).text()) <= -2.0 * np.pi + 1e-6
+    assert float(tab._group_param_table.item(rp_row, min_column + 1).text()) >= 2.0 * np.pi - 1e-6
 
 
 def test_grouped_tab_reset_button_restores_estimated_values(
@@ -2323,7 +2344,10 @@ def test_send_to_batch_button_copies_model_and_switches_tab(qapp: QApplication) 
     )
     panel._tabs.setCurrentWidget(panel._single_tab)
 
-    panel._single_tab._send_to_batch_action.trigger()
+    # The hand-off is a results-card button, and needs no fit behind it.
+    send = panel._single_tab._results_card._actions[single_tab_module.SEND_TO_BATCH_ACTION]
+    assert send.isEnabled()
+    send.click()
 
     assert (
         panel._global_tab._composite_model.component_names
@@ -2513,7 +2537,7 @@ def test_grouped_mode_ui_refresh_rebuilds_group_value_columns_when_groups_appear
     monkeypatch.setattr(tab, "_grouped_mode_context", _context)
 
     tab.set_current_dataset(dataset)
-    assert tab._group_param_table.columnCount() == 4
+    assert tab._group_param_table.columnCount() == 5
 
     state["ready"] = True
     tab._update_mode_ui(preserve_result=True)
@@ -2529,7 +2553,7 @@ def test_grouped_mode_ui_refresh_rebuilds_group_value_columns_when_groups_appear
     _background_seed, backward_n0_seed, _amplitude_seed = (
         fit_panel_module._seed_group_background_and_n0(np.array([80.0, 79.0]))
     )
-    assert headers == ["Parameter", "Forward", "Backward", "Type", "Bounds"]
+    assert headers == ["Parameter", "Forward", "Backward", "Type", "Min", "Max"]
     assert float(tab._group_param_table.item(row_by_name["N0"], 2).text()) == pytest.approx(
         backward_n0_seed
     )
@@ -2714,19 +2738,19 @@ def test_fit_panel_restores_single_fit_state_per_dataset(
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
 
     panel.set_dataset(d1)
-    panel._single_tab._result_label.setText("fit for run 101")
+    panel._single_tab._results_card.set_message("fit for run 101")
     panel._single_tab._param_table.item(0, 1).setText("0.123")
 
     panel.set_dataset(d2)
-    panel._single_tab._result_label.setText("fit for run 102")
+    panel._single_tab._results_card.set_message("fit for run 102")
     panel._single_tab._param_table.item(0, 1).setText("0.456")
 
     panel.set_dataset(d1)
-    assert "fit for run 101" in panel._single_tab._result_label.text()
+    assert "fit for run 101" in panel._single_tab._results_card.content_html()
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.123)
 
     panel.set_dataset(d2)
-    assert "fit for run 102" in panel._single_tab._result_label.text()
+    assert "fit for run 102" in panel._single_tab._results_card.content_html()
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.456)
 
 
@@ -2739,9 +2763,9 @@ def test_fit_panel_single_state_roundtrip_preserves_per_run_states(
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
 
     panel.set_dataset(d1)
-    panel._single_tab._result_label.setText("saved fit 101")
+    panel._single_tab._results_card.set_message("saved fit 101")
     panel.set_dataset(d2)
-    panel._single_tab._result_label.setText("saved fit 102")
+    panel._single_tab._results_card.set_message("saved fit 102")
 
     saved = panel.get_single_state()
     assert isinstance(saved.get("states_by_run"), dict)
@@ -2751,10 +2775,10 @@ def test_fit_panel_single_state_roundtrip_preserves_per_run_states(
     restored = FitPanel()
     restored.set_dataset(d1)
     restored.restore_single_state(saved)
-    assert "saved fit 101" in restored._single_tab._result_label.text()
+    assert "saved fit 101" in restored._single_tab._results_card.content_html()
 
     restored.set_dataset(d2)
-    assert "saved fit 102" in restored._single_tab._result_label.text()
+    assert "saved fit 102" in restored._single_tab._results_card.content_html()
 
 
 def test_single_tab_state_roundtrip_preserves_cached_wizard_results(
@@ -2895,11 +2919,14 @@ def test_fit_panel_global_fit_results_seed_single_state_per_run(
     stored[101] = panel._single_state_by_run[101]
     stored[102] = panel._single_state_by_run[102]
 
-    assert "Batch fit" in panel._single_tab._result_label.text()
+    assert "Batch fit" in panel._single_tab._results_card.content_html()
+    # The rebuilt read-out says a fit happened rather than "No fit yet".
+    assert panel._single_tab._results_card.tag_text() == "Fit ✓"
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.11)
 
     panel.set_dataset(d2)
-    assert "Batch fit" in panel._single_tab._result_label.text()
+    assert "Batch fit" in panel._single_tab._results_card.content_html()
+    assert panel._single_tab._results_card.tag_text() == "Fit ✓"
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.44)
 
     saved = panel.get_single_state()
@@ -3003,12 +3030,12 @@ def test_fit_panel_refresh_carries_fitted_source_and_clears_result(
     assert panel._single_fit_provenance == "carried_from_run"
     assert panel._single_fit_carry_source_run == 101
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.777)
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
     panel.set_dataset(d3)
     assert panel._single_fit_carry_source_run == 101
     assert float(panel._single_tab._param_table.item(0, 1).text()) == pytest.approx(0.777)
-    assert panel._single_tab._result_label.text() == "No fit performed yet"
+    assert panel._single_tab._results_card.content_html() == "No fit performed yet"
 
 
 def test_fit_panel_refresh_reseeds_bl_from_target_field(
@@ -3077,11 +3104,11 @@ def test_fit_panel_clear_fits_for_runs_removes_cached_fit_state(
     d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
 
     panel.set_dataset(d1)
-    panel._single_tab._result_label.setText("fit for run 101")
+    panel._single_tab._results_card.set_message("fit for run 101")
     panel._single_state_by_run[101] = panel._single_tab.get_state()
 
     panel.set_dataset(d2)
-    panel._single_tab._result_label.setText("fit for run 102")
+    panel._single_tab._results_card.set_message("fit for run 102")
     panel._single_state_by_run[102] = panel._single_tab.get_state()
 
     panel._global_tab._single_fit_seed_by_run[101] = {"model": {}, "values": {"A": 0.1}}
@@ -3259,7 +3286,7 @@ def test_global_fit_apply_fit_wizard_assessment_updates_roles_and_emits(
     lambda_combo = tab._param_table.cellWidget(lambda_row, 2)
     assert isinstance(lambda_combo, QComboBox)
     assert lambda_combo.currentText() == "Local"
-    assert "Global Fit Wizard" in tab._result_text.toPlainText()
+    assert "Global Fit Wizard" in tab._results_card.content_html()
     assert "results" in emitted
 
 
@@ -3380,8 +3407,8 @@ def test_global_fit_fraction_rows_auto_complete_final_fraction(qapp: QApplicatio
         item = tab._param_table.item(row_by_name[free_name], 1)
         assert item is not None
         assert bool(item.flags() & Qt.ItemFlag.ItemIsEditable)
-        bounds_item = tab._param_table.item(row_by_name[free_name], 3)
-        assert bounds_item is not None and bounds_item.text() == "0, 1"
+        assert tab._param_table.item(row_by_name[free_name], 3).text() == "0.0"
+        assert tab._param_table.item(row_by_name[free_name], 4).text() == "1.0"
     derived_item = tab._param_table.item(row_by_name["f_Constant"], 1)
     assert derived_item is not None
     assert not bool(derived_item.flags() & Qt.ItemFlag.ItemIsEditable)
@@ -4290,12 +4317,12 @@ def _two_tier_row(table, param_name: str) -> int:
 
 
 def _two_tier_state(table, param_name: str) -> tuple[float, str, str]:
-    """``(value, type, bounds)`` of a Name·Value·Type·Bounds table row."""
+    """``(value, type, "min, max")`` of a Name·Value·Type·Min·Max table row."""
     row = _two_tier_row(table, param_name)
     return (
         float(table.item(row, 1).text()),
         table.cellWidget(row, 2).currentText(),
-        table.item(row, 3).text(),
+        f"{table.item(row, 3).text()}, {table.item(row, 4).text()}",
     )
 
 
@@ -4313,7 +4340,9 @@ def _set_two_tier_state(
     if type_text is not None:
         table.cellWidget(row, 2).setCurrentText(type_text)
     if bounds is not None:
-        table.item(row, 3).setText(bounds)
+        minimum, maximum = (part.strip() for part in bounds.split(","))
+        table.item(row, 3).setText(minimum)
+        table.item(row, 4).setText(maximum)
 
 
 def _seeded_global_tab() -> GlobalFitTab:

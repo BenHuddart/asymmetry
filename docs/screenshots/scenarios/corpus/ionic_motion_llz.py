@@ -218,12 +218,6 @@ class LlzGlobalSetupScenario(CorpusScenario):
 
     def settle(self, widget: QWidget) -> None:
         _process_events_for(milliseconds=200)
-        # Widen the fit dock *after* show: showEvent applies the adaptive
-        # default inspector width, which would clobber a resize done in
-        # build(). The extra room lets the parameter-classification table show
-        # its bounds column without clipping at the right edge.
-        widget.resizeDocks([widget._dock_fit], [560], Qt.Orientation.Horizontal)
-        _process_events_for(milliseconds=200)
 
 
 class LlzGlobalResultScenario(CorpusScenario):
@@ -291,8 +285,11 @@ class LlzGlobalResultScenario(CorpusScenario):
         global_tab._emit_global_fit_success(
             model=model,
             results_dict=results_dict,
+            successful=results_dict,
             fitted_global=fitted_global,
-            global_param_names=global_params,
+            detail_html=global_tab._batch_detail_html(
+                results_dict, results_dict, {}, global_params, ""
+            ),
         )
         _process_events_for(milliseconds=120)
         # The completion signal raises the Parameters dock; bring the Batch fit

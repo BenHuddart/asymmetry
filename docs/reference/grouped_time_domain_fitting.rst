@@ -77,9 +77,9 @@ Single-run grouped fit
 4. In the central workspace, switch to **Individual Groups**.
 5. Launch **Fit** — the fit dock switches to the **Multi-Group Fit** window.
 6. Ensure the **Single** tab is selected.
-7. Adjust the fit function with **Edit Function...** if needed.
+7. Adjust the fit function with **Edit…** if needed.
 8. Configure the two parameter blocks described below.
-9. Click **Run Grouped Fit**.
+9. Click **Run grouped fit**.
 
 The grouped plot view shows stacked lifetime-corrected grouped traces for the
 active dataset. Switching back to the **FB Asymmetry** tab restores the regular
@@ -95,7 +95,7 @@ Multi-run grouped batch fit
 3. Launch **Fit** — the **Batch** tab in the Multi-Group Fit window accepts a
    multi-run member list fed from the current selection.
 4. Adjust the fit function and classify physics parameters (see below).
-5. Click **Run Grouped Fit**.
+5. Click **Run grouped fit**.
 
 The Batch tab fits each run's detector groups with the same polarisation model
 and records the results as a single ``FitSeries``, making parameter

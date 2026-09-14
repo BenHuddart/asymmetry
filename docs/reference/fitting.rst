@@ -130,7 +130,12 @@ Bounds, fixing, and initial values are set on individual
    p_fixed.fixed = True
 
 In the GUI parameter table, the **Fix** checkbox does the same job; bounds
-are entered directly in the ``min`` and ``max`` columns. Parameter
+are entered directly in the **Min** and **Max** columns. On the Single and
+Batch tabs those two columns are shown or hidden together by the **Bounds**
+chip above the table (on by default on the Single tab, off by default on the
+Batch tab; each column is narrow, holding ``-inf``, ``1e6`` or the ±∞ glyphs),
+and the **↗** button beside the rail pops the whole table — every column,
+whatever the chips show — into its own window. Parameter
 metadata — symbol, unit, default lower bound, physical description — comes
 from
 ``PARAM_INFO_REGISTRY``; symbols
@@ -346,9 +351,13 @@ deliberate capability beyond WiMDA (whose links are equality-only); see
 expression constraints (``Parameter.expr``) remain reserved and are not yet
 evaluated by the engine.
 
-In the **GUI**, the single-fit parameter table has a **Tie** column: click a
-row's button to open the tie editor and derive that parameter from the others
-in the table (``main``, ``scale``, ``offset``, ``offset scale``, ``const``, with
+In the **GUI**, the single-fit parameter table has **Link** and **Tie**
+columns, shown together by the **Links** rail chip above the table (off by
+default; the **Bounds** and, on the Single tab, **Batch** chips control the
+other column groups the same way, and the **↗** button pops out the full
+eight-column table whatever the chips currently show). Click a row's **Tie**
+button to open the tie editor and derive that parameter from the others in
+the table (``main``, ``scale``, ``offset``, ``offset scale``, ``const``, with
 a live formula preview). Setting a tie clears and disables that row's *Fix* and
 *Link* controls. Because the editor references parameters that already have a
 table row, equal spacing is expressed directly against existing lines — e.g. a
@@ -357,7 +366,10 @@ offset_scale=-1``), which removes one free frequency exactly like the
 auxiliary-``delta`` form. The free-auxiliary form above (a ``delta`` parameter
 the model never consumes) is authored via the API; a project that uses it is
 **preserved** intact when opened and re-saved in the GUI, even though the GUI
-does not edit the auxiliary parameter directly.
+does not edit the auxiliary parameter directly. A linked or tied row keeps a
+visible trace even while the **Links** chip is off: its Value cell paints a
+small ``⇄2``-style badge for a link group or ``ƒ`` for an affine tie, with the
+tie's formula on the cell's tooltip.
 
 Affine ties are honoured by the single-run engine (``FitEngine.fit``). Global,
 count-domain, and grouped/series fits raise ``NotImplementedError`` when a tie is
@@ -407,9 +419,12 @@ all runs) or local (independent per run):
 
 The GUI **Batch** tab automates the same workflow: select multiple
 datasets, mark parameters as **Global** (shared across runs) or **Local**
-(per-run) in the parameter table, and click **Run Batch Fit**. A fit where
+(per-run) in the parameter table, and click **Run batch fit**. A fit where
 at least one parameter is **Global** is a global fit; otherwise each run is
 fitted independently but the results are collected into one trendable series.
+The classification table's **Min** and **Max** columns — the same pair the
+Single tab shows — are hidden until the **Bounds** rail chip above the table
+is switched on; the **↗** button pops the table out with every column shown.
 Results land in the **Fit Parameters** panel where they can be browsed,
 exported to TSV, or passed into the parameter-trending fit framework documented
 in :doc:`parameter_trending`.

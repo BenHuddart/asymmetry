@@ -12,7 +12,7 @@ time-domain models with explicit baselines (one-shot Python use); the
 parses arithmetic expressions over the
 :data:`~asymmetry.core.fitting.composite.COMPONENTS` registry into a
 compiled callable (the canonical path for any non-trivial muSR model,
-mirroring the GUI **Edit Function...** dialog); and the
+mirroring the GUI **Edit…** dialog); and the
 :mod:`~asymmetry.core.fitting.parameter_models` package that fits
 *extracted* fit parameters as a function of field, temperature, or run
 number with the same machinery. Superconducting models live under

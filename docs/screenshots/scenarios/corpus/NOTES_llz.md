@@ -12,7 +12,7 @@ simultaneously with the **Keren** relaxation + flat background.
 |---|---|---|---|
 | `corpus_llz_calibration` | Alpha-calibration dialog on the TF 20 G run 51315; α = 0.876(1) fitted, before/after asymmetry preview | Data-prep: fix α before the science fits (GT §4 calibration) | no |
 | `corpus_llz_lf_triplet` | 160 K 0/5/10 G triplet overlaid, 0–12 µs; the three fields visibly separate (0 G relaxes fastest, 10 G least) | The raw signature of weak LF decoupling | no |
-| `corpus_llz_global_setup` | Batch/global fit panel (1680×1000, fit dock widened to 560 px in `settle()`): full Keren+Constant formula, Δ/ν/amplitudes **Global**, B_L **From File**, bounds column fully visible, 12 µs window, guide seeds, all 3 runs selected — Run Batch Fit armed, batch-results box readable | THE parameter-tying showcase | no |
+| `corpus_llz_global_setup` | Batch/global fit panel (1680×1000): full Keren+Constant formula, Δ/ν/amplitudes **Global**, B_L **From File**, 12 µs window, guide seeds, all 3 runs selected — Run batch fit armed, results card readable | THE parameter-tying showcase | no |
 | `corpus_llz_global_result` | Converged triplet fit: fitted shared Δ=0.358 µs⁻¹, ν=0.267 MHz, χ²ᵣ=1.67, red Keren curve over the ZF data | Headline global-fit result | **yes** |
 | `corpus_llz_nu_arrhenius` | **Reworked for PR 248.** ν(T) as a native **Arrhenius plot**: X→`reciprocal` (1/T), Y→**Custom** `log(x − 0.274324)` (baseline-subtracted ln), a `Linear` model fit on the activated branch (T≥264 K, 8 pts). Slope → Eₐ. The 5 plateau points are `include_in_trend=False`: 3 near-plateau sit ringed-grey low with huge error bars, 2 sub-baseline (ν<c) drop out as NaN. Chip "1/x · log(y - 0.274324)". | Trend → activation energy, **and the axis-transform + baseline interplay showcase** | **yes** |
 
@@ -130,9 +130,8 @@ by an order of magnitude — not used.)
 - **Inspector-dock resize clobbered by showEvent.** `MainWindow.showEvent`
   applies the adaptive default inspector width (`_apply_default_dock_widths`),
   so a `resizeDocks` on `_dock_fit` issued inside `build()` (pre-show) is
-  silently overridden. To widen the fit dock for a capture it must be resized
-  in `settle()` (post-show) — `corpus_llz_global_setup` does this so the
-  parameter table's bounds column is not clipped. Gotcha for scenario authors.
+  silently overridden. A scenario that needs a wider fit dock must resize it in
+  `settle()` (post-show). Gotcha for scenario authors.
 - **B_L display value in the result table.** With B_L typed *File*, the
   classification table shows a single representative field (5) rather than the
   selected ZF run's 0 G — cosmetic; the fit itself reads the correct per-run

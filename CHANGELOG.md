@@ -114,7 +114,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   legend entry now names that parameter's lens (`1/λ (µs)`, `ln σ`) in the
   plot and the GLE export, and the shared axis reads `Parameter value`.
 
+- **The Single and Batch fit tabs now share one control grammar: a model
+  row, a Parameters rail, and a Results card.** Beneath the formula,
+  `Edit Function...` / `Fit Wizard...` / `Global Wizard...` become one
+  wrapping row of `Edit…` and `Wizard…` buttons. Three chips above the
+  parameter table — `Bounds`, `Links`, `Batch` (only `Bounds` on the Batch
+  tab, off by default there) — show or hide the Min/Max, Link/Tie and
+  Batch-role columns as a group; hiding a column never loses what it says,
+  since a linked or tied row still paints a small `⇄2` / `ƒ` badge in its
+  Value cell, and a `↗` button pops the full eight-column table out into its
+  own window with `Copy TSV` and `Close`. Every column drags like a
+  spreadsheet's: widening one pushes the columns to its right along, and
+  whatever width they leave over goes to the value column, so a parameter
+  table never ends in a band of empty grid. A `χ²ᵣ 0.979` verdict chip appears
+  beside `Fit` once a run completes and opens that fit's own results window.
+  The Batch tab's single `"min, max"` bounds column splits into separate
+  `Min` and `Max` columns, matching the Single tab, and its `?`
+  parameter-classification help box becomes an `ⓘ` button beside the
+  **Parameter Classification** title, whose popover names each role and what
+  it does. `Run Batch Fit` is now `Run batch fit`
+  (`Run grouped fit` for a grouped fit), and its run row carries a verdict
+  chip once a run completes, reading the count of runs that converged
+  cleanly beside the count that failed or converged with a warning
+  (`3 ✓ 1 ⚠`), with the full sentence on its tooltip. The prose
+  `#resultBox`, the `?` help button, `Pull diagnostic…`, and the
+  carry-forward badge all fold into one `FitResultsCard`: a tag (`Fit ✓` /
+  `Fit ⚠` / `Batch ✓` / `Batch ⚠` / `No fit yet`), a `seeds from <run>` /
+  `carried seeds` tag while a form is carried rather than fitted for the
+  displayed run, and the hand-offs as footer buttons — `Diagnostic…`,
+  `Add to series…`, `Send to Batch →` on the Single tab; `Use as seeds`,
+  `Trends →` on the Batch tab (`Send to Batch →` on the Multi-Group panel's
+  single-fit tab). A batch's card shows one verdict chip per run
+  (`3001 ✓ 0.98`) that opens that run's own results window, and `Trends →`
+  brings the Parameters panel to the front with the batch's own series
+  already selected. See `docs/reference/gui_usage.rst` § "Fitting panel".
+
+### Removed
+
+- **The Single tab's `More…` overflow menu.** `Drop background` is retired —
+  remove the term in the function editor instead (delete the `Constant`
+  component), since that is what the action did under the hood; `Send to
+  Batch` and `Add to Series...` move to the Results card as `Send to Batch
+  →` and `Add to series…`.
+- **The Batch tab's `?` parameter-classification help box** (a `QMessageBox`).
+  Replaced by an `ⓘ` button beside the section title whose popover lists the
+  four roles — no dialog to dismiss, and no permanent hint line spending two
+  rows of a narrow dock on text that is read once.
+- **The `#seedingSignpost` frame and the single-fit carry-forward badge.**
+  Their content folds into the Results card: the signpost's advisory
+  sentence is now part of the card body and arms `Use as seeds`; the
+  carry-forward badge becomes the card's `seeds from <run>` meta tag.
+
 ### Fixed
+
+- **"Recursive repaint detected" on startup and after every trend redraw.**
+  The Parameters panel's hover ring re-blitted each canvas from inside the
+  draw that had just completed; the Qt canvas runs a pending draw from its
+  own paint event, and a blit is a synchronous repaint, so Qt logged the
+  recursion (and a painter with no engine) three times per redraw. The
+  post-draw ring is now put back by the hover timer instead.
 
 - **Locating moved data files now works for a project saved on Windows and opened on
   macOS or Linux.** The "Locate Data Directory" fallback took each stored path's file

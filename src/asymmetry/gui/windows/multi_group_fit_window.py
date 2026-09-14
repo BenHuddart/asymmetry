@@ -55,6 +55,9 @@ class MultiGroupFitWindow(QWidget):
     fit_range_edit_committed = Signal(float, float)
     count_fit_completed = Signal(object, object)  # (dataset, {"result", "overlays"})
     count_grouping_promoted = Signal(object)  # (dataset) — a count calibration hit the grouping
+    # Forwarded from a surface's results card: show its last recorded batch in the
+    # Parameters panel (the main window owns which batch that is).
+    trends_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -73,6 +76,7 @@ class MultiGroupFitWindow(QWidget):
             tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
             tab.count_fit_completed.connect(self.count_fit_completed.emit)
             tab.count_grouping_promoted.connect(self.count_grouping_promoted.emit)
+            tab.trends_requested.connect(self.trends_requested.emit)
         # A converged single grouped fit chain-seeds the batch surface per run
         # (mirrors how FB single fits seed the FB batch surface).
         self._single_fit_tab.single_grouped_fit_recorded.connect(
@@ -392,10 +396,10 @@ class MultiGroupFitWindow(QWidget):
         result is then cleared (an unseen run has not been fit). Mirrors
         ``FitPanel._carry_forward_single_fit_form``.
         """
-        # restore_state only *sets* a non-empty result_html, so the result widget
-        # is cleared directly (mirrors FitPanel clearing the single result label).
+        # restore_state only *sets* a non-empty result_html, so the read-out is
+        # cleared directly (mirrors FitPanel clearing the single results card).
         self._single_fit_tab.restore_state(self._single_fit_tab.get_state())
-        self._single_fit_tab._result_text.clear()
+        self._single_fit_tab._results_card.set_message("No fit performed yet")
 
     def _on_grouped_tab_changed(self, index: int) -> None:
         """Preserve the Single form across a Single↔Batch tab switch.
@@ -424,7 +428,13 @@ class MultiGroupFitWindow(QWidget):
             model, origins=self._batch_fit_tab.aligned_origins(model)
         )
         self._batch_fit_tab.apply_grouped_physics_seeds(seeds)
+        if self._active_single_grouped_run is not None:
+            self._batch_fit_tab.show_seeded_from(self._active_single_grouped_run)
         self._tabs.setCurrentWidget(self._batch_fit_tab)
+
+    def set_trends_available(self, available: bool) -> None:
+        """Arm the Batch surface's ``Trends →`` hand-off (a batch has been recorded)."""
+        self._batch_fit_tab.set_trends_available(available)
 
     def clear_grouped_single_state(self) -> None:
         """Drop all per-run grouped Single forms (project close / new project).

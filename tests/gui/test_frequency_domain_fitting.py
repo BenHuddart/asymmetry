@@ -194,7 +194,7 @@ def test_frequency_preview_renders_a_visible_peak(qapp) -> None:
 
 @pytest.mark.gui
 def test_frequency_adding_a_second_peak_seeds_both(qapp) -> None:
-    """Switching to a two-peak model (e.g. via Edit Function) seeds both lines.
+    """Switching to a two-peak model (e.g. via Edit…) seeds both lines.
 
     Regression: with duplicate peak components the params are suffixed
     (``nu0_1``/``nu0_2``), so the old single-peak seeder matched only ``bg`` and
@@ -310,7 +310,7 @@ def test_fit_panel_frequency_global_missing_spectra_status(qapp) -> None:
 
     panel.set_frequency_missing_spectra_status([3, 4], cached_count=2)
 
-    status = panel._global_tab._result_text.toPlainText()
+    status = panel._global_tab._results_card.content_html()
     assert "2 cached frequency spectra selected" in status
     assert "Compute a Fourier spectrum for run(s) 3, 4" in status
 

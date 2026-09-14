@@ -99,6 +99,10 @@ def test_fb_count_fit_runs_and_recovers_alpha(qapp, fb_dataset):
     assert result.success
     alpha = result.group_results[1].parameters["alpha"].value
     assert alpha == pytest.approx(1.25, abs=0.05)
+    # The χ² band behind the read-out's verdict chip hovers over the body line.
+    card = window._single_fit_tab._results_card
+    assert card.tag_text() == "Fit ✓"
+    assert "band" in card._detail.toolTip()
 
 
 def test_fb_count_fit_recovers_realistic_amplitude(qapp, fb_dataset):
@@ -264,7 +268,7 @@ def test_promote_button_without_fit_shows_hint(qapp, fb_dataset):
     # No deadtime fit run yet → promoting reports a hint rather than mutating.
     window._on_promote_deadtime()
     grouping = fb_dataset.run.grouping
-    assert "Run a deadtime count fit" in window._single_fit_tab._result_text.toPlainText()
+    assert "Run a deadtime count fit" in window._single_fit_tab._results_card.content_html()
     assert grouping.get("deadtime_correction") in (None, False)
 
 
@@ -392,7 +396,7 @@ def test_switching_run_clears_captured_calibrations(qapp, fb_dataset):
     assert tab._last_count_alpha is None
     # Promoting now reports a hint rather than writing run A's α into run B.
     window._promote_alpha_btn.click()
-    assert "Forward + Backward" in tab._result_text.toPlainText()
+    assert "Forward + Backward" in tab._results_card.content_html()
 
 
 def test_promote_alpha_without_fb_fit_shows_hint(qapp, fb_dataset):
@@ -401,7 +405,7 @@ def test_promote_alpha_without_fb_fit_shows_hint(qapp, fb_dataset):
     window.set_dataset(fb_dataset)
     window._target_combo.setCurrentIndex(2)  # single — no α produced
     window._promote_alpha_btn.click()
-    assert "Forward + Backward" in window._single_fit_tab._result_text.toPlainText()
+    assert "Forward + Backward" in window._single_fit_tab._results_card.content_html()
     assert "alpha_method" not in fb_dataset.run.grouping
 
 
@@ -419,7 +423,7 @@ def test_promote_t0_after_fit_writes_t0_bin_and_discloses_residual(qapp, fb_data
     window._promote_t0_btn.click()
     grouping = fb_dataset.run.grouping
     assert grouping["t0_method"] == "count_fit"
-    text = tab._result_text.toPlainText()
+    text = tab._results_card.content_html()
     assert "residual" in text.lower()
     assert "run-wide" in text
 
@@ -535,11 +539,11 @@ def test_grouped_single_carries_function_forward_and_drops_result(qapp):
     b = _grouped_run_dataset(702)
     win.set_dataset(a)
     _set_single_model(win, ["Gaussian", "Constant"])
-    win._single_fit_tab._result_text.setHtml("<b>chi2 = 1.0</b>")
+    win._single_fit_tab._results_card.set_message("<b>chi2 = 1.0</b>", tag="Fit ✓", tone="ok")
 
     win.set_dataset(b)  # unseen run, no recorded fit, no stored form
     assert _single_model_names(win) == ["Gaussian", "Constant"]  # function carried
-    assert win._single_fit_tab._result_text.toPlainText().strip() == ""  # result dropped
+    assert win._single_fit_tab._results_card.tag_text() == "No fit yet"  # result dropped
 
 
 def test_grouped_single_per_run_form_round_trips(qapp):

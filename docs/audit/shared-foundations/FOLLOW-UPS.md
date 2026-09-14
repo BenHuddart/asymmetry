@@ -78,7 +78,7 @@ Format: `- [ ] <area> — <what/why> (surfaced in Phase N)`
   `multi_group_fit_window.py` importing `_get_file_value_for_parameter`;
   tests importing `_set_tie_button_value`, `_tie_button_value`,
   `_dataset_representation_domain`, `_fit_domain_mismatch_message`,
-  `_model_without_trailing_background`, `_bounded_phase_seed_padding`,
+  `_bounded_phase_seed_padding`,
   `_MAX_PHASE_SEED_FFT_POINTS`) should migrate to importing from the owning
   submodule (`panels.fit.tab_base` / `panels.fit.seeding`) when the shim is
   retired. (surfaced in Phase 2)

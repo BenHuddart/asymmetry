@@ -16,7 +16,8 @@ Navigation map
    shared by both tabs).
 2. **Fit-result summary/messaging helpers** — ``_fit_summary``,
    ``_fit_range_provenance_text``, ``_apply_fit_range_display``,
-   ``_fit_success_html``/``_fit_warnings_html``, ``_format_tie_formula``.
+   ``_fit_warnings_html``, ``fit_results_snapshot``
+   (the frozen snapshot a ``FitResultsWindow`` renders), ``_format_tie_formula``.
 3. **Tie dialog and tie-button helpers** — ``AffineTieDialog`` (modal editor
    for an affine parameter tie), ``_make_tie_button``/``_tie_button_value``/
    ``_set_tie_button_value``, ``_param_name_from_tie_button``.
@@ -24,7 +25,7 @@ Navigation map
    ``_link_group_combo_value``/``_set_link_group_combo_value``.
 5. **Domain/worker-exception helpers** — ``_dataset_representation_domain``,
    ``_fit_domain_mismatch_message``/``_apply_domain_mismatch_warning``,
-   ``_model_without_trailing_background``, ``_format_fit_worker_exception``,
+   ``_format_fit_worker_exception``,
    ``_fit_curve_sample_count``, and the fit-thread wait/dispatch helpers
    (``_fit_work_pending``, ``_wait_for_fit_thread``, ``_start_fit_call`` — the
    shared entry point both tabs use to launch a fit worker).
@@ -40,9 +41,11 @@ Navigation map
    ``parameters_state``/``restore_parameters`` serialize/restore table state
    for project persistence.
 9. **``FitTabBase(QWidget)``** — the shared base both ``SingleFitTab`` and
-   ``GlobalFitTab`` subclass: common formula-box/fit-range/run-control
-   construction (``_build_formula_box``, ``_build_fit_range_fields``,
-   ``_build_run_controls``) and fit-range display sync
+   ``GlobalFitTab`` subclass: common formula-box/model-row/fit-range/run-control
+   construction (``_build_formula_box``, ``_build_model_row``,
+   ``_build_fit_range_fields``, ``_build_run_controls``), the Parameters rail
+   and its ``↗`` pop-out (``_build_parameters_rail`` over each tab's own
+   ``_apply_column_group``), and fit-range display sync
    (``_apply_fit_range_domain``, ``set_fit_range_display``,
    ``current_fit_range_text``). Deliberately thin — see
    ``docs/audit/shared-foundations/FOLLOW-UPS.md`` (Phase 2 H3) for the
@@ -50,10 +53,11 @@ Navigation map
 """
 
 import copy
+import functools
 import html
 import math
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 
 import numpy as np
@@ -70,6 +74,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -79,6 +84,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -90,6 +96,7 @@ from asymmetry.core.fitting.parameters import (
     AffineTie,
     Parameter,
     ParameterSet,
+    get_param_info,
     split_parameter_name,
 )
 from asymmetry.core.fitting.result_summary import fit_result_summary
@@ -102,18 +109,29 @@ from asymmetry.gui.fit_settings import fit_quality_confidence
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.metrics import char_width
+from asymmetry.gui.styles.typography import footer_font
 from asymmetry.gui.styles.widgets import (
+    FIT_VERDICT_CHIP_COLOURS,
+    NEUTRAL_CHIP_COLOURS,
     apply_param_table_style,
+    build_segmented_button_qss,
     configure_formula_label,
-    fit_quality_chip_html,
     make_formula_box,
-    success_html,
+    style_group_state_button,
     warning_html,
 )
 from asymmetry.gui.utils.formatting import format_param_label
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
+from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollDoubleSpinBox
+from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
+from asymmetry.gui.windows.fit_results_window import (
+    FitParameterRow,
+    FitRangeResults,
+    FitResults,
+)
 
 
 def _grouped_formula_string(model: CompositeModel) -> str:
@@ -286,6 +304,10 @@ _DERIVED_FRACTION_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 #: reads as computed rather than editable.
 _DERIVED_FRACTION_TOOLTIP = "Remainder: 1 − the other fractions in this group"
 
+#: Value-cell hint on a free fraction row. Shared so the Value tooltip can be
+#: recomposed (hint + affine-tie formula) without re-typing the sentence.
+_FRACTION_VALUE_TOOLTIP = "Free fraction in [0, 1]; the group's remainder is 1 − the others."
+
 
 def _is_derived_fraction_row(table: QTableWidget, row: int, name_column: int = 0) -> bool:
     """Return True when ``row`` is a synthesized derived-fraction (remainder) row."""
@@ -438,7 +460,6 @@ def _configure_fraction_rows_in_table(
     *,
     min_column: int | None = None,
     max_column: int | None = None,
-    bounds_column: int | None = None,
     type_column: int | None = None,
 ) -> None:
     """Set [0, 1] bounds and a hint tooltip on every FREE fraction row.
@@ -456,7 +477,7 @@ def _configure_fraction_rows_in_table(
     )
     row_by_name = _param_table_rows_by_name(table)
     all_free_names = {name for group in model.fraction_parameter_groups() for name in group}
-    tooltip = "Free fraction in [0, 1]; the group's remainder is 1 − the others."
+    tooltip = _FRACTION_VALUE_TOOLTIP
 
     for name in all_free_names:
         row = row_by_name.get(name)
@@ -480,10 +501,6 @@ def _configure_fraction_rows_in_table(
             max_item = table.item(row, max_column)
             if max_item is not None:
                 max_item.setText("1.0")
-        if bounds_column is not None:
-            bounds_item = table.item(row, bounds_column)
-            if bounds_item is not None:
-                bounds_item.setText("0, 1")
 
 
 def _get_file_value_for_parameter(
@@ -596,20 +613,68 @@ def _apply_fit_range_display(
         max_spin.setValue(float(x_max))
 
 
-def _fit_success_html(result) -> str:
-    """Return compact success HTML for the result label, with a χ² verdict chip."""
-    npar = len(result.parameters.free_parameters)
-    ndof = (
-        round(result.chi_squared / result.reduced_chi_squared)
-        if result.reduced_chi_squared > 0
-        else 0
+def fit_results_snapshot(
+    result,
+    *,
+    title: str,
+    model: str,
+    fit_range: str,
+    runs: str,
+) -> FitResults:
+    """Freeze a core :class:`FitResult` into what :class:`FitResultsWindow` renders.
+
+    The tab supplies the strings only it knows — the window title, the model
+    expression, the fitted range and the run provenance — and this builds the
+    one solved range from the result itself. The verdict and its chip colours
+    come from the same :func:`_fit_summary` the result label's chip uses, so the
+    window and the tab can never disagree about a fit.
+    """
+    rows = []
+    free_names = {param.name for param in result.parameters.free_parameters}
+    for param in result.parameters:
+        info = get_param_info(param.name)
+        rows.append(
+            FitParameterRow(
+                name=param.name,
+                symbol=info.unicode_label(include_unit=False),
+                unit=info.unit or "",
+                value=float(param.value),
+                error=result.uncertainties.get(param.name),
+                fixed=param.name not in free_names,
+            )
+        )
+
+    quality = _fit_summary(result).get("quality")
+    if quality is None:
+        verdict, colours = "no verdict", NEUTRAL_CHIP_COLOURS
+    else:
+        band = f"{quality['band_low']:.2g}–{quality['band_high']:.2g}"
+        verdict = f"{quality['verdict']} fit (band {band} at {quality['confidence'] * 100:g} %)"
+        colours = FIT_VERDICT_CHIP_COLOURS[quality["verdict"]]
+
+    return FitResults(
+        title=title,
+        # A run's asymmetry fit has neither a trended parameter nor an x axis of
+        # its own: it is one run against the fitted range, named by `runs`.
+        parameter_name="",
+        x_label="",
+        runs=runs,
+        ranges=(
+            FitRangeResults(
+                model=model,
+                chi_squared=f"χ²ᵣ {result.reduced_chi_squared:.3g}",
+                verdict=verdict,
+                colours=colours,
+                bounds=fit_range,
+                # The engine's FitResult records no error mode — the tabs always
+                # fit against the data's own per-point σ.
+                error_mode="",
+                # Free parameters first ("sorted" is stable, as in the trend
+                # panel's snapshot).
+                parameters=tuple(sorted(rows, key=lambda row: row.fixed)),
+            ),
+        ),
     )
-    stats = f"χ²/ν = {result.reduced_chi_squared:.4f} · npar = {npar} · ndof = {ndof}"
-    if result.edm is not None:
-        stats += f" · Δ‖p‖ = {result.edm:.2e}"
-    summary = _fit_summary(result)
-    stats += fit_quality_chip_html(summary.get("quality"), summary.get("params_at_bound"))
-    return success_html("Fit converged", detail=stats)
 
 
 def _fit_result_is_usable(result) -> bool:
@@ -678,6 +743,12 @@ _PARAM_ROLE_LABELS = {"global": "Global", "local": "Local", "fixed": "Fixed", "f
 #: (unit)" labels that overflow it are still readable via the per-cell tooltip
 #: (:func:`_make_param_name_item`). One budget so the tables stay aligned.
 _PARAM_NAME_COL_CHARS = 13
+
+#: Character budget every value/seed column asks for. The columns grow into the
+#: viewport's spare width (see :func:`elastic_value_columns`), so this is their
+#: floor in a narrow dock and the width the ↗ pop-out opens them at, not what
+#: they normally show.
+VALUE_COL_CHARS = 12
 
 
 def param_name_col_width() -> int:
@@ -1031,7 +1102,7 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
     Such models can only come from projects saved before domain filtering (or
     hand-edited files); they are kept loaded and fittable so nothing the user
     saved is destroyed, but the formula label is marked so the mismatch is
-    visible, and Edit Function explains which component is foreign.
+    visible, and Edit… explains which component is foreign.
     """
     foreign = {d for d in model.domains() if d != domain}
     if not foreign:
@@ -1046,48 +1117,63 @@ def _apply_domain_mismatch_warning(label: QLabel, model: CompositeModel, domain:
         f"This model contains {'/'.join(sorted(foreign))}-domain component(s) "
         f"({', '.join(foreign_names)}) but the representation is fitted in the "
         f"{domain} domain. The model is kept as saved and can still be fitted; "
-        "use Edit Function to repair it."
+        "use Edit… to repair it."
     )
     box = getattr(label, "_formula_box", None)
     if box is not None:
         box.refresh_height()
 
 
-def _model_without_trailing_background(model: CompositeModel | None) -> CompositeModel | None:
-    """Return *model* with a trailing additive ``Constant`` removed, or ``None``.
+def _split_bounds_text(text: object) -> tuple[str, str]:
+    """Split a stored ``"<min>, <max>"`` bounds string into its two cell texts.
 
-    Only the unambiguous case is handled — a final ``+ Constant`` term outside
-    any parentheses (e.g. ``Exponential + Constant`` or
-    ``Oscillatory*Exponential + Constant``). A free constant background absorbs
-    part of the signal during amplitude calibration, splitting the fitted
-    amplitude; dropping it lets the relaxation term capture the full initial
-    asymmetry (A₀). Returns ``None`` when there is no such removable background.
+    The saved project shape and the tables' carried row state both describe a
+    parameter's limits as one string; the Batch tab's tables show them as a Min
+    and a Max cell. A string with no comma is read as a lower bound alone, which
+    is what a half-typed cell means.
     """
-    if model is None:
-        return None
-    names = list(model.component_names)
-    operators = list(model.operators)
-    if len(names) < 2 or names[-1] != "Constant":
-        return None
-    if not operators or operators[-1] != "+":
-        return None
-    if any(model.open_parentheses) or any(model.close_parentheses):
-        return None
-    try:
-        return CompositeModel(names[:-1], operators=operators[:-1])
-    except ValueError:
-        return None
+    minimum, _, maximum = str(text).partition(",")
+    return minimum.strip() or "-inf", maximum.strip() or "inf"
 
 
-def _format_bounds_pair(min_val: float, max_val: float) -> str:
-    def _format(value: float) -> str:
-        if value == float("inf"):
-            return "inf"
-        if value == -float("inf"):
-            return "-inf"
-        return f"{float(value):.6g}"
+def table_as_tsv(table: QTableWidget) -> str:
+    """A parameter table as tab-separated text: the header row, then one per row.
 
-    return f"{_format(min_val)}, {_format(max_val)}"
+    Serves the rail's pop-out for the Batch tab's combo-role tables, whose Type
+    cell is a ``QComboBox`` rather than an item. :meth:`FitParameterTable.as_tsv`
+    covers its own richer set of cell widgets instead.
+    """
+    columns = range(table.columnCount())
+    lines = ["\t".join(table.horizontalHeaderItem(column).text() for column in columns)]
+    for row in range(table.rowCount()):
+        cells: list[str] = []
+        for column in columns:
+            item = table.item(row, column)
+            widget = table.cellWidget(row, column)
+            if item is not None:
+                cells.append(item.text())
+            elif isinstance(widget, QComboBox):
+                cells.append(widget.currentText())
+            else:
+                cells.append("")
+        lines.append("\t".join(cells))
+    return "\n".join(lines)
+
+
+#: Tag a read-out replayed from a saved state goes back onto the results card
+#: under when the state predates the tag being persisted: a fit that happened,
+#: whose verdict the file does not record.
+RESTORED_TAG = "Recorded"
+
+#: Card tone per results-card tag, for replaying a saved read-out. Anything else
+#: — including :data:`RESTORED_TAG` — is neutral.
+TONE_BY_TAG = {
+    "Fit ✓": "ok",
+    "Fit ⚠": "warn",
+    "Batch ✓": "ok",
+    "Batch ⚠": "warn",
+    "Error": "error",
+}
 
 
 def _format_fit_worker_exception(exc: Exception) -> str:
@@ -1103,22 +1189,6 @@ def _format_fit_worker_exception(exc: Exception) -> str:
     if text == exc_name:
         return text
     return f"{exc_name}: {text}"
-
-
-_GLOBAL_FIT_PARAMETER_CLASSIFICATION_HELP_TEXT = (
-    "Specify how each parameter behaves across datasets:\n\n"
-    "Global: Same value for all datasets. Use this for shared physical parameters "
-    "that should be fitted once across the full selection.\n\n"
-    "Local: Different value for each dataset. Use this when the parameter is "
-    "expected to vary from run to run.\n\n"
-    "Fixed: Held constant at the specified value for every dataset. Use this for "
-    "known values or parameters you want excluded from optimization.\n\n"
-    "File: Use the value from dataset metadata where available. This is offered for "
-    "field-like parameters such as B_L when the run file already stores the relevant value.\n\n"
-    "The Seed column is the shared initial value applied to every run in the batch — "
-    "it is not a per-run fitted result and does not change when you select different "
-    "runs. Per-run fitted values appear in the Parameters tab after the batch fit completes."
-)
 
 
 def _fit_curve_sample_count(
@@ -1268,11 +1338,20 @@ class _ValueUncertaintyDelegate(_CommitOnTabDelegate):
     MINOS asymmetric interval is present (UserRole+2, a ``(lower, upper)`` pair with
     ``lower < 0 < upper``), the cell instead shows ``value  +upper / lower`` — the
     display-only asymmetric overlay. Both roles are cleared when the user edits.
+
+    The row's link/tie badge (:meth:`FitParameterTable.value_badge`) is drawn in
+    accent colour at the cell's right edge, so a linked or tied parameter still
+    says so when the rail hides the Link and Tie columns.
     """
 
     _UNC_ROLE = Qt.ItemDataRole.UserRole + 1
     _MINOS_ROLE = Qt.ItemDataRole.UserRole + 2
     _MUTED = QColor(tokens.TEXT_MUTED)
+    _ACCENT = QColor(tokens.ACCENT)
+
+    def __init__(self, table: "FitParameterTable") -> None:
+        super().__init__(table)
+        self._table = table
 
     def paint(self, painter, option, index) -> None:
         super().paint(painter, option, index)
@@ -1284,21 +1363,31 @@ class _ValueUncertaintyDelegate(_CommitOnTabDelegate):
         elif unc is not None:
             unc_str = f"  ±{float(unc):.4f}"
         else:
+            unc_str = ""
+        badge = self._table.value_badge(index.row())
+        if not unc_str and not badge:
             return
-        val_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         style = option.widget.style() if option.widget else QApplication.style()
         text_opt = QStyleOptionViewItem(option)
         self.initStyleOption(text_opt, index)
         text_rect = style.subElementRect(
             QStyle.SubElement.SE_ItemViewItemText, text_opt, option.widget
         )
-        val_w = painter.fontMetrics().horizontalAdvance(val_text)
-        unc_rect = text_rect.adjusted(val_w, 0, 0, 0)
         painter.save()
-        painter.setPen(self._MUTED)
-        painter.drawText(
-            unc_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, unc_str
-        )
+        if unc_str:
+            val_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+            val_w = painter.fontMetrics().horizontalAdvance(val_text)
+            painter.setPen(self._MUTED)
+            painter.drawText(
+                text_rect.adjusted(val_w, 0, 0, 0),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                unc_str,
+            )
+        if badge:
+            painter.setPen(self._ACCENT)
+            painter.drawText(
+                text_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, badge
+            )
         painter.restore()
 
     def setModelData(self, editor, model, index) -> None:  # noqa: N802
@@ -1314,21 +1403,146 @@ class _ValueUncertaintyDelegate(_CommitOnTabDelegate):
         model.setData(index, None, self._MINOS_ROLE)
 
 
+class ElasticTable(QTableWidget):
+    """A parameter table whose value columns absorb the viewport's spare width.
+
+    Column dragging behaves the way a spreadsheet's does. Every column is
+    ``Interactive``, so any boundary can be dragged — including the value
+    column's own — and dragging one wider pushes the columns to its right along
+    (a horizontal scrollbar appears once they run past the viewport). What a
+    drag never does is take width out of another column: when it leaves width
+    over, :meth:`fill_elastic_columns` gives that to the elastic columns, so
+    narrowing a fixed column feeds the value column and the table never ends in
+    a band of empty grid.
+
+    The viewport is the one thing that *can* take width back
+    (:meth:`share_viewport_width`): a dock the user narrows, or a column group
+    the rail shows again, re-derives the elastic widths from the room there now
+    is rather than leaving the table scrolling sideways.
+
+    A ``Stretch`` value column did the reverse of all this: dragging any
+    boundary to its right took the space out of the value column instead of
+    moving anything, and its own boundary could not be dragged at all.
+    """
+
+    def __init__(self, rows: int, columns: int, parent: QWidget | None = None) -> None:
+        super().__init__(rows, columns, parent)
+        #: The columns that absorb spare width, and the character budget they
+        #: are reported at (:func:`elastic_value_columns` sets both).
+        self.elastic_columns: tuple[int, ...] = ()
+        self.elastic_width = 0
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        header.sectionResized.connect(self.fill_elastic_columns)
+
+    def viewportEvent(self, event) -> bool:  # noqa: N802 — Qt override
+        # The viewport is resized after the table's own resizeEvent has run, so
+        # a handler there would still be reading the previous width.
+        handled = super().viewportEvent(event)
+        if event.type() == QEvent.Type.Resize:
+            self.share_viewport_width()
+        return handled
+
+    def setColumnHidden(self, column: int, hide: bool) -> None:  # noqa: N802 — Qt override
+        # Showing a column again is the viewport losing width, not a drag.
+        super().setColumnHidden(column, hide)
+        self.share_viewport_width()
+
+    def fill_elastic_columns(self, *_section_resize_args) -> None:
+        """Level the elastic columns up into whatever width is going spare.
+
+        The level is what the spare affords once any elastic column already
+        wider than it keeps its own width (and takes that width out of what the
+        rest share) — so this adds, never shrinks. Each ``setColumnWidth`` below
+        re-enters here through ``sectionResized``; that pass computes the same
+        level, and the last one finds no spare width left and returns.
+        """
+        elastic = self._visible_elastic_columns()
+        if not elastic:
+            return
+        spare = self.viewport().width() - sum(
+            self.columnWidth(column)
+            for column in range(self.columnCount())
+            if not self.isColumnHidden(column)
+        )
+        if spare <= 0:
+            return
+        budget = spare + sum(self.columnWidth(column) for column in elastic)
+        for taken, column in enumerate(sorted(elastic, key=self.columnWidth, reverse=True)):
+            level = budget // (len(elastic) - taken)
+            if self.columnWidth(column) >= level:
+                budget -= self.columnWidth(column)
+                continue
+            self.setColumnWidth(column, level)
+            budget -= level
+
+    def share_viewport_width(self) -> None:
+        """Re-derive the elastic widths for a viewport that changed size.
+
+        Their width belongs to the viewport rather than to the last drag, so a
+        table that loses room — a narrowed dock, or a hidden column group shown
+        again — takes it back out of the elastic columns rather than scrolling
+        sideways, down to the header's own minimum section size. Each column
+        lands at the share the viewport affords, so the ``sectionResized`` fill
+        this re-enters has nothing left to give.
+        """
+        elastic = self._visible_elastic_columns()
+        if not elastic:
+            return
+        fixed = sum(
+            self.columnWidth(column)
+            for column in range(self.columnCount())
+            if not self.isColumnHidden(column) and column not in elastic
+        )
+        share = (self.viewport().width() - fixed) // len(elastic)
+        for column in elastic:
+            self.setColumnWidth(column, share)
+
+    def _visible_elastic_columns(self) -> list[int]:
+        return [column for column in self.elastic_columns if not self.isColumnHidden(column)]
+
+
+def elastic_value_columns(table: ElasticTable, columns: Sequence[int], *, chars: int) -> None:
+    """Make *columns* the ones that absorb *table*'s spare width.
+
+    A parameter table's fixed character widths are chosen to fit the narrow
+    inspector dock, so in a wider dock (or the ↗ pop-out) the sum falls short of
+    the viewport and the table ends in a band of empty grid. The value columns —
+    the ones whose content is open-ended — absorb that slack instead. *chars* is
+    the width each is worth when the dock is not what decides: what
+    :func:`table_content_width` reports them at, and so the width the ↗ pop-out
+    opens them at.
+    """
+    table.elastic_columns = tuple(columns)
+    table.elastic_width = char_width(chars)
+    table.share_viewport_width()
+
+
+def table_content_width(table: ElasticTable) -> int:
+    """Width the table's visible columns want, elastic columns at their budget."""
+    return sum(
+        table.elastic_width if column in table.elastic_columns else table.columnWidth(column)
+        for column in range(table.columnCount())
+        if not table.isColumnHidden(column)
+    )
+
+
 def _size_param_table_to_content(table: QTableWidget) -> None:
     """Fix a parameter table's height to exactly its rows.
 
     The inspector dock scrolls vertically as a whole, so the table does not need
     to grow and scroll internally; sizing it to its content means a few-parameter
     model leaves no empty rows, while a many-parameter model simply makes the
-    panel taller (and the dock scrolls — the natural axis). The horizontal
-    scrollbar's height is reserved so wide column sets never clip the last row.
+    panel taller (and the dock scrolls — the natural axis). The resting column
+    set fits the dock, so no room is reserved for a horizontal scrollbar; the
+    policy stays ``ScrollBarAsNeeded`` for the wide pop-out, which sizes itself.
     """
     table.resizeRowsToContents()
     rows_height = table.verticalHeader().length()
     header_height = table.horizontalHeader().sizeHint().height()
     frame = 2 * table.frameWidth()
-    scrollbar = table.horizontalScrollBar().sizeHint().height()
-    table.setFixedHeight(rows_height + header_height + frame + scrollbar)
+    table.setFixedHeight(rows_height + header_height + frame)
 
 
 def _shift_rrf_parameters(
@@ -1359,7 +1573,7 @@ def _shift_rrf_parameters(
     return shifted
 
 
-class FitParameterTable(QTableWidget):
+class FitParameterTable(ElasticTable):
     """Reusable fit-parameter table: Name·Value·Fix·Min·Max·Batch·Link·Tie.
 
     Shared by the single-fit panel (:class:`SingleFitTab`) and the single
@@ -1380,6 +1594,14 @@ class FitParameterTable(QTableWidget):
     COL_LINK = _SINGLE_PARAM_LINK_COLUMN  # 6
     COL_TIE = _SINGLE_PARAM_TIE_COLUMN  # 7
 
+    #: Column groups the parameters rail toggles as a unit, keyed by the chip
+    #: label's slug. Name, Value and Fix are always shown and belong to none.
+    _COLUMN_GROUPS = {
+        "bounds": (COL_MIN, COL_MAX),
+        "links": (COL_LINK, COL_TIE),
+        "batch": (COL_BATCH,),
+    }
+
     #: Emitted with the parameter name whose Value cell the user just edited.
     value_edited = Signal(str)
 
@@ -1388,22 +1610,27 @@ class FitParameterTable(QTableWidget):
         self.setHorizontalHeaderLabels(
             ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
         )
-        self.horizontalHeader().setStretchLastSection(False)
         # Name (col 0) holds formatted "name (unit)" labels; a too-narrow column
         # clips common cases like "f (MHz)" / "A_bg (%)" (tooltip backs the rest).
         # Widths are char-based (metrics.char_width) so they track the UI font
         # scale instead of freezing at their old design pixels.
         for col, chars in (
             (0, _PARAM_NAME_COL_CHARS),  # Name, 92 px at design font
-            (1, 12),  # Value, 88 px
             (2, 4),  # Fix, 30 px
-            (3, 7),  # Min, 52 px
-            (4, 7),  # Max, 52 px
+            # Min/Max are measured in sans characters but painted in the wider
+            # mono font: 7 is the least that shows "-inf" unelided, and the
+            # resting set (Name·Value·Fix·Min·Max) still fits a ~300 px dock
+            # because Value asks for no more than its own budget.
+            (3, 7),  # Min
+            (4, 7),  # Max
             (5, 7),  # Batch, 50 px
             (6, 5),  # Link, 40 px
             (7, 5),  # Tie, 40 px
         ):
             self.setColumnWidth(col, char_width(chars))
+        # Value is where a long number (or a ±σ overlay and a link/tie badge)
+        # actually needs the room, so it takes the dock's leftover width.
+        elastic_value_columns(self, (self.COL_VALUE,), chars=VALUE_COL_CHARS)
         _apply_param_table_style(self)
         # Tab commits the open editor on every editable column; the Value column
         # additionally paints the ±σ overlay.
@@ -1440,9 +1667,89 @@ class FitParameterTable(QTableWidget):
     def is_updating(self) -> bool:
         return self._updating
 
-    def set_batch_column_visible(self, visible: bool) -> None:
-        """Show/hide the read-only Batch-role column (hidden for grouped fits)."""
-        self.setColumnHidden(self.COL_BATCH, not visible)
+    # ── column groups ───────────────────────────────────────────────────────
+
+    @classmethod
+    def _column_group(cls, group: str) -> tuple[int, ...]:
+        columns = cls._COLUMN_GROUPS.get(group)
+        if columns is None:
+            known = ", ".join(sorted(cls._COLUMN_GROUPS))
+            raise ValueError(f"Unknown column group {group!r} (known groups: {known})")
+        return columns
+
+    def set_column_group_visible(self, group: str, visible: bool) -> None:
+        """Show or hide one rail column group: ``bounds``, ``links`` or ``batch``.
+
+        Hiding a group only changes what is painted — every row keeps its Fix
+        state, bounds, link group and tie, and re-showing the group brings the
+        same widgets back untouched.
+        """
+        for column in self._column_group(group):
+            self.setColumnHidden(column, not visible)
+
+    def column_group_visible(self, group: str) -> bool:
+        """Whether *group*'s columns are shown (they are always hidden together)."""
+        return not self.isColumnHidden(self._column_group(group)[0])
+
+    def as_tsv(self) -> str:
+        """The table as tab-separated text: the header row, then one line per row.
+
+        Every column is rendered whatever the rail hides, since this serves the
+        pop-out, which shows them all. Fix, Link and Tie are cell *widgets* on a
+        parameter row (a derived-remainder row carries inert items everywhere
+        instead), so those three read off the widget when there is no item.
+        """
+        columns = range(self.columnCount())
+        lines = ["\t".join(self.horizontalHeaderItem(column).text() for column in columns)]
+        for row in range(self.rowCount()):
+            cells: list[str] = []
+            for column in columns:
+                item = self.item(row, column)
+                if item is not None:
+                    cells.append(item.text())
+                elif column == self.COL_FIX:
+                    checkbox = self.cellWidget(row, column).findChild(QCheckBox)
+                    cells.append("fixed" if checkbox.isChecked() else "")
+                elif column == self.COL_LINK:
+                    group = _link_group_combo_value(self.cellWidget(row, column))
+                    cells.append("" if group is None else str(group))
+                else:
+                    tie = _tie_button_value(self.cellWidget(row, column))
+                    name = self.item(row, self.COL_NAME).text()
+                    cells.append("" if tie is None else _format_tie_formula(name, tie))
+            lines.append("\t".join(cells))
+        return "\n".join(lines)
+
+    def value_badge(self, row: int) -> str:
+        """Return the Value-cell badge for *row*: ``ƒ`` tied, ``⇄N`` linked, else ``""``.
+
+        Tie wins over link because setting a tie clears the row's link group,
+        so the two can never both apply.
+        """
+        if _tie_button_value(self.cellWidget(row, self.COL_TIE)) is not None:
+            return "ƒ"
+        group = _link_group_combo_value(self.cellWidget(row, self.COL_LINK))
+        return "" if group is None else f"⇄{group}"
+
+    def _mirror_tie_on_value_cell(self, row: int, tie: AffineTie | None) -> None:
+        """Repaint the row's Value cell and put the tie's formula on its tooltip.
+
+        Composed from scratch (fraction hint, then formula) rather than appended
+        to, so repeated tie edits cannot stack copies of the equation. Suspended
+        because a tooltip write is an ``itemChanged`` on the Value column, which
+        the edit handler would otherwise read as the user typing a value.
+        """
+        # A row only exists after populate(), which sets the model.
+        name = self.item(row, self.COL_NAME).data(Qt.ItemDataRole.UserRole)
+        fraction_names = {
+            n for group in self._composite_model.fraction_parameter_groups() for n in group
+        }
+        lines = [_FRACTION_VALUE_TOOLTIP] if name in fraction_names else []
+        if tie is not None:
+            lines.append(_format_tie_formula(name, tie))
+        with self.suspend():
+            self.item(row, self.COL_VALUE).setToolTip("\n".join(lines))
+        self.viewport().update()
 
     # ── populate ────────────────────────────────────────────────────────────
 
@@ -1562,6 +1869,7 @@ class FitParameterTable(QTableWidget):
             link_combo.setEnabled(not checked)
 
         def on_link_changed(_index: int) -> None:
+            self.viewport().update()  # the Value cell paints the row's ⇄N badge
             if self._updating:
                 return
             linked = _link_group_combo_value(link_combo) is not None
@@ -1623,6 +1931,7 @@ class FitParameterTable(QTableWidget):
                 return
             tie = dialog.tie()
             _set_tie_button_value(tie_button, tie)
+            self._mirror_tie_on_value_cell(row, tie)
             with self.suspend():
                 if tie is not None:
                     fix_checkbox.setChecked(False)
@@ -1856,6 +2165,7 @@ class FitParameterTable(QTableWidget):
                 raw_tie = p_data.get("tie")
                 tie = AffineTie.from_dict(raw_tie) if isinstance(raw_tie, dict) else None
                 _set_tie_button_value(tie_button, tie)
+                self._mirror_tie_on_value_cell(i, tie)
                 if tie is not None:
                     if fix_checkbox is not None:
                         fix_checkbox.setChecked(False)
@@ -1909,8 +2219,214 @@ class FitTabBase(QWidget):
         and only calls this helper to build the shared widgets.
         """
         self._formula_box, self._formula_label = _make_formula_box()
-        self._edit_model_btn = QPushButton("Edit Function...")
+        self._edit_model_btn = QPushButton("Edit…")
         self._edit_model_btn.clicked.connect(self._edit_function)
+
+    def _build_model_row(self, *buttons: QPushButton) -> QWidget:
+        """Return the model actions as one wrapping row: ``Edit…`` then *buttons*.
+
+        Segmented is the light action style beside the primary ``Fit`` button,
+        and the row wraps at the dock's width instead of widening it — a
+        vertical stack of full-width buttons used to push the parameter table
+        below the fold on a 13-inch screen.
+        """
+        row = QWidget()
+        row_layout = FlowLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        row.setSizePolicy(policy)
+        for button in (self._edit_model_btn, *buttons):
+            button.setStyleSheet(build_segmented_button_qss())
+            row_layout.addWidget(button)
+        return row
+
+    def _build_run_row(self, *widgets: QWidget) -> QWidget:
+        """Return the run controls and their outcome chip as one wrapping row.
+
+        The chip that appears after a fit ("2 ✓ 2 ⚠", "χ²ᵣ 1.07") is as wide as
+        a button, so on a `QHBoxLayout` it pushed the row — and with it the
+        whole dock — past the ~300 px a 13-inch inspector has. Here it wraps
+        under the buttons instead.
+        """
+        row = QWidget()
+        row_layout = FlowLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        row.setSizePolicy(policy)
+        for widget in widgets:
+            row_layout.addWidget(widget)
+        return row
+
+    # ------------------------------------------------------------------
+    # Shared Parameters rail: column-group chips and the ↗ pop-out
+    # ------------------------------------------------------------------
+    def _build_parameters_rail(
+        self,
+        section: PanelSection,
+        table: QTableWidget,
+        *,
+        chips: Sequence[tuple[str, str, bool, str]],
+        settings_key: str,
+        leading: QWidget | None = None,
+    ) -> None:
+        """Put *chips* and the pop-out on *section*'s header, over *table*.
+
+        A *leading* widget (the Batch tab's ⓘ) goes first. Every item joins
+        the section header's own wrapping row one by one, so the row wraps
+        item by item under the title rather than as one block; the row is one ``FlowLayout``,
+        whose minimum width is its widest single item, so what it holds never
+        adds to the dock's minimum width.
+
+        Each chip is ``(label, column group, default, tooltip)`` and drives
+        :meth:`_apply_column_group`, which each tab defines over the tables it
+        shows. The persisted state is one boolean per group under
+        ``<settings_key>/<group>``, so ``QSettings`` coerces the value and an
+        absent key falls back to the default — nothing the store could hold needs
+        interpreting. The table and its pop-out placeholder go into the section
+        body here, since the rail owns the swap between them.
+        """
+        self._column_group_chips = chips
+        self._column_settings_key = settings_key
+        self._column_chips: dict[str, QPushButton] = {}
+        self._rail_table = table
+
+        if leading is not None:
+            section.add_header_widget(leading)
+
+        shown = self._stored_column_groups()
+        for label, group, _default, tooltip in chips:
+            chip = QPushButton(label)
+            chip.setCheckable(True)
+            chip.setFont(footer_font())
+            chip.setToolTip(tooltip)
+            chip.setChecked(shown[group])
+            style_group_state_button(
+                chip, "active" if shown[group] else "unselected", palette="blue"
+            )
+            # The chips are the only thing that hides a column, so the tables are
+            # put into the persisted state here rather than awaiting a toggle.
+            self._apply_column_group(group, shown[group])
+            chip.toggled.connect(functools.partial(self._on_column_chip_toggled, group))
+            section.add_header_widget(chip)
+            self._column_chips[group] = chip
+
+        pop_out = QToolButton()
+        pop_out.setText("↗")
+        pop_out.setToolTip("Show every column in a window")
+        pop_out.clicked.connect(self._show_param_table_dialog)
+        section.add_header_widget(pop_out)
+        section.addWidget(table)
+        self._popped_out_note = QLabel("Shown in the pop-out window")
+        self._popped_out_note.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
+        self._popped_out_note.hide()
+        section.addWidget(self._popped_out_note)
+        #: Where the table goes back to when the pop-out closes.
+        self._rail_section_layout = section.body_layout
+        self._param_table_dialog = self._build_param_table_dialog()
+
+    def _stored_column_groups(self) -> dict[str, bool]:
+        """The rail's persisted chip states, with the defaults filling the gaps."""
+        return {
+            group: self._settings.value(f"{self._column_settings_key}/{group}", default, type=bool)
+            for _label, group, default, _tooltip in self._column_group_chips
+        }
+
+    def _apply_column_groups(self) -> None:
+        """Re-apply every chip's state — after a table rebuilds its columns."""
+        for group, chip in self._column_chips.items():
+            self._apply_column_group(group, chip.isChecked())
+
+    def _on_column_chip_toggled(self, group: str, checked: bool) -> None:
+        """Show or hide *group*'s columns and remember the rail's new state."""
+        style_group_state_button(
+            self._column_chips[group], "active" if checked else "unselected", palette="blue"
+        )
+        # The pop-out shows every column; the chips take effect again when the
+        # table comes back into the tab.
+        if not self._param_table_dialog.isVisible():
+            self._apply_column_group(group, checked)
+        self._settings.setValue(f"{self._column_settings_key}/{group}", checked)
+
+    def _build_param_table_dialog(self) -> QDialog:
+        """The pop-out that hosts the live parameter table, every column shown."""
+        dialog = QDialog(self)
+        dialog.setModal(False)
+        dialog_layout = QVBoxLayout(dialog)
+        buttons = QHBoxLayout()
+        copy_button = QPushButton("Copy TSV", dialog)
+        copy_button.setToolTip("Copy the parameter table to the clipboard.")
+        copy_button.clicked.connect(self._copy_param_table_tsv)
+        buttons.addWidget(copy_button)
+        buttons.addStretch(1)
+        close_button = QPushButton("Close", dialog)
+        close_button.clicked.connect(dialog.close)
+        buttons.addWidget(close_button)
+        dialog_layout.addLayout(buttons)
+        # Close, the window button and Escape all land on reject(), which is what
+        # `finished` reports — so the table comes home whichever the user uses.
+        dialog.finished.connect(self._return_param_table)
+        return dialog
+
+    def _show_param_table_dialog(self) -> None:
+        """Move the live table into the pop-out and show every column."""
+        self._param_table_dialog.setWindowTitle(f"Fit parameters — {self._run_label()}")
+        for group in self._column_chips:
+            self._apply_column_group(group, True)
+        self._param_table_dialog.layout().insertWidget(0, self._rail_table)
+        self._popped_out_note.show()
+        self._size_param_table_dialog()
+        self._param_table_dialog.show()
+        self._param_table_dialog.raise_()
+        self._param_table_dialog.activateWindow()
+
+    def _return_param_table(self) -> None:
+        """Put the table back above its placeholder and re-apply the rail's chips."""
+        self._rail_section_layout.insertWidget(0, self._rail_table)
+        self._popped_out_note.hide()
+        self._apply_column_groups()
+
+    def _size_param_table_dialog(self) -> None:
+        """Open the pop-out at the width its columns actually need.
+
+        A ``QTableWidget``'s size hint is a scrolling hint, so the dialog would
+        open with a horizontal scrollbar over columns that are already sized to
+        their contents. The width comes from what the columns want rather than
+        the header's current length, because a stretched value column reports
+        whatever the dock last gave it. The floor is the dialog's current size,
+        so a pop-out the user has widened only ever grows (as in the Parameters
+        panel).
+        """
+        layout = self._param_table_dialog.layout()
+        margins = layout.contentsMargins()
+        items = [layout.itemAt(index) for index in range(layout.count())]
+        width = (
+            table_content_width(self._rail_table)
+            + self._rail_table.verticalHeader().width()
+            + 2 * self._rail_table.frameWidth()
+            + margins.left()
+            + margins.right()
+        )
+        height = (
+            margins.top()
+            + margins.bottom()
+            + layout.spacing() * (len(items) - 1)
+            + sum(item.sizeHint().height() for item in items)
+        )
+        resize_to_available(
+            self._param_table_dialog,
+            width,
+            height,
+            min_width=self._param_table_dialog.width(),
+            min_height=self._param_table_dialog.height(),
+        )
+
+    def _copy_param_table_tsv(self) -> None:
+        """Put the parameter table on the clipboard as tab-separated text."""
+        table = self._rail_table
+        text = table.as_tsv() if isinstance(table, FitParameterTable) else table_as_tsv(table)
+        QApplication.clipboard().setText(text)
 
     # ------------------------------------------------------------------
     # Shared fit-range spinbox pair

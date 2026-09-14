@@ -17,11 +17,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QHeaderView
 
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.core.fitting.parameters import AffineTie
 from asymmetry.core.fitting.seeding import Seed
+from asymmetry.gui.panels.fit.tab_base import VALUE_COL_CHARS, table_content_width
 from asymmetry.gui.panels.fit_panel import FitParameterTable
+from asymmetry.gui.styles.metrics import char_width
 from asymmetry.gui.utils.formatting import format_param_label as _format_param_label
 
 
@@ -252,12 +255,202 @@ def test_populate_param_names_restricts_rows(qapp):
     assert "A_bg" not in {p.name for p in table.read_parameter_set()}
 
 
-def test_batch_column_can_be_hidden(qapp):
+def test_column_groups_hide_and_show_their_columns_together(qapp):
     table = FitParameterTable()
     table.populate(_model())
-    assert not table.isColumnHidden(table.COL_BATCH)
-    table.set_batch_column_visible(False)
+    assert all(table.column_group_visible(g) for g in ("bounds", "links", "batch"))
+
+    table.set_column_group_visible("batch", False)
     assert table.isColumnHidden(table.COL_BATCH)
+    assert table.column_group_visible("batch") is False
+    assert table.column_group_visible("bounds") is True
+
+    table.set_column_group_visible("links", False)
+    assert table.isColumnHidden(table.COL_LINK)
+    assert table.isColumnHidden(table.COL_TIE)
+
+    table.set_column_group_visible("bounds", False)
+    assert table.isColumnHidden(table.COL_MIN)
+    assert table.isColumnHidden(table.COL_MAX)
+
+    table.set_column_group_visible("bounds", True)
+    assert table.column_group_visible("bounds") is True
+    assert not table.isColumnHidden(table.COL_MIN)
+    assert not table.isColumnHidden(table.COL_MAX)
+
+
+def test_unknown_column_group_is_a_value_error(qapp):
+    table = FitParameterTable()
+    with pytest.raises(ValueError):
+        table.set_column_group_visible("ties", False)
+    with pytest.raises(ValueError):
+        table.column_group_visible("ties")
+
+
+def test_resting_columns_fit_a_narrow_inspector_dock(qapp):
+    """Name·Value·Fix·Min·Max is what the ~300 px dock shows at rest.
+
+    Value grows into whatever the viewport leaves over, so what it *has* is a
+    property of the dock; the budget that has to fit the dock is the fixed
+    columns plus what Value asks for. Both are what :func:`table_content_width`
+    reports.
+    """
+    table = FitParameterTable()
+    table.populate(_model())
+    # Every fixed column is sized, so the pop-out that shows all eight is readable.
+    assert all(table.columnWidth(c) > 0 for c in range(table.columnCount()) if c != table.COL_VALUE)
+    # Every column drags like a spreadsheet's, Value included.
+    assert all(
+        table.horizontalHeader().sectionResizeMode(c) == QHeaderView.ResizeMode.Interactive
+        for c in range(table.columnCount())
+    )
+    assert table.horizontalHeader().stretchLastSection() is False
+
+    table.set_column_group_visible("links", False)
+    table.set_column_group_visible("batch", False)
+    assert table_content_width(table) <= char_width(44)
+
+
+def _resting_table(qapp, width_chars: int = 60) -> FitParameterTable:
+    """A shown Name·Value·Fix·Min·Max table in a dock wider than it needs."""
+    table = FitParameterTable()
+    table.populate(_model())
+    table.set_column_group_visible("links", False)
+    table.set_column_group_visible("batch", False)
+    table.resize(char_width(width_chars), 200)
+    table.show()
+    qapp.processEvents()
+    return table
+
+
+def _fixed_width(table: FitParameterTable) -> int:
+    return sum(
+        table.columnWidth(c)
+        for c in range(table.columnCount())
+        if c != table.COL_VALUE and not table.isColumnHidden(c)
+    )
+
+
+def test_the_value_column_takes_the_leftover_width(qapp):
+    """In a dock wider than the columns need, Value absorbs the slack."""
+    table = _resting_table(qapp)
+    try:
+        assert table.columnWidth(table.COL_VALUE) > char_width(VALUE_COL_CHARS)
+        assert _fixed_width(table) + table.columnWidth(table.COL_VALUE) == table.viewport().width()
+        assert table.horizontalScrollBar().maximum() == 0
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_widening_a_column_pushes_the_ones_right_of_it_along(qapp):
+    """Dragging Min wider scrolls the table instead of eating into Value."""
+    table = _resting_table(qapp)
+    try:
+        value = table.columnWidth(table.COL_VALUE)
+        table.horizontalHeader().resizeSection(table.COL_MIN, table.columnWidth(table.COL_MIN) + 40)
+        qapp.processEvents()
+
+        assert table.columnWidth(table.COL_VALUE) == value
+        assert table.horizontalScrollBar().maximum() > 0
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_narrowing_a_column_hands_its_width_to_value(qapp):
+    """The freed width goes to Value rather than leaving a band of empty grid."""
+    table = _resting_table(qapp)
+    try:
+        value = table.columnWidth(table.COL_VALUE)
+        table.horizontalHeader().resizeSection(
+            table.COL_NAME, table.columnWidth(table.COL_NAME) - 20
+        )
+        qapp.processEvents()
+
+        assert table.columnWidth(table.COL_VALUE) == value + 20
+        assert _fixed_width(table) + table.columnWidth(table.COL_VALUE) == table.viewport().width()
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_showing_a_hidden_group_takes_its_width_back_from_value(qapp):
+    """A rail chip switched on borrows from Value rather than scrolling the table."""
+    table = _resting_table(qapp)
+    try:
+        table.set_column_group_visible("links", True)
+        qapp.processEvents()
+
+        assert table.horizontalScrollBar().maximum() == 0
+        assert _fixed_width(table) + table.columnWidth(table.COL_VALUE) == table.viewport().width()
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_value_cannot_be_dragged_narrower_than_the_fill(qapp):
+    """There is never an empty band: Value snaps back to the leftover width."""
+    table = _resting_table(qapp)
+    try:
+        value = table.columnWidth(table.COL_VALUE)
+        table.horizontalHeader().resizeSection(table.COL_VALUE, value - 30)
+        qapp.processEvents()
+        assert table.columnWidth(table.COL_VALUE) == value
+
+        # Wider by hand it stays, and the table scrolls to it.
+        table.horizontalHeader().resizeSection(table.COL_VALUE, value + 30)
+        qapp.processEvents()
+        assert table.columnWidth(table.COL_VALUE) == value + 30
+        assert table.horizontalScrollBar().maximum() > 0
+    finally:
+        table.close()
+        table.deleteLater()
+
+
+def test_value_badge_shows_the_link_group_then_the_tie(qapp):
+    table = FitParameterTable()
+    table.populate(_model())
+    assert table.value_badge(0) == ""
+    assert table.item(0, table.COL_VALUE).toolTip() == ""
+
+    table.cellWidget(0, table.COL_LINK).setCurrentIndex(2)  # link group 2
+    assert table.value_badge(0) == "⇄2"
+
+    state = {s["name"]: s for s in table.parameters_state()}
+    state["A_1"]["tie"] = AffineTie(main="Lambda", scale=2.0).to_dict()
+    table.restore_parameters(state)
+
+    # A tie clears the row's link group, so the tie is what the badge says, and
+    # the formula reaches the Value cell's tooltip (the Tie column may be hidden).
+    assert table.value_badge(0) == "ƒ"
+    assert table.item(0, table.COL_VALUE).toolTip() == "A_1 = 2·Lambda"
+
+    state["A_1"]["tie"] = None
+    state["A_1"]["link_group"] = None
+    table.restore_parameters(state)
+    assert table.value_badge(0) == ""
+    assert table.item(0, table.COL_VALUE).toolTip() == ""
+
+
+def test_hiding_the_links_group_keeps_the_link_and_tie_state(qapp):
+    table = FitParameterTable()
+    table.populate(_model())
+    link = table.cellWidget(0, table.COL_LINK)
+    tie_button = table.cellWidget(0, table.COL_TIE)
+    link.setCurrentIndex(1)
+
+    table.set_column_group_visible("links", False)
+    assert table.cellWidget(0, table.COL_LINK) is link
+    assert table.cellWidget(0, table.COL_TIE) is tie_button
+    assert table.read_parameter_set()["A_1"].link_group == 1
+    assert table.value_badge(0) == "⇄1"  # the hidden state is still readable
+
+    table.set_column_group_visible("links", True)
+    assert table.cellWidget(0, table.COL_LINK) is link
+    assert table.cellWidget(0, table.COL_TIE) is tie_button
+    assert link.currentData() == 1
+    assert table.read_parameter_set()["A_1"].link_group == 1
 
 
 def test_format_value_error_matches_precision_to_uncertainty():
@@ -278,3 +471,21 @@ def test_format_value_error_degenerate_inputs():
     # Pathological scale mismatch falls back to independent rounding rather
     # than an unreadable 16-decimal matched-precision string.
     assert format_value_error(1.0, 1e-15) == "1 ± 1e-15"
+
+
+def test_as_tsv_renders_every_column_including_the_widget_ones(qapp):
+    """The pop-out's Copy TSV dumps the whole table, hidden groups included."""
+    table = FitParameterTable()
+    table.populate(_model())
+    table.set_column_group_visible("links", False)
+    table.cellWidget(0, table.COL_LINK).setCurrentIndex(2)  # link group 2
+    table.cellWidget(1, table.COL_FIX).findChild(QCheckBox).setChecked(True)
+
+    lines = table.as_tsv().splitlines()
+    assert lines[0].split("\t") == ["Name", "Value", "Fix", "Min", "Max", "Batch", "Link", "Tie"]
+    assert len(lines) == table.rowCount() + 1
+
+    first = lines[1].split("\t")
+    assert first[0] == table.item(0, table.COL_NAME).text()
+    assert first[6] == "2"
+    assert lines[2].split("\t")[2] == "fixed"

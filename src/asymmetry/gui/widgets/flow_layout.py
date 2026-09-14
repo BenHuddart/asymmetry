@@ -105,6 +105,11 @@ class FlowLayout(QLayout):
         line_height = 0
 
         for item in self._items:
+            # A hidden widget reports a zero size hint but would still cost a
+            # spacing gap; rows that swap one button for another (Fit ↔ Stop) or
+            # reveal a chip only after a fit must not leave that gap behind.
+            if item.isEmpty():
+                continue
             hint = item.sizeHint()
             next_x = x + hint.width() + self._h_space
             if next_x - self._h_space > effective.right() and line_height > 0:

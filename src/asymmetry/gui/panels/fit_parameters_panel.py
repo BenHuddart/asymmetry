@@ -3039,13 +3039,16 @@ class FitParametersPanel(QWidget):
         """Cache a canvas' freshly-drawn pixels as the hover rings' background.
 
         Matplotlib fires this at the end of every completed draw, so the cache is
-        always the current picture — and re-blitting here is what lets a hover
-        that landed while a redraw was in flight survive it, with no second draw.
+        always the current picture. A hover that landed while the redraw was in
+        flight is put back by the ring timer rather than blitted here: the Qt
+        canvas runs a pending draw from inside its own paint event, and a blit is
+        a synchronous ``repaint`` — issued from there it recurses into the paint
+        ("Recursive repaint detected", a painter with no engine).
         """
         canvas = event.canvas
-        background = canvas.copy_from_bbox(canvas.figure.bbox)
-        self._hover_backgrounds[canvas] = background
-        self._blit_canvas_hover_rings(canvas, background)
+        self._hover_backgrounds[canvas] = canvas.copy_from_bbox(canvas.figure.bbox)
+        if self._hovered_row is not None:
+            self._hover_ring_timer.start()
 
     def _blit_canvas_hover_rings(self, canvas, background) -> None:
         """Repaint one canvas' *background* plus whichever of its rings show.
@@ -4037,6 +4040,7 @@ class FitParametersPanel(QWidget):
                 )
             )
         return FitResults(
+            title=f"Fit results — {format_param_label(name)}",
             parameter_name=name,
             x_label=self._x_axis_display_label(fit.x_key),
             runs=f"{included} / {len(self._rows)} runs · {len(fit.ranges)} range(s)",
@@ -4047,7 +4051,7 @@ class FitParametersPanel(QWidget):
         """Open (or raise) the results window for *name*'s model fit."""
         window = self._fit_results_windows.get(name)
         if window is None:
-            window = FitResultsWindow(self._fit_results(name), parent=self)
+            window = FitResultsWindow(self._fit_results(name), parent=self, editable=True)
             window.edit_requested.connect(self._open_model_fit_dialog)
             self._fit_results_windows[name] = window
         else:

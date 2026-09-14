@@ -1733,6 +1733,11 @@ class MainWindow(QMainWindow):
         install_provider = getattr(self._fit_panel, "set_full_fit_context_provider", None)
         if callable(install_provider):
             install_provider(self._get_full_fit_context)
+        #: Batch id most recently recorded per Trends-capable fit surface
+        #: ("batch" — the Fit panel's Batch tab; "grouped" — the Multi-Group
+        #: window's), which its ``Trends →`` hand-off selects in the Parameters
+        #: panel. A surface's entry exists exactly once its hand-off is armed.
+        self._last_batch_id_by_surface: dict[str, str] = {}
         self._multi_group_fit_window = MultiGroupFitWindow(self)
         self._multi_group_fit_window.grouped_fit_completed.connect(
             lambda grouped_datasets, results_dict: self._on_grouped_fit_completed(
@@ -1755,6 +1760,9 @@ class MainWindow(QMainWindow):
         self._multi_group_fit_window.count_fit_completed.connect(self._on_count_fit_completed)
         self._multi_group_fit_window.count_grouping_promoted.connect(
             self._on_count_grouping_promoted
+        )
+        self._multi_group_fit_window.trends_requested.connect(
+            functools.partial(self._on_trends_requested, "grouped")
         )
         # Bespoke ALC-mode build panel, swapped into the Fit dock when ALC mode
         # is on (see _sync_fit_dock_mode).
@@ -2032,6 +2040,9 @@ class MainWindow(QMainWindow):
         self._fit_panel.apply_wizard_phases_requested.connect(self._on_apply_wizard_phases)
         if hasattr(self._fit_panel, "batch_seeding_mode_changed"):
             self._fit_panel.batch_seeding_mode_changed.connect(self._sync_batch_seeding_menu)
+        self._fit_panel.trends_requested.connect(
+            functools.partial(self._on_trends_requested, "batch")
+        )
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         self._alc_scan_view.options_changed.connect(self._render_alc_scan)
@@ -10944,6 +10955,49 @@ class MainWindow(QMainWindow):
             self._data_browser.set_highlighted_runs(set())
         return refreshed
 
+    def _remember_trends_batch(self, surface: str, batch_id: str | None, panel) -> None:
+        """Record the batch *surface* just produced and arm its ``Trends →``.
+
+        A run that recorded no series (a single grouped fit) leaves the previous
+        batch — and the hand-off's enabled state — exactly as they were.
+        """
+        if batch_id is None:
+            return
+        self._last_batch_id_by_surface[surface] = batch_id
+        panel.set_trends_available(True)
+
+    def _rearm_trends_from_project(self) -> None:
+        """Arm each surface's ``Trends →`` on the newest restored batch of its kind.
+
+        A restored project carries its batches but no record of which fit
+        surface produced them beyond ``member_kind``, so the Fit panel's Batch
+        tab takes the newest ``runs`` series and the Multi-Group window the
+        newest ``groups`` one; a surface with no batch of its kind is disarmed.
+        """
+        self._last_batch_id_by_surface.clear()
+        for surface, member_kind, panel in (
+            ("batch", "runs", self._fit_panel),
+            ("grouped", "groups", self._multi_group_fit_window),
+        ):
+            batch_ids = [
+                series.batch_id
+                for series in self._project_model.batches.values()
+                if series.member_kind == member_kind
+            ]
+            if batch_ids:
+                self._last_batch_id_by_surface[surface] = batch_ids[-1]
+            panel.set_trends_available(bool(batch_ids))
+
+    def _on_trends_requested(self, surface: str) -> None:
+        """Bring the Parameters panel forward on *surface*'s last recorded batch.
+
+        The hand-off is armed only once a batch has been recorded, so the id is
+        always there by the time this runs.
+        """
+        self._parameters_stack.setCurrentWidget(self._fit_parameters_panel)
+        self._dock_fit_parameters.raise_()
+        self._fit_parameters_panel.select_series([self._last_batch_id_by_surface[surface]])
+
     def _on_trend_series_selected(self, batch_id: str) -> None:
         """Highlight the member runs of the active fit series in the data browser."""
         series = self._project_model.batch(batch_id)
@@ -12417,7 +12471,7 @@ class MainWindow(QMainWindow):
             self._fit_panel.set_bound_group(group_id, group_name)
         self.statusBar().showMessage(
             f"Loaded {len(analysis_datasets)} run(s) from group '{group_name}' into batch "
-            "fit — configure parameters and click Run Batch Fit."
+            "fit — configure parameters and click Run batch fit."
         )
 
     def _on_show_group_series_requested(self, group_id: str) -> None:
@@ -12848,7 +12902,10 @@ class MainWindow(QMainWindow):
             )
 
         self._fit_panel.register_global_fit_results(normalized_payloads)
+        # The Batch tab's form is frozen while its fit runs, so the roles and
+        # model read back off it here are the ones the batch was launched with.
         new_batch_id = self._record_global_fit_batch(normalized_payloads, global_params)
+        self._remember_trends_batch("batch", new_batch_id, self._fit_panel)
 
         # Set all fit curves in plot panel
         panel = self._frequency_plot_panel if is_frequency_fit else self._plot_panel
@@ -12930,7 +12987,10 @@ class MainWindow(QMainWindow):
         if not isinstance(grouped_datasets, list) or not isinstance(results_dict, dict):
             return
 
+        # The grouped surface's form is frozen while its fit runs, so the
+        # classification read back off it here is the launch's own.
         new_batch_id = self._record_grouped_fit_series(grouped_datasets, results_dict)
+        self._remember_trends_batch("grouped", new_batch_id, self._multi_group_fit_window)
         # Pull-based refresh: surface the newly recorded series in the trend panel
         # so it is not lost among older series — but only for a multi-run *batch*
         # grouped fit, which is the only case that records a FitSeries. A single
@@ -15996,6 +16056,7 @@ class MainWindow(QMainWindow):
         # already populated (``_restore_frequency_representations`` above); the
         # pull preserves per-series trend model-fits for surviving series.
         refreshed = self._refresh_trend_panel(surface=False)
+        self._rearm_trends_from_project()
         if fit_parameters_state and not refreshed and panel_supports_deferred_refresh:
             # No active representation to re-derive from (e.g. a non-fit view was
             # active at save): draw the deferred restore now so the panel isn't
@@ -16132,6 +16193,10 @@ class MainWindow(QMainWindow):
         if hasattr(self._multi_group_fit_window, "clear_grouped_single_state"):
             self._multi_group_fit_window.clear_grouped_single_state()
         self._fit_parameters_panel.clear()
+        # A cleared session has no batch for Trends → to select.
+        self._last_batch_id_by_surface.clear()
+        self._fit_panel.set_trends_available(False)
+        self._multi_group_fit_window.set_trends_available(False)
         # The ALC integral-scan view is not a fit panel; reset its scan data and
         # analysis (baseline model, regions, peaks) so they do not leak into the
         # next project and distort the new scatter's auto-range.

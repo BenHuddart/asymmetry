@@ -109,7 +109,7 @@ def test_flagged_fit_draws_greyed_preview_and_warns(app: QApplication) -> None:
     assert len(previews) == 1
     assert completed == []
     assert tab._last_fit_result is None
-    text = tab._result_label.text()
+    text = tab._results_card.content_html()
     assert "did not fully converge" in text
     assert "not recorded" in text
     tab.deleteLater()
@@ -132,5 +132,5 @@ def test_genuine_failure_draws_nothing(app: QApplication) -> None:
     )
 
     assert previews == []
-    assert "Fit failed" in tab._result_label.text()
+    assert "Fit failed" in tab._results_card.content_html()
     tab.deleteLater()
