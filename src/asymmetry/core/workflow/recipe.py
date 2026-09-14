@@ -17,6 +17,27 @@ values, and :meth:`FitRecipe.from_expression`, which seeds a fresh expression
 through :func:`~asymmetry.core.fitting.seeding.seed_parameters` — the same one
 seeding function every fit surface asks.
 
+A recipe is portable across a scan
+----------------------------------
+
+Whichever way it was built, a recipe's **bounds are the model's static
+defaults** — what :func:`~asymmetry.core.fitting.seeding.seed_parameters`
+returns for a bare :class:`~asymmetry.core.fitting.seeding.SeedContext`, and so
+exactly what a user gets typing the same expression into the desktop
+application. The fit wizard's own bounds are deliberately *not* carried: every
+one of them (``bounds_overrides`` in
+:mod:`~asymmetry.core.fitting.fit_wizard` — the window around a detected
+spectral line, 0.5–2× a seeded ``Delta``/``A_hf``/``r_muF``, the Nyquist and
+duration caps) describes *the one run the wizard screened*. Carrying a
+frequency window measured at 300 K into a fit at 380 K clamps the fit at a
+bound instead of letting it follow the physics, which is the opposite of what a
+recipe is for.
+
+Values are a different matter: a wizard fit's numbers are the best available
+starting point, so they *are* carried. The values that describe a run rather
+than the physics — an applied field, a spectral peak — are re-seeded per run by
+:func:`~asymmetry.core.workflow.series.fit_series`; see that module.
+
 ``rebin`` is a **fit** setting: the factor the recipe's consumers merge value
 bins by before fitting (1 = the reduced record as stored). It is unrelated to
 the wizard's own internal analysis rebinning, which is recorded separately in
@@ -82,17 +103,6 @@ class RecipeParameter:
             fixed=bool(data["fixed"]),
         )
 
-    @classmethod
-    def from_parameter(cls, parameter: Parameter) -> RecipeParameter:
-        """Capture a fitted or seeded :class:`Parameter`'s state."""
-        return cls(
-            name=str(parameter.name),
-            value=float(parameter.value),
-            min=float(parameter.min),
-            max=float(parameter.max),
-            fixed=bool(parameter.fixed),
-        )
-
     def to_parameter(self) -> Parameter:
         """The :class:`Parameter` a fit starts from."""
         return Parameter(
@@ -120,6 +130,13 @@ class FitRecipe:
     #: Where this recipe came from: ``{"wizard_run": N, "template_key": "..."}``
     #: for a screened one, ``{"user": True}`` for one built from an expression.
     source: dict[str, Any] = dataclasses_field(default_factory=lambda: {"user": True})
+    #: Parameters a *person* pinned — ``--fix``, ``--global``, or an edit to this
+    #: file. A series fit re-seeds run-bound parameters (an applied field, a
+    #: spectral peak) from each run's own record; one named here is never moved,
+    #: because the value was chosen rather than measured. Distinct from
+    #: :attr:`RecipeParameter.fixed`, which also covers a parameter the model or
+    #: the wizard holds by default and which *is* re-seeded per run.
+    pinned: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.rebin < 1:
@@ -141,6 +158,7 @@ class FitRecipe:
             "t_max": None if self.t_max is None else float(self.t_max),
             "rebin": int(self.rebin),
             "source": dict(self.source),
+            "pinned": list(self.pinned),
         }
 
     @classmethod
@@ -154,6 +172,7 @@ class FitRecipe:
             t_max=None if data["t_max"] is None else float(data["t_max"]),
             rebin=int(data["rebin"]),
             source=dict(data["source"]),
+            pinned=tuple(str(name) for name in data["pinned"]),
         )
 
     # -- what a fit needs ---------------------------------------------------
@@ -193,6 +212,10 @@ class FitRecipe:
         names parameters to release. A name neither the model nor the recipe
         carries raises :class:`KeyError` naming it — a typo must not silently
         do nothing to the fit.
+
+        A fixed name is recorded in :attr:`pinned`: the value came from a
+        person, so a series fit must never re-seed it from a run's own record.
+        Releasing a parameter un-pins it.
         """
         fix = dict(fix or {})
         free = list(free or [])
@@ -211,7 +234,12 @@ class FitRecipe:
             if parameter.name in free:
                 parameter = replace(parameter, fixed=False)
             rebuilt.append(parameter)
-        return replace(self, parameters=tuple(rebuilt))
+        pinned = (set(self.pinned) | set(fix)) - set(free)
+        return replace(
+            self,
+            parameters=tuple(rebuilt),
+            pinned=tuple(name for name in self.parameter_names if name in pinned),
+        )
 
     def with_window(self, *, t_min: float | None, t_max: float | None) -> FitRecipe:
         """A copy fitted over a different time window."""
@@ -223,17 +251,31 @@ class FitRecipe:
     def from_assessment(cls, assessment: Any, *, run_number: int) -> FitRecipe:
         """Build a recipe from a fit-wizard :class:`CandidateAssessment`.
 
-        The candidate's *fitted* values become the starting values, and its
-        bounds and fixed flags carry over unchanged — so a fit from this recipe
-        restarts exactly where the wizard's own fit of that template finished.
+        The candidate's *fitted* values become the starting values and its
+        fixed flags carry over, so a fit from this recipe restarts where the
+        wizard's own fit of that template finished. Its **bounds do not**: they
+        are the model's static defaults instead (see "A recipe is portable
+        across a scan" at the top of this module). Every bound the wizard sets
+        is measured from the single run it screened — a window around that
+        run's detected line, a multiple of that run's seeded width — so
+        carrying one would pin the fit of every *other* run in a scan at a
+        bound rather than letting it follow the physics.
         """
         model = assessment.template.model
+        defaults = seed_parameters(model, SeedContext())
+        fitted = assessment.fit_result.parameters
         return cls(
             expression=model.component_expression_string(),
             model_payload=model.to_dict(),
             parameters=tuple(
-                RecipeParameter.from_parameter(parameter)
-                for parameter in assessment.fit_result.parameters
+                RecipeParameter(
+                    name=name,
+                    value=float(fitted[name].value),
+                    min=defaults[name].min,
+                    max=defaults[name].max,
+                    fixed=bool(fitted[name].fixed),
+                )
+                for name in model.param_names
             ),
             source={
                 "wizard_run": int(run_number),
@@ -258,6 +300,9 @@ class FitRecipe:
         function every fit surface seeds through. Given a *dataset* the seeds
         additionally read that record's own amplitude/background scale and its
         applied field; without one they are the components' static defaults.
+        Only the *values* differ between those two cases — the seeding layers
+        above the first set values, never bounds — so a recipe's bounds are the
+        model's static defaults either way.
         """
         model = CompositeModel.from_expression(expression)
         context = SeedContext(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +14,11 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.fit_wizard import CandidateAssessment, CandidateTemplate
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
-from asymmetry.core.fitting.seeding import record_scale_estimate
+from asymmetry.core.fitting.seeding import (
+    SeedContext,
+    record_scale_estimate,
+    seed_parameters,
+)
 from asymmetry.core.workflow.recipe import FitRecipe, RecipeParameter
 from asymmetry.core.workflow.workdir import WorkDir
 
@@ -57,6 +62,31 @@ def _assessment() -> CandidateAssessment:
     )
 
 
+def _oscillatory_assessment() -> CandidateAssessment:
+    """An assessment carrying the narrow bounds the wizard sets on one run.
+
+    The frequency window is the kind :mod:`asymmetry.core.fitting.fit_wizard`
+    builds around a detected spectral line, and the rate ceiling the kind it
+    derives from the record's duration — both measurements of *that run*.
+    """
+    model = CompositeModel.from_expression("(Oscillatory * Exponential) + Constant")
+    parameters = ParameterSet(
+        [
+            Parameter(name="A_1", value=4.75, min=0.0, max=800.0),
+            Parameter(name="frequency", value=10.3564, min=9.3661, max=11.3457),
+            Parameter(name="phase", value=1.96, min=-math.pi, max=math.pi, fixed=True),
+            Parameter(name="Lambda", value=1.0, min=0.0, max=8.2919),
+            Parameter(name="A_bg", value=40.1, min=-300.0, max=300.0),
+        ]
+    )
+    base = _assessment()
+    return replace(
+        base,
+        template=replace(base.template, key="oscillatory_exp_constant", model=model),
+        fit_result=FitResult(success=True, parameters=parameters),
+    )
+
+
 # -- construction -----------------------------------------------------------
 
 
@@ -89,17 +119,42 @@ def test_from_expression_with_a_dataset_seeds_the_records_own_scale(
     assert without["A_1"] != pytest.approx(amplitude)
 
 
-def test_from_assessment_keeps_the_fitted_values_bounds_and_fixed_flags() -> None:
+def test_from_assessment_keeps_the_fitted_values_and_fixed_flags() -> None:
     recipe = FitRecipe.from_assessment(_assessment(), run_number=102)
 
     assert recipe.source == {"wizard_run": 102, "template_key": "exp_constant"}
     by_name = {parameter.name: parameter for parameter in recipe.parameters}
     assert by_name["A_1"].value == pytest.approx(18.5)
-    assert by_name["A_1"].max == pytest.approx(50.0)
-    assert by_name["Lambda"].max == math.inf
+    assert by_name["Lambda"].value == pytest.approx(0.31)
     assert by_name["A_bg"].fixed is True
-    assert by_name["A_bg"].min == pytest.approx(-5.0)
     assert recipe.free_parameter_names() == ["A_1", "Lambda"]
+    # Nobody pinned anything by hand: the wizard's own Fix is not a pin.
+    assert recipe.pinned == ()
+
+
+def test_from_assessment_takes_bounds_from_the_model_not_from_the_wizard() -> None:
+    # Every bound the wizard sets is measured off the one run it screened — a
+    # window around that run's detected line, a multiple of that run's seeded
+    # width. Carrying one would clamp the fit of every other run in a scan, so
+    # the recipe gets the model's static defaults instead: exactly what a user
+    # typing the same expression into the GUI would get.
+    assessment = _oscillatory_assessment()
+    defaults = seed_parameters(assessment.template.model, SeedContext())
+
+    recipe = FitRecipe.from_assessment(assessment, run_number=102)
+
+    by_name = {parameter.name: parameter for parameter in recipe.parameters}
+    for name, default in defaults.items():
+        assert by_name[name].min == default.min, name
+        assert by_name[name].max == default.max, name
+
+    # The wizard's narrow frequency window is gone ...
+    assert by_name["frequency"].min == 0.0
+    assert by_name["frequency"].max == math.inf
+    # ... but its fitted value and its Fix state are not.
+    assert by_name["frequency"].value == pytest.approx(10.3564)
+    assert by_name["phase"].fixed is True
+    assert by_name["phase"].value == pytest.approx(1.96)
 
 
 def test_a_recipe_rejects_a_rebin_below_one_and_an_inverted_window() -> None:
@@ -160,6 +215,19 @@ def test_with_overrides_pins_and_releases_named_parameters() -> None:
     assert edited.free_parameter_names() == ["A_1", "A_bg"]
     # The original is untouched — a recipe is a value, not a mutable form.
     assert recipe.free_parameter_names() == ["A_1", "Lambda"]
+
+
+def test_fixing_a_parameter_records_that_a_person_pinned_it() -> None:
+    # The distinction a series fit needs: a value a person chose is never
+    # re-seeded from a run, while one the wizard or the model holds is.
+    recipe = FitRecipe.from_assessment(_assessment(), run_number=102)
+    assert recipe.pinned == ()
+
+    pinned = recipe.with_overrides(fix={"Lambda": 0.25})
+    assert pinned.pinned == ("Lambda",)
+    assert FitRecipe.from_dict(pinned.to_dict()).pinned == ("Lambda",)
+
+    assert pinned.with_overrides(free=["Lambda"]).pinned == ()
 
 
 def test_with_overrides_rejects_a_name_the_model_does_not_have() -> None:

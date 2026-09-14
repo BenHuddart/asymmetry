@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.series import ORDER_KEYS, fit_one, fit_series, order_values
 from asymmetry.core.workflow.workdir import WorkDir
@@ -170,6 +173,96 @@ def test_a_global_parameter_is_pinned_in_every_run(
     assert "A_bg" not in pinned.trend.columns
     for entry in pinned.results:
         assert entry["parameters"]["A_bg"] == pytest.approx(0.0)
+
+
+# -- run-bound values --------------------------------------------------------
+
+#: A longitudinal-field decoupling set: the applied field is the thing that
+#: changes run to run, and the model carries it as ``B_L``.
+_LF_EXPRESSION = "LongitudinalFieldKT + Constant"
+_LF_FIELDS = (50.0, 100.0, 200.0)
+
+
+def _lf_datasets() -> dict[int, MuonDataset]:
+    """Three synthetic longitudinal-field runs, each at its own field."""
+    model = CompositeModel.from_expression(_LF_EXPRESSION)
+    time = np.linspace(0.05, 8.0, 240)
+    datasets: dict[int, MuonDataset] = {}
+    for index, field in enumerate(_LF_FIELDS):
+        run = 200 + index
+        asymmetry = model.function(time, A_1=18.0, Delta=0.3, B_L=field, A_bg=0.5)
+        datasets[run] = MuonDataset(
+            time=time,
+            asymmetry=asymmetry,
+            error=np.full_like(time, 0.2),
+            metadata={"run_number": run, "field": field, "temperature": 10.0},
+        )
+    return datasets
+
+
+def _lf_recipe(datasets: dict[int, MuonDataset]) -> FitRecipe:
+    """An LF recipe seeded from the first run, with ``B_L`` held as the wizard would."""
+    first = datasets[min(datasets)]
+    recipe = FitRecipe.from_expression(_LF_EXPRESSION, dataset=first)
+    return replace(
+        recipe,
+        parameters=tuple(
+            replace(parameter, fixed=True) if parameter.name == "B_L" else parameter
+            for parameter in recipe.parameters
+        ),
+    )
+
+
+def test_fit_series_re_seeds_a_run_bound_parameter_from_each_runs_own_record() -> None:
+    # The recipe carries one field — the first run's. Every other run must be
+    # fitted at *its* field, or a decoupling scan is fitted at the wrong field
+    # everywhere but its first point. B_L stays held throughout.
+    datasets = _lf_datasets()
+
+    outcome = fit_series(datasets, _lf_recipe(datasets), order_key="field", name="lf")
+
+    fitted = {entry["run"]: entry["parameters"]["B_L"] for entry in outcome.results}
+    assert list(fitted.values()) == pytest.approx(list(_LF_FIELDS))
+    assert "B_L" not in outcome.free_params
+
+
+def test_a_hand_pinned_run_bound_parameter_keeps_the_value_a_person_chose() -> None:
+    # --fix is a decision, not a measurement off a run, so nothing re-seeds it.
+    datasets = _lf_datasets()
+    recipe = _lf_recipe(datasets).with_overrides(fix={"B_L": 7.0})
+
+    outcome = fit_series(datasets, recipe, order_key="field", name="lf-pinned")
+
+    assert [entry["parameters"]["B_L"] for entry in outcome.results] == pytest.approx(
+        [7.0] * len(_LF_FIELDS)
+    )
+
+
+def test_a_global_run_bound_parameter_is_held_at_the_recipes_value() -> None:
+    # "Global" means identical across the scan; re-seeding it per run would
+    # contradict the word.
+    datasets = _lf_datasets()
+    recipe = _lf_recipe(datasets)
+
+    outcome = fit_series(
+        datasets, recipe, order_key="field", global_params=["B_L"], name="lf-global"
+    )
+
+    recipe_field = next(p.value for p in recipe.parameters if p.name == "B_L")
+    assert [entry["parameters"]["B_L"] for entry in outcome.results] == pytest.approx(
+        [recipe_field] * len(_LF_FIELDS)
+    )
+
+
+def test_fit_one_starts_from_the_recipe_as_written() -> None:
+    # No re-seeding for a single fit: the caller aimed this recipe at this run.
+    datasets = _lf_datasets()
+    recipe = _lf_recipe(datasets)
+    last = max(datasets)
+
+    result = fit_one(datasets[last], recipe)
+
+    assert result["parameters"]["B_L"] == pytest.approx(_LF_FIELDS[0])
 
 
 def test_a_global_parameter_the_recipe_does_not_have_is_rejected(

@@ -21,6 +21,25 @@ free per run. (The desktop application routes a batch with a *free* global to
 this façade.) :func:`fit_series` enforces the pinning itself, so a global
 parameter cannot silently end up fitted per run.
 
+Run-bound values are re-seeded per run
+--------------------------------------
+
+A recipe carries one set of starting values, but some of those values describe
+*the run they were seeded from* rather than the physics being fitted: an
+applied field (``field``, ``B_L``) and a frequency-domain spectral peak.
+:func:`~asymmetry.core.fitting.seeding.seed_parameters` marks exactly those
+with :attr:`~asymmetry.core.fitting.seeding.Seed.run_bound`, and this function
+re-seeds each of them from *each run's own record* before fitting it — so a
+scan whose field changes run to run starts every fit at that run's field
+instead of at the field of whichever run the recipe came from.
+
+Two things are left alone. A parameter in :attr:`~asymmetry.core.workflow.recipe.FitRecipe.pinned`
+— pinned by ``--fix``, by ``--global``, or by a hand edit — keeps the value a
+person chose, since that value was not measured off a run. And a parameter the
+*model or the wizard* holds fixed is still re-seeded and still held: a pinned
+``B_L`` stays pinned, at each run's own field, which is the only reading of
+"held" that means anything across a scan.
+
 Nothing is dropped
 ------------------
 
@@ -36,9 +55,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.parameters import ParameterSet
 from asymmetry.core.fitting.result_summary import fit_result_summary
+from asymmetry.core.fitting.seeding import SeedContext, seed_parameters
 from asymmetry.core.fitting.series import fit_asymmetry_series
 from asymmetry.core.fitting.series_seeding import resolve_series_params
 from asymmetry.core.workflow.recipe import FitRecipe
@@ -144,13 +165,26 @@ class SeriesOutcome:
         }
 
 
-def _pinned_parameter_set(recipe: FitRecipe, global_params: Sequence[str]) -> ParameterSet:
-    """One run's starting parameters, with every global parameter held.
+def _run_parameter_set(
+    recipe: FitRecipe,
+    model: CompositeModel,
+    dataset: MuonDataset,
+    *,
+    global_params: Sequence[str],
+) -> ParameterSet:
+    """One run's starting parameters.
 
-    See the module docstring: a block-separable batch cannot fit a shared
-    parameter, so naming one global means pinning it.
+    Two departures from the recipe as written, both in the module docstring:
+    every global parameter is held (a block-separable batch cannot fit a shared
+    parameter, so naming one global means pinning it), and every *run-bound*
+    value that nobody pinned is re-seeded from this run's own record.
     """
     parameters = recipe.parameter_set()
+    kept = set(recipe.pinned) | set(global_params)
+    seeds = seed_parameters(model, SeedContext(dataset=dataset, field_gauss=dataset.field))
+    for name, seed in seeds.items():
+        if seed.run_bound and name not in kept:
+            parameters[name].value = seed.value
     for name in global_params:
         parameters[name].fixed = True
     return parameters
@@ -163,6 +197,11 @@ def _prepared(dataset: MuonDataset, recipe: FitRecipe) -> MuonDataset:
 
 def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
     """Fit one run with *recipe* and summarise the result.
+
+    Starts from the recipe exactly as written — no run-bound re-seeding. That
+    only makes sense across a scan, where the recipe came from a run other than
+    the one being fitted; a single fit the caller aimed at one run should do
+    what the recipe says.
 
     Returns :func:`~asymmetry.core.fitting.result_summary.fit_result_summary`
     output — values, uncertainties, χ², the quality verdict, ``params_at_bound``
@@ -195,9 +234,11 @@ def fit_series(
     """Fit *recipe* across every run, chained along *order_key*.
 
     ``global_params`` names the parameters held identical across the scan (see
-    the module docstring — they are pinned, not jointly fitted). Raises
-    :class:`ValueError` for an unknown order key or a run that does not record
-    it, and :class:`KeyError` for a global parameter the recipe does not carry.
+    the module docstring — they are pinned, not jointly fitted). Each run's
+    run-bound values are re-seeded from its own record first, as that section
+    describes. Raises :class:`ValueError` for an unknown order key or a run
+    that does not record it, and :class:`KeyError` for a global parameter the
+    recipe does not carry.
     """
     global_params = list(global_params)
     unknown = sorted(set(global_params) - set(recipe.parameter_names))
@@ -215,11 +256,15 @@ def fit_series(
     ]
     amplitude_param, frequency_param = resolve_series_params(model.param_names)
 
-    initial_params = {run: _pinned_parameter_set(recipe, global_params) for run in runs}
+    records = {run: _prepared(datasets_by_run[run], recipe) for run in runs}
+    initial_params = {
+        run: _run_parameter_set(recipe, model, records[run], global_params=global_params)
+        for run in runs
+    }
     free_params = [parameter.name for parameter in initial_params[runs[0]].free_parameters]
 
     outcome = fit_asymmetry_series(
-        [_prepared(datasets_by_run[run], recipe) for run in runs],
+        [records[run] for run in runs],
         model.function,
         global_params,
         local_params,
