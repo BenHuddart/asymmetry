@@ -346,6 +346,7 @@ def test_the_grouped_run_row_wraps_instead_of_widening_the_dock(qapp, settings) 
         tab.resize(char_width(_DOCK_CHARS), 1200)
         tab.show()
         qapp.processEvents()
+        floor_before = tab.minimumSizeHint().width()
 
         tab._render_fit_summary(
             {0: _result(0.98), 1: _result(1.9), 2: _result(1.0, success=False), 3: _result(1.1)},
@@ -357,7 +358,13 @@ def test_the_grouped_run_row_wraps_instead_of_widening_the_dock(qapp, settings) 
         assert tab._outcome_chip.isVisible()
         assert tab._outcome_chip.toolTip().startswith("4 groups: ")
         assert tab._rail_table.horizontalScrollBar().maximum() == 0
-        assert tab.minimumSizeHint().width() <= char_width(_DOCK_CHARS)
+        # The chip joins a wrapping row, so it can never raise the tab's floor.
+        # (Measured against the tab's own resting floor rather than a character
+        # budget: the floor holds fixed-pixel chrome — spin buttons, tool
+        # buttons — so a font-relative bound flips by a pixel or two with the
+        # application font, which differs between the CI runner and macOS and
+        # between test orderings.)
+        assert tab.minimumSizeHint().width() == floor_before
     finally:
         tab.close()
         tab.deleteLater()

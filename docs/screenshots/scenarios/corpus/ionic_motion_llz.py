@@ -236,6 +236,7 @@ class LlzGlobalResultScenario(CorpusScenario):
         from asymmetry.core.fitting.engine import FitEngine
         from asymmetry.core.fitting.parameters import Parameter, ParameterSet
         from asymmetry.gui.mainwindow import MainWindow
+        from asymmetry.gui.panels.fit.global_tab import FitLaunch
 
         window = MainWindow()
         window._on_fit()
@@ -283,7 +284,11 @@ class LlzGlobalResultScenario(CorpusScenario):
             t_max=FIT_TMAX,
         )
         global_tab._emit_global_fit_success(
-            model=model,
+            launch=FitLaunch(
+                model=model,
+                global_params=tuple(global_params),
+                datasets=tuple(datasets),
+            ),
             results_dict=results_dict,
             successful=results_dict,
             fitted_global=fitted_global,
