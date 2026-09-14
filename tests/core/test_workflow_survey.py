@@ -8,11 +8,12 @@ import pytest
 
 from asymmetry.core.workflow.survey import survey_folder
 from tests.core.conftest import (
+    ALL_RUNS,
     CALIBRATION_FIELD_G,
     CALIBRATION_RUN,
     DEADTIME_RUN,
-    SCAN_RUNS,
-    SCAN_TEMPERATURES,
+    ZF_RUNS,
+    ZF_TEMPERATURES,
 )
 
 
@@ -22,7 +23,7 @@ def survey(workflow_folder: Path):
 
 
 def test_survey_lists_every_run_file(survey) -> None:
-    assert [row.run_number for row in survey.runs] == [CALIBRATION_RUN, *SCAN_RUNS]
+    assert [row.run_number for row in survey.runs] == list(ALL_RUNS)
     assert not survey.truncated
 
 
@@ -41,10 +42,23 @@ def test_survey_reads_instrument_and_geometry_metadata(survey) -> None:
 def test_zero_field_runs_report_zf_despite_the_files_tf_stamp(survey) -> None:
     # Every run in the fixture carries field_state "TF"; the zero-field ones
     # must still survey as ZF, or a whole ISIS scan would be mislabelled.
-    for run_number in SCAN_RUNS:
+    for run_number in ZF_RUNS:
         row = survey.row(run_number)
         assert row.field_direction == "Transverse"
         assert row.geometry == "ZF"
+
+
+def test_survey_reports_detector_orientation_and_the_runs_note(survey) -> None:
+    # Both are what an agent has to reason from when a file records no field
+    # geometry; the orientation is a bank position, never a field direction.
+    row = survey.row(CALIBRATION_RUN)
+    assert row.detector_orientation == "Longitudinal"
+    assert row.notes == f"simulated {row.title}"
+    assert row.geometry == "TF"
+
+    data = survey.to_dict()["runs"][0]
+    assert data["detector_orientation"] == "Longitudinal"
+    assert data["notes"] == row.notes
 
 
 def test_survey_records_start_time_and_duration(survey) -> None:
@@ -70,8 +84,8 @@ def test_survey_groups_the_zero_field_scan_with_temperature_as_axis(survey) -> N
     scan = scans[0]
     assert scan.geometry == "ZF"
     assert scan.field == pytest.approx(0.0)
-    assert scan.runs == list(SCAN_RUNS)
-    assert scan.values == pytest.approx(list(SCAN_TEMPERATURES))
+    assert scan.runs == list(ZF_RUNS)
+    assert scan.values == pytest.approx(list(ZF_TEMPERATURES))
 
 
 def test_survey_reports_no_field_scan_when_no_two_runs_share_a_temperature(survey) -> None:
@@ -81,7 +95,7 @@ def test_survey_reports_no_field_scan_when_no_two_runs_share_a_temperature(surve
 def test_survey_round_trips_through_its_dict(survey) -> None:
     data = survey.to_dict()
     assert data["best_calibration_run"] == CALIBRATION_RUN
-    assert [row["run_number"] for row in data["runs"]] == [CALIBRATION_RUN, *SCAN_RUNS]
+    assert [row["run_number"] for row in data["runs"]] == list(ALL_RUNS)
     assert data["scans"][0]["axis"] == "temperature"
 
 

@@ -9,8 +9,13 @@ its result.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from asymmetry.cli._output import UserError
+
+if TYPE_CHECKING:
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.workflow.workdir import WorkDir
 
 
 def parse_run_spec(spec: str) -> list[int]:
@@ -89,6 +94,24 @@ def resolve_run(folder: str | Path, run_number: int) -> Path:
     return available[run_number][1]
 
 
+def reduced_datasets(workdir: WorkDir, runs: list[int]) -> dict[int, MuonDataset]:
+    """The stored reduced spectra for *runs*, keyed by run number.
+
+    The screening and fitting commands read their data from the work directory
+    rather than the raw files, so every one of them agrees on the reduction
+    that produced it. Raises :class:`UserError` naming the runs that have not
+    been reduced, because that is a step the user has to run first.
+    """
+    stored = set(workdir.reduced_runs())
+    missing = [run for run in runs if run not in stored]
+    if missing:
+        raise UserError(
+            f"Run(s) {', '.join(str(run) for run in missing)} have not been reduced into "
+            f"{workdir.root}; run 'asymmetry reduce' on them first."
+        )
+    return {run: workdir.reduced(run) for run in runs}
+
+
 def _range_text(runs: list[int]) -> str:
     if not runs:
         return "no runs"
@@ -97,4 +120,10 @@ def _range_text(runs: list[int]) -> str:
     return f"runs {runs[0]}-{runs[-1]}"
 
 
-__all__ = ["parse_run_spec", "resolve_run", "resolve_runs", "run_files"]
+__all__ = [
+    "parse_run_spec",
+    "reduced_datasets",
+    "resolve_run",
+    "resolve_runs",
+    "run_files",
+]

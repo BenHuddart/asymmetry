@@ -11,6 +11,7 @@ from asymmetry import __version__, cli
 from asymmetry.cli._output import SCHEMA, UserError
 from asymmetry.cli._runs import parse_run_spec, resolve_run, resolve_runs
 from tests.core.conftest import (
+    ALL_RUNS,
     CALIBRATION_ALPHA,
     CALIBRATION_RUN,
     DEADTIME_RUN,
@@ -78,7 +79,7 @@ def test_survey_json_payload_and_written_file(
     payload = _json_output(capsys)
     _assert_stamped(payload)
     survey = payload["survey"]
-    assert [row["run_number"] for row in survey["runs"]] == [CALIBRATION_RUN, *SCAN_RUNS]
+    assert [row["run_number"] for row in survey["runs"]] == list(ALL_RUNS)
     assert survey["best_calibration_run"] == CALIBRATION_RUN
 
     stored = json.loads((workdir / "survey.json").read_text(encoding="utf-8"))
@@ -289,6 +290,310 @@ def test_reduce_human_table_lists_every_run(workflow_folder: Path, tmp_path: Pat
     assert "A(0)/%" in out
     for run_number in SCAN_RUNS[:2]:
         assert str(run_number) in out
+
+
+# -- wizard -----------------------------------------------------------------
+
+
+def test_wizard_before_reduce_names_the_run_and_the_step_to_run(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    # Screening reads the reduced spectrum, not the file, so an un-reduced run
+    # must say so rather than silently reloading and re-reducing it.
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "wizard",
+                str(workflow_folder),
+                "--run",
+                str(SCAN_RUNS[0]),
+                "--workdir",
+                str(tmp_path / "wd"),
+            ]
+        )
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert str(SCAN_RUNS[0]) in err
+    assert "asymmetry reduce" in err
+
+
+def test_wizard_rejects_an_unknown_scope_preset(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "wizard",
+                str(workflow_folder),
+                "--run",
+                str(SCAN_RUNS[0]),
+                "--scope",
+                "nonsense",
+                "--workdir",
+                str(tmp_path / "wd"),
+            ]
+        )
+    assert exc.value.code == 1
+    assert "Unknown scope preset" in capsys.readouterr().err
+
+
+# -- fit / fit-series / trend ------------------------------------------------
+
+
+@pytest.fixture
+def fitting_workdir(workflow_folder: Path, tmp_path: Path):
+    """A work directory with the scan reduced and one recipe stored.
+
+    The recipe is built straight from an expression rather than by running the
+    wizard: these tests are about the ``fit``/``fit-series``/``trend``
+    commands, and a screening run would cost seconds of fitting to produce a
+    recipe they would not otherwise care about.
+    """
+    from asymmetry.core.workflow.recipe import FitRecipe
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    workdir = tmp_path / "wd"
+    cli.main(
+        [
+            "reduce",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}",
+            "--workdir",
+            str(workdir),
+        ]
+    )
+    stored = WorkDir(workdir)
+    stored.write_recipe(
+        "relax",
+        FitRecipe.from_expression("Exponential + Constant", dataset=stored.reduced(SCAN_RUNS[0])),
+    )
+    return workdir
+
+
+def test_fit_reports_the_parameter_table_and_the_quality_verdict(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "fit",
+            str(workflow_folder),
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--recipe",
+            "relax",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "Exponential + Constant" in out
+    assert "Lambda" in out
+    assert "chi2_red" in out
+
+
+def test_fit_with_fix_pins_the_parameter_at_the_given_value(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "fit",
+            str(workflow_folder),
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--recipe",
+            "relax",
+            "--fix",
+            "A_bg=0",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    payload = _json_output(capsys)
+    _assert_stamped(payload)
+    assert payload["fit"]["parameters"]["A_bg"] == pytest.approx(0.0)
+    assert payload["fit"]["free_params"] == ["A_1", "Lambda"]
+    assert "A_bg" not in payload["fit"]["uncertainties"]
+    # The stored recipe is unchanged — the override applies to this fit only.
+    stored = json.loads((fitting_workdir / "recipes" / "relax.json").read_text(encoding="utf-8"))
+    assert all(not entry["fixed"] for entry in stored["parameters"])
+
+
+def test_fit_rejects_a_fix_that_names_no_parameter(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "fit",
+                str(workflow_folder),
+                "--run",
+                str(SCAN_RUNS[0]),
+                "--recipe",
+                "relax",
+                "--fix",
+                "Nope=1",
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert "Nope is not a parameter" in capsys.readouterr().err
+
+
+def test_fit_rejects_a_recipe_name_the_workdir_does_not_hold(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "fit",
+                str(workflow_folder),
+                "--run",
+                str(SCAN_RUNS[0]),
+                "--recipe",
+                "missing",
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert "No recipe 'missing'" in capsys.readouterr().err
+
+
+def test_fit_series_writes_a_stamped_series_file(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "fit-series",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}",
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--name",
+            "scan",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    payload = _json_output(capsys)
+    _assert_stamped(payload)
+    assert [entry["run"] for entry in payload["series"]["results"]] == list(SCAN_RUNS)
+
+    stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
+    assert stored["schema"] == SCHEMA
+    assert stored["asymmetry_version"] == __version__
+    assert stored["order_key"] == "temperature"
+
+
+def test_fit_series_defaults_its_name_from_the_recipe(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "fit-series",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+            "--recipe",
+            "relax",
+            "--order",
+            "run",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    assert (fitting_workdir / "series" / "series-relax.json").exists()
+
+
+def test_fit_series_rejects_a_global_the_recipe_does_not_have(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "fit-series",
+                str(workflow_folder),
+                "--runs",
+                f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+                "--recipe",
+                "relax",
+                "--order",
+                "run",
+                "--global",
+                "Nope",
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert "--global names Nope" in capsys.readouterr().err
+
+
+def test_trend_csv_has_one_header_line_and_one_row_per_run(
+    workflow_folder: Path, fitting_workdir: Path, tmp_path: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "fit-series",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}",
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--name",
+            "scan",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    capsys.readouterr()
+
+    csv_path = tmp_path / "out" / "trend.csv"
+    cli.main(
+        [
+            "trend",
+            str(workflow_folder),
+            "--series",
+            "scan",
+            "--csv",
+            str(csv_path),
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "Lambda" in out
+
+    lines = csv_path.read_text(encoding="utf-8").strip().split("\n")
+    assert lines[0].split(",")[:2] == ["run", "x"]
+    assert len(lines) == 1 + len(SCAN_RUNS)
+
+
+def test_trend_names_the_series_the_workdir_does_hold(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "trend",
+                str(workflow_folder),
+                "--series",
+                "nope",
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert "No series 'nope'" in capsys.readouterr().err
 
 
 # -- dispatcher -------------------------------------------------------------

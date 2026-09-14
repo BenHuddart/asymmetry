@@ -9,6 +9,7 @@ import pytest
 
 from asymmetry import __version__
 from asymmetry.core.io import load
+from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.reduction import (
     ReductionSettings,
     reduce_run,
@@ -152,3 +153,48 @@ def test_reduced_runs_lists_what_is_stored(reduced) -> None:
     assert workdir.reduced_runs() == []
     workdir.write_reduced(dataset, entry)
     assert workdir.reduced_runs() == [entry.run_number]
+
+
+# -- screening, recipes and series ------------------------------------------
+
+
+def test_a_wizard_payload_is_stamped_and_read_back(reduced) -> None:
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    assert workdir.screened_runs() == []
+
+    workdir.write_wizard(102, {"recommended_key": "exp_constant"})
+
+    stored = workdir.read_wizard(102)
+    assert stored["schema"] == SCHEMA
+    assert stored["asymmetry_version"] == __version__
+    assert stored["recommended_key"] == "exp_constant"
+    assert workdir.screened_runs() == [102]
+    with pytest.raises(KeyError, match="has not been screened"):
+        workdir.read_wizard(999)
+
+
+def test_a_recipe_round_trips_through_the_work_directory(reduced) -> None:
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    recipe = FitRecipe.from_expression("Exponential + Constant")
+
+    path = workdir.write_recipe("relax", recipe)
+
+    assert path == workdir.recipes_dir / "relax.json"
+    assert workdir.read_recipe("relax") == recipe
+    assert workdir.recipe_names() == ["relax"]
+    with pytest.raises(KeyError, match="No recipe"):
+        workdir.read_recipe("missing")
+
+
+def test_a_series_payload_is_stamped_and_read_back(reduced) -> None:
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    assert workdir.series_names() == []
+
+    workdir.write_series("scan", {"name": "scan", "results": []})
+
+    stored = workdir.read_series("scan")
+    assert stored["schema"] == SCHEMA
+    assert stored["name"] == "scan"
+    assert workdir.series_names() == ["scan"]
+    with pytest.raises(KeyError, match="No series"):
+        workdir.read_series("missing")

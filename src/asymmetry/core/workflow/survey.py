@@ -119,6 +119,14 @@ class RunRow:
     field: float | None
     field_direction: str
     geometry: str | None
+    #: Detector-bank orientation as the file records it. Never a geometry: a
+    #: bank orientation says nothing about which way the applied field points
+    #: (see ``docs/porting/field-geometry/``). It is reported because it is
+    #: often the only clue to the sample environment a metadata-poor file gives.
+    detector_orientation: str
+    #: The run's free-text note (NeXus ``notes``, which the loaders surface as
+    #: ``comment``), where an experimenter records what a run actually was.
+    notes: str
     n_histograms: int
     n_points: int
     bin_width_us: float
@@ -140,6 +148,8 @@ class RunRow:
             "field": self.field,
             "field_direction": self.field_direction,
             "geometry": self.geometry,
+            "detector_orientation": self.detector_orientation,
+            "notes": self.notes,
             "n_histograms": self.n_histograms,
             "n_points": self.n_points,
             "bin_width_us": self.bin_width_us,
@@ -256,6 +266,10 @@ def build_run_row(
         field=dataset.field,
         field_direction=str(metadata.get("field_direction") or metadata.get("field_state") or ""),
         geometry=run_geometry(metadata),
+        detector_orientation=str(metadata.get("detector_orientation") or "").strip(),
+        # The NeXus loaders read the ``notes`` node into ``comment``; PSI and
+        # MusrRoot also record a ``comment``. Either spelling is the same field.
+        notes=str(metadata.get("notes") or metadata.get("comment") or "").strip(),
         n_histograms=len(run.histograms),
         n_points=dataset.n_points,
         bin_width_us=float(run.histograms[0].bin_width),

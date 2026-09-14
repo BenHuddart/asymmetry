@@ -52,17 +52,19 @@ def run(args: argparse.Namespace) -> None:
 
 def _render(survey, survey_path: Path) -> str:
     """The human-readable survey: the run table, then candidates and scans."""
-    headers = ["run", "T/K", "B/G", "geom", "hist", "points", "dt", "title"]
+    headers = ["run", "T/K", "B/G", "geom", "orient", "hist", "points", "dt", "title", "notes"]
     rows = [
         [
             str(row.run_number),
             format_number(row.temperature, 2),
             format_number(row.field, 2),
             row.geometry or "-",
+            row.detector_orientation or "-",
             str(row.n_histograms),
             str(row.n_points),
             "yes" if row.has_file_deadtime else "no",
             row.title,
+            row.notes or "-",
         ]
         for row in survey.runs
     ]

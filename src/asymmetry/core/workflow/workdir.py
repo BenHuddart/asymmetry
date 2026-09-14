@@ -6,6 +6,9 @@ Every workflow command reads and writes ``<folder>/.asymmetry/``::
     survey.json            # output of `survey`
     reduced/<run>.npz      # time, asymmetry, error
     reduced/<run>.json     # run metadata + settings + digest
+    wizard/<run>.json      # screening payload: recommendation, narrative, recipe
+    recipes/<name>.json    # a fit recipe (model + parameters + window)
+    series/<name>.json     # per-run results, trend table, quality flags
 
 so a later command can pick up a reduced spectrum without reloading and
 re-reducing the file, and an agent has state between invocations without a
@@ -32,6 +35,8 @@ import numpy as np
 
 from asymmetry import __version__
 from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.workflow.jsonio import write_json as _write_json
+from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.reduction import ReductionSettings
 
 #: Schema version stamped into every file the work directory writes.
@@ -170,9 +175,22 @@ class WorkDir:
     def reduced_dir(self) -> Path:
         return self.root / "reduced"
 
+    @property
+    def wizard_dir(self) -> Path:
+        return self.root / "wizard"
+
+    @property
+    def recipes_dir(self) -> Path:
+        return self.root / "recipes"
+
+    @property
+    def series_dir(self) -> Path:
+        return self.root / "series"
+
     def ensure(self) -> None:
         """Create the directory layout."""
-        self.reduced_dir.mkdir(parents=True, exist_ok=True)
+        for directory in (self.reduced_dir, self.wizard_dir, self.recipes_dir, self.series_dir):
+            directory.mkdir(parents=True, exist_ok=True)
 
     # -- survey -------------------------------------------------------------
 
@@ -272,9 +290,77 @@ class WorkDir:
         """Run numbers with a stored reduction, ascending (empty before any write)."""
         return sorted(int(path.stem) for path in self.reduced_dir.glob("*.json"))
 
+    # -- screening ----------------------------------------------------------
 
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    def wizard_path(self, run_number: int) -> Path:
+        """Where the screening payload for *run_number* is stored."""
+        return self.wizard_dir / f"{int(run_number)}.json"
+
+    def write_wizard(self, run_number: int, payload: dict[str, Any]) -> Path:
+        """Write ``wizard/<run>.json`` and return its path."""
+        self.ensure()
+        path = self.wizard_path(run_number)
+        _write_json(path, {"schema": SCHEMA, "asymmetry_version": __version__} | payload)
+        return path
+
+    def read_wizard(self, run_number: int) -> dict[str, Any]:
+        """The stored screening payload; :class:`KeyError` when there is none."""
+        path = self.wizard_path(run_number)
+        if not path.exists():
+            raise KeyError(f"Run {run_number} has not been screened into {self.root}")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def screened_runs(self) -> list[int]:
+        """Run numbers with a stored screening, ascending."""
+        return sorted(int(path.stem) for path in self.wizard_dir.glob("*.json"))
+
+    # -- recipes ------------------------------------------------------------
+
+    def recipe_path(self, name: str) -> Path:
+        """Where the recipe called *name* is stored."""
+        return self.recipes_dir / f"{name}.json"
+
+    def write_recipe(self, name: str, recipe: FitRecipe) -> Path:
+        """Write ``recipes/<name>.json`` and return its path."""
+        self.ensure()
+        path = self.recipe_path(name)
+        _write_json(path, recipe.to_dict())
+        return path
+
+    def read_recipe(self, name: str) -> FitRecipe:
+        """The stored recipe; :class:`KeyError` when there is none by that name."""
+        path = self.recipe_path(name)
+        if not path.exists():
+            raise KeyError(f"No recipe {name!r} in {self.recipes_dir}")
+        return FitRecipe.from_dict(json.loads(path.read_text(encoding="utf-8")))
+
+    def recipe_names(self) -> list[str]:
+        """The names of every stored recipe, sorted."""
+        return sorted(path.stem for path in self.recipes_dir.glob("*.json"))
+
+    # -- series -------------------------------------------------------------
+
+    def series_path(self, name: str) -> Path:
+        """Where the series called *name* is stored."""
+        return self.series_dir / f"{name}.json"
+
+    def write_series(self, name: str, payload: dict[str, Any]) -> Path:
+        """Write ``series/<name>.json`` and return its path."""
+        self.ensure()
+        path = self.series_path(name)
+        _write_json(path, {"schema": SCHEMA, "asymmetry_version": __version__} | payload)
+        return path
+
+    def read_series(self, name: str) -> dict[str, Any]:
+        """The stored series payload; :class:`KeyError` when there is none."""
+        path = self.series_path(name)
+        if not path.exists():
+            raise KeyError(f"No series {name!r} in {self.series_dir}")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def series_names(self) -> list[str]:
+        """The names of every stored series, sorted."""
+        return sorted(path.stem for path in self.series_dir.glob("*.json"))
 
 
 __all__ = [

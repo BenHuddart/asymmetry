@@ -10,10 +10,7 @@ Exit codes (the contract every subcommand keeps):
 
 from __future__ import annotations
 
-import json
 from typing import Any
-
-import numpy as np
 
 from asymmetry import __version__
 
@@ -35,17 +32,19 @@ def payload(**fields: Any) -> dict[str, Any]:
     return {"schema": SCHEMA, "asymmetry_version": __version__, **fields}
 
 
-def _json_default(value: Any) -> Any:
-    if isinstance(value, np.ndarray):
-        return value.tolist()
-    if isinstance(value, (np.integer, np.floating, np.bool_)):
-        return value.item()
-    raise TypeError(f"{type(value).__name__} is not JSON-serialisable")
-
-
 def emit_json(data: dict[str, Any]) -> None:
-    """Print a payload as indented JSON on stdout."""
-    print(json.dumps(data, indent=2, default=_json_default))
+    """Print a payload as indented, standard JSON on stdout.
+
+    Standard: no ``Infinity``/``NaN`` tokens, which Python writes but ``jq``
+    and every other consumer reject — see
+    :mod:`asymmetry.core.workflow.jsonio`.
+    """
+    # Imported here, not at module scope: this module is loaded while the
+    # parser is built, on every invocation, and reaching into the workflow
+    # package pulls the whole analysis engine in with it.
+    from asymmetry.core.workflow.jsonio import dumps
+
+    print(dumps(data))
 
 
 def format_number(value: float | None, digits: int = 3) -> str:

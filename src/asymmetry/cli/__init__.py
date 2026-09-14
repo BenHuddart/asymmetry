@@ -1,10 +1,13 @@
 """Command-line interface for Asymmetry.
 
 ``asymmetry <command>`` drives the scriptable façade in
-:mod:`asymmetry.core.workflow`: ``survey`` a folder of runs, measure ``alpha``
-on a calibration run, ``reduce`` runs to asymmetry — plus the original ``info``
-file summary. Every command takes ``--json`` and writes its state into the
-work directory ``<folder>/.asymmetry`` so the next command can pick it up.
+:mod:`asymmetry.core.workflow`, in the order an analysis runs: ``survey`` a
+folder of runs, measure ``alpha`` on a calibration run, ``reduce`` runs to
+asymmetry, screen one of them with the fit ``wizard``, ``fit`` a run or a whole
+scan with ``fit-series``, and read the ``trend`` out of the result — plus the
+original ``info`` file summary. Every command takes ``--json`` and writes its
+state into the work directory ``<folder>/.asymmetry`` so the next command can
+pick it up.
 
 Exit codes: 0 on success, 1 on a user error (one line on stderr), 2 on an
 internal error (a traceback, because that is a bug worth reporting).
@@ -20,13 +23,26 @@ import traceback
 from asymmetry import __version__
 from asymmetry.cli._output import UserError
 from asymmetry.cli.commands import alpha as alpha_command
+from asymmetry.cli.commands import fit as fit_command
+from asymmetry.cli.commands import fit_series as fit_series_command
 from asymmetry.cli.commands import info as info_command
 from asymmetry.cli.commands import reduce as reduce_command
 from asymmetry.cli.commands import survey as survey_command
+from asymmetry.cli.commands import trend as trend_command
+from asymmetry.cli.commands import wizard as wizard_command
 
 #: Subcommand modules, in the order they appear in ``--help``: the workflow in
 #: the order an analysis runs, then the standalone file inspector.
-_COMMANDS = (survey_command, alpha_command, reduce_command, info_command)
+_COMMANDS = (
+    survey_command,
+    alpha_command,
+    reduce_command,
+    wizard_command,
+    fit_command,
+    fit_series_command,
+    trend_command,
+    info_command,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
