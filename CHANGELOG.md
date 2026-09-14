@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-09-14
+
 ### Added
 
 - **Resting the pointer on a row of the Fitted parameters window now rings that
