@@ -210,6 +210,10 @@ Model suggestions are in brackets.
 
 ### Phase 3 — plots, `agent` extra, skill packaging commands [Sonnet]
 
+Also: collapse warning tracebacks on stderr (the wizard emits
+`AsymmetryScaleWarning` stack traces from candidate seeding) into one line
+per distinct warning unless `--verbose`; an agent reads stderr.
+
 - `cli/plots.py`: data + fit per run, wizard candidate overlay, one trend
   PNG per parameter with error bars. Agg backend, fixed size, no GUI import.
 - `--plot` on `reduce`, `wizard`, `fit`, `fit-series`, `trend`.
@@ -343,6 +347,29 @@ what changed in the skill)
   copied into the repo. Deadtime default matches the GUI (off); the skill
   hints that ISIS data should normally be reduced with `--deadtime from_file`
   when the survey reports file deadtime values.
+- 2026-09-14 (Phase 2 gate): a recipe built from a wizard assessment takes
+  start values and fixed flags from the wizard's fit but its **bounds from
+  the model's static defaults** (`seed_parameters(model, SeedContext())`).
+  Every bound the wizard sets is a per-run search window (the peak window,
+  0.5–2× a seeded Delta/A_hf/r_muF, Nyquist and duration caps) and carrying
+  them clamped the nickel series at the 300 K window edge. This diverges
+  from the GUI's Apply button, which copies the wizard's bounds into the
+  single-fit table; the recipe is meant to travel across a scan, the table
+  is not. Series fits also re-seed run-bound values (applied field, spectral
+  peak) from each run's own record unless a person pinned them, using the
+  existing `Seed.run_bound` marker; the recipe records pins in `pinned`.
+- 2026-09-14 (Phase 2 gate): `fit-series --global` **pins** a parameter at
+  its recipe value in every run; `fit_asymmetry_series` is block-separable
+  and cannot fit a shared parameter. A scripted simultaneous fit is not in
+  this PR.
+- 2026-09-14 (Phase 2 gate): `fit-series --start RUN` chains outward from a
+  chosen run (descending and ascending branches, each its own chain), so the
+  recommended flow is `wizard --run N` on the run with the clearest structure
+  then `fit-series --start N`. Chaining from the cold end with a recipe fitted
+  at 300 K lost the 100–250 K nickel runs; outward chaining recovers them.
+- 2026-09-14: `screen_templates` (explicit template lists) was left out of
+  the façade: without a `PeakAnalysis` seed context multiplet templates seed
+  every line at one frequency, which is not a fit of that template.
 
 ## Open questions for the maintainer
 
