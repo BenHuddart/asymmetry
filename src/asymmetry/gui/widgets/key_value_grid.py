@@ -6,11 +6,16 @@ than the content warrants. Labels are muted body text; values are monospaced so
 numbers line up, and the value text is selectable so a user can copy a figure.
 Values may be rich text (a chip from ``styles/widgets.py``) — set via
 :meth:`set_rows`, which repopulates without leaking the previous row widgets.
+
+``bold_labels`` switches the label column to a definition list, where the name
+is the *term* being explained rather than a field label — what the ⓘ popovers
+(:mod:`asymmetry.gui.widgets.info_popover`) show.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QGridLayout, QLabel, QWidget
 
 from asymmetry.gui.styles import tokens
@@ -22,8 +27,11 @@ from asymmetry.gui.styles.widgets import clear_layout
 class KeyValueGrid(QWidget):
     """A compact, chrome-free grid of read-only ``name → value`` result rows."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, bold_labels: bool = False) -> None:
         super().__init__(parent)
+        self._label_font = mono_font(
+            SIZE_BODY, QFont.Weight.Bold if bold_labels else QFont.Weight.Normal
+        )
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setHorizontalSpacing(12)
@@ -41,7 +49,7 @@ class KeyValueGrid(QWidget):
         clear_layout(self._grid)
         for row, (label_text, value_text) in enumerate(rows):
             label = QLabel(str(label_text))
-            label.setFont(mono_font(SIZE_BODY))
+            label.setFont(self._label_font)
             label.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
             label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
 

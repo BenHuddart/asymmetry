@@ -11,10 +11,11 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QSettings  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
+from PySide6.QtCore import QSettings, Qt  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget  # noqa: E402
 
 from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME  # noqa: E402
+from asymmetry.gui.widgets.flow_layout import FlowLayout  # noqa: E402
 from asymmetry.gui.widgets.panel_section import PanelSection  # noqa: E402
 
 
@@ -161,3 +162,40 @@ def test_persisted_value_overrides_constructor_default(qapp, settings) -> None:
         "Advanced", collapsible=True, expanded=True, settings_key=key, settings=settings
     )
     assert not section.isExpanded()
+
+
+def test_add_header_widget_shares_a_wrapping_row_with_the_title(qapp):
+    """The title and the header widget wrap together, before the suffix.
+
+    A long uppercase title beside a rail of chips must not set the section's
+    minimum width: the two share one flow host, so the header's floor is its
+    widest single item and the rail wraps under the title in a narrow dock.
+    """
+    section = PanelSection("Parameter classification")
+    rail = QPushButton("Bounds")
+    section.add_header_widget(rail)
+    section.set_title_suffix("3 shown")
+
+    host = rail.parent()
+    assert host is section._header_label.parent()
+    assert host.parent() is section._header_row
+    assert isinstance(host.layout(), FlowLayout)
+    header = section._header_row.layout()
+    assert header.indexOf(host) < header.indexOf(section._suffix_label)
+    assert header.stretch(header.indexOf(host)) == 1
+    widest = max(section._header_label.minimumSizeHint().width(), rail.minimumSizeHint().width())
+    assert host.minimumSizeHint().width() <= widest
+
+
+def test_a_header_widget_does_not_toggle_a_collapsible_section(qapp, settings):
+    """A press on the rail stops there rather than reaching the disclosure row."""
+    section = PanelSection(
+        "Parameters", collapsible=True, expanded=True, settings_key="t/p", settings=settings
+    )
+    rail = QWidget()
+    section.add_header_widget(rail)
+
+    assert rail.testAttribute(Qt.WidgetAttribute.WA_NoMousePropagation)
+    # The header row itself still toggles.
+    section._header_row.clicked.emit()
+    assert section.isExpanded() is False

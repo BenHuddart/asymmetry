@@ -20,6 +20,7 @@ from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.representation import RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
+from asymmetry.gui.panels.fit.single_tab import ADD_TO_SERIES_ACTION
 from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
 
@@ -466,6 +467,11 @@ def test_add_compatible_single_fit_to_series(mw, monkeypatch):
     assert 13 not in series.member_run_numbers
 
 
+def _add_to_series(single_tab):
+    """The Single tab's results-card ``Add to series…`` hand-off."""
+    return single_tab._results_card._actions[ADD_TO_SERIES_ACTION]
+
+
 def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
     for run_number, field in [(10, 100.0), (11, 50.0), (12, 150.0)]:
         mw._data_browser.add_dataset(_dataset(run_number, field))
@@ -502,13 +508,13 @@ def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
 
 
 def test_add_to_series_action_disabled_without_a_completed_fit(mw):
-    """F18: the menu action must not silently do nothing — disable it instead."""
+    """F18: the hand-off must not silently do nothing — disable it instead."""
     mw._data_browser.add_dataset(_dataset(20, 100.0))
     mw._on_dataset_selected(20)
     single_tab = mw._fit_panel._single_tab
 
-    assert single_tab._add_to_series_action.isEnabled() is False
-    assert single_tab._add_to_series_action.toolTip() != ""
+    assert _add_to_series(single_tab).isEnabled() is False
+    assert _add_to_series(single_tab).toolTip() != ""
 
 
 def test_add_to_series_action_re_enables_on_reselecting_a_fitted_run(mw, monkeypatch):
@@ -538,13 +544,13 @@ def test_add_to_series_action_re_enables_on_reselecting_a_fitted_run(mw, monkeyp
     mw._on_dataset_selected(23)
 
     single_tab = mw._fit_panel._single_tab
-    assert single_tab._add_to_series_action.isEnabled() is True
+    assert _add_to_series(single_tab).isEnabled() is True
 
     mw._on_dataset_selected(24)
-    assert single_tab._add_to_series_action.isEnabled() is False
+    assert _add_to_series(single_tab).isEnabled() is False
 
     mw._on_dataset_selected(23)
-    assert single_tab._add_to_series_action.isEnabled() is True
+    assert _add_to_series(single_tab).isEnabled() is True
 
 
 def test_add_to_series_offers_create_new_series_when_none_compatible(mw, monkeypatch):

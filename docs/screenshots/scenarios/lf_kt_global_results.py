@@ -89,8 +89,11 @@ class LfKtGlobalResultsScenario(Scenario):
         global_tab._emit_global_fit_success(
             model=model,
             results_dict=results_dict,
+            successful=results_dict,
             fitted_global=fitted_global,
-            global_param_names=global_params,
+            detail_html=global_tab._batch_detail_html(
+                results_dict, results_dict, {}, global_params, ""
+            ),
         )
         _process_events_for(milliseconds=120)
 

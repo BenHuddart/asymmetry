@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.panels.fit.global_tab import FitLaunch
 from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
 
 pytestmark = [pytest.mark.gui]
@@ -60,9 +61,10 @@ def test_single_fit_surfaces_engine_warning(qapp: QApplication) -> None:
     tab._run_fit()
     assert tab.wait_for_fit()
 
-    rendered = tab._result_label.text()
-    # The result box shows the converged line AND the advisory warning beneath it.
-    assert "Fit converged" in rendered
+    rendered = tab._results_card.content_html()
+    # The card carries the converged verdict AND the advisory warning beneath it.
+    assert "Fit ✓" in rendered
+    assert "converged" in rendered
     assert "⚠" in rendered
     assert "Fixed-frequency trap" in rendered
 
@@ -77,14 +79,15 @@ def test_batch_fit_surfaces_engine_warnings_deduped(qapp: QApplication) -> None:
     }
 
     tab._emit_global_fit_success(
-        model=model,
+        launch=FitLaunch(model=model, global_params=(), datasets=()),
         results_dict=results_dict,
+        successful=results_dict,
         fitted_global=ParameterSet(),
-        global_param_names=[],
+        detail_html=tab._batch_detail_html(results_dict, results_dict, {}, [], ""),
     )
 
-    rendered = tab._result_text.toHtml()
-    assert "Batch fit converged" in rendered
+    rendered = tab._results_card.content_html()
+    assert tab._results_card.tag_text() == "Batch ✓"
     assert "Fixed-frequency trap" in rendered
     # Deduped: the identical warning fired for both runs but is shown a single time.
     assert rendered.count("Fixed-frequency trap") == 1

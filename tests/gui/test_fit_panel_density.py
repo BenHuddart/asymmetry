@@ -1,13 +1,15 @@
-"""Vertical-density regressions for the fit panel on a 13-inch screen.
+"""Density regressions for the fit panel on a 13-inch screen.
 
-Covers the F3 GUI-review findings:
+Covers the F3 GUI-review findings, as the Fit tab refresh now answers them:
 
-* **P1-2** — the advanced model actions (Drop background / Send to Batch /
-  Add to Series) must be folded into a single "⋯ More…" overflow menu so the
-  PARAMETERS table and the Fit button rise into view instead of falling below
-  the fold. ("Share with Group" was a fourth folded action here until D5
-  (`docs/studies/datagroup-fitseries-unification.md`) retired it in favour of
-  refresh-unless-fitted carry-forward.)
+* **P1-2** — the model actions are one wrapping row (``Edit…`` · ``Wizard…``)
+  rather than a stack of full-width buttons, so the PARAMETERS table and the
+  Fit button stay above the fold. The hand-offs that used to hide in a
+  "⋯ More…" overflow menu are the results card's own buttons; ``Drop
+  background`` is retired (the term is removed in the function editor).
+* **P1-4** — the resting parameter table fits the inspector dock without a
+  horizontal scrollbar, and the tab's minimum width is set by the fit-range
+  row rather than by the table.
 * **P1-5** — the fit wizards must open no larger than the available screen.
 * **P2-3** — ``ModelFitDialog`` must size against the available screen.
 * **P3-3** — the trend panel must show a "load a batch series" hint while empty.
@@ -16,6 +18,7 @@ Covers the F3 GUI-review findings:
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -25,23 +28,78 @@ pytestmark = [pytest.mark.gui]
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QSettings
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QApplication, QPushButton, QToolButton
+from PySide6.QtWidgets import QApplication, QMenu, QPushButton, QToolButton
 
-from asymmetry.gui.panels.fit_panel import SingleFitTab
+from asymmetry.core.data.dataset import MuonDataset
+from asymmetry.core.fitting.engine import FitResult
+from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.gui.panels.fit import global_tab as global_tab_module
+from asymmetry.gui.panels.fit.single_tab import (
+    ADD_TO_SERIES_ACTION,
+    DIAGNOSTIC_ACTION,
+    SEND_TO_BATCH_ACTION,
+)
+from asymmetry.gui.panels.fit_panel import GlobalFitTab, SingleFitTab
+from asymmetry.gui.styles.metrics import char_width
 
 _DECK_DEFAULT_WIDTH = 360  # INSPECTOR_DOCK_DEFAULT_WIDTH
 
-_ADVANCED_ACTION_LABELS = {
-    "Drop background",
-    "Send to Batch",
-    "Add to Series...",
-}
+#: The inspector dock the Fit tab is designed against, in characters (~320 px).
+#: The resting column set is 41 characters wide, so the tab needs that plus its
+#: own layout margins and the table's frame.
+_DOCK_CHARS = 46
+
+#: Labels that must not reappear as buttons or menu entries on the Single tab.
+_RETIRED_LABELS = {"Drop background", "More…", "Send to Batch", "Add to Series..."}
 
 
 @pytest.fixture
 def app():
     return QApplication.instance() or QApplication([])
+
+
+def _run_stub_fit(tab: SingleFitTab) -> None:
+    """Record a converged fit on *tab* against a stub engine, so the χ²ᵣ chip shows."""
+    names = list(tab._composite_model.param_names)
+
+    def _engine_fit(ds, model_fn, parameters, *, minos=False, cancel_callback=None):
+        return FitResult(
+            success=True,
+            chi_squared=60.0,
+            reduced_chi_squared=1.0,
+            dof=60,
+            parameters=ParameterSet(
+                [Parameter(name=name, value=float(i + 1)) for i, name in enumerate(names)]
+            ),
+            uncertainties=dict.fromkeys(names, 0.01),
+        )
+
+    time = np.linspace(0.1, 8.0, 64)
+    tab.set_dataset(
+        MuonDataset(
+            time=time,
+            asymmetry=0.2 * np.exp(-0.5 * time),
+            error=np.full_like(time, 0.01),
+            metadata={"run_number": 3001},
+        )
+    )
+    tab._fit_engine = SimpleNamespace(fit=_engine_fit)
+    tab._run_fit()
+    assert tab.wait_for_fit()
+
+
+def _stub_result(chi2: float) -> FitResult:
+    """A converged single-parameter result, enough to render an outcome chip."""
+    return FitResult(
+        success=True,
+        chi_squared=chi2 * 30.0,
+        reduced_chi_squared=chi2,
+        dof=30,
+        parameters=ParameterSet([Parameter(name="Lambda", value=0.5)]),
+        uncertainties={"Lambda": 0.01},
+    )
 
 
 def _find_button(widget, label: str) -> QPushButton:
@@ -51,94 +109,117 @@ def _find_button(widget, label: str) -> QPushButton:
     raise AssertionError(f"{label!r} button not found")
 
 
-def test_advanced_actions_folded_into_overflow_menu(app):
-    """The four advanced actions live in the More… menu, not as button rows."""
+def test_retired_model_actions_are_gone_from_the_single_tab(app):
+    """`More…` and the actions it hid are no longer on the tab at all."""
     tab = SingleFitTab()
     try:
-        # No standalone push buttons for the advanced actions any more.
-        button_labels = {b.text() for b in tab.findChildren(QPushButton)}
-        assert not (_ADVANCED_ACTION_LABELS & button_labels), (
-            "advanced actions should be menu items, not full-width buttons: "
-            f"{_ADVANCED_ACTION_LABELS & button_labels}"
-        )
+        labels = {b.text() for b in tab.findChildren(QPushButton)}
+        labels |= {b.text() for b in tab.findChildren(QToolButton)}
+        labels |= {a.text() for m in tab.findChildren(QMenu) for a in m.actions()}
+        assert not (_RETIRED_LABELS & labels), _RETIRED_LABELS & labels
 
-        # They are reachable via the single "More…" overflow tool button.
-        more = tab._more_btn
-        assert isinstance(more, QToolButton)
-        assert more.menu() is not None
-        menu_labels = {a.text() for a in more.menu().actions()}
-        assert _ADVANCED_ACTION_LABELS <= menu_labels, menu_labels
+        # The model row is `Edit…` then `Wizard…`; the hand-offs live on the card.
+        assert {"Edit…", "Wizard…"} <= {b.text() for b in tab.findChildren(QPushButton)}
+        assert set(tab._results_card._actions) == {
+            DIAGNOSTIC_ACTION,
+            ADD_TO_SERIES_ACTION,
+            SEND_TO_BATCH_ACTION,
+        }
     finally:
         tab.close()
         tab.deleteLater()
 
 
-def _model_button_layout(tab):
-    """The QVBoxLayout holding Edit Function / Fit Wizard / More…."""
-    from PySide6.QtWidgets import QVBoxLayout
-
-    for layout in tab.findChildren(QVBoxLayout):
-        if layout.indexOf(tab._more_btn) >= 0:
-            return layout
-    raise AssertionError("model button layout not found")
-
-
-def test_overflow_menu_lifts_fit_button_vs_inline_buttons(app):
-    """Folding the four advanced actions lifts PARAMETERS + Fit by ~3 button rows.
-
-    Asserted as a *relative* lift measured in the same environment (folded vs. a
-    reconstructed pre-fix inline layout), so it is independent of per-platform
-    font metrics — an absolute pixel budget is not portable between Windows and
-    the Linux CI runner.
-    """
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QPushButton
-
+def test_model_row_wraps_instead_of_stacking(app):
+    """`Edit…` and `Wizard…` share one row, so PARAMETERS keeps its height."""
     tab = SingleFitTab()
     try:
         tab.resize(_DECK_DEFAULT_WIDTH, 1200)
         tab.show()
         app.processEvents()
 
+        edit = _find_button(tab, "Edit…")
+        wizard = _find_button(tab, "Wizard…")
+        assert (
+            edit.mapTo(tab, edit.rect().topLeft()).y()
+            == wizard.mapTo(tab, wizard.rect().topLeft()).y()
+        ), "the model actions should sit on one row at the deck's width"
+
         fit_btn = _find_button(tab, "Fit")
         param_top = tab._param_table.mapTo(tab, tab._param_table.rect().topLeft()).y()
-        folded_bottom = fit_btn.mapTo(tab, fit_btn.rect().bottomLeft()).y()
-        # The parameter table sits above the Fit button (ordering sanity).
-        assert param_top < folded_bottom
+        assert param_top < fit_btn.mapTo(tab, fit_btn.rect().bottomLeft()).y()
+    finally:
+        tab.close()
+        tab.deleteLater()
 
-        # Reconstruct the pre-fix layout: the four advanced actions as button
-        # rows below the existing controls. The Fit button must drop by roughly
-        # the height of those four rows — i.e. folding lifts it by ≥3 rows.
-        layout = _model_button_layout(tab)
-        extras = [QPushButton(f"advanced {i}") for i in range(4)]
-        for btn in extras:
-            layout.addWidget(btn, 0, Qt.AlignmentFlag.AlignLeft)
+
+def test_resting_parameter_table_does_not_scroll_sideways_in_the_dock(app):
+    """At rest the table shows Name·Value·Fix·Min·Max without a scrollbar.
+
+    The tab's *minimum* width stays under ``char_width(40)`` — the fit-range
+    row, not the table, is what the dock can never be narrower than.
+    """
+    settings = QSettings("AsymmetryTest", "FitPanelDensity")
+    settings.clear()
+    tab = SingleFitTab(settings=settings)
+    try:
+        tab.resize(char_width(_DOCK_CHARS), 1200)
+        tab.show()
         app.processEvents()
 
-        inline_bottom = fit_btn.mapTo(tab, fit_btn.rect().bottomLeft()).y()
-        row_height = extras[0].sizeHint().height()
-        assert folded_bottom <= inline_bottom - 3 * row_height, (
-            f"folding saved only {inline_bottom - folded_bottom}px; expected "
-            f"≥3 button rows (~{3 * row_height}px). The overflow menu is not "
-            "lifting PARAMETERS/Fit as intended (P1-2)."
-        )
+        table = tab._param_table
+        assert table.column_group_visible("bounds") is True
+        assert table.column_group_visible("links") is False
+        assert table.column_group_visible("batch") is False
+        assert table.horizontalScrollBar().maximum() == 0
+        assert tab.minimumSizeHint().width() <= char_width(40)
+
+        # And still once a fit has run: the χ²ᵣ chip joins the run row, which
+        # wraps it under the buttons rather than widening the tab.
+        _run_stub_fit(tab)
+        app.processEvents()
+        assert not tab._chi2_chip.isHidden()
+        assert table.horizontalScrollBar().maximum() == 0
+        assert tab.minimumSizeHint().width() <= char_width(_DOCK_CHARS)
     finally:
         tab.close()
         tab.deleteLater()
+        settings.clear()
 
 
-def test_advanced_action_enable_state_still_tracks_domain(app):
-    """Folding into a menu preserves the enable/disable wiring of the actions."""
-    tab = SingleFitTab()
+def test_batch_tab_parameter_tables_do_not_scroll_sideways_in_the_dock(app):
+    """The Batch tab's tables fit the same dock as the Single tab's.
+
+    Parameter · Seed · Type is what rests visible; the rail's ``Bounds`` chip is
+    off, so Min and Max are not part of the resting budget.
+    """
+    settings = QSettings("AsymmetryTest", "BatchPanelDensity")
+    settings.clear()
+    tab = GlobalFitTab(member_kind="runs", settings=settings)
     try:
-        # Drop-background is offered for the default time-domain Exp+Const model.
-        assert tab._drop_background_action.isEnabled()
-        tab.set_domain("frequency")
-        # In the frequency domain there is nothing to drop.
-        assert not tab._drop_background_action.isEnabled()
+        tab.resize(char_width(_DOCK_CHARS), 1200)
+        tab.show()
+        app.processEvents()
+
+        assert tab._param_table.isColumnHidden(global_tab_module._COL_MIN)
+        assert tab._param_table.isColumnHidden(global_tab_module._COL_MAX)
+        assert tab._param_table.horizontalScrollBar().maximum() == 0
+        assert tab.minimumSizeHint().width() <= char_width(_DOCK_CHARS)
+
+        # The outcome chip lands on the same run row as ``Run batch fit``.
+        tab._render_fit_summary(
+            {3001: _stub_result(0.98), 3002: _stub_result(1.9)},
+            tag_prefix="Batch",
+            detail_html="",
+        )
+        app.processEvents()
+        assert tab._outcome_chip.isVisible()
+        assert tab._param_table.horizontalScrollBar().maximum() == 0
+        assert tab.minimumSizeHint().width() <= char_width(_DOCK_CHARS)
     finally:
         tab.close()
         tab.deleteLater()
+        settings.clear()
 
 
 def _available_size():

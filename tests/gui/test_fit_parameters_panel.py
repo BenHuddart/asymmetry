@@ -3708,14 +3708,18 @@ class TestTableHoverRing:
             panel._hover_rings[id(axes_for(panel, "Lambda"))].get_xydata(), [[200.0, 0.12]]
         )
 
-    def test_a_draw_that_lands_after_a_hover_keeps_the_ring(
+    def test_a_draw_that_lands_after_a_hover_defers_the_ring_to_the_timer(
         self, panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A hover before the first paint has no background to blit over; the
-        draw that follows caches one and puts the ring back itself."""
+        draw that follows caches one and arms the timer, which puts the ring
+        back. The draw itself must never blit: the Qt canvas runs a pending draw
+        from inside its paint event, and a blit is a synchronous repaint —
+        from there it recursed into the paint ("Recursive repaint detected")."""
         select_params(panel, ["A0", "Lambda"])
         panel._refresh_table()
         _hover(panel, 0)
+        panel._hover_ring_timer.stop()
         assert panel._hover_backgrounds == {}
 
         canvas = card(panel, "A0").canvas
@@ -3724,8 +3728,26 @@ class TestTableHoverRing:
         canvas.draw()
 
         assert canvas in panel._hover_backgrounds
+        assert blits == []
+        assert panel._hover_ring_timer.isActive()
+        panel._apply_hover_ring()
         assert blits == [1]
         assert panel._hover_rings[id(axes_for(panel, "A0"))].get_visible()
+
+    def test_a_draw_under_no_hover_leaves_the_timer_alone(
+        self, panel: FitParametersPanel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        select_params(panel, ["A0"])
+        panel._refresh_table()
+        canvas = card(panel, "A0").canvas
+        blits: list[int] = []
+        monkeypatch.setattr(canvas, "blit", lambda bbox=None: blits.append(1))
+
+        canvas.draw()
+
+        assert canvas in panel._hover_backgrounds
+        assert blits == []
+        assert not panel._hover_ring_timer.isActive()
 
     def test_hovering_never_redraws(
         self, qapp: QApplication, monkeypatch: pytest.MonkeyPatch

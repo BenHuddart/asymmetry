@@ -196,7 +196,7 @@ The same `load(...)` entry point works for supported NeXus, PSI, and ROOT files.
 asymmetry-gui
 ```
 
-Within the GUI, use **Edit Function...** (single/global fit) and **Edit Model...** (parameter
+Within the GUI, use **Edit…** (single/batch fit) and **Edit Model...** (parameter
 trending) to build expression-based models with grouped terms and live validation.
 
 ## Documentation

@@ -1062,7 +1062,7 @@ class TestMainWindowFourier:
         """F17: computing for a selection must refresh fit enable-state.
 
         Regression: computing spectra for a selection (via the old "Apply to
-        selection") left "Run Batch Fit" stale-disabled until an unrelated
+        selection") left the batch Fit button stale-disabled until an unrelated
         browser-selection change happened to trigger `_update_fit_block_state`
         (same class as the PR #89 fix). `_finish_compute_fourier_for_selection`
         must keep calling it directly rather than relying on some other event.
@@ -2520,7 +2520,9 @@ class TestMainWindowFourier:
         single_table.item(_find_row(single_table, "fwhm"), 1).setText("0.33")
         single_table.item(_find_row(single_table, "bg"), 1).setText("0.18")
         single_table.item(_find_row(single_table, "slope"), 1).setText("0.12")
-        mainwindow._fit_panel._single_tab._result_label.setText("Frequency single result marker")
+        mainwindow._fit_panel._single_tab._results_card.set_message(
+            "Frequency single result marker"
+        )
 
         mainwindow._fit_panel._global_tab._set_composite_model(global_model)
         global_table = mainwindow._fit_panel._global_tab._param_table
@@ -2570,7 +2572,7 @@ class TestMainWindowFourier:
         )
         assert restored_window._fit_panel._tabs.currentIndex() == 1
         assert (
-            restored_window._fit_panel._single_tab._result_label.text()
+            restored_window._fit_panel._single_tab._results_card.content_html()
             == "Frequency single result marker"
         )
         assert (

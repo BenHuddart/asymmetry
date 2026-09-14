@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox
 
 from asymmetry.core.fitting.composite import CompositeModel
+from asymmetry.gui.panels.fit import global_tab
 from asymmetry.gui.panels.fit_panel import FitPanel
 
 pytestmark = [pytest.mark.gui]
@@ -71,11 +72,11 @@ def test_send_to_batch_carries_single_fit_bounds(qapp: QApplication) -> None:
 
     assert panel.send_single_model_to_batch() is True
 
-    # The batch table stores bounds as one "min, max" string in column 3.
+    # The batch table stores bounds as separate Min/Max columns.
     batch_tbl = panel._global_tab._param_table
     batch_amp_row = _row_for(batch_tbl, "A_1")
-    bounds_text = batch_tbl.item(batch_amp_row, 3).text()
-    lo, hi = (part.strip() for part in bounds_text.split(","))
+    lo = batch_tbl.item(batch_amp_row, global_tab._COL_MIN).text()
+    hi = batch_tbl.item(batch_amp_row, global_tab._COL_MAX).text()
     assert float(lo) == pytest.approx(1.0), (
         f"batch A_1 lower bound is {lo!r}, not the single-fit floor 1 — "
         "Send-to-Batch dropped the parameter bounds"

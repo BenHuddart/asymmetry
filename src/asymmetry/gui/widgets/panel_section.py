@@ -26,6 +26,8 @@ from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QSizePolicy,
+    QSpacerItem,
     QVBoxLayout,
     QWidget,
 )
@@ -33,6 +35,7 @@ from PySide6.QtWidgets import (
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.typography import footer_font
 from asymmetry.gui.styles.widgets import make_section_header
+from asymmetry.gui.widgets.flow_layout import FlowLayout
 
 
 class _ClickableRow(QWidget):
@@ -127,9 +130,26 @@ class PanelSection(QWidget):
             self._header_row.clicked.connect(self._on_header_clicked)
             self._header_row.setCursor(Qt.CursorShape.PointingHandCursor)
 
+        # The title lives in a wrapping host so header widgets (a chip rail)
+        # can join it item by item: the header's minimum width is then its
+        # widest single item, and the rail wraps under the title when the panel
+        # is narrower than both — never the title plus the rail side by side.
         self._header_label = make_section_header(self._title)
-        header_layout.addWidget(self._header_label)
-        header_layout.addStretch(1)
+        self._header_host = QWidget(self._header_row)
+        host_layout = FlowLayout(self._header_host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        host_policy.setHeightForWidth(True)
+        self._header_host.setSizePolicy(host_policy)
+        host_layout.addWidget(self._header_label)
+        header_layout.addWidget(self._header_host, 0, Qt.AlignmentFlag.AlignTop)
+        # Held so :meth:`add_header_widget` can hand the row's slack to the
+        # widget instead — a chip rail that only got half the slack would float
+        # in the middle of the header rather than sit beside the title.
+        self._header_stretch = QSpacerItem(
+            0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum
+        )
+        header_layout.addItem(self._header_stretch)
 
         self._suffix_label = QLabel("", self._header_row)
         self._suffix_label.setFont(footer_font())
@@ -188,6 +208,21 @@ class PanelSection(QWidget):
         else:
             self._hint_label.clear()
             self._hint_label.hide()
+
+    def add_header_widget(self, widget: QWidget) -> None:
+        """Append *widget* to the header's wrapping row, after the title.
+
+        The row takes the header's slack from the first widget on, so a rail of
+        chips starts beside the title and wraps under it once the panel is
+        narrower than both. Mouse events stop at the widget, so pressing a chip
+        in a collapsible section's header never also toggles the section.
+        """
+        layout = self._header_row.layout()
+        layout.removeItem(self._header_stretch)
+        layout.setStretch(layout.indexOf(self._header_host), 1)
+        widget.setParent(self._header_host)
+        widget.setAttribute(Qt.WidgetAttribute.WA_NoMousePropagation, True)
+        self._header_host.layout().addWidget(widget)
 
     def set_title_suffix(self, html: str | None) -> None:
         """Set a small right-aligned rich-text suffix (chip/count) in the header.

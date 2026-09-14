@@ -78,6 +78,8 @@ class _StubFitPanel(QWidget):
         self.apply_wizard_phases_requested = _DummySignal()
         self.grouped_fit_completed = _DummySignal()
         self.grouped_time_domain_mode_changed = _DummySignal()
+        self.trends_requested = _DummySignal()
+        self.set_trends_available = lambda _available: None
         self.last_dataset = None
         self.last_datasets = None
         self.last_global_results = None
@@ -213,6 +215,8 @@ class _StubMultiGroupFitWindow(QWidget):
         self.grouped_preview_requested = _DummySignal()
         self.count_fit_completed = _DummySignal()
         self.count_grouping_promoted = _DummySignal()
+        self.trends_requested = _DummySignal()
+        self.set_trends_available = lambda _available: None
         self.last_dataset = None
         self.last_block_state = None
         self._title = "Multi-Group Fit"

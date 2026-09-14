@@ -1,12 +1,14 @@
-"""Per-parameter read-out of a trend model fit.
+"""Read-out of a solved fit — a parameter's trend model, or one run's asymmetry fit.
 
 The parameters panel's cards carry a χ²ᵣ chip; clicking it opens one of these
-windows for that parameter. It is a pure view: the panel hands it the plain
-:class:`FitResults` snapshot below (built from the parameter's
-``ParameterModelFit``) and this module imports nothing from the panel, so the
-window can be built and tested on its own. The panel keeps one window per
-parameter, refreshes it whenever the fit changes, and drops it when the
-parameter's card goes away.
+windows for that parameter. The fit tabs' χ²ᵣ chip opens the same window for the
+run that was just fitted. It is a pure view: the caller hands it the plain
+:class:`FitResults` snapshot below and this module imports nothing from the
+panels, so the window can be built and tested on its own. ``editable`` says
+whether the fit behind the snapshot has an editor to hand off to — the trend
+fit does (:attr:`FitResultsWindow.edit_requested`), a run fit does not. The
+parameters panel keeps one window per parameter, refreshes it whenever the fit
+changes, and drops it when the parameter's card goes away.
 """
 
 from __future__ import annotations
@@ -36,7 +38,6 @@ from asymmetry.gui.styles.widgets import (
     verdict_chip_qss,
 )
 from asymmetry.gui.utils.formatting import (
-    format_param_label,
     format_value_error,
     format_value_uncertainty,
 )
@@ -93,8 +94,10 @@ class FitRangeResults:
 
 @dataclass(frozen=True)
 class FitResults:
-    """Everything :class:`FitResultsWindow` renders for one parameter."""
+    """Everything :class:`FitResultsWindow` renders for one fit."""
 
+    #: The window's title — a trend fit names its parameter, a run fit its run.
+    title: str
     parameter_name: str
     #: The trend's x axis, as the panel labels it ("Temperature (K)").
     x_label: str
@@ -110,7 +113,13 @@ class FitResultsWindow(QDialog):
     #: The user asked to edit this fit; carries the parameter name.
     edit_requested = Signal(str)
 
-    def __init__(self, results: FitResults, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        results: FitResults,
+        parent: QWidget | None = None,
+        *,
+        editable: bool = False,
+    ) -> None:
         super().__init__(parent)
         self.setModal(False)
 
@@ -124,9 +133,10 @@ class FitResultsWindow(QDialog):
         copy_button.setToolTip("Copy the fitted parameters to the clipboard.")
         copy_button.clicked.connect(self._copy)
         buttons.addWidget(copy_button)
-        edit_button = QPushButton("Edit model fit…")
-        edit_button.clicked.connect(self._edit)
-        buttons.addWidget(edit_button)
+        if editable:
+            edit_button = QPushButton("Edit model fit…")
+            edit_button.clicked.connect(self._edit)
+            buttons.addWidget(edit_button)
         buttons.addStretch(1)
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.close)
@@ -139,7 +149,7 @@ class FitResultsWindow(QDialog):
     def set_results(self, results: FitResults) -> None:
         """Re-render the window from *results* (the fit changed, or is new)."""
         self._results = results
-        self.setWindowTitle(f"Fit results — {format_param_label(results.parameter_name)}")
+        self.setWindowTitle(results.title)
         clear_layout(self._body)
 
         first = results.ranges[0]
@@ -159,11 +169,14 @@ class FitResultsWindow(QDialog):
                 )
             self._body.addWidget(_parameter_table(fit_range))
 
-        self._body.addWidget(
-            _muted_label(
-                f"x: {results.x_label} · fit range {first.bounds} · errors: {first.error_mode}"
-            )
-        )
+        # A run's asymmetry fit has neither a trended x axis nor an error mode of
+        # its own, so those segments are simply absent rather than shown empty.
+        footer = [f"fit range {first.bounds}"]
+        if results.x_label:
+            footer.insert(0, f"x: {results.x_label}")
+        if first.error_mode:
+            footer.append(f"errors: {first.error_mode}")
+        self._body.addWidget(_muted_label(" · ".join(footer)))
 
     def _copy(self) -> None:
         lines: list[str] = []
