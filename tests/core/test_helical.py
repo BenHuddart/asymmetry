@@ -140,6 +140,12 @@ def test_ratio_below_the_closed_form_threshold_is_continuous_with_it() -> None:
     )
 
 
+@pytest.mark.parametrize("ratio", [0.0, 5e-7, 1e-3, 0.4, 1.0])
+def test_crystal_fractions_sum_to_one_at_zero_time(ratio: float) -> None:
+    fraction, line = helical_crystal_line(np.zeros(1), 8.0, ratio, 0.0, 90.0, 0.0)
+    assert fraction + line[0] == pytest.approx(1.0, abs=1e-12)
+
+
 def test_unit_ratio_is_a_single_cosine() -> None:
     t = np.linspace(0.0, 2.0, 300)
     expected = np.cos(2.0 * np.pi * 9.0 * t + 0.25)
@@ -227,6 +233,16 @@ def test_registry_tags_and_fixed_phase() -> None:
         assert definition.cost is ComputationalCost.MODERATE
         assert definition.fixed_params == ("phase",)
         assert definition.category == "Oscillation"
+
+
+@pytest.mark.parametrize("name", ["theta_h", "phi_h"])
+def test_wizard_bounds_orientation_angles_to_a_quadrant(name: str) -> None:
+    from asymmetry.core.fitting.fit_wizard import _parameter_bounds
+
+    bounds = _parameter_bounds(
+        name, 30.0, data_min=-5.0, data_max=25.0, data_span=30.0, duration=10.0, nyquist=500.0
+    )
+    assert bounds == (0.0, 90.0)
 
 
 def test_composite_parsing_and_serialisation_round_trip() -> None:

@@ -697,8 +697,9 @@ COMPONENTS: dict[str, ComponentDefinition] = {
     "OverhauserPowderCutoff": ComponentDefinition(
         name="OverhauserPowderCutoff",
         description=(
-            "Two-cut-off powder line (helical or general single-q): f = upper cut-off f_max, "
-            "ratio r = B_min/B_max; f_av = f(1+r)/2, Delta f = f(1-r)/2"
+            "Two-cut-off powder line for a fixed-direction modulated field (shifted Overhauser; "
+            "use HelicalPowder for a helix): f = upper cut-off f_max, ratio r = B_min/B_max; "
+            "f_av = f(1+r)/2, Delta f = f(1-r)/2"
         ),
         function=_overhauser_powder_cutoff_component,
         param_names=["A", "frequency", "ratio", "phase", "lambda_T", "lambda_L"],

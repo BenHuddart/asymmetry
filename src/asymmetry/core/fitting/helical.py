@@ -153,13 +153,16 @@ def _line(
     """``∫ D(B) [base + slope·λ(B)] cos(γ_μ B t + φ) dB`` for ``B_max = frequency/γ_μ``."""
     times = np.asarray(t, dtype=float)
     omega_max = 2.0 * np.pi * float(frequency)
+    # Both closed-form limits keep the exact weight ∫ D (base + slope·λ) dB, with
+    # ⟨λ⟩ = 1/(1 + r), so the line and the non-precessing fraction still sum to 1.
+    weight = base + slope / (1.0 + ratio)
     if ratio == 1.0:
-        # Every muon sees B_max; λ averages to ½ over the (degenerate) helix phase.
-        return (base + 0.5 * slope) * np.cos(omega_max * times + phase)
+        # Every muon sees B_max.
+        return weight * np.cos(omega_max * times + phase)
     if ratio < _RATIO_ZERO:
-        # λ ≡ 1 at r = 0, and the density is the Overhauser density on [0, B_max].
+        # The shape is the Overhauser density's on [0, B_max].
         arg = omega_max * times
-        return (base + slope) * (np.cos(phase) * j0(arg) - np.sin(phase) * struve(0, arg))
+        return weight * (np.cos(phase) * j0(arg) - np.sin(phase) * struve(0, arg))
 
     weighted = slope != 0.0
     coeffs_h, coeffs_lam = _series_coefficients(ratio, weighted)
