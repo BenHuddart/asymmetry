@@ -24,6 +24,7 @@ from asymmetry.core.fitting.component_tags import (
     FieldGeometry,
     PhysicsClass,
 )
+from asymmetry.core.fitting.helical import helical_crystal_line, helical_line
 from asymmetry.core.fitting.latex_preview import (
     LatexTerm,
     fallback_function_latex,
@@ -334,6 +335,34 @@ def _risch_kehr_component(t: NDArray, A: float, Gamma: float) -> NDArray[np.floa
 
 def _bessel_component(t: NDArray, A: float, frequency: float, phase: float) -> NDArray[np.float64]:
     return A * bessel_oscillation(t, frequency, phase)
+
+
+def _helical_powder_component(
+    t: NDArray,
+    A: float,
+    frequency: float,
+    ratio: float,
+    phase: float,
+    lambda_T: float,
+    lambda_L: float,
+) -> NDArray[np.float64]:
+    precessing = helical_line(t, frequency, ratio, phase)
+    return A * (np.exp(-lambda_L * t) / 3.0 + 2.0 / 3.0 * precessing * np.exp(-lambda_T * t))
+
+
+def _helical_crystal_component(
+    t: NDArray,
+    A: float,
+    frequency: float,
+    ratio: float,
+    theta_h: float,
+    phi_h: float,
+    phase: float,
+    lambda_T: float,
+    lambda_L: float,
+) -> NDArray[np.float64]:
+    non_precessing, precessing = helical_crystal_line(t, frequency, ratio, phase, theta_h, phi_h)
+    return A * (non_precessing * np.exp(-lambda_L * t) + precessing * np.exp(-lambda_T * t))
 
 
 def _overhauser_powder_component(
@@ -739,6 +768,95 @@ COMPONENTS: dict[str, ComponentDefinition] = {
         field_geometries=frozenset({FieldGeometry.ZF}),
         physics_classes=frozenset({PhysicsClass.MAGNETISM}),
         cost=ComputationalCost.CHEAP,
+    ),
+    "HelicalPowder": ComponentDefinition(
+        name="HelicalPowder",
+        description=(
+            "Powder helical (single-q) magnet: 1/3 exp(-lambda_L t) + 2/3 H(t) exp(-lambda_T t), "
+            "H the exact transform of the elliptical field distribution between r f and f"
+        ),
+        function=_helical_powder_component,
+        param_names=["A", "frequency", "ratio", "phase", "lambda_T", "lambda_L"],
+        param_defaults={
+            "A": 25.0,
+            "frequency": 1.0,
+            "ratio": 0.5,
+            "phase": 0.0,
+            "lambda_T": 0.5,
+            "lambda_L": 0.1,
+        },
+        param_info={
+            "A": get_param_info("A"),
+            "frequency": get_param_info("frequency"),
+            "ratio": get_param_info("ratio"),
+            "phase": get_param_info("phase"),
+            "lambda_T": get_param_info("lambda_T"),
+            "lambda_L": get_param_info("lambda_L"),
+        },
+        formula_template=(
+            "{A}*(1/3*exp(-{lambda_L}*t) + "
+            "2/3*H_helix(t; {frequency}, {ratio}, {phase})*exp(-{lambda_T}*t))"
+        ),
+        latex_equation=(
+            r"A(t) = A\left[\frac{1}{3}e^{-\lambda_L t} + \frac{2}{3}\int D(B)\,"
+            r"\cos(\gamma_\mu B t+\phi)\,dB\;e^{-\lambda_T t}\right]"
+        ),
+        category="Oscillation",
+        fixed_params=("phase",),
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.MODERATE,
+    ),
+    "HelicalCrystal": ComponentDefinition(
+        name="HelicalCrystal",
+        description=(
+            "Single-crystal helical (single-q) magnet: the HelicalPowder line with the "
+            "non-precessing weight set by the polarization's orientation (theta_h, phi_h)"
+        ),
+        function=_helical_crystal_component,
+        param_names=[
+            "A",
+            "frequency",
+            "ratio",
+            "theta_h",
+            "phi_h",
+            "phase",
+            "lambda_T",
+            "lambda_L",
+        ],
+        param_defaults={
+            "A": 25.0,
+            "frequency": 1.0,
+            "ratio": 0.5,
+            "theta_h": 90.0,
+            "phi_h": 0.0,
+            "phase": 0.0,
+            "lambda_T": 0.5,
+            "lambda_L": 0.1,
+        },
+        param_info={
+            "A": get_param_info("A"),
+            "frequency": get_param_info("frequency"),
+            "ratio": get_param_info("ratio"),
+            "theta_h": get_param_info("theta_h"),
+            "phi_h": get_param_info("phi_h"),
+            "phase": get_param_info("phase"),
+            "lambda_T": get_param_info("lambda_T"),
+            "lambda_L": get_param_info("lambda_L"),
+        },
+        formula_template=(
+            "{A}*(W0({ratio}, {theta_h}, {phi_h})*exp(-{lambda_L}*t) + "
+            "H_helix(t; {frequency}, {ratio}, {phase}, {theta_h}, {phi_h})*exp(-{lambda_T}*t))"
+        ),
+        latex_equation=(
+            r"A(t) = A\left[W_0\,e^{-\lambda_L t} + \int D(B)\,[1-b_z^2(B)]\,"
+            r"\cos(\gamma_\mu B t+\phi)\,dB\;e^{-\lambda_T t}\right]"
+        ),
+        category="Oscillation",
+        fixed_params=("phase",),
+        field_geometries=frozenset({FieldGeometry.ZF}),
+        physics_classes=frozenset({PhysicsClass.MAGNETISM}),
+        cost=ComputationalCost.MODERATE,
     ),
     "MuoniumTF": ComponentDefinition(
         name="MuoniumTF",

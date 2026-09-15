@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on a temperature axis under **Critical behaviour**, seeds its plateaus, midpoint, and width
   from the data, and matches the Fermi-function forms used in the μSR literature and Mantid's
   `SmoothTransition`. See `docs/reference/parameter_trending.rst` § "Transition step".
+- **`HelicalPowder` and `HelicalCrystal` fit the exact zero-field lineshape of a helical or
+  cycloidal magnet**, where the local field vector rotates on an ellipse between the cut-offs
+  B_min and B_max. `OverhauserPowderCutoff`'s closed form is exact only for a field of fixed
+  direction and, for a helix, misses the true lineshape by up to a third of the precessing
+  amplitude as `ratio` falls; the new components evaluate the true distribution numerically to
+  10⁻¹² — typically in under a millisecond per curve — with the same `frequency` (upper cut-off)
+  and `ratio` parameters, so a fit can switch directly. `HelicalPowder` keeps the powder ⅓/⅔
+  split and reduces to `OverhauserPowder` at `ratio` = 0. `HelicalCrystal` replaces that split
+  with the orientation of the muon polarization, `theta_h` and `phi_h`, which also reshape the
+  line because fields along the polarization do not precess. Both start with `phase` fixed at 0,
+  since a zero-field helix has no true phase. See `docs/reference/fit_functions/oscillation.rst`.
 
 ### Fixed
 

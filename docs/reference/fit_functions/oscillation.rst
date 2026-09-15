@@ -29,10 +29,13 @@ at the Fourier spectrum first (:doc:`../fourier_analysis`), and for an
 *incommensurate* distribution use ``Bessel``. ``Bessel`` is the bare
 precessing line; for a **powder** of the same incommensurate, single-site
 structure, where a non-precessing ⅓ tail is also present, use
-``OverhauserPowder`` instead. For a powder of a more general single-q
-structure — helical or collinear order at a low-symmetry muon site, where the
-field distribution has two non-zero cut-offs rather than running to zero —
-use the ``OverhauserPowderCutoff``/``OverhauserPowderCentre`` pair.
+``OverhauserPowder`` instead. When the field distribution of a single-q
+structure has two non-zero cut-offs rather than running to zero, choose by
+how the local field moves: ``HelicalPowder`` when the field vector rotates on
+an ellipse (helical or cycloidal order), and the
+``OverhauserPowderCutoff``/``OverhauserPowderCentre`` pair when the field
+keeps one direction and only its size is modulated. ``HelicalCrystal`` is the
+single-crystal form of ``HelicalPowder``.
 
 .. _fit-oscillatory:
 
@@ -196,11 +199,12 @@ OverhauserPowderCutoff and OverhauserPowderCentre
           + \tfrac{2}{3}\,J_0(2\pi\Delta f\,t)\,
             \cos(2\pi f_{\mathrm{av}} t + \phi)\,e^{-\lambda_T t}\right]
 
-The polarisation of a **powder** sample of a general single-*q* magnetic
-structure — helical or collinear order at a low-symmetry muon site — where
-the local field distribution has *two* non-zero cut-offs,
-:math:`p(B) \propto B\,[(B^2 - B_{\min}^2)(B_{\max}^2 - B^2)]^{-1/2}`, rather
-than running down to zero as in ``OverhauserPowder``. As with
+The polarisation of a **powder** sample in which the local field at the muon
+keeps one direction while its size is modulated sinusoidally between *two*
+non-zero cut-offs, :math:`B = B_{\mathrm{av}} + \Delta B\cos(\mathbf{q}\cdot\mathbf{r})`
+— a shifted Overhauser distribution,
+:math:`p(B) = \pi^{-1}[(B - B_{\min})(B_{\max} - B)]^{-1/2}`, rather than one
+running down to zero as in ``OverhauserPowder``. As with
 ``OverhauserPowder`` the polarisation splits into a non-precessing
 :math:`\tfrac{1}{3}` tail relaxing at :math:`\lambda_L` and a precessing
 :math:`\tfrac{2}{3}` fraction relaxing at :math:`\lambda_T`; :math:`\phi` is
@@ -266,18 +270,22 @@ In the cut-off form :math:`r > 1` is not the same line: it makes
 upper bound of 1 on ``ratio`` in the fit table (the Fit Wizard does), or
 read a fit that crosses it with the two edges swapped.
 
-The closed form above is an *approximation*: it is exactly the transform of
-an arcsine density on :math:`(f_{\min}, f_{\max})`, whereas the true
-two-cut-off density carries an extra factor of
-:math:`B/\sqrt{(B+B_{\min})(B_{\max}+B)}`. The approximation is exact as
-:math:`r \to 1` (a pure cosine at :math:`f_{\max}`) and worsens as :math:`r`
-falls: the maximum deviation of the precessing part from the exact transform
-is about 0.03 at :math:`r = 0.8`, 0.07 at :math:`r = 0.6`, 0.12 at
-:math:`r = 0.4` and 0.31 at :math:`r = 0` (in units of the precessing
-amplitude). At :math:`r = 0` the closed form does **not** reduce to
-``OverhauserPowder``'s :math:`J_0(2\pi f_{\max} t)`; once a fit drives
-``ratio`` (or :math:`f_{\min}`) towards zero, switch to ``OverhauserPowder``,
-which is exact for a single-cut-off distribution. As with ``Bessel``, a
+The closed form above is exact for that fixed-direction field. For a helical
+or cycloidal structure, where the field *vector* rotates on an ellipse, the
+distribution is instead
+:math:`p(B) = (2/\pi)\,B\,[(B^2 - B_{\min}^2)(B_{\max}^2 - B^2)]^{-1/2}`,
+which carries an extra factor of :math:`2B/\sqrt{(B+B_{\min})(B_{\max}+B)}`,
+and the closed form is Amato *et al.*'s narrow-distribution approximation to
+it: exact as :math:`r \to 1` (a pure cosine at :math:`f_{\max}`) and worse as
+:math:`r` falls, with a maximum deviation of the precessing part of about
+0.03 at :math:`r = 0.8`, 0.07 at :math:`r = 0.6`, 0.12 at :math:`r = 0.4` and
+0.31 at :math:`r = 0` (in units of the precessing amplitude). Use
+``HelicalPowder`` for that geometry. At :math:`r = 0` the closed form does
+**not** reduce to ``OverhauserPowder``'s :math:`J_0(2\pi f_{\max} t)`: a
+fixed-direction field swinging between zero and :math:`B_{\max}` is not a
+spin-density wave, whose field reverses sign. A fit that drives ``ratio`` (or
+:math:`f_{\min}`) to zero is worth comparing with ``OverhauserPowder`` and
+with ``HelicalPowder``, which reduces to it there. As with ``Bessel``, a
 Bessel-like line does not on its own prove incommensurate or single-*q*
 order — several commensurate sites, or disorder, can mimic it — so
 corroborate with the ordering wavevector from diffraction where possible.
@@ -310,6 +318,153 @@ cut-off form.
 - A. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
 - P. Dalmas de Réotier *et al.*, Phys. Rev. B **93**, 144419 (2016).
 - P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).
+
+.. _fit-helical-powder:
+
+HelicalPowder
+-------------
+
+.. math::
+
+   A(t) = A\left[\tfrac{1}{3}\,e^{-\lambda_L t}
+          + \tfrac{2}{3}\,e^{-\lambda_T t}\int_{B_{\min}}^{B_{\max}} p(B)\,
+            \cos(\gamma_\mu B t + \phi)\,dB\right],
+   \qquad
+   p(B) = \frac{2}{\pi}\,\frac{B}{\sqrt{(B^2 - B_{\min}^2)(B_{\max}^2 - B^2)}}
+
+The polarisation of a **powder** sample of a helical, cycloidal or other
+single-*q* magnetic structure in which the local field at the muon site
+rotates on an ellipse centred on zero, with semi-axes :math:`B_{\max}` and
+:math:`B_{\min}`. As the helix phase runs uniformly over the sites, the field
+magnitude follows :math:`p(B)`, which diverges at both cut-offs. ``frequency``
+is the upper cut-off :math:`f = \gamma_\mu B_{\max}/2\pi`, the order parameter
+to trend versus temperature, and ``ratio`` is :math:`r = B_{\min}/B_{\max}`, a
+structural constant to share across a series. The powder average splits the
+polarisation into a non-precessing :math:`\tfrac{1}{3}` tail relaxing at
+:math:`\lambda_L` and a precessing :math:`\tfrac{2}{3}` fraction relaxing at
+:math:`\lambda_T`.
+
+The transform of :math:`p(B)` has no closed form, so it is evaluated
+numerically to :math:`10^{-12}` of the line amplitude. :math:`p(B)` is the
+shifted Overhauser density of ``OverhauserPowderCutoff`` times the smooth
+factor :math:`h(B) = 2B/\sqrt{(B+B_{\min})(B+B_{\max})}`, and expanding
+:math:`h` in Chebyshev polynomials turns the integral into a series of Bessel
+functions,
+
+.. math::
+
+   \int p(B)\cos(\gamma_\mu B t + \phi)\,dB
+   = \sum_{n \ge 0} c_n\,J_n(2\pi\Delta f\,t)\,
+     \cos\!\left(2\pi f_{\mathrm{av}} t + \phi + \tfrac{n\pi}{2}\right),
+
+with :math:`f_{\mathrm{av}} = f(1+r)/2`, :math:`\Delta f = f(1-r)/2`, and
+coefficients :math:`c_n` that depend only on :math:`r`. The first term,
+:math:`c_0 = 1`, is the ``OverhauserPowderCutoff`` line; the rest are the
+correction. The series needs more terms as :math:`r` falls, so a fit near
+:math:`r = 0` evaluates more slowly; at :math:`r = 0` the line is exactly
+``OverhauserPowder``'s :math:`J_0(2\pi f t)`, and at :math:`r = 1` a single
+cosine at :math:`f`.
+
+=============  =================  =======  ==========================================
+Name           Symbol             Unit     Description
+=============  =================  =======  ==========================================
+``A``          :math:`A`          %        Component asymmetry amplitude.
+``frequency``  :math:`f`          MHz      Upper cut-off, γ\ :sub:`μ`\ B\ :sub:`max`\ /2π.
+``ratio``      :math:`r`          —        :math:`B_{\min}/B_{\max}`.
+``phase``      :math:`\phi`       rad      Phase offset; starts fixed at 0.
+``lambda_T``   :math:`\lambda_T`  µs⁻¹     Relaxation of the precessing ⅔ fraction.
+``lambda_L``   :math:`\lambda_L`  µs⁻¹     Relaxation of the non-precessing ⅓ fraction.
+=============  =================  =======  ==========================================
+
+``phase`` starts fixed at 0. In zero field every muon starts precessing from
+the direction of its initial polarisation, and every field :math:`\mathbf{B}`
+on the ellipse is paired with :math:`-\mathbf{B}`, so the true phase is zero.
+A fit that improves when the phase is freed is usually absorbing a time-zero
+offset, which shifts the phase in proportion to frequency, or a missing
+component, rather than describing the lineshape. ``ratio`` above 1 describes
+the same ellipse with its axes relabelled, so ``frequency`` then names the
+lower cut-off; bound ``ratio`` to :math:`[0, 1]` to keep the usual meaning.
+Compose with an additional relaxation component when the line is broader than
+the ideal distribution.
+
+**References**
+
+- A. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
+- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+  Resonance* (Oxford University Press, Oxford, 2011).
+
+.. _fit-helical-crystal:
+
+HelicalCrystal
+--------------
+
+.. math::
+
+   A(t) = A\left[W_0\,e^{-\lambda_L t}
+          + e^{-\lambda_T t}\int_{B_{\min}}^{B_{\max}} p(B)\,
+            \bigl[1 - b_z^2(B)\bigr]\cos(\gamma_\mu B t + \phi)\,dB\right]
+
+The same elliptical field distribution as ``HelicalPowder`` in a **single
+crystal**, where the non-precessing weight of each field is fixed by its
+direction relative to the initial muon polarisation :math:`\hat{P}_0`
+rather than averaged over orientations. With :math:`a` and :math:`c` the
+components of :math:`\hat{P}_0` along the :math:`B_{\max}` and
+:math:`B_{\min}` axes of the ellipse,
+
+.. math::
+
+   a = \sin\theta_h\cos\phi_h, \qquad c = \sin\theta_h\sin\phi_h,
+
+the squared component of the field direction along :math:`\hat{P}_0` depends
+on the field magnitude only,
+
+.. math::
+
+   b_z^2(B) = c^2 + (a^2 - c^2)\,\frac{1 - B_{\min}^2/B^2}{1 - r^2},
+   \qquad
+   W_0 = \int p(B)\,b_z^2(B)\,dB = \frac{a^2 + c^2 r}{1 + r}.
+
+:math:`\theta_h` is the angle between :math:`\hat{P}_0` and the normal to the
+plane the field rotates in, and :math:`\phi_h` the angle, within that plane,
+between the projection of :math:`\hat{P}_0` and the :math:`B_{\max}` axis.
+Fields parallel to the polarisation do not precess, so the orientation
+reshapes the line as well as setting :math:`W_0`: with :math:`\hat{P}_0`
+along the :math:`B_{\max}` axis (:math:`\theta_h = 90^\circ`,
+:math:`\phi_h = 0`) the upper cut-off drops out of the oscillation, and along
+the :math:`B_{\min}` axis the lower one does. The magic orientation
+:math:`\theta_h = 54.7356^\circ`, :math:`\phi_h = 45^\circ` gives
+:math:`a^2 = c^2 = \tfrac{1}{3}` and reproduces ``HelicalPowder`` exactly. The
+line is evaluated by the same series as ``HelicalPowder``.
+
+=============  =================  =======  ==========================================
+Name           Symbol             Unit     Description
+=============  =================  =======  ==========================================
+``A``          :math:`A`          %        Component asymmetry amplitude.
+``frequency``  :math:`f`          MHz      Upper cut-off, γ\ :sub:`μ`\ B\ :sub:`max`\ /2π.
+``ratio``      :math:`r`          —        :math:`B_{\min}/B_{\max}`.
+``theta_h``    :math:`\theta_h`   °        Angle between the polarisation and the helix-plane normal.
+``phi_h``      :math:`\phi_h`     °        In-plane angle of the polarisation from the B\ :sub:`max` axis.
+``phase``      :math:`\phi`       rad      Phase offset; starts fixed at 0.
+``lambda_T``   :math:`\lambda_T`  µs⁻¹     Relaxation of the precessing fraction.
+``lambda_L``   :math:`\lambda_L`  µs⁻¹     Relaxation of the non-precessing fraction.
+=============  =================  =======  ==========================================
+
+Take ``theta_h`` and ``phi_h`` from the known magnetic structure and the
+crystal mounting and hold them fixed where possible; freeing them alongside
+``A`` and ``ratio`` leaves strong correlations. Only :math:`a^2` and
+:math:`c^2` enter, so both angles are defined on :math:`[0^\circ, 90^\circ]`.
+Symmetry-inequivalent muon sites, or magnetic domains, generally see
+differently oriented ellipses: model them with one ``HelicalCrystal`` per
+inequivalent set, sharing ``frequency`` and ``ratio`` where the structure
+requires it. The weights assume the detector axis lies along
+:math:`\hat{P}_0`; with ``ratio`` above 1 the roles of the two axes, and so of
+``phi_h``, are exchanged.
+
+**References**
+
+- A. Amato *et al.*, Phys. Rev. B **89**, 184425 (2014).
+- A. Yaouanc and P. Dalmas de Réotier, *Muon Spin Rotation, Relaxation, and
+  Resonance* (Oxford University Press, Oxford, 2011).
 
 .. _fit-vortex-lattice:
 
