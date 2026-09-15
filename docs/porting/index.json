@@ -1251,6 +1251,27 @@
       "status": "implemented",
       "tests_path": "tests/core/test_fermi_step_parameter_model.py",
       "updated": "2026-09-15"
+    },
+    {
+      "depends_on": [],
+      "docs": {
+        "comparison": "docs/porting/helical-field-distribution/comparison.md",
+        "implementation_options": "docs/porting/helical-field-distribution/implementation-options.md",
+        "readme": "docs/porting/helical-field-distribution/README.md",
+        "test_data": "docs/porting/helical-field-distribution/test-data.md",
+        "verification_plan": "docs/porting/helical-field-distribution/verification-plan.md"
+      },
+      "feature_name": "Exact helical (elliptical) field-distribution lineshape (HelicalPowder, HelicalCrystal)",
+      "notes": "Exact ZF polarization for a local field rotating on a centred ellipse, D(B) = (2/pi) B/sqrt((B^2-Bmin^2)(Bmax^2-B^2)) (Amato PRB 89 184425 Eq. 10, 14), replacing reliance on the shifted-Overhauser closed form (their Eq. 15-16), which is exact only for a fixed-direction modulated field. D = arcsine density x smooth h(B) = 2B/sqrt((B+Bmin)(B+Bmax)); Chebyshev coefficients of h give sum c_n J_n(dw t) cos(wav t + phi + n pi/2), summed by upward Bessel recurrence where stable and a Gauss-Chebyshev quadrature of the same integrand at early times; 1e-12 accuracy; r = 0 -> J0/Struve H0, r = 1 -> cosine. Single crystal: b_z^2 = c^2 + (a^2 - c^2)(1 - Bmin^2/B^2)/(1 - r^2), W0 = (a^2 + c^2 r)/(1 + r). Phase starts fixed at 0. Deferred: Fit Wizard templates, detector axis not along P0, count-domain/vector fits.",
+      "path": "docs/porting/helical-field-distribution",
+      "references": [
+        "Literature"
+      ],
+      "slug": "helical-field-distribution",
+      "src_path": "src/asymmetry/core/fitting/helical.py",
+      "status": "implemented",
+      "tests_path": "tests/core/test_helical.py",
+      "updated": "2026-09-15"
     }
   ]
 }
