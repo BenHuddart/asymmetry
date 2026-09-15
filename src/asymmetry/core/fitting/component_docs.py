@@ -96,6 +96,17 @@ PARAMETER_MODEL_APPLICABILITY: dict[str, str] = {
         "It is not appropriate for diverging quantities (use CriticalDivergence instead) or for first-order "
         "transitions."
     ),
+    "FermiStep": (
+        "Use for a smooth step in an observable across a transition, most often the weak-transverse-field "
+        "(wTF) paramagnetic asymmetry or the zero-field 1/3 tail tracked through a magnetic ordering "
+        "temperature, where the step height measures the magnetic volume fraction. A₁ and A₂ are the "
+        "low- and high-temperature plateaus (in the unit of the trended observable; either may be the larger), "
+        "Tc is the midpoint where the curve is halfway between them, and ΔT is the width — the 10–90 % rise "
+        "spans about 4.4 ΔT. The midpoint need not coincide with the ordering temperature itself, and a broad "
+        "ΔT signals a distribution of local transition temperatures rather than a critical exponent. Use "
+        "OrderParameter instead for a quantity that grows continuously from zero, such as a precession "
+        "frequency."
+    ),
     "Redfield": (
         "Use for longitudinal-field relaxation in the motional-narrowing picture of dynamic local fields, "
         "where λ(B) = 2Δ²ν/(ν² + ωµ²) with ωµ = γµB. It is appropriate when a single dominant fluctuation "

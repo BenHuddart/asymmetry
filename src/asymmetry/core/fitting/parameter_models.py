@@ -13,6 +13,7 @@ from itertools import product
 
 import numpy as np
 from numpy.typing import NDArray
+from scipy.special import expit
 
 from asymmetry.core.fitting.ballistic import lambda_total as ballistic_lambda_total
 from asymmetry.core.fitting.composite import (
@@ -260,6 +261,24 @@ def _order_parameter(
         float(y0) * np.power(base, beta_safe),
         0.0,
     )
+
+
+def _fermi_step(x: NDArray, A1: float, A2: float, Tc: float, dT: float) -> NDArray[np.float64]:
+    """Fermi-function (logistic) step across a transition.
+
+    ``y(T) = A2 + (A1 - A2) / (exp((T - Tc)/dT) + 1)``, which runs from the
+    low-temperature plateau ``A1`` to the high-temperature plateau ``A2`` with
+    midpoint ``Tc`` (where ``y = (A1 + A2)/2``) and width ``dT`` (the 10–90 %
+    rise spans ``2 ln 9 · dT``). Plateaus rather than an amplitude + offset let
+    one sign convention fit a rising step (the weak-transverse-field paramagnetic
+    asymmetry) and a falling one (the zero-field 1/3 tail) alike.
+
+    Evaluated through the logistic ``expit`` so a narrow width never overflows
+    ``exp``. ``dT`` is kept strictly positive by its parameter floor (see
+    ``PARAM_INFO_REGISTRY["dT"]``).
+    """
+    tt = np.asarray(x, dtype=float)
+    return A2 + (A1 - A2) * expit((Tc - tt) / dT)
 
 
 def _knight_anisotropy(
@@ -658,6 +677,22 @@ PARAMETER_MODEL_COMPONENTS: dict[str, ParameterModelComponentDefinition] = {
         },
         formula_template="{y0}*(1 - (T/{Tc})^{alpha})^{beta}",
         latex_equation=r"y(T) = y_0 \left[1 - (T/T_c)^{\alpha}\right]^{\beta}",
+        scopes=("temperature",),
+    ),
+    "FermiStep": ParameterModelComponentDefinition(
+        name="FermiStep",
+        description="A2 + (A1 - A2)/(exp((T - Tc)/dT) + 1)",
+        function=_fermi_step,
+        param_names=["A1", "A2", "Tc", "dT"],
+        param_defaults={"A1": 0.0, "A2": 1.0, "Tc": 10.0, "dT": 1.0},
+        param_info={
+            "A1": get_param_info("A1"),
+            "A2": get_param_info("A2"),
+            "Tc": get_param_info("Tc"),
+            "dT": get_param_info("dT"),
+        },
+        formula_template="{A2} + ({A1} - {A2})/(exp((T - {Tc})/{dT}) + 1)",
+        latex_equation=r"y(T) = A_2 + \frac{A_1 - A_2}{e^{(T - T_c)/\Delta T} + 1}",
         scopes=("temperature",),
     ),
     "Redfield": ParameterModelComponentDefinition(
@@ -1311,7 +1346,7 @@ _PARAMETER_MODEL_CATEGORIES: dict[str, str] = {
         ["PowerLaw", "PowerLawQuadBG", "ExponentialDecay", "Arrhenius"],
         "Scaling & activation",
     ),
-    **dict.fromkeys(["CriticalDivergence", "OrderParameter"], "Critical behaviour"),
+    **dict.fromkeys(["CriticalDivergence", "OrderParameter", "FermiStep"], "Critical behaviour"),
     **dict.fromkeys(
         [
             "Redfield",
@@ -1942,6 +1977,10 @@ def suggest_trend_seeds(
     * ``OrderParameter`` (``y0·[1 − (T/Tc)^α]^β``) vanishes *at* ``Tc`` and is
       fitted with data *below* it, so ``Tc`` is placed just above ``max(x)`` and
       the amplitude ``y0`` is seeded from the largest observed value.
+    * ``FermiStep`` (``A2 + (A1 − A2)/(e^{(T−Tc)/dT} + 1)``) has its midpoint
+      *inside* the data, so the plateaus are seeded from the coldest and warmest
+      fifth of the trace, ``Tc`` from the half-step crossing, and ``dT`` from the
+      10–90 % crossings (see :func:`_fermi_step_seeds`).
 
     Exponents (``ν``, ``β``, ``α``) keep their physical defaults.
     """
@@ -1973,6 +2012,55 @@ def suggest_trend_seeds(
             seeds[mapping["Tc"]] = x_max + margin
             if y_max is not None:
                 seeds[mapping["y0"]] = y_max
+        elif component.name == "FermiStep":
+            x_sorted, y_sorted, _ = _finite_xy(xf, yf, None)
+            for base_name, value in _fermi_step_seeds(x_sorted, y_sorted).items():
+                seeds[mapping[base_name]] = value
+    return seeds
+
+
+def _level_crossing(x: NDArray[np.float64], z: NDArray[np.float64], level: float) -> float | None:
+    """x where the normalised step ``z`` first reaches ``level`` (linear interpolation).
+
+    ``z`` is the trace rescaled so its cold plateau is 0 and its warm plateau 1;
+    ``x`` is sorted ascending. Returns ``None`` when ``z`` never reaches
+    ``level``.
+    """
+    reached = np.nonzero(z >= level)[0]
+    if reached.size == 0:
+        return None
+    i = int(reached[0])
+    if i == 0:
+        return float(x[0])
+    x0, x1, z0, z1 = x[i - 1], x[i], z[i - 1], z[i]
+    return float(x0 + (level - z0) * (x1 - x0) / (z1 - z0))
+
+
+def _fermi_step_seeds(x: NDArray[np.float64], y: NDArray[np.float64]) -> dict[str, float]:
+    """Closed-form ``FermiStep`` seeds from an x-sorted, finite trace.
+
+    The plateaus ``A1``/``A2`` are the means of the coldest and warmest fifth of
+    the points (at least one each). With the trace normalised to run 0 → 1
+    between them, ``Tc`` is the half-step crossing and ``dT`` follows from the
+    10–90 % crossings, which a logistic step places ``2 ln 9 · dT`` apart. A
+    flat trace seeds only the plateaus.
+    """
+    if x.size < 2:
+        return {}
+    k = max(1, x.size // 5)
+    a1 = float(np.mean(y[:k]))
+    a2 = float(np.mean(y[-k:]))
+    seeds = {"A1": a1, "A2": a2}
+    if a2 == a1:
+        return seeds
+    z = (y - a1) / (a2 - a1)
+    tc = _level_crossing(x, z, 0.5)
+    if tc is not None:
+        seeds["Tc"] = tc
+    x10 = _level_crossing(x, z, 0.1)
+    x90 = _level_crossing(x, z, 0.9)
+    if x10 is not None and x90 is not None and x90 > x10:
+        seeds["dT"] = float((x90 - x10) / (2.0 * np.log(9.0)))
     return seeds
 
 
@@ -2275,9 +2363,9 @@ def _estimate_lcr_peak(
 #: uniquified ``"m_2"``) to suggested values. Components without an entry keep
 #: their static defaults. Estimators return only the parameters they are
 #: confident about — a partial dict is fine, an empty dict leaves everything to
-#: defaults. ``CriticalDivergence``/``OrderParameter`` are handled by
-#: :func:`suggest_trend_seeds` (they need the whole-model x-range margin) and are
-#: intentionally absent here.
+#: defaults. ``CriticalDivergence``/``OrderParameter``/``FermiStep`` are handled
+#: by :func:`suggest_trend_seeds` (the trend-model seed table reads only that
+#: helper) and are intentionally absent here.
 _MODEL_SEED_ESTIMATORS: dict[
     str,
     Callable[
