@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-15
+
 ### Added
 
 - **An `asymmetry` command-line workflow drives a whole μSR analysis without the GUI, for
