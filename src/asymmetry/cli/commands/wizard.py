@@ -1,0 +1,189 @@
+"""``asymmetry wizard`` — screen one reduced run against candidate models."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from asymmetry.cli._output import UserError, emit_json, format_number, payload, render_table
+from asymmetry.cli._runs import reduced_datasets
+from asymmetry.cli._workdir import add_workdir_argument, workdir_for
+
+#: Candidates listed in the human-readable table.
+_TOP_CANDIDATES = 5
+
+
+def add_parser(subparsers: argparse._SubParsersAction) -> None:
+    """Declare the ``wizard`` subcommand."""
+    parser = subparsers.add_parser(
+        "wizard",
+        help="Screen a reduced run against the fit wizard's candidate models",
+    )
+    parser.add_argument("folder", help="Directory holding the run files")
+    parser.add_argument("--run", type=int, required=True, help="Run number to screen")
+    parser.add_argument(
+        "--geometry",
+        choices=["ZF", "TF", "LF"],
+        default=None,
+        help=(
+            "Applied-field geometry, overriding the survey's and the file's "
+            "(ISIS stamps TF on zero-field runs and some files record nothing)"
+        ),
+    )
+    # Not an argparse ``choices`` list: reading the wizard's preset vocabulary
+    # means importing the fitting package, and the parser is built on *every*
+    # invocation — including ``--help`` and the commands that never fit
+    # anything. The value is checked in :func:`run`, which names every preset.
+    parser.add_argument(
+        "--scope",
+        default="auto",
+        metavar="PRESET",
+        help="Candidate-family scope preset (default: auto, from the run's geometry)",
+    )
+    parser.add_argument(
+        "--plot", action="store_true", help="Write plots/wizard-<run>.png of data + recommendation"
+    )
+    parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
+    add_workdir_argument(parser, purpose="read and write")
+    parser.set_defaults(func=run)
+
+
+def run(args: argparse.Namespace) -> None:
+    """Screen the run, store the payload and the recipe, and report both."""
+    from asymmetry.cli import plots
+    from asymmetry.core.workflow.screen import SCOPE_PRESETS, screen_run
+
+    if args.scope not in SCOPE_PRESETS:
+        raise UserError(
+            f"Unknown scope preset {args.scope!r}; expected one of {', '.join(SCOPE_PRESETS)}."
+        )
+    if args.plot:
+        plots.require_matplotlib()
+
+    folder = Path(args.folder)
+    workdir = workdir_for(folder, args.workdir)
+    dataset = reduced_datasets(workdir, [args.run])[args.run]
+
+    result = screen_run(
+        dataset,
+        geometry=args.geometry,
+        survey_geometry=_survey_geometry(workdir, args.run),
+        scope_preset=args.scope,
+        run_number=args.run,
+    )
+    wizard_path = workdir.write_wizard(args.run, result.to_dict())
+    recipe_name = f"wizard-{args.run}"
+    recipe_path = (
+        None if result.recipe is None else workdir.write_recipe(recipe_name, result.recipe)
+    )
+
+    plot_path = None
+    plot_note = None
+    if args.plot:
+        if result.recipe is None:
+            plot_note = "no recommendation to plot"
+        else:
+            recipe = result.recipe
+            plot_path = plots.plot_fit(
+                dataset.time,
+                dataset.asymmetry,
+                dataset.error,
+                model_function=recipe.model().function,
+                parameters={p.name: p.value for p in recipe.parameters},
+                t_min=recipe.t_min,
+                t_max=recipe.t_max,
+                run_number=args.run,
+                expression=recipe.expression,
+                out_path=workdir.plots_dir / f"wizard-{args.run}.png",
+            )
+
+    if args.json:
+        emit_json(
+            payload(
+                screen=result.to_dict(),
+                wizard_path=str(wizard_path),
+                recipe_name=None if recipe_path is None else recipe_name,
+                recipe_path=None if recipe_path is None else str(recipe_path),
+                plots=[] if plot_path is None else [str(plot_path)],
+                plot_note=plot_note,
+            )
+        )
+        return
+
+    print(_render(result, wizard_path, recipe_path, plot_path, plot_note))
+
+
+def _survey_geometry(workdir, run_number: int) -> str | None:
+    """The geometry the folder's survey resolved for *run_number*, if surveyed.
+
+    The survey may have *measured* it from Larmor precession, which is the only
+    source that can speak for a file recording no field state; so when a survey
+    exists in the work directory its reading beats this one dataset's metadata.
+    ``None`` when the folder was never surveyed, the run is not in the survey,
+    or the survey could not decide either.
+    """
+    if not workdir.survey_path.exists():
+        return None
+    for row in workdir.read_survey()["runs"]:
+        if row["run_number"] == run_number:
+            return row["geometry"]
+    return None
+
+
+def _render(
+    result,
+    wizard_path: Path,
+    recipe_path: Path | None,
+    plot_path: Path | None,
+    plot_note: str | None,
+) -> str:
+    """The human-readable screening report."""
+    geometry = result.geometry or "unknown"
+    lines = [
+        f"Run {result.run_number} — geometry {geometry} (from {result.geometry_source}), "
+        f"scope {result.scope_preset}",
+    ]
+    if result.scope_note:
+        lines.append(f"  scope: {result.scope_note}")
+    lines.append("")
+
+    if result.recommended_key is None:
+        lines.append("Recommendation: none — the wizard found no candidate it would stand behind.")
+    else:
+        lines.append(f"Recommendation: {result.recommended_key}")
+        lines.append(f"  {result.summary}")
+    lines.append(f"  confidence : {result.confidence}")
+    lines.append(f"  verdict    : {result.verdict}")
+    if result.caveat:
+        lines.append(f"  caveat     : {result.caveat}")
+    lines.append("")
+
+    headers = ["", "key", "title", "category", "AICc", "chi2_red", "params"]
+    rows = [
+        [
+            "*" if candidate.is_recommended else ("~" if candidate.is_comparable else ""),
+            candidate.key,
+            candidate.title,
+            candidate.category,
+            format_number(candidate.aicc, 1),
+            format_number(candidate.chi2_red, 3),
+            str(candidate.parameter_count),
+        ]
+        for candidate in result.candidates[:_TOP_CANDIDATES]
+    ]
+    lines.append(render_table(headers, rows))
+    lines.append("(* recommended, ~ comparable)")
+    lines.append("")
+
+    lines.append(result.narrative.rstrip())
+    lines.append("")
+    lines.append(f"Screening written to {wizard_path}")
+    if recipe_path is None:
+        lines.append("No recipe written — there is no recommended model to fit.")
+    else:
+        lines.append(f"Recipe written to {recipe_path}")
+    if plot_path is not None:
+        lines.append(f"Plot written to {plot_path}")
+    elif plot_note is not None:
+        lines.append(f"No plot written — {plot_note}.")
+    return "\n".join(lines)

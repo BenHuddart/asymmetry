@@ -6,7 +6,9 @@ API cookbook
 Copy-paste recipes for the most common scripting workflows, each linking to the
 page that documents it in full. If you are driving Asymmetry from a script or an
 agent rather than the GUI, **start here** — every recipe below is a runnable
-snippet against the public :mod:`asymmetry.core` API.
+snippet against the public :mod:`asymmetry.core` API. If an AI coding agent is
+doing the driving, :doc:`agent_workflow` documents a packaged command-line
+workflow and skill built on this same API, with no Python to write.
 
 .. contents:: Recipes
    :local:

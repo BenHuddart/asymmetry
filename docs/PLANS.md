@@ -6,6 +6,12 @@ subsystems or days.
 
 ## Active
 
+### Agent analysis CLI and skill (proof of concept)
+
+Status: implemented 2026-09-15 on `feat/agent-cli-skill`; PR pending; all
+four Tier A rubrics pass with Sonnet. Full plan:
+[docs/plans/agent-cli-skill.md](plans/agent-cli-skill.md).
+
 ### Parameters panel: parameter cards, chip rail, pop-out table
 
 Status: implemented 2026-09-13; single PR on `feat/parameters-panel-cards`

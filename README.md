@@ -69,6 +69,9 @@ for later reuse.
   state, plot state, fit state, Fourier settings, and per-run Fourier phase-table state.
 - **Extensible I/O**: register custom loaders at runtime for additional file formats.
 - **Optional publication export**: export trend and plot data for GLE-based figure generation.
+- **Scripting and agents**: an `asymmetry` command-line workflow (survey, calibrate, reduce, screen,
+  fit, and trend a scan) with headless plots and a `--json` payload on every command, plus a
+  packaged `asymmetry-analysis` skill that lets an AI coding agent drive the same workflow.
 
 ## Installation
 
@@ -152,6 +155,7 @@ stack stays within the versions tested by the project.
 | NeXus / HDF5 | h5py |
 | HDF4 (legacy ISIS `.nxs`) | pyhdf — see note below |
 | ROOT import | uproot |
+| agent | matplotlib, h5py |
 | GLE export | `gleplot` (current git version with foldered exports) plus a local GLE installation |
 | Development | pytest, pytest-cov, ruff, Sphinx |
 
@@ -174,6 +178,38 @@ install the conda-forge `hdf4` package, or run
 Windows and Apple Silicon macOS binaries bundle the HDF4 runtime**, so no extra
 setup is needed there. See [docs/reference/loading_data.rst](docs/reference/loading_data.rst)
 for details.
+
+### Use Asymmetry from an AI coding agent
+
+The `asymmetry` command-line workflow wraps the same core API in a script- and
+agent-friendly form: survey a folder of runs, calibrate alpha, reduce to
+asymmetry, screen fit models with the wizard, fit a scan as a series, and
+trend the results, with `--json` output and headless plots at every step. It
+ships with a packaged `asymmetry-analysis` skill that teaches an AI coding
+agent (Claude Code or Codex, so far) to drive that workflow end to end.
+
+```bash
+pipx install "asymmetry[agent] @ git+https://github.com/BenHuddart/asymmetry.git"
+asymmetry skill install --agent claude   # or --agent codex
+asymmetry skill check
+```
+
+Run the commands from the project directory you are working in and pass the
+data folder as an argument: each one caches its state in a visible
+`./asymmetry-work/` beside you — never in the data folder, which is often a
+read-only share — and one such directory holds one data folder's session.
+
+Restart the agent after installing (or upgrading) the skill so it picks up
+the change — an already-running session has already scanned its skills
+directory. The skill installs into `~/.claude/skills/asymmetry-analysis/` or
+`~/.agents/skills/asymmetry-analysis/` by default (`--project` installs under
+`./.claude` or `./.agents` instead); rerun `asymmetry skill install` after
+upgrading the package, and `asymmetry skill check` will say so if you forget.
+Note that the prebuilt desktop application does **not** put this CLI on
+`PATH` — it is a separate install even on a machine that already has the
+desktop app. See [docs/reference/agent_workflow.rst](docs/reference/agent_workflow.rst)
+for the full command reference, the work directory layout, and the fit
+recipe format.
 
 ## Quick start
 
@@ -198,6 +234,13 @@ asymmetry-gui
 
 Within the GUI, use **Edit…** (single/batch fit) and **Edit Model...** (parameter
 trending) to build expression-based models with grouped terms and live validation.
+
+### Drive an analysis from a shell or an AI agent
+
+See [Use Asymmetry from an AI coding agent](#use-asymmetry-from-an-ai-coding-agent)
+above to install the `asymmetry` command-line workflow and its packaged skill, and
+[docs/reference/agent_workflow.rst](docs/reference/agent_workflow.rst) for the full
+command reference.
 
 ## Documentation
 
@@ -225,7 +268,7 @@ reference.
 src/asymmetry/
 ├── core/           # Analysis engine, data model, loaders, transforms, fitting, Fourier tools
 ├── gui/            # PySide6 application, panels, dialogs, and windows
-├── cli.py          # Command-line entry point
+├── cli/            # Command-line entry point (survey, alpha, reduce, info)
 └── __main__.py     # python -m asymmetry
 ```
 
