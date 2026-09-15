@@ -34,9 +34,10 @@ What it does, in order:
    `Bash(cat:*)`, `Read` on the data copy, `Read`/`Edit` on the project
    directory, `Glob`, `Grep` and `Skill`,
    `WebFetch`/`WebSearch`/`Agent`/`Task` denied, and the stream saved as it
-   arrives. The prompt is the plan's fixed sentence with the data copy's path
-   in front of it (`The data is in <path>. ...`); `cost.json` records it in
-   full.
+   arrives. The prompt is the plan's fixed sentence pointed at the data copy
+   (`The directory <path> contains the data from a recent muSR experiment.
+   ...`); a custom `--prompt` gets `The data is in <path>.` in front of it.
+   `cost.json` records the prompt in full.
 4. Writes the outputs below and prints the rubric to tick.
 5. Exits nonzero if `claude` itself exited nonzero or never reached a `result`
    event. Every artefact is still written — the stderr file and the transcript

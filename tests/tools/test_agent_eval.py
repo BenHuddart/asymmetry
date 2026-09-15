@@ -204,7 +204,10 @@ def test_the_agent_runs_in_the_project_directory_and_is_told_where_the_data_is(
     assert not (out / "data" / ".claude").exists()
 
     prompt = json.loads((out / "cost.json").read_text(encoding="utf-8"))["prompt"]
-    assert prompt == f"The data is in {out / 'data'}. {runner.DEFAULT_PROMPT}"
+    assert prompt == runner.DEFAULT_PROMPT.replace(
+        "This directory contains", f"The directory {out / 'data'} contains", 1
+    )
+    assert prompt.startswith(f"The directory {out / 'data'} contains the data")
 
 
 def test_the_work_directory_the_agent_built_is_copied_out(eval_inputs, tmp_path: Path) -> None:

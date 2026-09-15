@@ -98,7 +98,7 @@ types a parameter table by hand; it edits a recipe.
 
 ## Command reference
 
-All commands: `--workdir` (default `<folder>/.asymmetry`), `--json` (machine
+All commands: `--workdir` (default `./asymmetry-work`, see Decisions recorded), `--json` (machine
 output on stdout, human table otherwise), exit code 0 on success, 1 on a
 user error with a one-line message on stderr, 2 on an internal error with a
 traceback. Every JSON payload carries `"schema": 1` and `"asymmetry_version"`.

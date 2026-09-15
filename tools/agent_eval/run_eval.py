@@ -189,12 +189,16 @@ def agent_env() -> dict[str, str]:
 
 
 def full_prompt(args: argparse.Namespace, data: Path) -> str:
-    """The prompt the agent is handed: where the data is, then the fixed sentence.
+    """The prompt the agent is handed, naming where the data is.
 
     The agent's own directory no longer holds the runs, so the path has to be
-    said. The sentence itself is unchanged from the plan's, and the whole
-    thing is recorded in ``cost.json``.
+    said. For the plan's fixed sentence that means "The directory <path>
+    contains ..." in place of "This directory contains ..." — the same
+    request, pointed at the copy; a custom prompt gets the path stated in
+    front of it. The whole thing is recorded in ``cost.json``.
     """
+    if args.prompt == DEFAULT_PROMPT:
+        return DEFAULT_PROMPT.replace("This directory contains", f"The directory {data} contains", 1)
     return f"The data is in {data}. {args.prompt}"
 
 
