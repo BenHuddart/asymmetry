@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A `FermiStep` trend model fits a smooth step across a transition**, such as the
+  weak-transverse-field asymmetry or the zero-field 1/3 tail through a magnetic ordering
+  temperature: `y(T) = A2 + (A1 − A2)/(exp((T − Tc)/ΔT) + 1)`, with the low- and
+  high-temperature plateaus `A1`/`A2`, the midpoint `Tc`, and the width `ΔT`. It is offered
+  on a temperature axis under **Critical behaviour**, seeds its plateaus, midpoint, and width
+  from the data, and matches the Fermi-function forms used in the μSR literature and Mantid's
+  `SmoothTransition`. See `docs/reference/parameter_trending.rst` § "Transition step".
+
 ## [0.20.0] - 2026-09-15
 
 ### Added

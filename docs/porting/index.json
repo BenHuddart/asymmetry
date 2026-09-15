@@ -1230,6 +1230,27 @@
       "src_path": null,
       "updated": "2026-07-19",
       "notes": "Port of musrfit's beta (A0_b/A0_f intrinsic-asymmetry balance) applied with alpha in one formula: ours A=(F-alphaB)/(betaF+alphaB), beta identical in both conventions. Determination is independent of alpha (beta invisible to count-ratio estimators; beta does not move the corrected asymmetry's zero), so the GUI gets a separate blue Corrections card. v1: fixed user-entered scalar only, default 1, key emitted only when != 1 (no schema bump); exact Poisson error generalizes 2|a| -> |a|(1+b) with denominator betaF+alphaB. Deferred pending expert consult: data-driven estimator == fittable beta in the count-domain FB model; per-projection vector beta."
+    },
+    {
+      "depends_on": [],
+      "docs": {
+        "comparison": "docs/porting/fermi-step-transition/comparison.md",
+        "implementation_options": "docs/porting/fermi-step-transition/implementation-options.md",
+        "readme": "docs/porting/fermi-step-transition/README.md",
+        "test_data": "docs/porting/fermi-step-transition/test-data.md",
+        "verification_plan": "docs/porting/fermi-step-transition/verification-plan.md"
+      },
+      "feature_name": "Fermi-function transition step (FermiStep trend model)",
+      "notes": "Logistic step y = A2 + (A1 - A2)/(exp((T - Tc)/dT) + 1) for the wTF/ZF initial asymmetry (magnetic volume fraction) across a transition. Plateau parameterisation (Steele PRB 84 064412; Mantid SmoothTransition, whose rst formula has a sign error vs its code). dT floor 1e-6 K via ParamInfo; data-aware seeds in suggest_trend_seeds. Deferred: erf sibling (Kamusella PRB 95 094415), shared-baseline multi-step sum (Khasanov arXiv:2512.22371), dialog default.",
+      "path": "docs/porting/fermi-step-transition",
+      "references": [
+        "Mantid"
+      ],
+      "slug": "fermi-step-transition",
+      "src_path": "src/asymmetry/core/fitting/parameter_models.py",
+      "status": "implemented",
+      "tests_path": "tests/core/test_fermi_step_parameter_model.py",
+      "updated": "2026-09-15"
     }
   ]
 }

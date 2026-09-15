@@ -158,6 +158,37 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
         default_min=0.0,
         description="Saturated (T=0) value of an order-parameter trend.",
     ),
+    # FermiStep transition plateaus. They carry the unit of the trended
+    # observable and are signed (a falling step has A2 < A1), so no floor.
+    "A1": ParamInfo(
+        "A1",
+        "A1",
+        "A₁",
+        r"$A_1$",
+        r"{\it A}_{1}",
+        description="Low-temperature (T ≪ Tc) plateau of a FermiStep transition.",
+    ),
+    "A2": ParamInfo(
+        "A2",
+        "A2",
+        "A₂",
+        r"$A_2$",
+        r"{\it A}_{2}",
+        description="High-temperature (T ≫ Tc) plateau of a FermiStep transition.",
+    ),
+    # A small POSITIVE floor, not 0: the width divides (T - Tc), so dT = 0 is a
+    # 0/0 at T = Tc. 1e-6 K sits far below any resolvable transition width
+    # (dilution-fridge steps are mK-wide), so the floor never clamps a real fit.
+    "dT": ParamInfo(
+        "dT",
+        "dT",
+        "ΔT",
+        r"$\Delta T$",
+        r"\Delta {\it T}",
+        "K",
+        default_min=1e-6,
+        description="Width of a FermiStep transition; the 10–90 % rise spans 2 ln 9 · ΔT ≈ 4.4 ΔT.",
+    ),
     # Knight-shift K(θ) anisotropy parameters (Phase 5). The K-amplitudes carry
     # the displayed Knight-shift unit (ppm/%/fraction), so no fixed unit here.
     "K_iso": ParamInfo(
