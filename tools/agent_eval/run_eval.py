@@ -198,7 +198,9 @@ def full_prompt(args: argparse.Namespace, data: Path) -> str:
     front of it. The whole thing is recorded in ``cost.json``.
     """
     if args.prompt == DEFAULT_PROMPT:
-        return DEFAULT_PROMPT.replace("This directory contains", f"The directory {data} contains", 1)
+        return DEFAULT_PROMPT.replace(
+            "This directory contains", f"The directory {data} contains", 1
+        )
     return f"The data is in {data}. {args.prompt}"
 
 
