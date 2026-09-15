@@ -158,6 +158,31 @@ def test_batch_physics_chain_seeds_local_per_run_global_averaged(qapp) -> None:
     assert lambda_seed(406) == pytest.approx(1.5)
 
 
+def test_batch_physics_fixed_value_typed_after_inheritance_reaches_fit(qapp) -> None:
+    # The inherited average lands in the physics table; a Fixed value typed over
+    # it afterwards is the one the grouped batch holds, not the average.
+    win = MultiGroupFitWindow()
+    tab = win._batch_fit_tab
+    tab.set_member_datasets(
+        [_member(415, field=100.0, phi=0.3, seed=15), _member(416, field=100.0, phi=0.3, seed=16)]
+    )
+    model = CompositeModel(["Exponential", "Constant"], operators=["+"])
+    tab.register_grouped_single_fit_seed(415, model, {"Lambda": 0.8})
+    tab.register_grouped_single_fit_seed(416, model, {"Lambda": 0.8})
+    row = _physics_row(tab, "Lambda")
+    assert float(tab._group_model_table.item(row, 1).text()) == pytest.approx(0.8)
+
+    tab._group_model_table.cellWidget(row, 2).setCurrentText("Fixed")
+    tab._group_model_table.item(row, 1).setText("2.5")
+
+    cfg = tab._parse_grouped_parameter_configuration()
+    for run in (415, 416):
+        params = tab._build_grouped_initial_params(tab._grouped_members[run], cfg, run_number=run)
+        lam = next(iter(params.values()))["Lambda"]
+        assert lam.fixed
+        assert lam.value == pytest.approx(2.5)
+
+
 def test_send_to_batch_copies_model_and_seeds(qapp) -> None:
     win = MultiGroupFitWindow()
     win.set_dataset(_member(407, field=222.0, phi=0.3, seed=7))

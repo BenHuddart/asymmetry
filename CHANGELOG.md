@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the data, and matches the Fermi-function forms used in the μSR literature and Mantid's
   `SmoothTransition`. See `docs/reference/parameter_trending.rst` § "Transition step".
 
+### Fixed
+
+- **A Fixed or Global value typed on the Batch Fit tab is the value the fit uses.** After a
+  batch (or the single fits it inherits from), the next fit replaced the table's Fixed and
+  Global values with the average of the earlier results, so a parameter re-fixed at a new
+  value was silently held at its previous one while the table showed the new number. The
+  table is now the only source of those values: the inherited average is written there once
+  when new results arrive, and re-selecting the same runs no longer writes it back over an
+  edit. The grouped (multi-group) batch had the same fault and is fixed the same way.
+
 ## [0.20.0] - 2026-09-15
 
 ### Added
