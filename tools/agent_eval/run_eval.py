@@ -51,7 +51,26 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUBRIC_DIR = Path(__file__).resolve().parent / "rubrics"
-VENV_BIN = REPO_ROOT / ".venv" / "bin"
+
+
+def asymmetry_command() -> list[str]:
+    """How to invoke the ``asymmetry`` CLI from this interpreter's environment.
+
+    The console script installed beside the running interpreter when there is
+    one (a venv, a pipx environment, a CI install), else the package's
+    ``python -m asymmetry`` entry point, which works wherever the package
+    imports. Nothing here assumes a ``.venv`` at the repository root.
+    """
+    script = Path(sys.executable).parent / "asymmetry"
+    if script.exists():
+        return [str(script)]
+    return [sys.executable, "-m", "asymmetry"]
+
+
+def cli_bin_dir() -> Path:
+    """The directory the agent needs first on ``PATH`` to find ``asymmetry``."""
+    return Path(sys.executable).parent
+
 
 #: The prompt the plan fixes for every evaluation.
 DEFAULT_PROMPT = (
@@ -155,8 +174,6 @@ def check_inputs(args: argparse.Namespace) -> None:
         sys.exit(f"--out {args.out} already exists and is not empty; choose another directory")
     if not Path(args.claude).exists():
         sys.exit(f"Claude Code CLI not found at {args.claude}; pass --claude")
-    if not (VENV_BIN / "asymmetry").exists():
-        sys.exit(f"{VENV_BIN / 'asymmetry'} not found; create the project venv first")
 
 
 def stage(args: argparse.Namespace) -> tuple[Path, Path]:
@@ -172,7 +189,7 @@ def stage(args: argparse.Namespace) -> tuple[Path, Path]:
     shutil.copytree(args.data, data)
     project.mkdir()
     subprocess.run(
-        [str(VENV_BIN / "asymmetry"), "skill", "install", "--agent", "claude", "--project"],
+        [*asymmetry_command(), "skill", "install", "--agent", "claude", "--project"],
         cwd=project,
         check=True,
         capture_output=True,
@@ -182,9 +199,9 @@ def stage(args: argparse.Namespace) -> tuple[Path, Path]:
 
 
 def agent_env() -> dict[str, str]:
-    """The environment the agent runs in: the project venv first on ``PATH``."""
+    """The environment the agent runs in: this interpreter's ``bin`` first on ``PATH``."""
     env = dict(os.environ)
-    env["PATH"] = f"{VENV_BIN}{os.pathsep}{env.get('PATH', '')}"
+    env["PATH"] = f"{cli_bin_dir()}{os.pathsep}{env.get('PATH', '')}"
     return env
 
 

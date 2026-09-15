@@ -29,7 +29,7 @@ What it does, in order:
    data — and installs the packaged skill into `<out>/project/.claude/skills/`
    with `asymmetry skill install --agent claude --project`. Everything the
    agent produces, the `asymmetry-work/` work directory included, lands here.
-3. Runs `claude -p` in the **project** directory with the project `.venv/bin`
+3. Runs `claude -p` in the **project** directory with the running interpreter's `bin`
    first on `PATH`, the tool set limited to `Bash(asymmetry:*)`, `Bash(ls:*)`,
    `Bash(cat:*)`, `Read` on the data copy, `Read`/`Edit` on the project
    directory, `Glob`, `Grep` and `Skill`,
