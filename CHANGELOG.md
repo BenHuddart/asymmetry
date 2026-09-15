@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   visible and lives in the directory the command is run from, not in the data folder (which is
   routinely a read-only share or archive), and it holds one data folder's session: a command
   pointed at a second folder says so rather than mixing two folders' runs in one cache, and
-  `--workdir asymmetry-work/<name>` gives that folder a session of its own.
+  `--workdir asymmetry-work-<name>` gives that folder a session of its own.
   `wizard` writes a fit recipe (model, parameters, time window) from its recommendation, the
   sole contract between screening and fitting; `fit-series --start RUN` chains a series outward
   from the run you screened. Install the new `agent` extra

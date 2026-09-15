@@ -75,7 +75,7 @@ stale entry is recomputed, never trusted.
 One work directory holds one data folder: everything in it is keyed on the run
 number alone, so the manifest's `folder` is binding — `survey` and `reduce`
 write it, every command checks it, and a second folder needs
-`--workdir asymmetry-work/<name>` of its own.
+`--workdir asymmetry-work-<name>` of its own.
 
 ### The fit recipe
 

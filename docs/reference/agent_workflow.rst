@@ -144,7 +144,7 @@ Every subcommand below shares the same conventions:
   ``./asymmetry-work`` — in the directory the command is run from, not in the
   data folder. One work directory holds one data folder's session, so this is
   the flag to reach for when a second folder is analysed from the same
-  project: ``--workdir asymmetry-work/<name>``, passed to every command on
+  project: ``--workdir asymmetry-work-<name>``, passed to every command on
   that folder. Pointing a command at a directory that already holds a
   different folder's session is a user error, not a silent merge.
 - ``--verbose`` (on the main ``asymmetry`` command, before the subcommand)
@@ -548,7 +548,7 @@ already belongs to another folder is refused:
 .. code-block:: console
 
    $ asymmetry survey /data/nickel
-   asymmetry: /work/asymmetry-work belongs to /data/ptfe; for /data/nickel pass --workdir asymmetry-work/<name>
+   asymmetry: /work/asymmetry-work belongs to /data/ptfe; for /data/nickel pass --workdir asymmetry-work-<name>
 
 ``survey`` and ``reduce`` write the manifest, so the first of them run against
 a fresh directory claims it; a directory with no manifest yet is unclaimed.

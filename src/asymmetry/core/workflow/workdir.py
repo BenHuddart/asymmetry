@@ -82,7 +82,7 @@ class WorkDirMismatchError(Exception):
         self.bound_folder = bound_folder
         self.folder = folder
         super().__init__(
-            f"{root} belongs to {bound_folder}; for {folder} pass --workdir {WORKDIR_NAME}/<name>"
+            f"{root} belongs to {bound_folder}; for {folder} pass --workdir {WORKDIR_NAME}-<name>"
         )
 
 

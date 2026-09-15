@@ -62,7 +62,7 @@ and it is often read-only.
 
 One work directory holds one data folder's runs — everything in it is keyed on
 the run number alone. So for a **second data folder** in the same project, pass
-`--workdir asymmetry-work/<short-name>` and keep passing that same `--workdir`
+`--workdir asymmetry-work-<short-name>` and keep passing that same `--workdir`
 for every command on that folder. Otherwise do not pass `--workdir` at all: the
 default is right, and a directory that already holds another folder's session
 says so rather than mixing the two.

@@ -49,7 +49,7 @@ and `info` are stateless — they load, print and write nothing — and `skill`
 writes into the agent's own skill directory instead.
 
 One work directory holds one data folder's session. For a second folder in the
-same project, pass `--workdir asymmetry-work/<short-name>` and keep using it
+same project, pass `--workdir asymmetry-work-<short-name>` and keep using it
 for that folder's commands.
 
 Exit codes: 0 success, 1 user error (one line on stderr), 2 internal error
