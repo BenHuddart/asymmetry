@@ -15,6 +15,7 @@ from tests.core.conftest import (
     CALIBRATION_ALPHA,
     CALIBRATION_RUN,
     DEADTIME_RUN,
+    DECOUPLING_RUN,
     SCAN_RUNS,
 )
 
@@ -97,6 +98,35 @@ def test_survey_human_output_names_the_calibration_run_and_the_scan(
     assert "ZF" in out
 
 
+def test_survey_table_shows_the_precession_column_and_the_measured_geometry(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    cli.main(["survey", str(workflow_folder), "--workdir", str(tmp_path / "wd")])
+    lines = capsys.readouterr().out.splitlines()
+    header = next(line for line in lines if line.lstrip().startswith("run "))
+    assert "prec" in header.split()
+
+    calibration = next(line for line in lines if line.startswith(f"{CALIBRATION_RUN} "))
+    # A measured geometry is starred so the column says at a glance that the
+    # spectrum, not the file, decided it.
+    assert "TF*" in calibration
+    assert "larmor" in calibration
+
+    decoupling = next(line for line in lines if line.startswith(f"{DECOUPLING_RUN} "))
+    assert "none" in decoupling
+    assert "TF*" not in decoupling
+
+
+def test_survey_candidate_block_names_the_source_of_each_candidate(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    cli.main(["survey", str(workflow_folder), "--workdir", str(tmp_path / "wd")])
+    out = capsys.readouterr().out
+    assert f"run {CALIBRATION_RUN} (best) [measured]" in out
+    assert "Larmor frequency" in out
+    assert f"run {DECOUPLING_RUN}" not in out.split("Alpha-calibration candidates:")[1]
+
+
 def test_survey_defaults_its_workdir_into_the_data_folder(tmp_path: Path, capsys) -> None:
     folder = tmp_path / "empty"
     folder.mkdir()
@@ -122,6 +152,7 @@ def test_alpha_json_payload_recovers_the_simulated_balance(workflow_folder: Path
     assert payload["alpha"]["method"] == "per_run_estimate"
     assert payload["is_calibration_candidate"] is True
     assert payload["warning"] is None
+    assert payload["precession"]["state"] == "larmor"
 
 
 def test_alpha_warns_when_the_run_is_not_a_calibration_run(workflow_folder: Path, capsys) -> None:
@@ -129,6 +160,18 @@ def test_alpha_warns_when_the_run_is_not_a_calibration_run(workflow_folder: Path
     payload = _json_output(capsys)
     assert payload["is_calibration_candidate"] is False
     assert "not a weak-transverse-field calibration run" in payload["warning"]
+
+
+def test_alpha_says_in_words_whether_the_run_precesses_at_the_larmor_frequency(
+    workflow_folder: Path, capsys
+) -> None:
+    cli.main(["alpha", str(workflow_folder), "--run", str(CALIBRATION_RUN)])
+    assert "precession      : at the Larmor frequency: yes" in capsys.readouterr().out
+
+    # The decoupling run records a field and shows no precession in it — the
+    # case an agent calibrating on a non-candidate needs told plainly.
+    cli.main(["alpha", str(workflow_folder), "--run", str(DECOUPLING_RUN)])
+    assert "precession      : at the Larmor frequency: no" in capsys.readouterr().out
 
 
 def test_alpha_on_an_absent_run_is_a_user_error(workflow_folder: Path, capsys) -> None:
@@ -315,6 +358,24 @@ def test_wizard_before_reduce_names_the_run_and_the_step_to_run(
     err = capsys.readouterr().err
     assert str(SCAN_RUNS[0]) in err
     assert "asymmetry reduce" in err
+
+
+def test_wizard_takes_the_geometry_the_survey_resolved(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    # Screening one run cannot see the folder's survey unless the command hands
+    # it over; without that, a file recording no field state screens blind.
+    from asymmetry.cli.commands.wizard import _survey_geometry
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    workdir = WorkDir(tmp_path / "wd")
+    assert _survey_geometry(workdir, CALIBRATION_RUN) is None
+
+    cli.main(["survey", str(workflow_folder), "--workdir", str(workdir.root)])
+    capsys.readouterr()
+    assert _survey_geometry(workdir, CALIBRATION_RUN) == "TF"
+    assert _survey_geometry(workdir, SCAN_RUNS[0]) == "ZF"
+    assert _survey_geometry(workdir, 900) is None
 
 
 def test_wizard_rejects_an_unknown_scope_preset(

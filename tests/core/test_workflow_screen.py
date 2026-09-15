@@ -57,11 +57,22 @@ def test_resolve_geometry_reports_the_value_and_where_it_came_from(
 def test_an_override_wins_and_is_recorded_as_the_users() -> None:
     dataset = _dataset({"field": 0.0, "field_state": "TF"})
     assert resolve_geometry(dataset, "LF") == ("LF", "user")
+    assert resolve_geometry(dataset, "LF", "TF") == ("LF", "user")
+
+
+def test_the_surveys_geometry_beats_this_datasets_own_metadata() -> None:
+    # The survey may have *measured* the geometry from Larmor precession, which
+    # is the only source that can speak for a file recording no field state.
+    dataset = _dataset({"field": 100.0})
+    assert resolve_geometry(dataset, None) == (None, "none")
+    assert resolve_geometry(dataset, None, "TF") == ("TF", "survey")
 
 
 def test_an_unknown_geometry_is_rejected() -> None:
     with pytest.raises(ValueError, match="Unknown geometry"):
         resolve_geometry(_dataset({}), "sideways")
+    with pytest.raises(ValueError, match="Unknown geometry"):
+        resolve_geometry(_dataset({}), None, "sideways")
 
 
 def test_an_unknown_scope_preset_is_rejected(reduced_workdir: WorkDir) -> None:

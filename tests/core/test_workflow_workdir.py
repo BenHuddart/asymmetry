@@ -15,7 +15,7 @@ from asymmetry.core.workflow.reduction import (
     reduce_run,
     resolve_reduction_grouping,
 )
-from asymmetry.core.workflow.survey import build_run_row
+from asymmetry.core.workflow.survey import build_run_row, precession_evidence
 from asymmetry.core.workflow.workdir import (
     SCHEMA,
     WORKDIR_NAME,
@@ -44,7 +44,13 @@ def reduced(workflow_folder: Path, tmp_path: Path):
         source_file=str(path),
         n_points=dataset.n_points,
         settings=settings,
-        run=build_run_row(dataset_in, path=path, prefix="SIM", run_number=run_number).to_dict(),
+        run=build_run_row(
+            dataset_in,
+            path=path,
+            prefix="SIM",
+            run_number=run_number,
+            precession=precession_evidence(dataset, dataset_in.field),
+        ).to_dict(),
         alpha=float(grouping["alpha"]),
         deadtime_mode=str(grouping["deadtime_mode"]),
         forward_group=int(grouping["forward_group"]),

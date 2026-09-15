@@ -26,8 +26,9 @@ calibration run:
 
 - [ ] Names the three field regimes (ZF, TF 100 G, LF) and their
       run-number ranges.
-- [ ] States that no dedicated calibration run exists and says what it
-      used (or would use) for alpha instead of silently assuming 1.0.
+- [ ] Identifies the paramagnetic 100 G runs as measured calibration
+      candidates (or states that none exist) and says which run alpha
+      came from.
 - [ ] Reports a damped/precessing oscillation present in the ZF spectra
       at the lower temperatures scanned.
 - [ ] Reports that the oscillation is lost or heavily damped at the
@@ -57,8 +58,9 @@ calibration run:
 - ISIS EMU files can carry a nonzero field stamp on runs intended as
   ZF (or a zero stamp on a field run); grouping must follow the
   survey's own field column, not an assumed run label.
-- There is no calibration run in this range; quietly defaulting to
-  alpha = 1.0 without saying so is a fail.
+- There is no *dedicated* calibration run in this range; the survey
+  offers the paramagnetic 100 G runs as measured candidates instead.
+  Quietly defaulting to alpha = 1.0 without saying so is a fail.
 - The worksheet's bulk Tc (630 K) is background physics, not a number
   the data can support at 100-380 K — echoing it as a result fails
   the no-fabricated-numbers rule.

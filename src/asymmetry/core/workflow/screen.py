@@ -15,12 +15,20 @@ which :func:`~asymmetry.core.fitting.wizard_scope.resolve_scope_for_dataset`
 reads from the recorded ``field_direction``/``field_state`` token. Real files
 are unreliable there: ISIS stamps ``TF`` on the zero-field runs of a scan that
 opened with a weak transverse-field calibration, and some files record nothing
-at all. So the geometry is resolved here first — from the caller's override,
-else from the survey's own rule (:func:`~asymmetry.core.workflow.survey.run_geometry`:
-a recorded field of exactly zero means zero field) — and the wizard is handed a
-dataset copy whose ``field_direction`` says so. The survey and the wizard can
-then never disagree about what a run is, and the result records which source
-decided (``"user"``, ``"field"``, ``"file"`` or ``"none"``).
+at all. So the geometry is resolved here first and the wizard is handed a
+dataset copy whose ``field_direction`` says so, in this order:
+
+1. the caller's explicit override (``"user"``);
+2. the geometry the folder's survey resolved for this run (``"survey"``) — which
+   may itself have been *measured* from Larmor precession, the one source that
+   can speak for a file recording no field state at all;
+3. the survey's metadata rule on this dataset alone
+   (:func:`~asymmetry.core.workflow.survey.run_geometry`: a recorded field of
+   exactly zero means zero field), as ``"field"`` or ``"file"``;
+4. nothing (``"none"``).
+
+The survey and the wizard can then never disagree about what a run is, and the
+result records which source decided.
 """
 
 from __future__ import annotations
@@ -40,22 +48,35 @@ from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.survey import run_geometry
 
 #: Where a run's geometry came from, in the order the resolution tries them.
-GEOMETRY_SOURCES = ("user", "field", "file", "none")
+GEOMETRY_SOURCES = ("user", "survey", "field", "file", "none")
 
 #: Scope presets a caller may name (the fit wizard's own vocabulary).
 SCOPE_PRESETS = tuple(preset.value for preset in WizardScopePreset)
 
 
-def resolve_geometry(dataset: MuonDataset, override: str | None) -> tuple[str | None, str]:
+def _named_geometry(value: str) -> str:
+    """``"ZF"``/``"TF"``/``"LF"`` for a geometry token, or :class:`ValueError`."""
+    geometry = geometry_from_field_direction(value)
+    if geometry is None:
+        raise ValueError(f"Unknown geometry {value!r}; expected ZF, TF or LF.")
+    return geometry.value
+
+
+def resolve_geometry(
+    dataset: MuonDataset,
+    override: str | None,
+    survey_geometry: str | None = None,
+) -> tuple[str | None, str]:
     """Return this run's ``(geometry, source)`` — see the module docstring.
 
-    Raises :class:`ValueError` for an *override* that is not a geometry token.
+    *survey_geometry* is the geometry the folder's survey resolved for this run;
+    it loses to an explicit *override* and beats this dataset's own metadata.
+    Raises :class:`ValueError` for a token that is not a geometry.
     """
     if override is not None:
-        geometry = geometry_from_field_direction(override)
-        if geometry is None:
-            raise ValueError(f"Unknown geometry {override!r}; expected ZF, TF or LF.")
-        return geometry.value, "user"
+        return _named_geometry(override), "user"
+    if survey_geometry is not None:
+        return _named_geometry(survey_geometry), "survey"
     resolved = run_geometry(dataset.metadata)
     if resolved is None:
         return None, "none"
@@ -138,18 +159,21 @@ def screen_run(
     dataset: MuonDataset,
     *,
     geometry: str | None = None,
+    survey_geometry: str | None = None,
     scope_preset: str = WizardScopePreset.AUTO.value,
     run_number: int,
 ) -> ScreenResult:
     """Screen *dataset* against the wizard's candidate models.
 
     *geometry* overrides the file's recorded field direction (``"ZF"``,
-    ``"TF"`` or ``"LF"``); *scope_preset* is one of :data:`SCOPE_PRESETS`.
-    Raises :class:`ValueError` for a value outside either vocabulary — this is
-    the boundary where that vocabulary is checked.
+    ``"TF"`` or ``"LF"``); *survey_geometry* is what the folder's survey
+    resolved for this run, used when the caller gives no override;
+    *scope_preset* is one of :data:`SCOPE_PRESETS`. Raises :class:`ValueError`
+    for a value outside either vocabulary — this is the boundary where that
+    vocabulary is checked.
     """
     preset = WizardScopePreset(scope_preset)
-    resolved_geometry, geometry_source = resolve_geometry(dataset, geometry)
+    resolved_geometry, geometry_source = resolve_geometry(dataset, geometry, survey_geometry)
 
     # Hand the wizard the geometry this workflow resolved, not the file's raw
     # token, so its scope matches the survey's reading of the same run.

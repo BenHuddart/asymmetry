@@ -159,20 +159,92 @@ reading every file:
 .. code-block:: console
 
    $ asymmetry survey runs
-   7 run(s) in runs — SIM
+   8 run(s) in runs — SIM
 
-   run  T/K    B/G     geom  orient        hist  points  dt   title
-   ---  -----  ------  ----  ------------  ----  ------  ---  ---------------------------
-   101  5.00   100.00  TF    Longitudinal  8     500     no   Calibrant T=5.0 K B=100.0 G
-   102  10.00  0.00    ZF    Longitudinal  8     500     no   Sample T=10.0 K B=0.0 G
+   run  T/K    B/G     geom  prec    orient        hist  points  dt   title
+   ---  -----  ------  ----  ------  ------------  ----  ------  ---  -------------------------------------
+   101  5.00   100.00  TF*   larmor  Longitudinal  8     500     no   Calibrant T=5.0 K B=100.0 G
+   102  10.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=10.0 K B=0.0 G
    ...
-   107  60.00  0.00    ZF    Longitudinal  8     500     no   Sample T=60.0 K B=0.0 G
+   107  60.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=60.0 K B=0.0 G
+   108  2.00   110.00  TF    none    Longitudinal  8     500     no   Sample T=2.0 K B=110.0 G (decoupling)
 
    Alpha-calibration candidates:
-     run 101 (best): transverse field 100 G (weak-TF calibration window)
+     run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
    Scans:
      temperature scan, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+
+.. _agent-workflow-precession:
+
+Measured transverse-field precession
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A run file's own account of its applied-field geometry cannot be trusted. ISIS
+EMU files from 2024 record no field state at all; other ISIS files stamp ``TF``
+on longitudinal decoupling runs and on the zero-field runs of a scan that opened
+with a weak-TF calibration. A survey built on that metadata alone reports "no
+calibration candidates" for a folder holding a perfectly good transverse-field
+run, and mislabels a decoupling scan.
+
+So the survey *measures* instead. Every run with a recorded non-zero field is
+reduced under the default reduction settings and fingerprinted with the same
+spectral reading the fit wizard shortlists candidate models from
+(:func:`~asymmetry.core.fitting.fit_wizard.fingerprint_spectrum`), and its
+dominant line is compared with the Larmor frequency of the recorded field,
+γ\ :sub:`μ`/2π × B. The ``prec`` column reports the verdict:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 88
+
+   * - ``prec``
+     - Meaning
+   * - ``larmor``
+     - A line at SNR ≥ 10 within 25 % of the Larmor frequency of the recorded
+       field. The field is transverse, and ``geom`` reads ``TF*`` — the ``*``
+       marks a geometry the spectrum decided rather than the file.
+   * - ``other``
+     - A line at SNR ≥ 10 somewhere else: the muon is precessing in an internal
+       field that beats the applied one, as in an ordered magnet below its
+       transition. This says nothing about the applied field's direction, so
+       ``geom`` falls back to the file.
+   * - ``none``
+     - No line above SNR 10. The applied field is not precessing the muon, so it
+       is not transverse — in a field scan, longitudinal decoupling. A row
+       reading ``geom TF`` with ``prec none`` is a file stamp the data refutes.
+   * - ``-``
+     - Not measured: the field is zero (nothing to look for), or its Larmor
+       frequency is above the record's Nyquist frequency. ``precession_note`` in
+       the JSON says which.
+
+The thresholds are :data:`~asymmetry.core.workflow.survey.PRECESSION_SNR_FLOOR`
+(10) and :data:`~asymmetry.core.workflow.survey.LARMOR_FREQUENCY_TOLERANCE`
+(0.25). They were set on measured data: genuine 20 G and 100 G transverse-field
+runs score SNR 89–418 and land 3–14 % above the nominal Larmor frequency, while
+the longitudinal decoupling runs ISIS stamps ``Transverse`` at 40–120 G score
+about 3, and ordered-state runs put their line a factor of 4 to 40 away.
+
+**Calibration candidates follow from the same measurement**, from two sources,
+each named in the candidates block:
+
+- ``[measured]`` — precession at the Larmor frequency of a recorded field inside
+  the weak-TF window
+  (:data:`~asymmetry.core.data.calibration.WEAK_TF_FIELD_RANGE_GAUSS`), with the
+  SNR quoted. The best candidate is the strongest such line.
+- ``[metadata]`` — no measurement was possible, and
+  :func:`~asymmetry.core.data.calibration.classify_tf_calibration_run` decides
+  from the file's own transverse-field evidence alone.
+
+Where a measurement *was* possible it decides: a file's ``TF`` stamp on a run
+with no precession in it is not a calibration candidate. ``asymmetry alpha``
+applies the same rule and prints its own ``precession`` line, so the two
+commands never disagree about whether a run will calibrate alpha.
+
+Each run's ``survey.json`` row carries ``geometry``, ``geometry_source``
+(``field``, ``measured``, ``file`` or ``none``), ``precession``,
+``precession_frequency_mhz``, ``precession_snr``, ``precession_larmor_mhz`` and
+``precession_note``.
 
 ``alpha``
 ~~~~~~~~~
@@ -194,7 +266,8 @@ calibration candidate, and a warning when it is not:
    Run 101 (SIM00000101.nxs)
      alpha           : 1.2521
      method          : per_run_estimate
-     calibration run : yes — transverse field 100 G (weak-TF calibration window)
+     calibration run : yes — precession at the Larmor frequency of the recorded 100 G (SNR 93)
+     precession      : at the Larmor frequency: yes — 1.363 MHz (SNR 93) against a Larmor 1.355 MHz
 
 ``reduce``
 ~~~~~~~~~~
@@ -241,10 +314,13 @@ engine behind the GUI's single-fit wizard.
                     [--plot] [--json] [--workdir WORKDIR]
                     folder
 
-``--geometry`` overrides what the file records, because ISIS stamps ``TF`` on
-zero-field runs and some files record nothing at all — pass whichever
-geometry the reduced spectrum actually shows (see `The fit recipe`_ and the
-skill's geometry-confirmation step for how to tell). ``--scope`` restricts the
+``--geometry`` overrides every other source. Without it the geometry comes from
+the folder's ``survey.json`` when one exists — including a geometry the survey
+*measured* from Larmor precession (see :ref:`agent-workflow-precession`) — and
+otherwise from this run's own metadata; the header line names the source
+(``user``, ``survey``, ``field``, ``file`` or ``none``). Pass it whenever the
+reduced spectrum tells you something the survey could not, such as a
+longitudinal decoupling run the file stamps ``TF``. ``--scope`` restricts the
 candidate families to a preset (``auto``, ``zf-static-magnetism``,
 ``tf-knight-precession``, ``tf-superconductor``, ``lf-dynamics``,
 ``fluoride-fmuf``, ``muonium-radical``, ``all``) when the physics is already
@@ -258,7 +334,7 @@ candidate's fitted values — see `The fit recipe`_), plus
 .. code-block:: console
 
    $ asymmetry wizard runs --run 102 --plot
-   Run 102 — geometry ZF (from field), scope auto
+   Run 102 — geometry ZF (from survey), scope auto
 
    Recommendation: exp_constant
      Recommended: Exponential + Constant by AICc (medium confidence).
@@ -522,8 +598,9 @@ The skill
 
 The packaged ``asymmetry-analysis`` skill tells an agent to work through
 seven steps: survey the folder; decide alpha (and never guess it); reduce the
-scan; confirm the geometry of every non-zero-field scan from the reduced
-spectrum rather than trusting the file's stamp; screen one run with the
+scan; confirm the geometry of every non-zero-field scan from the survey's
+measured precession and the reduced spectrum rather than the file's stamp;
+screen one run with the
 wizard; fit the scan as a chained series; read the trend; then write the
 summary. Alongside the steps, it carries the decision rules an analyst
 applies — which model family the physics calls for versus what AICc ranks

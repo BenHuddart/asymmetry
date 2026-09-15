@@ -76,7 +76,7 @@ def run(args: argparse.Namespace) -> None:
         reduce_run,
         resolve_reduction_grouping,
     )
-    from asymmetry.core.workflow.survey import build_run_row
+    from asymmetry.core.workflow.survey import build_run_row, precession_evidence
     from asymmetry.core.workflow.workdir import ReducedEntry, WorkDir, reduction_digest
 
     folder = Path(args.folder)
@@ -129,7 +129,15 @@ def run(args: argparse.Namespace) -> None:
             recomputed = False
         else:
             dataset = reduce_run(source_run, settings)
-            row = build_run_row(dataset_in, path=path, prefix=prefix, run_number=run_number)
+            row = build_run_row(
+                dataset_in,
+                path=path,
+                prefix=prefix,
+                run_number=run_number,
+                # Measured on the record this command actually produced, so a
+                # rebinned or trimmed reduction is judged on what it reduced to.
+                precession=precession_evidence(dataset, dataset_in.field),
+            )
             entry = ReducedEntry(
                 run_number=run_number,
                 digest=digest,

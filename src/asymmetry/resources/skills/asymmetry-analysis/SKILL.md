@@ -62,10 +62,22 @@ asymmetry survey <folder>
 ```
 
 Read it properly before doing anything else. It gives you, per run:
-temperature, field, geometry, detector orientation, point count, whether the
-file carries deadtime values, title and notes; then the
+temperature, field, geometry, **`prec`**, detector orientation, point count,
+whether the file carries deadtime values, title and notes; then the
 **alpha-calibration candidates**, then **`scans`** — runs grouped into
 temperature scans at fixed field and field scans at fixed temperature.
+
+**`geom` and `prec` together are the geometry evidence.** For every run with a
+non-zero recorded field the survey reduces the spectrum and looks for precession
+at that field's Larmor frequency (γ_μ/2π × B = 13.55 kHz/G). `prec` reports what
+it found:
+
+| `prec` | Means |
+|---|---|
+| `larmor` | A strong line at the Larmor frequency of the recorded field. The field **is** transverse, and `geom` reads `TF*` — the `*` says the spectrum decided it, not the file. |
+| `other` | A strong line somewhere else: the muon is precessing in an **internal** field that beats the applied one. An ordered magnet, below its transition. |
+| `none` | No line worth the name. Whatever the file stamps, **this field is not precessing the muon** — in a field scan that means longitudinal decoupling. A row reading `geom TF` with `prec none` is a file stamp the data does not support; do not believe the `TF`. |
+| `-` | Not measurable: zero field (nothing to look for), or a Larmor frequency above the record's Nyquist frequency (a kilogauss-scale field at a pulsed source). |
 
 `scans` is the experiment's structure. Work out from it:
 
@@ -100,20 +112,34 @@ asymmetry alpha <folder> --run <calibration run>
 
 (`alpha` takes no `--workdir` and no `--plot`.)
 
+The survey's candidate list has two sources, marked in the block it prints:
+
+- `[measured]` — the spectrum was seen precessing at the Larmor frequency of its
+  recorded field, with the SNR quoted. This is the strong evidence, and it finds
+  candidates the file's own metadata hides: a TF scan above a magnetic
+  transition is listed run by run, and so is a 100 G run in a file recording no
+  field state at all.
+- `[metadata]` — nothing could be measured (no recorded field, or a Larmor
+  frequency above Nyquist) and the file's own transverse-field evidence is all
+  there is.
+
+Then:
+
 - **The survey lists calibration candidates** → use one and report the value.
-  When several are listed, the calibration run is the one at the **weakest
-  transverse field that is not itself a member of the scan you are about to
-  analyse** — a whole scan taken at, say, 110 G will be listed as candidates
-  run by run, and those are scan members, not a calibration. A single separate
-  run at 20 G is the calibration.
-- **No candidates at all, but the folder has TF runs** (for example a TF scan
-  above a magnetic transition, where the sample is paramagnetic and the
-  precession is clean): you may run `alpha --run` on one of those. The command
-  prints a WARNING that the run is not a calibration run — **say in your
-  summary that you did this and on which run**.
-- **Nothing suitable at all** → reduce with the default alpha 1.0 and state in
-  the summary that alpha was assumed to be 1.0 and was not measured. Silently
-  defaulting is a failure; say it.
+  When several are listed, prefer the one the survey marks `(best)` — the
+  strongest measured precession — unless it is a member of the scan you are
+  about to analyse and a separate run is available. A dedicated run at 20 G is
+  the calibration; twelve runs of a 100 G paramagnetic scan are candidates
+  *because* the sample is paramagnetic there, and calibrating on one of them is
+  legitimate — **say which run alpha came from**.
+- **No candidates at all** → nothing in this folder precesses at its own
+  applied field, so there is nothing to measure alpha on. Reduce with the
+  default alpha 1.0 and state in the summary that alpha was assumed to be 1.0
+  and was not measured. Silently defaulting is a failure; say it.
+
+`asymmetry alpha <folder> --run N` prints its own `precession` line — "at the
+Larmor frequency: yes/no" in words — so you can see for any run, candidate or
+not, whether it is the kind of run alpha can be measured on.
 
 ### Step 3 — reduce the scan to asymmetry
 
@@ -141,19 +167,32 @@ cheap (results are cached on a digest and reused).
 ### Step 3a — confirm the geometry of every non-zero-field scan
 
 Do this before screening anything, every time, and report the answer. ISIS
-files stamp `field_direction` unreliably: a zero-field run in a scan that
-opened with a weak-TF calibration keeps the `TF` stamp, and a longitudinal
-decoupling field is routinely stamped `TF` too. **The survey's `geom` column
-is a hypothesis, not a fact.**
+files stamp `field_direction` unreliably: a zero-field run in a scan that opened
+with a weak-TF calibration keeps the `TF` stamp, a longitudinal decoupling field
+is routinely stamped `TF` too, and EMU files from 2024 record no field state at
+all.
+
+**Start from the survey's own measurement** (step 1's `prec` column), which is
+evidence, not a stamp:
 
 - A run at **0 G is ZF**, whatever the file says.
-- For a non-zero field, look at the reduced PNG. A **transverse** field
-  precesses the muon at γ_μ/2π × B — 13.55 kHz/G, so 20 G ≈ 0.27 MHz,
-  110 G ≈ 1.5 MHz, 400 G ≈ 5.4 MHz — a plainly visible oscillation filling the
-  early-time window. **No oscillation at that frequency means the field is
-  longitudinal.** (Use `reduce --tmax 2 --plot` to zoom the early window if
-  the full range is too compressed to judge.)
-- A field scan at fixed temperature over a wide range is LF decoupling.
+- `geom TF*` with `prec larmor` → **transverse, measured**. Take it.
+- `prec none` on a non-zero field → **longitudinal**. The muon is not precessing
+  in the applied field, so the field is along the beam. This holds even when
+  `geom` still reads `TF`: that is the file's stamp, and the measurement refutes
+  it. A field scan at fixed temperature over a wide range is LF decoupling, and
+  this is how you confirm it.
+- `prec other` → an ordered magnet precessing in its own internal field. That
+  says nothing about the applied field's direction; fall back to the file's
+  `geom`, the scan the run belongs to, and the reduced PNG.
+- `prec -` → nothing was measurable. Judge it from the PNG as below.
+
+**Confirm on the reduced PNG** — always for `other` and `-`, and as a sanity
+check otherwise. A **transverse** field precesses the muon at γ_μ/2π × B —
+13.55 kHz/G, so 20 G ≈ 0.27 MHz, 110 G ≈ 1.5 MHz, 400 G ≈ 5.4 MHz — a plainly
+visible oscillation filling the early-time window. No oscillation at that
+frequency means the field is longitudinal. (Use `reduce --tmax 2 --plot` to zoom
+the early window if the full range is too compressed to judge.)
 
 Then pass the right `--geometry ZF|TF|LF` to `wizard` for every run you screen,
 and say in the summary what each scan's geometry is and how you established it.
@@ -184,9 +223,13 @@ Pick it from the `reduce` table and the reduced PNGs, not from the run list:
   enough to fit. A falling A(0) on cooling is loss of *resolvable* signal, not
   loss of magnetism; say so in those terms.
 
-Always pass the `--geometry` you established in step 3a. The wizard scopes its
-candidate families by geometry, so screening a decoupling LF run as `TF` puts
-precession models in front of it and nothing else.
+Always pass the `--geometry` you established in step 3a. Without it the wizard
+falls back to the survey's geometry (the header line says `from survey`, `from
+user`, `from field` or `from file`), which is right whenever `prec` settled it
+and wrong exactly where you had to reason — a `prec none` run the file stamps
+`TF`. The wizard scopes its candidate families by geometry, so screening a
+decoupling LF run as `TF` puts precession models in front of it and nothing
+else.
 
 Read from the output:
 
@@ -459,37 +502,43 @@ here it may be qualitative.
 
 ## 7. Worked example
 
-A synthetic folder of seven simulated runs: one weak-TF calibration run at
-100 G and a six-run zero-field temperature scan, 10–60 K, the last of which
-carries no signal at all. Output below is real, trimmed.
+A synthetic folder of eight simulated runs: one weak-TF calibration run at
+100 G, a six-run zero-field temperature scan, 10–60 K, the last of which carries
+no signal at all, and one 110 G longitudinal decoupling run. Output below is
+real, trimmed.
 
 ```console
 $ asymmetry survey runs
-7 run(s) in runs — SIM
+8 run(s) in runs — SIM
 
-run  T/K    B/G     geom  orient        hist  points  dt   title
----  -----  ------  ----  ------------  ----  ------  ---  ---------------------------
-101  5.00   100.00  TF    Longitudinal  8     500     no   Calibrant T=5.0 K B=100.0 G
-102  10.00  0.00    ZF    Longitudinal  8     500     no   Sample T=10.0 K B=0.0 G
+run  T/K    B/G     geom  prec    orient        hist  points  dt   title
+---  -----  ------  ----  ------  ------------  ----  ------  ---  -------------------------------------
+101  5.00   100.00  TF*   larmor  Longitudinal  8     500     no   Calibrant T=5.0 K B=100.0 G
+102  10.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=10.0 K B=0.0 G
 ...
-107  60.00  0.00    ZF    Longitudinal  8     500     no   Sample T=60.0 K B=0.0 G
+107  60.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=60.0 K B=0.0 G
+108  2.00   110.00  TF    none    Longitudinal  8     500     no   Sample T=2.0 K B=110.0 G (decoupling)
 
 Alpha-calibration candidates:
-  run 101 (best): transverse field 100 G (weak-TF calibration window)
+  run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
 Scans:
   temperature scan, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
 ```
 
-One calibration run, one ZF temperature scan. Note the files stamp `TF` on
-every run; the survey reads the ZF runs correctly from their zero field.
+One calibration run, one ZF temperature scan, one decoupling run. The files
+stamp `TF` on every run: the survey reads the ZF runs from their zero field, and
+run 101 from its *measured* precession (`TF*`). Run 108 keeps the file's `TF` but
+`prec none` refutes it — 110 G with nothing precessing is a longitudinal field,
+and it is not offered as a calibration candidate.
 
 ```console
 $ asymmetry alpha runs --run 101
 Run 101 (SIM00000101.nxs)
   alpha           : 1.2521
   method          : per_run_estimate
-  calibration run : yes — transverse field 100 G (weak-TF calibration window)
+  calibration run : yes — precession at the Larmor frequency of the recorded 100 G (SNR 93)
+  precession      : at the Larmor frequency: yes — 1.363 MHz (SNR 93) against a Larmor 1.355 MHz
 
 $ asymmetry reduce runs --runs 102-107 --alpha-from 101 --deadtime from_file --plot
 run  T/K    B/G   points  A(0)/%   err/%  alpha   deadtime
@@ -504,7 +553,7 @@ signal:
 
 ```console
 $ asymmetry wizard runs --run 102 --plot
-Run 102 — geometry ZF (from field), scope auto
+Run 102 — geometry ZF (from survey), scope auto
 
 Recommendation: exp_constant
   Recommended: Exponential + Constant by AICc (medium confidence).

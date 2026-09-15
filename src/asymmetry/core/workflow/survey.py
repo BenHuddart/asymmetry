@@ -6,25 +6,36 @@ before touching any data: *what is in this directory?* — which instrument,
 which runs, at which temperatures and fields, is there an alpha-calibration
 run, and do the runs form a temperature scan or a field scan.
 
-Everything here is metadata: the loaders are used for their parsing, never for
-their numerics, and no reduction is performed. The result is
-JSON-serialisable via :meth:`FolderSurvey.to_dict` so a CLI or an agent can
-consume it verbatim.
+Most of it is metadata: the loaders are used for their parsing, never for
+their numerics. The one exception is :func:`precession_evidence`, which
+*measures* whether a run at a recorded non-zero field precesses at that
+field's Larmor frequency — because the metadata cannot be trusted to say so.
+ISIS EMU files from 2024 record no field state at all, and other ISIS files
+stamp ``TF`` on longitudinal decoupling runs, so a folder holding a perfectly
+good transverse-field run would otherwise report no calibration candidate and
+an agent would be left guessing. The result is JSON-serialisable via
+:meth:`FolderSurvey.to_dict` so a CLI or an agent can consume it verbatim.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from asymmetry.core.data.calibration import (
+    WEAK_TF_FIELD_RANGE_GAUSS,
     best_calibration_run_index,
     classify_tf_calibration_run,
 )
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.component_tags import geometry_from_field_direction
+from asymmetry.core.fitting.fit_wizard import fingerprint_spectrum
+from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
 
 #: Timestamp spellings the loaders hand us: ISO-8601 from the ISIS NeXus
 #: headers and the PSI ``dd-MMM-yy HH:MM:SS`` run header form. External file
@@ -39,6 +50,28 @@ _TIMESTAMP_FORMATS = (
 #: Decimal places the scan grouping rounds temperature/field to before using
 #: them as a group key, so 350 K and 350.0 K land in the same scan.
 _SCAN_KEY_DECIMALS = 3
+
+#: Dominant-FFT SNR a line must clear before the survey will call it precession
+#: at all. Measured across the muon-school corpus: genuine weak-transverse-field
+#: runs at 20 G and 100 G score 89–418, while the longitudinal decoupling runs
+#: ISIS stamps ``Transverse`` at 40–120 G score about 3. Ten sits in the empty
+#: gap between the two populations.
+PRECESSION_SNR_FLOOR = 10.0
+
+#: How far the dominant line may sit from the Larmor frequency of the recorded
+#: field and still be called Larmor precession, as a fraction of that frequency.
+#: On the corpus the true transverse-field runs land 3–14 % high (the FFT bin is
+#: coarse and the recorded field is nominal), while the runs that must be
+#: rejected — ordered magnets precessing in their own internal field — are off by
+#: factors of 4 to 40. A quarter separates the two with room on both sides.
+LARMOR_FREQUENCY_TOLERANCE = 0.25
+
+#: The three measured outcomes, plus ``None`` for "could not be measured".
+PRECESSION_STATES = ("larmor", "other", "none")
+
+#: Where :func:`resolve_row_geometry` got a run's geometry from. (The screening
+#: layer has its own, wider list — it can also be told by a person.)
+ROW_GEOMETRY_SOURCES = ("field", "measured", "file", "none")
 
 
 def _parse_timestamp(text: object) -> datetime | None:
@@ -71,6 +104,153 @@ def run_geometry(metadata: dict[str, Any]) -> str | None:
         str(metadata.get("field_direction") or metadata.get("field_state") or "")
     )
     return None if geometry is None else geometry.value
+
+
+@dataclass(frozen=True)
+class PrecessionEvidence:
+    """What the spectrum itself says about precession in the recorded field.
+
+    ``state`` is ``"larmor"`` (a strong line at the Larmor frequency of the
+    recorded field — the run really is transverse), ``"other"`` (a strong line
+    somewhere else, which is a magnet precessing in its own internal field),
+    ``"none"`` (no line worth the name), or ``None`` when no measurement was
+    possible — then ``note`` says why.
+    """
+
+    state: str | None
+    #: Dominant line (MHz) when one was found, else ``None``.
+    frequency_mhz: float | None
+    #: SNR of the dominant line, or ``None`` when nothing was measured.
+    snr: float | None
+    #: γ_μ/2π × B for the recorded field, or ``None`` when no field is recorded.
+    larmor_mhz: float | None
+    #: Why no measurement was made; empty when one was.
+    note: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict."""
+        return {
+            "state": self.state,
+            "frequency_mhz": self.frequency_mhz,
+            "snr": self.snr,
+            "larmor_mhz": self.larmor_mhz,
+            "note": self.note,
+        }
+
+    def describe(self) -> str:
+        """One plain sentence, for a person reading a command's output."""
+        if self.state is None:
+            return f"at the Larmor frequency: not measured — {self.note}"
+        if self.state == "larmor":
+            return (
+                f"at the Larmor frequency: yes — {self.frequency_mhz:.3f} MHz "
+                f"(SNR {self.snr:.0f}) against a Larmor {self.larmor_mhz:.3f} MHz"
+            )
+        if self.state == "other":
+            return (
+                f"at the Larmor frequency: no — the strongest line is "
+                f"{self.frequency_mhz:.3f} MHz (SNR {self.snr:.0f}), not the "
+                f"Larmor {self.larmor_mhz:.3f} MHz"
+            )
+        return (
+            f"at the Larmor frequency: no — no line above SNR "
+            f"{PRECESSION_SNR_FLOOR:.0f} (strongest SNR {self.snr:.0f}) against "
+            f"a Larmor {self.larmor_mhz:.3f} MHz"
+        )
+
+
+def _nyquist_mhz(dataset: MuonDataset) -> float:
+    """The record's Nyquist frequency, from the spacing of its time axis."""
+    time = np.asarray(dataset.time, dtype=float)
+    return 0.5 / float(time[1] - time[0])
+
+
+def precession_evidence(dataset: MuonDataset, field: float | None) -> PrecessionEvidence:
+    """Does *dataset* precess at the Larmor frequency of its recorded *field*?
+
+    *dataset* is the run reduced to asymmetry (default
+    :class:`~asymmetry.core.workflow.reduction.ReductionSettings`); *field* is
+    the applied field in Gauss the file recorded for it. The measurement is
+    :func:`~asymmetry.core.fitting.fit_wizard.fingerprint_spectrum` — the same
+    spectral reading the fit wizard shortlists candidate models from — compared
+    against γ_μ/2π × B under :data:`PRECESSION_SNR_FLOOR` and
+    :data:`LARMOR_FREQUENCY_TOLERANCE`.
+
+    A run at zero (or unrecorded) field has no Larmor frequency to look for, and
+    a run whose Larmor frequency is above the record's Nyquist frequency could
+    not show the line even if it were there; both report ``state=None`` with the
+    reason in ``note`` rather than a verdict the data cannot support.
+    """
+    if field is None:
+        return PrecessionEvidence(
+            state=None,
+            frequency_mhz=None,
+            snr=None,
+            larmor_mhz=None,
+            note="the file records no applied field, so there is no Larmor frequency to look for",
+        )
+    larmor_mhz = field_gauss_to_frequency_mhz(abs(float(field)))
+    if larmor_mhz == 0.0:
+        return PrecessionEvidence(
+            state=None,
+            frequency_mhz=None,
+            snr=None,
+            larmor_mhz=0.0,
+            note="the applied field is zero, so there is no Larmor precession to look for",
+        )
+    nyquist_mhz = _nyquist_mhz(dataset)
+    if larmor_mhz > nyquist_mhz:
+        return PrecessionEvidence(
+            state=None,
+            frequency_mhz=None,
+            snr=None,
+            larmor_mhz=larmor_mhz,
+            note=(
+                f"the Larmor frequency of {abs(float(field)):g} G is {larmor_mhz:.2f} MHz, "
+                f"above this record's Nyquist frequency of {nyquist_mhz:.2f} MHz"
+            ),
+        )
+
+    fingerprint = fingerprint_spectrum(dataset)
+    snr = float(fingerprint.dominant_fft_snr)
+    if not (fingerprint.oscillatory_hint and snr >= PRECESSION_SNR_FLOOR):
+        return PrecessionEvidence(
+            state="none",
+            frequency_mhz=None,
+            snr=snr,
+            larmor_mhz=larmor_mhz,
+            note="",
+        )
+    frequency_mhz = float(fingerprint.dominant_fft_frequency_mhz)
+    matches = abs(frequency_mhz / larmor_mhz - 1.0) <= LARMOR_FREQUENCY_TOLERANCE
+    return PrecessionEvidence(
+        state="larmor" if matches else "other",
+        frequency_mhz=frequency_mhz,
+        snr=snr,
+        larmor_mhz=larmor_mhz,
+        note="",
+    )
+
+
+def resolve_row_geometry(
+    metadata: dict[str, Any], evidence: PrecessionEvidence
+) -> tuple[str | None, str]:
+    """A run's ``(geometry, source)`` with the spectrum allowed to have a say.
+
+    A recorded field of exactly zero settles it (``"field"``). Otherwise
+    measured precession at the Larmor frequency of the recorded field *is* a
+    transverse field, whatever the file says or fails to say (``"measured"``) —
+    that is the case :func:`run_geometry` cannot reach, because ISIS EMU files
+    record no field state at all. Failing both, the file's own token stands
+    (``"file"``), or nothing does (``"none"``).
+    """
+    field = metadata.get("field")
+    if field is not None and float(field) == 0.0:
+        return "ZF", "field"
+    if evidence.state == "larmor":
+        return "TF", "measured"
+    geometry = run_geometry(metadata)
+    return (None, "none") if geometry is None else (geometry, "file")
 
 
 def run_facility(metadata: dict[str, Any]) -> str:
@@ -119,6 +299,10 @@ class RunRow:
     field: float | None
     field_direction: str
     geometry: str | None
+    #: One of :data:`ROW_GEOMETRY_SOURCES` — how ``geometry`` was decided.
+    geometry_source: str
+    #: What the spectrum says about precession in the recorded field.
+    precession: PrecessionEvidence
     #: Detector-bank orientation as the file records it. Never a geometry: a
     #: bank orientation says nothing about which way the applied field points
     #: (see ``docs/porting/field-geometry/``). It is reported because it is
@@ -148,6 +332,15 @@ class RunRow:
             "field": self.field,
             "field_direction": self.field_direction,
             "geometry": self.geometry,
+            "geometry_source": self.geometry_source,
+            # Flattened alongside the metadata columns rather than nested: this
+            # payload is a table of runs, and an agent reads `precession` in the
+            # same glance as `geometry`.
+            "precession": self.precession.state,
+            "precession_frequency_mhz": self.precession.frequency_mhz,
+            "precession_snr": self.precession.snr,
+            "precession_larmor_mhz": self.precession.larmor_mhz,
+            "precession_note": self.precession.note,
             "detector_orientation": self.detector_orientation,
             "notes": self.notes,
             "n_histograms": self.n_histograms,
@@ -161,11 +354,21 @@ class RunRow:
 
 @dataclass(frozen=True)
 class CalibrationCandidate:
-    """A run the weak-TF classifier flagged as a possible alpha calibration."""
+    """A run that could serve as the weak-TF alpha calibration.
+
+    ``source`` is ``"measured"`` when the spectrum was seen precessing at the
+    Larmor frequency of the recorded field, and ``"metadata"`` when no such
+    measurement was possible and the file's own transverse-field evidence
+    (:func:`~asymmetry.core.data.calibration.classify_tf_calibration_run`) is
+    all there is. ``snr`` is the measured line's SNR, ``None`` for a metadata
+    candidate.
+    """
 
     run_number: int
     field_gauss: float | None
     reason: str
+    source: str
+    snr: float | None
     best: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -174,6 +377,8 @@ class CalibrationCandidate:
             "run_number": self.run_number,
             "field_gauss": self.field_gauss,
             "reason": self.reason,
+            "source": self.source,
+            "snr": self.snr,
             "best": self.best,
         }
 
@@ -245,8 +450,14 @@ def build_run_row(
     path: Path,
     prefix: str,
     run_number: int,
+    precession: PrecessionEvidence,
 ) -> RunRow:
-    """Describe one loaded dataset as a :class:`RunRow`."""
+    """Describe one loaded dataset as a :class:`RunRow`.
+
+    *precession* comes from :func:`precession_evidence` on the *reduced* record
+    — the caller has it, this function does not reduce anything — and decides
+    the row's geometry when the file's own metadata cannot.
+    """
     run = dataset.run
     metadata = run.metadata
     started = str(metadata.get("started") or "") or None
@@ -254,6 +465,7 @@ def build_run_row(
     stop = _parse_timestamp(metadata.get("stopped"))
     duration = (stop - start).total_seconds() if start is not None and stop is not None else None
     sample = str(metadata.get("sample") or "").strip() or None
+    geometry, geometry_source = resolve_row_geometry(metadata, precession)
     return RunRow(
         run_number=run_number,
         file=path.name,
@@ -265,7 +477,9 @@ def build_run_row(
         temperature=dataset.temperature,
         field=dataset.field,
         field_direction=str(metadata.get("field_direction") or metadata.get("field_state") or ""),
-        geometry=run_geometry(metadata),
+        geometry=geometry,
+        geometry_source=geometry_source,
+        precession=precession,
         detector_orientation=str(metadata.get("detector_orientation") or "").strip(),
         # The NeXus loaders read the ``notes`` node into ``comment``; PSI and
         # MusrRoot also record a ``comment``. Either spelling is the same field.
@@ -318,8 +532,92 @@ def _scan_groups(rows: list[RunRow]) -> list[ScanGroup]:
     return scans
 
 
+def calibration_verdict(
+    metadata: dict[str, Any] | None, field: float | None, evidence: PrecessionEvidence
+) -> tuple[str | None, str]:
+    """``(source, reason)`` for using one run as the alpha calibration.
+
+    Two sources, and the measurement outranks the file. A run seen precessing at
+    the Larmor frequency of a recorded field inside
+    :data:`~asymmetry.core.data.calibration.WEAK_TF_FIELD_RANGE_GAUSS` is a
+    candidate (``"measured"``) however poorly the file describes itself — that
+    is the ISIS EMU file recording no field state at all. A run whose precession
+    *could* be measured and was not found is not a candidate however confidently
+    the file claims ``TF`` — that is the longitudinal decoupling run ISIS
+    mislabels. Only where no measurement was possible (no recorded field, or a
+    Larmor frequency above the record's Nyquist) does
+    :func:`~asymmetry.core.data.calibration.classify_tf_calibration_run` decide
+    alone (``"metadata"``). ``source`` is ``None`` when the run will not do, and
+    ``reason`` says why either way.
+    """
+    lo, hi = WEAK_TF_FIELD_RANGE_GAUSS
+    if evidence.state is None:
+        verdict = classify_tf_calibration_run(metadata)
+        return ("metadata" if verdict.is_candidate else None), verdict.reason
+    gauss = abs(float(field))
+    if evidence.state != "larmor":
+        return None, f"no precession at the Larmor frequency of the recorded {gauss:g} G"
+    if not (lo <= gauss <= hi):
+        return None, (
+            f"precession at the Larmor frequency, but the recorded {gauss:g} G is "
+            f"outside the weak-TF window [{lo:.0f}, {hi:.0f}] G"
+        )
+    return "measured", (
+        f"precession at the Larmor frequency of the recorded {gauss:g} G (SNR {evidence.snr:.0f})"
+    )
+
+
+def _calibration_candidates(
+    rows: list[RunRow], metadatas: list[dict[str, Any] | None]
+) -> tuple[list[CalibrationCandidate], int | None]:
+    """The runs that could calibrate alpha, and the best of them.
+
+    Each run is judged by :func:`calibration_verdict`. The best candidate is the
+    strongest measured line; with no measured candidate at all it falls back to
+    the metadata classifier's own ranking, which prefers a field near the middle
+    of the weak-TF window.
+    """
+    candidates: list[CalibrationCandidate] = []
+    # Runs the classifier is allowed to speak for, masked to ``None`` elsewhere
+    # so ``best_calibration_run_index`` ranks only those.
+    unmeasured: list[dict[str, Any] | None] = []
+    for row, metadata in zip(rows, metadatas):
+        source, reason = calibration_verdict(metadata, row.field, row.precession)
+        unmeasured.append(metadata if source == "metadata" else None)
+        if source is None:
+            continue
+        candidates.append(
+            CalibrationCandidate(
+                run_number=row.run_number,
+                field_gauss=row.field,
+                reason=reason,
+                source=source,
+                snr=row.precession.snr if source == "measured" else None,
+                best=False,
+            )
+        )
+
+    measured = [candidate for candidate in candidates if candidate.source == "measured"]
+    if measured:
+        best_run = max(measured, key=lambda candidate: candidate.snr).run_number
+    else:
+        index = best_calibration_run_index(unmeasured)
+        best_run = None if index is None else rows[index].run_number
+
+    candidates = [
+        replace(candidate, best=candidate.run_number == best_run) for candidate in candidates
+    ]
+    return candidates, best_run
+
+
 def survey_folder(folder: str | Path) -> FolderSurvey:
     """Load every run file in *folder* and report what the experiment contains.
+
+    Every run is also reduced under the default
+    :class:`~asymmetry.core.workflow.reduction.ReductionSettings` so its
+    precession can be measured (see :func:`precession_evidence`); the file is
+    loaded once and that one :class:`~asymmetry.core.data.dataset.Run` is
+    reduced, never re-read.
 
     Raises :class:`ValueError` when *folder* is not a directory (from
     :func:`asymmetry.core.io.run_range.scan_run_files`).
@@ -328,6 +626,7 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
 
     folder = Path(folder)
     found = scan_run_files(folder)
+    settings = ReductionSettings()
 
     rows: list[RunRow] = []
     metadatas: list[dict[str, Any] | None] = []
@@ -336,41 +635,45 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
         # A multi-period file loads as a list; the survey describes its first
         # period, the same one the reduction default selects.
         dataset = result[0] if isinstance(result, list) else result
-        rows.append(build_run_row(dataset, path=path, prefix=prefix, run_number=run_number))
-        metadatas.append(dataset.run.metadata)
-
-    best_index = best_calibration_run_index(metadatas)
-    candidates: list[CalibrationCandidate] = []
-    for index, (row, metadata) in enumerate(zip(rows, metadatas)):
-        verdict = classify_tf_calibration_run(metadata)
-        if not verdict.is_candidate:
-            continue
-        candidates.append(
-            CalibrationCandidate(
-                run_number=row.run_number,
-                field_gauss=verdict.field_gauss,
-                reason=verdict.reason,
-                best=index == best_index,
+        precession = precession_evidence(reduce_run(dataset.run, settings), dataset.field)
+        rows.append(
+            build_run_row(
+                dataset,
+                path=path,
+                prefix=prefix,
+                run_number=run_number,
+                precession=precession,
             )
         )
+        metadatas.append(dataset.run.metadata)
+
+    candidates, best_run = _calibration_candidates(rows, metadatas)
 
     return FolderSurvey(
         folder=str(folder),
         runs=rows,
         calibration_candidates=candidates,
-        best_calibration_run=None if best_index is None else rows[best_index].run_number,
+        best_calibration_run=best_run,
         scans=_scan_groups(rows),
         truncated=found.truncated,
     )
 
 
 __all__ = [
+    "LARMOR_FREQUENCY_TOLERANCE",
+    "PRECESSION_SNR_FLOOR",
+    "PRECESSION_STATES",
+    "ROW_GEOMETRY_SOURCES",
     "CalibrationCandidate",
     "FolderSurvey",
+    "PrecessionEvidence",
     "RunRow",
     "ScanGroup",
     "build_run_row",
+    "calibration_verdict",
     "has_file_deadtime",
+    "precession_evidence",
+    "resolve_row_geometry",
     "run_facility",
     "run_geometry",
     "survey_folder",

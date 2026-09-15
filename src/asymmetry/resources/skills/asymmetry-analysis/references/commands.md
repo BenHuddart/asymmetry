@@ -111,8 +111,9 @@ options:
   -h, --help            show this help message and exit
   --run RUN             Run number to screen
   --geometry {ZF,TF,LF}
-                        Applied-field geometry, overriding what the file records (ISIS
-                        stamps TF on zero-field runs and some files record nothing)
+                        Applied-field geometry, overriding the survey's and the file's
+                        (ISIS stamps TF on zero-field runs and some files record
+                        nothing)
   --scope PRESET        Candidate-family scope preset (default: auto, from the run's
                         geometry)
   --plot                Write plots/wizard-<run>.png of data + recommendation

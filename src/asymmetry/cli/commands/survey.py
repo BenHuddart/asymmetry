@@ -52,13 +52,27 @@ def run(args: argparse.Namespace) -> None:
 
 def _render(survey, survey_path: Path) -> str:
     """The human-readable survey: the run table, then candidates and scans."""
-    headers = ["run", "T/K", "B/G", "geom", "orient", "hist", "points", "dt", "title", "notes"]
+    headers = [
+        "run",
+        "T/K",
+        "B/G",
+        "geom",
+        "prec",
+        "orient",
+        "hist",
+        "points",
+        "dt",
+        "title",
+        "notes",
+    ]
     rows = [
         [
             str(row.run_number),
             format_number(row.temperature, 2),
             format_number(row.field, 2),
-            row.geometry or "-",
+            # A trailing * marks a geometry the spectrum decided, not the file.
+            (row.geometry or "-") + ("*" if row.geometry_source == "measured" else ""),
+            row.precession.state or "-",
             row.detector_orientation or "-",
             str(row.n_histograms),
             str(row.n_points),
@@ -76,6 +90,13 @@ def _render(survey, survey_path: Path) -> str:
         render_table(headers, rows) if rows else "(no run files found)",
         "",
     ]
+    if rows:
+        lines.append(
+            "prec: precession measured against the Larmor frequency of the recorded field "
+            "— larmor / other (a different line) / none / - (not measurable). "
+            "geom*: geometry measured from that precession rather than read from the file."
+        )
+        lines.append("")
     if survey.truncated:
         lines.append(
             "WARNING: the folder holds more entries than the scan cap; runs may be missing."
@@ -86,7 +107,10 @@ def _render(survey, survey_path: Path) -> str:
         lines.append("Alpha-calibration candidates:")
         for candidate in survey.calibration_candidates:
             marker = " (best)" if candidate.best else ""
-            lines.append(f"  run {candidate.run_number}{marker}: {candidate.reason}")
+            # The SNR of a measured candidate is already in its reason.
+            lines.append(
+                f"  run {candidate.run_number}{marker} [{candidate.source}]: {candidate.reason}"
+            )
     else:
         lines.append(
             "Alpha-calibration candidates: none — alpha cannot be measured from this folder."

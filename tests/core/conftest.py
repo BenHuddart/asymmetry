@@ -13,7 +13,11 @@ real loader path without any research data in the repository. The folder holds:
 * one deliberately broken zero-field run at the top of the scan
   (:data:`FLAT_RUN`) carrying no signal at all — a flat spectrum whose
   amplitude collapses and whose relaxation rate is undetermined, so the
-  quality flags a series fit raises have something to fire on.
+  quality flags a series fit raises have something to fire on;
+* one longitudinal decoupling run at 110 G (:data:`DECOUPLING_RUN`) whose
+  spectrum is a plain relaxing decay with no precession in it, standing for the
+  run ISIS stamps ``TF`` on a field it applied along the beam — the case the
+  survey's *measured* precession has to reject.
 
 Every run is stamped ``field_state = "TF"``, including the zero-field ones —
 that is what ISIS files actually do to a scan that opened with a weak-TF
@@ -45,8 +49,14 @@ SCAN_TEMPERATURES = (10.0, 20.0, 30.0, 40.0, 50.0)
 FLAT_RUN = 107
 FLAT_TEMPERATURE = 60.0
 
+#: The longitudinal decoupling run: a non-zero recorded field, a spectrum with
+#: no precession in it, and the same misleading ``TF`` stamp as everything else.
+DECOUPLING_RUN = 108
+DECOUPLING_FIELD_G = 110.0
+DECOUPLING_TEMPERATURE = 2.0
+
 #: Every run in the folder, in the order the survey lists them.
-ALL_RUNS = (CALIBRATION_RUN, *SCAN_RUNS, FLAT_RUN)
+ALL_RUNS = (CALIBRATION_RUN, *SCAN_RUNS, FLAT_RUN, DECOUPLING_RUN)
 
 #: The zero-field temperature scan including its broken member.
 ZF_RUNS = (*SCAN_RUNS, FLAT_RUN)
@@ -206,6 +216,30 @@ def workflow_folder(tmp_path_factory: pytest.TempPathFactory) -> Path:
         deadtime_us=0.0,
     )
 
+    decoupling_title = f"Sample T={DECOUPLING_TEMPERATURE} K B={DECOUPLING_FIELD_G} G (decoupling)"
+    decoupling = simulate_run(
+        _template_for(
+            temperature=DECOUPLING_TEMPERATURE,
+            field=DECOUPLING_FIELD_G,
+            title=decoupling_title,
+        ),
+        # A plain decay: the field is along the beam, so nothing precesses,
+        # whatever the 110 G stamped in the metadata might suggest.
+        _relaxation_signal(0.5),
+        total_events=_TOTAL_EVENTS,
+        seed=30,
+        alpha=1.0,
+        run_number=DECOUPLING_RUN,
+        title=decoupling_title,
+    )
+    _write(
+        decoupling,
+        folder,
+        started="2024-03-01T16:00:00",
+        stopped="2024-03-01T16:20:00",
+        deadtime_us=0.0,
+    )
+
     return folder
 
 
@@ -223,7 +257,7 @@ def reduced_workdir(workflow_folder: Path, tmp_path_factory: pytest.TempPathFact
         reduce_run,
         resolve_reduction_grouping,
     )
-    from asymmetry.core.workflow.survey import build_run_row
+    from asymmetry.core.workflow.survey import build_run_row, precession_evidence
     from asymmetry.core.workflow.workdir import ReducedEntry, WorkDir, reduction_digest
 
     workdir = WorkDir(tmp_path_factory.mktemp("workflow_workdir"))
@@ -243,7 +277,11 @@ def reduced_workdir(workflow_folder: Path, tmp_path_factory: pytest.TempPathFact
                 n_points=dataset.n_points,
                 settings=settings,
                 run=build_run_row(
-                    dataset, path=path, prefix="SIM", run_number=run_number
+                    dataset,
+                    path=path,
+                    prefix="SIM",
+                    run_number=run_number,
+                    precession=precession_evidence(dataset, dataset.field),
                 ).to_dict(),
                 alpha=float(grouping["alpha"]),
                 deadtime_mode=str(grouping["deadtime_mode"]),

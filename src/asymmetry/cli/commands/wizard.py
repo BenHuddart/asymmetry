@@ -25,7 +25,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         choices=["ZF", "TF", "LF"],
         default=None,
         help=(
-            "Applied-field geometry, overriding what the file records "
+            "Applied-field geometry, overriding the survey's and the file's "
             "(ISIS stamps TF on zero-field runs and some files record nothing)"
         ),
     )
@@ -71,6 +71,7 @@ def run(args: argparse.Namespace) -> None:
     result = screen_run(
         dataset,
         geometry=args.geometry,
+        survey_geometry=_survey_geometry(workdir, args.run),
         scope_preset=args.scope,
         run_number=args.run,
     )
@@ -114,6 +115,23 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(result, wizard_path, recipe_path, plot_path, plot_note))
+
+
+def _survey_geometry(workdir, run_number: int) -> str | None:
+    """The geometry the folder's survey resolved for *run_number*, if surveyed.
+
+    The survey may have *measured* it from Larmor precession, which is the only
+    source that can speak for a file recording no field state; so when a survey
+    exists in the work directory its reading beats this one dataset's metadata.
+    ``None`` when the folder was never surveyed, the run is not in the survey,
+    or the survey could not decide either.
+    """
+    if not workdir.survey_path.exists():
+        return None
+    for row in workdir.read_survey()["runs"]:
+        if row["run_number"] == run_number:
+            return row["geometry"]
+    return None
 
 
 def _render(

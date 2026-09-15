@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls for, what a fitted amplitude means, when to fix a parameter from a reference run — and
   a summary template whose numbers must all come from command output. `tools/agent_eval/`
   adds the rubric-driven harness used to evaluate an agent against it.
+- **`asymmetry survey` measures transverse-field precession instead of trusting the file's
+  field stamp.** Every run with a recorded non-zero field is reduced and fingerprinted, and its
+  dominant line compared with the Larmor frequency of that field (γ_μ/2π × B): a new `prec`
+  column reports `larmor`, `other` (an internal field, as in an ordered magnet), `none` or `-`
+  (zero field, or a Larmor frequency above the record's Nyquist). Measured Larmor precession
+  now yields both calibration candidates and the run's geometry — shown as `TF*` — so a folder
+  whose files record no field state at all, like ISIS EMU's from 2024, no longer reports "no
+  calibration candidates", and a longitudinal decoupling run stamped `TF` is no longer offered
+  as one. `asymmetry alpha` applies the same rule and says in words whether the run precesses at
+  the Larmor frequency; `asymmetry wizard` takes the survey's resolved geometry as its default.
 
 ### Fixed
 
