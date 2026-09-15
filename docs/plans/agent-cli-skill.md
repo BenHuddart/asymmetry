@@ -538,6 +538,23 @@ Sonnet re-runs on the unchanged rubrics:
   the spectra, stretched exponential with a fixed 1.3 % background, rate
   rising on cooling. All Musts.
 
+### Pass 6 — 2026-09-15, project-level work directory
+
+After the maintainer's request that outputs go to a visible folder in the
+project directory rather than beside the data (commit `c2a4778`), the runner
+gives the agent an empty project directory and the data copy read-only.
+
+| Dataset | Wall | Turns | Cost | Verdict |
+|---|---|---|---|---|
+| fmuf-ptfe | 134 s | 17 | $0.74 | **pass** |
+
+Every command was given the absolute data path; `asymmetry-work/` appeared
+in the project directory and nothing was written beside the data (no
+permission denials, and the allow-list grants no write there). Calibration
+from the measured candidate 17293 (SNR 89), Dynamic F-μ-F + Constant, the
+coupling reported as `r_muF` and read as rigid below ~45 K with motional
+narrowing above, 18 flagged runs listed as not results. All Musts.
+
 ### Tier B and C — 2026-09-15, one run each, final skill text
 
 | Dataset | Tier | Wall | Turns | Cost | Verdict |
