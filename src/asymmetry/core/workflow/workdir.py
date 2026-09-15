@@ -17,10 +17,13 @@ long-lived process. The JSON written here is the single source of truth for
 those later commands.
 
 A reduced entry is keyed on a **digest** of everything that determines its
-numbers: the source file's identity (size, mtime and the SHA-256 of its first
-mebibyte), the resolved grouping payload, and the reduction settings. A cached
+numbers: the source file's identity (size, mtime and the SHA-256 of the whole
+file), the resolved grouping payload, and the reduction settings. A cached
 entry whose digest no longer matches is stale and is recomputed, never
 trusted.
+
+Names a caller chooses — a recipe's, a series' — become path components under
+this directory, so every path built from one goes through :func:`safe_name`.
 """
 
 from __future__ import annotations
@@ -46,10 +49,36 @@ SCHEMA = 1
 #: Default work-directory name inside a data folder.
 WORKDIR_NAME = ".asymmetry"
 
-#: Bytes of the source file hashed into its identity. A muon run file's header
-#: and the first detectors' counts live here, so a file edited in place is
-#: caught without reading a multi-megabyte histogram block.
-_FILE_HASH_BYTES = 1024 * 1024
+#: Chunk the source file is read in while hashing — a buffer size, not a limit
+#: on what is hashed (:func:`file_fingerprint` reads to the end).
+_FILE_HASH_CHUNK = 1024 * 1024
+
+#: Characters a name may never contain, because each one would make it
+#: something other than a single path component under this directory.
+_NAME_FORBIDDEN = ("/", "\\", "\0")
+
+
+def safe_name(name: str) -> str:
+    """*name*, checked to be usable as one path component; :class:`ValueError` if not.
+
+    A recipe's or a series' name is chosen by whoever ran the command and then
+    interpolated into a path under the work directory. This is the one place
+    that decides what a name may be: non-empty, no ``/``, ``\\`` or NUL, not
+    ``.`` or ``..``, and no leading ``.`` (which would hide the file and, at
+    the front of ``..``, walk out of the directory). The message names the
+    offending value so a caller can put it in front of the user unchanged.
+    """
+    if not name:
+        raise ValueError("A name must not be empty.")
+    for character in _NAME_FORBIDDEN:
+        if character in name:
+            shown = "NUL" if character == "\0" else repr(character)
+            raise ValueError(f"Name {name!r} contains {shown}; it must be a single path component.")
+    if name in (".", ".."):
+        raise ValueError(f"Name {name!r} is a directory reference, not a name.")
+    if name.startswith("."):
+        raise ValueError(f"Name {name!r} starts with '.'; that is a hidden path, not a name.")
+    return name
 
 
 def _canonical(value: Any) -> Any:
@@ -73,16 +102,25 @@ def _canonical(value: Any) -> Any:
 
 
 def file_fingerprint(path: str | Path) -> dict[str, Any]:
-    """Identity of a source file: size, mtime and a hash of its leading bytes."""
+    """Identity of a source file: size, mtime and the SHA-256 of the whole file.
+
+    The whole file, not a leading slice: a slice leaves a file edited in place
+    beyond it — same size, same mtime, different counts — fingerprinting
+    identical, and this module's contract is that a stale cache entry is never
+    trusted. Reading to the end costs little on the sizes involved: on this
+    machine the test fixture's 41 kB run hashes in ~0.4 ms and a 5 MiB file
+    (the scale of a real ISIS run) in ~3 ms, against seconds to reduce one.
+    """
     path = Path(path)
     stat = path.stat()
     digest = hashlib.sha256()
     with path.open("rb") as handle:
-        digest.update(handle.read(_FILE_HASH_BYTES))
+        for chunk in iter(lambda: handle.read(_FILE_HASH_CHUNK), b""):
+            digest.update(chunk)
     return {
         "size": int(stat.st_size),
         "mtime_ns": int(stat.st_mtime_ns),
-        "sha256_head": digest.hexdigest(),
+        "sha256": digest.hexdigest(),
     }
 
 
@@ -328,8 +366,13 @@ class WorkDir:
     # -- recipes ------------------------------------------------------------
 
     def recipe_path(self, name: str) -> Path:
-        """Where the recipe called *name* is stored."""
-        return self.recipes_dir / f"{name}.json"
+        """Where the recipe called *name* is stored.
+
+        Raises :class:`ValueError` for a *name* that is not one path component
+        (see :func:`safe_name`), so ``write_recipe``/``read_recipe`` cannot be
+        talked into a path outside ``recipes/``.
+        """
+        return self.recipes_dir / f"{safe_name(name)}.json"
 
     def write_recipe(self, name: str, recipe: FitRecipe) -> Path:
         """Write ``recipes/<name>.json`` and return its path."""
@@ -352,8 +395,30 @@ class WorkDir:
     # -- series -------------------------------------------------------------
 
     def series_path(self, name: str) -> Path:
-        """Where the series called *name* is stored."""
-        return self.series_dir / f"{name}.json"
+        """Where the series called *name* is stored.
+
+        Raises :class:`ValueError` for a *name* that is not one path component
+        (see :func:`safe_name`).
+        """
+        return self.series_dir / f"{safe_name(name)}.json"
+
+    def series_plot_dir(self, name: str) -> Path:
+        """``plots/<name>/`` — where a series' per-run fit PNGs go.
+
+        Raises :class:`ValueError` for a *name* that is not one path component
+        (see :func:`safe_name`); the plot paths are built here rather than in
+        the command modules so every one of them is checked.
+        """
+        return self.plots_dir / safe_name(name)
+
+    def trend_plot_path(self, name: str, param_name: str) -> Path:
+        """``plots/<name>-trend-<param>.png`` — a series' trend PNG for one parameter.
+
+        Raises :class:`ValueError` for a *name* that is not one path component
+        (see :func:`safe_name`). *param_name* comes from the fitted model, not
+        from a path the user typed.
+        """
+        return self.plots_dir / f"{safe_name(name)}-trend-{param_name}.png"
 
     def write_series(self, name: str, payload: dict[str, Any]) -> Path:
         """Write ``series/<name>.json`` and return its path."""
@@ -381,4 +446,5 @@ __all__ = [
     "WorkDir",
     "file_fingerprint",
     "reduction_digest",
+    "safe_name",
 ]

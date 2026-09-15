@@ -28,15 +28,39 @@ What it does, in order:
    `asymmetry skill install --agent claude --project`.
 3. Runs `claude -p` in that directory with the project `.venv/bin` first on
    `PATH`, the tool set limited to `Bash(asymmetry:*)`, `Bash(ls:*)`,
-   `Bash(cat:*)`, `Read`, `Glob`, `Grep`, `Write` and `Skill`, and the stream
-   saved as it arrives.
+   `Bash(cat:*)`, `Read` and `Edit` scoped to the copy, `Glob`, `Grep` and
+   `Skill`, `WebFetch`/`WebSearch`/`Agent`/`Task` denied, and the stream saved
+   as it arrives.
 4. Writes the outputs below and prints the rubric to tick.
+5. Exits nonzero if `claude` itself exited nonzero or never reached a `result`
+   event. Every artefact is still written — the stderr file and the transcript
+   are what say why — but nothing from such a run is scoreable, and
+   `cost.json` records the `returncode`.
+
+### What the allow-list does and does not restrict
 
 `Skill` must stay in the tool list: without it the skill is discovered at
-startup and can never be read, and the run measures nothing. The Bash
-allow-list deliberately has no interpreter — an agent that can run Python can
-compute a number the CLI never printed, which is exactly what the rubrics'
-number rule is there to catch.
+startup and can never be read, and the run measures nothing.
+
+The Bash allow-list deliberately has no interpreter — an agent that can run
+Python can compute a number the CLI never printed, which is exactly what the
+rubrics' number rule is there to catch.
+
+`Read` and the file-writing tools are scoped to the run's own copy of the
+dataset, by absolute path and by `./**` relative to the agent's cwd, so the
+agent cannot read this repository — the rubrics included — or write outside
+the copy without a permission prompt, which headless mode records as a
+denial in `cost.json`. Writes are granted as `Edit(<path>)` rules, because
+Claude Code consults `Edit` and `Read` path rules only and accepts but never
+consults a `Write(<path>)` rule; for the same reason `Edit` is *not* in the
+denied list, where a bare tool-name deny would also stop those scoped writes.
+
+`Glob` and `Grep` are **not** path-scoped. Claude Code refuses to match rules
+against a tool's primary content field, which for both of them is `path`, so
+there is no allow rule that fences them; only a `Read` **deny** rule reaches
+the directory they search. They can therefore still list and search outside
+the copy. Add a `Read` deny rule for this repository if a future rubric makes
+that worth closing.
 
 ## Outputs
 
@@ -47,7 +71,7 @@ Everything lands under `--out`, and nothing outside it is touched:
 | `summary.md` | the agent's final message — **the only thing the rubric scores** |
 | `commands.txt` | every Bash command the agent ran, in order |
 | `transcript.jsonl` | the raw `stream-json` event stream |
-| `cost.json` | wall time, turns, cost, permission denials, whether the skill was invoked |
+| `cost.json` | wall time, turns, cost, the CLI's `returncode`, permission denials, whether the skill was invoked |
 | `workdir/` | the `.asymmetry/` work directory the agent built, plots included |
 | `data/` | the copy of the dataset the agent worked in |
 | `rubric.md` | the dataset's rubric, copied here to tick |

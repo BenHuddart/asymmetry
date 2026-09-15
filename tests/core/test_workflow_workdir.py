@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,7 @@ from asymmetry.core.workflow.workdir import (
     WorkDir,
     file_fingerprint,
     reduction_digest,
+    safe_name,
 )
 from tests.core.conftest import SCAN_RUNS
 
@@ -128,7 +130,65 @@ def test_file_fingerprint_reports_size_mtime_and_hash(reduced) -> None:
     fingerprint = file_fingerprint(path)
     assert fingerprint["size"] == path.stat().st_size
     assert fingerprint["mtime_ns"] == path.stat().st_mtime_ns
-    assert len(fingerprint["sha256_head"]) == 64
+    assert len(fingerprint["sha256"]) == 64
+
+
+def test_file_fingerprint_sees_a_byte_changed_near_the_end(reduced, tmp_path: Path) -> None:
+    """The whole file is hashed, not a leading slice.
+
+    An edit past the first mebibyte with the size and mtime restored is
+    exactly the case a head-only hash would serve from cache.
+    """
+    _workdir, _dataset, _entry, source, _grouping, _settings = reduced
+    path = tmp_path / source.name
+    path.write_bytes(source.read_bytes())
+    stat = path.stat()
+    before = file_fingerprint(path)
+
+    with path.open("r+b") as handle:
+        handle.seek(-8, 2)
+        tail = handle.read(1)
+        handle.seek(-8, 2)
+        handle.write(bytes([tail[0] ^ 0xFF]))
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    after = file_fingerprint(path)
+    assert after["size"] == before["size"]
+    assert after["mtime_ns"] == before["mtime_ns"]
+    assert after["sha256"] != before["sha256"]
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", "a\\b", "", ".", "..", ".hidden"])
+def test_safe_name_rejects_anything_that_is_not_one_path_component(name: str) -> None:
+    with pytest.raises(ValueError):
+        safe_name(name)
+
+
+@pytest.mark.parametrize("name", ["scan", "series-wizard-102", "a.b", "T_300K"])
+def test_safe_name_accepts_an_ordinary_name(name: str) -> None:
+    assert safe_name(name) == name
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", ""])
+def test_no_work_directory_path_can_be_built_from_an_unsafe_name(reduced, name: str) -> None:
+    """Every path a caller's name reaches goes through :func:`safe_name`."""
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    recipe = FitRecipe.from_expression("Exponential + Constant")
+
+    for call in (
+        lambda: workdir.recipe_path(name),
+        lambda: workdir.series_path(name),
+        lambda: workdir.series_plot_dir(name),
+        lambda: workdir.trend_plot_path(name, "lambda"),
+        lambda: workdir.write_recipe(name, recipe),
+        lambda: workdir.read_recipe(name),
+        lambda: workdir.write_series(name, {"name": name}),
+        lambda: workdir.read_series(name),
+    ):
+        with pytest.raises(ValueError):
+            call()
+
+    assert list(workdir.root.parent.glob("*.json")) == []
 
 
 def test_manifest_records_version_folder_settings_and_runs(reduced, tmp_path: Path) -> None:

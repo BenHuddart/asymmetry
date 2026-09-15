@@ -3,10 +3,16 @@
 Generated from the CLI's own parser by
 `tools/agent_eval/render_command_reference.py`; do not edit by hand.
 
-Every command takes `--json` (machine-readable payload on stdout) and writes
-its state into the work directory `<folder>/.asymmetry`, so the next command
-picks it up. Exit codes: 0 success, 1 user error (one line on stderr),
-2 internal error (a traceback).
+Every command takes `--json` (machine-readable payload on stdout).
+
+`survey`, `reduce`, `wizard` and `fit-series` persist state in the work
+directory `<folder>/.asymmetry`, so the next command picks it up. `fit` and
+`trend` read that state and add only what `--plot` (and `trend --csv`) asks
+for. `alpha` and `info` are stateless — they load, print and write nothing —
+and `skill` writes into the agent's own skill directory instead.
+
+Exit codes: 0 success, 1 user error (one line on stderr), 2 internal error
+(a traceback).
 
 ## `asymmetry`
 
@@ -267,11 +273,12 @@ options:
 ## `asymmetry info`
 
 ```
-usage: asymmetry info [-h] file
+usage: asymmetry info [-h] [--json] file
 
 positional arguments:
   file        Path to a μSR data file
 
 options:
   -h, --help  show this help message and exit
+  --json      Emit the machine-readable payload
 ```

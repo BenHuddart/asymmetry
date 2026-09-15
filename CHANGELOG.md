@@ -14,9 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fit-series` and `trend` wrap the same core engine the desktop application uses, in the order
   an analysis runs, each with a `--json` machine-readable payload and, on the six analysis
   commands, `--plot` for headless PNGs (framed on the informative window and, for a trend, on
-  its clean points). Every command reads and writes a `<folder>/.asymmetry` work directory —
-  a survey, cached reduced spectra keyed on a digest, wizard screenings, fit recipes, and series
-  results — so state persists between separate invocations without a long-lived process.
+  its clean points). `survey`, `reduce`, `wizard` and `fit-series` persist their state in a
+  `<folder>/.asymmetry` work directory — a survey, cached reduced spectra keyed on a digest,
+  wizard screenings, fit recipes, and series results — so state persists between separate
+  invocations without a long-lived process; `fit` and `trend` read it and add only what
+  `--plot`/`--csv` asks for, and `alpha` and `info` are stateless.
   `wizard` writes a fit recipe (model, parameters, time window) from its recommendation, the
   sole contract between screening and fitting; `fit-series --start RUN` chains a series outward
   from the run you screened. Install the new `agent` extra

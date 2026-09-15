@@ -121,6 +121,59 @@ def test_trend_frame_covers_every_point_when_all_are_flagged() -> None:
     assert not outside.any()
 
 
+def test_trend_frame_ignores_missing_errors_and_frames_on_the_bare_values() -> None:
+    """Every row flagged and every error ``None`` — the wholly-failed series."""
+    y = np.array([1.0, 2.0, 3.0])
+    y_err = np.array([np.nan, np.nan, np.nan])
+    flagged = np.array([True, True, True])
+
+    y_lo, y_hi, outside = plots._trend_frame(y, y_err, flagged)
+
+    assert y_lo == pytest.approx(1.0 - 0.2)
+    assert y_hi == pytest.approx(3.0 + 0.2)
+    assert not outside.any()
+
+
+def test_trend_frame_has_no_range_when_no_value_is_finite() -> None:
+    y = np.array([np.nan, np.nan])
+    y_err = np.array([np.nan, np.nan])
+    flagged = np.array([False, False])
+
+    y_lo, y_hi, outside = plots._trend_frame(y, y_err, flagged)
+
+    assert y_lo is None
+    assert y_hi is None
+    assert not outside.any()
+
+
+def _trend_rows(values, errors):
+    return [
+        {"x": float(index), "run": 100 + index, "lam": value, "lam_err": error, "flags": ["bad"]}
+        for index, (value, error) in enumerate(zip(values, errors))
+    ]
+
+
+def test_trend_plot_frames_a_series_whose_errors_are_all_missing(tmp_path: Path) -> None:
+    """A wholly flagged/failed series used to hand ``set_ylim`` NaN limits."""
+    out_path = plots.plot_trend(
+        _trend_rows([1.0, 2.0, 3.0], [None, None, None]),
+        param_name="lam",
+        order_key="temperature",
+        out_path=tmp_path / "all-errors-missing.png",
+    )
+    _assert_real_png(out_path)
+
+
+def test_trend_plot_still_writes_a_png_when_no_value_is_finite(tmp_path: Path) -> None:
+    out_path = plots.plot_trend(
+        _trend_rows([None, None, None], [None, None, None]),
+        param_name="lam",
+        order_key="temperature",
+        out_path=tmp_path / "no-values.png",
+    )
+    _assert_real_png(out_path)
+
+
 # -- framing/bunching, end to end (plot_fit on a synthetic noisy-tail record) -
 
 

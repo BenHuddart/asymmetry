@@ -36,6 +36,9 @@ SKILL_NAME = "asymmetry-analysis"
 #: Manifest file stamped beside ``SKILL.md`` on install.
 MANIFEST_NAME = ".asymmetry-skill.json"
 
+#: Schema version of the manifest this command writes and recognises.
+MANIFEST_SCHEMA = 1
+
 #: The agent skill ecosystems this CLI installs into.
 AGENTS = ("claude", "codex")
 
@@ -71,11 +74,36 @@ def _manifest_path(target: Path) -> Path:
 
 
 def read_manifest(target: Path) -> dict[str, Any] | None:
-    """The manifest stored beside ``SKILL.md`` in *target*, or ``None`` when there is none."""
+    """The manifest *this command* wrote in *target*, or ``None`` when there is none.
+
+    ``install --force`` and ``uninstall`` ``rmtree`` the directory this returns
+    a manifest for, so "there is a readable JSON file at the manifest path" is
+    not a good enough answer: it would hand a foreign directory that happens to
+    hold a ``.asymmetry-skill.json`` to :func:`shutil.rmtree`. The file is
+    parsed as the record :func:`install` writes — a JSON object carrying
+    ``schema`` :data:`MANIFEST_SCHEMA`, a string ``asymmetry_version``, a
+    string ``installed_at`` and an ``agent`` in :data:`AGENTS`. Anything else
+    (unreadable bytes, malformed JSON, a missing or wrong field) is *no
+    manifest*, so the directory is refused rather than removed.
+    """
     path = _manifest_path(target)
     if not path.is_file():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    if manifest.get("schema") != MANIFEST_SCHEMA:
+        return None
+    if not isinstance(manifest.get("asymmetry_version"), str):
+        return None
+    if not isinstance(manifest.get("installed_at"), str):
+        return None
+    if manifest.get("agent") not in AGENTS:
+        return None
+    return manifest
 
 
 def links_into_package(target: Path) -> bool:
@@ -162,7 +190,7 @@ def install(
 
     shutil.copytree(skill_source_dir(), target)
     manifest = {
-        "schema": 1,
+        "schema": MANIFEST_SCHEMA,
         "asymmetry_version": __version__,
         "installed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "agent": agent,
@@ -301,6 +329,7 @@ __all__ = [
     "AGENTS",
     "LOADER_MODULES",
     "MANIFEST_NAME",
+    "MANIFEST_SCHEMA",
     "SKILL_NAME",
     "InstallResult",
     "install",

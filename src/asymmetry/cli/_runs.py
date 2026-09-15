@@ -54,7 +54,10 @@ def run_files(folder: str | Path) -> dict[int, tuple[str, Path]]:
     """Map every run number in *folder* to its ``(prefix, path)``.
 
     Raises :class:`UserError` when *folder* is not a directory, so a mistyped
-    path is a one-line message rather than a traceback.
+    path is a one-line message rather than a traceback, and when two files
+    carry the same run number under different prefixes — the work directory is
+    keyed on the run number alone, so there is no prefix to disambiguate with
+    and the folder has to be split.
     """
     from asymmetry.core.io import scan_run_files
 
@@ -62,7 +65,25 @@ def run_files(folder: str | Path) -> dict[int, tuple[str, Path]]:
     if not folder.is_dir():
         raise UserError(f"{folder} does not exist or is not a directory.")
     found = scan_run_files(folder)
-    return {run_number: (prefix, path) for prefix, run_number, path in found.entries}
+    files: dict[int, tuple[str, Path]] = {}
+    for prefix, run_number, path in found.entries:
+        if run_number in files:
+            raise UserError(_duplicate_run_message(folder, run_number, files[run_number], path))
+        files[run_number] = (prefix, path)
+    return files
+
+
+def _duplicate_run_message(
+    folder: Path, run_number: int, first: tuple[str, Path], second: Path
+) -> str:
+    """The message for two files in *folder* sharing one run number."""
+    names = sorted([first[1].name, second.name])
+    return (
+        f"Run {run_number} is in {folder} twice: {names[0]} and {names[1]}. "
+        "Every command keys its work directory on the run number alone, so there is "
+        "no prefix to tell the two apart; split the folder so each prefix "
+        "(instrument) has a directory of its own."
+    )
 
 
 def resolve_runs(folder: str | Path, spec: str) -> list[tuple[int, str, Path]]:

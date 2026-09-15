@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from asymmetry.cli._output import UserError
+from asymmetry.cli._output import UserError, checked_name
 
 if TYPE_CHECKING:
     from asymmetry.core.workflow.recipe import FitRecipe
@@ -49,7 +49,9 @@ def load_recipe(workdir: WorkDir, reference: str) -> FitRecipe:
     """The recipe *reference* names: a path, or a name under ``recipes/``.
 
     Raises :class:`UserError` naming the recipes the work directory does hold
-    when the reference resolves to nothing.
+    when the reference resolves to nothing, and for a bare name that is not
+    usable as one (see :func:`~asymmetry.cli._output.checked_name`) — a name is
+    interpolated into a path under ``recipes/``, so it has to stay inside it.
     """
     from asymmetry.core.workflow.recipe import FitRecipe
 
@@ -59,6 +61,7 @@ def load_recipe(workdir: WorkDir, reference: str) -> FitRecipe:
             raise UserError(f"Recipe file {path} does not exist.")
         return FitRecipe.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
+    reference = checked_name(reference, flag="--recipe")
     stored = workdir.recipe_names()
     if reference not in stored:
         known = ", ".join(stored) if stored else "none yet — run 'asymmetry wizard' first"

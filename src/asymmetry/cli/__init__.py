@@ -6,10 +6,15 @@ folder of runs, measure ``alpha`` on a calibration run, ``reduce`` runs to
 asymmetry, screen one of them with the fit ``wizard``, ``fit`` a run or a whole
 scan with ``fit-series``, and read the ``trend`` out of the result — plus
 ``skill`` to install this workflow as an agent skill, and the original
-``info`` file summary. Every command takes ``--json`` and writes its state
-into the work directory ``<folder>/.asymmetry`` so the next command can pick
-it up; ``reduce``, ``wizard``, ``fit``, ``fit-series`` and ``trend`` also take
-``--plot`` to write headless PNGs alongside it.
+``info`` file summary. Every command takes ``--json``.
+
+``survey``, ``reduce``, ``wizard`` and ``fit-series`` **persist state** in the
+work directory ``<folder>/.asymmetry`` so the next command can pick it up.
+``fit`` and ``trend`` read that state and write nothing into it beyond the
+files ``--plot`` (and ``trend --csv``) asks for. ``alpha`` and ``info`` are
+stateless — they load, print and write nothing — and ``skill`` writes into the
+agent's own skill directory, not the work directory. ``reduce``, ``wizard``,
+``fit``, ``fit-series`` and ``trend`` take ``--plot`` to write headless PNGs.
 
 Exit codes: 0 on success, 1 on a user error (one line on stderr), 2 on an
 internal error (a traceback, because that is a bug worth reporting).

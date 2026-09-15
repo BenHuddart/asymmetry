@@ -32,6 +32,12 @@ frames its y range on the unflagged points, so one wildly-flagged run cannot
 squash every other point onto the axis edge; a flagged point outside that
 range is drawn clamped, with a distinct marker, rather than silently moving
 the frame or being dropped.
+
+Every frame is taken over the *finite* points only. A run that failed to fit
+carries no value and no error, so a range over those would be NaN and
+``set_ylim`` would raise — exactly when every run in a series is flagged. With
+nothing finite to frame on, the panel is drawn with no y range and a note
+saying so, and the PNG is still written.
 """
 
 from __future__ import annotations
@@ -71,6 +77,10 @@ _DATA_Y_MARGIN = 0.05
 
 #: Margin added around a trend's y range, framed on its unflagged points.
 _TREND_Y_MARGIN = 0.10
+
+#: Drawn on a panel that has no finite point to frame on — every run in the
+#: series failed — in place of a y range.
+_NO_FINITE_VALUES_NOTE = "no finite values to frame"
 
 
 def require_matplotlib() -> None:
@@ -177,20 +187,31 @@ def _drawn_record(
 
 def _margin_range(
     values: np.ndarray, errors: np.ndarray, *, fraction: float
-) -> tuple[float, float]:
-    """``(min(value - error), max(value + error))`` over *values*, plus a margin.
+) -> tuple[float, float] | None:
+    """``(min(value - error), max(value + error))`` over the finite points, plus a margin.
+
+    Only finite *values* are framed on, and only a finite error widens one: a
+    run that failed to fit carries no value and no error, and a range taken
+    over those would hand ``set_ylim`` NaN limits — which raises, exactly when
+    every run in a series is flagged. A point whose value is finite but whose
+    error is missing frames as the bare value. Returns ``None`` when no finite
+    value is left to frame at all, which is the caller's cue to draw the axes
+    with no y range rather than an impossible one.
 
     A degenerate (zero-span) range — e.g. a single point, or a parameter held
     fixed across a whole trend — gets a margin scaled off the value itself
     (or, at zero, a fixed absolute margin) rather than collapsing to a
     zero-height axis.
     """
-    lo = float(
-        np.nanmin(np.asarray(values, dtype=np.float64) - np.asarray(errors, dtype=np.float64))
-    )
-    hi = float(
-        np.nanmax(np.asarray(values, dtype=np.float64) + np.asarray(errors, dtype=np.float64))
-    )
+    values = np.asarray(values, dtype=np.float64)
+    errors = np.asarray(errors, dtype=np.float64)
+    finite = np.isfinite(values)
+    if not np.any(finite):
+        return None
+    framed = values[finite]
+    widths = np.where(np.isfinite(errors[finite]), errors[finite], 0.0)
+    lo = float(np.min(framed - widths))
+    hi = float(np.max(framed + widths))
     span = hi - lo
     if span > 0:
         margin = span * fraction
@@ -218,6 +239,14 @@ def _frame_note(
     if factor > 1:
         parts.append(f"bunched ×{factor}")
     return "; ".join(parts) if parts else None
+
+
+def _set_y_range(axes, y_range: tuple[float, float] | None) -> None:
+    """Apply a :func:`_margin_range` result, noting on the axes when there is none."""
+    if y_range is None:
+        _annotate_frame(axes, _NO_FINITE_VALUES_NOTE)
+        return
+    axes.set_ylim(*y_range)
 
 
 def _annotate_frame(axes, note: str | None) -> None:
@@ -273,7 +302,7 @@ def plot_reduced(
         color="C0",
     )
     axes.set_xlim(window_min, window_max)
-    axes.set_ylim(*_margin_range(drawn.asymmetry, drawn.error, fraction=_DATA_Y_MARGIN))
+    _set_y_range(axes, _margin_range(drawn.asymmetry, drawn.error, fraction=_DATA_Y_MARGIN))
     axes.set_xlabel("time / µs")
     axes.set_ylabel("asymmetry / %")
     t_text = "-" if temperature is None else f"{temperature:g}"
@@ -337,7 +366,7 @@ def plot_fit(
     )
     data_axes.plot(dense_time, curve, "-", color="C1", lw=1.5, label="model")
     data_axes.set_xlim(window_min, window_max)
-    data_axes.set_ylim(*_margin_range(drawn.asymmetry, drawn.error, fraction=_DATA_Y_MARGIN))
+    _set_y_range(data_axes, _margin_range(drawn.asymmetry, drawn.error, fraction=_DATA_Y_MARGIN))
     data_axes.set_ylabel("asymmetry / %")
     data_axes.set_title(f"Run {run_number} — {expression}")
     data_axes.legend(loc="best", fontsize="small")
@@ -354,17 +383,26 @@ def plot_fit(
 
 def _trend_frame(
     y: np.ndarray, y_err: np.ndarray, flagged: np.ndarray
-) -> tuple[float, float, np.ndarray]:
+) -> tuple[float | None, float | None, np.ndarray]:
     """``(y_lo, y_hi, outside)`` for :func:`plot_trend` — see its docstring.
 
-    Framed on the unflagged points when there are any, else on all of them
-    (so a wholly-flagged trend still gets a usable frame); *outside* marks
-    the flagged points whose value falls outside that frame.
+    Framed on the unflagged points when any of them carries a finite value,
+    else on all of them (so a wholly-flagged trend still gets a usable frame);
+    *outside* marks the flagged points whose value falls outside that frame.
+    ``(None, None, nothing outside)`` when no point carries a finite value at
+    all — a series in which every run failed — so the caller can draw the axes
+    without a y range instead of an exception.
     """
     clean = ~flagged
-    frame_values, frame_errors = (y[clean], y_err[clean]) if np.any(clean) else (y, y_err)
-    y_lo, y_hi = _margin_range(frame_values, frame_errors, fraction=_TREND_Y_MARGIN)
-    outside = flagged & ((y < y_lo) | (y > y_hi))
+    framed = None
+    if np.any(clean):
+        framed = _margin_range(y[clean], y_err[clean], fraction=_TREND_Y_MARGIN)
+    if framed is None:
+        framed = _margin_range(y, y_err, fraction=_TREND_Y_MARGIN)
+    if framed is None:
+        return None, None, np.zeros_like(flagged)
+    y_lo, y_hi = framed
+    outside = flagged & np.isfinite(y) & ((y < y_lo) | (y > y_hi))
     return y_lo, y_hi, outside
 
 
@@ -390,7 +428,9 @@ def plot_trend(
     clamped to the nearest edge and drawn with a distinct (triangular)
     marker, in its own legend entry naming how many were clamped, rather than
     being dropped or moving the frame. When every point is flagged, the frame
-    covers all of them, so nothing is clamped.
+    covers all of them, so nothing is clamped; when no point carries a finite
+    value at all — every run in the series failed — the axes are drawn with no
+    y range and a note saying so, and the PNG is still written.
     """
     from asymmetry.gui.utils.formatting import format_param_label
 
@@ -442,7 +482,7 @@ def plot_trend(
             label=f"flagged, {n_outside} outside frame",
         )
 
-    axes.set_ylim(y_lo, y_hi)
+    _set_y_range(axes, None if y_lo is None else (y_lo, y_hi))
     axes.set_xlabel(_order_axis_label(order_key))
     axes.set_ylabel(format_param_label(param_name))
     axes.set_title(param_name if title is None else title)

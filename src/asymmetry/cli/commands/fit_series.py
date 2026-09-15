@@ -5,7 +5,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from asymmetry.cli._output import UserError, emit_json, format_number, payload, render_table
+from asymmetry.cli._output import (
+    UserError,
+    checked_name,
+    emit_json,
+    format_number,
+    payload,
+    render_table,
+)
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
 from asymmetry.cli._runs import parse_run_spec, reduced_datasets
 
@@ -89,7 +96,11 @@ def run(args: argparse.Namespace) -> None:
 
     recipe = recipe_with_overrides(load_recipe(workdir, args.recipe), fix=args.fix)
     global_params = [name.strip() for name in args.global_params.split(",") if name.strip()]
-    name = args.name or f"series-{Path(args.recipe).stem}"
+    # ``args.name is None`` — not falsy — is "no --name given": an explicit
+    # empty one is a name that cannot be used, and says so rather than
+    # quietly becoming the default.
+    default_name = f"series-{Path(args.recipe).stem}"
+    name = checked_name(default_name if args.name is None else args.name, flag="--name")
 
     datasets = reduced_datasets(workdir, parse_run_spec(args.runs))
 
@@ -139,7 +150,7 @@ def run(args: argparse.Namespace) -> None:
                     t_max=recipe.t_max,
                     run_number=run_number,
                     expression=outcome.expression,
-                    out_path=workdir.plots_dir / name / f"{run_number}.png",
+                    out_path=workdir.series_plot_dir(name) / f"{run_number}.png",
                 )
             )
         for param_name in outcome.free_params:
@@ -148,7 +159,7 @@ def run(args: argparse.Namespace) -> None:
                     outcome.trend.rows,
                     param_name=param_name,
                     order_key=outcome.order_key,
-                    out_path=workdir.plots_dir / f"{name}-trend-{param_name}.png",
+                    out_path=workdir.trend_plot_path(name, param_name),
                     title=f"{name} — {outcome.expression}: {param_name}",
                 )
             )

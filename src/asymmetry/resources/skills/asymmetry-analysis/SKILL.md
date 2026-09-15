@@ -48,9 +48,13 @@ A folder the tool can *load* is not automatically a folder the tool can
 ## 2. The workflow
 
 Run every command from the directory holding the data (or pass an absolute
-path). Every command writes into `<folder>/.asymmetry/` — the work directory —
-so the next command picks the state up. **Do not pass `--workdir`**; the
-default is right and a mismatched one silently loses your reduced runs.
+path). `survey`, `reduce`, `wizard` and `fit-series` write into
+`<folder>/.asymmetry/` — the work directory — so the next command picks the
+state up; `fit` and `trend` read it and add only what `--plot` (and `trend
+--csv`) asks for. **Do not pass `--workdir` to any of those**; the default is
+right and a mismatched one silently loses your reduced runs. `alpha` and
+`info` are stateless — they load a file, print, and write nothing — and
+`skill` writes into the agent's own skill directory, not the work directory.
 
 Add `--json` when you need to parse a payload; the default human table is
 usually easier to read and is what these examples show.

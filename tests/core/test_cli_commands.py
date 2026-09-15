@@ -9,7 +9,7 @@ import pytest
 
 from asymmetry import __version__, cli
 from asymmetry.cli._output import SCHEMA, UserError
-from asymmetry.cli._runs import parse_run_spec, resolve_run, resolve_runs
+from asymmetry.cli._runs import parse_run_spec, resolve_run, resolve_runs, run_files
 from tests.core.conftest import (
     ALL_RUNS,
     CALIBRATION_ALPHA,
@@ -66,6 +66,55 @@ def test_resolve_run_reports_a_missing_run(workflow_folder: Path) -> None:
     assert resolve_run(workflow_folder, CALIBRATION_RUN).exists()
     with pytest.raises(UserError):
         resolve_run(workflow_folder, 900)
+
+
+def _write_run_file(folder: Path, prefix: str, run_number: int) -> Path:
+    """One small synthetic NeXus run in *folder*, named ``<prefix><run>.nxs``."""
+    from asymmetry.core.io.nexus_writer import write_nexus_v1
+    from asymmetry.core.simulate import simulate_run
+    from tests.core.conftest import _relaxation_signal, _template_for
+
+    title = f"Sample {prefix}{run_number}"
+    run = simulate_run(
+        _template_for(temperature=10.0, field=0.0, title=title),
+        _relaxation_signal(0.2),
+        total_events=2.0e4,
+        seed=1,
+        alpha=1.0,
+        run_number=run_number,
+        title=title,
+    )
+    path = folder / f"{prefix}{run_number:08d}.nxs"
+    write_nexus_v1(run, path)
+    return path
+
+
+def test_one_run_number_under_two_prefixes_is_refused(tmp_path: Path) -> None:
+    """The work directory is keyed on the run number, so a clash has no answer."""
+    pytest.importorskip("h5py")
+    _write_run_file(tmp_path, "SIM", 42)
+    _write_run_file(tmp_path, "MUT", 42)
+
+    with pytest.raises(UserError) as exc:
+        run_files(tmp_path)
+
+    message = str(exc.value)
+    assert "42" in message
+    assert "MUT00000042.nxs" in message
+    assert "SIM00000042.nxs" in message
+    assert "split the folder" in message
+
+
+def test_a_duplicate_run_number_reaches_the_command_line(tmp_path: Path, capsys) -> None:
+    pytest.importorskip("h5py")
+    _write_run_file(tmp_path, "SIM", 42)
+    _write_run_file(tmp_path, "MUT", 42)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["reduce", str(tmp_path), "--runs", "42"])
+
+    assert exc.value.code == 1
+    assert "split the folder" in capsys.readouterr().err
 
 
 # -- survey -----------------------------------------------------------------
@@ -723,6 +772,41 @@ def test_trend_names_the_series_the_workdir_does_hold(
         )
     assert exc.value.code == 1
     assert "No series 'nope'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", ""])
+def test_a_name_that_is_not_one_path_component_is_a_user_error(
+    workflow_folder: Path, fitting_workdir: Path, capsys, name: str
+) -> None:
+    """Every flag whose value becomes a path under the work directory refuses it.
+
+    Exit 1 with a message, not a traceback and not a file written somewhere
+    outside ``recipes/``, ``series/`` or ``plots/``.
+    """
+    invocations = [
+        ["trend", str(workflow_folder), "--series", name],
+        ["fit", str(workflow_folder), "--run", str(SCAN_RUNS[0]), "--recipe", name],
+        [
+            "fit-series",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--name",
+            name,
+        ],
+    ]
+    for invocation in invocations:
+        with pytest.raises(SystemExit) as exc:
+            cli.main([*invocation, "--workdir", str(fitting_workdir)])
+        assert exc.value.code == 1, invocation[0]
+        assert capsys.readouterr().err.startswith("asymmetry: "), invocation[0]
+
+    # ``recipes/../escape.json`` and ``series/../escape.json`` both resolve here.
+    assert not (Path(fitting_workdir) / "escape.json").exists()
 
 
 # -- dispatcher -------------------------------------------------------------

@@ -12,11 +12,15 @@ everything a human needs to tick the dataset's rubric:
 ``summary.md``        the agent's report — the only thing the rubric scores
 ``assistant-text.md`` every assistant message, to check the report was picked right
 ``commands.txt``      every Bash command the agent ran, in order
-``cost.json``         usage, cost, wall time, and any permission denials
+``cost.json``         usage, cost, wall time, exit code, permission denials
 ``rubric.md``         the dataset's rubric, to tick
 
 This script itself creates, modifies and removes nothing outside the output
-directory. The agent it launches is an ordinary Claude Code session, so that
+directory, and the agent's own file tools are scoped to the copy (see
+:func:`allowed_tools`). It exits nonzero when the agent did not finish, so a
+broken run is never filed as a scoreable one.
+
+The agent it launches is an ordinary Claude Code session, so that
 session's own state (its transcript and any auto-memory it writes) lands under
 ``~/.claude/`` keyed on the copied data directory, exactly as for a hand-run
 session in that folder.
@@ -49,24 +53,58 @@ DEFAULT_PROMPT = (
     "analyse these using Asymmetry and present me a summary of what they show?"
 )
 
-#: Tools the agent may use. Bash is limited to the analysis CLI and two
-#: read-only helpers, so the eval measures the skill rather than the agent's
-#: ability to reach around it (a Python one-liner could invent any number).
-#: ``Skill`` is how a Claude Code agent loads the installed skill at all —
-#: without it the skill is listed at startup and can never be read.
-ALLOWED_TOOLS = (
-    "Bash(asymmetry:*)",
-    "Bash(ls:*)",
-    "Bash(cat:*)",
-    "Read",
-    "Glob",
-    "Grep",
-    "Write",
-    "Skill",
-)
+#: Bash commands the agent may run: the analysis CLI and two read-only
+#: helpers, so the eval measures the skill rather than the agent's ability to
+#: reach around it (a Python one-liner could invent any number).
+_ALLOWED_BASH = ("Bash(asymmetry:*)", "Bash(ls:*)", "Bash(cat:*)")
+
+#: Tools allowed without a path scope. ``Skill`` is how a Claude Code agent
+#: loads the installed skill at all — without it the skill is listed at
+#: startup and can never be read. ``Glob`` and ``Grep`` take their path in the
+#: field Claude Code refuses to match rules against, so neither can be scoped
+#: by an allow rule (see the README); they are allowed as they are.
+_ALLOWED_UNSCOPED = ("Glob", "Grep", "Skill")
+
+#: Tools denied outright, so a run cannot reach the network or spawn helpers
+#: whose own tool use this harness would never see. ``--tools`` already leaves
+#: them out of the session; these say so a second time, at the permission
+#: layer. ``Edit`` is deliberately *not* here: Claude Code checks file writes
+#: against ``Edit(<path>)`` rules, so a bare ``Edit`` deny would also stop the
+#: scoped writes :func:`allowed_tools` grants.
+DISALLOWED_TOOLS = ("WebFetch", "WebSearch", "Agent", "Task")
 
 #: Built-in tools the session is given at all, before the allow-list narrows it.
 TOOLS = ("Bash", "Read", "Glob", "Grep", "Write", "Skill")
+
+
+def _absolute_pattern(path: Path) -> str:
+    """*path* as a permission-rule pattern covering it and everything under it.
+
+    A single leading slash anchors a rule at its settings source, not at the
+    filesystem root; ``//`` is the absolute form (see the permissions
+    documentation, "Read and Edit").
+    """
+    return "//" + str(path).lstrip("/") + "/**"
+
+
+def allowed_tools(work: Path) -> tuple[str, ...]:
+    """The ``--allowedTools`` list for a run working in *work*.
+
+    ``Read`` and the file-writing tools are scoped to the run's own copy of
+    the dataset — by absolute path, and by ``./**`` for the same directory as
+    the agent's cwd — so an agent cannot read this repository (its rubrics
+    included) or write outside the copy without a permission prompt, which in
+    headless mode is a refusal recorded in ``cost.json``. Writes are granted
+    as ``Edit(...)``: Claude Code consults ``Edit`` and ``Read`` path rules
+    only, and accepts but never consults a ``Write(<path>)`` rule.
+    """
+    scope = (_absolute_pattern(work), "./**")
+    return (
+        *_ALLOWED_BASH,
+        *(f"Read({pattern})" for pattern in scope),
+        *(f"Edit({pattern})" for pattern in scope),
+        *_ALLOWED_UNSCOPED,
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -131,10 +169,13 @@ def agent_env() -> dict[str, str]:
     return env
 
 
-def run_agent(args: argparse.Namespace, work: Path) -> tuple[list[dict], float]:
+def run_agent(args: argparse.Namespace, work: Path) -> tuple[list[dict], float, int]:
     """Run the agent, streaming its events to ``transcript.jsonl``.
 
-    Returns the parsed events and the wall time in seconds.
+    Returns the parsed events, the wall time in seconds, and the CLI's exit
+    code — a failed run (an auth error, a CLI crash) produces a transcript
+    that looks merely short, so the exit code is the only thing that tells it
+    from an evaluation worth scoring.
     """
     command = [
         args.claude,
@@ -152,7 +193,9 @@ def run_agent(args: argparse.Namespace, work: Path) -> tuple[list[dict], float]:
         "--tools",
         *TOOLS,
         "--allowedTools",
-        *ALLOWED_TOOLS,
+        *allowed_tools(work),
+        "--disallowedTools",
+        *DISALLOWED_TOOLS,
     ]
     transcript = args.out / "transcript.jsonl"
     events: list[dict] = []
@@ -180,8 +223,8 @@ def run_agent(args: argparse.Namespace, work: Path) -> tuple[list[dict], float]:
             if line.startswith("{"):
                 events.append(json.loads(line))
                 print(f"  ... {len(events)} events", end="\r", file=sys.stderr)
-        process.wait()
-    return events, time.monotonic() - started
+        returncode = process.wait()
+    return events, time.monotonic() - started, returncode
 
 
 def _content_blocks(event: dict) -> list[dict]:
@@ -251,8 +294,19 @@ def skill_was_available(events: list[dict]) -> bool:
     )
 
 
-def write_outputs(args: argparse.Namespace, work: Path, events: list[dict], elapsed: float) -> None:
-    """Save the summary, the command list, the cost record, the work directory and the rubric."""
+def write_outputs(
+    args: argparse.Namespace,
+    work: Path,
+    events: list[dict],
+    elapsed: float,
+    returncode: int,
+) -> None:
+    """Save the summary, the command list, the cost record, the work directory and the rubric.
+
+    Written for a failed run too: the transcript and stderr of a run that
+    crashed are exactly what says why, and ``cost.json`` records *returncode*
+    so a later reader can tell a scoreable evaluation from a broken one.
+    """
     (args.out / "summary.md").write_text(extract_summary(events) + "\n", encoding="utf-8")
     (args.out / "assistant-text.md").write_text(
         "\n\n---\n\n".join(assistant_texts(events)) + "\n", encoding="utf-8"
@@ -268,6 +322,7 @@ def write_outputs(args: argparse.Namespace, work: Path, events: list[dict], elap
         "model": args.model,
         "prompt": args.prompt,
         "max_turns": args.max_turns,
+        "returncode": returncode,
         "wall_seconds": round(elapsed, 1),
         "num_turns": result.get("num_turns"),
         "total_cost_usd": result.get("total_cost_usd"),
@@ -288,6 +343,15 @@ def write_outputs(args: argparse.Namespace, work: Path, events: list[dict], elap
     shutil.copy2(args.rubric_path, args.out / "rubric.md")
 
 
+def has_result(events: list[dict]) -> bool:
+    """Whether the stream carried a ``result`` event — the agent's own sign-off.
+
+    Without one the run ended some other way (killed, a CLI failure part-way
+    through), and there is no evaluation to score however much text arrived.
+    """
+    return any(event.get("type") == "result" for event in events)
+
+
 def report(args: argparse.Namespace) -> None:
     """Print the rubric to tick and where the evidence is."""
     cost = json.loads((args.out / "cost.json").read_text(encoding="utf-8"))
@@ -297,6 +361,8 @@ def report(args: argparse.Namespace) -> None:
         f"{cost['num_turns']} turns, ${cost['total_cost_usd']}"
     )
     print(f"skill available: {cost['skill_available']}, invoked: {cost['skill_invoked']}")
+    if cost["returncode"] != 0:
+        print(f"claude exited {cost['returncode']} — this run is NOT scoreable")
     if cost["permission_denials"]:
         print(f"permission denials: {len(cost['permission_denials'])}")
     print("=" * 72)
@@ -310,16 +376,38 @@ def report(args: argparse.Namespace) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Stage, run, save, report. Returns an exit code."""
+    """Stage, run, save, report. Returns an exit code.
+
+    Nonzero when the agent exited nonzero or never reached a ``result`` event:
+    a run that failed to start (an expired login, a CLI that crashed) must not
+    be mistaken for an evaluation whose agent simply said very little. Every
+    artefact is written either way — the evidence of *why* it failed is in
+    them.
+    """
     args = parse_args(argv)
     check_inputs(args)
 
     print(f"staging {args.data.name} -> {args.out / 'data'}", file=sys.stderr)
     work = stage_data(args)
     print(f"running {args.model} in {work}", file=sys.stderr)
-    events, elapsed = run_agent(args, work)
-    write_outputs(args, work, events, elapsed)
+    events, elapsed, returncode = run_agent(args, work)
+    write_outputs(args, work, events, elapsed, returncode)
     report(args)
+
+    if returncode != 0:
+        print(
+            f"claude exited {returncode}; see {args.out / 'agent-stderr.txt'}. "
+            "Nothing here is scoreable.",
+            file=sys.stderr,
+        )
+        return returncode
+    if not has_result(events):
+        print(
+            f"the agent produced no result event ({len(events)} events); see "
+            f"{args.out / 'transcript.jsonl'}. Nothing here is scoreable.",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

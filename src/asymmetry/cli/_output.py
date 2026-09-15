@@ -32,6 +32,22 @@ def payload(**fields: Any) -> dict[str, Any]:
     return {"schema": SCHEMA, "asymmetry_version": __version__, **fields}
 
 
+def checked_name(name: str, *, flag: str) -> str:
+    """*name* as a usable work-directory name, or a :class:`UserError` naming *flag*.
+
+    The rule itself is
+    :func:`asymmetry.core.workflow.workdir.safe_name` — one path component; this
+    is only the boundary that turns its :class:`ValueError` into the one-line
+    message the CLI contract promises for something the caller typed.
+    """
+    from asymmetry.core.workflow.workdir import safe_name
+
+    try:
+        return safe_name(name)
+    except ValueError as exc:
+        raise UserError(f"{flag}: {exc}") from None
+
+
 def emit_json(data: dict[str, Any]) -> None:
     """Print a payload as indented, standard JSON on stdout.
 
@@ -70,6 +86,7 @@ def render_table(headers: list[str], rows: list[list[str]]) -> str:
 __all__ = [
     "SCHEMA",
     "UserError",
+    "checked_name",
     "emit_json",
     "format_number",
     "payload",

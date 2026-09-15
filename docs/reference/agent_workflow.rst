@@ -482,16 +482,24 @@ Install, check or remove the ``asymmetry-analysis`` agent skill — see
 
 Show metadata for a single data file, independent of any work directory —
 the same summary the GUI's file inspector shows, useful for checking one
-file directly without surveying a whole folder.
+file directly without surveying a whole folder. ``--json`` adds the run
+number, the point count and the file's metadata beside that summary (without
+the loader's verbatim NeXus field tree, which would bury it).
 
 .. code-block:: text
 
-   asymmetry info [-h] file
+   asymmetry info [-h] [--json] file
 
 The work directory
 -------------------
 
-Every command above reads and writes ``<folder>/.asymmetry/``:
+``survey``, ``reduce``, ``wizard`` and ``fit-series`` persist their state in
+``<folder>/.asymmetry/``; ``fit`` and ``trend`` read it and add only what
+``--plot`` (and ``trend --csv``) asks for. ``alpha`` and ``info`` are
+stateless — they load a file, print, and write nothing — and ``skill`` writes
+into the agent's own skill directory instead.
+
+The work directory holds:
 
 .. code-block:: text
 
@@ -509,8 +517,8 @@ so a later command picks up a reduced spectrum, a recipe, or a series without
 reloading or recomputing it, and an agent (or a shell script run in several
 steps) has state between invocations without a long-lived process — the same
 role a future MCP server would hold in memory instead. A reduced entry is
-keyed on a digest of the source file's identity (size, mtime, and a hash of
-its leading bytes), the resolved grouping payload, and the reduction
+keyed on a digest of the source file's identity (size, mtime, and the SHA-256
+of the whole file), the resolved grouping payload, and the reduction
 settings; an entry whose digest no longer matches its inputs is recomputed,
 never trusted stale. The whole directory is safe to delete — every command
 rebuilds whatever it needs from the original data files and, for ``fit`` and

@@ -189,6 +189,54 @@ def test_uninstall_refuses_a_directory_with_no_manifest(tmp_path: Path) -> None:
     assert target.exists()  # never touched
 
 
+#: Manifest-shaped files that are *not* this command's manifest. Each one is a
+#: readable file at the manifest path that ``install --force``/``uninstall``
+#: must not accept as proof the directory is ours — otherwise a foreign
+#: directory holding one gets ``rmtree``'d.
+_NOT_OUR_MANIFESTS = {
+    "unknown agent": json.dumps(
+        {
+            "schema": 1,
+            "asymmetry_version": __version__,
+            "installed_at": "2026-01-01T00:00:00+00:00",
+            "agent": "gpt",
+        }
+    ),
+    "no schema": json.dumps(
+        {
+            "asymmetry_version": __version__,
+            "installed_at": "2026-01-01T00:00:00+00:00",
+            "agent": "claude",
+        }
+    ),
+    "invalid json": "{not json at all",
+    "not an object": json.dumps(["claude"]),
+}
+
+
+@pytest.mark.parametrize("description", sorted(_NOT_OUR_MANIFESTS))
+def test_a_directory_whose_manifest_is_not_ours_is_refused(
+    tmp_path: Path, description: str
+) -> None:
+    target = tmp_path / skill.SKILL_NAME
+    target.mkdir()
+    (target / skill.MANIFEST_NAME).write_text(_NOT_OUR_MANIFESTS[description], encoding="utf-8")
+    (target / "someone-elses-work.txt").write_text("keep me", encoding="utf-8")
+
+    assert skill.read_manifest(target) is None
+    with pytest.raises(UserError, match="no manifest found"):
+        skill.install("claude", into=tmp_path)
+    with pytest.raises(UserError, match="no manifest found"):
+        skill.uninstall("claude", into=tmp_path)
+
+    assert (target / "someone-elses-work.txt").is_file()
+
+
+def test_the_manifest_install_writes_is_the_one_read_manifest_accepts(tmp_path: Path) -> None:
+    result = skill.install("claude", into=tmp_path)
+    assert skill.read_manifest(result.path) == result.manifest
+
+
 def test_target_dir_rejects_an_unknown_agent(tmp_path: Path) -> None:
     with pytest.raises(UserError, match="Unknown agent"):
         skill.target_dir("gpt", into=tmp_path)

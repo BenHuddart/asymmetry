@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from asymmetry.cli._output import UserError, emit_json, payload, render_table
+from asymmetry.cli._output import UserError, checked_name, emit_json, payload, render_table
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -43,12 +43,13 @@ def run(args: argparse.Namespace) -> None:
         plots.require_matplotlib()
 
     workdir = WorkDir.for_folder(Path(args.folder), args.workdir)
+    name = checked_name(args.series, flag="--series")
     stored = workdir.series_names()
-    if args.series not in stored:
+    if name not in stored:
         known = ", ".join(stored) if stored else "none yet — run 'asymmetry fit-series' first"
-        raise UserError(f"No series {args.series!r} in {workdir.series_dir} (it holds: {known}).")
+        raise UserError(f"No series {name!r} in {workdir.series_dir} (it holds: {known}).")
 
-    series = workdir.read_series(args.series)
+    series = workdir.read_series(name)
     trend = TrendTable(**series["trend"])
 
     csv_path = None
@@ -72,7 +73,7 @@ def run(args: argparse.Namespace) -> None:
                     trend.rows,
                     param_name=param_name,
                     order_key=trend.order_key,
-                    out_path=workdir.plots_dir / f"{args.series}-trend-{param_name}.png",
+                    out_path=workdir.trend_plot_path(name, param_name),
                     title=f"{series['name']} — {recipe.expression}: {param_name}",
                 )
             )
