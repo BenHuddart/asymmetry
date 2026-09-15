@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -186,11 +188,99 @@ def test_survey_candidate_block_names_the_source_of_each_candidate(
     assert f"run {DECOUPLING_RUN}" not in out.split("Alpha-calibration candidates:")[1]
 
 
-def test_survey_defaults_its_workdir_into_the_data_folder(tmp_path: Path, capsys) -> None:
+def test_survey_defaults_its_workdir_into_the_current_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """The project the command is run from, not the folder the data sits in."""
+    from asymmetry.core.workflow.workdir import WORKDIR_NAME
+
     folder = tmp_path / "empty"
     folder.mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+
     cli.main(["survey", str(folder)])
-    assert (folder / ".asymmetry" / "survey.json").exists()
+
+    assert (project / WORKDIR_NAME / "survey.json").exists()
+    assert list(folder.iterdir()) == []
+
+
+def test_every_command_offers_the_same_default_work_directory() -> None:
+    """The help text is built without importing the core, so the two are pinned here."""
+    from asymmetry.cli._workdir import WORKDIR_NAME as CLI_NAME
+    from asymmetry.core.workflow.workdir import WORKDIR_NAME
+
+    assert CLI_NAME == WORKDIR_NAME
+
+    parser = cli.build_parser()
+    subparsers = next(
+        action
+        for action in parser._actions  # noqa: SLF001 — argparse exposes no public walk
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    with_workdir = {
+        name
+        for name, subparser in subparsers.choices.items()
+        for action in subparser._actions  # noqa: SLF001
+        if action.dest == "workdir"
+        if f"default: ./{WORKDIR_NAME}" in (action.help or "")
+    }
+    assert with_workdir == {"survey", "reduce", "wizard", "fit", "fit-series", "trend"}
+
+
+def test_a_work_directory_holds_one_data_folder(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    """Run numbers key everything stored, so a second folder must not share it."""
+    other = tmp_path / "other"
+    other.mkdir()
+    workdir = tmp_path / "wd"
+    cli.main(["survey", str(workflow_folder), "--workdir", str(workdir)])
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["survey", str(other), "--workdir", str(workdir)])
+
+    assert exc.value.code == 1
+    error = capsys.readouterr().err
+    assert str(workflow_folder.resolve()) in error
+    assert str(other.resolve()) in error
+    assert "--workdir" in error
+
+
+def test_a_second_data_folder_gets_a_work_directory_of_its_own(
+    workflow_folder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """The way out of a mismatch: a named directory under the default one."""
+    from asymmetry.core.workflow.workdir import WORKDIR_NAME
+
+    other = tmp_path / "other"
+    other.mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    cli.main(["survey", str(workflow_folder)])
+
+    cli.main(["survey", str(other), "--workdir", f"{WORKDIR_NAME}/other"])
+
+    assert (project / WORKDIR_NAME / "other" / "survey.json").exists()
+
+
+def test_the_same_folder_named_relatively_and_absolutely_is_one_session(
+    workflow_folder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    from asymmetry.core.workflow.workdir import WORKDIR_NAME
+
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+    cli.main(["survey", str(workflow_folder)])
+    capsys.readouterr()
+
+    cli.main(["survey", os.path.relpath(workflow_folder, project)])
+
+    assert (project / WORKDIR_NAME / "survey.json").exists()
 
 
 def test_survey_on_a_missing_folder_is_a_user_error(tmp_path: Path, capsys) -> None:

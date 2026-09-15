@@ -22,15 +22,21 @@ CLI).
 
 What it does, in order:
 
-1. Copies `--data` to `<out>/data/`. **The corpus is never written to** —
-   every work directory, plot and cached spectrum lands in the copy.
-2. Installs the packaged skill into `<out>/data/.claude/skills/` with
-   `asymmetry skill install --agent claude --project`.
-3. Runs `claude -p` in that directory with the project `.venv/bin` first on
-   `PATH`, the tool set limited to `Bash(asymmetry:*)`, `Bash(ls:*)`,
-   `Bash(cat:*)`, `Read` and `Edit` scoped to the copy, `Glob`, `Grep` and
-   `Skill`, `WebFetch`/`WebSearch`/`Agent`/`Task` denied, and the stream saved
-   as it arrives.
+1. Copies `--data` to `<out>/data/`. **The corpus is never written to**, and
+   neither is the copy: it stands in for the read-only share or archive real
+   data comes from.
+2. Makes `<out>/project/` — the directory an analyst would open beside their
+   data — and installs the packaged skill into `<out>/project/.claude/skills/`
+   with `asymmetry skill install --agent claude --project`. Everything the
+   agent produces, the `asymmetry-work/` work directory included, lands here.
+3. Runs `claude -p` in the **project** directory with the project `.venv/bin`
+   first on `PATH`, the tool set limited to `Bash(asymmetry:*)`, `Bash(ls:*)`,
+   `Bash(cat:*)`, `Read` on the data copy, `Read`/`Edit` on the project
+   directory, `Glob`, `Grep` and `Skill`,
+   `WebFetch`/`WebSearch`/`Agent`/`Task` denied, and the stream saved as it
+   arrives. The prompt is the plan's fixed sentence with the data copy's path
+   in front of it (`The data is in <path>. ...`); `cost.json` records it in
+   full.
 4. Writes the outputs below and prints the rubric to tick.
 5. Exits nonzero if `claude` itself exited nonzero or never reached a `result`
    event. Every artefact is still written — the stderr file and the transcript
@@ -46,14 +52,18 @@ The Bash allow-list deliberately has no interpreter — an agent that can run
 Python can compute a number the CLI never printed, which is exactly what the
 rubrics' number rule is there to catch.
 
-`Read` and the file-writing tools are scoped to the run's own copy of the
-dataset, by absolute path and by `./**` relative to the agent's cwd, so the
-agent cannot read this repository — the rubrics included — or write outside
-the copy without a permission prompt, which headless mode records as a
-denial in `cost.json`. Writes are granted as `Edit(<path>)` rules, because
-Claude Code consults `Edit` and `Read` path rules only and accepts but never
-consults a `Write(<path>)` rule; for the same reason `Edit` is *not* in the
-denied list, where a bare tool-name deny would also stop those scoped writes.
+`Read` is granted on the data copy (by absolute path) and on the agent's own
+cwd (`./**`, the project directory); `Edit` **only** on the project. So the
+agent cannot read this repository — the rubrics included — or write anywhere
+but the project without a permission prompt, which headless mode records as a
+denial in `cost.json`. That the data copy is readable and not writable is
+deliberate: the skill tells the agent never to write into the data folder, and
+a run that tries leaves a `permission_denials` entry — a finding to record
+against the skill text, not a file quietly written. Writes are granted as
+`Edit(<path>)` rules, because Claude Code consults `Edit` and `Read` path
+rules only and accepts but never consults a `Write(<path>)` rule; for the same
+reason `Edit` is *not* in the denied list, where a bare tool-name deny would
+also stop those scoped writes.
 
 `Glob` and `Grep` are **not** path-scoped. Claude Code refuses to match rules
 against a tool's primary content field, which for both of them is `path`, so
@@ -72,8 +82,9 @@ Everything lands under `--out`, and nothing outside it is touched:
 | `commands.txt` | every Bash command the agent ran, in order |
 | `transcript.jsonl` | the raw `stream-json` event stream |
 | `cost.json` | wall time, turns, cost, the CLI's `returncode`, permission denials, whether the skill was invoked |
-| `workdir/` | the `.asymmetry/` work directory the agent built, plots included |
-| `data/` | the copy of the dataset the agent worked in |
+| `workdir/` | the `asymmetry-work/` work directory the agent built, plots included |
+| `project/` | the directory the agent worked in: its work directory and the installed skill |
+| `data/` | the copy of the dataset the agent analysed, which it could only read |
 | `rubric.md` | the dataset's rubric, copied here to tick |
 
 Eval outputs are **never committed**: they carry copies of the corpus. Write

@@ -16,6 +16,7 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._runs import resolve_run, resolve_runs
+from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 #: Points averaged to report the initial asymmetry A(0).
 _A0_POINTS = 5
@@ -58,11 +59,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         "--plot", action="store_true", help="Write plots/reduced-<run>.png for each run"
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
-    parser.add_argument(
-        "--workdir",
-        default=None,
-        help="Work directory to write into (default: <folder>/.asymmetry)",
-    )
+    add_workdir_argument(parser, purpose="write into")
     parser.set_defaults(func=run)
 
 
@@ -77,7 +74,7 @@ def run(args: argparse.Namespace) -> None:
         resolve_reduction_grouping,
     )
     from asymmetry.core.workflow.survey import build_run_row, precession_evidence
-    from asymmetry.core.workflow.workdir import ReducedEntry, WorkDir, reduction_digest
+    from asymmetry.core.workflow.workdir import ReducedEntry, reduction_digest
 
     folder = Path(args.folder)
     if args.alpha is not None and args.alpha_from is not None:
@@ -111,8 +108,15 @@ def run(args: argparse.Namespace) -> None:
         raise UserError(str(exc)) from None
 
     targets = resolve_runs(folder, args.runs)
-    workdir = WorkDir.for_folder(folder, args.workdir)
-    workdir.ensure()
+    workdir = workdir_for(folder, args.workdir)
+    # Written before the first spectrum, not after the last: the manifest is
+    # what binds the directory to this data folder, so a reduction interrupted
+    # part-way still leaves a directory that says whose runs are in it.
+    workdir.write_manifest(
+        folder=folder,
+        settings=settings,
+        runs=[run_number for run_number, _prefix, _path in targets],
+    )
 
     entries: list[dict[str, Any]] = []
     plot_paths: list[Path] = []
@@ -168,12 +172,6 @@ def run(args: argparse.Namespace) -> None:
                     out_path=workdir.plots_dir / f"reduced-{run_number}.png",
                 )
             )
-
-    workdir.write_manifest(
-        folder=folder,
-        settings=settings,
-        runs=[run_number for run_number, _prefix, _path in targets],
-    )
 
     if args.json:
         emit_json(

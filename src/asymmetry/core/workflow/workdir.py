@@ -1,6 +1,8 @@
 """The work directory: an analysis session held on disk, not in a process.
 
-Every workflow command reads and writes ``<folder>/.asymmetry/``::
+Every workflow command reads and writes ``./asymmetry-work/`` — a visible
+directory in the *project* the analysis is being done in, never in the data
+folder, which is routinely a read-only share or archive::
 
     manifest.json          # asymmetry version, folder, settings, run list
     survey.json            # output of `survey`
@@ -15,6 +17,14 @@ so a later command can pick up a reduced spectrum without reloading and
 re-reducing the file, and an agent has state between invocations without a
 long-lived process. The JSON written here is the single source of truth for
 those later commands.
+
+**One work directory holds one data folder.** Everything under it is keyed on
+the run number alone, so two folders whose run numbers overlap would overwrite
+each other's spectra, recipes and series in a single directory. The manifest
+records the folder the session was opened for, and :meth:`WorkDir.bind` — which
+every command goes through before it reads or writes anything — refuses a
+directory that belongs to a different one. A directory with no manifest yet is
+unclaimed; the first ``survey`` or ``reduce`` writes the binding.
 
 A reduced entry is keyed on a **digest** of everything that determines its
 numbers: the source file's identity (size, mtime and the SHA-256 of the whole
@@ -46,8 +56,10 @@ from asymmetry.core.workflow.reduction import ReductionSettings
 #: Schema version stamped into every file the work directory writes.
 SCHEMA = 1
 
-#: Default work-directory name inside a data folder.
-WORKDIR_NAME = ".asymmetry"
+#: Default work-directory name, resolved against the current directory. Not
+#: hidden: an analyst who has to find a plot, delete a stale session or put a
+#: recipe under version control should see it in a file listing.
+WORKDIR_NAME = "asymmetry-work"
 
 #: Chunk the source file is read in while hashing — a buffer size, not a limit
 #: on what is hashed (:func:`file_fingerprint` reads to the end).
@@ -56,6 +68,22 @@ _FILE_HASH_CHUNK = 1024 * 1024
 #: Characters a name may never contain, because each one would make it
 #: something other than a single path component under this directory.
 _NAME_FORBIDDEN = ("/", "\\", "\0")
+
+
+class WorkDirMismatchError(Exception):
+    """A work directory was asked to serve a data folder that is not the one it holds.
+
+    Carries the three paths involved so a caller can phrase the message in its
+    own vocabulary; :meth:`str` is already a complete sentence naming them.
+    """
+
+    def __init__(self, *, root: Path, bound_folder: Path, folder: Path) -> None:
+        self.root = root
+        self.bound_folder = bound_folder
+        self.folder = folder
+        super().__init__(
+            f"{root} belongs to {bound_folder}; for {folder} pass --workdir {WORKDIR_NAME}/<name>"
+        )
 
 
 def safe_name(name: str) -> str:
@@ -190,7 +218,7 @@ class ReducedEntry:
 
 
 class WorkDir:
-    """Read/write access to one ``.asymmetry/`` session directory."""
+    """Read/write access to one ``asymmetry-work/`` session directory."""
 
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
@@ -198,9 +226,14 @@ class WorkDir:
     # -- layout -------------------------------------------------------------
 
     @classmethod
-    def for_folder(cls, folder: str | Path, root: str | Path | None = None) -> WorkDir:
-        """The work directory for a data *folder* (``<folder>/.asymmetry``), or *root*."""
-        return cls(Path(folder) / WORKDIR_NAME if root is None else Path(root))
+    def default(cls, root: str | Path | None = None) -> WorkDir:
+        """``<cwd>/asymmetry-work``, or *root* when one was named.
+
+        Resolved against the current directory — the project the analysis is
+        being done in — and never against the data folder, which is often a
+        read-only share or archive and is not where an analyst keeps work.
+        """
+        return cls(Path.cwd() / WORKDIR_NAME if root is None else Path(root))
 
     @property
     def manifest_path(self) -> Path:
@@ -241,6 +274,30 @@ class WorkDir:
         ):
             directory.mkdir(parents=True, exist_ok=True)
 
+    # -- binding ------------------------------------------------------------
+
+    @property
+    def bound_folder(self) -> Path | None:
+        """The data folder this session holds, or ``None`` while it is unclaimed."""
+        if not self.manifest_path.exists():
+            return None
+        return Path(str(self.read_manifest()["folder"])).resolve()
+
+    def bind(self, folder: str | Path) -> WorkDir:
+        """This directory, checked to be *folder*'s session; raise if it is another's.
+
+        The single gate every command passes before it touches the directory,
+        so no command can mix two data folders into one cache (see the module
+        docstring). Both paths are resolved, so the same folder named
+        relatively and absolutely is the same folder. Raises
+        :class:`WorkDirMismatchError` when the manifest names a different one.
+        """
+        folder = Path(folder).resolve()
+        bound = self.bound_folder
+        if bound is not None and bound != folder:
+            raise WorkDirMismatchError(root=self.root, bound_folder=bound, folder=folder)
+        return self
+
     # -- survey -------------------------------------------------------------
 
     def write_survey(self, payload: dict[str, Any]) -> Path:
@@ -261,19 +318,27 @@ class WorkDir:
         self,
         *,
         folder: str | Path,
-        settings: ReductionSettings,
-        runs: list[int],
+        settings: ReductionSettings | None = None,
+        runs: list[int] | None = None,
     ) -> Path:
-        """Record the session's provenance: version, folder, settings, run list."""
+        """Record the session's provenance: version, folder, settings, run list.
+
+        This is also where the directory is **bound** to its data folder, as
+        an absolute, resolved path: ``survey`` writes it with neither settings
+        nor runs to claim a fresh directory, ``reduce`` writes all three, and
+        a later ``survey`` leaves what ``reduce`` recorded in place rather than
+        erasing the reduction's provenance.
+        """
         self.ensure()
+        stored = self.read_manifest() if self.manifest_path.exists() else {}
         _write_json(
             self.manifest_path,
             {
                 "schema": SCHEMA,
                 "asymmetry_version": __version__,
-                "folder": str(folder),
-                "settings": settings.to_dict(),
-                "runs": [int(run) for run in runs],
+                "folder": str(Path(folder).resolve()),
+                "settings": stored.get("settings") if settings is None else settings.to_dict(),
+                "runs": stored.get("runs", []) if runs is None else [int(run) for run in runs],
                 "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             },
         )
@@ -444,6 +509,7 @@ __all__ = [
     "WORKDIR_NAME",
     "ReducedEntry",
     "WorkDir",
+    "WorkDirMismatchError",
     "file_fingerprint",
     "reduction_digest",
     "safe_name",

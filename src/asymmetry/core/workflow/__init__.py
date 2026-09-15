@@ -61,6 +61,7 @@ from asymmetry.core.workflow.workdir import (
     WORKDIR_NAME,
     ReducedEntry,
     WorkDir,
+    WorkDirMismatchError,
     file_fingerprint,
     reduction_digest,
 )
@@ -93,6 +94,7 @@ __all__ = [
     "SeriesOutcome",
     "TrendTable",
     "WorkDir",
+    "WorkDirMismatchError",
     "build_run_row",
     "build_trend_table",
     "calibration_verdict",

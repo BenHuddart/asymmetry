@@ -15,6 +15,7 @@ from asymmetry.cli._output import (
 )
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
 from asymmetry.cli._runs import parse_run_spec, reduced_datasets
+from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -74,11 +75,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
-    parser.add_argument(
-        "--workdir",
-        default=None,
-        help="Work directory to read and write (default: <folder>/.asymmetry)",
-    )
+    add_workdir_argument(parser, purpose="read and write")
     parser.set_defaults(func=run)
 
 
@@ -86,13 +83,12 @@ def run(args: argparse.Namespace) -> None:
     """Fit every named run with the recipe and store the series."""
     from asymmetry.cli import plots
     from asymmetry.core.workflow.series import fit_series, order_values
-    from asymmetry.core.workflow.workdir import WorkDir
 
     if args.plot:
         plots.require_matplotlib()
 
     folder = Path(args.folder)
-    workdir = WorkDir.for_folder(folder, args.workdir)
+    workdir = workdir_for(folder, args.workdir)
 
     recipe = recipe_with_overrides(load_recipe(workdir, args.recipe), fix=args.fix)
     global_params = [name.strip() for name in args.global_params.split(",") if name.strip()]

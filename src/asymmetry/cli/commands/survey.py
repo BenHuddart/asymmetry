@@ -12,6 +12,7 @@ from asymmetry.cli._output import (
     payload,
     render_table,
 )
+from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -22,25 +23,27 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("folder", help="Directory holding the run files")
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
-    parser.add_argument(
-        "--workdir",
-        default=None,
-        help="Work directory to write survey.json into (default: <folder>/.asymmetry)",
-    )
+    add_workdir_argument(parser, purpose="write survey.json into")
     parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace) -> None:
     """Survey the folder, store the result in the work directory, and report it."""
     from asymmetry.core.workflow.survey import survey_folder
-    from asymmetry.core.workflow.workdir import WorkDir
 
     folder = Path(args.folder)
     if not folder.is_dir():
         raise UserError(f"{folder} does not exist or is not a directory.")
 
+    # Resolved before the folder is read: surveying measures precession on
+    # every run, and a work directory that belongs to another folder should
+    # say so at once rather than after that.
+    workdir = workdir_for(folder, args.workdir)
+
     survey = survey_folder(folder)
-    workdir = WorkDir.for_folder(folder, args.workdir)
+    # The first command run against a fresh directory is normally this one, so
+    # this is where the session is usually claimed for its data folder.
+    workdir.write_manifest(folder=folder)
     survey_path = workdir.write_survey(survey.to_dict())
 
     if args.json:

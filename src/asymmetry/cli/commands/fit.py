@@ -9,6 +9,7 @@ from typing import Any
 from asymmetry.cli._output import emit_json, format_number, payload, render_table
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
 from asymmetry.cli._runs import reduced_datasets
+from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -24,11 +25,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--tmax", type=float, default=None, help="Fit only below this time/µs")
     parser.add_argument("--plot", action="store_true", help="Write plots/fit-<run>.png")
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
-    parser.add_argument(
-        "--workdir",
-        default=None,
-        help="Work directory to read (default: <folder>/.asymmetry)",
-    )
+    add_workdir_argument(parser, purpose="read")
     parser.set_defaults(func=run)
 
 
@@ -36,13 +33,12 @@ def run(args: argparse.Namespace) -> None:
     """Fit the named run and report the parameter table and quality verdict."""
     from asymmetry.cli import plots
     from asymmetry.core.workflow.series import fit_one
-    from asymmetry.core.workflow.workdir import WorkDir
 
     if args.plot:
         plots.require_matplotlib()
 
     folder = Path(args.folder)
-    workdir = WorkDir.for_folder(folder, args.workdir)
+    workdir = workdir_for(folder, args.workdir)
     dataset = reduced_datasets(workdir, [args.run])[args.run]
 
     recipe = recipe_with_overrides(load_recipe(workdir, args.recipe), fix=args.fix, free=args.free)

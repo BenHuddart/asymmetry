@@ -22,6 +22,7 @@ from asymmetry.core.workflow.workdir import (
     WORKDIR_NAME,
     ReducedEntry,
     WorkDir,
+    WorkDirMismatchError,
     file_fingerprint,
     reduction_digest,
     safe_name,
@@ -61,9 +62,64 @@ def reduced(workflow_folder: Path, tmp_path: Path):
     return WorkDir(tmp_path / "wd"), dataset, entry, path, grouping, settings
 
 
-def test_for_folder_defaults_to_the_dot_asymmetry_directory(tmp_path: Path) -> None:
-    assert WorkDir.for_folder(tmp_path).root == tmp_path / WORKDIR_NAME
-    assert WorkDir.for_folder(tmp_path, tmp_path / "elsewhere").root == tmp_path / "elsewhere"
+def test_the_default_is_in_the_current_directory_not_the_data_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.chdir(project)
+
+    assert WorkDir.default().root == project / WORKDIR_NAME
+    assert WorkDir.default(project / "elsewhere").root == project / "elsewhere"
+
+
+def test_the_default_work_directory_is_not_hidden() -> None:
+    """An analyst has to find the plots, the recipes and the stale sessions."""
+    assert not WORKDIR_NAME.startswith(".")
+
+
+def test_a_work_directory_binds_to_the_folder_its_manifest_names(reduced, tmp_path: Path) -> None:
+    workdir, _dataset, _entry, _path, _grouping, settings = reduced
+    folder = tmp_path / "runs"
+    folder.mkdir()
+
+    assert workdir.bound_folder is None
+    workdir.write_manifest(folder=folder, settings=settings, runs=[101])
+
+    assert workdir.bound_folder == folder.resolve()
+    assert workdir.bind(folder) is workdir
+
+
+def test_a_bound_work_directory_accepts_its_folder_named_any_way(
+    reduced, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relative path, an absolute one and a detour through ``..`` are one folder."""
+    workdir, _dataset, _entry, _path, _grouping, settings = reduced
+    folder = tmp_path / "runs"
+    folder.mkdir()
+    workdir.write_manifest(folder=str(folder), settings=settings, runs=[])
+
+    monkeypatch.chdir(tmp_path)
+    workdir.bind("runs")
+    workdir.bind(folder)
+    workdir.bind(tmp_path / "runs" / ".." / "runs")
+
+
+def test_a_second_data_folder_cannot_share_a_bound_work_directory(reduced, tmp_path: Path) -> None:
+    """Everything stored is keyed on run number alone, so two folders would collide."""
+    workdir, _dataset, _entry, _path, _grouping, settings = reduced
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    workdir.write_manifest(folder=first, settings=settings, runs=[101])
+
+    with pytest.raises(WorkDirMismatchError) as exc:
+        workdir.bind(second)
+
+    assert str(first.resolve()) in str(exc.value)
+    assert str(second.resolve()) in str(exc.value)
+    assert f"--workdir {WORKDIR_NAME}/" in str(exc.value)
 
 
 def test_reduced_round_trips_through_the_work_directory(reduced) -> None:
@@ -198,10 +254,26 @@ def test_manifest_records_version_folder_settings_and_runs(reduced, tmp_path: Pa
     manifest = workdir.read_manifest()
     assert manifest["schema"] == SCHEMA
     assert manifest["asymmetry_version"] == __version__
-    assert manifest["folder"] == str(tmp_path)
+    # Absolute and resolved: the folder is what binds the directory, and it is
+    # compared against paths typed in later commands from other directories.
+    assert manifest["folder"] == str(tmp_path.resolve())
     assert manifest["settings"] == settings.to_dict()
     assert manifest["runs"] == [101, 102]
     assert manifest["updated"]
+
+
+def test_a_manifest_written_without_settings_keeps_what_the_reduction_recorded(
+    reduced, tmp_path: Path
+) -> None:
+    """``survey`` claims a directory; it must not erase ``reduce``'s provenance."""
+    workdir, _dataset, _entry, _path, _grouping, settings = reduced
+    workdir.write_manifest(folder=tmp_path, settings=settings, runs=[101, 102])
+
+    workdir.write_manifest(folder=tmp_path)
+
+    manifest = workdir.read_manifest()
+    assert manifest["settings"] == settings.to_dict()
+    assert manifest["runs"] == [101, 102]
 
 
 def test_survey_payload_round_trips(reduced) -> None:

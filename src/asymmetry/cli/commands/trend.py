@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from asymmetry.cli._output import UserError, checked_name, emit_json, payload, render_table
+from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
 def add_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -24,25 +25,20 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Write plots/<series>-trend-<param>.png for every free parameter",
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
-    parser.add_argument(
-        "--workdir",
-        default=None,
-        help="Work directory to read (default: <folder>/.asymmetry)",
-    )
+    add_workdir_argument(parser, purpose="read")
     parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace) -> None:
     """Read the stored series and report its trend table."""
     from asymmetry.core.workflow.series import TrendTable
-    from asymmetry.core.workflow.workdir import WorkDir
 
     if args.plot:
         from asymmetry.cli import plots
 
         plots.require_matplotlib()
 
-    workdir = WorkDir.for_folder(Path(args.folder), args.workdir)
+    workdir = workdir_for(Path(args.folder), args.workdir)
     name = checked_name(args.series, flag="--series")
     stored = workdir.series_names()
     if name not in stored:

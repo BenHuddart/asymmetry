@@ -47,14 +47,25 @@ A folder the tool can *load* is not automatically a folder the tool can
 
 ## 2. The workflow
 
-Run every command from the directory holding the data (or pass an absolute
-path). `survey`, `reduce`, `wizard` and `fit-series` write into
-`<folder>/.asymmetry/` — the work directory — so the next command picks the
-state up; `fit` and `trend` read it and add only what `--plot` (and `trend
---csv`) asks for. **Do not pass `--workdir` to any of those**; the default is
-right and a mismatched one silently loses your reduced runs. `alpha` and
-`info` are stateless — they load a file, print, and write nothing — and
-`skill` writes into the agent's own skill directory, not the work directory.
+Run every command from the project directory you are working in, and pass the
+data folder as the command's argument — an absolute path is fine, and is what
+you want when the data sits on a share or in an archive. `survey`, `reduce`,
+`wizard` and `fit-series` write into `./asymmetry-work/` — the work directory,
+in the project, never in the data folder — so the next command picks the state
+up; `fit` and `trend` read it and add only what `--plot` (and `trend --csv`)
+asks for. `alpha` and `info` are stateless — they load a file, print, and
+write nothing — and `skill` writes into the agent's own skill directory, not
+the work directory.
+
+**Never write anything into the data folder.** It is the experiment's record,
+and it is often read-only.
+
+One work directory holds one data folder's runs — everything in it is keyed on
+the run number alone. So for a **second data folder** in the same project, pass
+`--workdir asymmetry-work/<short-name>` and keep passing that same `--workdir`
+for every command on that folder. Otherwise do not pass `--workdir` at all: the
+default is right, and a directory that already holds another folder's session
+says so rather than mixing the two.
 
 Add `--json` when you need to parse a payload; the default human table is
 usually easier to read and is what these examples show.
@@ -166,7 +177,7 @@ asymmetry reduce <folder> --runs 102-107 --alpha-from 101 --deadtime from_file -
   `yes`** — the files carry per-detector deadtime values and the GUI's fresh
   default (off) leaves them unused. Say in the summary that you applied the
   file's deadtime values.
-- `--plot` writes `<folder>/.asymmetry/plots/reduced-<run>.png`. Read a few of
+- `--plot` writes `asymmetry-work/plots/reduced-<run>.png`. Read a few of
   them with the Read tool — the lowest-temperature, the highest, and one in the
   middle. That is how you learn whether there is an oscillation, a Kubo–Toyabe
   dip, or featureless relaxation, before any model is chosen.
@@ -275,9 +286,10 @@ F–μ–F family. Trust it when the sample really is a fluoride; a fluoride
 whose title does not name it still gets F–μ–F candidates from the spectral
 search.
 
-`wizard` writes `recipes/wizard-<run>.json` — the fit recipe, the only
-contract between screening and fitting. `--plot` writes
-`plots/wizard-<run>.png` (data, recommended curve, residuals). Look at it.
+`wizard` writes `asymmetry-work/recipes/wizard-<run>.json` — the fit recipe,
+the only contract between screening and fitting. `--plot` writes
+`asymmetry-work/plots/wizard-<run>.png` (data, recommended curve, residuals).
+Look at it.
 
 The wizard's candidate search prints `AsymmetryScaleWarning` blocks on stderr.
 They are benign noise from seeding trial models; ignore them.
@@ -289,7 +301,8 @@ asymmetry fit-series <folder> --runs 102-107 --recipe wizard-102 \
     --order temperature --start 102 --name zf-scan --plot
 ```
 
-- `--recipe` takes a name in `recipes/` (no path, no `.json`) or a path.
+- `--recipe` takes a name in `asymmetry-work/recipes/` (no path, no `.json`)
+  or a path.
 - `--order temperature` or `--order field` — the quantity the scan varies, the
   axis of the trend. `--order run` only when neither applies.
 - `--start <run>` is **the run you screened**. The series chains outward from
@@ -372,8 +385,8 @@ things. In every summary, state for the chosen model:
 **Many flagged runs.** If a large fraction of the series is flagged, the recipe
 is wrong for part of the scan. In order of effort:
 
-1. Read the per-run PNGs (`plots/<name>/<run>.png`) at the flagged
-   temperatures. Compare them with the run you screened. What changed?
+1. Read the per-run PNGs (`asymmetry-work/plots/<name>/<run>.png`) at the
+   flagged temperatures. Compare them with the run you screened. What changed?
 2. Try a narrower `--tmax`. Late-time noise drags a fit that the early-time
    structure would have constrained.
 3. Take a different template from the wizard's ranked table. Either re-run
@@ -398,9 +411,9 @@ is wrong for part of the scan. In order of effort:
 three things: `expression`, the entry in `model.component_names`, and the
 parameter list (name and starting value). For example, `Exponential` →
 `Gaussian` means `Lambda` → `sigma`; `Constant` carries `A_bg`. Write it to
-`recipes/<name>.json` and pass `--recipe <name>`. Run `asymmetry fit --run N
---recipe <name>` on one run first to check it converges before spending a
-series on it.
+`asymmetry-work/recipes/<name>.json` and pass `--recipe <name>`. Run
+`asymmetry fit <folder> --run N --recipe <name>` on one run first to check it
+converges before spending a series on it.
 
 **The wizard found nothing.** Confidence `low`/`none`, or the null baseline
 winning, on the run you screened: screen a different run before concluding
@@ -513,14 +526,18 @@ went wrong. State plainly that these values are not results.
 consistent with, what would need checking. Interpretation belongs here, and
 here it may be qualitative.
 
-**Files** — the work directory, and the paths of the PNGs worth looking at.
+**Files** — the work directory (`asymmetry-work/`), and the paths of the PNGs
+worth looking at.
 
 ## 7. Worked example
 
 A synthetic folder of eight simulated runs: one weak-TF calibration run at
 100 G, a six-run zero-field temperature scan, 10–60 K, the last of which carries
-no signal at all, and one 110 G longitudinal decoupling run. Output below is
-real, trimmed.
+no signal at all, and one 110 G longitudinal decoupling run. Every command is
+run from the project directory, with the data folder (here `runs`, but as often
+an absolute path to a share) as its argument; everything the commands write
+lands in `asymmetry-work/` beside them, and nothing is written into `runs`.
+Output below is real, trimmed.
 
 ```console
 $ asymmetry survey runs

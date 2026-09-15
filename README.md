@@ -194,6 +194,11 @@ asymmetry skill install --agent claude   # or --agent codex
 asymmetry skill check
 ```
 
+Run the commands from the project directory you are working in and pass the
+data folder as an argument: each one caches its state in a visible
+`./asymmetry-work/` beside you — never in the data folder, which is often a
+read-only share — and one such directory holds one data folder's session.
+
 Restart the agent after installing (or upgrading) the skill so it picks up
 the change — an already-running session has already scanned its skills
 directory. The skill installs into `~/.claude/skills/asymmetry-analysis/` or

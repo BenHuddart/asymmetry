@@ -50,10 +50,12 @@ Three layers, each usable alone; the upper ones only wrap the lower.
 
 ### The work directory is the session
 
-Every command reads and writes `<folder>/.asymmetry/` (name settled below):
+Every command reads and writes `./asymmetry-work/` — a visible directory in
+the project the analysis is being done in, resolved against the current
+directory and never against the data folder:
 
 ```
-.asymmetry/
+asymmetry-work/
   manifest.json          # asymmetry version, settings used, run list
   survey.json            # output of `survey`
   reduced/<run>.npz      # time, asymmetry, error
@@ -69,6 +71,11 @@ so the agent has state between calls without a long-lived process. This is
 the same state an MCP server would later hold in memory. Reduced spectra are
 keyed on a digest of (file bytes, grouping payload, reduction settings); a
 stale entry is recomputed, never trusted.
+
+One work directory holds one data folder: everything in it is keyed on the run
+number alone, so the manifest's `folder` is binding — `survey` and `reduce`
+write it, every command checks it, and a second folder needs
+`--workdir asymmetry-work/<name>` of its own.
 
 ### The fit recipe
 
@@ -631,6 +638,16 @@ Recorded here rather than fixed, because Phase 4 changes skill text only:
 - 2026-09-14: `screen_templates` (explicit template lists) was left out of
   the façade: without a `PeakAnalysis` seed context multiplet templates seed
   every line at one frequency, which is not a fit of that template.
+- 2026-09-15: the work directory is a **visible `asymmetry-work/` in the
+  current (project) directory**, not a hidden `.asymmetry/` inside the data
+  folder: raw data routinely sits on a share or in a read-only archive, which
+  is neither writable nor a place an analyst wants caches and plots to appear,
+  and a hidden directory is one the person driving the analysis cannot find
+  when they need a plot or want to delete a stale session. The consequence —
+  the work directory no longer being uniquely determined by the data folder —
+  is paid for by making the manifest's `folder` binding: one work directory
+  serves one data folder, checked on every command, so two folders with
+  overlapping run numbers can never collide in one cache.
 
 ## Open questions for the maintainer
 

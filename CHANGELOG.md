@@ -14,11 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fit-series` and `trend` wrap the same core engine the desktop application uses, in the order
   an analysis runs, each with a `--json` machine-readable payload and, on the six analysis
   commands, `--plot` for headless PNGs (framed on the informative window and, for a trend, on
-  its clean points). `survey`, `reduce`, `wizard` and `fit-series` persist their state in a
-  `<folder>/.asymmetry` work directory — a survey, cached reduced spectra keyed on a digest,
+  its clean points). `survey`, `reduce`, `wizard` and `fit-series` persist their state in an
+  `./asymmetry-work` work directory — a survey, cached reduced spectra keyed on a digest,
   wizard screenings, fit recipes, and series results — so state persists between separate
   invocations without a long-lived process; `fit` and `trend` read it and add only what
-  `--plot`/`--csv` asks for, and `alpha` and `info` are stateless.
+  `--plot`/`--csv` asks for, and `alpha` and `info` are stateless. The work directory is
+  visible and lives in the directory the command is run from, not in the data folder (which is
+  routinely a read-only share or archive), and it holds one data folder's session: a command
+  pointed at a second folder says so rather than mixing two folders' runs in one cache, and
+  `--workdir asymmetry-work/<name>` gives that folder a session of its own.
   `wizard` writes a fit recipe (model, parameters, time window) from its recommendation, the
   sole contract between screening and fitting; `fit-series --start RUN` chains a series outward
   from the run you screened. Install the new `agent` extra

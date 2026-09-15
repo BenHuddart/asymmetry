@@ -7,6 +7,7 @@ from pathlib import Path
 
 from asymmetry.cli._output import UserError, emit_json, format_number, payload, render_table
 from asymmetry.cli._runs import reduced_datasets
+from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 #: Candidates listed in the human-readable table.
 _TOP_CANDIDATES = 5
@@ -43,11 +44,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         "--plot", action="store_true", help="Write plots/wizard-<run>.png of data + recommendation"
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
-    parser.add_argument(
-        "--workdir",
-        default=None,
-        help="Work directory to read and write (default: <folder>/.asymmetry)",
-    )
+    add_workdir_argument(parser, purpose="read and write")
     parser.set_defaults(func=run)
 
 
@@ -55,7 +52,6 @@ def run(args: argparse.Namespace) -> None:
     """Screen the run, store the payload and the recipe, and report both."""
     from asymmetry.cli import plots
     from asymmetry.core.workflow.screen import SCOPE_PRESETS, screen_run
-    from asymmetry.core.workflow.workdir import WorkDir
 
     if args.scope not in SCOPE_PRESETS:
         raise UserError(
@@ -65,7 +61,7 @@ def run(args: argparse.Namespace) -> None:
         plots.require_matplotlib()
 
     folder = Path(args.folder)
-    workdir = WorkDir.for_folder(folder, args.workdir)
+    workdir = workdir_for(folder, args.workdir)
     dataset = reduced_datasets(workdir, [args.run])[args.run]
 
     result = screen_run(

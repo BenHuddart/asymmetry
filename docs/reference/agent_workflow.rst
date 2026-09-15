@@ -141,9 +141,12 @@ Every subcommand below shares the same conventions:
   ``trend``) writes one or more headless PNGs into the work directory's
   ``plots/`` — see `Plots`_.
 - ``--workdir`` overrides the work directory, which otherwise defaults to
-  ``<folder>/.asymmetry``. Passing a different one deliberately starts a
-  separate session against the same data; passing it by mistake silently
-  loses whatever an earlier command in the default location already wrote.
+  ``./asymmetry-work`` — in the directory the command is run from, not in the
+  data folder. One work directory holds one data folder's session, so this is
+  the flag to reach for when a second folder is analysed from the same
+  project: ``--workdir asymmetry-work/<name>``, passed to every command on
+  that folder. Pointing a command at a directory that already holds a
+  different folder's session is a user error, not a silent merge.
 - ``--verbose`` (on the main ``asymmetry`` command, before the subcommand)
   prints every warning as Python's own multi-line traceback-style block.
   Without it, a repeated warning — the fit wizard's ``AsymmetryScaleWarning``
@@ -494,16 +497,23 @@ The work directory
 -------------------
 
 ``survey``, ``reduce``, ``wizard`` and ``fit-series`` persist their state in
-``<folder>/.asymmetry/``; ``fit`` and ``trend`` read it and add only what
+``./asymmetry-work/``; ``fit`` and ``trend`` read it and add only what
 ``--plot`` (and ``trend --csv``) asks for. ``alpha`` and ``info`` are
 stateless — they load a file, print, and write nothing — and ``skill`` writes
 into the agent's own skill directory instead.
+
+The directory is resolved against **the directory the command is run from** —
+the project the analysis lives in — and never against the data folder, which
+is routinely a read-only share or an archive and is not somewhere an analyst
+would want cached spectra and plots to appear. It is deliberately not hidden:
+the plots, the recipes and the stale sessions in it are all things a person
+has to find.
 
 The work directory holds:
 
 .. code-block:: text
 
-   .asymmetry/
+   asymmetry-work/
      manifest.json          # asymmetry version, folder, settings, run list
      survey.json            # output of `survey`
      reduced/<run>.npz      # time, asymmetry, error
@@ -523,6 +533,27 @@ settings; an entry whose digest no longer matches its inputs is recomputed,
 never trusted stale. The whole directory is safe to delete — every command
 rebuilds whatever it needs from the original data files and, for ``fit`` and
 ``fit-series``, the recipe.
+
+One directory, one data folder
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Everything under the work directory is keyed on the **run number** alone, so
+two data folders whose run numbers overlap would overwrite each other's
+spectra, recipes and series inside one directory. The manifest therefore
+records the folder the session was opened for, as an absolute resolved path,
+and every command checks it before reading or writing anything
+(:meth:`asymmetry.core.workflow.workdir.WorkDir.bind`). A directory that
+already belongs to another folder is refused:
+
+.. code-block:: console
+
+   $ asymmetry survey /data/nickel
+   asymmetry: /work/asymmetry-work belongs to /data/ptfe; for /data/nickel pass --workdir asymmetry-work/<name>
+
+``survey`` and ``reduce`` write the manifest, so the first of them run against
+a fresh directory claims it; a directory with no manifest yet is unclaimed.
+The same folder named relatively, absolutely, or through a symlink is one
+folder — both paths are resolved before they are compared.
 
 The fit recipe
 ---------------

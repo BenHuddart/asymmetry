@@ -35,19 +35,21 @@ def _load_runner():
 # -- the allow-list ---------------------------------------------------------
 
 
-def test_read_and_write_are_scoped_to_the_run_s_own_data_copy() -> None:
-    """The agent may read and write inside its copy, and nowhere else by rule.
+def test_the_data_copy_is_readable_and_the_project_directory_writable() -> None:
+    """The agent works in the project directory; the data copy it may only read.
 
-    Writes are granted as ``Edit(...)``: Claude Code consults ``Edit`` and
-    ``Read`` path rules only, and accepts but never consults a
-    ``Write(<path>)`` rule.
+    That asymmetry is what enforces the skill's "never write into the data
+    folder" rule: an attempt is a permission denial in ``cost.json``, not a
+    file quietly written. Writes are granted as ``Edit(...)``: Claude Code
+    consults ``Edit`` and ``Read`` path rules only, and accepts but never
+    consults a ``Write(<path>)`` rule.
     """
     runner = _load_runner()
 
     allowed = runner.allowed_tools(Path("/private/tmp/evals/run-1/data"))
 
     assert "Read(//private/tmp/evals/run-1/data/**)" in allowed
-    assert "Edit(//private/tmp/evals/run-1/data/**)" in allowed
+    assert "Edit(//private/tmp/evals/run-1/data/**)" not in allowed
     assert "Read(./**)" in allowed
     assert "Edit(./**)" in allowed
 
@@ -178,8 +180,42 @@ def test_the_runner_hands_the_agent_the_scoped_allow_list(
     _run(runner, data=data, out=out, claude=claude)
 
     argv = recorded.read_text(encoding="utf-8").split("\n")
-    work = out / "data"
-    assert f"Read(//{str(work).lstrip(os.sep)}/**)" in argv
-    assert f"Edit(//{str(work).lstrip(os.sep)}/**)" in argv
+    data = out / "data"
+    assert f"Read(//{str(data).lstrip(os.sep)}/**)" in argv
+    assert f"Edit(//{str(data).lstrip(os.sep)}/**)" not in argv
+    assert "Edit(./**)" in argv
     assert "--disallowedTools" in argv
     assert "WebFetch" in argv
+
+
+def test_the_agent_runs_in_the_project_directory_and_is_told_where_the_data_is(
+    eval_inputs, tmp_path: Path
+) -> None:
+    """The data is no longer under the agent's feet, so the prompt has to say so."""
+    runner = _load_runner()
+    data, out = eval_inputs
+    recorded = tmp_path / "cwd.txt"
+    claude = _stub_claude(tmp_path, body=f"pwd > {recorded}\nexit 0")
+
+    _run(runner, data=data, out=out, claude=claude)
+
+    assert recorded.read_text(encoding="utf-8").strip() == str(out / "project")
+    assert (out / "project" / ".claude" / "skills" / "asymmetry-analysis").is_dir()
+    assert not (out / "data" / ".claude").exists()
+
+    prompt = json.loads((out / "cost.json").read_text(encoding="utf-8"))["prompt"]
+    assert prompt == f"The data is in {out / 'data'}. {runner.DEFAULT_PROMPT}"
+
+
+def test_the_work_directory_the_agent_built_is_copied_out(eval_inputs, tmp_path: Path) -> None:
+    """``workdir/`` comes from the project directory now, not from the data copy."""
+    runner = _load_runner()
+    data, out = eval_inputs
+    produced = out / "project" / runner.WORKDIR_NAME
+    claude = _stub_claude(
+        tmp_path, body=f'mkdir -p "{produced}" && touch "{produced}/manifest.json"\nexit 0'
+    )
+
+    _run(runner, data=data, out=out, claude=claude)
+
+    assert (out / "workdir" / "manifest.json").is_file()

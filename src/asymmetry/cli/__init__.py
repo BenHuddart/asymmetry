@@ -9,7 +9,11 @@ scan with ``fit-series``, and read the ``trend`` out of the result — plus
 ``info`` file summary. Every command takes ``--json``.
 
 ``survey``, ``reduce``, ``wizard`` and ``fit-series`` **persist state** in the
-work directory ``<folder>/.asymmetry`` so the next command can pick it up.
+work directory ``./asymmetry-work`` — in the directory the command is run
+from, not in the data folder — so the next command can pick it up. One work
+directory holds one data folder's session; a command handed a different folder
+says so rather than mixing the two (see
+:meth:`asymmetry.core.workflow.workdir.WorkDir.bind`).
 ``fit`` and ``trend`` read that state and write nothing into it beyond the
 files ``--plot`` (and ``trend --csv``) asks for. ``alpha`` and ``info`` are
 stateless — they load, print and write nothing — and ``skill`` writes into the

@@ -2,11 +2,14 @@
 """Run one agent evaluation of the ``asymmetry-analysis`` skill.
 
 Copies a dataset folder into the output directory (the corpus itself is never
-written to), installs the packaged skill beside the copy, runs the Claude Code
-CLI headless in that directory with the fixed analysis prompt, and saves
-everything a human needs to tick the dataset's rubric:
+written to), makes an empty project directory beside it holding only the
+installed skill, runs the Claude Code CLI headless *in the project directory*
+with the fixed analysis prompt and the data copy's path, and saves everything
+a human needs to tick the dataset's rubric:
 
-``data/``             the copy the agent worked in (its ``.asymmetry/`` included)
+``data/``             the read-only copy of the dataset the agent analysed
+``project/``          the directory the agent worked in (its ``asymmetry-work/``
+                      and the installed skill)
 ``workdir/``          the work directory the agent built, copied out
 ``transcript.jsonl``  the raw ``stream-json`` event stream
 ``summary.md``        the agent's report — the only thing the rubric scores
@@ -16,13 +19,16 @@ everything a human needs to tick the dataset's rubric:
 ``rubric.md``         the dataset's rubric, to tick
 
 This script itself creates, modifies and removes nothing outside the output
-directory, and the agent's own file tools are scoped to the copy (see
-:func:`allowed_tools`). It exits nonzero when the agent did not finish, so a
-broken run is never filed as a scoreable one.
+directory, and the agent's own file tools are scoped to those two directories
+— the data copy readable, the project writable (see :func:`allowed_tools`), so
+that the skill's "never write into the data folder" rule is enforced rather
+than merely asked for: an attempt shows up as a ``permission_denials`` entry
+in ``cost.json``. It exits nonzero when the agent did not finish, so a broken
+run is never filed as a scoreable one.
 
 The agent it launches is an ordinary Claude Code session, so that
 session's own state (its transcript and any auto-memory it writes) lands under
-``~/.claude/`` keyed on the copied data directory, exactly as for a hand-run
+``~/.claude/`` keyed on the project directory, exactly as for a hand-run
 session in that folder.
 
 Usage::
@@ -76,6 +82,9 @@ DISALLOWED_TOOLS = ("WebFetch", "WebSearch", "Agent", "Task")
 #: Built-in tools the session is given at all, before the allow-list narrows it.
 TOOLS = ("Bash", "Read", "Glob", "Grep", "Write", "Skill")
 
+#: The work directory the CLI writes, looked for under the project directory.
+WORKDIR_NAME = "asymmetry-work"
+
 
 def _absolute_pattern(path: Path) -> str:
     """*path* as a permission-rule pattern covering it and everything under it.
@@ -87,22 +96,25 @@ def _absolute_pattern(path: Path) -> str:
     return "//" + str(path).lstrip("/") + "/**"
 
 
-def allowed_tools(work: Path) -> tuple[str, ...]:
-    """The ``--allowedTools`` list for a run working in *work*.
+def allowed_tools(data: Path) -> tuple[str, ...]:
+    """The ``--allowedTools`` list for a run analysing the copy at *data*.
 
-    ``Read`` and the file-writing tools are scoped to the run's own copy of
-    the dataset — by absolute path, and by ``./**`` for the same directory as
-    the agent's cwd — so an agent cannot read this repository (its rubrics
-    included) or write outside the copy without a permission prompt, which in
-    headless mode is a refusal recorded in ``cost.json``. Writes are granted
-    as ``Edit(...)``: Claude Code consults ``Edit`` and ``Read`` path rules
-    only, and accepts but never consults a ``Write(<path>)`` rule.
+    The agent runs in the project directory, so ``./**`` is that directory:
+    it may read and write there, and it may **read** the data copy and not
+    write it. Nothing else is granted, so an agent cannot read this repository
+    (its rubrics included) or write outside the project without a permission
+    prompt, which in headless mode is a refusal recorded in ``cost.json``.
+    That the data copy is readable but not writable is the point: the skill
+    tells the agent never to write into the data folder, and a run that tries
+    leaves a ``permission_denials`` entry saying so. Writes are granted as
+    ``Edit(...)``: Claude Code consults ``Edit`` and ``Read`` path rules only,
+    and accepts but never consults a ``Write(<path>)`` rule.
     """
-    scope = (_absolute_pattern(work), "./**")
     return (
         *_ALLOWED_BASH,
-        *(f"Read({pattern})" for pattern in scope),
-        *(f"Edit({pattern})" for pattern in scope),
+        f"Read({_absolute_pattern(data)})",
+        "Read(./**)",
+        "Edit(./**)",
         *_ALLOWED_UNSCOPED,
     )
 
@@ -147,19 +159,26 @@ def check_inputs(args: argparse.Namespace) -> None:
         sys.exit(f"{VENV_BIN / 'asymmetry'} not found; create the project venv first")
 
 
-def stage_data(args: argparse.Namespace) -> Path:
-    """Copy the dataset into ``<out>/data`` and install the skill beside it."""
-    work = args.out / "data"
-    work.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(args.data, work)
+def stage(args: argparse.Namespace) -> tuple[Path, Path]:
+    """Copy the dataset to ``<out>/data`` and build the agent's ``<out>/project``.
+
+    The project directory starts out holding nothing but the installed skill —
+    it is the directory an analyst would open beside their data, and where the
+    work directory is expected to appear.
+    """
+    data = args.out / "data"
+    project = args.out / "project"
+    data.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(args.data, data)
+    project.mkdir()
     subprocess.run(
         [str(VENV_BIN / "asymmetry"), "skill", "install", "--agent", "claude", "--project"],
-        cwd=work,
+        cwd=project,
         check=True,
         capture_output=True,
         text=True,
     )
-    return work
+    return data, project
 
 
 def agent_env() -> dict[str, str]:
@@ -169,8 +188,18 @@ def agent_env() -> dict[str, str]:
     return env
 
 
-def run_agent(args: argparse.Namespace, work: Path) -> tuple[list[dict], float, int]:
-    """Run the agent, streaming its events to ``transcript.jsonl``.
+def full_prompt(args: argparse.Namespace, data: Path) -> str:
+    """The prompt the agent is handed: where the data is, then the fixed sentence.
+
+    The agent's own directory no longer holds the runs, so the path has to be
+    said. The sentence itself is unchanged from the plan's, and the whole
+    thing is recorded in ``cost.json``.
+    """
+    return f"The data is in {data}. {args.prompt}"
+
+
+def run_agent(args: argparse.Namespace, data: Path, project: Path) -> tuple[list[dict], float, int]:
+    """Run the agent in *project*, streaming its events to ``transcript.jsonl``.
 
     Returns the parsed events, the wall time in seconds, and the CLI's exit
     code — a failed run (an auth error, a CLI crash) produces a transcript
@@ -180,7 +209,7 @@ def run_agent(args: argparse.Namespace, work: Path) -> tuple[list[dict], float, 
     command = [
         args.claude,
         "-p",
-        args.prompt,
+        full_prompt(args, data),
         "--model",
         args.model,
         "--output-format",
@@ -193,7 +222,7 @@ def run_agent(args: argparse.Namespace, work: Path) -> tuple[list[dict], float, 
         "--tools",
         *TOOLS,
         "--allowedTools",
-        *allowed_tools(work),
+        *allowed_tools(data),
         "--disallowedTools",
         *DISALLOWED_TOOLS,
     ]
@@ -209,7 +238,7 @@ def run_agent(args: argparse.Namespace, work: Path) -> tuple[list[dict], float, 
     ):
         process = subprocess.Popen(
             command,
-            cwd=work,
+            cwd=project,
             env=agent_env(),
             stdout=subprocess.PIPE,
             stderr=errors,
@@ -296,7 +325,8 @@ def skill_was_available(events: list[dict]) -> bool:
 
 def write_outputs(
     args: argparse.Namespace,
-    work: Path,
+    data: Path,
+    project: Path,
     events: list[dict],
     elapsed: float,
     returncode: int,
@@ -320,7 +350,7 @@ def write_outputs(
         "dataset": str(args.data),
         "rubric": args.rubric,
         "model": args.model,
-        "prompt": args.prompt,
+        "prompt": full_prompt(args, data),
         "max_turns": args.max_turns,
         "returncode": returncode,
         "wall_seconds": round(elapsed, 1),
@@ -336,7 +366,7 @@ def write_outputs(
     }
     (args.out / "cost.json").write_text(json.dumps(cost, indent=2) + "\n", encoding="utf-8")
 
-    produced = work / ".asymmetry"
+    produced = project / WORKDIR_NAME
     if produced.is_dir():
         shutil.copytree(produced, args.out / "workdir")
 
@@ -372,6 +402,7 @@ def report(args: argparse.Namespace) -> None:
     print(f"commands run     : {args.out / 'commands.txt'}")
     print(f"transcript       : {args.out / 'transcript.jsonl'}")
     print(f"work directory   : {args.out / 'workdir'}")
+    print(f"project directory: {args.out / 'project'}")
     print(f"rubric to tick   : {args.out / 'rubric.md'}")
 
 
@@ -388,10 +419,10 @@ def main(argv: list[str] | None = None) -> int:
     check_inputs(args)
 
     print(f"staging {args.data.name} -> {args.out / 'data'}", file=sys.stderr)
-    work = stage_data(args)
-    print(f"running {args.model} in {work}", file=sys.stderr)
-    events, elapsed, returncode = run_agent(args, work)
-    write_outputs(args, work, events, elapsed, returncode)
+    data, project = stage(args)
+    print(f"running {args.model} in {project}", file=sys.stderr)
+    events, elapsed, returncode = run_agent(args, data, project)
+    write_outputs(args, data, project, events, elapsed, returncode)
     report(args)
 
     if returncode != 0:

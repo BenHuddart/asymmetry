@@ -6,10 +6,15 @@ Generated from the CLI's own parser by
 Every command takes `--json` (machine-readable payload on stdout).
 
 `survey`, `reduce`, `wizard` and `fit-series` persist state in the work
-directory `<folder>/.asymmetry`, so the next command picks it up. `fit` and
-`trend` read that state and add only what `--plot` (and `trend --csv`) asks
-for. `alpha` and `info` are stateless — they load, print and write nothing —
-and `skill` writes into the agent's own skill directory instead.
+directory `./asymmetry-work` — in the directory you run the command from, not
+in the data folder — so the next command picks it up. `fit` and `trend` read
+that state and add only what `--plot` (and `trend --csv`) asks for. `alpha`
+and `info` are stateless — they load, print and write nothing — and `skill`
+writes into the agent's own skill directory instead.
+
+One work directory holds one data folder's session. For a second folder in the
+same project, pass `--workdir asymmetry-work/<short-name>` and keep using it
+for that folder's commands.
 
 Exit codes: 0 success, 1 user error (one line on stderr), 2 internal error
 (a traceback).
@@ -56,8 +61,8 @@ positional arguments:
 options:
   -h, --help         show this help message and exit
   --json             Emit the machine-readable payload
-  --workdir WORKDIR  Work directory to write survey.json into (default:
-                     <folder>/.asymmetry)
+  --workdir WORKDIR  Work directory to write survey.json into (default: ./asymmetry-
+                     work)
 ```
 
 ## `asymmetry alpha`
@@ -100,7 +105,7 @@ options:
   --tmax TMAX           Discard points above this time/µs
   --plot                Write plots/reduced-<run>.png for each run
   --json                Emit the machine-readable payload
-  --workdir WORKDIR     Work directory to write into (default: <folder>/.asymmetry)
+  --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
 ```
 
 ## `asymmetry wizard`
@@ -124,8 +129,7 @@ options:
                         geometry)
   --plot                Write plots/wizard-<run>.png of data + recommendation
   --json                Emit the machine-readable payload
-  --workdir WORKDIR     Work directory to read and write (default:
-                        <folder>/.asymmetry)
+  --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
 ```
 
 ## `asymmetry fit`
@@ -148,7 +152,7 @@ options:
   --tmax TMAX        Fit only below this time/µs
   --plot             Write plots/fit-<run>.png
   --json             Emit the machine-readable payload
-  --workdir WORKDIR  Work directory to read (default: <folder>/.asymmetry)
+  --workdir WORKDIR  Work directory to read (default: ./asymmetry-work)
 ```
 
 ## `asymmetry fit-series`
@@ -183,8 +187,7 @@ options:
   --plot                Write plots/<name>/<run>.png per run and
                         plots/<name>-trend-<param>.png per free parameter
   --json                Emit the machine-readable payload
-  --workdir WORKDIR     Work directory to read and write (default:
-                        <folder>/.asymmetry)
+  --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
 ```
 
 ## `asymmetry trend`
@@ -203,7 +206,7 @@ options:
   --csv CSV          Also write the table to this CSV file
   --plot             Write plots/<series>-trend-<param>.png for every free parameter
   --json             Emit the machine-readable payload
-  --workdir WORKDIR  Work directory to read (default: <folder>/.asymmetry)
+  --workdir WORKDIR  Work directory to read (default: ./asymmetry-work)
 ```
 
 ## `asymmetry skill`
