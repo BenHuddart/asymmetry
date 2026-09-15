@@ -502,6 +502,35 @@ check against the sample. Should unchecked: critical exponents not raised.
 One `Bash` call was denied by the allow-list (a filesystem-wide `find` for a
 recipe file), which is the harness working as intended.
 
+### Pass 5 — 2026-09-15, after measured Larmor precession in the survey
+
+Maintainer testing found the survey listed no calibration candidates when
+no file carried transverse-field metadata (the 2024 EMU nickel files record
+none). The survey now measures precession at the Larmor frequency of each
+run's recorded field with the wizard's spectrum fingerprint (commits
+`a4f672b`, `01db4f1`): measured candidates ranked by SNR, `TF*` geometry when
+measured, a refuted `TF` stamp reads unknown, scans key on instrument. Two
+Sonnet re-runs on the unchanged rubrics:
+
+| Dataset | Wall | Turns | Cost | Verdict |
+|---|---|---|---|---|
+| ferromagnetic-nickel | 719 s | 51 | $1.84 | **pass** |
+| spin-glass-ymnal | 216 s | 20 | $0.83 | **pass** |
+
+- **Nickel.** The agent's second command was `alpha --run 124251`, the
+  survey's measured best candidate (376 K, SNR 428), with no workaround
+  needed; the 100 G scan's geometry was read from `prec larmor` on the
+  paramagnetic side and `other`/`none` below the transition, and the 200 K
+  field scan from refuted stamps plus the spectra. ZF order parameter fitted
+  200–356 K (10.8 → 2.95 MHz) with an Overhauser powder model chosen under
+  `--scope zf-static-magnetism` after rejecting the unscoped F-μ-F pick as
+  unphysical for nickel. Five `Bash` calls were denied (python3 and jq), the
+  harness's number rule holding.
+- **YMnAl.** Run 24563 identified from `prec larmor` (SNR 158), alpha
+  1.2320 from it, the 110 G scan read as LF from `prec none` and confirmed on
+  the spectra, stretched exponential with a fixed 1.3 % background, rate
+  rising on cooling. All Musts.
+
 ### Tier B and C — 2026-09-15, one run each, final skill text
 
 | Dataset | Tier | Wall | Turns | Cost | Verdict |
