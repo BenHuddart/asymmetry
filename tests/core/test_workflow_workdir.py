@@ -119,7 +119,7 @@ def test_a_second_data_folder_cannot_share_a_bound_work_directory(reduced, tmp_p
 
     assert str(first.resolve()) in str(exc.value)
     assert str(second.resolve()) in str(exc.value)
-    assert f"--workdir {WORKDIR_NAME}/" in str(exc.value)
+    assert f"--workdir {WORKDIR_NAME}-<name>" in str(exc.value)
 
 
 def test_reduced_round_trips_through_the_work_directory(reduced) -> None:
