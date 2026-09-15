@@ -2723,11 +2723,67 @@ def test_global_fit_uses_inherited_local_values_per_run(
 
     assert pset_101["Lambda"].value == pytest.approx(0.40)
     assert pset_102["Lambda"].value == pytest.approx(0.85)
-    # Global/fixed parameters are seeded from per-run averages.
+    # Global/fixed parameters come from the table, which holds the per-run averages.
     assert pset_101["A_1"].value == pytest.approx(0.26)
     assert pset_102["A_1"].value == pytest.approx(0.26)
     assert pset_101["A_bg"].value == pytest.approx(0.015)
     assert pset_102["A_bg"].value == pytest.approx(0.015)
+
+
+def test_batch_fit_uses_edited_fixed_value_after_global_batch(
+    qapp: QApplication,
+    dataset: MuonDataset,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Fixed value typed after a batch fit is the value the next fit holds.
+
+    The previous batch fitted A_bg as Global, and its results became every
+    member's inherited seed. Re-typing A_bg as a Fixed value must reach the fit,
+    and re-selecting the same runs must not write the old average back.
+    """
+    panel = FitPanel()
+    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
+    panel.set_datasets([dataset, d2])
+    tab = panel._global_tab
+    pnames = tab._composite_model.param_names
+    row_by_name = {
+        tab._param_table.item(row, 0).data(Qt.ItemDataRole.UserRole): row
+        for row in range(tab._param_table.rowCount())
+    }
+
+    def _payload(values: list[float]):
+        params = ParameterSet(
+            [Parameter(name=name, value=value) for name, value in zip(pnames, values, strict=True)]
+        )
+        result = FitResult(
+            success=True, parameters=params, uncertainties={name: 0.01 for name in pnames}
+        )
+        return (result, (np.array([0.0, 1.0]), np.array([0.2, 0.1])), [])
+
+    panel.register_global_fit_results(
+        {101: _payload([0.20, 0.5, 0.0123]), 102: _payload([0.21, 0.6, 0.0123])}
+    )
+    value_item = tab._param_table.item(row_by_name["A_bg"], 1)
+    assert float(value_item.text()) == pytest.approx(0.0123)
+
+    tab._param_table.cellWidget(row_by_name["A_bg"], 2).setCurrentText("Fixed")
+    value_item.setText("0.05")
+    tab.set_datasets([dataset, d2])
+    assert float(tab._param_table.item(row_by_name["A_bg"], 1).text()) == pytest.approx(0.05)
+
+    captured: dict[str, object] = {}
+
+    def _fake_start(panel, call, *, on_finished, on_error, on_cancelled):
+        captured["initial_params"] = call.args[4]
+        return SimpleNamespace(cancel=lambda: None)
+
+    monkeypatch.setattr(global_tab_module, "_start_fit_call", _fake_start)
+    tab._run_global_fit()
+
+    for run in (101, 102):
+        a_bg = captured["initial_params"][run]["A_bg"]
+        assert a_bg.fixed
+        assert a_bg.value == pytest.approx(0.05)
 
 
 def test_fit_panel_restores_single_fit_state_per_dataset(

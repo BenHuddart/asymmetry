@@ -529,6 +529,11 @@ class GlobalFitTab(FitTabBase):
         # Inherited seed cache for current dataset selection.
         self._inherited_seed_by_run: dict[int, dict[str, float]] = {}
         self._inherited_model_dict: dict[str, object] | None = None
+        # The (model, per-run values) whose averages the tables last received.
+        # The tables are the only source of Global/Fixed values, so they take
+        # the averages once per distinct inheritance — never again for the
+        # same one, which would overwrite what the user typed since.
+        self._inherited_written_source: tuple[dict, dict[int, dict[str, float]]] | None = None
         # Per-run initial values set explicitly via the Initial-values dialog
         # (highest precedence over inherited single-fit seeds).
         self._user_initial_values_by_run: dict[int, dict[str, float]] = {}
@@ -1692,7 +1697,25 @@ class GlobalFitTab(FitTabBase):
         # survive the rebuild.
         self._set_composite_model(inherited_model, origins=self.aligned_origins(inherited_model))
 
-        if not grouped:
+        self._inherited_seed_by_run = inherited_values_by_run
+        self._inherited_model_dict = inherited_model.to_dict()
+
+        source = (self._inherited_model_dict, inherited_values_by_run)
+        if source == self._inherited_written_source:
+            return
+        self._inherited_written_source = source
+
+        if grouped:
+            averages = self._inherited_param_averages(
+                inherited_values_by_run,
+                list(self._current_grouped_model_row_state()),
+            )
+            # Inherited from real single fits: values, not seeds.
+            self.apply_grouped_physics_seeds(
+                {name: f"{value:.6g}" for name, value in averages.items()}
+            )
+            self._synchronize_grouped_model_fraction_rows()
+        else:
             averages = self._inherited_param_averages(
                 inherited_values_by_run,
                 inherited_model.param_names,
@@ -1713,9 +1736,6 @@ class GlobalFitTab(FitTabBase):
                         _set_value_provenance(value_item, USER)
                 self._updating_fraction_values = False
                 self._synchronize_fraction_value_rows()
-
-        self._inherited_seed_by_run = inherited_values_by_run
-        self._inherited_model_dict = inherited_model.to_dict()
 
     def _inherited_param_averages(
         self,
@@ -2296,19 +2316,20 @@ class GlobalFitTab(FitTabBase):
     def _effective_initial_values_by_run(self, parsed: dict) -> dict[int, dict[str, float]]:
         """Per-run initial values used by the batch fit.
 
-        Precedence: parameter-table value < inherited single-fit seed (per run for
-        Local, average for Global/Fixed) < explicit Initial-values dialog entry.
+        Precedence: parameter-table value < inherited single-fit seed (Local
+        only, per run) < explicit Initial-values dialog entry. A Global or Fixed
+        value is one number for every run, so the table is its only source: the
+        inherited average is written there (see
+        :meth:`_refresh_inherited_single_fit_defaults`), where the user can see
+        and edit it.
         """
         model = self._composite_model
         if model is None:
             return {}
         param_values = dict(parsed.get("values", {}))
         local_params = set(parsed.get("local", []))
-        global_params = set(parsed.get("global", []))
-        fixed_params = set(parsed.get("fixed", {}))
 
         inherited_seed_by_run: dict[int, dict[str, float]] = {}
-        inherited_averages: dict[str, float] = {}
         if self._inherited_model_dict == model.to_dict() and self._inherited_seed_by_run:
             selected_runs = {int(ds.run_number) for ds in self._datasets}
             if selected_runs.issubset(self._inherited_seed_by_run):
@@ -2316,9 +2337,6 @@ class GlobalFitTab(FitTabBase):
                     run_number: self._inherited_seed_by_run[run_number]
                     for run_number in selected_runs
                 }
-                inherited_averages = self._inherited_param_averages(
-                    inherited_seed_by_run, model.param_names
-                )
 
         result: dict[int, dict[str, float]] = {}
         for ds in self._datasets:
@@ -2328,13 +2346,8 @@ class GlobalFitTab(FitTabBase):
             run_values: dict[str, float] = {}
             for pname in model.param_names:
                 value = float(param_values.get(pname, 0.0))
-                if inherited_seed_by_run:
-                    if pname in local_params and pname in local_seed_values:
-                        value = float(local_seed_values[pname])
-                    elif pname in inherited_averages and (
-                        pname in global_params or pname in fixed_params
-                    ):
-                        value = float(inherited_averages[pname])
+                if pname in local_params and pname in local_seed_values:
+                    value = float(local_seed_values[pname])
                 if pname in user_values:
                     value = float(user_values[pname])
                 run_values[pname] = value
@@ -3722,20 +3735,16 @@ class GlobalFitTab(FitTabBase):
 
         # Physics chain-seeding (batch only): when every member has a single
         # grouped fit under the current model, seed each run's Local physics from
-        # its own single fit and Global/Fixed from the cross-run average — the
-        # grouped analogue of FB's _effective_initial_values_by_run.
+        # its own single fit — the grouped analogue of FB's
+        # _effective_initial_values_by_run. Global/Fixed physics come from the
+        # table, which holds the inherited cross-run average.
         physics_roles = dict(grouped_config.get("physics_roles", {}))
         run_physics_seed: dict[str, float] = {}
-        physics_averages: dict[str, float] = {}
         if not self._grouped_single and run_number is not None and self._inherited_seed_by_run:
             if self._inherited_model_dict == self._composite_model.to_dict():
                 member_runs = {int(r) for r in self._grouped_members}
                 if member_runs and member_runs.issubset(self._inherited_seed_by_run):
                     run_physics_seed = self._inherited_seed_by_run.get(int(run_number), {})
-                    physics_averages = self._inherited_param_averages(
-                        {r: self._inherited_seed_by_run[r] for r in member_runs},
-                        list(model_values),
-                    )
 
         for index, group in enumerate(grouped_groups, start=1):
             user_values: dict[str, float] = {}
@@ -3763,12 +3772,8 @@ class GlobalFitTab(FitTabBase):
                 )
             for name, value in model_values.items():
                 seed_value = value
-                if run_physics_seed or physics_averages:
-                    if physics_roles.get(name) == "local":
-                        if name in run_physics_seed:
-                            seed_value = float(run_physics_seed[name])
-                    elif name in physics_averages:  # global / fixed
-                        seed_value = float(physics_averages[name])
+                if physics_roles.get(name) == "local" and name in run_physics_seed:
+                    seed_value = float(run_physics_seed[name])
                 min_val, max_val = bounds[name]
                 params.add(
                     Parameter(
