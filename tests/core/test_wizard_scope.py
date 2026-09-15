@@ -244,13 +244,26 @@ def test_zero_field_override_via_dataset_wrapper():
 # --- fluorine sniff -----------------------------------------------------
 
 
-@pytest.mark.parametrize("sample", ["PbF2", "CaF2", "LiF", "NaF"])
+@pytest.mark.parametrize("sample", ["PbF2", "CaF2", "LiF", "NaF", "KTCNQF4 T=300.0 F=100.0"])
 def test_fluorine_sniff_positive(sample):
     _, _, note, _ = infer_auto_query("Zero field", None, sample)
     assert "fluorine" in note.lower()
 
 
-@pytest.mark.parametrize("sample", ["Fe", "FeSe", "Fer", ""])
+@pytest.mark.parametrize(
+    "sample",
+    [
+        "Fe",
+        "FeSe",
+        "Fer",
+        "",
+        # ISIS run titles spell the applied field as ``F=<gauss>``; that is a
+        # field, not a fluoride, and must not promote the F-mu-F family.
+        "nickel_T=100_F=0",
+        "Y(MnAl)2 T=75.0 F=110",
+        "Teflon T=5.0 F=20.0",
+    ],
+)
 def test_fluorine_sniff_negative(sample):
     _, _, note, _ = infer_auto_query("Zero field", None, sample)
     assert "fluorine" not in note.lower()

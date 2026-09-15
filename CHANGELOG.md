@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **An `asymmetry` command-line workflow drives a whole μSR analysis without the GUI, for
+  scripting and for AI coding agents.** `survey`, `alpha`, `reduce`, `wizard`, `fit`,
+  `fit-series` and `trend` wrap the same core engine the desktop application uses, in the order
+  an analysis runs, each with a `--json` machine-readable payload and, on the six analysis
+  commands, `--plot` for headless PNGs (framed on the informative window and, for a trend, on
+  its clean points). `survey`, `reduce`, `wizard` and `fit-series` persist their state in an
+  `./asymmetry-work` work directory — a survey, cached reduced spectra keyed on a digest,
+  wizard screenings, fit recipes, and series results — so state persists between separate
+  invocations without a long-lived process; `fit` and `trend` read it and add only what
+  `--plot`/`--csv` asks for, and `alpha` and `info` are stateless. The work directory is
+  visible and lives in the directory the command is run from, not in the data folder (which is
+  routinely a read-only share or archive), and it holds one data folder's session: a command
+  pointed at a second folder says so rather than mixing two folders' runs in one cache, and
+  `--workdir asymmetry-work-<name>` gives that folder a session of its own.
+  `wizard` writes a fit recipe (model, parameters, time window) from its recommendation, the
+  sole contract between screening and fitting; `fit-series --start RUN` chains a series outward
+  from the run you screened. Install the new `agent` extra
+  (`pip install "asymmetry[agent]"`, matplotlib + h5py) for the plots and NeXus loading. See
+  `docs/reference/agent_workflow.rst`.
+- **A packaged `asymmetry-analysis` skill teaches an AI coding agent to drive that workflow
+  end to end**, with `asymmetry skill install --agent claude|codex` (`--project` for a
+  per-directory install), `asymmetry skill check`, and `asymmetry skill uninstall`. The skill
+  carries the decision rules an analyst applies at each step — which model family the physics
+  calls for, what a fitted amplitude means, when to fix a parameter from a reference run — and
+  a summary template whose numbers must all come from command output. `tools/agent_eval/`
+  adds the rubric-driven harness used to evaluate an agent against it. For developing the
+  skill, `asymmetry skill install --link` symlinks the packaged skill instead of copying it,
+  so edits in a checkout reach the agent without reinstalling.
+- **`asymmetry survey` measures transverse-field precession instead of trusting the file's
+  field stamp.** Every run with a recorded non-zero field is reduced and fingerprinted, and its
+  dominant line compared with the Larmor frequency of that field (γ_μ/2π × B): a new `prec`
+  column reports `larmor`, `other` (an internal field, as in an ordered magnet), `none` or `-`
+  (zero field, or a Larmor frequency above the record's Nyquist). Measured Larmor precession
+  now yields both calibration candidates and the run's geometry — shown as `TF*` — so a folder
+  whose files record no field state at all, like ISIS EMU's from 2024, no longer reports "no
+  calibration candidates", and a longitudinal decoupling run stamped `TF` is no longer offered
+  as one, nor reported as transverse: a stamp the spectrum refutes reads as no geometry rather
+  than a claim the data contradicts. Scans are now grouped by instrument and the held quantity
+  rather than by geometry, so two instruments in one folder never merge and a scan that
+  resolves only in part stays one scan with a note saying how its members broke down.
+  `asymmetry alpha` applies the same rule and says in words whether the run precesses at
+  the Larmor frequency; `asymmetry wizard` takes the survey's resolved geometry as its default.
+
+### Fixed
+
+- **The fit wizard's "sample name suggests fluorine" sniff no longer fires on ISIS's
+  `F=<gauss>` title convention.** The token match looked for a bare `F` anywhere in the run's
+  title or sample text, so an ISIS title like `nickel_T=100_F=0` — the field, not a sample name
+  — read as a fluorine hint and promoted the F-μ-F candidate family on every ISIS run, in the
+  GUI wizard as well as the CLI's. The token now excludes an `F` immediately followed by `=`.
+
 ## [0.19.0] - 2026-09-14
 
 ### Added

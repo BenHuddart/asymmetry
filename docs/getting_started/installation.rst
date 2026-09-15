@@ -48,6 +48,12 @@ For ROOT file support:
 
 * uproot >= 5.0
 
+For the command-line workflow and AI-agent skill (headless plots and NeXus
+loading):
+
+* matplotlib >= 3.7, h5py >= 3.8 — installed together as the ``agent`` extra
+  (``pip install "asymmetry[agent]"``). See :doc:`/reference/agent_workflow`.
+
 For GLE export support:
 
 * gleplot installed from GitHub:

@@ -81,6 +81,10 @@ asymmetry/
 │   ├── project/        # Project persistence
 │   │   ├── __init__.py
 │   │   └── schema.py         # load_project, save_project, migrate_to_current (v1–v13)
+│   ├── workflow/       # Scriptable session façade (drives the engine for the CLI/agents)
+│   │   ├── survey.py         # survey_folder: per-run metadata, calibration candidates, scans
+│   │   ├── reduction.py      # ReductionSettings, reduce_run, estimate_alpha_for_run
+│   │   └── workdir.py        # WorkDir: the on-disk session (manifest, survey, reduced spectra)
 │   └── utils/          # Shared utilities
 │       ├── __init__.py
 │       ├── constants.py      # Physical constants (μ⁺ gyromagnetic ratio, etc.)
@@ -131,7 +135,7 @@ asymmetry/
 │   │   └── ...                        # detector_layout_dialog.py, run_info_dialog.py, simulate_dialog.py, etc.
 │   └── styles/                # BENCH design tokens, palette, and stylesheet (see below)
 │
-├── cli.py              # Optional command-line interface
+├── cli/                # Command-line interface over `core.workflow` (survey/alpha/reduce/info)
 ├── __init__.py
 └── __main__.py         # `python -m asymmetry` entry point
 ```
