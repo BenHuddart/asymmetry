@@ -76,8 +76,16 @@ it found:
 |---|---|
 | `larmor` | A strong line at the Larmor frequency of the recorded field. The field **is** transverse, and `geom` reads `TF*` — the `*` says the spectrum decided it, not the file. |
 | `other` | A strong line somewhere else: the muon is precessing in an **internal** field that beats the applied one. An ordered magnet, below its transition. |
-| `none` | No line worth the name. Whatever the file stamps, **this field is not precessing the muon** — in a field scan that means longitudinal decoupling. A row reading `geom TF` with `prec none` is a file stamp the data does not support; do not believe the `TF`. |
+| `none` | No line worth the name. Whatever the file stamps, **this field is not precessing the muon**. The file's claim is refuted, so `geom` reads `-`: either the field is longitudinal, or it is transverse with no resolvable line. |
 | `-` | Not measurable: zero field (nothing to look for), or a Larmor frequency above the record's Nyquist frequency (a kilogauss-scale field at a pulsed source). |
+
+`scans` groups by **instrument** and the held quantity, never by geometry, so a
+physical scan stays one scan even where the measurement resolves only part of it
+— and two instruments in one folder never merge. When the members disagree the
+group prints a `geometry:` line tallying them
+(`TF measured on 12 of 21 runs; 9 unresolved`), which is itself a finding: a
+transverse-field scan through a magnetic transition resolves above it and not
+below.
 
 `scans` is the experiment's structure. Work out from it:
 
@@ -177,14 +185,16 @@ evidence, not a stamp:
 
 - A run at **0 G is ZF**, whatever the file says.
 - `geom TF*` with `prec larmor` → **transverse, measured**. Take it.
-- `prec none` on a non-zero field → **longitudinal**. The muon is not precessing
-  in the applied field, so the field is along the beam. This holds even when
-  `geom` still reads `TF`: that is the file's stamp, and the measurement refutes
-  it. A field scan at fixed temperature over a wide range is LF decoupling, and
-  this is how you confirm it.
+- `geom -` with `prec none` at a non-zero field → the file's stamp was
+  **refuted**: the muon is not precessing in the applied field. That is either
+  an **LF** measurement — the field is along the beam — or a TF run whose line is
+  not resolvable (a broad field distribution, or a frequency too fast for the
+  pulse). **A fixed-temperature field scan of such runs is LF decoupling**, and
+  this is how you confirm it; a single such run in a temperature scan wants the
+  PNG looked at before you call it. Pass `--geometry LF` once you have decided.
 - `prec other` → an ordered magnet precessing in its own internal field. That
-  says nothing about the applied field's direction; fall back to the file's
-  `geom`, the scan the run belongs to, and the reduced PNG.
+  says nothing about the applied field's direction, so `geom` falls back to the
+  file; judge it from the scan the run belongs to and the reduced PNG.
 - `prec -` → nothing was measurable. Judge it from the PNG as below.
 
 **Confirm on the reduced PNG** — always for `other` and `-`, and as a sanity
@@ -226,8 +236,9 @@ Pick it from the `reduce` table and the reduced PNGs, not from the run list:
 Always pass the `--geometry` you established in step 3a. Without it the wizard
 falls back to the survey's geometry (the header line says `from survey`, `from
 user`, `from field` or `from file`), which is right whenever `prec` settled it
-and wrong exactly where you had to reason — a `prec none` run the file stamps
-`TF`. The wizard scopes its candidate families by geometry, so screening a
+and gives you *nothing* exactly where you had to reason — a refuted run reads
+`geom -`, so the wizard is left unscoped unless you pass `--geometry LF`
+yourself. The wizard scopes its candidate families by geometry, so screening a
 decoupling LF run as `TF` puts precession models in front of it and nothing
 else.
 
@@ -517,20 +528,20 @@ run  T/K    B/G     geom  prec    orient        hist  points  dt   title
 102  10.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=10.0 K B=0.0 G
 ...
 107  60.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=60.0 K B=0.0 G
-108  2.00   110.00  TF    none    Longitudinal  8     500     no   Sample T=2.0 K B=110.0 G (decoupling)
+108  2.00   110.00  -     none    Longitudinal  8     500     no   Sample T=2.0 K B=110.0 G (decoupling)
 
 Alpha-calibration candidates:
   run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
 Scans:
-  temperature scan, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+  temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
 ```
 
 One calibration run, one ZF temperature scan, one decoupling run. The files
 stamp `TF` on every run: the survey reads the ZF runs from their zero field, and
-run 101 from its *measured* precession (`TF*`). Run 108 keeps the file's `TF` but
-`prec none` refutes it — 110 G with nothing precessing is a longitudinal field,
-and it is not offered as a calibration candidate.
+run 101 from its *measured* precession (`TF*`). Run 108's stamp is refuted —
+110 G with nothing precessing — so its geometry reads `-`, and it is not offered
+as a calibration candidate.
 
 ```console
 $ asymmetry alpha runs --run 101
@@ -599,3 +610,8 @@ a result.
 `asymmetry skill install --agent claude` (add `--project` for the current
 directory), `asymmetry skill check` to verify the CLI, loaders, matplotlib and
 the installed skill version, `asymmetry skill uninstall` to remove it.
+
+`asymmetry skill install --agent claude --link` symlinks the packaged skill
+instead of copying it, so edits in a checkout reach the agent without
+reinstalling — for developing this skill, not for using it. `check` reports such
+an install as `linked (development)` and always current.

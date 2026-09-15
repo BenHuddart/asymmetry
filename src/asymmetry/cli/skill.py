@@ -7,6 +7,12 @@ into an agent's skill directory and stamps a manifest
 ``check`` can tell a stale copy from a current one and ``install``/
 ``uninstall`` can tell a directory this command wrote from one that just
 happens to be in the way.
+
+``install --link`` is the development variant: instead of copying, it points a
+symlink at :func:`skill_source_dir`, so edits in a checkout reach the agent
+without reinstalling. A link carries no manifest — nothing is written into the
+package directory — and needs none: a symlink resolving to the packaged skill
+*is* the proof this command made it, and it is always current by construction.
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ from __future__ import annotations
 import importlib.resources
 import importlib.util
 import json
+import os
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -71,17 +78,62 @@ def read_manifest(target: Path) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def links_into_package(target: Path) -> bool:
+    """Whether *target* is a symlink pointing at the packaged skill.
+
+    That is the whole proof a linked install needs: only ``install --link``
+    puts a symlink to :func:`skill_source_dir` at an agent's skill path, so a
+    link resolving there is one this command made and is safe to replace or
+    remove. A symlink to anywhere else belongs to whoever made it.
+    """
+    return target.is_symlink() and target.resolve() == skill_source_dir().resolve()
+
+
+def _clear_target(target: Path, *, force: bool) -> None:
+    """Make way for a new install at *target*, or refuse.
+
+    A symlink is replaced only when it is one of ours or *force* is given; a
+    directory only when it carries this command's manifest or *force* is given.
+    """
+    if target.is_symlink():
+        if not (links_into_package(target) or force):
+            raise UserError(
+                f"{target} is a symlink to {os.readlink(target)}, which is not the "
+                "packaged skill; pass --force to replace it."
+            )
+        target.unlink()
+        return
+    if not target.exists():
+        return
+    if not force and read_manifest(target) is None:
+        raise UserError(
+            f"{target} already exists and was not written by 'asymmetry skill install' "
+            "(no manifest found there); pass --force to overwrite it anyway."
+        )
+    shutil.rmtree(target)
+
+
 @dataclass(frozen=True)
 class InstallResult:
-    """What :func:`install` wrote."""
+    """What :func:`install` wrote.
+
+    ``manifest`` is ``None`` exactly when ``linked`` is true: a development
+    link writes nothing into the package directory, and needs no manifest.
+    """
 
     agent: str
     path: Path
-    manifest: dict[str, Any]
+    linked: bool
+    manifest: dict[str, Any] | None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
-        return {"agent": self.agent, "path": str(self.path), "manifest": dict(self.manifest)}
+        return {
+            "agent": self.agent,
+            "path": str(self.path),
+            "linked": self.linked,
+            "manifest": None if self.manifest is None else dict(self.manifest),
+        }
 
 
 def install(
@@ -90,21 +142,24 @@ def install(
     project: bool = False,
     into: str | Path | None = None,
     force: bool = False,
+    link: bool = False,
 ) -> InstallResult:
-    """Copy the packaged skill into *agent*'s skill directory.
+    """Put the packaged skill in *agent*'s skill directory.
 
-    Raises :class:`UserError` when the target directory exists and carries no
-    manifest from a previous install of this skill, unless *force* is given —
-    a directory this command did not write is not this command's to overwrite.
+    Copies it and stamps a manifest, or with *link* points a symlink at
+    :func:`skill_source_dir` instead, so a checkout's edits reach the agent
+    without reinstalling. Raises :class:`UserError` when the target exists and
+    is neither this command's own directory nor its own link, unless *force* is
+    given — what this command did not write is not this command's to overwrite.
     """
     target = target_dir(agent, project=project, into=into)
-    if target.exists() and not force and read_manifest(target) is None:
-        raise UserError(
-            f"{target} already exists and was not written by 'asymmetry skill install' "
-            "(no manifest found there); pass --force to overwrite it anyway."
-        )
-    if target.exists():
-        shutil.rmtree(target)
+    _clear_target(target, force=force)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if link:
+        target.symlink_to(skill_source_dir(), target_is_directory=True)
+        return InstallResult(agent=agent, path=target, linked=True, manifest=None)
+
     shutil.copytree(skill_source_dir(), target)
     manifest = {
         "schema": 1,
@@ -113,17 +168,23 @@ def install(
         "agent": agent,
     }
     _manifest_path(target).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    return InstallResult(agent=agent, path=target, manifest=manifest)
+    return InstallResult(agent=agent, path=target, linked=False, manifest=manifest)
 
 
 def uninstall(agent: str, *, project: bool = False, into: str | Path | None = None) -> Path:
-    """Remove *agent*'s skill directory, only if it carries this command's manifest.
+    """Remove *agent*'s skill, only if this command put it there.
 
-    Raises :class:`UserError` when the directory carries no manifest —
-    including when it does not exist at all — so an unrelated directory
-    (or one already removed) is never silently accepted as a no-op.
+    A development link is removed on the strength of where it points (see
+    :func:`links_into_package`) — the link itself, never what it points at.
+    Otherwise the directory must carry this command's manifest; raises
+    :class:`UserError` when it does not — including when it does not exist at
+    all — so an unrelated directory (or one already removed) is never silently
+    accepted as a no-op.
     """
     target = target_dir(agent, project=project, into=into)
+    if links_into_package(target):
+        target.unlink()
+        return target
     if read_manifest(target) is None:
         raise UserError(
             f"{target} was not written by 'asymmetry skill install' (no manifest found "
@@ -180,10 +241,30 @@ def run_check(agents: tuple[str, ...] = AGENTS) -> dict[str, Any]:
     skills: dict[str, dict[str, Any]] = {}
     for agent in agents:
         target = target_dir(agent)
+        if links_into_package(target):
+            # A link *is* the running package's skill directory, so it cannot be
+            # a stale copy; there is nothing to compare and nothing to rerun.
+            skills[agent] = {
+                "installed": True,
+                "linked": True,
+                "path": str(target),
+                "version": __version__,
+                "up_to_date": True,
+            }
+            lines.append(
+                {
+                    "ok": True,
+                    "text": (
+                        f"{agent} skill installed: linked (development) → {skill_source_dir()}"
+                    ),
+                }
+            )
+            continue
         manifest = read_manifest(target)
         if manifest is None:
             skills[agent] = {
                 "installed": False,
+                "linked": False,
                 "path": str(target),
                 "version": None,
                 "up_to_date": True,
@@ -194,6 +275,7 @@ def run_check(agents: tuple[str, ...] = AGENTS) -> dict[str, Any]:
         up_to_date = version == __version__
         skills[agent] = {
             "installed": True,
+            "linked": False,
             "path": str(target),
             "version": version,
             "up_to_date": up_to_date,
@@ -222,6 +304,7 @@ __all__ = [
     "SKILL_NAME",
     "InstallResult",
     "install",
+    "links_into_package",
     "read_manifest",
     "run_check",
     "skill_source_dir",

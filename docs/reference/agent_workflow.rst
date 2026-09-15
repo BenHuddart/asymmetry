@@ -94,6 +94,21 @@ Install the skill for an agent, then verify it:
    asymmetry skill check
    asymmetry skill uninstall --agent claude
 
+For developing the skill itself, ``skill install --link`` symlinks the packaged
+skill instead of copying it, so edits in a checkout reach the agent without
+reinstalling:
+
+.. code-block:: bash
+
+   asymmetry skill install --agent claude --link
+
+A linked install writes no manifest — nothing is written into the package
+directory — and needs none: the symlink resolves to the packaged skill, which is
+both the proof this command made it (so ``install`` may replace it and
+``uninstall`` may remove it, the link only, never what it points at) and the
+reason it is always current. ``skill check`` reports it as ``linked
+(development)``. A symlink pointing anywhere else is refused without ``--force``.
+
 ``skill install`` copies the packaged skill into the agent's usual skill
 directory — ``~/.claude/skills/asymmetry-analysis/`` for Claude, or
 ``~/.agents/skills/asymmetry-analysis/`` for Codex — and stamps a
@@ -152,7 +167,7 @@ candidates — always the first command run against a new folder.
    asymmetry survey [-h] [--json] [--workdir WORKDIR] folder
 
 Writes ``survey.json`` into the work directory. Groups runs into scans by
-(geometry, field) ordered by temperature and by (geometry, temperature)
+(instrument, field) ordered by temperature and by (instrument, temperature)
 ordered by field, so the structure of a multi-scan folder is visible without
 reading every file:
 
@@ -167,13 +182,13 @@ reading every file:
    102  10.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=10.0 K B=0.0 G
    ...
    107  60.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=60.0 K B=0.0 G
-   108  2.00   110.00  TF    none    Longitudinal  8     500     no   Sample T=2.0 K B=110.0 G (decoupling)
+   108  2.00   110.00  -     none    Longitudinal  8     500     no   Sample T=2.0 K B=110.0 G (decoupling)
 
    Alpha-calibration candidates:
      run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
    Scans:
-     temperature scan, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
+     temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
 
 .. _agent-workflow-precession:
 
@@ -210,9 +225,12 @@ dominant line is compared with the Larmor frequency of the recorded field,
        transition. This says nothing about the applied field's direction, so
        ``geom`` falls back to the file.
    * - ``none``
-     - No line above SNR 10. The applied field is not precessing the muon, so it
-       is not transverse — in a field scan, longitudinal decoupling. A row
-       reading ``geom TF`` with ``prec none`` is a file stamp the data refutes.
+     - No line above SNR 10. The applied field is not precessing the muon, so
+       the file's ``TF`` stamp is **refuted** and ``geom`` reads ``-``
+       (``geometry_source`` ``"refuted"``): the run is either a longitudinal
+       measurement or a transverse one with no resolvable line, and the file's
+       claim is evidence for neither. A fixed-temperature field scan of such
+       runs is longitudinal decoupling.
    * - ``-``
      - Not measured: the field is zero (nothing to look for), or its Larmor
        frequency is above the record's Nyquist frequency. ``precession_note`` in
@@ -242,9 +260,33 @@ applies the same rule and prints its own ``precession`` line, so the two
 commands never disagree about whether a run will calibrate alpha.
 
 Each run's ``survey.json`` row carries ``geometry``, ``geometry_source``
-(``field``, ``measured``, ``file`` or ``none``), ``precession``,
+(``field``, ``measured``, ``refuted``, ``file`` or ``none``), ``precession``,
 ``precession_frequency_mhz``, ``precession_snr``, ``precession_larmor_mhz`` and
 ``precession_note``.
+
+How scans are grouped
+^^^^^^^^^^^^^^^^^^^^^
+
+A scan's key is the **instrument** and the held quantity — never the geometry.
+Two instruments in one folder are two campaigns and must never merge into one
+scan (an EMU and a MUSR scan of the same sample, say). Geometry, by contrast, is
+measured per run, so a scan that resolves only in part is still one scan: a
+transverse-field scan taken through a magnetic transition resolves above it,
+where the sample is paramagnetic, and not below.
+
+Each :class:`~asymmetry.core.workflow.survey.ScanGroup` therefore reports
+``instrument`` alongside ``geometry``, which is the members' single agreed
+geometry — and ``None`` with a ``geometry_note`` tallying them when they
+disagree:
+
+.. code-block:: console
+
+   Scans:
+     temperature scan, EMU, mixed geometry, B = 100 G: 21 runs, 340 to 380 K (run 124269 -> 124249)
+         geometry: TF measured on 12 of 21 runs; 9 unresolved
+
+That note is itself a finding: it says where in the scan the measurement could
+settle the geometry and where it could not.
 
 ``alpha``
 ~~~~~~~~~

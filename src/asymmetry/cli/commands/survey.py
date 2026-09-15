@@ -125,15 +125,21 @@ def _render(survey, survey_path: Path) -> str:
                 if scan.axis == "temperature"
                 else f"T = {scan.temperature:g} K"
             )
-            geometry = scan.geometry or "unknown geometry"
+            geometry = scan.geometry or (
+                "mixed geometry" if scan.geometry_note else "unknown geometry"
+            )
             unit = "K" if scan.axis == "temperature" else "G"
+            instrument = f"{scan.instrument}, " if scan.instrument else ""
             # Runs are listed in axis order, which need not be run order, so
             # the endpoints are shown with an arrow rather than as a range.
             lines.append(
-                f"  {scan.axis} scan, {geometry}, {held}: {len(scan.runs)} runs, "
+                f"  {scan.axis} scan, {instrument}{geometry}, {held}: "
+                f"{len(scan.runs)} runs, "
                 f"{scan.values[0]:g} to {scan.values[-1]:g} {unit} "
                 f"(run {scan.runs[0]} -> {scan.runs[-1]})"
             )
+            if scan.geometry_note:
+                lines.append(f"      geometry: {scan.geometry_note}")
     else:
         lines.append("Scans: none — no two runs share a geometry and a held quantity.")
 

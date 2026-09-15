@@ -28,6 +28,14 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Install under this directory instead of the agent's usual location",
     )
     install_parser.add_argument(
+        "--link",
+        action="store_true",
+        help=(
+            "Symlink the packaged skill instead of copying it, so edits in a "
+            "checkout reach the agent without reinstalling (development)"
+        ),
+    )
+    install_parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite a target directory even if it was not written by a previous install",
@@ -72,13 +80,26 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 def _run_install(args: argparse.Namespace) -> None:
     from asymmetry.cli import skill
 
-    result = skill.install(args.agent, project=args.project, into=args.into, force=args.force)
+    result = skill.install(
+        args.agent,
+        project=args.project,
+        into=args.into,
+        force=args.force,
+        link=args.link,
+    )
 
     if args.json:
         emit_json(payload(install=result.to_dict()))
         return
 
-    print(f"Installed the {skill.SKILL_NAME!r} skill for {result.agent} into {result.path}")
+    if result.linked:
+        print(
+            f"Linked the {skill.SKILL_NAME!r} skill for {result.agent}: "
+            f"{result.path} -> {skill.skill_source_dir()}"
+        )
+        print("Edits to the packaged skill now reach the agent without reinstalling.")
+    else:
+        print(f"Installed the {skill.SKILL_NAME!r} skill for {result.agent} into {result.path}")
     print("Restart the agent (or start a new session) so it picks up the skill.")
 
 

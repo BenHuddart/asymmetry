@@ -9,6 +9,9 @@ import pytest
 from asymmetry.core.workflow.survey import (
     PRECESSION_SNR_FLOOR,
     PrecessionEvidence,
+    RunRow,
+    _group_geometry,
+    _scan_groups,
     calibration_verdict,
     resolve_row_geometry,
     survey_folder,
@@ -28,6 +31,46 @@ from tests.core.conftest import (
 @pytest.fixture(scope="module")
 def survey(workflow_folder: Path):
     return survey_folder(workflow_folder)
+
+
+_NOT_MEASURED = PrecessionEvidence(
+    state=None, frequency_mhz=None, snr=None, larmor_mhz=None, note="not measured"
+)
+
+
+def _row(
+    *,
+    run_number: int,
+    temperature: float,
+    field: float = 0.0,
+    instrument: str = "SIM",
+    geometry: str | None = "ZF",
+    geometry_source: str = "field",
+) -> RunRow:
+    """A :class:`RunRow` for the grouping tests, which read only six of its fields."""
+    return RunRow(
+        run_number=run_number,
+        file=f"{instrument}{run_number:08d}.nxs",
+        prefix=instrument,
+        instrument=instrument,
+        facility="ISIS",
+        title="",
+        sample=None,
+        temperature=temperature,
+        field=field,
+        field_direction="",
+        geometry=geometry,
+        geometry_source=geometry_source,
+        precession=_NOT_MEASURED,
+        detector_orientation="",
+        notes="",
+        n_histograms=2,
+        n_points=100,
+        bin_width_us=0.016,
+        start_time=None,
+        duration_s=None,
+        has_file_deadtime=False,
+    )
 
 
 def test_survey_lists_every_run_file(survey) -> None:
@@ -193,7 +236,29 @@ def test_measured_precession_gives_a_geometry_a_blank_file_cannot() -> None:
         state="none", frequency_mhz=None, snr=3.0, larmor_mhz=1.355, note=""
     )
     assert resolve_row_geometry(blank, larmor) == ("TF", "measured")
-    assert resolve_row_geometry(blank, silent) == (None, "none")
+    assert resolve_row_geometry(blank, silent) == (None, "refuted")
+
+
+def test_a_file_tf_stamp_is_refuted_by_a_spectrum_with_no_line_in_it() -> None:
+    # A field the muon does not precess in is not a transverse field, whatever
+    # the file claims; reporting the claim would mislabel a decoupling run.
+    stamped = {"field": 110.0, "field_state": "TF"}
+    silent = PrecessionEvidence(
+        state="none", frequency_mhz=None, snr=3.0, larmor_mhz=1.491, note=""
+    )
+    assert resolve_row_geometry(stamped, silent) == (None, "refuted")
+
+
+def test_an_internal_field_line_refutes_nothing_and_leaves_the_file_standing() -> None:
+    # An ordered magnet precessing in its own internal field is perfectly
+    # consistent with a transverse applied field, so "other" is not evidence
+    # against the file's stamp the way "none" is.
+    stamped = {"field": 100.0, "field_state": "TF"}
+    internal = PrecessionEvidence(
+        state="other", frequency_mhz=6.14, snr=25.0, larmor_mhz=1.355, note=""
+    )
+    assert resolve_row_geometry(stamped, internal) == ("TF", "file")
+    assert resolve_row_geometry({"field": 100.0}, internal) == (None, "none")
 
 
 def test_a_zero_field_run_is_zf_before_any_measurement_is_consulted() -> None:
@@ -217,10 +282,64 @@ def test_survey_groups_the_zero_field_scan_with_temperature_as_axis(survey) -> N
     scans = [scan for scan in survey.scans if scan.axis == "temperature"]
     assert len(scans) == 1
     scan = scans[0]
+    assert scan.instrument == "SIM"
     assert scan.geometry == "ZF"
+    assert scan.geometry_note == ""
     assert scan.field == pytest.approx(0.0)
     assert scan.runs == list(ZF_RUNS)
     assert scan.values == pytest.approx(list(ZF_TEMPERATURES))
+
+
+def test_a_scan_whose_geometry_resolves_only_in_part_stays_one_scan() -> None:
+    # A transverse-field scan through a magnetic transition resolves above it
+    # and not below; splitting it on geometry would report one experiment as
+    # two. The group holds together and says how its members broke down.
+    members = [
+        _row(run_number=1, temperature=380.0, geometry="TF", geometry_source="measured"),
+        _row(run_number=2, temperature=370.0, geometry="TF", geometry_source="measured"),
+        _row(run_number=3, temperature=350.0, geometry=None, geometry_source="none"),
+    ]
+    geometry, note = _group_geometry(members)
+    assert geometry is None
+    assert note == "TF measured on 2 of 3 runs; 1 unresolved"
+
+
+def test_a_scan_whose_members_all_agree_reports_that_geometry_and_no_note() -> None:
+    members = [
+        _row(run_number=1, temperature=380.0, geometry="TF", geometry_source="measured"),
+        _row(run_number=2, temperature=370.0, geometry="TF", geometry_source="file"),
+    ]
+    assert _group_geometry(members) == ("TF", "")
+
+
+def test_a_zero_field_run_beside_one_field_run_is_not_a_field_scan() -> None:
+    # With geometry out of the scan key, a magnet's fine ZF re-scan and its TF
+    # scan share temperatures run for run; each pair would otherwise be
+    # reported as a spurious "0 to 100 G field scan".
+    pair = [
+        _row(run_number=1, temperature=360.0, field=0.0),
+        _row(run_number=2, temperature=360.0, field=100.0, geometry="TF"),
+    ]
+    assert [scan for scan in _scan_groups(pair) if scan.axis == "field"] == []
+
+    # Add a second non-zero field and it is a field scan, zero-field point and
+    # all — that is what a decoupling curve looks like.
+    decoupling = [*pair, _row(run_number=3, temperature=360.0, field=2000.0, geometry=None)]
+    scans = [scan for scan in _scan_groups(decoupling) if scan.axis == "field"]
+    assert len(scans) == 1
+    assert scans[0].values == pytest.approx([0.0, 100.0, 2000.0])
+
+
+def test_two_instruments_in_one_folder_never_share_a_scan() -> None:
+    rows = [
+        _row(run_number=1, temperature=10.0, instrument="EMU"),
+        _row(run_number=2, temperature=20.0, instrument="EMU"),
+        _row(run_number=3, temperature=10.0, instrument="MUSR"),
+        _row(run_number=4, temperature=20.0, instrument="MUSR"),
+    ]
+    scans = _scan_groups(rows)
+    assert sorted(scan.instrument for scan in scans) == ["EMU", "MUSR"]
+    assert all(len(scan.runs) == 2 for scan in scans)
 
 
 def test_survey_reports_no_field_scan_when_no_two_runs_share_a_temperature(survey) -> None:

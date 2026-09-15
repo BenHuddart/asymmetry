@@ -28,7 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries the decision rules an analyst applies at each step — which model family the physics
   calls for, what a fitted amplitude means, when to fix a parameter from a reference run — and
   a summary template whose numbers must all come from command output. `tools/agent_eval/`
-  adds the rubric-driven harness used to evaluate an agent against it.
+  adds the rubric-driven harness used to evaluate an agent against it. For developing the
+  skill, `asymmetry skill install --link` symlinks the packaged skill instead of copying it,
+  so edits in a checkout reach the agent without reinstalling.
 - **`asymmetry survey` measures transverse-field precession instead of trusting the file's
   field stamp.** Every run with a recorded non-zero field is reduced and fingerprinted, and its
   dominant line compared with the Larmor frequency of that field (γ_μ/2π × B): a new `prec`
@@ -37,7 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now yields both calibration candidates and the run's geometry — shown as `TF*` — so a folder
   whose files record no field state at all, like ISIS EMU's from 2024, no longer reports "no
   calibration candidates", and a longitudinal decoupling run stamped `TF` is no longer offered
-  as one. `asymmetry alpha` applies the same rule and says in words whether the run precesses at
+  as one, nor reported as transverse: a stamp the spectrum refutes reads as no geometry rather
+  than a claim the data contradicts. Scans are now grouped by instrument and the held quantity
+  rather than by geometry, so two instruments in one folder never merge and a scan that
+  resolves only in part stays one scan with a note saying how its members broke down.
+  `asymmetry alpha` applies the same rule and says in words whether the run precesses at
   the Larmor frequency; `asymmetry wizard` takes the survey's resolved geometry as its default.
 
 ### Fixed

@@ -194,6 +194,125 @@ def test_target_dir_rejects_an_unknown_agent(tmp_path: Path) -> None:
         skill.target_dir("gpt", into=tmp_path)
 
 
+# -- install --link (development) ------------------------------------------
+
+
+def test_link_points_at_the_packaged_skill_and_writes_no_manifest(tmp_path: Path) -> None:
+    result = skill.install("claude", into=tmp_path, link=True)
+
+    assert result.linked is True
+    assert result.manifest is None
+    assert result.path.is_symlink()
+    assert result.path.resolve() == skill.skill_source_dir().resolve()
+    assert (result.path / "SKILL.md").is_file()
+    # Nothing is written into the package directory — a manifest there would
+    # land in the repository and in every other install made from it.
+    assert not (skill.skill_source_dir() / skill.MANIFEST_NAME).exists()
+
+
+def test_an_edit_to_the_checkout_reaches_a_linked_skill(tmp_path: Path) -> None:
+    result = skill.install("claude", into=tmp_path, link=True)
+
+    # The point of --link: the agent reads the checkout, not a snapshot of it.
+    source = skill.skill_source_dir() / "SKILL.md"
+    assert (result.path / "SKILL.md").read_text(encoding="utf-8") == source.read_text(
+        encoding="utf-8"
+    )
+    assert (result.path / "SKILL.md").resolve() == source.resolve()
+
+
+def test_check_reports_a_linked_skill_as_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    result = skill.install("claude", link=True)
+
+    report = skill.run_check(("claude",))
+
+    assert report["skills"]["claude"] == {
+        "installed": True,
+        "linked": True,
+        "path": str(result.path),
+        "version": __version__,
+        "up_to_date": True,
+    }
+    assert any("linked (development)" in line["text"] for line in report["lines"])
+
+
+def test_a_copy_install_replaces_our_link_without_following_it(tmp_path: Path) -> None:
+    linked = skill.install("claude", into=tmp_path, link=True)
+
+    copied = skill.install("claude", into=tmp_path)
+
+    assert copied.path == linked.path
+    assert not copied.path.is_symlink()
+    assert copied.linked is False
+    assert (copied.path / skill.MANIFEST_NAME).is_file()
+    # The package directory the link pointed at is untouched.
+    assert (skill.skill_source_dir() / "SKILL.md").is_file()
+    assert not (skill.skill_source_dir() / skill.MANIFEST_NAME).exists()
+
+
+def test_a_link_replaces_a_previous_copy_install(tmp_path: Path) -> None:
+    skill.install("claude", into=tmp_path)
+
+    result = skill.install("claude", into=tmp_path, link=True)
+
+    assert result.path.is_symlink()
+    assert result.path.resolve() == skill.skill_source_dir().resolve()
+
+
+def test_uninstall_removes_our_link_and_leaves_the_package_alone(tmp_path: Path) -> None:
+    result = skill.install("claude", into=tmp_path, link=True)
+
+    removed = skill.uninstall("claude", into=tmp_path)
+
+    assert removed == result.path
+    assert not result.path.exists()
+    assert not result.path.is_symlink()
+    assert (skill.skill_source_dir() / "SKILL.md").is_file()
+
+
+def test_a_symlink_pointing_elsewhere_is_refused_without_force(tmp_path: Path) -> None:
+    elsewhere = tmp_path / "somebody-elses-skill"
+    elsewhere.mkdir()
+    (elsewhere / "SKILL.md").write_text("not ours", encoding="utf-8")
+    target = tmp_path / "asymmetry-analysis"
+    target.symlink_to(elsewhere, target_is_directory=True)
+
+    assert skill.links_into_package(target) is False
+    with pytest.raises(UserError, match="not the packaged skill"):
+        skill.install("claude", into=tmp_path)
+    with pytest.raises(UserError, match="not written by"):
+        skill.uninstall("claude", into=tmp_path)
+    assert target.is_symlink()  # never touched
+
+    result = skill.install("claude", into=tmp_path, force=True)
+    assert not result.path.is_symlink()
+    # Forcing replaced the link, not what it pointed at.
+    assert (elsewhere / "SKILL.md").read_text(encoding="utf-8") == "not ours"
+
+
+def test_cli_skill_install_link_round_trip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    cli.main(["skill", "install", "--agent", "claude", "--link", "--json"])
+    installed = _json_output(capsys)["install"]
+    assert installed["linked"] is True
+    assert installed["manifest"] is None
+    assert Path(installed["path"]).is_symlink()
+
+    cli.main(["skill", "check", "--agent", "claude", "--json"])
+    checked = _json_output(capsys)["check"]
+    assert checked["skills"]["claude"]["linked"] is True
+    assert checked["skills"]["claude"]["up_to_date"] is True
+
+    cli.main(["skill", "uninstall", "--agent", "claude", "--json"])
+    assert not Path(installed["path"]).is_symlink()
+
+
 # -- check ----------------------------------------------------------------
 
 
@@ -212,6 +331,7 @@ def test_check_reports_a_version_mismatch_after_the_manifest_is_edited(
     report = skill.run_check(("claude",))
     assert report["skills"]["claude"] == {
         "installed": True,
+        "linked": False,
         "path": str(result.path),
         "version": __version__,
         "up_to_date": True,

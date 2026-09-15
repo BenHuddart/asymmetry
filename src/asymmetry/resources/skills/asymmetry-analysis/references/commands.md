@@ -220,7 +220,7 @@ options:
 
 ```
 usage: asymmetry skill install [-h] --agent {claude,codex} [--project] [--into INTO]
-                               [--force] [--json]
+                               [--link] [--force] [--json]
 
 options:
   -h, --help            show this help message and exit
@@ -229,6 +229,8 @@ options:
                         directory
   --into INTO           Install under this directory instead of the agent's usual
                         location
+  --link                Symlink the packaged skill instead of copying it, so edits in
+                        a checkout reach the agent without reinstalling (development)
   --force               Overwrite a target directory even if it was not written by a
                         previous install
   --json                Emit the machine-readable payload

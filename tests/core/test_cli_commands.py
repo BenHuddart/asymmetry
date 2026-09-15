@@ -112,9 +112,19 @@ def test_survey_table_shows_the_precession_column_and_the_measured_geometry(
     assert "TF*" in calibration
     assert "larmor" in calibration
 
+    # The decoupling run's file stamps TF; the spectrum refutes it, so the
+    # geometry column must show nothing rather than repeat the claim.
     decoupling = next(line for line in lines if line.startswith(f"{DECOUPLING_RUN} "))
     assert "none" in decoupling
-    assert "TF*" not in decoupling
+    assert "TF" not in decoupling
+
+
+def test_survey_scans_block_names_the_instrument(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    cli.main(["survey", str(workflow_folder), "--workdir", str(tmp_path / "wd")])
+    out = capsys.readouterr().out
+    assert "temperature scan, SIM, ZF, B = 0 G" in out
 
 
 def test_survey_candidate_block_names_the_source_of_each_candidate(

@@ -71,7 +71,7 @@ PRECESSION_STATES = ("larmor", "other", "none")
 
 #: Where :func:`resolve_row_geometry` got a run's geometry from. (The screening
 #: layer has its own, wider list — it can also be told by a person.)
-ROW_GEOMETRY_SOURCES = ("field", "measured", "file", "none")
+ROW_GEOMETRY_SOURCES = ("field", "measured", "refuted", "file", "none")
 
 
 def _parse_timestamp(text: object) -> datetime | None:
@@ -237,18 +237,37 @@ def resolve_row_geometry(
 ) -> tuple[str | None, str]:
     """A run's ``(geometry, source)`` with the spectrum allowed to have a say.
 
-    A recorded field of exactly zero settles it (``"field"``). Otherwise
-    measured precession at the Larmor frequency of the recorded field *is* a
-    transverse field, whatever the file says or fails to say (``"measured"``) —
-    that is the case :func:`run_geometry` cannot reach, because ISIS EMU files
-    record no field state at all. Failing both, the file's own token stands
-    (``"file"``), or nothing does (``"none"``).
+    In order:
+
+    ``"field"``
+        A recorded field of exactly zero is zero field and settles it.
+    ``"measured"``
+        Precession at the Larmor frequency of the recorded field *is* a
+        transverse field, whatever the file says or fails to say — the case
+        :func:`run_geometry` cannot reach, because ISIS EMU files record no
+        field state at all.
+    ``"refuted"``
+        The spectrum was read and holds no line at all, so the applied field is
+        not precessing the muon and the file's ``TF`` stamp is contradicted.
+        Reporting ``None`` here is the honest answer: the run is a longitudinal
+        measurement, or a transverse one whose line is not resolvable, and the
+        file's claim is not evidence for either. (A line at *some other*
+        frequency — ``"other"`` — is an internal field in an ordered or
+        broadened state, which is perfectly consistent with a transverse applied
+        field, so it refutes nothing and the file's token stands.)
+    ``"file"``
+        Nothing was measured, or an internal line was; the file's own token
+        decides.
+    ``"none"``
+        Nothing decides.
     """
     field = metadata.get("field")
     if field is not None and float(field) == 0.0:
         return "ZF", "field"
     if evidence.state == "larmor":
         return "TF", "measured"
+    if evidence.state == "none":
+        return None, "refuted"
     geometry = run_geometry(metadata)
     return (None, "none") if geometry is None else (geometry, "file")
 
@@ -385,16 +404,26 @@ class CalibrationCandidate:
 
 @dataclass(frozen=True)
 class ScanGroup:
-    """A set of runs that vary one quantity with the other two held fixed.
+    """A set of runs on one instrument that vary one quantity, holding another.
 
     ``axis`` is the varying quantity (``"temperature"`` or ``"field"``);
-    ``geometry`` plus the *other* quantity (``field`` for a temperature scan,
+    ``instrument`` plus the *other* quantity (``field`` for a temperature scan,
     ``temperature`` for a field scan) are what the group holds fixed.
     ``runs`` and ``values`` are parallel and ordered along the axis.
+
+    Geometry is a *property* of the group, not part of its key. A physical scan
+    is one scan even when the survey can only resolve the geometry of part of it
+    — a magnet's transverse-field scan resolves above its transition and not
+    below — so ``geometry`` is the members' single agreed geometry, and ``None``
+    with a ``geometry_note`` when they disagree.
     """
 
     axis: str
+    instrument: str
     geometry: str | None
+    #: How the members' geometries break down when they do not agree (e.g.
+    #: ``"TF measured on 12 of 21 runs; 9 unresolved"``); empty when they do.
+    geometry_note: str
     temperature: float | None
     field: float | None
     runs: list[int]
@@ -404,7 +433,9 @@ class ScanGroup:
         """Serialize to a plain, JSON-safe dict."""
         return {
             "axis": self.axis,
+            "instrument": self.instrument,
             "geometry": self.geometry,
+            "geometry_note": self.geometry_note,
             "temperature": self.temperature,
             "field": self.field,
             "runs": list(self.runs),
@@ -493,15 +524,46 @@ def build_run_row(
     )
 
 
+def _group_geometry(members: list[RunRow]) -> tuple[str | None, str]:
+    """A scan's ``(geometry, note)``: the members' agreed geometry, or a tally.
+
+    Geometry is not part of a scan's identity, so a group whose members do not
+    all resolve the same way is still one scan — it reports no geometry and says
+    how the members broke down, which is what an analyst then has to reason
+    about (a transverse-field scan through a magnetic transition resolves above
+    it and not below).
+    """
+    geometries = {row.geometry for row in members}
+    if len(geometries) == 1:
+        return geometries.pop(), ""
+
+    total = len(members)
+    parts: list[str] = []
+    for geometry in sorted(value for value in geometries if value is not None):
+        matching = [row for row in members if row.geometry == geometry]
+        measured = " measured" if all(r.geometry_source == "measured" for r in matching) else ""
+        parts.append(f"{geometry}{measured} on {len(matching)} of {total} runs")
+    unresolved = sum(1 for row in members if row.geometry is None)
+    if unresolved:
+        parts.append(f"{unresolved} unresolved")
+    return None, "; ".join(parts)
+
+
 def _scan_groups(rows: list[RunRow]) -> list[ScanGroup]:
     """Group *rows* into temperature scans and field scans.
 
-    A temperature scan is every run sharing a (geometry, field) pair, ordered
-    by temperature; a field scan every run sharing a (geometry, temperature)
+    A temperature scan is every run sharing an (instrument, field) pair, ordered
+    by temperature; a field scan every run sharing an (instrument, temperature)
     pair, ordered by field. A group qualifies only when it holds at least two
     runs *at two different axis values*: a single run is not a scan, and
     neither are three zero-field runs all at 350 K, which would otherwise be
-    reported as a "field scan" from 0 G to 0 G.
+    reported as a "field scan" from 0 G to 0 G. A field scan needs two
+    different *non-zero* fields on top of that.
+
+    The instrument is in the key because two instruments in one folder are two
+    campaigns and must never merge; geometry is **not**, because it is measured
+    per run and a scan that resolves only in part is still one scan (see
+    :func:`_group_geometry`).
     """
     scans: list[ScanGroup] = []
     for axis, held in (("temperature", "field"), ("field", "temperature")):
@@ -511,17 +573,28 @@ def _scan_groups(rows: list[RunRow]) -> list[ScanGroup]:
             held_value = getattr(row, held)
             if axis_value is None or held_value is None:
                 continue
-            key = (row.geometry or "", round(float(held_value), _SCAN_KEY_DECIMALS))
+            key = (row.instrument, round(float(held_value), _SCAN_KEY_DECIMALS))
             buckets.setdefault(key, []).append(row)
-        for (geometry, held_value), members in buckets.items():
+        for (instrument, held_value), members in buckets.items():
             ordered = sorted(members, key=lambda row: float(getattr(row, axis)))
             axis_values = [float(getattr(row, axis)) for row in ordered]
             if len(ordered) < 2 or len(set(axis_values)) < 2:
                 continue
+            if axis == "field" and len({value for value in axis_values if value != 0.0}) < 2:
+                # A zero-field run beside a *single* field run is a run and its
+                # reference, not a field scan — a field scan varies the field.
+                # Geometry used to keep those apart; with it out of the key, a
+                # magnet's fine ZF re-scan and its TF scan share temperatures
+                # run for run, and every such pair would be reported as a
+                # spurious "0 to 100 G field scan".
+                continue
+            geometry, geometry_note = _group_geometry(ordered)
             scans.append(
                 ScanGroup(
                     axis=axis,
-                    geometry=geometry or None,
+                    instrument=instrument,
+                    geometry=geometry,
+                    geometry_note=geometry_note,
                     temperature=held_value if held == "temperature" else None,
                     field=held_value if held == "field" else None,
                     runs=[row.run_number for row in ordered],
