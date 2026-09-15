@@ -498,7 +498,9 @@ and vice versa. The registry (grouped by the context that offers them) is:
   quadrature-background variant ``PowerLawQuadBG``; and ``ExponentialDecay``.
 * **Temperature axis** — ``Arrhenius`` (thermal activation), ``OrderParameter``
   (a magnetic order parameter vanishing at :math:`T_c`), ``CriticalDivergence``
-  (a rate diverging at :math:`T_c`), and the superconducting gap models
+  (a rate diverging at :math:`T_c`), ``FermiStep`` (a smooth step between two
+  plateaus, such as the weak-transverse-field asymmetry through an ordering
+  transition; see `Transition step`_), and the superconducting gap models
   ``SC_SWave``, ``SC_DWave``, the anisotropic and non-monotonic forms
   (``SC_AnisotropicS_Cos4``, ``SC_NonmonotonicD``, ``SC_PWaveAxial``,
   ``SC_ExtendedS``, ``SC_SPlusG``), the phenomenological ``SC_AlphaModel``, the
@@ -1048,6 +1050,110 @@ parameter that vanishes there.
    print(result.success, result.reduced_chi_squared)
    for p in result.parameters:
        print(p.name, p.value, result.uncertainties.get(p.name))
+
+Transition step
+---------------
+
+Not every observable across a magnetic transition behaves like an order
+parameter. In a weak transverse field (wTF), only muons in paramagnetic regions
+precess coherently in the applied field; muons in ordered regions are dephased by
+the large, broadly distributed internal field. The wTF oscillation amplitude
+therefore falls on cooling from the full paramagnetic asymmetry to the
+background, and the size of the drop measures the magnetic volume fraction. In
+zero field, a polycrystalline magnet loses the rapidly dephased 2/3 of its
+sample asymmetry below the ordering temperature, leaving the 1/3 tail. Both
+trends are steps between two plateaus rather than a power law, and the
+μSR literature models them with a Fermi-function (logistic) step. The
+``FermiStep`` basis model is
+
+.. math::
+
+   y(T) = A_2 + \frac{A_1 - A_2}{e^{(T - T_c)/\Delta T} + 1}.
+
+:math:`A_1` and :math:`A_2` are the low- and high-temperature plateaus, in the
+unit of the trended observable. Either may be the larger, so the same form fits
+the rising wTF asymmetry and a falling zero-field tail without a sign change.
+:math:`T_c` is the midpoint, where :math:`y` lies halfway between the plateaus,
+and :math:`\Delta T` is the width: the 10–90 % rise spans
+:math:`2\ln 9\,\Delta T \approx 4.4\,\Delta T`. When the low-temperature plateau
+is pure background, the magnetic volume fraction follows as
+:math:`f_\mathrm{m}(T) = [A_2 - y(T)]/(A_2 - A_1)`; for a zero-field tail, scale
+the lost asymmetry by 3/2 to account for the unobserved 2/3 component [3].
+
+A broad :math:`\Delta T` is best read as a distribution of local transition
+temperatures across the sample, not as critical behaviour. The logistic step
+corresponds to a logistic distribution with standard deviation
+:math:`\pi\Delta T/\sqrt{3} \approx 1.8\,\Delta T`; a Gaussian distribution
+gives the closely similar error-function step, which differs mainly in the
+tails. The midpoint need not coincide with the ordering temperature: Steele
+*et al.* place :math:`T_N` near :math:`T_c - \Delta T` because the relaxation
+rate peaks just above the transition [2]. The fit seeds itself from the data —
+the plateaus from the coldest and warmest fifth of the points, :math:`T_c` from
+the half-step crossing, and :math:`\Delta T` from the 10–90 % crossings — so it
+converges without a hand reseed. :math:`\Delta T` has a small positive lower
+bound (:math:`10^{-6}` K), because a zero width is undefined at :math:`T = T_c`.
+
+Published forms of the same step use different names and sign conventions:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Published form
+     - ``FermiStep`` equivalent
+   * - :math:`A_s(0)/(1 + e^{(T_N - T)/\Delta T_N}) + A_\mathrm{bg}(0)` [1]
+     - :math:`A_1 = A_\mathrm{bg}(0)`, :math:`A_2 = A_s(0) + A_\mathrm{bg}(0)`,
+       :math:`T_c = T_N`, :math:`\Delta T = \Delta T_N`.
+   * - :math:`A_2 + (A_1 - A_2)/(e^{(T - T_\mathrm{mid})/w} + 1)` [2]
+     - Identical, with :math:`T_c = T_\mathrm{mid}` and :math:`\Delta T = w`.
+   * - Mantid ``SmoothTransition``
+     - ``A1`` → :math:`A_1`, ``A2`` → :math:`A_2`, ``Midpoint`` → :math:`T_c`,
+       ``GrowthRate`` → :math:`\Delta T`.
+   * - :math:`A_H \tanh[k_H (T - T_0)] + c_H`
+     - :math:`A_1 = c_H - A_H`, :math:`A_2 = c_H + A_H`, :math:`T_c = T_0`,
+       :math:`\Delta T = 1/(2 k_H)`.
+
+.. code-block:: python
+
+   import numpy as np
+   from asymmetry.core.fitting import (
+       Parameter,
+       ParameterSet,
+       ParameterCompositeModel,
+       fit_parameter_model,
+   )
+   from asymmetry.core.fitting.parameter_models import suggest_trend_seeds
+
+   # wTF initial asymmetry through a Néel transition at 50 K.
+   rng = np.random.default_rng(1)
+   temperature = np.arange(40.0, 61.0, 1.0)
+   a0 = 0.112 + 0.111 / (1.0 + np.exp((50.0 - temperature) / 0.8))
+   a0 += rng.normal(0.0, 0.002, temperature.size)
+   errors = np.full_like(a0, 0.002)
+
+   model = ParameterCompositeModel(["FermiStep"])
+   seeds = suggest_trend_seeds(model, temperature, a0)
+   params = ParameterSet([
+       Parameter("A1", value=seeds["A1"]),
+       Parameter("A2", value=seeds["A2"]),
+       Parameter("Tc", value=seeds["Tc"], min=0.0),
+       Parameter("dT", value=seeds["dT"], min=1e-6),
+   ])
+
+   result = fit_parameter_model(temperature, a0, errors, model, params)
+   for p in result.parameters:
+       print(p.name, p.value, result.uncertainties.get(p.name))
+
+References
+~~~~~~~~~~
+
+1. R. Khasanov, G. Simutis, Y. G. Pashkevich, T. Shevtsova, W. R. Meier, M.
+   Xu, S. L. Bud'ko, V. G. Kogan, and P. C. Canfield, Phys. Rev. B **102**,
+   094504 (2020).
+2. A. J. Steele, T. Lancaster, S. J. Blundell, P. J. Baker, F. L. Pratt, C.
+   Baines, M. M. Conner, H. I. Southerland, J. L. Manson, and J. A.
+   Schlueter, Phys. Rev. B **84**, 064412 (2011).
+3. B. A. Frandsen *et al.*, Nat. Commun. **7**, 12519 (2016).
 
 Polynomial trends
 -----------------
