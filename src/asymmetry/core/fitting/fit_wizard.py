@@ -5363,6 +5363,10 @@ def _parameter_bounds(
         return 0.0, max(10.0, 4.0 * abs(value))
     if base_name == "theta":
         return 0.0, 180.0
+    if base_name in {"theta_h", "phi_h"}:
+        # Only the squared direction cosines enter HelicalCrystal, so [0°, 90°]
+        # covers every orientation once.
+        return 0.0, 90.0
     if base_name == "Gamma":
         # Risch-Kehr 1D-diffusion rate (>= 0); a finite cap keeps the fit and
         # the χ²-quality verdict away from the degenerate Gamma -> 0 plateau.

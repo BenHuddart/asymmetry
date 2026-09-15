@@ -28,6 +28,8 @@ def test_get_param_info_known_parameter_has_rich_formats() -> None:
         ("lambda_L", "lambda_L", "λ_L", r"$\lambda_L$", r"\lambda_{L}", "µs⁻¹"),
         ("ratio", "ratio", "r", r"$r$", r"{\it r}", None),
         ("delta_frequency", "delta_frequency", "Δf", r"$\Delta f$", r"\Delta{\it f}", "MHz"),
+        ("theta_h", "theta_h", "θ_h", r"$\theta_h$", r"\theta_{h}", "°"),
+        ("phi_h", "phi_h", "φ_h", r"$\phi_h$", r"\phi_{h}", "°"),
     ],
 )
 def test_get_param_info_overhauser_powder_params_have_rich_formats(
