@@ -25,7 +25,7 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.project.schema import load_project, save_project
-from asymmetry.core.representation import RepresentationType
+from asymmetry.core.representation import FitSeries, RepresentationType
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
@@ -406,3 +406,56 @@ def test_project_reload_reopens_the_series_the_tab_was_editing(mw, monkeypatch, 
 
     assert restored._fit_panel.open_series_id() == first_id
     assert restored._project_model.active_series_id(_FB) == first_id
+
+
+# ── Chip rail short names: group section vs Standalone (series-workflow item 2) ──
+
+
+def test_grouped_chip_short_name_omits_the_member_range_its_header_already_shows(mw):
+    """A chip under a named group's section reads "<model> · <range>" only.
+
+    Reproduces the lead's two-group render script: two series over the same
+    group ("Scan A") read the model and their own fit window — never the
+    member run range, which the section header (SCAN A) already names.
+    """
+    _group_over(mw, [10, 11, 12], "Scan A")
+    _set_range(mw, 0.0, 8.0)
+    a1 = _run(mw, [10, 11, 12])
+    _set_range(mw, 0.0, 6.0)
+    a2 = _run(mw, [10, 11, 12], value=0.3)
+
+    panel = mw._fit_parameters_panel
+    assert panel._group_fit_results[a1].short_name == "Exponential + Constant · 0–8 µs"
+    assert panel._group_fit_results[a2].short_name == "Exponential + Constant · 0–6 µs"
+
+
+def test_standalone_chip_short_name_keeps_the_member_range(mw):
+    """A group-less chip has no section header to lean on, so its member run
+    range still rides along beside the model (item 2).
+
+    Every *recorded* batch/global fit auto-mints a group when it does not
+    already belong to one (D3's "Runs 10–11" auto-group), so a genuinely
+    group-less series — the actual "Standalone" bucket — is built directly
+    here rather than through the recording pipeline, the same way
+    ``test_trend_surface.py``'s ``_twin_series`` does.
+    """
+    group_id = _group_over(mw, [10, 11, 12], "Scan A")
+    _set_range(mw, 0.0, 8.0)
+    grouped_id = _run(mw, [10, 11, 12])
+    grouped = mw._project_model.batch(grouped_id)
+    assert grouped.group_id == group_id
+
+    standalone = FitSeries(
+        "batch-standalone",
+        _FB,
+        member_kind="runs",
+        member_run_numbers=[10, 11],
+        canonical_model={"component_names": ["Gaussian"], "operators": []},
+        results_by_run=dict(grouped.results_by_run),
+    )
+    mw._project_model.add_batch(standalone)
+    mw._refresh_trend_panel()
+    assert standalone.group_id is None
+
+    panel = mw._fit_parameters_panel
+    assert panel._group_fit_results["batch-standalone"].short_name == "Gaussian · 10–11"

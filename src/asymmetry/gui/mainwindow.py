@@ -10959,21 +10959,42 @@ class MainWindow(QMainWindow):
 
         # Short pill names. A series pill carrying the full default label
         # ("StretchedExponential + Constant · 394–397 · high") is ~330 px wide, so
-        # two of them push the dock past a 13-inch display. The run range alone
-        # identifies a series in the common case; where it does not, the colliding
-        # pills gain the model, then the browser-group suffix. A user rename is
-        # the name the user chose, so it is never shortened or disambiguated.
-        short_names_by_id = {
-            batch_id: (series.label or member_range(series) or name)
-            for batch_id, series, name in named_series
-        }
+        # two of them push the dock past a 13-inch display. A grouped chip sits
+        # under a section header that already names the group (item 1), so its
+        # own text need only say the model and its fit window — the D10 scheme
+        # minus the group suffix; a group-less chip has no header to lean on, so
+        # its member run range still rides along, as it always has. A user
+        # rename is the name the user chose, so it is never shortened further.
+        short_names_by_id: dict[str, str] = {}
+        for batch_id, series, _name in named_series:
+            if series.label:
+                short_names_by_id[batch_id] = series.label
+            elif series.group_id is not None:
+                short_names_by_id[batch_id] = default_series_label(series)
+            else:
+                short_names_by_id[batch_id] = default_series_label(
+                    series, group_name=member_range(series)
+                )
+        # A residual collision — same model and window, and for a group-less
+        # series the same member range too (only bounds/seeding differ) —
+        # still needs a differentiator: the member range for a grouped chip
+        # that doesn't already carry one, then the browser-group suffix for
+        # whichever chip still collides after that. Scoped to the chip's own
+        # group (or "no group" for a Standalone chip): two chips that read
+        # the same text under *different* section headers are not actually
+        # ambiguous — the header already tells them apart — so they are left
+        # alone rather than gaining a redundant, unrequested suffix.
         for extra_part in (
-            lambda s: composite_model_label(s.canonical_model),
+            lambda s: member_range(s) if s.group_id is not None else None,
             self._series_group_suffix,
         ):
-            counts = Counter(short_names_by_id.values())
+            counts = Counter(
+                (series.group_id, short_names_by_id[batch_id])
+                for batch_id, series, _name in named_series
+            )
             for batch_id, series, _name in named_series:
-                if series.label or counts[short_names_by_id[batch_id]] == 1:
+                key = (series.group_id, short_names_by_id[batch_id])
+                if series.label or counts[key] == 1:
                     continue
                 part = extra_part(series)
                 if part:

@@ -671,7 +671,8 @@ class TestVisibilityGatedHighlight:
 
 
 def _twin_series(mw, first, model: str) -> FitSeries:
-    """A second series over *first*'s runs and results, fitted with another model."""
+    """A second, group-less (Standalone) series over *first*'s runs and results,
+    fitted with another model."""
     twin = FitSeries(
         "batch-twin",
         first.rep_type,
@@ -686,15 +687,24 @@ def _twin_series(mw, first, model: str) -> FitSeries:
 
 
 class TestShortSeriesPillNames:
-    """The host computes the short pill label and disambiguates collisions."""
+    """The host computes the short pill label and disambiguates collisions.
 
-    def test_single_series_pill_is_its_run_range(self, mw, monkeypatch):
+    A batch/global fit always records into a data group — an explicit binding,
+    or an auto-minted one named after the run range ("Runs 10–11", D3) when
+    the user never bound one — so ``_setup_one_series``'s series sits under a
+    real (non-"Standalone") section header (item 1). Its own chip therefore
+    reads ``<model> · <range>`` only; ``_twin_series`` deliberately adds its
+    series with no ``group_id`` at all, landing it in the "Standalone"
+    section, whose chip still carries the member run range (item 2).
+    """
+
+    def test_single_series_pill_is_just_the_model_under_its_group_header(self, mw, monkeypatch):
         series = _setup_one_series(mw, monkeypatch)
         panel = mw._fit_parameters_panel
-        assert panel._group_fit_results[series.batch_id].short_name == "10–11"
-        assert panel._group_button_map[series.batch_id].text() == "10–11"
+        assert panel._group_fit_results[series.batch_id].short_name == "Exponential"
+        assert panel._group_button_map[series.batch_id].text() == "Exponential"
 
-    def test_two_series_over_the_same_runs_gain_the_model(self, mw, monkeypatch):
+    def test_standalone_series_pill_carries_the_model_and_the_member_range(self, mw, monkeypatch):
         first = _setup_one_series(mw, monkeypatch)
         second = _twin_series(mw, first, "Gaussian")
 
@@ -702,8 +712,10 @@ class TestShortSeriesPillNames:
             bid: group.short_name
             for bid, group in mw._fit_parameters_panel._group_fit_results.items()
         }
-        assert short[first.batch_id] == "10–11 · Exponential"
-        assert short[second.batch_id] == "10–11 · Gaussian"
+        # first: grouped, so just the model (no configured fit range here).
+        assert short[first.batch_id] == "Exponential"
+        # second: group-less, so the model plus its own member range.
+        assert short[second.batch_id] == "Gaussian · 10–11"
 
     def test_renamed_series_keeps_its_label_as_the_pill(self, mw, monkeypatch):
         first = _setup_one_series(mw, monkeypatch)
@@ -711,11 +723,12 @@ class TestShortSeriesPillNames:
         mw._on_series_rename_requested(first.batch_id, "Cooldown")
 
         panel = mw._fit_parameters_panel
-        # The user's name is never shortened, and never disambiguated — with the
-        # collision gone, the other series drops back to its bare run range.
+        # The user's name is never shortened, and never disambiguated; the
+        # group-less second series' short name does not depend on the first's
+        # label (it was never a collision-driven suffix to begin with).
         assert panel._group_fit_results[first.batch_id].short_name == "Cooldown"
         assert panel._group_button_map[first.batch_id].text() == "Cooldown"
-        assert panel._group_fit_results[second.batch_id].short_name == "10–11"
+        assert panel._group_fit_results[second.batch_id].short_name == "Gaussian · 10–11"
 
 
 class TestSeriesRenameAndLabel:
@@ -738,10 +751,11 @@ class TestSeriesRenameAndLabel:
         assert mw._project_model.batch(series.batch_id).label is None
         # Clearing the label reverts to the unified default (D10: "<model> ·
         # <fit range>", the window omitted when the recipe leaves it open), not
-        # a bare positional "Series N": the pill drops to the short run range
-        # and the full default name moves to the tooltip.
+        # a bare positional "Series N": the pill drops to the model alone (its
+        # auto-minted group's own section header already names the run range,
+        # item 2) and the full default name moves to the tooltip.
         button = mw._fit_parameters_panel._group_button_map.get(series.batch_id)
-        assert button is not None and button.text() == "10–11"
+        assert button is not None and button.text() == "Exponential"
         assert button.toolTip().startswith("Exponential\n")
 
     def test_add_to_series_chooser_shows_user_label(self, mw, monkeypatch):
