@@ -20,8 +20,10 @@ section-comment markers in source):
 - **Data ingestion** — ``set_fit_results`` and ``load_representation_series``
   are the two entry points by which the panel receives new per-run parameter
   data (pull-based from ``ProjectModel``/``FitSeries`` rather than push).
-- **Data-group selection** — ``_rebuild_group_buttons``,
-  ``_apply_group_selection_to_view``, ``_selected_group_ids_from_buttons``.
+- **Data-group selection** — ``_rebuild_group_buttons`` (sectioned by owning
+  data group via ``_resolved_sections``/``_build_section_header``/
+  ``_build_group_chip``), ``_apply_group_selection_to_view``,
+  ``_selected_group_ids_from_buttons``.
 - **Composite / Knight-shift derived parameters** — the
   ``_apply_composite_parameters_to_rows``, ``_apply_knight_shift_to_rows``, and
   ``_detect_component_crossings`` helpers derive extra Y-series from the raw
@@ -171,6 +173,7 @@ from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
     build_segmented_button_qss,
     clear_layout,
+    make_section_header,
     style_group_state_button,
 )
 from asymmetry.gui.tasks import TaskRunner
@@ -558,6 +561,11 @@ class FitParametersPanel(QWidget):
     model_fit_completed = Signal(object, object, object)
     #: Emitted when the user activates a different fit series (batch_id).
     series_selection_changed = Signal(str)
+    #: Emitted when the user chooses "Open in Batch tab" from the chip menu, or
+    #: double-clicks a chip (batch_id).
+    series_open_requested = Signal(str)
+    #: Emitted when the user chooses "Duplicate…" from the chip menu (batch_id).
+    series_duplicate_requested = Signal(str)
     #: Emitted when the user renames a series via the context menu (batch_id, new_label).
     series_rename_requested = Signal(str, str)
     #: Emitted when the user chooses "Select members in browser" (batch_id).
@@ -700,6 +708,12 @@ class FitParametersPanel(QWidget):
         #: was last fit (D1). Surfaced on the series pill as a warning glyph +
         #: tooltip; cleared by re-running.
         self._stale_series_ids: set[str] = set()
+        #: Chip-rail section layout: ``(title, swatch colour or None, [batch_id,
+        #: …])`` in display order, supplied by the host via
+        #: :meth:`load_representation_series`. ``None`` (no caller has ever
+        #: supplied one, e.g. a bare panel under test) falls back to one
+        #: alphabetised "Standalone" section — today's flat, header-less rail.
+        self._sections: list[tuple[str, str | None, list[str]]] | None = None
 
         # Background machinery for the trend-overlay model evaluation, which runs
         # model.function (and optional components) per fit range over an 800-pt
@@ -760,9 +774,15 @@ class FitParametersPanel(QWidget):
         layout.addWidget(self._empty_state_hint)
 
         # ── Series strip ─────────────────────────────────────────────────────
+        # One row per section (a data group, a phase's parent group, or the
+        # group-less "Standalone" bucket): an optional swatch+name header
+        # (omitted when there is only one section, so a simple project's rail
+        # looks exactly as it always has) followed by that section's chips,
+        # themselves wrapped in a FlowLayout — see _rebuild_group_buttons.
         self._group_tabs_widget = QWidget()
-        self._group_tabs_layout = FlowLayout(self._group_tabs_widget)
+        self._group_tabs_layout = QVBoxLayout(self._group_tabs_widget)
         self._group_tabs_layout.setContentsMargins(0, 0, 0, 0)
+        self._group_tabs_layout.setSpacing(4)
         # Like the y chip strip: the pills wrap, so the strip's height follows the
         # width the dock gives it rather than the panel widening to fit the row.
         strip_policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
@@ -1097,6 +1117,7 @@ class FitParametersPanel(QWidget):
         self._group_fit_results = {}
         self._group_button_map = {}
         self._active_group_id = None
+        self._sections = None
         self._last_cross_group_fit = None
         self._cross_group_fit_configs = {}
         self._trend_model_memory = {}
@@ -1600,6 +1621,7 @@ class FitParametersPanel(QWidget):
         fraction_weights_by_id: dict[str, dict[str, float]] | None = None,
         stale_ids: set[str] | None = None,
         phase_by_id: dict[str, PhaseDecoration] | None = None,
+        sections: list[tuple[str, str | None, list[str]]] | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -1633,6 +1655,13 @@ class FitParametersPanel(QWidget):
             Optional ``batch_id → PhaseDecoration`` map for series bound to a
             phase group (Global Fit Wizard transitions, D1/D4); a series absent
             from the map gets ``phase=None`` (plain series).
+        sections:
+            Optional chip-rail section layout: ``(title, swatch colour or
+            ``None``, [batch_id, …])`` tuples in display order, built by the
+            host from :meth:`MainWindow._batch_series_catalogue`. ``None``
+            (the default, and every caller that has not migrated) falls back
+            to one alphabetised "Standalone" section — a header-less rail,
+            exactly today's layout.
         """
         # This is the host's pull entry point after a series is recorded, updated
         # or deleted, after a representation change, and after a membership toggle
@@ -1640,6 +1669,9 @@ class FitParametersPanel(QWidget):
         # assembly reads, so the study-staleness cache must invalidate.
         self._bump_data_revision()
         self._sync_active_group_state()
+        self._sections = (
+            [(str(t), c, list(ids)) for t, c, ids in sections] if sections is not None else None
+        )
 
         # Preserve any model-fit / composite-param / annotation state for
         # series that survive this reload.
@@ -1836,52 +1868,119 @@ class FitParametersPanel(QWidget):
         self._set_selected_group_ids(valid, emit=False)
         self._apply_group_selection_to_view()
 
+    def _resolved_sections(self) -> list[tuple[str, str | None, list[str]]]:
+        """The chip-rail section layout to render right now.
+
+        A host that has migrated to :meth:`load_representation_series`'s
+        ``sections`` keyword gets exactly what it asked for; one that has not
+        (or a bare panel under test) falls back to one alphabetised
+        "Standalone" section — today's flat, header-less rail.
+        """
+        if self._sections is not None:
+            return self._sections
+        ids = sorted(
+            self._group_fit_results, key=lambda gid: self._group_fit_results[gid].group_name.lower()
+        )
+        return [("Standalone", None, ids)] if ids else []
+
+    def _build_section_header(self, title: str, colour: str | None) -> QWidget:
+        """A muted uppercase section label, preceded by a 10 px kind swatch."""
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 4, 0, 0)
+        row_layout.setSpacing(6)
+        if colour:
+            swatch = QLabel()
+            swatch.setFixedSize(10, 10)
+            swatch.setStyleSheet(f"background-color: {colour}; border-radius: 2px;")
+            row_layout.addWidget(swatch)
+        row_layout.addWidget(make_section_header(title))
+        row_layout.addStretch(1)
+        return row
+
+    def _build_group_chip(self, group: _GroupFitData, strip_metrics) -> QPushButton:
+        """One series pill: icon, tooltip, click/double-click and context menu."""
+        # A stale group-bound series (live membership ≠ last-fitted set, D1)
+        # carries a warning glyph + tooltip on its pill. The clean
+        # ``group_name`` is left untouched so rename/sort/delete still read
+        # the user-facing label.
+        is_stale = group.group_id in self._stale_series_ids
+        # Same rule as the y chips: the pill is a short handle capped at a
+        # character count, and the full name lives on the tooltip. A pill that
+        # grew with the series name was what pushed the dock past 13 inches.
+        pill_text = strip_metrics.elidedText(
+            group.short_name, Qt.TextElideMode.ElideRight, metrics.char_width(_CHIP_MAX_CHARS)
+        )
+        button = QPushButton(f"{pill_text} ⚠" if is_stale else pill_text)
+        if group.phase is not None:
+            button.setIcon(self._phase_swatch_icon(group.phase.color))
+            button.setIconSize(QSize(10, 10))
+        # Every pill names its series in full and teaches the overlay gesture;
+        # a stale one prepends its own warning to the same tooltip.
+        tooltip = [
+            group.group_name,
+            "Click to view this series · Shift+click to overlay it with the selected series.",
+        ]
+        if is_stale:
+            tooltip.insert(0, "Membership changed since last fit — re-run to refresh.")
+        button.setToolTip("\n".join(tooltip))
+        button.setCheckable(True)
+        button.clicked.connect(self._on_group_button_clicked)
+        button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        button.customContextMenuRequested.connect(
+            lambda pos, gid=group.group_id, b=button: self._show_group_button_context_menu(
+                gid, b, pos
+            )
+        )
+        # Double-click = "Open in Batch tab" (the chip menu's first action);
+        # the eventFilter below tells a chip's second click from any other
+        # watched widget's by this property, set only on chip buttons.
+        button.setProperty("_series_chip_id", group.group_id)
+        button.installEventFilter(self)
+        return button
+
     def _rebuild_group_buttons(self) -> None:
         clear_layout(self._group_tabs_layout)
 
         self._group_button_map = {}
-        groups = sorted(self._group_fit_results.values(), key=lambda g: g.group_name.lower())
+        sections = self._resolved_sections()
+        single_section = len(sections) <= 1
         strip_metrics = self._group_tabs_widget.fontMetrics()
-        for group in groups:
-            # A stale group-bound series (live membership ≠ last-fitted set, D1)
-            # carries a warning glyph + tooltip on its pill. The clean
-            # ``group_name`` is left untouched so rename/sort/delete still read
-            # the user-facing label.
-            is_stale = group.group_id in self._stale_series_ids
-            # Same rule as the y chips: the pill is a short handle capped at a
-            # character count, and the full name lives on the tooltip. A pill that
-            # grew with the series name was what pushed the dock past 13 inches.
-            pill_text = strip_metrics.elidedText(
-                group.short_name, Qt.TextElideMode.ElideRight, metrics.char_width(_CHIP_MAX_CHARS)
-            )
-            button = QPushButton(f"{pill_text} ⚠" if is_stale else pill_text)
-            if group.phase is not None:
-                button.setIcon(self._phase_swatch_icon(group.phase.color))
-                button.setIconSize(QSize(10, 10))
-            # Every pill names its series in full and teaches the overlay gesture;
-            # a stale one prepends its own warning to the same tooltip.
-            tooltip = [
-                group.group_name,
-                "Click to view this series · Shift+click to overlay it with the selected series.",
-            ]
-            if is_stale:
-                tooltip.insert(0, "Membership changed since last fit — re-run to refresh.")
-            button.setToolTip("\n".join(tooltip))
-            button.setCheckable(True)
-            button.clicked.connect(self._on_group_button_clicked)
-            button.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            button.customContextMenuRequested.connect(
-                lambda pos, gid=group.group_id, b=button: self._show_group_button_context_menu(
-                    gid, b, pos
-                )
-            )
-            self._group_tabs_layout.addWidget(button)
-            self._group_button_map[group.group_id] = button
-        self._group_tabs_widget.setVisible(bool(groups))
+        for title, colour, batch_ids in sections:
+            chip_ids = [gid for gid in batch_ids if gid in self._group_fit_results]
+            if not chip_ids:
+                continue
+            if not single_section:
+                self._group_tabs_layout.addWidget(self._build_section_header(title, colour))
+            row = QWidget()
+            row_layout = FlowLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            for gid in chip_ids:
+                button = self._build_group_chip(self._group_fit_results[gid], strip_metrics)
+                row_layout.addWidget(button)
+                self._group_button_map[gid] = button
+            self._group_tabs_layout.addWidget(row)
+        self._group_tabs_widget.setVisible(bool(self._group_button_map))
         self._refresh_group_button_styles()
 
     def _exec_menu(self, menu: QMenu, pos) -> object:
         return menu.exec(pos)
+
+    def _activate_series(self, group_id: str) -> None:
+        """Make *group_id* the sole selection, exactly as pressing its chip would.
+
+        The chip menu's "Show fit overlay" action reuses this rather than a
+        second selection path, so a menu pick and a click stay indistinguishable
+        to every downstream listener (:signal:`series_selection_changed`).
+        """
+        if group_id not in self._group_fit_results:
+            return
+        self._sync_active_group_state()
+        self._active_group_id = group_id
+        self._set_selected_group_ids([group_id], emit=False)
+        self._apply_group_selection_to_view(sync_active=False)
+        self._refresh_model_fit_button_labels()
+        self.series_selection_changed.emit(group_id)
 
     def _show_group_button_context_menu(self, group_id: str, button: QPushButton, pos) -> None:
         if group_id not in self._group_fit_results:
@@ -1889,18 +1988,32 @@ class FitParametersPanel(QWidget):
 
         group = self._group_fit_results[group_id]
         menu = QMenu(self)
+        open_action = menu.addAction("Open in Batch tab")
+        duplicate_action = menu.addAction("Duplicate…")
         rename_action = menu.addAction("Rename…")
+        menu.addSeparator()
         select_action = menu.addAction("Select members in browser")
+        overlay_action = menu.addAction("Show fit overlay")
+        overlay_action.setCheckable(True)
+        is_active = group_id == self._active_group_id
+        overlay_action.setChecked(is_active)
+        overlay_action.setEnabled(not is_active)
         menu.addSeparator()
         delete_action = menu.addAction("Delete series…")
         selected_action = self._exec_menu(menu, button.mapToGlobal(pos))
 
-        if selected_action is rename_action:
+        if selected_action is open_action:
+            self.series_open_requested.emit(group_id)
+        elif selected_action is duplicate_action:
+            self.series_duplicate_requested.emit(group_id)
+        elif selected_action is rename_action:
             new_name = prompt_series_rename(self, group.group_name)
             if new_name is not None:
                 self.series_rename_requested.emit(group_id, new_name)
         elif selected_action is select_action:
             self.series_select_members_requested.emit(group_id)
+        elif selected_action is overlay_action:
+            self._activate_series(group_id)
         elif selected_action is delete_action:
             self._delete_group_fits(group_id)
 
@@ -3088,12 +3201,18 @@ class FitParametersPanel(QWidget):
         self._blit_hover_rings()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
-        """Drop the hover rings when the pointer leaves the rows or the pop-out hides.
+        """Drop the hover rings when the pointer leaves the rows or the pop-out hides;
+        turn a double-click on a series chip into "Open in Batch tab".
 
         ``viewportEntered`` covers only a move onto the viewport's empty space, so
         leaving the viewport over a row (or closing the window outright) needs
         these two events.
         """
+        if event.type() == QEvent.Type.MouseButtonDblClick:
+            chip_id = watched.property("_series_chip_id")
+            if chip_id:
+                self.series_open_requested.emit(str(chip_id))
+                return True
         leaving_rows = watched is self._table_viewport and event.type() == QEvent.Type.Leave
         dialog_hidden = watched is self._table_dialog and event.type() == QEvent.Type.Hide
         if leaving_rows or dialog_hidden:

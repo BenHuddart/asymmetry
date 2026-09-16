@@ -2114,6 +2114,15 @@ class MainWindow(QMainWindow):
             self._fit_parameters_panel.knight_window_requested.connect(
                 self._on_knight_shift_analysis
             )
+        # Chip menu: "Open in Batch tab" / "Duplicate…" (item 2).
+        self._fit_parameters_panel.series_open_requested.connect(self._on_series_open_requested)
+        self._fit_parameters_panel.series_duplicate_requested.connect(
+            self._on_series_duplicate_requested
+        )
+        # Plot "Fits on this run" pill strip: a double-click makes that fit's
+        # series active (item 3), on whichever domain panel it was clicked.
+        for _panel in (self._plot_panel, self._frequency_plot_panel):
+            _panel.active_fit_requested.connect(self._on_active_fit_requested)
 
         # Unsaved-changes guard (P0-2): every fit result and trend-series edit
         # is work worth saving, so flag the session modified when one lands.
@@ -10970,6 +10979,17 @@ class MainWindow(QMainWindow):
                 if part:
                     short_names_by_id[batch_id] = f"{short_names_by_id[batch_id]} · {part}"
 
+        # A phase-owned series (Global Fit Wizard sub-group, D1/D4) whose phase
+        # decoration is absent — no swatch icon on its chip — still names its
+        # phase, so it stays identifiable inside its parent's rail section
+        # (item 1). One already carrying the icon is not doubled up here.
+        for batch_id, series, _name in named_series:
+            group = self._project_model.data_group(series.group_id) if series.group_id else None
+            if group is not None and group.is_phase and batch_id not in phase_by_id:
+                short_names_by_id[batch_id] = f"{group.name}: {short_names_by_id[batch_id]}"
+
+        sections = self._trend_panel_sections(named_series)
+
         refreshed = False
         if hasattr(self._fit_parameters_panel, "load_representation_series"):
             self._fit_parameters_panel.load_representation_series(
@@ -10982,8 +11002,19 @@ class MainWindow(QMainWindow):
                 fraction_weights_by_id=fraction_weights_by_id,
                 stale_ids=stale_ids,
                 phase_by_id=phase_by_id,
+                sections=sections,
             )
             refreshed = True
+
+        # Authoritative "Fits on this run" pill labels (item 3): the series'
+        # own display name, not whatever generic legend text a recording path
+        # drew the curve under ("Batch Fit", …). Every series of the
+        # representation is pushed here — not only the active one — so a
+        # restored project's pills read correctly even though its curves came
+        # back from ``plot_state`` rather than a fresh ``_overlay_series`` draw.
+        self._plot_panel_for_rep(rep_type).set_fit_labels(
+            {batch_id: name for batch_id, _series, name in named_series}
+        )
 
         if surface and entries and hasattr(self, "_dock_fit_parameters"):
             # Route through _show_panel so the per-representation closed-tab
@@ -10993,6 +11024,48 @@ class MainWindow(QMainWindow):
             # No series remain — ensure the browser highlight is cleared.
             self._data_browser.set_highlighted_runs(set())
         return refreshed
+
+    def _trend_panel_sections(
+        self, named_series: list[tuple[str, FitSeries, str]]
+    ) -> list[tuple[str, str | None, list[str]]]:
+        """Group a representation's series into the chip rail's sections.
+
+        A series' section is the data group that owns it, or that group's
+        *parent* when the owning group is a phase (a Global Fit Wizard
+        sub-group, D1/D4) — so a phase's chips sit under the campaign they
+        were partitioned from rather than under a throwaway bucket of their
+        own. Group-less series share one "Standalone" section. Sections, and
+        the series within them, keep recording order (``named_series`` is
+        already sorted by batch id); a section's phase-owned series come
+        after its own direct members.
+        """
+        buckets: dict[str | None, tuple[str, str | None, list[str], list[str]]] = {}
+        order: list[str | None] = []
+        for batch_id, series, _name in named_series:
+            group = (
+                self._project_model.data_group(series.group_id)
+                if series.group_id is not None
+                else None
+            )
+            is_phase_member = group is not None and group.is_phase
+            section_group = (
+                self._project_model.data_group(group.parent_group_id) if is_phase_member else group
+            )
+            if section_group is None and is_phase_member:
+                # A stale parent pointer: keep the series in the phase's own
+                # bucket rather than losing it from the rail entirely.
+                section_group = group
+            key = section_group.group_id if section_group is not None else None
+            if key not in buckets:
+                title = section_group.name if section_group is not None else "Standalone"
+                buckets[key] = (title, self._group_kind_colour(section_group), [], [])
+                order.append(key)
+            _, _, direct, phased = buckets[key]
+            (phased if is_phase_member else direct).append(batch_id)
+        return [
+            (title, colour, direct + phased)
+            for title, colour, direct, phased in (buckets[key] for key in order)
+        ]
 
     def _remember_trends_batch(self, surface: str, batch_id: str | None, panel) -> None:
         """Record the batch *surface* just produced and arm its ``Trends →``.
@@ -11120,7 +11193,9 @@ class MainWindow(QMainWindow):
                 None,
             )
         if fit_curves:
-            panel.set_global_fits(fit_curves, fit_id=series.batch_id)
+            panel.set_global_fits(
+                fit_curves, fit_id=series.batch_id, fit_labels={series.batch_id: label}
+            )
 
     def _series_curve_bounds(
         self, series: FitSeries, run_number: int, window: dict
@@ -11364,6 +11439,27 @@ class MainWindow(QMainWindow):
         )
         self._set_active_series(series.rep_type, series.batch_id)
         self._sync_batch_fit_range_guide()
+
+    def _on_series_open_requested(self, batch_id: str) -> None:
+        """Chip menu "Open in Batch tab" / a chip double-click (item 2)."""
+        self._open_series_in_batch_tab(batch_id)
+        self._show_panel("fit")
+
+    def _on_series_duplicate_requested(self, batch_id: str) -> None:
+        """Chip menu "Duplicate…": open the series, then copy it into a draft."""
+        self._open_series_in_batch_tab(batch_id)
+        self._fit_panel.duplicate_open_series()
+        self._show_panel("fit")
+
+    def _on_active_fit_requested(self, batch_id: str) -> None:
+        """A "Fits on this run" pill was double-clicked: make its series active.
+
+        The ``"single"`` id is never routed here (the plot panel itself never
+        emits it for a double-click), so this always names a real series.
+        """
+        series = self._project_model.batch(str(batch_id))
+        if series is not None:
+            self._set_active_series(series.rep_type, series.batch_id)
 
     def _adopt_recorded_series(self, batch_id: str | None, previously_open: str | None) -> None:
         """Leave the Batch tab open on the series its run just recorded (D3).

@@ -1191,7 +1191,12 @@ class GlobalFitTab(FitTabBase):
         self._series_group = section
 
         self._series_selector_btn = QPushButton()
-        self._series_selector_btn.setStyleSheet(build_segmented_button_qss())
+        # Left-align: a centred name reads oddly once the dot icon pins the
+        # left edge (render review, item 4) — "● Draft" should read like a
+        # label, not float mid-button.
+        self._series_selector_btn.setStyleSheet(
+            build_segmented_button_qss() + "QPushButton { text-align: left; }"
+        )
         # The series dot: the same red accent the Parameters panel's chips carry,
         # so the two surfaces read as one object seen twice.
         self._series_selector_btn.setIcon(self._series_dot())
