@@ -66,6 +66,7 @@ def _row(
         notes="",
         n_histograms=2,
         n_points=100,
+        total_events=1000,
         bin_width_us=0.016,
         start_time=None,
         duration_s=None,
@@ -116,6 +117,17 @@ def test_survey_records_start_time_and_duration(survey) -> None:
     calibration = survey.row(CALIBRATION_RUN)
     assert calibration.start_time == "2024-03-01T09:00:00"
     assert calibration.duration_s == pytest.approx(1800.0)
+
+
+def test_survey_reports_the_gross_event_total(workflow_folder: Path, survey) -> None:
+    from asymmetry.core.io import load
+
+    calibration = survey.row(CALIBRATION_RUN)
+    dataset = load(workflow_folder / calibration.file)
+    expected = round(sum(float(histogram.counts.sum()) for histogram in dataset.run.histograms))
+
+    assert calibration.total_events == expected
+    assert survey.to_dict()["runs"][0]["total_events"] == expected
 
 
 def test_has_file_deadtime_is_true_only_for_the_run_that_carries_values(survey) -> None:

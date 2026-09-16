@@ -260,6 +260,14 @@ class WorkDir:
         return self.root / "series"
 
     @property
+    def scans_dir(self) -> Path:
+        return self.root / "scans"
+
+    @property
+    def spectra_dir(self) -> Path:
+        return self.root / "spectra"
+
+    @property
     def plots_dir(self) -> Path:
         return self.root / "plots"
 
@@ -270,6 +278,8 @@ class WorkDir:
             self.wizard_dir,
             self.recipes_dir,
             self.series_dir,
+            self.scans_dir,
+            self.spectra_dir,
             self.plots_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
@@ -502,6 +512,52 @@ class WorkDir:
     def series_names(self) -> list[str]:
         """The names of every stored series, sorted."""
         return sorted(path.stem for path in self.series_dir.glob("*.json"))
+
+    # -- integral scans and frequency spectra ------------------------------
+
+    def scan_path(self, name: str) -> Path:
+        """Where an integral field scan called *name* is stored."""
+        return self.scans_dir / f"{safe_name(name)}.json"
+
+    def write_scan(self, name: str, payload: dict[str, Any]) -> Path:
+        """Write ``scans/<name>.json`` and return its path."""
+        self.ensure()
+        path = self.scan_path(name)
+        _write_json(path, {"schema": SCHEMA, "asymmetry_version": __version__} | payload)
+        return path
+
+    def read_scan(self, name: str) -> dict[str, Any]:
+        """Read a stored integral scan; raise :class:`KeyError` when absent."""
+        path = self.scan_path(name)
+        if not path.exists():
+            raise KeyError(f"No scan {name!r} in {self.scans_dir}")
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def spectrum_paths(self, name: str) -> tuple[Path, Path]:
+        """The ``(.npz, .json)`` paths for a named frequency spectrum."""
+        stem = safe_name(name)
+        return self.spectra_dir / f"{stem}.npz", self.spectra_dir / f"{stem}.json"
+
+    def write_spectrum(
+        self,
+        name: str,
+        *,
+        frequency: np.ndarray,
+        real: np.ndarray,
+        magnitude: np.ndarray,
+        payload: dict[str, Any],
+    ) -> tuple[Path, Path]:
+        """Store a frequency spectrum's arrays and JSON provenance."""
+        self.ensure()
+        array_path, json_path = self.spectrum_paths(name)
+        np.savez(
+            array_path,
+            frequency=np.asarray(frequency, dtype=np.float64),
+            real=np.asarray(real, dtype=np.float64),
+            magnitude=np.asarray(magnitude, dtype=np.float64),
+        )
+        _write_json(json_path, {"schema": SCHEMA, "asymmetry_version": __version__} | payload)
+        return array_path, json_path
 
 
 __all__ = [

@@ -206,6 +206,46 @@ def test_fit_plot_on_a_record_with_an_exploding_tail_is_framed_and_bunched(
     assert plots._bunch_factor(windowed_points) > 1
 
 
+def test_integral_scan_plot_writes_data_and_fitted_curve(tmp_path: Path) -> None:
+    x = np.linspace(1000.0, 5000.0, 21)
+    parameters = {"amplitude": -0.04, "centre": 3300.0, "width": 180.0, "offset": 0.2}
+
+    def model(field, amplitude, centre, width, offset):
+        return offset + amplitude / (1.0 + ((field - centre) / width) ** 2)
+
+    value = model(x, **parameters)
+    out_path = plots.plot_scan(
+        x,
+        value,
+        np.full_like(x, 0.002),
+        expression="test resonance",
+        model_function=model,
+        parameters=parameters,
+        x_label="field / G",
+        y_label="integral asymmetry",
+        title="ALC scan",
+        out_path=tmp_path / "scan.png",
+    )
+
+    _assert_real_png(out_path)
+
+
+def test_fourier_plot_writes_real_and_magnitude_channels(tmp_path: Path) -> None:
+    frequency = np.linspace(0.0, 5.0, 101)
+    real = np.cos(frequency) * np.exp(-frequency)
+    magnitude = np.abs(real)
+
+    out_path = plots.plot_spectrum(
+        frequency,
+        real,
+        magnitude,
+        run_number=20721,
+        out_path=tmp_path / "fourier.png",
+    )
+
+    _assert_real_png(out_path)
+
+
 @pytest.fixture
 def fitting_workdir(workflow_folder: Path, tmp_path: Path) -> Path:
     """A work directory with the scan reduced and one expression-built recipe stored.

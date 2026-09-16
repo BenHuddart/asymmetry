@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The agent CLI now covers four more μSR workflows needed by the WiMDA teaching
+  corpus.** `reduce --period red|green|N` selects a named or numbered acquisition
+  period and `survey` reports period counts and gross event totals;
+  `integral-scan` builds and optionally fits integral-asymmetry ALC/QLCR field
+  scans, including separate off-resonance
+  baseline fitting; `fourier` stores an FFT and reports quantitative peaks; and
+  `fit-global` performs a true coupled fit with named shared parameters and per-run
+  field parameters. The packaged `asymmetry-analysis` skill documents when and how
+  an agent should use each path, as well as the remaining MaxEnt and batch-global
+  limits.
 - **A `FermiStep` trend model fits a smooth step across a transition**, such as the
   weak-transverse-field asymmetry or the zero-field 1/3 tail through a magnetic ordering
   temperature: `y(T) = A2 + (A1 − A2)/(exp((T − Tc)/ΔT) + 1)`, with the low- and

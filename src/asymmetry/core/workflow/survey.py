@@ -332,10 +332,14 @@ class RunRow:
     notes: str
     n_histograms: int
     n_points: int
+    #: Gross events in the default (first) period, summed over raw histograms.
+    total_events: int
     bin_width_us: float
     start_time: str | None
     duration_s: float | None
     has_file_deadtime: bool
+    #: Number of independently selectable acquisition periods in the file.
+    n_periods: int = 1
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -363,7 +367,9 @@ class RunRow:
             "detector_orientation": self.detector_orientation,
             "notes": self.notes,
             "n_histograms": self.n_histograms,
+            "n_periods": self.n_periods,
             "n_points": self.n_points,
+            "total_events": self.total_events,
             "bin_width_us": self.bin_width_us,
             "start_time": self.start_time,
             "duration_s": self.duration_s,
@@ -482,6 +488,7 @@ def build_run_row(
     prefix: str,
     run_number: int,
     precession: PrecessionEvidence,
+    n_periods: int = 1,
 ) -> RunRow:
     """Describe one loaded dataset as a :class:`RunRow`.
 
@@ -497,6 +504,11 @@ def build_run_row(
     duration = (stop - start).total_seconds() if start is not None and stop is not None else None
     sample = str(metadata.get("sample") or "").strip() or None
     geometry, geometry_source = resolve_row_geometry(metadata, precession)
+    total_events = round(
+        sum(
+            float(np.sum(np.asarray(histogram.counts, dtype=float))) for histogram in run.histograms
+        )
+    )
     return RunRow(
         run_number=run_number,
         file=path.name,
@@ -516,7 +528,9 @@ def build_run_row(
         # MusrRoot also record a ``comment``. Either spelling is the same field.
         notes=str(metadata.get("notes") or metadata.get("comment") or "").strip(),
         n_histograms=len(run.histograms),
+        n_periods=int(n_periods),
         n_points=dataset.n_points,
+        total_events=total_events,
         bin_width_us=float(run.histograms[0].bin_width),
         start_time=started,
         duration_s=duration,
@@ -696,6 +710,7 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
     :func:`asymmetry.core.io.run_range.scan_run_files`).
     """
     from asymmetry.core.io import load, scan_run_files
+    from asymmetry.core.io.periods import period_count
 
     folder = Path(folder)
     found = scan_run_files(folder)
@@ -716,6 +731,7 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
                 prefix=prefix,
                 run_number=run_number,
                 precession=precession,
+                n_periods=len(result) if isinstance(result, list) else period_count(result),
             )
         )
         metadatas.append(dataset.run.metadata)

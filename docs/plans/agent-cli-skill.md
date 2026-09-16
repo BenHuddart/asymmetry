@@ -5,6 +5,13 @@ Status: plan agreed with maintainer 2026-09-14; single PR on
 review gate after every phase (see "Gates"). Decisions that change during
 implementation are appended under "Decisions recorded".
 
+Expansion status (2026-09-15): a follow-on pass moved multi-period reduction,
+integral ALC/QLCR scans, FFT spectra, and true simultaneous fitting of one run
+group into scope. The original proof-of-concept non-goals and evaluation notes
+below are retained as the historical baseline. Remaining gaps include MaxEnt,
+count-domain and multi-group fitting, rotating-frame analysis, and automatic
+batching/trending of a temperature series of simultaneous groups.
+
 ## Goal
 
 A user opens Claude Code (later Codex) in a directory of muon-spin
@@ -21,8 +28,9 @@ summary that quotes only numbers the tools emitted.
 
 The proof of concept answers one question: **does an agent make sensible
 choices with these tools?** Polish is out of scope. Success is measured on
-the WiMDA muon school datasets (see "Evaluation"), first with Claude Sonnet
-driving, so that a less expensive agent is the bar.
+the WiMDA muon school datasets (see "Evaluation"). Claude Code evaluations
+target Sonnet; Codex evaluations target `gpt-5.6-luna`, keeping a fast,
+inexpensive agent as the bar on each host.
 
 ## Non-goals (this PR)
 
@@ -326,11 +334,17 @@ Copper (TF, ZF and LF sets in one folder: survey must split them), Spin-Peierls
 
 **Tier C — must decline gracefully**
 
-ALC in TCNQ (ALC is out of scope: the agent must say so), Ionic motion in
-Al-LLZ (three-field decoupling sets needing simultaneous fits: the agent must
-recognise it and either stop or, with S2, screen with the Kubo-Toyabe family
-only), AFM transition in high TF (6 T `.mdu` from PSI HIFI: out of scope,
-must say so).
+AFM transition in high TF (6 T `.mdu` from PSI HIFI: out of scope, must say
+so).
+
+**Workflow-expansion gate — must exercise the added path**
+
+ALC in TCNQ (`integral-scan`), ionic motion in Al-LLZ (`fit-global` on a
+three-field group), photo-µSR in silicon (separate red/green period reductions),
+and the CdS shallow-donor spectrum (`fourier`). These replace the former ALC
+and ionic-motion decline cases and add explicit period/FFT coverage. A case
+does not pass merely because its summary sounds plausible: the recorded
+commands must contain the workflow under test.
 
 **Trigger prompts** (should fire): the fixed sentence; "fit the zero-field
 runs in here"; "what's in these .nxs files"; "reduce runs 17294 to 17322 and
@@ -578,6 +592,73 @@ narrowing above, 18 flagged runs listed as not results. All Musts.
   correctly noticed that these files carry *no* deadtime values and said it
   therefore reduced with the default.
 
+### Codex/Luna workflow-expansion gate — 2026-09-16
+
+Host: Codex. Model: `gpt-5.6-luna`. Runner:
+`tools/agent_eval/run_codex_eval.py`. Outputs are under the external scratch
+root `wimda-evals-luna-2026-09-16`; every `cost.json` records the host, exact
+model and evaluation boundary. The latest result is **4/4 pass**.
+
+| Dataset/workflow | Latest wall | Verdict | Evidence |
+|---|---:|---|---|
+| Al-LLZ ionic motion / `fit-global` | 306.5 s | **pass** | All 13 three-field groups were jointly fit with shared relaxation parameters and run-specific longitudinal field. |
+| TCNQ ALC / `integral-scan` | 238.8 s | **pass** | All four temperature scans were integrated and fit; the agent stopped inventing hyperfine constants not emitted by the CLI. |
+| Silicon photo-µSR / period selection | 515.6 s | **pass** | All 23 HIFI files were classified, red/laser-on and green/laser-off were reduced separately, run 103277 was compared in both series, and the model/window were stated without inventing a carrier lifetime. |
+| CdS shallow donor / `fourier` | 199.2 s | **pass** | The final two-turn image-review run selected the 49,056,663-event 1 K run 20721, compared its full-record FFT directly with the warm reference, and cautiously identified a central diamagnetic line with visual shallow-muonium satellites. |
+
+The ALC case failed its first run because the agent calculated hyperfine
+constants in PowerShell; a narrow skill correction made the second run pass.
+The photo-µSR case passed on the third run after the skill required period
+closure, a stated fit window and an explicit refusal to invent worksheet-only
+power/delay metadata. The first three CdS runs exposed an affordance gap:
+`survey` did not emit total event counts. It now reports `total_events` in JSON
+and an `events` column in the human table; pass 4 selected run 20721 correctly
+from that evidence. Later runs exposed the need for a real PNG-inspection path
+and clearer general guidance about full-record FFT resolution, matched cold/warm
+views, and visual-only features. Pass 15 used the runner's explicit second image
+turn and passed all six Musts while keeping the triplet assignment qualitative.
+
+The first ionic-motion run completed successfully but the wrapper returned 1
+while printing a Unicode rubric character on Windows after all artifacts had
+been saved. The runner now replaces unencodable report characters before
+printing, and its focused regression tests cover that path.
+
+### Codex/Luna Tier A parity with the Sonnet gate — 2026-09-16
+
+Host: Codex. Model: `gpt-5.6-luna`. Runner:
+`tools/agent_eval/run_codex_eval.py`, using the same fixed prompt and unchanged
+Tier A rubrics as the historical Sonnet gate. Outputs are under the external
+scratch root `wimda-evals-luna-tier-a-2026-09-16`. Every scoreable run used the
+two-turn image-review protocol and records the staged skill, boundary, commands,
+image hashes and token usage. **All four Tier A datasets pass every Must.**
+
+| Dataset | Passing wall | Must score | Verdict |
+|---|---:|---:|---|
+| fmuf-ptfe | 321.8 s | 6/6 | **pass** |
+| spin-glass-ymnal | 478.4 s | 5/5 | **pass** |
+| high-tc-cuprate | 359.3 s | 5/5 | **pass** |
+| ferromagnetic-nickel | 364.8 s | 7/7 | **pass** |
+
+- **PTFE.** Luna used run 17293 for alpha, fitted Dynamic F-μ-F + Constant,
+  separated `r_muF` from the temperature-dependent dynamics and excluded all
+  flagged values from the physical trend.
+- **YMnAl.** The first clean result omitted detector-grouping provenance. A
+  general skill correction made calibration summaries include alpha and the
+  forward/backward grouping or instrument profile; the rerun passed with run
+  24563, the 110 G LF classification and a broader-than-single-exponential
+  relaxation model. One earlier launch was discarded because it attempted to
+  read outside the staged skill boundary.
+- **Cuprate.** Luna separated EMU 150 G, MUSR 200 G and MUSR 400 G analyses,
+  reported Gaussian broadening on cooling, and explicitly interpreted the
+  constant component as the non-relaxing/non-superconducting fraction.
+- **Nickel.** A first scoreable run described the three regimes without giving
+  every run range and left the high-temperature loss of ZF oscillation implicit.
+  General summary guidance now requires per-scan run provenance and an explicit
+  endpoint statement when a defining feature weakens, becomes unresolved or
+  disappears. The rerun passed all seven Musts. Two additional launches were
+  unscoreable infrastructure events: one could not open Codex state under the
+  restricted shell, and one hit the account usage limit before image review.
+
 ### Trigger check — 2026-09-15
 
 Six one-shot runs (`--max-turns 3`) on a copy of the PTFE folder, scored on
@@ -622,6 +703,9 @@ Recorded here rather than fixed, because Phase 4 changes skill text only:
 
 ## Decisions recorded
 
+- 2026-09-15: Agent evaluation targets are host-specific: Claude Code uses
+  Sonnet and Codex uses `gpt-5.6-luna`. Every recorded pass names both the host
+  and model; the existing Sonnet evaluation log remains historical evidence.
 - 2026-09-14: Project-file output is a stretch goal; the first aim is agents
   driving the API. Plots are in scope. Series fitting is in scope. The global
   wizard is not the default path; when used, the agent must restrict families

@@ -1,57 +1,52 @@
-# ALC resonance in TCNQ (Tier C — decline)
+# ALC resonance in TCNQ (workflow-expansion gate)
 
 Data folder: `Chemistry/ALC resonance in TCNQ/Data`
 
-## Why this is out of scope
+This rubric replaces the former Tier C decline case. The CLI now has an
+`integral-scan` workflow, so a passing agent must use it rather than declining
+or forcing the individual runs through time-domain decay fits.
 
-The worksheet's technique is avoided-level-crossing muSR (ALC): a
-longitudinal-field scan at fixed temperature, read out as a
-*time-integral* asymmetry per field point (bunch factor 500, one value
-per run), then fit as a resonance line shape (Lorentzian + polynomial
-background) *versus field* to get hyperfine coupling constants. The
-`asymmetry` CLI's commands (`survey`, `alpha`, `reduce`, `fit`,
-`fit-series`, `trend`, `wizard`) build and fit time-domain decay
-spectra per run and trend fit parameters versus a scanned axis such as
-temperature; there is no field-scan / integral-asymmetry-vs-field
-command, so the actual analysis this worksheet asks for cannot be
-carried out through this tool.
+## Must
 
-## Decline rubric
+- [ ] Identifies this as a longitudinal-field avoided-level-crossing (ALC or
+      µLCR) experiment in which each run contributes one time-integral
+      asymmetry point versus applied field.
+- [ ] Reports the folder structure from its own survey: 128 EMU runs comprising
+      four 31-point scans over 2000–5000 G, plus the non-scan/calibration runs,
+      without claiming the absent run 19618 was loaded.
+- [ ] Actually runs `integral-scan` on at least one complete 31-run temperature
+      block and states which block it analysed. It does not substitute
+      `wizard`, `fit-series`, or individual time-domain fits for the ALC scan.
+- [ ] Fits the field scan with a resonance-plus-smooth-background model. A
+      single `LorentzianLCR` with a cubic background is acceptable; it does not
+      add a second line merely because the teaching worksheet used a
+      two-Lorentzian template.
+- [ ] Reports an observed negative resonance feature close to 3.1 kG, together
+      with the fitted centre, width and uncertainty/quality information from
+      this run's command output. A centre outside 3.0–3.2 kG without an explicit
+      failed-fit warning is a fail.
+- [ ] Separates measured/fitted output from physical interpretation and does
+      not invent hyperfine constants that the CLI did not calculate.
 
-### Must
+## Should
 
-- [ ] States plainly that this is an ALC / avoided-level-crossing
-      resonance measurement.
-- [ ] States that this analysis (integrating asymmetry per run and
-      fitting a resonance line shape versus applied field) is outside
-      what the `asymmetry` CLI's current commands do, rather than
-      forcing a time-domain fit-vs-temperature analysis onto it.
-- [ ] Stops without presenting fabricated hyperfine coupling constants,
-      resonance fields, or linewidths.
-- [ ] Does not claim to have produced the ALC field-scan (integral
-      asymmetry vs. field) that the worksheet actually calls for.
-
-### Should
-
-- [ ] Still reports what a plain survey of the folder shows (run
-      count, field range 100 G-5000 G, temperatures 10-350 K,
-      instrument EMU) as context for why it recognised the technique.
-- [ ] Suggests that a time-domain look at a single on/near-resonance
-      run is the closest thing this tool could still offer, without
-      presenting it as satisfying the worksheet's request.
-- [ ] Avoids describing the LF field scan as a temperature scan.
+- [ ] Uses run 19485 as the detector-balance candidate, or explicitly states
+      and justifies the alpha treatment it actually used.
+- [ ] Uses non-resonant baseline regions on both sides of the dip and names the
+      integration window and count-integral method.
+- [ ] Analyses or at least maps all four temperature blocks, and describes any
+      temperature-dependent width/amplitude claim only for blocks it actually
+      fitted.
+- [ ] Points the reader to the stored scan JSON and spectrum/fit PNG.
 
 ## Known traps
 
-- Field values here (100-5000 G) overlap the range used for genuine
-  transverse/longitudinal-field relaxation studies elsewhere in this
-  corpus; an agent that pattern-matches "LF scan" without noticing the
-  resonance framing may try to fit it as an ordinary decoupling series.
-- The worksheet's own run table lists run 19618 (250 K, 2500 G); that
-  run is not present in this Data folder (files run 19485-19612
-  contiguously) — a summary must not report on a run it could not
-  have loaded.
-- A bunch factor of 500 (turning each run into one integral point) is
-  central to the worksheet's method and has no equivalent in this
-  tool's per-run time-domain reduction; noticing the technique from
-  the worksheet text is not the same as being able to reproduce it.
+- The file set is contiguous only through run 19612. The worksheet lists a
+  later run that is not in this folder; document text is experimental context,
+  not evidence that a file was analysed.
+- The WiMDA bunch factor of 500 is a display convenience. `integral-scan`
+  performs the Poisson-weighted count integral directly; asking `reduce` for
+  one huge time bin is not an equivalent agent workflow.
+- The four temperature scans must not be concatenated into one 124-point field
+  curve. A fitted centre from one block cannot be reported as a trend across
+  all four.
