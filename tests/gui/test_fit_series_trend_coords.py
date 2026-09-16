@@ -327,7 +327,7 @@ def test_fit_this_group_prefills_batch_regardless_of_visibility(win: MainWindow)
 
     win._on_fit_group_requested(gid)
 
-    fed_runs = sorted(int(ds.run_number) for ds in win._fit_panel._all_datasets)
+    fed_runs = sorted(int(ds.run_number) for ds in win._fit_panel.batch_datasets())
     assert fed_runs == sorted(coords)
 
 

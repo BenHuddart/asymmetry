@@ -79,11 +79,41 @@ class _StubFitPanel(QWidget):
         self.grouped_fit_completed = _DummySignal()
         self.grouped_time_domain_mode_changed = _DummySignal()
         self.trends_requested = _DummySignal()
+        # Series row (docs/plans/series-workflow.md, D1/D7/D8): the tab asks,
+        # the window answers. A stub panel edits no series, so it is always a
+        # draft over the selection and the window's series wiring is inert.
+        self.series_open_requested = _DummySignal()
+        self.series_new_from_selection_requested = _DummySignal()
+        self.series_new_from_group_requested = _DummySignal()
+        self.series_rename_requested = _DummySignal()
+        self.series_delete_requested = _DummySignal()
+        self.batch_fit_range_changed = _DummySignal()
         self.set_trends_available = lambda _available: None
         self.last_dataset = None
         self.last_datasets = None
         self.last_global_results = None
         self._grouped_mode = False
+
+    def set_series_catalogue_provider(self, _provider):
+        return
+
+    def open_series_id(self):
+        return None
+
+    def saved_open_series_id(self):
+        return None
+
+    def batch_tab_visible(self):
+        return False
+
+    def batch_fit_range(self):
+        return (None, None)
+
+    def set_batch_fit_range(self, _x_min, _x_max):
+        return
+
+    def clear_bound_group(self):
+        return
 
     def set_datasets(self, datasets):
         self.last_datasets = datasets
@@ -108,12 +138,18 @@ class _StubPlotPanel(QWidget):
         self._fit_curves = {}
         self.bunch_factor_changed = _DummySignal()
         self.fit_range_changed = _DummySignal()
+        # D8: a drag on the range guides while they show the Batch tab's own
+        # window reports it here rather than moving the project range.
+        self.fit_range_guide_changed = _DummySignal()
         self.time_view_changed = _DummySignal()
         self.factor = 1
         self.last_plotted_dataset = None
         self.last_grouped_datasets = None
         self._time_view_mode = "fb_asymmetry"
         self._time_view_modes = ["fb_asymmetry"]
+
+    def set_fit_range_guide(self, _x_min, _x_max):
+        return
 
     def plot_dataset(self, dataset):
         self.last_plotted_dataset = dataset
