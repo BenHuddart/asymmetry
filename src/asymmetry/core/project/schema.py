@@ -226,8 +226,11 @@ import json
 import math
 import os
 import re
+import shutil
 import tempfile
 from pathlib import Path
+
+from asymmetry.core.representation.base import RepresentationType
 
 CURRENT_SCHEMA_VERSION: int = 20
 
@@ -1351,7 +1354,10 @@ def _migrate_v19_to_v20(data: dict) -> dict:
       skipped, having no fit to draw).
 
     Tolerant throughout: a malformed dataset, representation, slot or series is
-    skipped rather than raising, so no project fails to open on migration.
+    skipped rather than raising, so no project fails to open on migration. A
+    ``batches`` entry that :func:`_v20_loadable_series` rejects is dropped here
+    rather than carried through — it holds nothing a reader could use, and the
+    open is where the damage would otherwise land.
     """
     migrated = dict(data)
     migrated["schema_version"] = 20
@@ -1363,8 +1369,7 @@ def _migrate_v19_to_v20(data: dict) -> dict:
         updated: list = []
         active_series: dict[str, str] = {}
         for series in batches:
-            if not isinstance(series, dict):
-                updated.append(series)
+            if not _v20_loadable_series(series):
                 continue
             entry = dict(series)
             entry["recipe"] = _v20_series_recipe(entry, slots)
@@ -1398,6 +1403,25 @@ def _migrate_v19_to_v20(data: dict) -> dict:
                         projections[key] = _v20_migrated_slot(slot)
 
     return migrated
+
+
+def _v20_loadable_series(series: object) -> bool:
+    """Whether a ``batches`` entry can be read back as a :class:`FitSeries`.
+
+    ``FitSeries.from_dict`` indexes ``batch_id`` and ``rep_type`` and coerces
+    the latter through :class:`RepresentationType`, so an entry that is not a
+    dict, carries no string ``batch_id``, or names no known representation
+    cannot be turned into a series at all — it would abort the project open.
+    """
+    if not isinstance(series, dict):
+        return False
+    if not isinstance(series.get("batch_id"), str):
+        return False
+    try:
+        RepresentationType(series["rep_type"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
 
 
 def _v20_migrated_slot(slot: object) -> dict:
@@ -1674,13 +1698,20 @@ def save_project(state: dict, path: str | Path, *, backup: bool = True) -> None:
     """Write a project state dict to a JSON file, atomically (D9).
 
     The JSON is serialised to a temporary file in the destination's directory,
-    flushed and ``fsync``ed, then swapped into place with ``os.replace`` — a
-    crash or exception at any point up to the replace leaves the previous
-    file untouched and removes the temp file. If a file already exists at
-    ``path``, its previous contents are kept alongside the new one as
-    ``<path>.bak`` (one generation: an older ``.bak`` is overwritten) unless
-    *backup* is false — the autosave snapshot is itself a backup, so it keeps
-    none of its own.
+    flushed and ``fsync``ed, then swapped into place with ``os.replace`` — the
+    single moment at which ``path`` changes. A crash or exception at any point
+    before it leaves the previous file byte-for-byte intact and removes the
+    temp file.
+
+    If a file already exists at ``path``, its previous contents are kept
+    alongside the new one as ``<path>.bak`` (one generation: an older ``.bak``
+    is overwritten) unless *backup* is false — the autosave snapshot is itself
+    a backup, so it keeps none of its own. The ``.bak`` is made by hard-linking
+    the existing target (copying it where the filesystem refuses links), never
+    by moving it: the target must stay in place until the replace, so a failure
+    in between can never leave ``path`` missing. A failure after the ``.bak``
+    is written leaves it holding the previous contents, which is exactly what
+    the still-intact target holds.
 
     Parameters
     ----------
@@ -1702,7 +1733,15 @@ def save_project(state: dict, path: str | Path, *, backup: bool = True) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         if backup and target.exists():
-            os.replace(target, target.with_name(target.name + ".bak"))
+            bak = target.with_name(target.name + ".bak")
+            bak.unlink(missing_ok=True)
+            try:
+                os.link(target, bak)
+            except OSError:
+                # No hard links here (FAT/exFAT, some network shares): copy the
+                # bytes instead. Slower, same guarantee — the target is read,
+                # never moved.
+                shutil.copy2(target, bak)
         os.replace(tmp_path, target)
     except BaseException:
         tmp_path.unlink(missing_ok=True)

@@ -118,9 +118,11 @@ def test_case_d_no_data_groups_block_migrates_clean():
 def test_migration_tolerates_junk_shapes():
     state = _v14_state(data_groups=["not-a-dict", 5], batches=["junk", None])
     result = migrate_to_current(state)
-    # Junk entries pass through untouched; no raise.
+    # Junk groups pass through untouched; no raise.
     assert result["data_groups"] == ["not-a-dict", 5]
-    assert result["batches"] == ["junk", None]
+    # Junk series are dropped by the v19->v20 step: FitSeries.from_dict would
+    # abort the open on them, and they hold nothing a reader could use.
+    assert result["batches"] == []
 
 
 def test_migration_is_idempotent_on_already_migrated_fields():

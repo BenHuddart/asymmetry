@@ -376,13 +376,40 @@ def test_member_slot_naming_a_dead_series_is_dropped_without_raising():
 def test_malformed_entries_are_skipped_not_raised_on():
     state = _v19_state(
         datasets=["junk", None, {"run_number": "nope"}, {"run_number": 10, "representations": 5}],
-        batches=["junk", None, {"batch_id": "b1"}],
+        batches=["junk", None, {"batch_id": "b1", "rep_type": _FB}],
     )
     result = migrate_to_current(state)
-    assert result["batches"][:2] == ["junk", None]
-    # A series with nothing but an id still gains a well-formed default recipe.
-    assert result["batches"][2]["recipe"]["fit_range"] == {"min": None, "max": None}
-    assert result["batches"][2]["trend_excluded_runs"] == []
+    # Only the readable series survives; the junk carries nothing a reader
+    # could use and would abort the open.
+    assert len(result["batches"]) == 1
+    assert result["batches"][0]["batch_id"] == "b1"
+    assert result["batches"][0]["recipe"]["fit_range"] == {"min": None, "max": None}
+    assert result["batches"][0]["trend_excluded_runs"] == []
+
+
+def test_unloadable_batches_are_dropped_and_the_good_one_still_loads():
+    """A series ``FitSeries.from_dict`` could not read must not reach the open.
+
+    ``from_dict`` indexes ``batch_id`` and ``rep_type``; carrying such an entry
+    through the migration would turn one junk record into a project that cannot
+    be opened at all.
+    """
+    state = _v19_state(
+        batches=[
+            _series("b1"),
+            {"label": "junk"},
+            "not-even-a-dict",
+            {"batch_id": 17, "rep_type": _FB},
+            {"batch_id": "b2", "rep_type": "not_a_representation"},
+        ],
+    )
+    result = migrate_to_current(state)
+    validate(result)
+
+    assert [entry["batch_id"] for entry in result["batches"]] == ["b1"]
+
+    model = ProjectModel.from_project_state(result)
+    assert list(model.batches) == ["b1"]
 
 
 def test_migrated_project_round_trips_through_the_project_model():

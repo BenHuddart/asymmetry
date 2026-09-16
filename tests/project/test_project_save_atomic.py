@@ -107,6 +107,56 @@ def test_failed_write_after_serialization_leaves_original_file_intact(tmp_path, 
     assert not any(tmp_path.glob("*.tmp*"))
 
 
+def test_failed_replace_leaves_the_target_intact_and_no_temp_file(tmp_path, monkeypatch):
+    """The target survives a crash between making the ``.bak`` and the replace.
+
+    Rotating the live file into ``.bak`` first would leave no project file at
+    all in this window; the ``.bak`` is produced from the target without moving
+    it, so the only moment ``path`` changes is the replace that failed.
+    """
+    path = tmp_path / "project.asymp"
+    save_project(_state("first"), path)
+    original_bytes = path.read_bytes()
+
+    real_replace = schema.os.replace
+
+    def _fail_on_final_replace(src, dst, *args, **kwargs):
+        if str(dst) == str(path):
+            raise OSError("synthetic crash mid-rotation")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(schema.os, "replace", _fail_on_final_replace)
+
+    with pytest.raises(OSError, match="synthetic crash mid-rotation"):
+        save_project(_state("second"), path)
+
+    assert path.read_bytes() == original_bytes
+    assert load_project(path)["marker"] == "first"
+    assert not any(tmp_path.glob("*.tmp*"))
+    # The .bak may already hold the previous contents — the same bytes the
+    # target still holds, so nothing is lost either way.
+    backup = path.with_name(path.name + ".bak")
+    if backup.exists():
+        assert backup.read_bytes() == original_bytes
+
+
+def test_backup_falls_back_to_a_copy_when_hard_links_are_refused(tmp_path, monkeypatch):
+    """FAT/exFAT and some network shares refuse ``os.link``; the bytes still get kept."""
+    path = tmp_path / "project.asymp"
+    save_project(_state("first"), path)
+    previous_bytes = path.read_bytes()
+
+    def _no_links(*args, **kwargs):
+        raise OSError("synthetic: hard links unsupported")
+
+    monkeypatch.setattr(schema.os, "link", _no_links)
+
+    save_project(_state("second"), path)
+
+    assert path.with_name(path.name + ".bak").read_bytes() == previous_bytes
+    assert load_project(path)["marker"] == "second"
+
+
 def test_saved_bytes_are_indent_2_json_matching_prior_format(tmp_path):
     path = tmp_path / "project.asymp"
     state = _state("format")
