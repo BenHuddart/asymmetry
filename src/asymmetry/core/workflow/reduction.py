@@ -65,6 +65,7 @@ class ReductionSettings:
     rebin: int = 1
     t_min: float | None = None
     t_max: float | None = None
+    period: str | None = None
 
     def __post_init__(self) -> None:
         # User input arrives here from the CLI, so the vocabulary is checked
@@ -96,6 +97,7 @@ class ReductionSettings:
             "rebin": int(self.rebin),
             "t_min": None if self.t_min is None else float(self.t_min),
             "t_max": None if self.t_max is None else float(self.t_max),
+            "period": self.period,
         }
 
     @classmethod
@@ -109,6 +111,7 @@ class ReductionSettings:
             rebin=int(data["rebin"]),
             t_min=None if data["t_min"] is None else float(data["t_min"]),
             t_max=None if data["t_max"] is None else float(data["t_max"]),
+            period=None if data.get("period") is None else str(data["period"]),
         )
 
 

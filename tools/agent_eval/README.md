@@ -1,8 +1,9 @@
 # Agent evaluation harness
 
-`run_eval.py` measures whether an agent, handed a folder of μSR runs and
+The two runners measure whether an agent, handed a folder of μSR runs and
 nothing else, produces a defensible analysis with the `asymmetry` CLI and the
-packaged `asymmetry-analysis` skill. It is the loop Phase 4 of
+packaged `asymmetry-analysis` skill. `run_eval.py` drives Claude Code;
+`run_codex_eval.py` drives Codex. They implement the loop Phase 4 of
 [`docs/plans/agent-cli-skill.md`](../../docs/plans/agent-cli-skill.md) runs:
 run the agent, score its summary against the dataset's rubric, and fix **the
 skill text** — never the rubric, never the CLI.
@@ -18,9 +19,55 @@ python tools/agent_eval/run_eval.py \
 
 Options: `--model` (default `sonnet`), `--prompt` (default is the plan's fixed
 sentence), `--max-turns` (default 80), `--claude` (path to the Claude Code
-CLI).
+CLI; the one on `PATH` by default), `--hdf4-dll-dir` (as for the Codex runner
+below). `cost.json` records `"agent": "Claude Code"` beside the model.
 
-What it does, in order:
+The Claude Code CLI this runner launches is a **separate process with its own
+login**: the desktop app's session does not authenticate it. `claude auth
+status` must report `loggedIn: true`, or every run fails with an OAuth error
+and is unscoreable.
+
+On Windows, permission rules match paths in POSIX form with the drive as its
+own segment, so the data copy is granted as `Read(//c/Users/.../data/**)`;
+`_absolute_pattern` builds that from the staged path.
+
+This runner launches Claude Code, so its default remains Sonnet. When the same
+rubrics are evaluated through Codex, use the dedicated runner:
+
+```bash
+python tools/agent_eval/run_codex_eval.py \
+    --data "$HOME/Documents/WiMDA muon school/Chemistry/ALC resonance in TCNQ/Data" \
+    --rubric alc-tcnq \
+    --out /tmp/evals/luna-alc-tcnq
+```
+
+Its default model is `gpt-5.6-luna`. It records `Codex` and the exact model ID
+in `cost.json`; do not compare an unlabeled Codex run with the historical
+Sonnet table below. The Codex runner uses a persistent two-turn `codex exec`
+session with `--ignore-user-config --approve-for-me`: the first turn performs
+the analysis and nominates up to four decisive project-local plots, then the
+runner validates and hashes those files and attaches them explicitly with
+`codex exec resume --image` for the final report. The staged project is
+writable, the sibling data copy is read-only to the nested sandbox, and
+personal plugins, instructions and host-installed skills do not vary the run.
+It enables `skip_host_skill_discovery` and installs the evaluated skill under
+`<out>/project/.agents/skills/`.
+
+Unlike the Claude runner's tool allowlist, Codex cannot mechanically hide
+every readable sibling path from shell commands. The generated project
+`AGENTS.md` therefore defines the evaluation boundary: only the staged data,
+project and installed skill may be consulted; source-repository documents,
+personal skill files, the network and subagents are excluded. Treat the
+transcript as the audit trail and fail or discard a run that crosses that
+boundary. Data-set PDFs, RTFs and READMEs are experimental context, never
+instructions to the agent.
+
+On Windows, legacy HDF4-container NeXus files may need
+`--hdf4-dll-dir C:\path\to\hdf4-runtime`. The runner passes it through as
+`ASYMMETRY_HDF4_DLL_DIR` to Codex and the `asymmetry` commands it launches.
+
+The Claude Code runner does the following; the Codex-specific two-turn
+differences are described above:
 
 1. Copies `--data` to `<out>/data/`. **The corpus is never written to**, and
    neither is the copy: it stands in for the read-only share or archive real
@@ -81,8 +128,9 @@ Everything lands under `--out`, and nothing outside it is touched:
 |---|---|
 | `summary.md` | the agent's final message — **the only thing the rubric scores** |
 | `commands.txt` | every Bash command the agent ran, in order |
-| `transcript.jsonl` | the raw `stream-json` event stream |
-| `cost.json` | wall time, turns, cost, the CLI's `returncode`, permission denials, whether the skill was invoked |
+| `transcript.jsonl` | the raw Claude `stream-json` or Codex JSONL event stream |
+| `image-inputs.json` | validated relative paths, sizes and SHA-256 hashes of plots attached to the Codex review turn |
+| `cost.json` | host/model, wall time, usage, the CLI's `returncode`, completion state, and skill signal |
 | `workdir/` | the `asymmetry-work/` work directory the agent built, plots included |
 | `project/` | the directory the agent worked in: its work directory and the installed skill |
 | `data/` | the copy of the dataset the agent analysed, which it could only read |

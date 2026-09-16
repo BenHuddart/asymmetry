@@ -61,9 +61,11 @@ def asymmetry_command() -> list[str]:
     ``python -m asymmetry`` entry point, which works wherever the package
     imports. Nothing here assumes a ``.venv`` at the repository root.
     """
-    script = Path(sys.executable).parent / "asymmetry"
-    if script.exists():
-        return [str(script)]
+    bindir = Path(sys.executable).parent
+    for name in ("asymmetry", "asymmetry.exe"):
+        script = bindir / name
+        if script.exists():
+            return [str(script)]
     return [sys.executable, "-m", "asymmetry"]
 
 
@@ -110,9 +112,14 @@ def _absolute_pattern(path: Path) -> str:
 
     A single leading slash anchors a rule at its settings source, not at the
     filesystem root; ``//`` is the absolute form (see the permissions
-    documentation, "Read and Edit").
+    documentation, "Read and Edit"). On Windows Claude Code normalises paths
+    to POSIX form before matching (drive ``C:`` becoming ``/c``), so a
+    drive-letter path is written ``//c/data/**``.
     """
-    return "//" + str(path).lstrip("/") + "/**"
+    posix = path.as_posix()
+    if path.drive:
+        posix = "/" + path.drive[0].lower() + posix[len(path.drive) :]
+    return "//" + posix.lstrip("/") + "/**"
 
 
 def allowed_tools(data: Path) -> tuple[str, ...]:
@@ -153,13 +160,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--max-turns", type=int, default=80, help="Turn budget for the agent")
     parser.add_argument(
         "--claude",
-        default=str(Path.home() / ".local" / "bin" / "claude"),
+        default=shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude"),
         help="Path to the Claude Code CLI",
+    )
+    parser.add_argument(
+        "--hdf4-dll-dir",
+        help="Windows directory containing hdf.dll/mfhdf.dll for legacy NeXus files",
     )
     args = parser.parse_args(argv)
     args.data = Path(args.data).expanduser().resolve()
     args.out = Path(args.out).expanduser().resolve()
     args.rubric_path = RUBRIC_DIR / f"{args.rubric}.md"
+    if args.hdf4_dll_dir:
+        args.hdf4_dll_dir = Path(args.hdf4_dll_dir).expanduser().resolve()
     return args
 
 
@@ -172,6 +185,8 @@ def check_inputs(args: argparse.Namespace) -> None:
         sys.exit(f"--rubric {args.rubric!r} has no file in {RUBRIC_DIR} (have: {available})")
     if args.out.exists() and any(args.out.iterdir()):
         sys.exit(f"--out {args.out} already exists and is not empty; choose another directory")
+    if args.hdf4_dll_dir and not args.hdf4_dll_dir.is_dir():
+        sys.exit(f"--hdf4-dll-dir {args.hdf4_dll_dir} is not a directory")
     if not Path(args.claude).exists():
         sys.exit(f"Claude Code CLI not found at {args.claude}; pass --claude")
 
@@ -191,17 +206,27 @@ def stage(args: argparse.Namespace) -> tuple[Path, Path]:
     subprocess.run(
         [*asymmetry_command(), "skill", "install", "--agent", "claude", "--project"],
         cwd=project,
+        env=agent_env(args),
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return data, project
 
 
-def agent_env() -> dict[str, str]:
-    """The environment the agent runs in: this interpreter's ``bin`` first on ``PATH``."""
+def agent_env(args: argparse.Namespace) -> dict[str, str]:
+    """The environment the agent runs in: this interpreter's ``bin`` first on ``PATH``.
+
+    ``--hdf4-dll-dir`` reaches the ``asymmetry`` commands the agent launches as
+    ``ASYMMETRY_HDF4_DLL_DIR``, which legacy NeXus files need on Windows.
+    """
     env = dict(os.environ)
     env["PATH"] = f"{cli_bin_dir()}{os.pathsep}{env.get('PATH', '')}"
+    env.setdefault("PYTHONUTF8", "1")
+    if args.hdf4_dll_dir:
+        env["ASYMMETRY_HDF4_DLL_DIR"] = str(args.hdf4_dll_dir)
     return env
 
 
@@ -262,10 +287,13 @@ def run_agent(args: argparse.Namespace, data: Path, project: Path) -> tuple[list
         process = subprocess.Popen(
             command,
             cwd=project,
-            env=agent_env(),
+            env=agent_env(args),
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=errors,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
         )
         for line in process.stdout:
@@ -372,6 +400,7 @@ def write_outputs(
     cost = {
         "dataset": str(args.data),
         "rubric": args.rubric,
+        "agent": "Claude Code",
         "model": args.model,
         "prompt": full_prompt(args, data),
         "max_turns": args.max_turns,
@@ -419,7 +448,9 @@ def report(args: argparse.Namespace) -> None:
     if cost["permission_denials"]:
         print(f"permission denials: {len(cost['permission_denials'])}")
     print("=" * 72)
-    print(args.rubric_path.read_text(encoding="utf-8"))
+    rubric = args.rubric_path.read_text(encoding="utf-8")
+    output_encoding = sys.stdout.encoding or "utf-8"
+    print(rubric.encode(output_encoding, errors="replace").decode(output_encoding))
     print("=" * 72)
     print(f"summary to score : {args.out / 'summary.md'}")
     print(f"commands run     : {args.out / 'commands.txt'}")

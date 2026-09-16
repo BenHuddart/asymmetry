@@ -8,12 +8,13 @@ the "dataset" is an empty directory.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
 import stat
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -78,6 +79,23 @@ def test_the_skill_and_the_analysis_cli_stay_allowed() -> None:
     # harness README.
     assert "Glob" in allowed
     assert "Grep" in allowed
+
+
+def test_a_windows_data_path_becomes_a_drive_letter_posix_pattern() -> None:
+    """Claude Code matches Windows paths in POSIX form, ``C:`` becoming ``/c``."""
+    runner = _load_runner()
+
+    pattern = runner._absolute_pattern(PureWindowsPath(r"C:\Users\me\evals\run-1\data"))
+
+    assert pattern == "//c/Users/me/evals/run-1/data/**"
+
+
+def test_the_hdf4_dll_directory_reaches_the_agent_environment(tmp_path: Path) -> None:
+    """Legacy NeXus files on Windows need the HDF4 runtime the CLI looks up by env var."""
+    runner = _load_runner()
+    args = argparse.Namespace(hdf4_dll_dir=tmp_path)
+
+    assert runner.agent_env(args)["ASYMMETRY_HDF4_DLL_DIR"] == str(tmp_path)
 
 
 def test_the_network_and_subagent_tools_are_denied_but_edit_is_not() -> None:

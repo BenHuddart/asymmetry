@@ -56,6 +56,15 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         "--tmax", type=float, default=None, help="Discard points above this time/µs"
     )
     parser.add_argument(
+        "--period",
+        default=None,
+        metavar="RED|GREEN|N",
+        help=(
+            "Select one period from a multi-period file. The common two-period "
+            "labels are red (period 1) and green (period 2)"
+        ),
+    )
+    parser.add_argument(
         "--plot", action="store_true", help="Write plots/reduced-<run>.png for each run"
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
@@ -67,6 +76,7 @@ def run(args: argparse.Namespace) -> None:
     """Reduce every named run, caching each result in the work directory."""
     from asymmetry.cli import plots
     from asymmetry.core.io import load
+    from asymmetry.core.io.periods import period_count, select_period
     from asymmetry.core.workflow.reduction import (
         ReductionSettings,
         estimate_alpha_for_run,
@@ -85,7 +95,14 @@ def run(args: argparse.Namespace) -> None:
     if args.alpha_from is not None:
         alpha_path = resolve_run(folder, args.alpha_from)
         alpha_result = load(str(alpha_path))
-        alpha_dataset = alpha_result[0] if isinstance(alpha_result, list) else alpha_result
+        try:
+            alpha_dataset = (
+                select_period(alpha_result, args.period)
+                if args.period is not None
+                else (alpha_result[0] if isinstance(alpha_result, list) else alpha_result)
+            )
+        except (TypeError, ValueError) as exc:
+            raise UserError(f"Run {args.alpha_from}: {exc}") from None
         alpha = estimate_alpha_for_run(alpha_dataset.run).alpha
         alpha_source = f"estimated:{args.alpha_from}"
     elif args.alpha is not None:
@@ -101,6 +118,7 @@ def run(args: argparse.Namespace) -> None:
             rebin=args.rebin,
             t_min=args.tmin,
             t_max=args.tmax,
+            period=args.period,
         )
     except ValueError as exc:
         # ReductionSettings owns the vocabulary the CLI accepts; a value it
@@ -122,7 +140,14 @@ def run(args: argparse.Namespace) -> None:
     plot_paths: list[Path] = []
     for run_number, prefix, path in targets:
         result = load(str(path))
-        dataset_in = result[0] if isinstance(result, list) else result
+        try:
+            dataset_in = (
+                select_period(result, args.period)
+                if args.period is not None
+                else (result[0] if isinstance(result, list) else result)
+            )
+        except (TypeError, ValueError) as exc:
+            raise UserError(f"Run {run_number}: {exc}") from None
         source_run = dataset_in.run
         grouping = resolve_reduction_grouping(source_run, settings)
         digest = reduction_digest(source_file=path, grouping=grouping, settings=settings)
@@ -141,6 +166,7 @@ def run(args: argparse.Namespace) -> None:
                 # Measured on the record this command actually produced, so a
                 # rebinned or trimmed reduction is judged on what it reduced to.
                 precession=precession_evidence(dataset, dataset_in.field),
+                n_periods=period_count(dataset_in),
             )
             entry = ReducedEntry(
                 run_number=run_number,
@@ -223,7 +249,7 @@ def _render(
         "",
         f"alpha {settings.alpha:.4f} ({settings.alpha_source}), "
         f"deadtime {settings.deadtime}, background {settings.background}, "
-        f"rebin {settings.rebin}",
+        f"rebin {settings.rebin}, period {settings.period or 'default'}",
         f"{len(entries)} run(s) reduced into {workdir_root}"
         + (f" ({reused} reused from cache)" if reused else ""),
     ]

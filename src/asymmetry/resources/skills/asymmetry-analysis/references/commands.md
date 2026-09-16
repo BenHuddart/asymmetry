@@ -23,22 +23,28 @@ Exit codes: 0 success, 1 user error (one line on stderr), 2 internal error
 
 ```
 usage: asymmetry [-h] [--version] [--verbose]
-                 {survey,alpha,reduce,wizard,fit,fit-series,trend,skill,info} ...
+                 {survey,alpha,reduce,integral-scan,wizard,fit,fit-global,fit-series,trend,fourier,skill,info}
+                 ...
 
 Asymmetry — μSR data analysis
 
 positional arguments:
-  {survey,alpha,reduce,wizard,fit,fit-series,trend,skill,info}
+  {survey,alpha,reduce,integral-scan,wizard,fit,fit-global,fit-series,trend,fourier,skill,info}
     survey              List the runs in a folder with their metadata, scans and
                         calibration runs
     alpha               Estimate the forward/backward balance alpha from one run
     reduce              Reduce runs to forward/backward asymmetry and cache them in
                         the work directory
+    integral-scan       Build an integral-asymmetry scan and optionally fit a field-
+                        scan model
     wizard              Screen a reduced run against the fit wizard's candidate models
     fit                 Fit one reduced run with a recipe
+    fit-global          Fit multiple reduced runs simultaneously with shared
+                        parameters
     fit-series          Fit a recipe across a scan of reduced runs, chained along the
                         scan order
     trend               Print (or export) the parameter trend of a stored series
+    fourier             Transform a reduced run and report resolved frequency peaks
     skill               Install, check or remove the asymmetry-analysis agent skill
     info                Show metadata for a data file
 
@@ -84,7 +90,8 @@ options:
 ```
 usage: asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FROM]
                         [--deadtime {off,from_file}] [--rebin REBIN] [--tmin TMIN]
-                        [--tmax TMAX] [--plot] [--json] [--workdir WORKDIR]
+                        [--tmax TMAX] [--period RED|GREEN|N] [--plot] [--json]
+                        [--workdir WORKDIR]
                         folder
 
 positional arguments:
@@ -103,7 +110,48 @@ options:
   --rebin REBIN         Merge this many bins (default: 1)
   --tmin TMIN           Discard points below this time/µs
   --tmax TMAX           Discard points above this time/µs
+  --period RED|GREEN|N  Select one period from a multi-period file. The common two-
+                        period labels are red (period 1) and green (period 2)
   --plot                Write plots/reduced-<run>.png for each run
+  --json                Emit the machine-readable payload
+  --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
+```
+
+## `asymmetry integral-scan`
+
+```
+usage: asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
+                               [--alpha-from ALPHA_FROM] [--period RED|GREEN|N]
+                               [--tmin TMIN] [--tmax TMAX]
+                               [--method {integral,differential}]
+                               [--order {field,temperature,run}] [--model MODEL]
+                               [--initial NAME=VALUE] [--fix NAME=VALUE]
+                               [--baseline MODEL] [--baseline-regions LO:HI,...]
+                               [--plot] [--json] [--workdir WORKDIR]
+                               folder
+
+positional arguments:
+  folder                Directory holding the run files
+
+options:
+  -h, --help            show this help message and exit
+  --runs RUNS           Run numbers in the scan
+  --name NAME           Stored scan name
+  --alpha ALPHA         Fixed detector balance
+  --alpha-from ALPHA_FROM
+                        Estimate alpha on this run
+  --period RED|GREEN|N  Select one acquisition period
+  --tmin TMIN           Integration-window start / µs
+  --tmax TMAX           Integration-window end / µs
+  --method {integral,differential}
+  --order {field,temperature,run}
+  --model MODEL         Optional field-scan expression, e.g. 'LorentzianLCR + Cubic'
+  --initial NAME=VALUE  Fit start (repeatable)
+  --fix NAME=VALUE      Fixed fit value (repeatable)
+  --baseline MODEL      Fit and subtract this baseline model first
+  --baseline-regions LO:HI,...
+                        Non-resonant x ranges used by --baseline
+  --plot                Write plots/<name>.png
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
 ```
@@ -153,6 +201,35 @@ options:
   --plot             Write plots/fit-<run>.png
   --json             Emit the machine-readable payload
   --workdir WORKDIR  Work directory to read (default: ./asymmetry-work)
+```
+
+## `asymmetry fit-global`
+
+```
+usage: asymmetry fit-global [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
+                            [--free NAME] --shared P,Q [--field-param NAME]
+                            [--strategy {joint,profiled,least_squares}] [--name NAME]
+                            [--plot] [--json] [--workdir WORKDIR]
+                            folder
+
+positional arguments:
+  folder                Directory holding the run files
+
+options:
+  -h, --help            show this help message and exit
+  --runs RUNS           Runs in one simultaneous-fit group
+  --recipe RECIPE       Recipe file, or the name of one in the work directory's
+                        recipes/
+  --fix NAME=VALUE      Hold a parameter at a value (repeatable)
+  --free NAME           Release a parameter the recipe holds (repeatable)
+  --shared P,Q          Parameters fitted once across all runs
+  --field-param NAME    Set this parameter from each run's field and hold it
+                        (repeatable)
+  --strategy {joint,profiled,least_squares}
+  --name NAME           Stored fit name
+  --plot                Write one fitted plot per run
+  --json                Emit the machine-readable payload
+  --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
 ```
 
 ## `asymmetry fit-series`
@@ -207,6 +284,39 @@ options:
   --plot             Write plots/<series>-trend-<param>.png for every free parameter
   --json             Emit the machine-readable payload
   --workdir WORKDIR  Work directory to read (default: ./asymmetry-work)
+```
+
+## `asymmetry fourier`
+
+```
+usage: asymmetry fourier [-h] --run RUN [--name NAME]
+                         [--window {none,hann,cosine,gaussian,lorentzian}]
+                         [--padding PADDING] [--tmin TMIN] [--tmax TMAX]
+                         [--phase PHASE] [--filter-tau FILTER_TAU] [--fmin FMIN]
+                         [--fmax FMAX] [--peaks PEAKS] [--plot] [--json]
+                         [--workdir WORKDIR]
+                         folder
+
+positional arguments:
+  folder                Directory holding the run files
+
+options:
+  -h, --help            show this help message and exit
+  --run RUN             Reduced run number
+  --name NAME           Stored spectrum name (default: run-<N>)
+  --window {none,hann,cosine,gaussian,lorentzian}
+  --padding PADDING     Zero-padding factor (default: 4)
+  --tmin TMIN           Transform-window start / µs
+  --tmax TMAX           Transform-window end / µs
+  --phase PHASE         Phase rotation / degrees
+  --filter-tau FILTER_TAU
+                        Time constant for the lorentzian/gaussian window / µs
+  --fmin FMIN           Lowest reported frequency / MHz
+  --fmax FMAX           Highest reported frequency / MHz
+  --peaks PEAKS         Maximum peaks to report
+  --plot                Write plots/<name>.png
+  --json                Emit the machine-readable payload
+  --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
 ```
 
 ## `asymmetry skill`
