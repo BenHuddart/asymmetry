@@ -183,6 +183,7 @@ from .tab_base import (
     _apply_param_table_style,
     _CommitOnTabDelegate,
     _configure_fraction_rows_in_table,
+    _fit_curve_display_bounds,
     _fit_curve_sample_count,
     _fit_domain_mismatch_message,
     _fit_summary,
@@ -3639,7 +3640,7 @@ class GlobalFitTab(FitTabBase):
             for pname in launch.model.param_names:
                 if is_amplitude_parameter(pname):
                     param_dict.setdefault(pname, 1.0)
-            fit_t_min, fit_t_max = _finite_time_span(dataset.time)
+            fit_t_min, fit_t_max = _fit_curve_display_bounds(*_finite_time_span(dataset.time))
             n_samples = _fit_curve_sample_count(launch.model, param_dict, fit_t_min, fit_t_max)
             t_fit = np.linspace(fit_t_min, fit_t_max, n_samples)
             y_fit = grouped_model(t_fit, **param_dict)
@@ -3810,8 +3811,9 @@ class GlobalFitTab(FitTabBase):
             finite_mask = np.isfinite(fit_time)
             if not np.any(finite_mask):
                 continue
-            fit_t_min = float(np.min(fit_time[finite_mask]))
-            fit_t_max = float(np.max(fit_time[finite_mask]))
+            fit_t_min, fit_t_max = _fit_curve_display_bounds(
+                float(np.min(fit_time[finite_mask])), float(np.max(fit_time[finite_mask]))
+            )
             n_samples = _fit_curve_sample_count(
                 fit_model,
                 param_dict,
@@ -3887,13 +3889,9 @@ class GlobalFitTab(FitTabBase):
             if result is None:
                 continue
             param_dict = {parameter.name: parameter.value for parameter in result.parameters}
-            n_samples = _fit_curve_sample_count(
-                model,
-                param_dict,
-                float(dataset.time.min()),
-                float(dataset.time.max()),
-            )
-            t_fit = np.linspace(dataset.time.min(), dataset.time.max(), n_samples)
+            t_min, t_max = _fit_curve_display_bounds(dataset.time.min(), dataset.time.max())
+            n_samples = _fit_curve_sample_count(model, param_dict, t_min, t_max)
+            t_fit = np.linspace(t_min, t_max, n_samples)
             y_fit = model.function(t_fit, **param_dict)
             component_curves = tuple(
                 model.evaluate_components(
@@ -4448,7 +4446,9 @@ class GlobalFitTab(FitTabBase):
                     param_dict.setdefault(pname, 1.0)
             # Every group was fitted over the launch run's span; a member with no
             # run behind it (no active dataset) falls back to its own samples.
-            fit_t_min, fit_t_max = launch.time_span or _finite_time_span(dataset.time)
+            fit_t_min, fit_t_max = _fit_curve_display_bounds(
+                *(launch.time_span or _finite_time_span(dataset.time))
+            )
             n_samples = _fit_curve_sample_count(
                 launch.model,
                 param_dict,

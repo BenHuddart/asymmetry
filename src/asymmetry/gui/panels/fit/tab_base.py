@@ -1232,6 +1232,18 @@ def _fit_curve_sample_count(
     return int(max(base_points, min(max_points, required_points)))
 
 
+def _fit_curve_display_bounds(t_min: float, t_max: float) -> tuple[float, float]:
+    """Widen a fitted curve's plotted x-range down to t=0 when needed.
+
+    Muon time starts at implantation (t=0), but the active fit range commonly
+    starts later — narrowed to skip the prompt peak, or simply seeded from the
+    reduced dataset's first sample. A model describing relaxation from t=0
+    should still be drawn back to it rather than visibly truncated at the
+    first fitted time bin.
+    """
+    return min(float(t_min), 0.0), float(t_max)
+
+
 def _fit_work_pending(panel) -> bool:
     """True while *panel* has a worker fit in flight on its TaskRunner."""
     runner = getattr(panel, "_fit_call_runner", None)

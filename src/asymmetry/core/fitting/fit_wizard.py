@@ -6423,8 +6423,13 @@ def _dense_fit_curves(
     param_values = _curve_parameter_values(
         model, parameters, fallback_parameters=fallback_parameters
     )
-    n_samples = _curve_sample_count(dataset, param_values)
-    fitted_time = np.linspace(float(dataset.time.min()), float(dataset.time.max()), n_samples)
+    # Muon time starts at implantation (t=0); draw the candidate's curve back to
+    # it even when the dataset's own first sample sits later (e.g. a fit range
+    # narrowed to skip the prompt peak), rather than truncating at that sample.
+    t_min = min(float(dataset.time.min()), 0.0)
+    t_max = float(dataset.time.max())
+    n_samples = _curve_sample_count(dataset, param_values, t_min, t_max)
+    fitted_time = np.linspace(t_min, t_max, n_samples)
     fitted_curve = np.asarray(model.function(fitted_time, **param_values), dtype=float)
     component_curves = tuple(
         model.evaluate_components(
@@ -6451,8 +6456,10 @@ def _curve_parameter_values(
     return param_values
 
 
-def _curve_sample_count(dataset: MuonDataset, param_values: dict[str, float]) -> int:
-    duration = float(dataset.time.max() - dataset.time.min()) if dataset.n_points > 1 else 0.0
+def _curve_sample_count(
+    dataset: MuonDataset, param_values: dict[str, float], t_min: float, t_max: float
+) -> int:
+    duration = float(t_max - t_min) if dataset.n_points > 1 else 0.0
     base_points = max(500, dataset.n_points * 4)
     if duration <= 0.0:
         return base_points

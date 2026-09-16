@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table is now the only source of those values: the inherited average is written there once
   when new results arrive, and re-selecting the same runs no longer writes it back over an
   edit. The grouped (multi-group) batch had the same fault and is fixed the same way.
+- **A fitted curve is drawn back to t=0.** The overlay was sampled only across the active fit
+  range, so narrowing the range to skip the prompt peak (or a reduced dataset whose first
+  sample already sits above zero) visibly truncated the curve at that first fitted time
+  instead of showing the model back to implantation. Single, batch, grouped, and Fit Wizard
+  curves now extend their lower sampling bound to `min(fit_start, 0)`.
 
 ## [0.20.0] - 2026-09-15
 
