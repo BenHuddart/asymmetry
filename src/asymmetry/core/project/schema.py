@@ -11,8 +11,24 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 19)
+Current schema (version 20)
 ---------------------------
+
+Version 20 makes the Batch tab a series editor (D1-D5). Each entry in
+``batches`` gains ``recipe`` — the setup that produced it: ``parameters`` (the
+Batch tab's table rows), ``fit_range`` (``{"min", "max"}``, the domain unit
+implied by ``rep_type``), ``seeding`` and ``coadd`` — plus
+``trend_excluded_runs``, the members the user dropped from *this* series'
+trend. Every per-run fit slot is the Single tab's fit alone: ``batch_id``,
+``diverged`` and ``include_in_trend`` are gone, and slots recorded as series
+members (``provenance`` ``"batch"``/``"global"``) are dropped, their results
+already being held by the series. A new top-level ``active_series`` maps each
+representation type to the one series the plot overlays and the Batch tab
+opens. Series identity is now the recipe plus the member set
+(``FitSeries.recipe_identity``): an identical re-run replaces its results in
+place, anything else records a new series, and the old signature-based
+superseding is gone. Tolerant: a malformed series or slot is skipped, never
+raised on. See :func:`_migrate_v19_to_v20`.
 
 Version 19 adds nested *phase* data groups (Global Fit Wizard transitions,
 D1): a phase is a ``data_groups`` entry whose ``parent_group_id`` names the
@@ -208,12 +224,13 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION: int = 19
+CURRENT_SCHEMA_VERSION: int = 20
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -333,6 +350,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 18
     if version == 18:
         migrated = _migrate_v18_to_v19(migrated)
+        version = 19
+    if version == 19:
+        migrated = _migrate_v19_to_v20(migrated)
     return migrated
 
 
@@ -1167,6 +1187,228 @@ def _migrate_v17_to_v18(data: dict) -> dict:
         )
         migrated["plot_state"] = plot_state
 
+    return migrated
+
+
+#: Fit-range provenance strings are written as ``"<lo>–<hi> <unit>"`` by
+#: ``_fit_range_provenance_text`` (GUI). Older records used an ASCII hyphen, so
+#: accept either dash. The unit is implied by the representation's domain and is
+#: not parsed back.
+_FIT_RANGE_PROVENANCE = re.compile(r"\s*([-+0-9.eE]+)\s*[–—-]\s*([-+0-9.eE]+)")
+
+#: A serialised v20 :class:`FitSlot` holding nothing.
+_EMPTY_V20_SLOT: dict = {"model": None, "parameters": [], "result": None, "provenance": "none"}
+
+#: Slot provenance values that mean "this fit belongs to a series, not this run".
+_SERIES_PROVENANCE = ("batch", "global")
+
+
+def _parse_fit_range_provenance(text: object) -> dict:
+    """Parse a stored fit-range provenance string into a recipe ``fit_range``.
+
+    ``"0.100–8.000 µs"`` -> ``{"min": 0.1, "max": 8.0}``. Anything unparsable or
+    absent becomes an unbounded window — "as fitted, unknown" (D11).
+    """
+    if not isinstance(text, str):
+        return {"min": None, "max": None}
+    match = _FIT_RANGE_PROVENANCE.match(text)
+    if match is None:
+        return {"min": None, "max": None}
+    try:
+        return {"min": float(match.group(1)), "max": float(match.group(2))}
+    except ValueError:
+        return {"min": None, "max": None}
+
+
+def _v19_default_slots(data: dict) -> dict:
+    """Index every dataset's default ``fit`` slot by ``(run_number, rep_type)``."""
+    slots: dict[tuple[int, str], dict] = {}
+    for entry in data.get("datasets") or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            run_number = int(entry.get("run_number"))
+        except (TypeError, ValueError):
+            continue
+        reps = entry.get("representations")
+        if not isinstance(reps, dict):
+            continue
+        for rep_key, rep in reps.items():
+            if not isinstance(rep, dict):
+                continue
+            slot = rep.get("fit")
+            if isinstance(slot, dict):
+                slots[(run_number, str(rep_key))] = slot
+    return slots
+
+
+def _v19_member_source_runs(series: dict) -> list[tuple[int, int]]:
+    """Return ``(member_key, source_run)`` for each member of *series*, in order.
+
+    Mirrors ``FitSeries.source_run_for``: a run series' key *is* its run; a
+    detector-group series maps through ``member_source_run``, falling back to
+    decoding the synthetic key (``|key| // 1000``).
+    """
+    raw_map = series.get("member_source_run")
+    source_map: dict[int, int] = {}
+    if isinstance(raw_map, dict):
+        for key, src in raw_map.items():
+            try:
+                source_map[int(key)] = int(src)
+            except (TypeError, ValueError):
+                continue
+    grouped = str(series.get("member_kind", "runs")) == "groups"
+    members: list[tuple[int, int]] = []
+    for raw_key in series.get("member_run_numbers") or []:
+        try:
+            key = int(raw_key)
+        except (TypeError, ValueError):
+            continue
+        if not grouped:
+            members.append((key, key))
+        else:
+            members.append((key, source_map.get(key, abs(key) // 1000)))
+    return members
+
+
+def _v20_series_recipe(series: dict, slots: dict[tuple[int, str], dict]) -> dict:
+    """Seed a series' ``recipe`` from its v19 member slots and results (D11)."""
+    batch_id = series.get("batch_id")
+    rep_key = str(series.get("rep_type", ""))
+    parameters: list = []
+    for _member_key, source_run in _v19_member_source_runs(series):
+        slot = slots.get((source_run, rep_key))
+        if not isinstance(slot, dict) or slot.get("batch_id") != batch_id:
+            continue
+        template = slot.get("parameters")
+        if isinstance(template, list) and template:
+            parameters = [
+                {
+                    "name": str(row.get("name", "")),
+                    "value": row.get("value", 0.0),
+                    "type": row.get("type", ""),
+                    "bounds": row.get("bounds", ""),
+                    # A migrated template is a record of what was fit, not a
+                    # live seed, so nothing is marked as still-seeded.
+                    "seeded": False,
+                }
+                for row in template
+                if isinstance(row, dict)
+            ]
+            break
+    results = series.get("results_by_run")
+    fit_range_text = None
+    if isinstance(results, dict):
+        for summary in results.values():
+            if isinstance(summary, dict):
+                fit_range_text = summary.get("fit_range")
+                break
+    return {
+        "parameters": parameters,
+        "fit_range": _parse_fit_range_provenance(fit_range_text),
+        "seeding": "auto",
+        "coadd": {"mode": "off", "window": 2},
+    }
+
+
+def _v20_trend_excluded(series: dict, slots: dict[tuple[int, str], dict]) -> list[int]:
+    """Member keys whose v19 slot was manually excluded from trending (D11)."""
+    batch_id = series.get("batch_id")
+    rep_key = str(series.get("rep_type", ""))
+    excluded: set[int] = set()
+    for member_key, source_run in _v19_member_source_runs(series):
+        slot = slots.get((source_run, rep_key))
+        if not isinstance(slot, dict) or slot.get("batch_id") != batch_id:
+            continue
+        if slot.get("include_in_trend") is False:
+            excluded.add(member_key)
+    return sorted(excluded)
+
+
+def _migrate_v19_to_v20(data: dict) -> dict:
+    """Migrate schema v19 project state to v20.
+
+    v20 makes the Batch tab a *series editor* (D1-D5): each series carries the
+    recipe that produced it and its own trend exclusions, per-run ``FitSlot``\\ s
+    hold the Single tab's fit alone, and one series per representation is
+    *active*.
+
+    * Every entry in ``batches`` gains a ``recipe`` — parameter rows taken from
+      the first member slot that points at this series, the fit window parsed
+      from the first recorded result's ``fit_range`` provenance string,
+      ``seeding="auto"`` and co-adding off — plus ``trend_excluded_runs`` (the
+      members whose slot carried ``include_in_trend=False``). ``diverged_runs``
+      is dropped: with per-run state reduced to the single fit, divergence
+      cannot occur.
+    * Every representation slot whose ``provenance`` is ``"batch"``/``"global"``
+      is emptied — it was a pointer to results the series already holds — while
+      single/wizard slots keep their model, result and ``ui_state`` and merely
+      lose ``batch_id``/``diverged``/``include_in_trend``.
+    * The top-level ``active_series`` maps each representation to its newest
+      series (last in ``batches`` order).
+
+    Tolerant throughout: a malformed dataset, representation, slot or series is
+    skipped rather than raising, so no project fails to open on migration.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 20
+
+    slots = _v19_default_slots(migrated)
+
+    batches = migrated.get("batches")
+    if isinstance(batches, list):
+        updated: list = []
+        active_series: dict[str, str] = {}
+        for series in batches:
+            if not isinstance(series, dict):
+                updated.append(series)
+                continue
+            entry = dict(series)
+            entry["recipe"] = _v20_series_recipe(entry, slots)
+            entry["trend_excluded_runs"] = _v20_trend_excluded(entry, slots)
+            entry.pop("diverged_runs", None)
+            updated.append(entry)
+            rep_key = entry.get("rep_type")
+            batch_id = entry.get("batch_id")
+            if rep_key and batch_id:
+                active_series[str(rep_key)] = str(batch_id)
+        migrated["batches"] = updated
+        migrated["active_series"] = active_series
+
+    datasets = migrated.get("datasets")
+    if isinstance(datasets, list):
+        for entry in datasets:
+            if not isinstance(entry, dict):
+                continue
+            reps = entry.get("representations")
+            if not isinstance(reps, dict):
+                continue
+            for rep in reps.values():
+                if not isinstance(rep, dict):
+                    continue
+                rep["fit"] = _v20_migrated_slot(rep.get("fit"))
+                projections = rep.get("projection_fits")
+                if isinstance(projections, dict):
+                    for key, slot in projections.items():
+                        projections[key] = _v20_migrated_slot(slot)
+
+    return migrated
+
+
+def _v20_migrated_slot(slot: object) -> dict:
+    """Return the v20 form of one v19 :class:`FitSlot` payload.
+
+    A slot recorded as a series member is emptied (its results live on the
+    series); any other slot keeps everything but the three fields that moved to
+    the series.
+    """
+    if not isinstance(slot, dict):
+        return dict(_EMPTY_V20_SLOT)
+    if str(slot.get("provenance", "none")) in _SERIES_PROVENANCE:
+        return dict(_EMPTY_V20_SLOT)
+    migrated = dict(slot)
+    for key in ("batch_id", "diverged", "include_in_trend"):
+        migrated.pop(key, None)
     return migrated
 
 
