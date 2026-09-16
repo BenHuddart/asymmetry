@@ -14660,7 +14660,9 @@ class MainWindow(QMainWindow):
         place), the bunch factor and the fit range. The entry rides a
         ``weakref.finalize`` on the source so a recycled ``id`` can never
         alias, and the cached crop's metadata is refreshed from the source on
-        every hit (metadata is edited in place, e.g. field overrides).
+        every hit (metadata is edited in place, e.g. field overrides) — with
+        the crop's own ``fit_range`` stamp (see ``PlotPanel.get_fit_dataset``)
+        re-applied afterwards, since the source dataset never carries it.
         """
         if dataset is None:
             return None
@@ -14691,6 +14693,9 @@ class MainWindow(QMainWindow):
             if crop is None:
                 return dataset
             crop.metadata = dict(dataset.metadata)
+            requested_range = key[-1]
+            if requested_range != (None, None):
+                crop.metadata["fit_range"] = requested_range
             return crop
         if analysis_dataset is None:
             analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)

@@ -184,6 +184,7 @@ from .tab_base import (
     _CommitOnTabDelegate,
     _configure_fraction_rows_in_table,
     _fit_curve_sample_count,
+    _fit_curve_time_bounds,
     _fit_domain_mismatch_message,
     _fit_summary,
     _format_bound,
@@ -380,7 +381,9 @@ class FitLaunch:
     already ``with_default_fraction_groups()``-applied, so a handler uses
     ``launch.model.param_names`` directly. ``time_span`` and ``run_number``
     describe the active run of a single grouped fit (the only completion that
-    needs them); the other paths leave them ``None``.
+    needs them); the other paths leave them ``None``. ``time_span`` is the
+    literal fit range stamped onto the active dataset (see
+    ``_fit_curve_time_bounds``), not that dataset's own surviving-bin extent.
     """
 
     model: CompositeModel
@@ -2730,7 +2733,7 @@ class GlobalFitTab(FitTabBase):
             model=grouped_model,
             global_params=tuple(global_params),
             datasets=tuple(grouped_datasets),
-            time_span=_finite_time_span(active.time) if active is not None else None,
+            time_span=_fit_curve_time_bounds(active) if active is not None else None,
             run_number=single_run,
         )
         self._fit_worker = _start_fit_call(
@@ -3877,7 +3880,11 @@ class GlobalFitTab(FitTabBase):
         """Pair each member's result with curves sampled over that member's data.
 
         *datasets* are the batch's launch members, not the live selection: the
-        user is free to select other runs while the fit runs.
+        user is free to select other runs while the fit runs. Each member was
+        individually cropped to the fit range by ``_get_fit_dataset``, which
+        stamps that literal range onto it (see ``_fit_curve_time_bounds``), so
+        the curve is drawn over the range the user actually set rather than
+        the member's own surviving-bin extent.
         """
         results_with_curves = {}
         for dataset in datasets:
@@ -3887,13 +3894,9 @@ class GlobalFitTab(FitTabBase):
             if result is None:
                 continue
             param_dict = {parameter.name: parameter.value for parameter in result.parameters}
-            n_samples = _fit_curve_sample_count(
-                model,
-                param_dict,
-                float(dataset.time.min()),
-                float(dataset.time.max()),
-            )
-            t_fit = np.linspace(dataset.time.min(), dataset.time.max(), n_samples)
+            t_min, t_max = _fit_curve_time_bounds(dataset)
+            n_samples = _fit_curve_sample_count(model, param_dict, t_min, t_max)
+            t_fit = np.linspace(t_min, t_max, n_samples)
             y_fit = model.function(t_fit, **param_dict)
             component_curves = tuple(
                 model.evaluate_components(

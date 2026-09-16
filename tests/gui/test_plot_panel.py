@@ -3790,6 +3790,26 @@ class TestPlotPanel:
         assert np.all(fit_ds.time <= 4.0)
         assert len(fit_ds.time) < len(sample_dataset.time)
 
+    def test_get_fit_dataset_stamps_the_requested_boundary(
+        self, panel: PlotPanel, sample_dataset: MuonDataset
+    ) -> None:
+        """The crop's own extent can sit inside the requested range; the literal
+        boundary survives as metadata so a fit-curve overlay can be drawn from it
+        instead of the nearest surviving bin (see ``FitTabBase._fit_curve_time_bounds``).
+        """
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        panel.plot_dataset(sample_dataset)
+        # No sample bin lands exactly on 0.05 (spacing is 10/99 ≈ 0.101), so the
+        # crop's own time.min() is strictly greater than the requested t_min.
+        panel.set_fit_range(0.05, 4.0)
+
+        fit_ds = panel.get_fit_dataset(sample_dataset)
+        assert fit_ds is not None
+        assert fit_ds.time.min() > 0.05
+        assert fit_ds.metadata["fit_range"] == pytest.approx((0.05, 4.0))
+
     def test_fit_range_can_extend_beyond_data_extent(
         self, panel: PlotPanel, sample_dataset: MuonDataset
     ) -> None:

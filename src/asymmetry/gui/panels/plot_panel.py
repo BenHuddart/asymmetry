@@ -3169,7 +3169,15 @@ class PlotPanel(QWidget):
         t_min, t_max = self.get_fit_range()
         if t_min is None or t_max is None:
             return dataset
-        return dataset.time_range(t_min, t_max)
+        crop = dataset.time_range(t_min, t_max)
+        # Stamp the literal requested boundary: the crop keeps only surviving
+        # bins, so the crop's own time.min()/.max() can sit strictly inside
+        # (t_min, t_max) when no bin lands exactly on an edge. A fit-curve
+        # overlay drawn from the crop's own extent would then look truncated
+        # at that first/last bin instead of starting where the user actually
+        # set the range (see FitTabBase._fit_curve_time_bounds).
+        crop.metadata["fit_range"] = (float(t_min), float(t_max))
+        return crop
 
     def get_full_fit_context(
         self, dataset: MuonDataset | None
