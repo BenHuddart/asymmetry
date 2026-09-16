@@ -1345,7 +1345,8 @@ def _migrate_v19_to_v20(data: dict) -> dict:
       single/wizard slots keep their model, result and ``ui_state`` and merely
       lose ``batch_id``/``diverged``/``include_in_trend``.
     * The top-level ``active_series`` maps each representation to its newest
-      series (last in ``batches`` order).
+      model-bearing series (last in ``batches`` order; computed scans are
+      skipped, having no fit to draw).
 
     Tolerant throughout: a malformed dataset, representation, slot or series is
     skipped rather than raising, so no project fails to open on migration.
@@ -1370,7 +1371,9 @@ def _migrate_v19_to_v20(data: dict) -> dict:
             updated.append(entry)
             rep_key = entry.get("rep_type")
             batch_id = entry.get("batch_id")
-            if rep_key and batch_id:
+            # A computed (model-less) scan has no fit to draw, so it never
+            # becomes the active series: the newest model-bearing one does.
+            if rep_key and batch_id and entry.get("canonical_model") is not None:
                 active_series[str(rep_key)] = str(batch_id)
         migrated["batches"] = updated
         migrated["active_series"] = active_series

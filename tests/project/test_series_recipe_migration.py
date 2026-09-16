@@ -269,6 +269,21 @@ def test_computed_scan_series_gets_an_empty_recipe():
     assert model.batch("scan-1").recipe == recipe
 
 
+def test_computed_scan_never_becomes_the_active_series():
+    """A scan has no fit to draw, so the newest *model-bearing* series is active."""
+    scan = _series(
+        "scan-1",
+        canonical_model=None,
+        param_roles={},
+        results_by_run={"10": {"success": True, "parameters": {"Integral asymmetry": 0.1}}},
+    )
+    result = migrate_to_current(_v19_state(datasets=[_dataset(10)], batches=[_series("b1"), scan]))
+    assert result["active_series"] == {_FB: "b1"}
+
+    only_scan = migrate_to_current(_v19_state(datasets=[_dataset(10)], batches=[scan]))
+    assert only_scan["active_series"] == {}
+
+
 # ── (e) a member_kind="groups" series ────────────────────────────────────────
 
 
