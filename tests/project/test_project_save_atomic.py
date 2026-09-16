@@ -32,6 +32,16 @@ def test_first_save_creates_no_backup(tmp_path):
     assert loaded["marker"] == "first"
 
 
+def test_backup_false_overwrites_without_keeping_a_generation(tmp_path):
+    """An autosave snapshot is itself a backup, so it keeps no ``.bak`` of its own."""
+    target = tmp_path / "proj.autosave.asymp"
+    save_project(_state("one"), target, backup=False)
+    save_project(_state("two"), target, backup=False)
+    assert json.loads(target.read_text())["marker"] == "two"
+    assert not (tmp_path / "proj.autosave.asymp.bak").exists()
+    assert list(tmp_path.iterdir()) == [target]
+
+
 def test_second_save_backs_up_previous_contents(tmp_path):
     path = tmp_path / "project.asymp"
 

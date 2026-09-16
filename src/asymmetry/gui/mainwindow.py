@@ -15723,7 +15723,7 @@ class MainWindow(QMainWindow):
         path = self._autosave_path()
         self._project_save_active = True
         self._tasks.start(
-            lambda w, state=state, path=path: save_project(state, path),
+            lambda w, state=state, path=path: save_project(state, path, backup=False),
             on_finished=lambda _result, path=path: self._on_autosave_finished(path),
             on_error=self._on_autosave_error,
         )

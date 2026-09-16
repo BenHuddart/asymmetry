@@ -145,9 +145,10 @@ def test_autosave_timeout_writes_snapshot_and_leaves_session_unchanged(
 
     recorded: list[str] = []
 
-    def _record(state, path):
+    def _record(state, path, **kwargs):
         recorded.append(str(path))
-        core_save_project(state, path)
+        assert kwargs == {"backup": False}
+        core_save_project(state, path, **kwargs)
 
     monkeypatch.setattr(mw_module, "save_project", _record)
 

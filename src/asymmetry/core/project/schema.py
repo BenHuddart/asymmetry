@@ -1670,7 +1670,7 @@ def load_project(path: str | Path) -> dict:
     return migrated
 
 
-def save_project(state: dict, path: str | Path) -> None:
+def save_project(state: dict, path: str | Path, *, backup: bool = True) -> None:
     """Write a project state dict to a JSON file, atomically (D9).
 
     The JSON is serialised to a temporary file in the destination's directory,
@@ -1678,7 +1678,9 @@ def save_project(state: dict, path: str | Path) -> None:
     crash or exception at any point up to the replace leaves the previous
     file untouched and removes the temp file. If a file already exists at
     ``path``, its previous contents are kept alongside the new one as
-    ``<path>.bak`` (one generation: an older ``.bak`` is overwritten).
+    ``<path>.bak`` (one generation: an older ``.bak`` is overwritten) unless
+    *backup* is false — the autosave snapshot is itself a backup, so it keeps
+    none of its own.
 
     Parameters
     ----------
@@ -1699,7 +1701,7 @@ def save_project(state: dict, path: str | Path) -> None:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        if target.exists():
+        if backup and target.exists():
             os.replace(target, target.with_name(target.name + ".bak"))
         os.replace(tmp_path, target)
     except BaseException:
