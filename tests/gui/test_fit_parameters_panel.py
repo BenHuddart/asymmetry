@@ -2682,7 +2682,9 @@ def test_series_pill_elides_a_long_short_name(qapp: QApplication) -> None:
     panel._rebuild_group_buttons()
 
     text = panel._group_button_map["s0"].text()
-    assert text.endswith("…")
+    # Elided in the middle so the tail (a default name's fit range) survives.
+    assert "…" in text
+    assert text.endswith("extra")
     assert len(text) < len("groups 100000–100031 extra")
     # The full name — not the truncated short one — is what hover reveals.
     assert (

@@ -1908,8 +1908,10 @@ class FitParametersPanel(QWidget):
         # Same rule as the y chips: the pill is a short handle capped at a
         # character count, and the full name lives on the tooltip. A pill that
         # grew with the series name was what pushed the dock past 13 inches.
+        # Elide in the middle: a default name is "<model> · <range>", and the
+        # range at the end is what tells two series in one section apart.
         pill_text = strip_metrics.elidedText(
-            group.short_name, Qt.TextElideMode.ElideRight, metrics.char_width(_CHIP_MAX_CHARS)
+            group.short_name, Qt.TextElideMode.ElideMiddle, metrics.char_width(_CHIP_MAX_CHARS)
         )
         button = QPushButton(f"{pill_text} ⚠" if is_stale else pill_text)
         if group.phase is not None:
