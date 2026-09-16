@@ -1209,6 +1209,10 @@ class FitPanel(QWidget):
         """Drop the Batch tab to a draft (see ``GlobalFitTab.open_draft``)."""
         self._global_tab.open_draft(**context)
 
+    def duplicate_open_series(self) -> None:
+        """Copy the Batch tab's open series into a draft beside it (D7)."""
+        self._global_tab.duplicate_open_series()
+
     def note_series_recorded(self, series, *, display_name: str, replaced: bool) -> None:
         """Tell the Batch tab which series its completed run recorded (D3)."""
         self._global_tab.note_series_recorded(series, display_name=display_name, replaced=replaced)

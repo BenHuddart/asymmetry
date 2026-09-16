@@ -334,7 +334,7 @@ def test_duplicate_makes_a_draft_named_after_its_source(mw):
     source_recipe = tab.current_recipe()
     source_name = tab._selector_name()
 
-    tab._duplicate_open_series()
+    tab.duplicate_open_series()
 
     assert mw._fit_panel.open_series_id() is None
     assert _status_tag(mw) == "Draft"

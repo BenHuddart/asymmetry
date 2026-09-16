@@ -1213,7 +1213,7 @@ class GlobalFitTab(FitTabBase):
         self._duplicate_series_btn.setToolTip(
             "Start a draft with this series' setup and members, leaving it untouched."
         )
-        self._duplicate_series_btn.clicked.connect(self._duplicate_open_series)
+        self._duplicate_series_btn.clicked.connect(self.duplicate_open_series)
         self._rename_series_btn = QPushButton("Rename…")
         self._rename_series_btn.setStyleSheet(build_segmented_button_qss())
         self._rename_series_btn.clicked.connect(self._rename_open_series)
@@ -1386,8 +1386,12 @@ class GlobalFitTab(FitTabBase):
         )
         self._refresh_series_row()
 
-    def _duplicate_open_series(self) -> None:
-        """Copy the open series into a draft, leaving the recorded one alone."""
+    def duplicate_open_series(self) -> None:
+        """Copy the open series into a draft, leaving the recorded one alone.
+
+        The draft keeps the recipe, the members and the binding, and names
+        itself after its source until a run records it (D7, *Copy of current*).
+        """
         source = self._selector_name()
         self._results_card.set_notice("")
         self._become_draft(f"{source} (copy)")
@@ -1713,7 +1717,7 @@ class GlobalFitTab(FitTabBase):
         if chosen is selection_action:
             self.series_new_from_selection_requested.emit()
         elif chosen is copy_action:
-            self._duplicate_open_series()
+            self.duplicate_open_series()
         elif chosen in group_actions:
             self.series_new_from_group_requested.emit(group_actions[chosen])
 
