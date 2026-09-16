@@ -145,8 +145,20 @@ class _StubPlotPanel(QWidget):
     def plot_fit(self, *_args, **_kwargs):
         return
 
-    def set_global_fits(self, _curves):
+    def set_global_fits(self, _curves, *, fit_id="single"):
         return
+
+    def set_shown_fits(self, _run_number, _fit_ids):
+        return
+
+    def set_active_fit_id(self, _fit_id):
+        return
+
+    def has_fits_for_series(self, _fit_id):
+        return False
+
+    def clear_fits_for_series(self, _fit_id):
+        return 0
 
     def get_analysis_dataset(self, dataset):
         if dataset is None or self.factor <= 1:
@@ -159,7 +171,7 @@ class _StubPlotPanel(QWidget):
             run=dataset.run,
         )
 
-    def get_fit_dataset(self, dataset):
+    def get_fit_dataset(self, dataset, fit_range=None):
         return dataset
 
     def get_fit_range(self):

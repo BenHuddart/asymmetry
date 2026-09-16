@@ -2354,8 +2354,8 @@ class TestPlotPanel:
         panel.plot_fit(t, np.zeros_like(t), label="Fit")
 
         # The fit is keyed under the selected projection (P_y), not P_x.
-        assert (9302, "P_y") in panel._fit_curves_by_key
-        assert (9302, "P_x") not in panel._fit_curves_by_key
+        assert (9302, "P_y", "single") in panel._fit_curves_by_key
+        assert (9302, "P_x", "single") not in panel._fit_curves_by_key
 
     def test_axis_key_for_dataset_passes_through_tf_label(self, panel: PlotPanel) -> None:
         """A transverse-field projection label keys the dataset's fit storage,
@@ -2401,8 +2401,8 @@ class TestPlotPanel:
 
         panel.plot_fit(t, np.zeros_like(t), label="Fit")
 
-        assert (9303, "Fwd-Back") in panel._fit_curves_by_key
-        assert (9303, "Top-Bottom") not in panel._fit_curves_by_key
+        assert (9303, "Fwd-Back", "single") in panel._fit_curves_by_key
+        assert (9303, "Top-Bottom", "single") not in panel._fit_curves_by_key
 
     def test_plot_fit_keys_under_the_explicit_fitted_run_in_multi_run_overlay(
         self, panel: PlotPanel
@@ -2442,8 +2442,8 @@ class TestPlotPanel:
         # The user fitted the FIRST run (501); the caller passes it explicitly.
         panel.plot_fit(t, np.zeros_like(t), label="Fit", run_number=501)
 
-        assert (501, "P_y") in panel._fit_curves_by_key
-        assert (502, "P_y") not in panel._fit_curves_by_key
+        assert (501, "P_y", "single") in panel._fit_curves_by_key
+        assert (502, "P_y", "single") not in panel._fit_curves_by_key
         assert panel._fit_curve_run_number == 501
 
     def test_plot_fit_axis_key_follows_the_fitted_run_in_mixed_axis_overlay(
@@ -2477,8 +2477,8 @@ class TestPlotPanel:
         # Fit the first run (601, P_x); its key must use P_x, not the panel's P_y.
         panel.plot_fit(t, np.zeros_like(t), label="Fit", run_number=601)
 
-        assert (601, "P_x") in panel._fit_curves_by_key
-        assert (601, "P_y") not in panel._fit_curves_by_key
+        assert (601, "P_x", "single") in panel._fit_curves_by_key
+        assert (601, "P_y", "single") not in panel._fit_curves_by_key
 
     def test_empty_projection_subplot_uses_neutral_y_range(self, panel: PlotPanel) -> None:
         """An all-NaN projection subplot gets a neutral asymmetry range, not (0, 1).
@@ -2942,10 +2942,10 @@ class TestPlotPanel:
         panel.plot_dataset(ds_py)
         panel.plot_fit(t, fit_py, label="Fit Py")
 
-        assert (9901, "P_x") in panel._fit_curves_by_key
-        assert (9901, "P_y") in panel._fit_curves_by_key
-        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_x")][1], fit_px)
-        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_y")][1], fit_py)
+        assert (9901, "P_x", "single") in panel._fit_curves_by_key
+        assert (9901, "P_y", "single") in panel._fit_curves_by_key
+        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_x", "single")][1], fit_px)
+        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_y", "single")][1], fit_py)
 
     def test_all_mode_axis_plotting_uses_matching_axis_fit_curve(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -2973,8 +2973,8 @@ class TestPlotPanel:
         fit_px = 0.21 * np.exp(-0.27 * t)
         fit_py = 0.14 * np.exp(-0.20 * t)
 
-        panel._fit_curves_by_key[(9902, "P_x")] = (t, fit_px, "Fit Px")
-        panel._fit_curves_by_key[(9902, "P_y")] = (t, fit_py, "Fit Py")
+        panel._fit_curves_by_key[(9902, "P_x", "single")] = (t, fit_px, "Fit Px")
+        panel._fit_curves_by_key[(9902, "P_y", "single")] = (t, fit_py, "Fit Py")
 
         ax_px = _FakeAxis()
         ax_py = _FakeAxis()
@@ -3008,7 +3008,7 @@ class TestPlotPanel:
         )
 
         fit_pz = 0.19 * np.exp(-0.22 * t)
-        panel._fit_curves_by_key[(9903, "P_z")] = (t, fit_pz, "Fit Pz")
+        panel._fit_curves_by_key[(9903, "P_z", "single")] = (t, fit_pz, "Fit Pz")
         # Legacy run-only cache should not override axis-specific separation.
         panel._fit_curves[9903] = (t, fit_pz, "Fit")
 
@@ -3489,10 +3489,10 @@ class TestPlotPanel:
         fit_px = np.array([0.2, 0.15, 0.1], dtype=float)
         fit_py = np.array([0.18, 0.12, 0.08], dtype=float)
 
-        panel._fit_curves_by_key[(1101, "P_x")] = (t, fit_px, "Fit Px")
-        panel._fit_curves_by_key[(1101, "P_y")] = (t, fit_py, "Fit Py")
-        panel._fit_components_by_key[(1101, "P_x")] = [("Component", fit_px)]
-        panel._fit_metadata_by_key[(1101, "P_x")] = {"fit_function": "A0*exp(-lambda*t)"}
+        panel._fit_curves_by_key[(1101, "P_x", "single")] = (t, fit_px, "Fit Px")
+        panel._fit_curves_by_key[(1101, "P_y", "single")] = (t, fit_py, "Fit Py")
+        panel._fit_components_by_key[(1101, "P_x", "single")] = [("Component", fit_px)]
+        panel._fit_metadata_by_key[(1101, "P_x", "single")] = {"fit_function": "A0*exp(-lambda*t)"}
 
         state = panel.get_state()
 
@@ -3501,11 +3501,14 @@ class TestPlotPanel:
             pytest.skip("matplotlib not available")
         restored.restore_state(state, dataset=None)
 
-        assert (1101, "P_x") in restored._fit_curves_by_key
-        assert (1101, "P_y") in restored._fit_curves_by_key
-        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_x")][1], fit_px)
-        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_y")][1], fit_py)
-        assert restored._fit_metadata_by_key[(1101, "P_x")]["fit_function"] == "A0*exp(-lambda*t)"
+        assert (1101, "P_x", "single") in restored._fit_curves_by_key
+        assert (1101, "P_y", "single") in restored._fit_curves_by_key
+        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_x", "single")][1], fit_px)
+        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_y", "single")][1], fit_py)
+        assert (
+            restored._fit_metadata_by_key[(1101, "P_x", "single")]["fit_function"]
+            == "A0*exp(-lambda*t)"
+        )
 
     def test_label_field_selection_is_tracked_per_data_group(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:

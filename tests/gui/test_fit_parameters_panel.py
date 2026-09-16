@@ -886,7 +886,25 @@ def test_long_parameter_name_does_not_widen_the_rail(panel: FitParametersPanel) 
     assert card(panel, long_name)._name_label.minimumSizeHint().width() == 0
 
 
-def test_delete_group_fits_removes_group_and_emits_run_numbers(
+def _accept_message_box(
+    monkeypatch: pytest.MonkeyPatch, *, accept: bool = True
+) -> list[tuple[str, str]]:
+    """Answer the series-delete confirmation without showing it.
+
+    Returns the (text, informative text) of each box raised, so a caller can
+    assert on what the prompt actually said.
+    """
+    shown: list[tuple[str, str]] = []
+
+    def _exec(box: QMessageBox) -> QMessageBox.StandardButton:
+        shown.append((box.text(), box.informativeText()))
+        return QMessageBox.StandardButton.Ok if accept else QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(QMessageBox, "exec", _exec)
+    return shown
+
+
+def test_delete_group_fits_removes_only_that_series(
     qapp: QApplication,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -935,22 +953,24 @@ def test_delete_group_fits_removes_group_and_emits_run_numbers(
     panel._rebuild_group_buttons()
     panel._set_selected_group_ids(["g1"], emit=False)
 
-    emitted: list[tuple[str, object]] = []
-    panel.delete_group_fits_requested.connect(
-        lambda gid, run_numbers: emitted.append((gid, run_numbers))
-    )
+    emitted: list[str] = []
+    panel.series_delete_requested.connect(emitted.append)
 
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *_a, **_k: QMessageBox.StandardButton.Ok,
-    )
-
+    shown = _accept_message_box(monkeypatch)
     panel._delete_group_fits("g1")
 
     assert "g1" not in panel._group_fit_results
     assert panel._active_group_id == "g2"
-    assert emitted == [("g1", [101, 102])]
+    # Only the series id travels: what else to clear is the main window's call
+    # (D6 — other series and the runs' single fits are kept).
+    assert emitted == ["g1"]
+    assert shown == [
+        (
+            'Delete series "Group 1"?',
+            "Removes this series and its trend. Other series and single fits on "
+            "these runs are kept.",
+        )
+    ]
 
 
 def test_background_labels_use_subscript_formatting() -> None:
@@ -2825,7 +2845,7 @@ def test_context_menu_delete_confirm_emits_signal(
     emitted: list[str] = []
     panel.series_delete_requested.connect(lambda gid: emitted.append(gid))
 
-    monkeypatch.setattr(QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Ok)
+    _accept_message_box(monkeypatch)
     panel._exec_menu = lambda menu, pos: menu.actions()[3]  # type: ignore[method-assign]
     panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
     assert emitted == ["g1"]
@@ -2838,9 +2858,7 @@ def test_context_menu_delete_cancel_emits_nothing(
     emitted: list = []
     panel.series_delete_requested.connect(lambda *a: emitted.append(a))
 
-    monkeypatch.setattr(
-        QMessageBox, "question", lambda *_a, **_kw: QMessageBox.StandardButton.Cancel
-    )
+    _accept_message_box(monkeypatch, accept=False)
     panel._exec_menu = lambda menu, pos: menu.actions()[3]  # type: ignore[method-assign]
     panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
     assert emitted == []

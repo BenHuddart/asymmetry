@@ -1,7 +1,6 @@
 """Phase 4: per-series trend surface and representation-aware panel.
 
 Tests cover:
-- Group-aware divergence / inclusion in ProjectModel.
 - FitParametersPanel.load_representation_series (pull-based refresh).
 - MainWindow._refresh_trend_panel after batch/grouped fits.
 - Representation change swaps the trend-panel content.
@@ -27,7 +26,6 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.representation import FitSeries, FitSlot, RepresentationType
-from asymmetry.core.representation.project_model import ProjectModel
 from asymmetry.gui.mainwindow import MainWindow
 from asymmetry.gui.ui_manager import UI_SCALE_SETTINGS_KEY
 
@@ -85,120 +83,6 @@ def _result(rchi: float = 0.5, **param_kw) -> FitResult:
 
 
 _CURVE = (np.array([0.0, 0.3]), np.array([0.1, 0.05]))
-
-
-# ---------------------------------------------------------------------------
-# ProjectModel group-aware divergence
-# ---------------------------------------------------------------------------
-
-
-class TestGroupAwareDivergence:
-    """refresh_divergence handles synthetic group-member keys."""
-
-    def _group_series(self, source_run: int = 42) -> FitSeries:
-        """Return a group FitSeries for source_run with 2 synthetic members."""
-        k1 = -((source_run * 1000) + 1)
-        k2 = -((source_run * 1000) + 2)
-        canonical = {"component_names": ["Exponential"], "operators": []}
-        series = FitSeries(
-            "test-series",
-            RepresentationType.TIME_GROUPS,
-            member_kind="groups",
-            member_run_numbers=[k1, k2],
-            member_source_run={k1: source_run, k2: source_run},
-            canonical_model=canonical,
-        )
-        return series
-
-    def test_non_diverged_members_stay_clear(self):
-        pm = ProjectModel()
-        series = self._group_series(source_run=42)
-        pm.add_batch(series)
-
-        # Source run 42 has a matching model.
-        rep = pm.ensure_dataset(42).ensure(RepresentationType.TIME_GROUPS)
-        rep.fit = FitSlot(model=series.canonical_model)
-
-        pm.refresh_divergence()
-
-        for k in series.member_run_numbers:
-            assert not series.is_diverged(k), f"member {k} should not be diverged"
-
-    def test_mismatched_model_marks_all_synthetic_members_diverged(self):
-        pm = ProjectModel()
-        series = self._group_series(source_run=42)
-        pm.add_batch(series)
-
-        # Source run 42 has a *different* model.
-        rep = pm.ensure_dataset(42).ensure(RepresentationType.TIME_GROUPS)
-        rep.fit = FitSlot(
-            model={"component_names": ["Gaussian"], "operators": []},
-        )
-
-        pm.refresh_divergence()
-
-        for k in series.member_run_numbers:
-            assert series.is_diverged(k), f"member {k} should be diverged"
-        # All diverged → excluded from trend by default.
-        assert not rep.fit.include_in_trend
-
-    def test_reconverged_model_clears_divergence(self):
-        pm = ProjectModel()
-        series = self._group_series(source_run=42)
-        # Pre-mark both as diverged.
-        for k in series.member_run_numbers:
-            series.mark_diverged(k)
-        pm.add_batch(series)
-
-        rep = pm.ensure_dataset(42).ensure(RepresentationType.TIME_GROUPS)
-        rep.fit = FitSlot(model=series.canonical_model, diverged=True)
-        rep.fit.include_in_trend = False
-
-        pm.refresh_divergence()
-
-        for k in series.member_run_numbers:
-            assert not series.is_diverged(k)
-        assert rep.fit.include_in_trend is True
-
-    def test_trend_runs_for_group_batch_returns_synthetic_keys(self):
-        pm = ProjectModel()
-        series = self._group_series(source_run=42)
-        pm.add_batch(series)
-
-        rep = pm.ensure_dataset(42).ensure(RepresentationType.TIME_GROUPS)
-        rep.fit = FitSlot(model=series.canonical_model)
-
-        trend = pm.trend_runs_for_batch(series)
-        assert set(trend) == set(series.member_run_numbers)
-
-    def test_trend_runs_excludes_when_source_run_excluded(self):
-        pm = ProjectModel()
-        series = self._group_series(source_run=42)
-        pm.add_batch(series)
-
-        rep = pm.ensure_dataset(42).ensure(RepresentationType.TIME_GROUPS)
-        rep.fit = FitSlot(model=series.canonical_model)
-        rep.fit.include_in_trend = False  # Manually excluded.
-
-        trend = pm.trend_runs_for_batch(series)
-        assert trend == []
-
-    def test_set_member_trend_inclusion_maps_to_source_run(self):
-        pm = ProjectModel()
-        series = self._group_series(source_run=42)
-        pm.add_batch(series)
-
-        rep = pm.ensure_dataset(42).ensure(RepresentationType.TIME_GROUPS)
-        rep.fit = FitSlot(model=series.canonical_model)
-
-        # Disable via a synthetic member key.
-        k1 = series.member_run_numbers[0]
-        pm.set_member_trend_inclusion(series.batch_id, k1, False)
-        assert rep.fit.include_in_trend is False
-
-        # Re-enable.
-        pm.set_member_trend_inclusion(series.batch_id, k1, True)
-        assert rep.fit.include_in_trend is True
 
 
 # ---------------------------------------------------------------------------
@@ -698,97 +582,6 @@ class TestDataBrowserHighlighting:
 class TestReviewFindings:
     """Regression tests for bugs identified in the code review."""
 
-    def test_group_divergence_heterogeneous_keys_preserves_manual_reinclusion(self):
-        """Fix #1: _refresh_group_series_divergence reads was_diverged before mutating.
-
-        When two synthetic keys for the same source run have heterogeneous prior
-        divergence states, the first-time-exclusion guard must not override a
-        manual re-inclusion set by the user.
-        """
-        pm = ProjectModel()
-        # Two synthetic keys for source run 42.
-        k1, k2 = -42001, -42002
-        canonical = {"component_names": ["Exponential"], "operators": []}
-        series = FitSeries(
-            "s",
-            RepresentationType.TIME_GROUPS,
-            member_kind="groups",
-            member_run_numbers=[k1, k2],
-            member_source_run={k1: 42, k2: 42},
-            canonical_model=canonical,
-        )
-        # k1 is already diverged; k2 is not (heterogeneous state after a partial
-        # persistence round-trip).
-        series.mark_diverged(k1)
-        pm.add_batch(series)
-
-        rep = pm.ensure_dataset(42).ensure(RepresentationType.TIME_GROUPS)
-        # Model still doesn't match (divergence persists).
-        rep.fit = FitSlot(model={"component_names": ["Gaussian"], "operators": []})
-        # User manually re-included the run despite it being diverged.
-        rep.fit.include_in_trend = True
-
-        pm.refresh_divergence()
-
-        # Both keys should be marked diverged (model still wrong).
-        assert series.is_diverged(k1)
-        assert series.is_diverged(k2)
-        # The manual re-inclusion must NOT have been overwritten by the
-        # k2 (was_diverged=False) path — fix ensures was_any_diverged=True
-        # so the first-time-exclusion guard is skipped.
-        assert rep.fit.include_in_trend is True
-
-    def test_grouped_fit_calls_refresh_divergence(self, mw, monkeypatch):
-        """Fix #2: _record_grouped_fit_series calls refresh_divergence at the end.
-
-        A single grouped fit records no series, but it still writes the source
-        run's grouped FitSlot and refreshes divergence so any earlier series that
-        included this run is re-evaluated against the new fit.
-        """
-        mw._data_browser.add_dataset(_dataset(42))
-        mw._plot_workspace.set_available_views(["fb_asymmetry", "groups"])
-        mw._plot_workspace.set_active_view("groups")
-        monkeypatch.setattr(
-            mw._multi_group_fit_window,
-            "get_grouped_state",
-            lambda: {
-                "composite_model": {"component_names": ["Exponential"], "operators": []},
-                "param_roles": {"Lambda": "local"},
-                "nuisance_params": [],
-            },
-        )
-        grouped_datasets = [
-            MuonDataset(
-                np.array([0.0, 0.1]),
-                np.array([1.0, 1.0]),
-                np.array([1.0, 1.0]),
-                {"run_number": -42001, "source_run_number": 42},
-                None,
-            ),
-        ]
-        results = {-42001: (_result(), _CURVE, [])}
-
-        # Plant a stale series (same Exponential model) pre-marked diverged.
-        stale = FitSeries(
-            "old-series",
-            RepresentationType.TIME_GROUPS,
-            member_kind="groups",
-            member_run_numbers=[-42001],
-            member_source_run={-42001: 42},
-            canonical_model={"component_names": ["Exponential"], "operators": []},
-        )
-        stale.mark_diverged(-42001)
-        mw._project_model.add_batch(stale)
-
-        batch_id = mw._record_grouped_fit_series(grouped_datasets, results)
-
-        # The single fit records no new series.
-        assert batch_id is None
-        assert set(mw._project_model.batches) == {"old-series"}
-        # refresh_divergence ran: run 42's FitSlot now carries the matching
-        # Exponential model, so the stale series' diverged flag is cleared.
-        assert not stale.is_diverged(-42001)
-
     def test_build_series_rows_frequency_uses_spectra_cache(self, mw, monkeypatch):
         """Fix #3: _build_series_rows uses _frequency_spectra_by_run for FFT series."""
         # Populate a fake frequency spectrum with known field/temperature.
@@ -943,12 +736,13 @@ class TestSeriesRenameAndLabel:
         mw._on_series_rename_requested(series.batch_id, "Field sweep")
         mw._on_series_rename_requested(series.batch_id, "")
         assert mw._project_model.batch(series.batch_id).label is None
-        # Clearing the label reverts to the unified default (<model> · <members>),
-        # not a bare positional "Series N": the pill drops to the short run range
+        # Clearing the label reverts to the unified default (D10: "<model> ·
+        # <fit range>", the window omitted when the recipe leaves it open), not
+        # a bare positional "Series N": the pill drops to the short run range
         # and the full default name moves to the tooltip.
         button = mw._fit_parameters_panel._group_button_map.get(series.batch_id)
         assert button is not None and button.text() == "10–11"
-        assert button.toolTip().startswith("Exponential · 10–11\n")
+        assert button.toolTip().startswith("Exponential\n")
 
     def test_add_to_series_chooser_shows_user_label(self, mw, monkeypatch):
         from PySide6.QtWidgets import QInputDialog
@@ -956,7 +750,7 @@ class TestSeriesRenameAndLabel:
         series = _setup_one_series(mw, monkeypatch)
         mw._on_series_rename_requested(series.batch_id, "My named series")
         # Load a third dataset with a single fit, compatible model.
-        from asymmetry.core.representation import FitSlot, RepresentationType
+        from asymmetry.core.representation import RepresentationType
 
         mw._data_browser.add_dataset(_dataset(99))
         rep = mw._project_model.ensure_dataset(99).ensure(RepresentationType.TIME_FB_ASYMMETRY)

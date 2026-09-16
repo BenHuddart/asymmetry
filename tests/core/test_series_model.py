@@ -8,11 +8,7 @@ from asymmetry.core.representation import RepresentationType
 from asymmetry.core.representation.base import FitSlot
 from asymmetry.core.representation.group import DATA_GROUP_KINDS, DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
-from asymmetry.core.representation.series import (
-    FitSeries,
-    canonical_model_matches,
-    default_recipe,
-)
+from asymmetry.core.representation.series import FitSeries, default_recipe
 
 _FB = RepresentationType.TIME_FB_ASYMMETRY
 
@@ -255,26 +251,6 @@ def test_recipe_identity_differs_on_model_roles_and_representation():
 def test_recipe_identity_is_stable_across_a_round_trip():
     series = _identity_series()
     assert FitSeries.from_dict(series.to_dict()).recipe_identity() == series.recipe_identity()
-
-
-# ── canonical model comparison ──────────────────────────────────────────────
-
-
-def test_canonical_model_matches_normalised():
-    a = CompositeModel(["Exponential", "Constant"]).to_dict()
-    b = CompositeModel(["Exponential", "Constant"]).to_dict()
-    assert canonical_model_matches(a, b)
-
-
-def test_canonical_model_mismatch_on_different_components():
-    a = CompositeModel(["Exponential", "Constant"]).to_dict()
-    b = CompositeModel(["Gaussian", "Constant"]).to_dict()
-    assert not canonical_model_matches(a, b)
-
-
-def test_canonical_model_matches_handles_none():
-    assert canonical_model_matches(None, None)
-    assert not canonical_model_matches(None, {"component_names": ["Exponential"]})
 
 
 # ── persistence ─────────────────────────────────────────────────────────────
