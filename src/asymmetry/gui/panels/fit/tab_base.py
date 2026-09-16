@@ -1241,14 +1241,20 @@ def _fit_curve_time_bounds(dataset: MuonDataset) -> tuple[float, float]:
     *surviving* first/last bin can sit strictly inside it when no bin lands
     exactly on an edge (e.g. a range set to start at 0 with the first bin at
     0.01 µs), which then falsely looks like the fit was never asked to start
-    at t=0. Falls back to the dataset's own extent when no range was active
-    (the whole dataset is being fitted) or the dataset was never produced by
-    that crop (e.g. built directly in a test).
+    at t=0. Falls back to the dataset's own *finite* extent when no range was
+    active (the whole dataset is being fitted) or the dataset was never
+    produced by that crop (e.g. built directly in a test) — a grouped count
+    domain can carry non-finite padding at the ends (mirrors
+    ``GlobalFitTab._finite_time_span``).
     """
     fit_range = dataset.metadata.get("fit_range")
     if fit_range is not None:
         return float(fit_range[0]), float(fit_range[1])
-    return float(dataset.time.min()), float(dataset.time.max())
+    time = np.asarray(dataset.time, dtype=float)
+    finite = time[np.isfinite(time)]
+    if finite.size:
+        return float(finite.min()), float(finite.max())
+    return float(time.min()), float(time.max())
 
 
 def _fit_work_pending(panel) -> bool:

@@ -127,6 +127,27 @@ class TestFitDatasetMemo:
         assert mainwindow._get_fit_dataset(a) is first
         assert first.metadata["field"] == pytest.approx(4321.0)
 
+    def test_cache_hit_keeps_the_requested_fit_range_stamp(self, mainwindow: MainWindow) -> None:
+        """A memo hit refreshes ``crop.metadata`` from the source (see
+        ``test_metadata_edits_reach_the_cached_crop``), which would otherwise wipe the
+        literal fit-range boundary ``PlotPanel.get_fit_dataset`` stamps on first build —
+        the source dataset never carries that key. Regression for a fit-curve overlay
+        silently reverting to the crop's own (surviving-bin) extent after any second
+        request for the same crop, which happens routinely on a run switch (see the
+        module docstring).
+        """
+        a, _b = _load_two_runs(mainwindow)
+        # No bin lands on 0.02 (bins are multiples of 0.05), so the crop's own
+        # time.min() is strictly greater than the requested t_min.
+        mainwindow._plot_panel.set_fit_range(0.02, 1.0)
+        first = mainwindow._get_fit_dataset(a)
+        assert first.time.min() > 0.02
+        assert first.metadata["fit_range"] == pytest.approx((0.02, 1.0))
+
+        second = mainwindow._get_fit_dataset(a)  # memo hit
+        assert second is first
+        assert second.metadata["fit_range"] == pytest.approx((0.02, 1.0))
+
     def test_no_fit_range_entry_never_pins_the_source(self, mainwindow: MainWindow) -> None:
         # Nothing plotted yet, so no fit range is seeded: the "crop" is the
         # source itself and the memo must not hold it strongly.
