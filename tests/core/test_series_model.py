@@ -8,7 +8,13 @@ from asymmetry.core.representation import RepresentationType
 from asymmetry.core.representation.base import FitSlot
 from asymmetry.core.representation.group import DATA_GROUP_KINDS, DataGroup
 from asymmetry.core.representation.project_model import ProjectModel
-from asymmetry.core.representation.series import FitSeries, canonical_model_matches
+from asymmetry.core.representation.series import (
+    FitSeries,
+    canonical_model_matches,
+    default_recipe,
+)
+
+_FB = RepresentationType.TIME_FB_ASYMMETRY
 
 
 def _batch(**kwargs) -> FitSeries:
@@ -80,7 +86,7 @@ def test_unknown_order_key_defaults_to_run():
 
 
 def test_add_and_remove_member_cleans_derived_state():
-    batch = _batch(results_by_run={11: {"chi": 1.0}}, diverged_runs={11})
+    batch = _batch(results_by_run={11: {"chi": 1.0}}, trend_excluded_runs=[11])
     batch.add_member(11)  # idempotent
     assert batch.member_run_numbers.count(11) == 1
     batch.add_member(20)
@@ -88,19 +94,167 @@ def test_add_and_remove_member_cleans_derived_state():
     batch.remove_member(11)
     assert 11 not in batch.member_run_numbers
     assert 11 not in batch.results_by_run
-    assert not batch.is_diverged(11)
+    assert batch.trend_excluded_runs == []
 
 
-# ── divergence ──────────────────────────────────────────────────────────────
+# ── trend exclusions (D4) ───────────────────────────────────────────────────
 
 
-def test_divergence_flags_exclude_from_trend():
-    batch = _batch()
-    batch.mark_diverged(11)
-    assert batch.is_diverged(11)
+def test_trend_excluded_runs_gate_trend_membership():
+    batch = _batch(trend_excluded_runs=[11])
     assert batch.trend_member_run_numbers() == [10, 12]
-    batch.clear_diverged(11)
+    batch.trend_excluded_runs = []
     assert batch.trend_member_run_numbers() == [10, 11, 12]
+
+
+def test_trend_excluded_runs_sorted_deduped_and_round_trip():
+    batch = _batch(trend_excluded_runs=[12, 10, 12])
+    assert batch.trend_excluded_runs == [10, 12]
+    restored = FitSeries.from_dict(batch.to_dict())
+    assert restored.trend_excluded_runs == [10, 12]
+    assert restored.trend_member_run_numbers() == [11]
+    # A pre-v20 dict with no key at all defaults to "nothing excluded".
+    payload = batch.to_dict()
+    del payload["trend_excluded_runs"]
+    assert FitSeries.from_dict(payload).trend_excluded_runs == []
+
+
+def test_trend_exclusion_is_per_series_not_per_run():
+    """Two series over the same runs keep independent trend gates (D4)."""
+    pm = ProjectModel()
+    pm.add_batch(_batch(batch_id="b1"))
+    pm.add_batch(_batch(batch_id="b2"))
+    pm.set_trend_excluded("b1", 11, True)
+    assert pm.batch("b1").trend_member_run_numbers() == [10, 12]
+    assert pm.batch("b2").trend_member_run_numbers() == [10, 11, 12]
+    pm.set_trend_excluded("b1", 11, False)
+    assert pm.batch("b1").trend_member_run_numbers() == [10, 11, 12]
+    # Unknown series: nothing to toggle, nothing raised.
+    pm.set_trend_excluded("missing", 11, True)
+
+
+# ── recipe (D2) ─────────────────────────────────────────────────────────────
+
+
+def test_recipe_defaults_and_round_trip():
+    fresh = _batch()
+    assert fresh.recipe == {
+        "parameters": [],
+        "fit_range": {"min": None, "max": None},
+        "seeding": "auto",
+        "coadd": {"mode": "off", "window": 2},
+    }
+    series = _batch(
+        recipe={
+            "parameters": [
+                {"name": "A", "value": 0.2, "type": "Local", "bounds": "0, 1", "seeded": True}
+            ],
+            "fit_range": {"min": 0.1, "max": 8},
+            "seeding": "carry",
+            "coadd": {"mode": "window", "window": 4},
+        }
+    )
+    restored = FitSeries.from_dict(series.to_dict())
+    assert restored.recipe == series.recipe
+    assert restored.recipe["fit_range"] == {"min": 0.1, "max": 8.0}
+    assert restored.recipe["coadd"] == {"mode": "window", "window": 4}
+    assert restored.recipe["seeding"] == "carry"
+
+
+def test_recipe_absent_from_dict_defaults_tolerantly():
+    """A pre-v20 series dict carries no recipe at all."""
+    payload = _batch().to_dict()
+    del payload["recipe"]
+    assert FitSeries.from_dict(payload).recipe == default_recipe()
+
+
+def test_partial_recipe_is_completed_on_construction():
+    series = _batch(recipe={"seeding": "manual"})
+    assert series.recipe["seeding"] == "manual"
+    assert series.recipe["fit_range"] == {"min": None, "max": None}
+    assert series.recipe["coadd"] == {"mode": "off", "window": 2}
+    assert series.recipe["parameters"] == []
+
+
+# ── recipe identity (D3) ────────────────────────────────────────────────────
+
+
+def _identity_series(**kwargs) -> FitSeries:
+    defaults = dict(
+        last_fitted_members=[10, 11, 12],
+        recipe={
+            "parameters": [
+                {"name": "A", "value": 0.2, "type": "Local", "bounds": "0, 1", "seeded": False}
+            ],
+            "fit_range": {"min": 0.0, "max": 8.0},
+        },
+    )
+    defaults.update(kwargs)
+    return _batch(**defaults)
+
+
+def test_recipe_identity_differs_when_fit_range_differs():
+    narrow = _identity_series(
+        recipe={"parameters": [], "fit_range": {"min": 0.0, "max": 6.0}},
+    )
+    wide = _identity_series(
+        recipe={"parameters": [], "fit_range": {"min": 0.0, "max": 8.0}},
+    )
+    assert narrow.recipe_identity() != wide.recipe_identity()
+
+
+def test_recipe_identity_ignores_label_and_batch_id():
+    """Renaming never changes identity (D3)."""
+    first = _identity_series(batch_id="b1", label="Field sweep")
+    second = _identity_series(batch_id="b2", label=None)
+    assert first.recipe_identity() == second.recipe_identity()
+
+
+def test_recipe_identity_differs_when_a_member_is_excluded():
+    full = _identity_series()
+    subset = _identity_series(last_fitted_members=[10, 11], excluded_run_numbers=[12])
+    assert full.recipe_identity() != subset.recipe_identity()
+
+
+def test_recipe_identity_differs_when_bounds_differ():
+    loose = _identity_series()
+    tight = _identity_series(
+        recipe={
+            "parameters": [
+                {"name": "A", "value": 0.2, "type": "Local", "bounds": "0, 0.5", "seeded": False}
+            ],
+            "fit_range": {"min": 0.0, "max": 8.0},
+        }
+    )
+    assert loose.recipe_identity() != tight.recipe_identity()
+
+
+def test_recipe_identity_ignores_member_order_and_results():
+    """The member *set* is identity; its ordering and results are not."""
+    first = _identity_series(last_fitted_members=[10, 11, 12])
+    second = _identity_series(
+        last_fitted_members=[12, 10, 11],
+        results_by_run={10: {"success": True}},
+    )
+    assert first.recipe_identity() == second.recipe_identity()
+
+
+def test_recipe_identity_differs_on_model_roles_and_representation():
+    base = _identity_series()
+    assert (
+        _identity_series(canonical_model=CompositeModel(["Gaussian"]).to_dict()).recipe_identity()
+        != base.recipe_identity()
+    )
+    assert _identity_series(param_roles={"A": "local"}).recipe_identity() != base.recipe_identity()
+    assert (
+        _identity_series(rep_type=RepresentationType.FREQ_FFT).recipe_identity()
+        != base.recipe_identity()
+    )
+
+
+def test_recipe_identity_is_stable_across_a_round_trip():
+    series = _identity_series()
+    assert FitSeries.from_dict(series.to_dict()).recipe_identity() == series.recipe_identity()
 
 
 # ── canonical model comparison ──────────────────────────────────────────────
@@ -127,7 +281,7 @@ def test_canonical_model_matches_handles_none():
 
 
 def test_batch_round_trip():
-    batch = _batch(results_by_run={10: {"chi": 1.0}, 11: {"chi": 2.0}}, diverged_runs={11})
+    batch = _batch(results_by_run={10: {"chi": 1.0}, 11: {"chi": 2.0}})
     restored = FitSeries.from_dict(batch.to_dict())
     assert restored.batch_id == batch.batch_id
     assert restored.rep_type == batch.rep_type
@@ -135,7 +289,6 @@ def test_batch_round_trip():
     assert restored.param_roles == batch.param_roles
     assert restored.canonical_model == batch.canonical_model
     assert restored.results_by_run == batch.results_by_run
-    assert restored.diverged_runs == batch.diverged_runs
     assert restored.is_global() == batch.is_global()
 
 
@@ -439,33 +592,46 @@ def test_remove_batch_sibling_survives():
     assert pm.batch("b2") is not None
 
 
-def test_remove_batch_clears_fit_slot_batch_id():
+def test_remove_batch_leaves_member_single_fits_alone():
+    """Deleting a series touches only the series (D6)."""
     pm = ProjectModel()
-    s = _batch(batch_id="b1", member_run_numbers=[10])
-    pm.add_batch(s)
+    pm.add_batch(_batch(batch_id="b1", member_run_numbers=[10]))
     rep = pm.ensure_dataset(10).ensure(RepresentationType.TIME_FB_ASYMMETRY)
-    rep.fit = FitSlot(model={}, provenance="batch", batch_id="b1")
+    rep.fit = FitSlot(model={"component_names": ["Exponential"]}, provenance="single")
     pm.remove_batch("b1")
-    assert rep.fit.batch_id is None
+    assert pm.batch("b1") is None
+    assert rep.fit.model == {"component_names": ["Exponential"]}
     assert rep.fit.provenance == "single"
 
 
-def test_remove_batch_clears_group_series_source_run_slots():
+# ── active series (D5) ───────────────────────────────────────────────────────
+
+
+def test_active_series_set_read_and_cleared():
     pm = ProjectModel()
-    s = FitSeries(
-        "b1",
-        RepresentationType.TIME_GROUPS,
-        member_kind="groups",
-        member_run_numbers=[-10001],
-        member_source_run={-10001: 10},
-        canonical_model={},
-    )
-    pm.add_batch(s)
-    rep = pm.ensure_dataset(10).ensure(RepresentationType.TIME_GROUPS)
-    rep.fit = FitSlot(model={}, provenance="batch", batch_id="b1")
+    assert pm.active_series_id(_FB) is None
+    pm.set_active_series(_FB, "b1")
+    assert pm.active_series_id(_FB) == "b1"
+    # Keyed by representation value, and accepts the value string too.
+    assert pm.active_series == {"time_fb_asymmetry": "b1"}
+    assert pm.active_series_id("time_fb_asymmetry") == "b1"
+    # One active series per representation: another representation is separate.
+    pm.set_active_series(RepresentationType.FREQ_FFT, "f1")
+    assert pm.active_series_id(_FB) == "b1"
+    pm.set_active_series(_FB, None)
+    assert pm.active_series_id(_FB) is None
+    assert pm.active_series_id(RepresentationType.FREQ_FFT) == "f1"
+
+
+def test_remove_batch_clears_active_series_pointer():
+    pm = ProjectModel()
+    pm.add_batch(_batch(batch_id="b1"))
+    pm.add_batch(_batch(batch_id="b2"))
+    pm.set_active_series(_FB, "b1")
+    pm.set_active_series(RepresentationType.FREQ_FFT, "b2")
     pm.remove_batch("b1")
-    assert rep.fit.batch_id is None
-    assert rep.fit.provenance == "single"
+    assert pm.active_series_id(_FB) is None
+    assert pm.active_series_id(RepresentationType.FREQ_FFT) == "b2"
 
 
 def test_rename_batch_sets_label():

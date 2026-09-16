@@ -55,7 +55,7 @@ def test_v15_bumps_version_and_defaults_group_kind():
         data_groups=[{"group_id": "grp-1", "name": "B = 60 G", "member_run_numbers": [1, 2]}]
     )
     result = migrate_to_current(state)
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 19
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 20
     assert result["data_groups"][0]["kind"] == "user"
 
 
@@ -109,7 +109,7 @@ def test_case_d_no_data_groups_block_migrates_clean():
     assert "data_groups" not in state
     result = migrate_to_current(state)
     validate(result)
-    assert result["schema_version"] == 19
+    assert result["schema_version"] == 20
     series = result["batches"][0]
     assert series["group_id"] is None
     assert series["last_fitted_members"] == [3, 4]
@@ -194,7 +194,7 @@ def test_v19_adds_phase_defaults_to_existing_groups():
         ]
     )
     result = migrate_to_current(state)
-    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 19
+    assert result["schema_version"] == CURRENT_SCHEMA_VERSION == 20
     group = result["data_groups"][0]
     assert group["parent_group_id"] is None
     assert group["phase_ordinal"] is None
@@ -208,7 +208,7 @@ def test_v19_migration_tolerates_no_data_groups_block():
     state = _v18_state()
     result = migrate_to_current(state)
     validate(result)
-    assert result["schema_version"] == 19
+    assert result["schema_version"] == 20
     assert "data_groups" not in result
 
 
@@ -224,7 +224,7 @@ def test_v18_project_with_groups_migrates_and_round_trips():
         data_groups=[{"group_id": "grp-1", "name": "scan", "member_run_numbers": [1, 2, 3]}]
     )
     migrated = migrate_to_current(state)
-    assert migrated["schema_version"] == 19
+    assert migrated["schema_version"] == 20
 
     model = ProjectModel.from_project_state(migrated)
     parent = model.data_group("grp-1")
