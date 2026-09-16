@@ -2730,9 +2730,74 @@ def test_series_pill_falls_back_to_full_name_without_short_names(
     assert panel._group_button_map["batch-1"].text() == "1"
 
 
+def _row_dicts_for(run_number: int) -> list[dict]:
+    return [
+        {
+            "run_number": run_number,
+            "run_label": str(run_number),
+            "field": 100.0,
+            "temperature": 10.0,
+            "values": {"Lambda": 0.1},
+            "errors": {"Lambda": 0.01},
+        }
+    ]
+
+
+def test_sections_group_chips_under_a_swatched_header(panel: FitParametersPanel) -> None:
+    """A section header carries the group's kind swatch and name (item 1)."""
+    from asymmetry.gui.styles.widgets import SECTION_HEADER_OBJECT_NAME
+
+    panel.load_representation_series(
+        [
+            ("batch-1", "Series 1", _row_dicts_for(1)),
+            ("batch-2", "Series 2", _row_dicts_for(2)),
+            ("batch-3", "Series 3", _row_dicts_for(3)),
+        ],
+        sections=[
+            ("T scan — EuO", tokens.GROUP_HEADER_BG, ["batch-1", "batch-2"]),
+            ("Standalone", None, ["batch-3"]),
+        ],
+    )
+    # header, chip row, header, chip row: two sections, each with its own.
+    assert panel._group_tabs_layout.count() == 4
+
+    header1 = panel._group_tabs_layout.itemAt(0).widget()
+    label1 = header1.findChild(QLabel, SECTION_HEADER_OBJECT_NAME)
+    assert label1.text() == "T SCAN — EUO"
+    # Swatch + name label + trailing stretch: the swatch is there for a real group.
+    assert header1.layout().count() == 3
+
+    row1 = panel._group_tabs_layout.itemAt(1).widget()
+    assert isinstance(row1.layout(), FlowLayout)
+    chips_in_row1 = [row1.layout().itemAt(i).widget() for i in range(row1.layout().count())]
+    assert chips_in_row1 == [panel._group_button_map["batch-1"], panel._group_button_map["batch-2"]]
+
+    header2 = panel._group_tabs_layout.itemAt(2).widget()
+    label2 = header2.findChild(QLabel, SECTION_HEADER_OBJECT_NAME)
+    assert label2.text() == "STANDALONE"
+    # No swatch for a group-less section: name label + trailing stretch only.
+    assert header2.layout().count() == 2
+
+
+def test_sections_header_hidden_for_a_group_less_project(panel: FitParametersPanel) -> None:
+    """A single "Standalone" section (no groups at all) shows no header (item 1)."""
+    panel.load_representation_series(
+        [("batch-1", "Series 1", _row_dicts_for(1))],
+        sections=[("Standalone", None, ["batch-1"])],
+    )
+    # Just the one chip row — no header widget precedes it.
+    assert panel._group_tabs_layout.count() == 1
+    row = panel._group_tabs_layout.itemAt(0).widget()
+    assert isinstance(row.layout(), FlowLayout)
+
+
 def test_series_strip_wraps_instead_of_widening(qapp: QApplication) -> None:
     panel = _panel_with_long_series(qapp, count=4)
-    layout = panel._group_tabs_layout
+    # A group-less project is one "Standalone" section: no header, one row
+    # widget wrapping the pills in a FlowLayout (item 1).
+    assert panel._group_tabs_layout.count() == 1
+    row_widget = panel._group_tabs_layout.itemAt(0).widget()
+    layout = row_widget.layout()
     assert isinstance(layout, FlowLayout)
 
     one_row = layout.heightForWidth(1000)
@@ -2789,6 +2854,67 @@ def test_footer_global_note_keeps_its_size_hint_at_dock_width(qapp: QApplication
     panel.close()
 
 
+def _capture_menu(captured: list) -> object:
+    def _exec(menu, _pos):
+        captured.append(menu)
+        return None
+
+    return _exec
+
+
+def test_context_menu_action_order(qapp: QApplication) -> None:
+    """The six actions appear in the documented order, with the two separators."""
+    panel = _panel_with_two_groups(qapp)
+    captured: list = []
+    panel._exec_menu = _capture_menu(captured)  # type: ignore[method-assign]
+    panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
+
+    menu = captured[0]
+    texts = [a.text() if not a.isSeparator() else "---" for a in menu.actions()]
+    assert texts == [
+        "Open in Batch tab",
+        "Duplicate…",
+        "Rename…",
+        "---",
+        "Select members in browser",
+        "Show fit overlay",
+        "---",
+        "Delete series…",
+    ]
+
+
+def test_context_menu_open_emits_signal(qapp: QApplication) -> None:
+    panel = _panel_with_two_groups(qapp)
+    emitted: list[str] = []
+    panel.series_open_requested.connect(lambda gid: emitted.append(gid))
+
+    panel._exec_menu = lambda menu, pos: menu.actions()[0]  # type: ignore[method-assign]
+    panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
+    assert emitted == ["g1"]
+
+
+def test_context_menu_duplicate_emits_signal(qapp: QApplication) -> None:
+    panel = _panel_with_two_groups(qapp)
+    emitted: list[str] = []
+    panel.series_duplicate_requested.connect(lambda gid: emitted.append(gid))
+
+    panel._exec_menu = lambda menu, pos: menu.actions()[1]  # type: ignore[method-assign]
+    panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
+    assert emitted == ["g1"]
+
+
+def test_double_click_a_chip_emits_open_requested(qapp: QApplication) -> None:
+    """A chip double-click is the same gesture as the menu's first action."""
+    panel = _panel_with_two_groups(qapp)
+    emitted: list[str] = []
+    panel.series_open_requested.connect(lambda gid: emitted.append(gid))
+
+    button = panel._group_button_map["g1"]
+    event = QEvent(QEvent.Type.MouseButtonDblClick)
+    panel.eventFilter(button, event)
+    assert emitted == ["g1"]
+
+
 def test_context_menu_rename_emits_signal(
     qapp: QApplication, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2799,7 +2925,7 @@ def test_context_menu_rename_emits_signal(
     panel.series_rename_requested.connect(lambda gid, lbl: emitted.append((gid, lbl)))
 
     # Patch _exec_menu at instance level (class-level QMenu.exec patch bypassed by PySide6).
-    panel._exec_menu = lambda menu, pos: menu.actions()[0]  # type: ignore[method-assign]
+    panel._exec_menu = lambda menu, pos: menu.actions()[2]  # type: ignore[method-assign]
     monkeypatch.setattr(
         QInputDialog,
         "getText",
@@ -2819,7 +2945,7 @@ def test_context_menu_rename_cancel_emits_nothing(
     emitted: list = []
     panel.series_rename_requested.connect(lambda *a: emitted.append(a))
 
-    panel._exec_menu = lambda menu, pos: menu.actions()[0]  # type: ignore[method-assign]
+    panel._exec_menu = lambda menu, pos: menu.actions()[2]  # type: ignore[method-assign]
     monkeypatch.setattr(QInputDialog, "getText", lambda *_a, **_kw: ("", False))
 
     panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
@@ -2833,9 +2959,35 @@ def test_context_menu_select_members_emits_signal(
     emitted: list[str] = []
     panel.series_select_members_requested.connect(lambda gid: emitted.append(gid))
 
-    panel._exec_menu = lambda menu, pos: menu.actions()[1]  # type: ignore[method-assign]
+    panel._exec_menu = lambda menu, pos: menu.actions()[4]  # type: ignore[method-assign]
     panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
     assert emitted == ["g1"]
+
+
+def test_context_menu_show_overlay_activates_series(qapp: QApplication) -> None:
+    """ "Show fit overlay" on the inactive series behaves exactly like a chip press."""
+    panel = _panel_with_two_groups(qapp)
+    emitted: list[str] = []
+    panel.series_selection_changed.connect(lambda gid: emitted.append(gid))
+    assert panel._active_group_id == "g1"
+
+    panel._exec_menu = lambda menu, pos: menu.actions()[5]  # type: ignore[method-assign]
+    panel._show_group_button_context_menu("g2", panel._group_button_map["g2"], QPoint(0, 0))
+
+    assert emitted == ["g2"]
+    assert panel._active_group_id == "g2"
+
+
+def test_context_menu_show_overlay_disabled_for_the_active_series(qapp: QApplication) -> None:
+    panel = _panel_with_two_groups(qapp)
+    captured: list = []
+    panel._exec_menu = _capture_menu(captured)  # type: ignore[method-assign]
+    panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
+
+    overlay_action = captured[0].actions()[5]
+    assert overlay_action.text() == "Show fit overlay"
+    assert overlay_action.isChecked()
+    assert not overlay_action.isEnabled()
 
 
 def test_context_menu_delete_confirm_emits_signal(
@@ -2846,7 +2998,7 @@ def test_context_menu_delete_confirm_emits_signal(
     panel.series_delete_requested.connect(lambda gid: emitted.append(gid))
 
     _accept_message_box(monkeypatch)
-    panel._exec_menu = lambda menu, pos: menu.actions()[3]  # type: ignore[method-assign]
+    panel._exec_menu = lambda menu, pos: menu.actions()[7]  # type: ignore[method-assign]
     panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
     assert emitted == ["g1"]
 
@@ -2859,7 +3011,7 @@ def test_context_menu_delete_cancel_emits_nothing(
     panel.series_delete_requested.connect(lambda *a: emitted.append(a))
 
     _accept_message_box(monkeypatch, accept=False)
-    panel._exec_menu = lambda menu, pos: menu.actions()[3]  # type: ignore[method-assign]
+    panel._exec_menu = lambda menu, pos: menu.actions()[7]  # type: ignore[method-assign]
     panel._show_group_button_context_menu("g1", panel._group_button_map["g1"], QPoint(0, 0))
     assert emitted == []
 

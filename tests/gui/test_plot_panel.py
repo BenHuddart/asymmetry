@@ -17,13 +17,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # Import PySide6 conditionally
 pyside6 = pytest.importorskip("PySide6")
+from PySide6.QtCore import QEvent  # type: ignore
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # type: ignore
 
 import asymmetry.gui.utils.gle_export as gle_export
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import resolve_gle_export_paths
-from asymmetry.gui.panels.plot_panel import PlotPanel
+from asymmetry.gui.panels.plot_panel import SINGLE_FIT_ID, PlotPanel
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.utils.gle_editor import open_gle_editor_count
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
@@ -5698,3 +5699,114 @@ class TestSwitchCostPins:
         panel._moments_span_artists = [panel._ax.axvspan(0.1, 0.2)]
         panel.clear_moments_overlay()
         assert draws == [1]
+
+
+class TestFitPillStrip:
+    """ "Fits on this run" pill strip above the time-domain plot (series-workflow item 3)."""
+
+    @staticmethod
+    def _dataset(run_number: int) -> MuonDataset:
+        t = np.linspace(0.0, 5.0, 20)
+        a = 0.2 * np.exp(-0.4 * t)
+        e = np.full_like(t, 0.01)
+        return MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": run_number})
+
+    @staticmethod
+    def _curve() -> tuple[np.ndarray, np.ndarray]:
+        t = np.linspace(0.0, 5.0, 10)
+        return t, np.zeros_like(t)
+
+    @staticmethod
+    def _pill(panel: PlotPanel, fit_id: str) -> QPushButton:
+        for i in range(panel._fit_pill_layout.count()):
+            button = panel._fit_pill_layout.itemAt(i).widget()
+            if button.property("_fit_pill_id") == fit_id:
+                return button
+        raise AssertionError(f"no pill for fit id {fit_id!r}")
+
+    def test_hidden_for_a_run_with_no_fit(self, panel: PlotPanel) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(self._dataset(500))
+        assert panel._fit_pill_strip.isHidden()
+
+    def test_hidden_for_a_run_with_one_fit(self, panel: PlotPanel) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(self._dataset(500))
+        t, y = self._curve()
+        panel.plot_fit(t, y, label="Fit", run_number=500, fit_id=SINGLE_FIT_ID)
+        assert panel._fit_pill_strip.isHidden()
+
+    def test_lists_two_series_and_the_single_fit_in_order(self, panel: PlotPanel) -> None:
+        """Active series first, other series in recording order, "Single fit" last."""
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(self._dataset(500))
+        t, y = self._curve()
+        panel.set_global_fits(
+            {500: (t, y, "leg-a", [])}, fit_id="batch-1", fit_labels={"batch-1": "T scan A"}
+        )
+        panel.set_global_fits(
+            {500: (t, y, "leg-b", [])}, fit_id="batch-2", fit_labels={"batch-2": "T scan B"}
+        )
+        panel.plot_fit(t, y, label="Fit", run_number=500, fit_id=SINGLE_FIT_ID)
+        panel.set_active_fit_id("batch-2")
+
+        assert not panel._fit_pill_strip.isHidden()
+        assert panel._fit_pill_layout.count() == 3
+        ids = [panel._fit_pill_layout.itemAt(i).widget().property("_fit_pill_id") for i in range(3)]
+        assert ids == ["batch-2", "batch-1", SINGLE_FIT_ID]
+
+        # Only the active series is shown by default; its pill carries the
+        # check glyph and the accent-red "active" styling, the others don't.
+        active_pill = self._pill(panel, "batch-2")
+        assert active_pill.text() == "✓ T scan B"
+        assert tokens.ACCENT_RED in active_pill.styleSheet()
+        other_pill = self._pill(panel, "batch-1")
+        assert other_pill.text() == "T scan A"
+        single_pill = self._pill(panel, SINGLE_FIT_ID)
+        assert single_pill.text() == "Single fit"
+
+    def test_pill_click_toggles_shown_fit_ids(self, panel: PlotPanel) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(self._dataset(500))
+        t, y = self._curve()
+        panel.set_global_fits({500: (t, y, "leg-a", [])}, fit_id="batch-1")
+        panel.set_global_fits({500: (t, y, "leg-b", [])}, fit_id="batch-2")
+        panel.set_active_fit_id("batch-2")
+        assert set(panel.shown_fit_ids(500)) == {"batch-2"}
+
+        panel._on_fit_pill_clicked("batch-1")
+        assert set(panel.shown_fit_ids(500)) == {"batch-1", "batch-2"}
+        assert self._pill(panel, "batch-1").text().startswith("✓")
+
+        panel._on_fit_pill_clicked("batch-1")
+        assert set(panel.shown_fit_ids(500)) == {"batch-2"}
+
+    def test_pill_double_click_makes_that_series_active_never_for_single(
+        self, panel: PlotPanel
+    ) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(self._dataset(500))
+        t, y = self._curve()
+        panel.set_global_fits({500: (t, y, "leg-a", [])}, fit_id="batch-1")
+        panel.set_global_fits({500: (t, y, "leg-b", [])}, fit_id="batch-2")
+        panel.plot_fit(t, y, label="Fit", run_number=500, fit_id=SINGLE_FIT_ID)
+        panel.set_active_fit_id("batch-2")
+
+        requested: list[str] = []
+        panel.active_fit_requested.connect(requested.append)
+
+        single_pill = self._pill(panel, SINGLE_FIT_ID)
+        dbl_click = QEvent(QEvent.Type.MouseButtonDblClick)
+        panel.eventFilter(single_pill, dbl_click)
+        assert requested == []
+        assert panel.active_fit_id() == "batch-2"
+
+        other_pill = self._pill(panel, "batch-1")
+        panel.eventFilter(other_pill, QEvent(QEvent.Type.MouseButtonDblClick))
+        assert requested == ["batch-1"]
+        assert panel.active_fit_id() == "batch-1"

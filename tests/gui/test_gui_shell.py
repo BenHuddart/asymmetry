@@ -142,6 +142,9 @@ class _StubPlotPanel(QWidget):
         # window reports it here rather than moving the project range.
         self.fit_range_guide_changed = _DummySignal()
         self.time_view_changed = _DummySignal()
+        # A "Fits on this run" pill double-click (item 3); MainWindow connects
+        # this unconditionally on both domain panels.
+        self.active_fit_requested = _DummySignal()
         self.factor = 1
         self.last_plotted_dataset = None
         self.last_grouped_datasets = None
@@ -149,6 +152,9 @@ class _StubPlotPanel(QWidget):
         self._time_view_modes = ["fb_asymmetry"]
 
     def set_fit_range_guide(self, _x_min, _x_max):
+        return
+
+    def set_fit_labels(self, _labels):
         return
 
     def plot_dataset(self, dataset):
@@ -252,6 +258,14 @@ class _StubFourier(QWidget):
 
 
 class _StubFitParams(QWidget):
+    def __init__(self):
+        super().__init__()
+        # MainWindow connects these two unconditionally (Phase 4: the chip
+        # menu's "Open in Batch tab"/"Duplicate…"), unlike the series_*
+        # signals it still probes with hasattr — so a bare stub needs them.
+        self.series_open_requested = _DummySignal()
+        self.series_duplicate_requested = _DummySignal()
+
     def set_fit_results(self, *_args, **_kwargs):
         return
 

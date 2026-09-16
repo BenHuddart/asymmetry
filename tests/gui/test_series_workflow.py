@@ -325,3 +325,93 @@ def test_project_reload_restores_the_active_series_and_selects_it(mw, monkeypatc
 
     assert restored._project_model.active_series_id(_FB) == first_id
     assert restored._fit_parameters_panel._active_group_id == first_id
+
+
+# ── Phase 4: chip rail sections, chip menu, pill strip, active-series sync ──
+
+
+def test_trend_panel_sections_nest_phase_series_under_their_parent(mw):
+    """A phase's chips share their parent group's section, after its own series."""
+    from asymmetry.core.representation.group import DataGroup
+    from asymmetry.core.representation.series import FitSeries
+
+    parent = DataGroup("parent-1", "T scan — EuO", member_run_numbers=[10, 11, 12])
+    phase = DataGroup("phase-1", "T < Tc", parent_group_id="parent-1")
+    mw._project_model.add_data_group(parent)
+    mw._project_model.add_data_group(phase)
+
+    direct = FitSeries("b-direct", _FB, group_id="parent-1", member_run_numbers=[10, 11])
+    phased = FitSeries("b-phase", _FB, group_id="phase-1", member_run_numbers=[10])
+    standalone = FitSeries("b-standalone", _FB, member_run_numbers=[20])
+
+    named_series = [
+        ("b-direct", direct, "Direct"),
+        ("b-phase", phased, "Phase"),
+        ("b-standalone", standalone, "Standalone series"),
+    ]
+    sections = mw._trend_panel_sections(named_series)
+
+    assert sections == [
+        ("T scan — EuO", mw._group_kind_colour(parent), ["b-direct", "b-phase"]),
+        ("Standalone", mw._group_kind_colour(None), ["b-standalone"]),
+    ]
+
+
+def test_chip_menu_open_and_duplicate_route_through_mainwindow(mw, monkeypatch):
+    """The chip menu's "Open in Batch tab" / "Duplicate…" reach the Batch tab (item 2)."""
+    _load_runs(mw, [10, 11])
+    _stub_batch_form(mw, monkeypatch)
+    _set_batch_range(mw, 0.0, 8.0)
+    batch_id = _run_batch(mw, [10, 11])
+
+    mw._on_series_open_requested(batch_id)
+    assert mw._fit_panel.open_series_id() == batch_id
+    assert mw._project_model.active_series_id(_FB) == batch_id
+
+    mw._on_series_duplicate_requested(batch_id)
+    # Duplicating drops the tab to a draft — a copy that has never run (D7).
+    assert mw._fit_panel.open_series_id() is None
+
+
+def test_chip_press_batch_open_and_pill_double_click_keep_the_three_surfaces_agreeing(
+    mw, monkeypatch
+):
+    """Chip press, Batch tab open and a pill double-click all move the one pointer (D5).
+
+    ``_set_active_series`` is the GUI's only writer reached by a user gesture
+    (the recording path, ``_record_fit_series``, separately makes a just-run
+    series active per D5 — not a "which series is shown" pick, so it is not
+    one of the three surfaces this test holds to a single pointer).
+    """
+    _load_runs(mw, [10, 11])
+    _stub_batch_form(mw, monkeypatch)
+    _set_batch_range(mw, 0.0, 8.0)
+    first_id = _run_batch(mw, [10, 11])
+    _set_batch_range(mw, 0.0, 4.0)
+    second_id = _run_batch(mw, [10, 11])
+
+    def assert_agree(expected_id: str) -> None:
+        assert mw._project_model.active_series_id(_FB) == expected_id
+        assert mw._fit_parameters_panel._active_group_id == expected_id
+        assert mw._plot_panel.active_fit_id() == expected_id
+
+    # The just-recorded series (second_id) starts active; the Batch tab is
+    # already open on it too (it recorded it).
+    assert_agree(second_id)
+    assert mw._fit_panel.open_series_id() == second_id
+
+    # A chip press moves the pointer but leaves the Batch tab's own open
+    # series untouched — pressing a chip is "show me this", not "edit this".
+    mw._on_trend_series_selected(first_id)
+    assert_agree(first_id)
+    assert mw._fit_panel.open_series_id() == second_id
+
+    # Opening the other series in the Batch tab moves the pointer again, and
+    # this time the tab follows too.
+    mw._open_series_in_batch_tab(second_id)
+    assert_agree(second_id)
+    assert mw._fit_panel.open_series_id() == second_id
+
+    # A "Fits on this run" pill double-click for the first series.
+    mw._on_active_fit_requested(first_id)
+    assert_agree(first_id)
