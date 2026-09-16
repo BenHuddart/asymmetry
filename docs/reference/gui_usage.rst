@@ -1138,12 +1138,16 @@ After a batch or global fit completes:
       strip above the time-domain plot
    :width: 100%
 
-*A run belonging to two series — a wider and a narrower fit window over the*
-*same group — with the* **Fits on this run** *strip above the canvas*
-*showing both checked. The active series (the narrower window, opened most*
-*recently) draws in the fit accent colour; the other takes a trace colour.*
-*Double-clicking a pill would make it the active series instead; clicking*
-*either would hide its curve without discarding it.*
+*A run belonging to two series — a real 0.5–5 µs and 0–6 µs batch fit over*
+*the same EuO group, zoomed to resolve the ~22 MHz precession — with the*
+**Fits on this run** *strip above the canvas showing both checked. The*
+*active series (the wider window, opened most recently) draws in the fit*
+*accent colour; the other takes a trace colour, though the two agree*
+*closely enough over their shared window that one mostly hides the other —*
+*a fitted curve is never extrapolated past its own recorded range, so only*
+*the wider series draws before 0.5 µs, the one visible difference at this*
+*zoom. Double-clicking a pill would make the other series active instead;*
+*clicking either would hide its curve without discarding it.*
 
 Fitting a group directly
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1177,11 +1181,13 @@ differs" hint described above instead.
       on the same group
    :width: 100%
 
-*The same group after two runs: narrowing the fit range before the second*
-*run is a recipe change, so it records a* **second** *series rather than*
-*replacing the first — the group now owns two, and the newer one is*
-*open, its* **Series** *status tag reading* ``Fitted 4/4`` *and its Results*
-*card replaying the recorded outcome. Re-running this same setup unchanged*
+*The same group after two real batch fits, both converging on the same*
+*injected precession (χ²ᵣ ≈ 1 for all four runs): widening the fit range*
+*from* ``0.5–5 µs`` *to* ``0–6 µs`` *before the second run is a recipe*
+*change, so it records a* **second** *series rather than replacing the*
+*first — the group now owns two, and the newer (wider) one is open, its*
+**Series** *status tag reading* ``Fitted 4/4`` *and its Results card*
+*replaying the recorded outcome. Re-running this same setup unchanged*
 *would instead replace it in place; see* :ref:`group-bound-series-staleness`
 *in* :doc:`parameter_trending`.
 
