@@ -280,35 +280,64 @@ FIT_COMPONENT_APPLICABILITY: dict[str, str] = {
         "non-precessing ⅓ tail relaxing at λ_L and a precessing ⅔ fraction relaxing at λ_T, with frequency "
         "the upper edge of the Overhauser distribution and the order parameter to trend versus temperature. "
         "Prefer Bessel when the ⅓ tail is absent (a single crystal, or a signal already reduced to its "
-        "precessing part). When OverhauserPowderCutoff/OverhauserPowderCentre drive their lower cut-off to "
-        "zero, switch to this component: it is exact there, where their closed form is not. A Bessel-like "
+        "precessing part). HelicalPowder reduces to this component when its lower cut-off reaches zero; "
+        "OverhauserPowderCutoff does not, because its fixed-direction field never reverses sign. A Bessel-like "
         "line does not by itself prove incommensurate order — several commensurate sites, or disorder, can "
         "mimic it — so corroborate with the ordering wavevector from diffraction where possible."
     ),
     "OverhauserPowderCutoff": (
-        "Use for a powder sample of a general single-q structure (helical or collinear) at a low-symmetry "
-        "muon site, where the local field runs between two non-zero cut-offs. frequency is the upper cut-off "
+        "Use for a powder sample of a single-q structure in which the local field keeps one direction while its "
+        "size is modulated between two non-zero cut-offs (a shifted Overhauser distribution); for a helical or "
+        "cycloidal structure, where the field vector rotates, use HelicalPowder. frequency is the upper cut-off "
         "f_max (the order parameter) and ratio is r = B_min/B_max, a structural constant to share across a "
         "series; OverhauserPowderCentre fits the same lineshape by the centre f_av = f_max(1 + r)/2 and "
         "half-width delta_frequency = f_max(1 − r)/2 (back: f_max = f_av + delta_frequency, "
         "r = (f_av − delta_frequency)/(f_av + delta_frequency)). The polarization splits into a "
-        "non-precessing ⅓ tail (λ_L) and a precessing ⅔ fraction (λ_T). The closed form is a "
-        "narrow-distribution approximation, exact as r → 1 and increasingly wrong as r → 0; a fit pinned at "
-        "r = 0 says the lower cut-off has reached zero — use OverhauserPowder there. A Bessel-like line does "
+        "non-precessing ⅓ tail (λ_L) and a precessing ⅔ fraction (λ_T). The closed form is exact for the "
+        "fixed-direction field; applied to a helix it is only a narrow-distribution approximation, exact as "
+        "r → 1 and increasingly wrong as r → 0. A fit pinned at r = 0 says the lower cut-off has reached zero "
+        "— compare with OverhauserPowder and HelicalPowder there. A Bessel-like line does "
         "not by itself prove single-q order; corroborate with the ordering wavevector from diffraction where "
         "possible."
     ),
     "OverhauserPowderCentre": (
-        "Use for the same two-cut-off powder line as OverhauserPowderCutoff — a general single-q structure "
-        "(helical or collinear) at a low-symmetry muon site — when fitting the two edges as independent "
+        "Use for the same two-cut-off powder line as OverhauserPowderCutoff — a single-q structure whose "
+        "local field keeps one direction while its size is modulated — when fitting the two edges as independent "
         "numbers or comparing with literature written this way: frequency is the centre f_av and "
         "delta_frequency the half-width Δf, so f_max = f_av + Δf, f_min = f_av − Δf and r = f_min/f_max "
         "(back: f_av = f_max(1 + r)/2, Δf = f_max(1 − r)/2). The polarization splits into a non-precessing ⅓ "
         "tail (λ_L) and a precessing ⅔ fraction (λ_T). Δf ≤ f_av is not enforced: a fit that wants Δf > f_av "
-        "is telling you B_min has reached zero, where the closed form (a narrow-distribution approximation, "
-        "exact as Δf → 0) no longer holds — use OverhauserPowder instead. A Bessel-like line does not by "
+        "is telling you B_min has reached zero — compare with OverhauserPowder and HelicalPowder there. For a "
+        "helical or cycloidal structure use HelicalPowder: this closed form only approximates it, exactly as "
+        "Δf → 0. A Bessel-like line does not by "
         "itself prove single-q order; corroborate with the ordering wavevector from diffraction where "
         "possible."
+    ),
+    "HelicalPowder": (
+        "Use for a powder sample of a helical, cycloidal or other single-q magnetic structure, where the "
+        "local field at the muon rotates on an ellipse between the cut-offs B_min and B_max. frequency is the "
+        "upper cut-off f_max (the order parameter) and ratio is r = B_min/B_max, a structural constant to "
+        "share across a series. The precessing line is the exact transform of the elliptical field "
+        "distribution, evaluated numerically; the polarization splits into a non-precessing ⅓ tail (λ_L) and "
+        "a precessing ⅔ fraction (λ_T). phase starts fixed at 0: in zero field every muon starts in phase, "
+        "so a fit that needs a phase usually points to a time-zero offset or a missing component rather than "
+        "to the lineshape. At r = 0 the line is OverhauserPowder's J₀; for a local field of fixed direction "
+        "whose size is modulated between two cut-offs use OverhauserPowderCutoff, whose closed form is exact "
+        "for that geometry. A Bessel-like line does not by itself prove single-q order; corroborate with the "
+        "ordering wavevector from diffraction where possible."
+    ),
+    "HelicalCrystal": (
+        "Use for a single crystal of a helical, cycloidal or other single-q magnet, with the same elliptical "
+        "field distribution as HelicalPowder but the powder ⅓/⅔ split replaced by the orientation of the "
+        "initial muon polarization: theta_h is its angle to the normal of the plane the field rotates in and "
+        "phi_h the in-plane angle of its projection from the B_max axis. Fields parallel to the polarization "
+        "do not precess, so the orientation reshapes the line as well as setting the non-precessing fraction "
+        "(a² + c² r)/(1 + r), with a and c the polarization's components along the B_max and B_min axes; with "
+        "the polarization along the B_max axis the upper cut-off drops out of the oscillation. Take theta_h "
+        "and phi_h from the known structure and crystal mounting and hold them fixed where possible. "
+        "Symmetry-inequivalent muon sites or magnetic domains see differently oriented ellipses: use one "
+        "component per inequivalent set. The weights assume the detector axis lies along the initial "
+        "polarization. theta_h = 54.7356° with phi_h = 45° reproduces the HelicalPowder split."
     ),
     "VortexLattice": (
         "Use for transverse-field precession in the mixed state of a type-II superconductor, where the muon "
@@ -581,6 +610,16 @@ FIT_COMPONENT_REFERENCES: dict[str, tuple[str, ...]] = {
         "A. Amato et al., Phys. Rev. B 89, 184425 (2014).",
         "P. Dalmas de Réotier et al., Phys. Rev. B 93, 144419 (2016).",
         "P. Dalmas de Réotier, A. Yaouanc, and A. Maisuradze, arXiv:1410.2767 (2014).",
+    ),
+    "HelicalPowder": (
+        "A. Amato et al., Phys. Rev. B 89, 184425 (2014).",
+        "A. Yaouanc and P. Dalmas de Réotier, Muon Spin Rotation, Relaxation, and Resonance "
+        "(Oxford University Press, Oxford, 2011).",
+    ),
+    "HelicalCrystal": (
+        "A. Amato et al., Phys. Rev. B 89, 184425 (2014).",
+        "A. Yaouanc and P. Dalmas de Réotier, Muon Spin Rotation, Relaxation, and Resonance "
+        "(Oxford University Press, Oxford, 2011).",
     ),
     "VortexLattice": (
         "E. H. Brandt, Phys. Rev. B 68, 054506 (2003).",

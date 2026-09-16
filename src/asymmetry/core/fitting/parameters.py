@@ -345,6 +345,10 @@ PARAM_INFO_REGISTRY: dict[str, ParamInfo] = {
     "r3": ParamInfo("r3", "r3", "r₃", r"$r_3$", r"{\it r}_{3}", "Å", default_min=0.0),
     "theta": ParamInfo("theta", "theta", "θ", r"$\theta$", r"\theta", "°", default_min=0.0),
     "phi3": ParamInfo("phi3", "phi3", "φ₃", r"$\phi_3$", r"\phi_{3}", "°", default_min=0.0),
+    "theta_h": ParamInfo(
+        "theta_h", "theta_h", "θ_h", r"$\theta_h$", r"\theta_{h}", "°", default_min=0.0
+    ),
+    "phi_h": ParamInfo("phi_h", "phi_h", "φ_h", r"$\phi_h$", r"\phi_{h}", "°", default_min=0.0),
     "Gamma": ParamInfo("Gamma", "Gamma", "Γ", r"$\Gamma$", r"\Gamma", "µs⁻¹", default_min=0.0),
     "delta_ex": ParamInfo(
         "delta_ex", "delta_ex", "δ_ex", r"$\delta_{ex}$", r"\delta_{ex}", "MHz", default_min=0.0
@@ -559,6 +563,14 @@ _PARAM_DESCRIPTIONS: dict[str, str] = {
     "r3": "Distance from the muon to the third fluorine in the F-mu-F + F geometry.",
     "theta": "F-mu-F bond angle in degrees for the general three-spin geometry.",
     "phi3": "Angle in degrees between the F-mu-F axis and the third fluorine direction.",
+    "theta_h": (
+        "Angle in degrees between the initial muon polarization and the normal to the plane "
+        "the helical local field rotates in."
+    ),
+    "phi_h": (
+        "Angle in degrees, within the plane the helical local field rotates in, between the "
+        "projected initial muon polarization and the B_max axis of the field ellipse."
+    ),
     "Gamma": "Risch-Kehr relaxation rate set by the 1D diffusion of the depolarizing carrier.",
     "delta_ex": "Amplitude of the fluctuating (nuclear-hyperfine or spin-exchange) coupling relaxing muonium.",
     "tau_c": "Correlation time of the fluctuating coupling (inverse hop or collision rate).",

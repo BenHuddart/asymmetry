@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on a temperature axis under **Critical behaviour**, seeds its plateaus, midpoint, and width
   from the data, and matches the Fermi-function forms used in the μSR literature and Mantid's
   `SmoothTransition`. See `docs/reference/parameter_trending.rst` § "Transition step".
+- **`HelicalPowder` and `HelicalCrystal` fit the exact zero-field lineshape of a helical or
+  cycloidal magnet**, where the local field vector rotates on an ellipse between the cut-offs
+  B_min and B_max. `OverhauserPowderCutoff`'s closed form is exact only for a field of fixed
+  direction and, for a helix, misses the true lineshape by up to a third of the precessing
+  amplitude as `ratio` falls; the new components evaluate the true distribution numerically to
+  10⁻¹² — typically in under a millisecond per curve — with the same `frequency` (upper cut-off)
+  and `ratio` parameters, so a fit can switch directly. `HelicalPowder` keeps the powder ⅓/⅔
+  split and reduces to `OverhauserPowder` at `ratio` = 0. `HelicalCrystal` replaces that split
+  with the orientation of the muon polarization, `theta_h` and `phi_h`, which also reshape the
+  line because fields along the polarization do not precess. Both start with `phase` fixed at 0,
+  since a zero-field helix has no true phase. See `docs/reference/fit_functions/oscillation.rst`.
 
 ### Changed
 
@@ -48,6 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table is now the only source of those values: the inherited average is written there once
   when new results arrive, and re-selecting the same runs no longer writes it back over an
   edit. The grouped (multi-group) batch had the same fault and is fixed the same way.
+- **A fitted curve is drawn over the fit range you actually set, including a minimum of 0.**
+  The overlay was sampled from the cropped fit dataset's own surviving bins rather than the
+  literal range typed into the Fit range fields, so a range set to start at 0 could still draw
+  the curve starting from the first bin above 0 (e.g. 0.01 µs) whenever no bin landed exactly
+  on the boundary — looking like the fit was never asked to start at t=0. The crop now carries
+  its requested boundary with it, and single and batch fit curves are drawn from that literal
+  range.
 
 ## [0.20.0] - 2026-09-15
 
