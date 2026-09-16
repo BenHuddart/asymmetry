@@ -8,17 +8,28 @@ the single- and global-fit model setups with their parameter tables and
 bounds, separate frequency-domain fit state with spectral peak models,
 the most recent fit overlays, the Fourier panel state including
 per-run phase tables, any cached Fit Wizard or Global Fit Wizard
-analyses, per-run *representation* fit slots (single and series fits
-recorded into the domain representation model), and the *batches* (fit
-series) that drive the Fit Parameters trending panel. Raw detector
-arrays are *not* embedded — the file references source data by path and
-reloads from disk on open. Fourier spectra are regenerated from their
-stored recipe (window, padding, phase, group selection) rather than
-embedded, so the file remains compact even after frequency-domain work.
-This makes ``.asymp`` files small enough to share alongside the raw
-data when sending an analysis to a collaborator, or to archive alongside
-paper supplementary material so that readers can reproduce every fit
-shown in the figures.
+analyses, per-run *representation* fit slots (the Single tab's fit
+alone — a batch, global, grouped or scan run never writes one), and the
+*batches* (fit series, each carrying the recipe that produced it) that
+drive the Fit Parameters trending panel and the plot's overlays. Raw
+detector arrays are *not* embedded — the file references source data by
+path and reloads from disk on open. Fourier spectra are regenerated from
+their stored recipe (window, padding, phase, group selection) rather
+than embedded, so the file remains compact even after frequency-domain
+work. This makes ``.asymp`` files small enough to share alongside the
+raw data when sending an analysis to a collaborator, or to archive
+alongside paper supplementary material so that readers can reproduce
+every fit shown in the figures.
+
+Saving is crash-safe: the new content is written to a temporary file
+next to the target and only swapped into place once it is fully flushed
+to disk, so a crash or a full disk mid-write leaves the previous save
+untouched. The file it replaces is kept alongside it as ``<name>.asymp.bak``
+(one generation — a second save overwrites it). While a project has
+unsaved changes, a background timer also writes a crash-recovery
+snapshot to ``<name>.autosave.asymp`` (or, for a session that has never
+been saved, a file under the platform's application-data directory);
+see `Crash-safe save and autosave`_ below.
 
 Because only paths are stored, a project whose data files have since
 moved cannot reload them directly. On open, Asymmetry lists the files it
@@ -58,14 +69,22 @@ Project files store:
 * **Per-dataset representations** — for each analysis domain (F-B asymmetry,
   detector groups, FFT, MaxEnt) that the user has exercised, the stored
   representation records a *recipe* (for FFT: the generation config) and a
-  *FitSlot* (the most recent fit's model, parameters, result summary,
-  provenance, and trending flags). Fourier spectra are re-generated from the
-  recipe on load; time-domain asymmetry is re-computed from the raw data.
-* **Fit series (batches)** — each batch or global fit over multiple runs (or
-  multiple runs' detector groups) is recorded as a ``FitSeries`` that carries
-  the member list, parameter roles, per-member result summaries, and divergence
-  state. The Fit Parameters trending panel reads directly from these series,
+  *FitSlot* — the Single tab's own fit for that representation only: model,
+  parameters, result summary, provenance (``"none"``/``"single"``/``"wizard"``)
+  and, when the single-fit GUI produced it, a ``ui_state`` blob that restores
+  the form verbatim. Fourier spectra are re-generated from the recipe on
+  load; time-domain asymmetry is re-computed from the raw data.
+* **Fit series (batches)** — each batch, global, grouped or scan fit over
+  multiple runs (or multiple runs' detector groups) is recorded as a
+  ``FitSeries`` that carries the member list, parameter roles, per-member
+  result summaries, and the *recipe* that produced it (model, parameter
+  rows, fit range, seeding, co-add) plus its own ``trend_excluded_runs``.
+  The Fit Parameters trending panel reads directly from these series,
   organised by the active representation.
+* **Active series** — the top-level ``active_series`` map names, per
+  representation, the series the Batch tab, the Parameters chip rail and the
+  plot's default overlay all currently point at; see `Fit series recipe and
+  active series`_ below.
 * **Data groups** — the top-level ``data_groups`` registry is the canonical
   store of named run collections (:doc:`the Data Browser's groups
   <gui_usage>`). A run-membered ``FitSeries`` that was launched from a group
@@ -169,6 +188,85 @@ includes red/green period configuration such as ``period_mode`` and per-period
 histogram metadata used by RG recomputation.
 
 Project files do not embed raw detector arrays or computed Fourier spectra.
+
+.. _fit-series-recipe-and-active-series:
+
+Fit series recipe and active series
+------------------------------------
+
+Every ``batches`` entry (schema v20) carries the setup that produced it as a
+``recipe`` dict, and its own trend gating:
+
+``recipe``
+    ``{"parameters": [...], "fit_range": {"min": ..., "max": ...}, "seeding":
+    "auto"|..., "coadd": {"mode": "off"|..., "window": 2}}``. ``parameters``
+    is the Batch tab's table at record time — one entry per physics
+    parameter with ``name``, ``value``, ``type`` (``Global``/``Local``/
+    ``Fixed``/``File``), ``bounds`` and ``seeded``; ``fit_range`` is the
+    window the series was cropped to, in the representation's own unit,
+    with either bound ``null`` for unbounded; ``seeding`` is the Batch tab's
+    per-run seeding mode; ``coadd`` is the co-add mode and window. This is
+    the whole recipe a re-run compares for identity (below), and what the
+    Batch tab restores when you reopen the series.
+
+``trend_excluded_runs``
+    Member run numbers ticked out of *this* series' trend without touching
+    its fit — the per-series successor to the old per-slot
+    ``include_in_trend`` flag, toggled from the same **Exclude from trend**
+    plot action.
+
+Recording a series compares its recipe and effective member set against
+what is already recorded — the series open in the Batch tab first, then the
+representation's active series (below), then the newest series already
+describing the same analysis — as a single canonical identity string
+(``FitSeries.recipe_identity()``). An identical match **replaces** that
+series' results in place, keeping its ``batch_id`` and label; any
+difference — a wider window, a different model or classification, a
+different member set — writes a **new** ``batches`` entry instead, with a
+fresh id and a default label derived from the recipe
+(``<model> · <fit-range>[ · <group>]``, suffixed `` (2)`` on a collision).
+Nothing is ever superseded or deduplicated at load time: two series that
+differ only in fit range are two entries, kept side by side.
+
+The top-level ``active_series`` object maps each representation's value
+(``"time_fb_asymmetry"``, ``"freq_fft"``, …) to the ``batch_id`` of its
+*active* series — the one the Batch tab has open, the Parameters chip rail
+highlights, and the plot draws by default on every run the series covers.
+Deleting a series clears any ``active_series`` entry that pointed at it,
+leaving that representation with none until another is opened or recorded.
+
+.. _fit-slot-fields-v20:
+
+Per-run fit slot fields (schema v20)
+--------------------------------------
+
+A representation's ``fit`` (and each entry of ``projection_fits``) is a
+*FitSlot* holding the Single tab's own fit alone:
+
+``model``, ``parameters``, ``result``
+    The composite model, its parameter table and the fit-result summary —
+    ``null``/empty for a representation that has never been singly fitted.
+
+``provenance``
+    ``"none"``, ``"single"`` or ``"wizard"``. ``"batch"`` and ``"global"``
+    are recognised only while reading an older file — schema v19 and
+    earlier wrote them for a run that belonged to a batch or global fit;
+    the v19→v20 migration drops such a slot entirely, since its result
+    already lives on the series that recorded it.
+
+``ui_state``
+    The single-fit form payload (composite model, parameters, result HTML,
+    wizard cache) needed to restore the editor verbatim; present only when
+    the single-fit GUI itself produced the slot, omitted (not written)
+    otherwise.
+
+A slot no longer carries ``batch_id``, ``diverged`` or ``include_in_trend``:
+per-run state cannot diverge when it only ever holds one fit, and trend
+gating moved to the series' own ``trend_excluded_runs`` above. A run with no
+single fit but a series result still shows fitted state on the Single tab —
+reconstructed from the active series' recorded result for that run, not
+stored on the slot itself (:doc:`gui_usage`, "Carrying a model forward
+between runs").
 
 Wizard cache state
 ------------------
@@ -332,6 +430,33 @@ is preserved without re-running the Grouping dialog.
 ``period_mode``
     Two-period RG mode (``Red``, ``Green``, ``G minus R``, ``G plus R``).
 
+.. _crash-safe-save-and-autosave:
+
+Crash-safe save and autosave
+-----------------------------
+
+``save_project`` never writes the target file directly: the new JSON is
+serialised to a temporary file in the same directory, flushed and
+``fsync``\ ed, and only then swapped over the target with an atomic
+``os.replace``. A crash, a full disk or a raised exception at any point up
+to that swap leaves the previous file exactly as it was and simply drops
+the temporary file, so a save can never leave a project half-written. The
+file the swap replaces is kept alongside it as ``<name>.asymp.bak`` — one
+generation, overwritten by the next save — as a manual fallback (open it by
+renaming away the ``.bak``); this is skipped for the autosave snapshot
+below, which is itself a backup and keeps none of its own.
+
+While a project has unsaved changes, a timer (default every 5 minutes,
+``0`` disables it — the ``QSettings`` key ``project/autosave_interval_minutes``)
+writes a crash-recovery snapshot to ``<name>.autosave.asymp`` beside a saved
+project, or to an ``untitled.autosave.asymp`` file under the platform's
+application-data directory for a session that has never been saved. A
+successful save or a clean window close deletes it. Opening a project whose
+autosave sibling is newer than the file itself asks "An autosave from
+*<time>* is newer than this project. Load the autosave instead?", with
+**Load autosave** (reads the snapshot but still treats the session as
+unsaved against the original path), **Open saved file** (reads the project
+normally and leaves the autosave in place) and **Cancel**.
 
 Save and load
 -------------
