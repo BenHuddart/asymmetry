@@ -213,6 +213,7 @@ from asymmetry.core.representation import (
     default_recipe,
     default_series_label,
     disambiguate_series_label,
+    fit_range_label,
     format_run_range,
     member_range,
 )
@@ -260,6 +261,14 @@ from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView, IntegralScanPanel
 from asymmetry.gui.panels.cross_group_config import run_cross_group_fit_from_config
 from asymmetry.gui.panels.data_browser import DataBrowserPanel
+from asymmetry.gui.panels.fit import (
+    BATCH_SEEDING_LABELS,
+    BATCH_SEEDING_MODES,
+    BATCH_SEEDING_TOOLTIP,
+    FitPanel,
+    SeriesCatalogue,
+    SeriesMenuEntry,
+)
 from asymmetry.gui.panels.fit.tab_base import (
     _fit_curve_sample_count,
     _fit_curve_time_bounds,
@@ -267,12 +276,6 @@ from asymmetry.gui.panels.fit.tab_base import (
 from asymmetry.gui.panels.fit.wizard_cache import (
     persisted_global_fit_form_state,
     persisted_single_fit_form_state,
-)
-from asymmetry.gui.panels.fit_panel import (
-    BATCH_SEEDING_LABELS,
-    BATCH_SEEDING_MODES,
-    BATCH_SEEDING_TOOLTIP,
-    FitPanel,
 )
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, PhaseDecoration
 from asymmetry.gui.panels.fourier_panel import FourierPanel
@@ -1992,7 +1995,7 @@ class MainWindow(QMainWindow):
         if hasattr(self._fit_panel, "fit_range_edit_committed"):
             self._fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         if hasattr(self._fit_panel, "tab_changed"):
-            self._fit_panel.tab_changed.connect(lambda _index: self._update_fit_block_state())
+            self._fit_panel.tab_changed.connect(self._on_fit_tab_changed)
         if self._multi_group_fit_window is not None and hasattr(
             self._multi_group_fit_window, "fit_range_edit_committed"
         ):
@@ -2048,6 +2051,19 @@ class MainWindow(QMainWindow):
         self._fit_panel.trends_requested.connect(
             functools.partial(self._on_trends_requested, "batch")
         )
+        # The Batch tab's series row (D1/D7/D8): the tab asks, this window
+        # resolves ids into members, groups and results.
+        self._fit_panel.set_series_catalogue_provider(self._batch_series_catalogue)
+        self._fit_panel.series_open_requested.connect(self._open_series_in_batch_tab)
+        self._fit_panel.series_new_from_selection_requested.connect(
+            self._on_new_series_from_selection
+        )
+        self._fit_panel.series_new_from_group_requested.connect(self._on_fit_group_requested)
+        self._fit_panel.series_rename_requested.connect(self._on_series_rename_requested)
+        self._fit_panel.series_delete_requested.connect(self._on_series_delete_requested)
+        self._fit_panel.batch_fit_range_changed.connect(self._on_batch_fit_range_changed)
+        for _panel in (self._plot_panel, self._frequency_plot_panel):
+            _panel.fit_range_guide_changed.connect(self._fit_panel.set_batch_fit_range)
         self._alc_fit_panel.build_requested.connect(self._on_scan_requested)
         self._alc_fit_panel.fit_range_edit_committed.connect(self._on_fit_range_edit_committed)
         self._alc_scan_view.options_changed.connect(self._render_alc_scan)
@@ -6178,11 +6194,16 @@ class MainWindow(QMainWindow):
         )
 
     def _selected_time_fit_datasets(self) -> list[MuonDataset]:
-        """Fit-range crops of the browser selection (the grouped-series members)."""
+        """Fit-range crops of the browser selection (the batch/grouped members).
+
+        Cropped to the Batch tab's own window (D8) — these datasets are what a
+        series run fits — with an unbounded side falling back to the plot's.
+        """
         selected = self._data_browser.get_selected_datasets()
+        window = self._fit_panel.batch_fit_range()
         return [
             fit_dataset
-            for fit_dataset in (self._get_fit_dataset(ds) for ds in selected)
+            for fit_dataset in (self._get_fit_dataset(ds, window) for ds in selected)
             if fit_dataset is not None
         ]
 
@@ -10322,6 +10343,31 @@ class MainWindow(QMainWindow):
         )
         panel.set_fit_range(x_min, x_max)
 
+    def _on_fit_tab_changed(self, _index: int) -> None:
+        """Re-evaluate what is fittable, and whose window the guides show (D8)."""
+        self._update_fit_block_state()
+        self._sync_batch_fit_range_guide()
+
+    def _on_batch_fit_range_changed(self, _x_min: float, _x_max: float) -> None:
+        """The Batch tab's own window moved: the range guides follow it (D8)."""
+        self._sync_batch_fit_range_guide()
+
+    def _sync_batch_fit_range_guide(self) -> None:
+        """Point the plot's range guides at whichever window is being edited (D8).
+
+        The Batch tab's series window while that tab is visible, the project's
+        own range otherwise. The override is set on the active domain's panel
+        only — the two speak different units — and cleared on the other.
+        """
+        frequency = self._plot_workspace.active_domain() == "frequency"
+        active = self._frequency_plot_panel if frequency else self._plot_panel
+        other = self._plot_panel if frequency else self._frequency_plot_panel
+        other.set_fit_range_guide(None, None)
+        if self._fit_panel.batch_tab_visible():
+            active.set_fit_range_guide(*self._fit_panel.batch_fit_range())
+        else:
+            active.set_fit_range_guide(None, None)
+
     def _on_fit_completed(self, fit_result, fitted_curve, component_curves) -> None:
         """Handle completed fit from fit panel."""
         t_fit, y_fit = fitted_curve
@@ -11155,16 +11201,230 @@ class MainWindow(QMainWindow):
         fits, and every *other* series over the same runs keeps its results and
         its overlay.
         """
-        if self._project_model.batch(batch_id) is None:
+        series = self._project_model.batch(batch_id)
+        if series is None:
             return
+        editing = self._fit_panel.open_series_id() == batch_id
+        members = list(series.member_run_numbers)
+        window = self._recipe_window(series.recipe)
         self._project_model.remove_batch(batch_id)
         self._clear_series_overlays(batch_id)
+        if editing:
+            # The Batch tab was editing it: keep the runs and the setup on show
+            # as a draft rather than emptying the surface under the user.
+            self._fit_panel.open_draft(
+                datasets=self._batch_datasets_for_runs(members, window),
+                group_id=self._fit_panel.bound_group_id(),
+                group_name=self._data_group_name(self._fit_panel.bound_group_id() or ""),
+            )
         self._refresh_trend_panel()
 
     def _clear_series_overlays(self, batch_id: str) -> None:
         """Drop the plot curves a deleted series drew, on both domains' panels."""
         for panel in (self._plot_panel, self._frequency_plot_panel):
             panel.clear_fits_for_series(str(batch_id))
+
+    # ── The Batch tab as a series editor (D1/D7/D8) ──────────────────────────
+
+    def _batch_series_catalogue(self) -> SeriesCatalogue:
+        """What the Batch tab's series menus offer right now.
+
+        The tab holds neither the project model nor the browser, so every menu
+        line is resolved here: the active representation's fittable series,
+        each under the data group that owns it, and the groups a new series
+        could be built on.
+        """
+        rep_type = self._active_representation_type()
+        entries: list[SeriesMenuEntry] = []
+        for series in self._project_model.batches.values():
+            if series.rep_type != rep_type or series.member_kind != "runs" or series.is_computed:
+                continue
+            group = self._project_model.data_group(series.group_id) if series.group_id else None
+            entries.append(
+                SeriesMenuEntry(
+                    batch_id=series.batch_id,
+                    group_name=group.name if group is not None else "Standalone",
+                    group_colour=self._group_kind_colour(group),
+                    text=self._series_menu_text(series, group),
+                    members=tuple(series.effective_members(group)),
+                )
+            )
+        groups = tuple(
+            (group.group_id, group.name) for group in self._project_model.data_groups.values()
+        )
+        return SeriesCatalogue(series=tuple(entries), groups=groups)
+
+    @staticmethod
+    def _group_kind_colour(group) -> str:
+        """The swatch colour a data group reads under in the series menu.
+
+        The browser's own header tints: a phase keeps its assigned colour, an
+        auto-minted group the red family, a user group the blue one. A
+        group-less ("Standalone") series gets the neutral border tint.
+        """
+        if group is None:
+            return tokens.BORDER
+        if group.is_phase and group.phase_color:
+            return group.phase_color
+        return tokens.AUTO_GROUP_HEADER_BG if group.kind == "auto" else tokens.GROUP_HEADER_BG
+
+    def _series_menu_text(self, series: FitSeries, group) -> str:
+        """``"<model> · <range> · <status>"`` for one line of the series menu.
+
+        Status is how the last run went (``"4/4 · 14:32"``), or the staleness
+        glyph when the owning group has gained or lost runs since (D1).
+        """
+        parts = [composite_model_label(series.canonical_model) or "Series"]
+        window = fit_range_label(series)
+        if window:
+            parts.append(window)
+        if series.is_stale(group):
+            parts.append("⚠")
+        else:
+            status = self._series_run_status(series)
+            if status:
+                parts.append(status)
+        return " · ".join(parts)
+
+    @staticmethod
+    def _series_run_status(series: FitSeries) -> str:
+        """``"4/4 · 14:32"`` — converged members and when, from the recorded results."""
+        summaries = [
+            series.results_by_run[member]
+            for member in series.member_run_numbers
+            if isinstance(series.results_by_run.get(member), dict)
+        ]
+        if not summaries:
+            return ""
+        converged = sum(1 for summary in summaries if summary.get("success"))
+        text = f"{converged}/{len(summaries)}"
+        for summary in summaries:
+            stamp = summary.get("timestamp")
+            if isinstance(stamp, str):
+                try:
+                    return f"{text} · {datetime.fromisoformat(stamp).strftime('%H:%M')}"
+                except ValueError:
+                    continue
+        return text
+
+    def _batch_datasets_for_runs(self, runs, fit_range=None) -> list[MuonDataset]:
+        """Fit-range crops of *runs* for the Batch tab's member pool.
+
+        *fit_range* is the series' own window (D8); an unbounded side falls back
+        to the plot's bound inside :meth:`_get_fit_dataset`.
+        """
+        datasets = []
+        for run_number in runs:
+            dataset = self._data_browser.get_dataset(int(run_number))
+            if dataset is None:
+                continue
+            crop = self._get_fit_dataset(dataset, fit_range)
+            if crop is not None:
+                datasets.append(crop)
+        return datasets
+
+    @staticmethod
+    def _recipe_window(recipe: dict) -> tuple[float | None, float | None]:
+        """A recipe's fit window as the ``(min, max)`` pair ``_get_fit_dataset`` takes."""
+        window = recipe["fit_range"]
+        return window["min"], window["max"]
+
+    def _group_member_pool(self, group_id: str | None, fallback_runs) -> list[int]:
+        """The runs the Batch tab's member list offers for a group-bound series.
+
+        The owning group's whole membership — the series' exclusions are what
+        untick rows within it — falling back to *fallback_runs* for a frozen
+        (group-less) series.
+        """
+        group = self._project_model.data_group(group_id) if group_id else None
+        if group is None:
+            return [int(run) for run in fallback_runs]
+        return [int(run) for run in group.member_run_numbers]
+
+    def _open_series_in_batch_tab(self, batch_id: str) -> None:
+        """Open a recorded series in the Batch tab and make it the active one (D1/D5).
+
+        The single route from a ``batch_id`` to an edited series: it resolves
+        the owning group's members into datasets cropped to the series' own
+        window, hands the tab the whole recipe, and moves the active pointer so
+        the plot and the chip rail follow.
+        """
+        series = self._project_model.batch(str(batch_id))
+        if series is None:
+            return
+        window = self._recipe_window(series.recipe)
+        pool = self._group_member_pool(series.group_id, series.member_run_numbers)
+        self._fit_panel.open_series(
+            series,
+            display_name=series.label or self._series_fallback_name(series),
+            datasets=self._batch_datasets_for_runs(pool, window),
+            excluded_runs=series.excluded_run_numbers,
+            group_id=series.group_id,
+            group_name=self._data_group_name(series.group_id) if series.group_id else None,
+        )
+        self._set_active_series(series.rep_type, series.batch_id)
+        self._sync_batch_fit_range_guide()
+
+    def _adopt_recorded_series(self, batch_id: str | None, previously_open: str | None) -> None:
+        """Leave the Batch tab open on the series its run just recorded (D3).
+
+        An identical re-run comes back with the id that was already open, so
+        the tab stays where it was and says the results were replaced; anything
+        else recorded a new series beside it, and the tab moves onto that one.
+        The form is not restored — the recorder read it, so it already *is* the
+        recorded recipe.
+        """
+        series = self._project_model.batch(batch_id) if batch_id else None
+        if series is None:
+            return
+        self._fit_panel.note_series_recorded(
+            series,
+            display_name=series.label or self._series_fallback_name(series),
+            replaced=batch_id == previously_open,
+        )
+
+    def _reopen_saved_batch_series(self) -> None:
+        """Put the Batch tab back on the series it was editing when saved (D1).
+
+        The saved id first, then the representation's active series — a project
+        written before the tab recorded which series it held, or one whose
+        series has since gone, still lands on something rather than on nothing.
+        A draft was never saved, so it simply does not come back.
+        """
+        saved = self._fit_panel.saved_open_series_id()
+        if saved is None or self._project_model.batch(saved) is None:
+            rep_type = self._active_representation_type()
+            saved = self._project_model.active_series_id(rep_type) if rep_type else None
+        if saved is not None:
+            self._open_series_in_batch_tab(saved)
+
+    def _on_new_series_from_selection(self) -> None:
+        """Drop the Batch tab to a draft over the browser selection (D7).
+
+        The pre-series behaviour, now reached deliberately rather than by every
+        selection change: the member pool becomes the selection and the group
+        binding is cleared, so the run mints or adopts its own group.
+        """
+        self._fit_panel.set_datasets(self._selected_time_fit_datasets())
+        self._fit_panel.clear_bound_group()
+        self._sync_batch_fit_range_guide()
+
+    def _newest_series_for_group(self, group_id: str) -> FitSeries | None:
+        """The group's most recently recorded run series, or ``None``.
+
+        What a fresh "Fit this group…" draft is seeded from (D7), so the natural
+        next run is an identical re-run or a deliberate variation rather than a
+        setup rebuilt from defaults.
+        """
+        rep_type = self._active_representation_type()
+        candidates = [
+            series
+            for series in self._project_model.series_for_group(group_id)
+            if series.rep_type == rep_type
+            and series.member_kind == "runs"
+            and not series.is_computed
+        ]
+        return candidates[-1] if candidates else None
 
     def _on_member_trend_inclusion_changed(
         self, batch_id: str, member_key: int, include: bool
@@ -11398,16 +11658,20 @@ class MainWindow(QMainWindow):
     def _open_series_for(self, candidate: FitSeries) -> FitSeries | None:
         """The recorded series *candidate* is a re-run of, or ``None`` for a new one.
 
-        Phase 3 seam: the Batch tab will hand its *open* series id in here
-        (``FitPanel.open_series_id()``), and this becomes a single identity
-        comparison against that one series. Until then the tab has no notion of
-        an open series, so a run matches the representation's active series when
-        its identity agrees, and otherwise the newest series of that
-        representation that describes the same analysis — which is what keeps a
-        surface that re-applies several analyses in turn (the Global Fit
-        Wizard's per-phase apply) replacing each one rather than stacking them.
+        Three steps, in order. The series the Batch tab is *editing* comes
+        first: re-running it unchanged is the gesture the whole design is built
+        around (D3). Then the representation's active series, then the newest
+        series of that representation describing the same analysis — which is
+        what keeps a surface that re-applies several analyses in turn (the
+        Global Fit Wizard's per-phase apply) replacing each one rather than
+        stacking them. A truly identical re-run therefore replaces its series
+        wherever it lives, and anything else records a new one.
         """
         identity = candidate.recipe_identity()
+        open_id = self._fit_panel.open_series_id()
+        open_series = self._project_model.batch(open_id) if open_id else None
+        if open_series is not None and open_series.recipe_identity() == identity:
+            return open_series
         active_id = self._project_model.active_series_id(candidate.rep_type)
         active = self._project_model.batch(active_id) if active_id else None
         if active is not None and active.recipe_identity() == identity:
@@ -12584,10 +12848,12 @@ class MainWindow(QMainWindow):
         hidden by a column filter or sort order silently fit exactly the wrong
         (invisible) runs — by building the batch dataset list directly from
         :meth:`DataBrowserPanel.get_group_member_run_numbers` rather than the
-        current table selection. Binding the Batch tab to *group_id* (D1) means the
-        recorded series carries a structural ``group_id`` and the member-list
-        checkboxes drive its exclusions; an ordinary selection change later clears
-        the binding.
+        current table selection. The tab becomes a *draft* bound to the group
+        (D1/D7): the recorded series will carry a structural ``group_id`` and the
+        member-list checkboxes drive its exclusions. When the group already holds
+        a series, the draft opens on that series' recipe with its exclusions
+        unticked, so the natural next run is an identical re-run or a deliberate
+        variation rather than a setup rebuilt from defaults.
         """
         browser = self._data_browser
         if not hasattr(browser, "get_group_member_run_numbers"):
@@ -12596,29 +12862,29 @@ class MainWindow(QMainWindow):
         if len(run_numbers) < 2:
             self.statusBar().showMessage("This group has too few runs to batch fit.")
             return
-        datasets = [browser.get_dataset(rn) for rn in run_numbers]
-        analysis_datasets = [
-            fit_dataset
-            for fit_dataset in (self._get_fit_dataset(ds) for ds in datasets if ds is not None)
-            if fit_dataset is not None
-        ]
+        seed = self._newest_series_for_group(group_id)
+        window = self._recipe_window(seed.recipe) if seed is not None else None
+        analysis_datasets = self._batch_datasets_for_runs(run_numbers, window)
         if not analysis_datasets:
             self.statusBar().showMessage("This group has no fittable datasets.")
             return
-        self._fit_panel.set_datasets(analysis_datasets)
+        group_name = self._data_group_name(group_id) or group_id
+        self._fit_panel.open_draft(
+            datasets=analysis_datasets,
+            excluded_runs=seed.excluded_run_numbers if seed is not None else (),
+            group_id=group_id,
+            group_name=group_name,
+            seed_from=seed,
+        )
         if self._multi_group_fit_window is not None and hasattr(
             self._multi_group_fit_window, "set_member_datasets"
         ):
             self._multi_group_fit_window.set_member_datasets(analysis_datasets)
         self._show_panel("fit")
-        group_name = self._data_group_name(group_id) or group_id
-        # Bind after set_datasets (which resets the members list) and after
-        # _show_panel, so nothing clears the binding it just set.
-        if hasattr(self._fit_panel, "set_bound_group"):
-            self._fit_panel.set_bound_group(group_id, group_name)
+        self._sync_batch_fit_range_guide()
         self.statusBar().showMessage(
             f"Loaded {len(analysis_datasets)} run(s) from group '{group_name}' into batch "
-            "fit — configure parameters and click Run batch fit."
+            "fit — configure parameters and click Run series."
         )
 
     def _on_show_group_series_requested(self, group_id: str) -> None:
@@ -13036,7 +13302,9 @@ class MainWindow(QMainWindow):
         self._fit_panel.register_global_fit_results(normalized_payloads)
         # The Batch tab's form is frozen while its fit runs, so the roles and
         # model read back off it here are the ones the batch was launched with.
+        previously_open = self._fit_panel.open_series_id()
         new_batch_id = self._record_global_fit_batch(normalized_payloads, global_params)
+        self._adopt_recorded_series(new_batch_id, previously_open)
         self._remember_trends_batch("batch", new_batch_id, self._fit_panel)
 
         # Set all fit curves in plot panel, keyed under the series they belong
@@ -14603,9 +14871,12 @@ class MainWindow(QMainWindow):
         if is_frequency_domain:
             analysis_datasets = self._frequency_fit_datasets_for_selected_runs()
         else:
+            # The batch path crops to the Batch tab's own window (D8), not to
+            # whatever the plot happens to be showing.
+            batch_window = self._fit_panel.batch_fit_range()
             analysis_datasets = [
                 dataset
-                for dataset in (self._get_fit_dataset(ds) for ds in selected)
+                for dataset in (self._get_fit_dataset(ds, batch_window) for ds in selected)
                 if dataset is not None
             ]
 
@@ -14627,12 +14898,18 @@ class MainWindow(QMainWindow):
             # cost on every switch.
             self._fit_panel.set_dataset(self._get_fit_dataset(self._current_dataset))
 
-        self._fit_panel.set_datasets(analysis_datasets)
-        # A selection-driven batch is ad-hoc: clear any "Fit this group…" binding so
-        # it auto-creates its own group at record time (D1) rather than adopting the
-        # previously-bound group.
-        if hasattr(self._fit_panel, "clear_bound_group"):
+        if self._fit_panel.open_series_id() is None:
+            # No series open: the Batch tab is a draft over the selection, as it
+            # has always been. A selection-driven batch is ad-hoc, so any
+            # "Fit this group…" binding goes with it (D1).
+            self._fit_panel.set_datasets(analysis_datasets)
             self._fit_panel.clear_bound_group()
+        else:
+            # D7: a selection change never rewrites an open series. The tab says
+            # so and offers the ways out instead.
+            self._fit_panel.note_selection_differs(
+                [int(dataset.run_number) for dataset in selected]
+            )
         # The grouped surface fits a *series* across the selected runs.
         if (
             not is_frequency_domain
@@ -14640,6 +14917,9 @@ class MainWindow(QMainWindow):
             and hasattr(self._multi_group_fit_window, "set_member_datasets")
         ):
             self._multi_group_fit_window.set_member_datasets(analysis_datasets)
+        # The guides belong to whichever window is being edited, and the domain
+        # may have changed under them (D8). Two tuple compares when it has not.
+        self._sync_batch_fit_range_guide()
         if is_frequency_domain:
             self._apply_frequency_missing_spectra_status(len(analysis_datasets))
             # The prep above is a pure cached read; fill any uncached recipe-backed
@@ -14794,12 +15074,15 @@ class MainWindow(QMainWindow):
             # dataset's identity instead, so a re-binned copy never aliases.
             analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)
             analysis_key = id(analysis_dataset)
+        plot_window = tuple(plot_range()) if callable(plot_range) else (None, None)
         if fit_range is not None:
-            requested = (float(fit_range[0]), float(fit_range[1]))
-        elif callable(plot_range):
-            requested = tuple(plot_range())
+            # A recipe window may be open on one side (a pre-v20 series whose
+            # bound could not be recovered); that side takes the plot's.
+            low = plot_window[0] if fit_range[0] is None else float(fit_range[0])
+            high = plot_window[1] if fit_range[1] is None else float(fit_range[1])
+            requested = (low, high)
         else:
-            requested = (None, None)
+            requested = plot_window
         key = (
             id(dataset.time),
             id(dataset.asymmetry),
@@ -14820,7 +15103,7 @@ class MainWindow(QMainWindow):
             return crop
         if analysis_dataset is None:
             analysis_dataset = self._plot_panel.get_analysis_dataset(dataset)
-        crop = self._plot_panel.get_fit_dataset(analysis_dataset, fit_range)
+        crop = self._plot_panel.get_fit_dataset(analysis_dataset, requested)
         if entry is None:
             try:
                 weakref.finalize(dataset, memo.pop, id(dataset), None)
@@ -16183,6 +16466,7 @@ class MainWindow(QMainWindow):
         # pull preserves per-series trend model-fits for surviving series.
         refreshed = self._refresh_trend_panel(surface=False)
         self._rearm_trends_from_project()
+        self._reopen_saved_batch_series()
         if fit_parameters_state and not refreshed and panel_supports_deferred_refresh:
             # No active representation to re-derive from (e.g. a non-fit view was
             # active at save): draw the deferred restore now so the panel isn't

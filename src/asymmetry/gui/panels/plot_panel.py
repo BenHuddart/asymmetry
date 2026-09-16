@@ -310,6 +310,10 @@ class PlotPanel(QWidget):
 
     bunch_factor_changed = Signal(int)
     fit_range_changed = Signal(float, float)
+    #: A handle of the range guides moved while they were showing a window other
+    #: than the project's own (the Batch tab's series window, D8). The project
+    #: range is untouched; whoever set the guide owns the new window.
+    fit_range_guide_changed = Signal(float, float)
     view_limits_changed = Signal(float, float, float, float)
     polarization_axis_changed = Signal(str)
     #: Emitted with the projection label when a stacked subplot is clicked to
@@ -463,6 +467,10 @@ class PlotPanel(QWidget):
             # Fit-range interaction state.
             self._fit_x_min: float | None = None
             self._fit_x_max: float | None = None
+            # A window the guides show *instead of* the project range (D8): the
+            # Batch tab's series window while that tab is visible. ``None`` when
+            # the guides speak for the project range, as they always used to.
+            self._fit_guide_override: tuple[float, float] | None = None
             self._fit_span_artists: list[object] = []
             self._fit_min_handles: list[object] = []
             self._fit_max_handles: list[object] = []
@@ -4743,6 +4751,54 @@ class PlotPanel(QWidget):
         """Set fit range limits and refresh visual handles."""
         self._set_fit_range(x_min, x_max, emit_signal=True, redraw=True)
 
+    def set_fit_range_guide(self, x_min: float | None, x_max: float | None) -> None:
+        """Draw (and drag) the range guides over a window other than the project's.
+
+        The Batch tab's series window while that tab is visible (D8); either
+        bound left ``None`` falls back to the project range's, and two ``None``s
+        hand the guides back to the project range. The stored range — what a
+        single fit crops to — never moves.
+        """
+        if not self._has_mpl:
+            return
+        if x_min is None and x_max is None:
+            override = None
+        else:
+            low = self._fit_x_min if x_min is None else float(x_min)
+            high = self._fit_x_max if x_max is None else float(x_max)
+            override = None if low is None or high is None else (min(low, high), max(low, high))
+        if override == self._fit_guide_override:
+            return
+        self._fit_guide_override = override
+        self._draw_fit_range_artists()
+        self._canvas.draw_idle()
+
+    def _fit_guide_window(self) -> tuple[float | None, float | None]:
+        """The window the range guides currently describe (override, else project)."""
+        if self._fit_guide_override is not None:
+            return self._fit_guide_override
+        return self._fit_x_min, self._fit_x_max
+
+    def _apply_fit_handle(self, handle: str, value: float) -> None:
+        """Move one range-guide handle to *value*.
+
+        With a guide override in place the drag edits *that* window and reports
+        it (D8) — the guides and the gesture stay one thing — instead of moving
+        the project range the guides are not showing.
+        """
+        low, high = self._fit_guide_window()
+        if self._fit_guide_override is None:
+            if handle == "min":
+                self._set_fit_range(value, high, emit_signal=True, redraw=True)
+            else:
+                self._set_fit_range(low, value, emit_signal=True, redraw=True)
+            return
+        low, high = (value, high) if handle == "min" else (low, value)
+        self._fit_guide_override = (min(low, high), max(low, high))
+        self._draw_fit_range_artists()
+        self._canvas.draw_idle()
+        self.fit_range_guide_changed.emit(*self._fit_guide_override)
+
     def _waterfall_active_for(self, datasets: list[MuonDataset]) -> bool:
         """Return True when waterfall stacking applies to this overlay draw.
 
@@ -6602,12 +6658,13 @@ class PlotPanel(QWidget):
         drawing/hit-testing exactly as the moments overlay does in
         :meth:`_moments_window_display`.
         """
-        if self._fit_x_min is None or self._fit_x_max is None:
+        low, high = self._fit_guide_window()
+        if low is None or high is None:
             return None
         unit = self._current_frequency_x_unit
         mode = self._frequency_axis_mode
-        lo = self._convert_canonical_mhz_to_display_limit(self._fit_x_min, unit=unit, mode=mode)
-        hi = self._convert_canonical_mhz_to_display_limit(self._fit_x_max, unit=unit, mode=mode)
+        lo = self._convert_canonical_mhz_to_display_limit(low, unit=unit, mode=mode)
+        hi = self._convert_canonical_mhz_to_display_limit(high, unit=unit, mode=mode)
         return lo, hi
 
     def _draw_fit_range_artists(self) -> None:
@@ -6619,7 +6676,8 @@ class PlotPanel(QWidget):
         self._draw_moments_artists()
         self._clear_fit_range_artists()
 
-        if self._fit_x_min is None or self._fit_x_max is None:
+        guide_min, guide_max = self._fit_guide_window()
+        if guide_min is None or guide_max is None:
             return
 
         # Frequency panels draw a single span on the main axis, converting the
@@ -6639,9 +6697,7 @@ class PlotPanel(QWidget):
             return
 
         for axis in axes:
-            span, left_line, right_line = draw_fit_range_span(
-                axis, self._fit_x_min, self._fit_x_max
-            )
+            span, left_line, right_line = draw_fit_range_span(axis, guide_min, guide_max)
             self._fit_span_artists.append(span)
             self._fit_min_handles.append(left_line)
             self._fit_max_handles.append(right_line)
@@ -6657,9 +6713,10 @@ class PlotPanel(QWidget):
         (checked next in ``_on_canvas_button_press``) rather than steal its
         clicks.
         """
+        guide_min, guide_max = self._fit_guide_window()
         if (
-            self._fit_x_min is None
-            or self._fit_x_max is None
+            guide_min is None
+            or guide_max is None
             or event.inaxes is None
             or event.x is None
             or event.y is None
@@ -6689,7 +6746,7 @@ class PlotPanel(QWidget):
 
         return nearest_handle(
             hit_axis,
-            [(self._fit_x_min, "min"), (self._fit_x_max, "max")],
+            [(guide_min, "min"), (guide_max, "max")],
             event.x,
             tolerance_px=8.0,
         )
@@ -6809,10 +6866,7 @@ class PlotPanel(QWidget):
                     unit=self._current_frequency_x_unit,
                     mode=self._frequency_axis_mode,
                 )
-            if self._active_fit_handle == "min":
-                self._set_fit_range(new_value, self._fit_x_max, emit_signal=True, redraw=True)
-            else:
-                self._set_fit_range(self._fit_x_min, new_value, emit_signal=True, redraw=True)
+            self._apply_fit_handle(self._active_fit_handle, new_value)
 
         if self._active_moments_handle is not None and event.inaxes is self._ax:
             self._drag_started = True
@@ -6985,10 +7039,11 @@ class PlotPanel(QWidget):
         """
         if self._is_frequency_plot_panel():
             return
-        if self._fit_x_min is None or self._fit_x_max is None:
+        guide_min, guide_max = self._fit_guide_window()
+        if guide_min is None or guide_max is None:
             return
 
-        current = self._fit_x_min if handle == "min" else self._fit_x_max
+        current = guide_min if handle == "min" else guide_max
         prompt = "Fit x-value (µs):"
         value, ok = QInputDialog.getDouble(
             self,
@@ -7002,10 +7057,7 @@ class PlotPanel(QWidget):
         if not ok:
             return
 
-        if handle == "min":
-            self._set_fit_range(value, self._fit_x_max, emit_signal=True, redraw=True)
-        else:
-            self._set_fit_range(self._fit_x_min, value, emit_signal=True, redraw=True)
+        self._apply_fit_handle(handle, float(value))
 
     def plot_fit(
         self,
