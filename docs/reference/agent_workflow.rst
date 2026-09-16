@@ -17,11 +17,13 @@ Claude Code or Codex are the two tested so far — through the packaged
 decision rules an analyst applies at each step, and the summary a
 spectroscopist would recognise at the end.
 
-**In scope**: preliminary, time-domain forward–backward asymmetry analysis of
-zero-field (ZF), transverse-field (TF) and longitudinal-field (LF) runs — a
-temperature scan or a field scan at one geometry, from ISIS NeXus (``.nxs``)
-or PSI (``.bin``, ``.mdu``) files, one forward group against one backward
-group. "Preliminary" is the operative word: the workflow produces a
+**In scope**: preliminary forward–backward asymmetry analysis of zero-field
+(ZF), transverse-field (TF) and longitudinal-field (LF) runs — a temperature
+scan or a field scan at one geometry, named or numbered periods in a
+multi-period run, Fourier spectra, integral-asymmetry ALC/QLCR field scans,
+and a simultaneous group of runs with shared fitted parameters. Input may be
+ISIS NeXus (``.nxs``) or PSI (``.bin``, ``.mdu``), using one forward group
+against one backward group. "Preliminary" is the operative word: the workflow produces a
 defensible first pass — the right model family, a trend, and flagged runs —
 not a publication analysis.
 
@@ -34,17 +36,15 @@ skill tells an agent to say so and stop rather than force a fit:
 
    * - Case
      - Why it is out of scope
-   * - ALC / avoided-level-crossing resonance
-     - The analysis is integral asymmetry *versus field*, fit as a resonance
-       line shape; there is no command for that.
    * - Count-domain fitting
      - ``reduce`` only produces asymmetry, not per-detector counts with an
        N₀ and relaxation term.
    * - Multi-group / orientation-resolved analysis
      - The workflow reduces exactly one forward/backward detector pair, not
        several groups fit together.
-   * - Fourier or maximum-entropy spectra
-     - There is no transform command; everything here is a time-domain fit.
+   * - Maximum-entropy spectra
+     - ``fourier`` provides an FFT and peak table, not maximum entropy
+       reconstruction.
    * - Negative-muon (μ⁻) elemental analysis
      - Gamma spectra and elemental lines are not asymmetry data.
    * - Rotating-reference-frame or RF-resonance runs
@@ -53,10 +53,9 @@ skill tells an agent to say so and stop rather than force a fit:
    * - Muonium chemistry / reaction rates
      - Rates versus concentration across samples are not a spin-relaxation
        trend.
-   * - Simultaneous multi-field fits
-     - ``fit-series --global`` pins a parameter at one value across the
-       series; it does not fit several runs jointly, so it cannot represent a
-       decoupling triplet that needs a shared parameter fit across fields.
+   * - A series of simultaneous groups
+     - ``fit-global`` fits one group jointly, but no command yet repeats that
+       fit over every temperature and trends the shared parameters.
    * - A fragment of a published multi-field campaign
      - Disjoint run-number blocks with large gaps and no self-contained scan
        cannot be reconstructed from what is on disk.
@@ -137,8 +136,9 @@ Every subcommand below shares the same conventions:
   table; every payload carries ``"schema": 1`` and ``"asymmetry_version"``.
   Omit it for the default human-readable table, which is usually easier to
   read directly.
-- ``--plot`` (on ``reduce``, ``wizard``, ``fit``, ``fit-series`` and
-  ``trend``) writes one or more headless PNGs into the work directory's
+- ``--plot`` (on ``reduce``, ``integral-scan``, ``wizard``, ``fit``,
+  ``fit-global``, ``fit-series``, ``trend`` and ``fourier``) writes one or
+  more headless PNGs into the work directory's
   ``plots/`` — see `Plots`_.
 - ``--workdir`` overrides the work directory, which otherwise defaults to
   ``./asymmetry-work`` — in the directory the command is run from, not in the
@@ -179,13 +179,13 @@ reading every file:
    $ asymmetry survey runs
    8 run(s) in runs — SIM
 
-   run  T/K    B/G     geom  prec    orient        hist  points  dt   title
-   ---  -----  ------  ----  ------  ------------  ----  ------  ---  -------------------------------------
-   101  5.00   100.00  TF*   larmor  Longitudinal  8     500     no   Calibrant T=5.0 K B=100.0 G
-   102  10.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=10.0 K B=0.0 G
+   run  T/K    B/G     geom  prec    orient        hist  periods  points  events   dt   title
+   ---  -----  ------  ----  ------  ------------  ----  -------  ------  -------  ---  -------------------------------------
+   101  5.00   100.00  TF*   larmor  Longitudinal  8     1        500     2000123  no   Calibrant T=5.0 K B=100.0 G
+   102  10.00  0.00    ZF    -       Longitudinal  8     1        500     1999876  no   Sample T=10.0 K B=0.0 G
    ...
-   107  60.00  0.00    ZF    -       Longitudinal  8     500     no   Sample T=60.0 K B=0.0 G
-   108  2.00   110.00  -     none    Longitudinal  8     500     no   Sample T=2.0 K B=110.0 G (decoupling)
+   107  60.00  0.00    ZF    -       Longitudinal  8     1        500     2000456  no   Sample T=60.0 K B=0.0 G
+   108  2.00   110.00  -     none    Longitudinal  8     1        500     1999544  no   Sample T=2.0 K B=110.0 G (decoupling)
 
    Alpha-calibration candidates:
      run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
@@ -262,10 +262,17 @@ with no precession in it is not a calibration candidate. ``asymmetry alpha``
 applies the same rule and prints its own ``precession`` line, so the two
 commands never disagree about whether a run will calibrate alpha.
 
-Each run's ``survey.json`` row carries ``geometry``, ``geometry_source``
+Each run's ``survey.json`` row carries ``n_periods``, ``total_events``,
+``geometry``, ``geometry_source``
 (``field``, ``measured``, ``refuted``, ``file`` or ``none``), ``precession``,
 ``precession_frequency_mhz``, ``precession_snr``, ``precession_larmor_mhz`` and
 ``precession_note``.
+
+``total_events`` is the gross count summed over every raw detector histogram
+in the default (first) period. The human table shows the same value under
+``events``. Use it to choose between otherwise comparable science runs; do not
+rank candidate spectra by precession SNR, which can favour a calibration run
+or a warmer, narrower line.
 
 How scans are grouped
 ^^^^^^^^^^^^^^^^^^^^^
@@ -323,7 +330,8 @@ directory.
 .. code-block:: text
 
    asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FROM]
-                    [--deadtime {off,from_file}] [--rebin REBIN] [--tmin TMIN]
+                    [--period RED|GREEN|N] [--deadtime {off,from_file}]
+                    [--rebin REBIN] [--tmin TMIN]
                     [--tmax TMAX] [--plot] [--json] [--workdir WORKDIR]
                     folder
 
@@ -337,6 +345,21 @@ default is ``off``, matching the GUI's fresh-run default. Writes
 ``plots/reduced-<run>.png`` per run with ``--plot``. Results are cached on a
 digest of the source file, the grouping and the reduction settings, so
 re-running ``reduce`` on unchanged runs is cheap.
+
+``--period red``, ``--period green`` or ``--period N`` selects one period
+before alpha calibration and reduction. The choice is part of the cache
+digest. ISIS photo-μSR commonly records light-ON as red and light-OFF as
+green, but the experiment notes and spectra remain the authority. Since the
+cache is keyed by source run number, use separate work directories if two
+periods of the same run must coexist.
+
+For photo-μSR, use the weak-TF run only to obtain alpha, then reduce the same
+science run's light-ON and light-OFF periods into separate work directories.
+Fit the dark period first when its amplitude is needed to stabilise an
+early-time light-period rate. Run order may visualise a rate sequence, but it
+is not a substitute for injected carrier density or laser delay; do not report
+a density exponent or carrier lifetime unless those x values and the required
+trend fit were actually available.
 
 .. code-block:: console
 
@@ -409,6 +432,28 @@ only ``plots/fit-<run>.png`` with ``--plot`` — so it is the quick way to check
 a hand-edited recipe converges on one run before spending a whole series on
 it (see `Hand-editing a recipe`_).
 
+``fit-global``
+~~~~~~~~~~~~~~
+
+Fit two or more reduced runs in one coupled objective with named parameters
+fitted once across every run:
+
+.. code-block:: text
+
+   asymmetry fit-global [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
+                        [--free NAME] --shared P,Q [--field-param NAME]
+                        [--strategy {joint,profiled,least_squares}]
+                        [--name NAME] [--plot] [--json] [--workdir WORKDIR]
+                        folder
+
+``--shared P,Q`` is a true shared fit, unlike ``fit-series --global``.
+``--field-param B_L`` seeds that parameter from each run's recorded field and
+holds it for that run, which is the usual structure of an LF decoupling
+triplet. Other parameters remain run-local. The result and its shared
+uncertainties are stored in ``series/<name>.json``; ``--plot`` writes one fit
+plot per run. The command fits one group at a time—repeat it for each
+temperature when analysing a sequence of triplets.
+
 ``fit-series``
 ~~~~~~~~~~~~~~
 
@@ -470,6 +515,70 @@ PNG per free parameter (``plots/<series>-trend-<param>.png``):
    ...
    107  60  0.198726  0.232033  1.06863   1.67424     large_rel_err, spurious_reseeded
 
+``integral-scan``
+~~~~~~~~~~~~~~~~~
+
+Build time-integral asymmetry versus field (or temperature/run order) and
+optionally fit a field-scan expression. This is the ALC/QLCR path:
+
+.. code-block:: text
+
+   asymmetry integral-scan [-h] --runs RUNS [--name NAME] [--alpha ALPHA]
+                           [--alpha-from ALPHA_FROM] [--period RED|GREEN|N]
+                           [--tmin TMIN] [--tmax TMAX]
+                           [--method {integral,differential}]
+                           [--order {field,temperature,run}] [--model MODEL]
+                           [--initial NAME=VALUE] [--fix NAME=VALUE]
+                           [--baseline MODEL] [--baseline-regions LO:HI,...]
+                           [--plot] [--json] [--workdir WORKDIR] folder
+
+For example, ``--model "LorentzianLCR + Cubic"`` fits an off-zero resonance
+and background together. Alternatively, ``--baseline Cubic
+--baseline-regions 2000:2600,4500:5000 --model LorentzianLCR`` determines the
+background only from non-resonant regions before fitting the corrected scan.
+The scan points, excluded runs, fit parameters and uncertainties are stored in
+``scans/<name>.json``.
+
+Report the resonance field, width, amplitude and uncertainties the command
+prints. Do not use shell arithmetic or a literature formula to turn them into
+a numeric hyperfine coupling and present it as command output; keep that
+relationship qualitative unless Asymmetry itself emitted the derived value.
+
+``fourier``
+~~~~~~~~~~~
+
+Transform one reduced run and report quantitative peaks:
+
+.. code-block:: text
+
+   asymmetry fourier [-h] --run RUN [--name NAME]
+                     [--window {none,hann,cosine,gaussian,lorentzian}]
+                     [--padding PADDING] [--tmin TMIN] [--tmax TMAX]
+                     [--phase PHASE] [--filter-tau FILTER_TAU]
+                     [--fmin FMIN] [--fmax FMAX] [--peaks PEAKS]
+                     [--plot] [--json] [--workdir WORKDIR] folder
+
+The command stores numerical arrays in ``spectra/<name>.npz`` and settings,
+resolution and the peak table in ``spectra/<name>.json``. Zero padding makes
+the plotted curve smoother but does not improve the reported resolution,
+which is set by the selected time window. This is an FFT, not MaxEnt.
+Peak detection is deliberately conservative, so inspect the spectrum PNG for
+weak shoulders as well as reading the table. Heed an
+``ApodisationEarlySignalWarning``: use an unwindowed physical ``--tmax`` crop,
+or a ``lorentzian`` window whose ``--filter-tau`` matches the damping rate,
+when a symmetric taper removes the early-time signal.
+
+Use a science run—not the weak-TF alpha-calibration run—for the representative
+FFT. In a temperature series, the coldest high-statistics science run is the
+usual first choice when splitting or broadening is expected. If several runs
+share that temperature, use their event counts to choose the highest-statistics
+one rather than the first run number. For semiconductor/shallow-donor or
+muonium data, inspect around the Larmor line for a central peak and symmetric
+satellites. When Fourier structure is the experiment's point, call the result
+an FFT rather than MaxEnt and include its window, resolution, peak table and
+visual PNG inspection in the final report; a generic time-domain fit does not
+replace them.
+
 ``skill``
 ~~~~~~~~~
 
@@ -496,8 +605,9 @@ the loader's verbatim NeXus field tree, which would bury it).
 The work directory
 -------------------
 
-``survey``, ``reduce``, ``wizard`` and ``fit-series`` persist their state in
-``./asymmetry-work/``; ``fit`` and ``trend`` read it and add only what
+``survey``, ``reduce``, ``integral-scan``, ``wizard``, ``fit-global``,
+``fit-series`` and ``fourier`` persist their state in ``./asymmetry-work/``;
+``fit`` and ``trend`` read it and add only what
 ``--plot`` (and ``trend --csv``) asks for. ``alpha`` and ``info`` are
 stateless — they load a file, print, and write nothing — and ``skill`` writes
 into the agent's own skill directory instead.
@@ -521,6 +631,9 @@ The work directory holds:
      wizard/<run>.json      # screening payload: recommendation, narrative, recipe
      recipes/<name>.json    # a fit recipe (model + parameters + window)
      series/<name>.json     # per-run results, trend table, quality flags
+     scans/<name>.json      # integral-scan points, exclusions and optional fit
+     spectra/<name>.npz     # Fourier frequency, real part and magnitude
+     spectra/<name>.json    # Fourier settings, resolution and peak table
      plots/*.png            # headless PNGs written by --plot
 
 so a later command picks up a reduced spectrum, a recipe, or a series without
@@ -531,8 +644,8 @@ keyed on a digest of the source file's identity (size, mtime, and the SHA-256
 of the whole file), the resolved grouping payload, and the reduction
 settings; an entry whose digest no longer matches its inputs is recomputed,
 never trusted stale. The whole directory is safe to delete — every command
-rebuilds whatever it needs from the original data files and, for ``fit`` and
-``fit-series``, the recipe.
+rebuilds whatever it needs from the original data files and, for ``fit``,
+``fit-global`` and ``fit-series``, the recipe.
 
 One directory, one data folder
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -559,8 +672,8 @@ The fit recipe
 ---------------
 
 A recipe is the only contract between screening and fitting: small JSON that
-``wizard`` writes, that a person or an agent may hand-edit, and that ``fit``
-and ``fit-series`` consume.
+``wizard`` writes, that a person or an agent may hand-edit, and that ``fit``,
+``fit-global`` and ``fit-series`` consume.
 
 .. code-block:: json
 
@@ -613,8 +726,8 @@ first to check it converges before spending a whole series on it.
 
 ``--global P,Q`` on ``fit-series`` **pins** those parameters at the recipe's
 value for every run rather than fitting them jointly: ``fit_asymmetry_series``
-is block-separable and cannot share a fitted parameter across runs, so this
-is not a simultaneous fit (see `Limits and what is not there yet`_).
+is block-separable. Use ``fit-global --shared P,Q`` for a true simultaneous
+fit of one run group.
 
 Series fitting
 ---------------
@@ -704,16 +817,20 @@ the expected findings for a dataset, and ``tools/agent_eval/run_eval.py``
 drives an agent against a copied dataset folder and reports the transcript
 and work directory for scoring against the rubric.
 
+The evaluation target is host-specific: use Sonnet through Claude Code and
+``gpt-5.6-luna`` through Codex. Record both the host and exact model with each
+result so the two evaluation tracks remain comparable without being conflated.
+
 Limits and what is not there yet
 ----------------------------------
 
 - No headless ``.asymp`` project export — the workflow produces reduced
   data, recipes, series and plots in the work directory, not a project file
   the desktop application can reopen.
-- No simultaneous multi-field fits. ``fit-series --global`` pins a shared
-  parameter's value rather than fitting it jointly across runs (see
-  `Hand-editing a recipe`_); a decoupling measurement that genuinely needs a
-  joint fit across fields is out of scope (see the scope table above).
+- No batch-over-groups global fit. ``fit-global`` couples one group of runs;
+  a temperature series of LF triplets currently requires one invocation per
+  temperature and manual collation of the stored shared results.
+- No maximum-entropy transform; ``fourier`` is an FFT.
 - No MCP server. The work directory is the mechanism that gives an agent
   state between separate command invocations in its place.
 - Warnings raised inside the fit wizard's worker processes are not collapsed

@@ -1,6 +1,6 @@
 # Agent CLI/skill evaluation rubrics
 
-These rubrics score the summary an agent (Claude, driving the
+These rubrics score the summary an agent (Claude Code or Codex, driving the
 `asymmetry` CLI) produces when handed a directory of muSR run files
 from the WiMDA muon school corpus and the prompt:
 
@@ -26,12 +26,17 @@ alone, without needing to see the agent's tool calls or the raw data.
   recorded in the plan's evaluation log, but a miss does not block the
   phase. These add multi-instrument folders, non-worksheet (paper)
   sources, and a non-ISIS loader (PSI `.bin`) to the mix.
-- **Tier C** (`alc-tcnq.md`, `ionic-motion-llz.md`,
-  `afm-high-tf-mdu.md`): the correct behaviour is to decline — explain
+- **Tier C** (`afm-high-tf-mdu.md`): the correct behaviour is to decline — explain
   that the requested workflow is out of scope for the current tool and
   stop, rather than force an answer. Each file is a decline rubric:
   it checks that the agent recognised *why* the case is out of scope,
   not just that it refused.
+- **Workflow-expansion gate** (`alc-tcnq.md`, `ionic-motion-llz.md`,
+  `photo-musr-silicon.md`, `cds-fourier.md`): must pass when adding or changing
+  the period-selection, integral-scan, Fourier or coupled-group workflows.
+  These cases were chosen specifically because an earlier CLI could not carry
+  them out. They grade a representative new workflow; where batching is still
+  absent, the rubric requires the agent to state that boundary.
 
 ## How to tick a rubric
 
@@ -56,6 +61,10 @@ alone, without needing to see the agent's tool calls or the raw data.
    correct summary here contains no analysis results at all, only a
    clear, specific explanation of scope and (for the "should" lines)
    useful survey-level context.
+6. For a workflow-expansion case, verify from `commands.txt` that the named new
+   command/flag was really used. The final summary remains the scored artifact;
+   this extra check distinguishes a capable-sounding narrative from an actual
+   exercise of the new path.
 
 ## The number rule
 

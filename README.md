@@ -69,9 +69,10 @@ for later reuse.
   state, plot state, fit state, Fourier settings, and per-run Fourier phase-table state.
 - **Extensible I/O**: register custom loaders at runtime for additional file formats.
 - **Optional publication export**: export trend and plot data for GLE-based figure generation.
-- **Scripting and agents**: an `asymmetry` command-line workflow (survey, calibrate, reduce, screen,
-  fit, and trend a scan) with headless plots and a `--json` payload on every command, plus a
-  packaged `asymmetry-analysis` skill that lets an AI coding agent drive the same workflow.
+- **Scripting and agents**: an `asymmetry` command-line workflow to survey, select acquisition
+  periods, calibrate, reduce, inspect Fourier spectra, fit ALC/QLCR field scans, run true
+  simultaneous fits, and trend conventional scans, with headless plots and a `--json` payload on
+  every command, plus a packaged `asymmetry-analysis` skill that lets an AI coding agent drive it.
 
 ## Installation
 
@@ -182,9 +183,11 @@ for details.
 ### Use Asymmetry from an AI coding agent
 
 The `asymmetry` command-line workflow wraps the same core API in a script- and
-agent-friendly form: survey a folder of runs, calibrate alpha, reduce to
-asymmetry, screen fit models with the wizard, fit a scan as a series, and
-trend the results, with `--json` output and headless plots at every step. It
+agent-friendly form: survey a folder of runs, select acquisition periods,
+calibrate alpha, reduce to asymmetry, inspect Fourier spectra, fit an integral
+ALC/QLCR scan or a simultaneous run group, screen time-domain models with the
+wizard, fit a conventional scan as a series, and trend the results. It offers
+`--json` output and headless plots throughout. It
 ships with a packaged `asymmetry-analysis` skill that teaches an AI coding
 agent (Claude Code or Codex, so far) to drive that workflow end to end.
 

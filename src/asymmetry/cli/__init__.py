@@ -41,8 +41,11 @@ from asymmetry import __version__
 from asymmetry.cli._output import UserError
 from asymmetry.cli.commands import alpha as alpha_command
 from asymmetry.cli.commands import fit as fit_command
+from asymmetry.cli.commands import fit_global as fit_global_command
 from asymmetry.cli.commands import fit_series as fit_series_command
+from asymmetry.cli.commands import fourier as fourier_command
 from asymmetry.cli.commands import info as info_command
+from asymmetry.cli.commands import integral_scan as integral_scan_command
 from asymmetry.cli.commands import reduce as reduce_command
 from asymmetry.cli.commands import skill as skill_command
 from asymmetry.cli.commands import survey as survey_command
@@ -56,10 +59,13 @@ _COMMANDS = (
     survey_command,
     alpha_command,
     reduce_command,
+    integral_scan_command,
     wizard_command,
     fit_command,
+    fit_global_command,
     fit_series_command,
     trend_command,
+    fourier_command,
     skill_command,
     info_command,
 )

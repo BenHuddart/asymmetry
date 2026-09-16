@@ -132,6 +132,7 @@ def test_survey_json_payload_and_written_file(
     _assert_stamped(payload)
     survey = payload["survey"]
     assert [row["run_number"] for row in survey["runs"]] == list(ALL_RUNS)
+    assert all(row["total_events"] > 0 for row in survey["runs"])
     assert survey["best_calibration_run"] == CALIBRATION_RUN
 
     stored = json.loads((workdir / "survey.json").read_text(encoding="utf-8"))
@@ -156,6 +157,7 @@ def test_survey_table_shows_the_precession_column_and_the_measured_geometry(
     lines = capsys.readouterr().out.splitlines()
     header = next(line for line in lines if line.lstrip().startswith("run "))
     assert "prec" in header.split()
+    assert "events" in header.split()
 
     calibration = next(line for line in lines if line.startswith(f"{CALIBRATION_RUN} "))
     # A measured geometry is starred so the column says at a glance that the
@@ -226,7 +228,17 @@ def test_every_command_offers_the_same_default_work_directory() -> None:
         if action.dest == "workdir"
         if f"default: ./{WORKDIR_NAME}" in (action.help or "")
     }
-    assert with_workdir == {"survey", "reduce", "wizard", "fit", "fit-series", "trend"}
+    assert with_workdir == {
+        "survey",
+        "reduce",
+        "integral-scan",
+        "wizard",
+        "fit",
+        "fit-global",
+        "fit-series",
+        "trend",
+        "fourier",
+    }
 
 
 def test_a_work_directory_holds_one_data_folder(
@@ -427,6 +439,83 @@ def test_reduce_with_deadtime_from_file(workflow_folder: Path, tmp_path: Path, c
     assert entry["settings"]["deadtime"] == "from_file"
 
 
+def test_reduce_selects_and_records_a_multi_period_run(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from asymmetry.core.data.dataset import Histogram
+    from asymmetry.core.io import load as real_load
+
+    def _clone(histogram):
+        return Histogram(
+            counts=histogram.counts.copy(),
+            bin_width=histogram.bin_width,
+            t0_bin=histogram.t0_bin,
+            good_bin_start=histogram.good_bin_start,
+            good_bin_end=histogram.good_bin_end,
+        )
+
+    def _load_two_periods(path):
+        dataset = real_load(path)
+        red = [_clone(histogram) for histogram in dataset.run.histograms]
+        green = [_clone(histogram) for histogram in dataset.run.histograms]
+        dataset.run.grouping["period_histograms"] = [red, green]
+        dataset.run.grouping["period_reduced"] = [
+            (dataset.time.copy(), dataset.asymmetry.copy(), dataset.error.copy()),
+            (dataset.time.copy(), dataset.asymmetry.copy(), dataset.error.copy()),
+        ]
+        dataset.run.metadata["period_count"] = 2
+        return dataset
+
+    monkeypatch.setattr("asymmetry.core.io.load", _load_two_periods)
+    workdir = tmp_path / "period-wd"
+    cli.main(
+        [
+            "reduce",
+            str(workflow_folder),
+            "--runs",
+            str(SCAN_RUNS[0]),
+            "--period",
+            "green",
+            "--json",
+            "--workdir",
+            str(workdir),
+        ]
+    )
+    data = _json_output(capsys)
+    assert data["settings"]["period"] == "green"
+    assert data["entries"][0]["run"]["n_periods"] == 2
+    assert (
+        json.loads((workdir / "manifest.json").read_text(encoding="utf-8"))["settings"]["period"]
+        == "green"
+    )
+
+
+def test_survey_reports_the_number_of_selectable_periods(
+    workflow_folder: Path, tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from asymmetry.core.io import load as real_load
+
+    def _load_two_periods(path):
+        dataset = real_load(path)
+        reduced = (dataset.time.copy(), dataset.asymmetry.copy(), dataset.error.copy())
+        dataset.run.grouping["period_reduced"] = [reduced, reduced]
+        dataset.run.metadata["period_count"] = 2
+        return dataset
+
+    monkeypatch.setattr("asymmetry.core.io.load", _load_two_periods)
+    cli.main(
+        [
+            "survey",
+            str(workflow_folder),
+            "--json",
+            "--workdir",
+            str(tmp_path / "survey-period-wd"),
+        ]
+    )
+    data = _json_output(capsys)
+    assert all(row["n_periods"] == 2 for row in data["survey"]["runs"])
+
+
 def test_reduce_rejects_alpha_and_alpha_from_together(
     workflow_folder: Path, tmp_path: Path, capsys
 ) -> None:
@@ -482,6 +571,60 @@ def test_reduce_human_table_lists_every_run(workflow_folder: Path, tmp_path: Pat
     assert "A(0)/%" in out
     for run_number in SCAN_RUNS[:2]:
         assert str(run_number) in out
+
+
+def test_integral_scan_writes_points_for_the_named_runs(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    workdir = tmp_path / "wd"
+    cli.main(
+        [
+            "integral-scan",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[2]}",
+            "--order",
+            "run",
+            "--name",
+            "integral",
+            "--json",
+            "--workdir",
+            str(workdir),
+        ]
+    )
+    data = _json_output(capsys)
+    assert [point["run"] for point in data["scan"]["points"]] == list(SCAN_RUNS[:3])
+    assert data["scan"]["units"] == "fraction"
+    assert (workdir / "scans" / "integral.json").exists()
+
+
+@pytest.mark.parametrize(
+    "fit_only_args",
+    [
+        ["--initial", "B0=3000"],
+        ["--fix", "Bwid=100"],
+        ["--baseline", "Constant", "--baseline-regions", "0:1"],
+    ],
+)
+def test_integral_scan_rejects_fit_options_without_a_model(
+    workflow_folder: Path,
+    tmp_path: Path,
+    capsys,
+    fit_only_args: list[str],
+) -> None:
+    with pytest.raises(SystemExit, match="1"):
+        cli.main(
+            [
+                "integral-scan",
+                str(workflow_folder),
+                "--runs",
+                str(SCAN_RUNS[0]),
+                *fit_only_args,
+                "--workdir",
+                str(tmp_path / "wd"),
+            ]
+        )
+    assert "require --model MODEL" in capsys.readouterr().err
 
 
 # -- wizard -----------------------------------------------------------------
@@ -722,6 +865,35 @@ def test_fit_series_defaults_its_name_from_the_recipe(
     assert (fitting_workdir / "series" / "series-relax.json").exists()
 
 
+def test_fit_global_fits_a_shared_parameter_instead_of_pinning_it(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "fit-global",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+            "--recipe",
+            "relax",
+            "--shared",
+            "A_bg",
+            "--strategy",
+            "least_squares",
+            "--name",
+            "joint",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    data = _json_output(capsys)["global_fit"]
+    assert data["shared_params"] == ["A_bg"]
+    assert "A_bg" in data["shared"]
+    assert len(data["results"]) == 2
+    assert (fitting_workdir / "series" / "joint.json").exists()
+
+
 def test_fit_series_start_chains_outward_from_the_named_run(
     workflow_folder: Path, fitting_workdir: Path, capsys
 ) -> None:
@@ -862,6 +1034,31 @@ def test_trend_names_the_series_the_workdir_does_hold(
         )
     assert exc.value.code == 1
     assert "No series 'nope'" in capsys.readouterr().err
+
+
+def test_fourier_writes_arrays_and_quantitative_metadata(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "fourier",
+            str(workflow_folder),
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--name",
+            "spectrum",
+            "--fmax",
+            "10",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    data = _json_output(capsys)
+    assert data["run"] == SCAN_RUNS[0]
+    assert data["resolution_mhz"] > 0.0
+    assert Path(data["array_path"]).exists()
+    assert Path(data["metadata_path"]).exists()
 
 
 @pytest.mark.parametrize("name", ["../escape", "a/b", ""])

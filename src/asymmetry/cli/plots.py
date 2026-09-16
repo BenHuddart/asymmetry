@@ -491,11 +491,65 @@ def plot_trend(
     return _save(figure, out_path)
 
 
+def plot_scan(
+    x: np.ndarray,
+    value: np.ndarray,
+    error: np.ndarray,
+    *,
+    expression: str | None,
+    model_function: Callable[..., np.ndarray] | None,
+    parameters: Mapping[str, float] | None,
+    x_label: str,
+    y_label: str,
+    title: str,
+    out_path: str | Path,
+) -> Path:
+    """Integral asymmetry against field/temperature, with an optional fit."""
+    x = np.asarray(x, dtype=np.float64)
+    value = np.asarray(value, dtype=np.float64)
+    error = np.asarray(error, dtype=np.float64)
+    figure = _new_figure(_FIGSIZE)
+    axes = figure.add_subplot(111)
+    axes.errorbar(x, value, yerr=error, fmt="o", ms=4, elinewidth=0.8, color="C0", label="data")
+    if model_function is not None and parameters is not None and x.size:
+        dense_x = np.linspace(float(np.min(x)), float(np.max(x)), 500)
+        curve = np.asarray(model_function(dense_x, **parameters), dtype=np.float64)
+        axes.plot(dense_x, curve, "-", color="C1", lw=1.5, label=expression or "model")
+        axes.legend(loc="best", fontsize="small")
+    axes.set_xlabel(x_label)
+    axes.set_ylabel(y_label)
+    axes.set_title(title)
+    _set_y_range(axes, _margin_range(value, error, fraction=_DATA_Y_MARGIN))
+    return _save(figure, out_path)
+
+
+def plot_spectrum(
+    frequency: np.ndarray,
+    real: np.ndarray,
+    magnitude: np.ndarray,
+    *,
+    run_number: int,
+    out_path: str | Path,
+) -> Path:
+    """Real and magnitude Fourier channels for one reduced run."""
+    figure = _new_figure(_FIGSIZE)
+    axes = figure.add_subplot(111)
+    axes.plot(frequency, magnitude, color="C0", lw=1.2, label="magnitude")
+    axes.plot(frequency, real, color="C1", lw=1.0, alpha=0.8, label="real")
+    axes.set_xlabel("frequency / MHz")
+    axes.set_ylabel("Fourier amplitude")
+    axes.set_title(f"Run {run_number} — Fourier spectrum")
+    axes.legend(loc="best", fontsize="small")
+    return _save(figure, out_path)
+
+
 __all__ = [
     "MATPLOTLIB_HINT",
     "frame_for_record",
     "plot_fit",
     "plot_reduced",
+    "plot_scan",
+    "plot_spectrum",
     "plot_trend",
     "require_matplotlib",
 ]
