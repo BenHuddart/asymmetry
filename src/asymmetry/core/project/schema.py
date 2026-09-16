@@ -224,7 +224,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import tempfile
 from pathlib import Path
 
 CURRENT_SCHEMA_VERSION: int = 20
@@ -1669,7 +1671,14 @@ def load_project(path: str | Path) -> dict:
 
 
 def save_project(state: dict, path: str | Path) -> None:
-    """Write a project state dict to a JSON file.
+    """Write a project state dict to a JSON file, atomically (D9).
+
+    The JSON is serialised to a temporary file in the destination's directory,
+    flushed and ``fsync``ed, then swapped into place with ``os.replace`` — a
+    crash or exception at any point up to the replace leaves the previous
+    file untouched and removes the temp file. If a file already exists at
+    ``path``, its previous contents are kept alongside the new one as
+    ``<path>.bak`` (one generation: an older ``.bak`` is overwritten).
 
     Parameters
     ----------
@@ -1678,10 +1687,24 @@ def save_project(state: dict, path: str | Path) -> None:
     path : str or Path
         Destination ``.asymp`` file path.
     """
-    Path(path).write_text(
-        json.dumps(_encode_non_finite(state), indent=2, default=_json_default),
-        encoding="utf-8",
+    target = Path(path)
+    payload = json.dumps(_encode_non_finite(state), indent=2, default=_json_default)
+
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp"
     )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if target.exists():
+            os.replace(target, target.with_name(target.name + ".bak"))
+        os.replace(tmp_path, target)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 #: Wrapper key used to round-trip non-finite floats through strict JSON.
