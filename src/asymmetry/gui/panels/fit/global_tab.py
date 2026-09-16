@@ -183,8 +183,8 @@ from .tab_base import (
     _apply_param_table_style,
     _CommitOnTabDelegate,
     _configure_fraction_rows_in_table,
-    _fit_curve_display_bounds,
     _fit_curve_sample_count,
+    _fit_curve_time_bounds,
     _fit_domain_mismatch_message,
     _fit_summary,
     _format_bound,
@@ -381,7 +381,9 @@ class FitLaunch:
     already ``with_default_fraction_groups()``-applied, so a handler uses
     ``launch.model.param_names`` directly. ``time_span`` and ``run_number``
     describe the active run of a single grouped fit (the only completion that
-    needs them); the other paths leave them ``None``.
+    needs them); the other paths leave them ``None``. ``time_span`` is the
+    literal fit range stamped onto the active dataset (see
+    ``_fit_curve_time_bounds``), not that dataset's own surviving-bin extent.
     """
 
     model: CompositeModel
@@ -2731,7 +2733,7 @@ class GlobalFitTab(FitTabBase):
             model=grouped_model,
             global_params=tuple(global_params),
             datasets=tuple(grouped_datasets),
-            time_span=_finite_time_span(active.time) if active is not None else None,
+            time_span=_fit_curve_time_bounds(active) if active is not None else None,
             run_number=single_run,
         )
         self._fit_worker = _start_fit_call(
@@ -3640,7 +3642,7 @@ class GlobalFitTab(FitTabBase):
             for pname in launch.model.param_names:
                 if is_amplitude_parameter(pname):
                     param_dict.setdefault(pname, 1.0)
-            fit_t_min, fit_t_max = _fit_curve_display_bounds(*_finite_time_span(dataset.time))
+            fit_t_min, fit_t_max = _finite_time_span(dataset.time)
             n_samples = _fit_curve_sample_count(launch.model, param_dict, fit_t_min, fit_t_max)
             t_fit = np.linspace(fit_t_min, fit_t_max, n_samples)
             y_fit = grouped_model(t_fit, **param_dict)
@@ -3811,9 +3813,8 @@ class GlobalFitTab(FitTabBase):
             finite_mask = np.isfinite(fit_time)
             if not np.any(finite_mask):
                 continue
-            fit_t_min, fit_t_max = _fit_curve_display_bounds(
-                float(np.min(fit_time[finite_mask])), float(np.max(fit_time[finite_mask]))
-            )
+            fit_t_min = float(np.min(fit_time[finite_mask]))
+            fit_t_max = float(np.max(fit_time[finite_mask]))
             n_samples = _fit_curve_sample_count(
                 fit_model,
                 param_dict,
@@ -3879,7 +3880,11 @@ class GlobalFitTab(FitTabBase):
         """Pair each member's result with curves sampled over that member's data.
 
         *datasets* are the batch's launch members, not the live selection: the
-        user is free to select other runs while the fit runs.
+        user is free to select other runs while the fit runs. Each member was
+        individually cropped to the fit range by ``_get_fit_dataset``, which
+        stamps that literal range onto it (see ``_fit_curve_time_bounds``), so
+        the curve is drawn over the range the user actually set rather than
+        the member's own surviving-bin extent.
         """
         results_with_curves = {}
         for dataset in datasets:
@@ -3889,7 +3894,7 @@ class GlobalFitTab(FitTabBase):
             if result is None:
                 continue
             param_dict = {parameter.name: parameter.value for parameter in result.parameters}
-            t_min, t_max = _fit_curve_display_bounds(dataset.time.min(), dataset.time.max())
+            t_min, t_max = _fit_curve_time_bounds(dataset)
             n_samples = _fit_curve_sample_count(model, param_dict, t_min, t_max)
             t_fit = np.linspace(t_min, t_max, n_samples)
             y_fit = model.function(t_fit, **param_dict)
@@ -4446,9 +4451,7 @@ class GlobalFitTab(FitTabBase):
                     param_dict.setdefault(pname, 1.0)
             # Every group was fitted over the launch run's span; a member with no
             # run behind it (no active dataset) falls back to its own samples.
-            fit_t_min, fit_t_max = _fit_curve_display_bounds(
-                *(launch.time_span or _finite_time_span(dataset.time))
-            )
+            fit_t_min, fit_t_max = launch.time_span or _finite_time_span(dataset.time)
             n_samples = _fit_curve_sample_count(
                 launch.model,
                 param_dict,

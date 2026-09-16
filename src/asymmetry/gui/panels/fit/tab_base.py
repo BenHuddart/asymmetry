@@ -1232,16 +1232,23 @@ def _fit_curve_sample_count(
     return int(max(base_points, min(max_points, required_points)))
 
 
-def _fit_curve_display_bounds(t_min: float, t_max: float) -> tuple[float, float]:
-    """Widen a fitted curve's plotted x-range down to t=0 when needed.
+def _fit_curve_time_bounds(dataset: MuonDataset) -> tuple[float, float]:
+    """Return the x-range to draw a fitted curve over.
 
-    Muon time starts at implantation (t=0), but the active fit range commonly
-    starts later — narrowed to skip the prompt peak, or simply seeded from the
-    reduced dataset's first sample. A model describing relaxation from t=0
-    should still be drawn back to it rather than visibly truncated at the
-    first fitted time bin.
+    Prefers the literal fit range stamped onto *dataset* by
+    ``PlotPanel.get_fit_dataset`` (``dataset.metadata["fit_range"]``) over
+    ``dataset.time.min()``/``.max()``: after cropping to that range, the
+    *surviving* first/last bin can sit strictly inside it when no bin lands
+    exactly on an edge (e.g. a range set to start at 0 with the first bin at
+    0.01 µs), which then falsely looks like the fit was never asked to start
+    at t=0. Falls back to the dataset's own extent when no range was active
+    (the whole dataset is being fitted) or the dataset was never produced by
+    that crop (e.g. built directly in a test).
     """
-    return min(float(t_min), 0.0), float(t_max)
+    fit_range = dataset.metadata.get("fit_range")
+    if fit_range is not None:
+        return float(fit_range[0]), float(fit_range[1])
+    return float(dataset.time.min()), float(dataset.time.max())
 
 
 def _fit_work_pending(panel) -> bool:

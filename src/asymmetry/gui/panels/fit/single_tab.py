@@ -81,8 +81,8 @@ from .tab_base import (
     FitParameterTable,
     FitTabBase,
     _apply_domain_mismatch_warning,
-    _fit_curve_display_bounds,
     _fit_curve_sample_count,
+    _fit_curve_time_bounds,
     _fit_domain_mismatch_message,
     _fit_result_is_usable,
     _fit_summary,
@@ -901,9 +901,7 @@ class SingleFitTab(FitTabBase):
         self._record_fit_verdict(result)
 
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
-        t_min, t_max = _fit_curve_display_bounds(
-            self._current_dataset.time.min(), self._current_dataset.time.max()
-        )
+        t_min, t_max = _fit_curve_time_bounds(self._current_dataset)
         n_samples = _fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
         t_fit = np.linspace(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
@@ -967,9 +965,7 @@ class SingleFitTab(FitTabBase):
             parameters.add(param)
 
         param_dict = {p.name: p.value for p in parameters}
-        t_min, t_max = _fit_curve_display_bounds(
-            self._current_dataset.time.min(), self._current_dataset.time.max()
-        )
+        t_min, t_max = _fit_curve_time_bounds(self._current_dataset)
         n_samples = _fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
         # Generate fitted curve for plotting
         t_fit = np.linspace(t_min, t_max, n_samples)
@@ -1220,7 +1216,7 @@ class SingleFitTab(FitTabBase):
             result.parameters = _shift_rrf_parameters(result.parameters, rrf_offsets, sign=+1)
 
         param_dict = {parameter.name: parameter.value for parameter in result.parameters}
-        t_min, t_max = _fit_curve_display_bounds(dataset.time.min(), dataset.time.max())
+        t_min, t_max = _fit_curve_time_bounds(dataset)
         n_samples = _fit_curve_sample_count(self._composite_model, param_dict, t_min, t_max)
         t_fit = np.linspace(t_min, t_max, n_samples)
         y_fit = self._composite_model.function(t_fit, **param_dict)
@@ -1341,7 +1337,7 @@ class SingleFitTab(FitTabBase):
         self._synchronize_fraction_value_rows()
 
         param_dict = {p.name: p.value for p in result.parameters}
-        t_min, t_max = _fit_curve_display_bounds(dataset.time.min(), dataset.time.max())
+        t_min, t_max = _fit_curve_time_bounds(dataset)
         n_samples = _fit_curve_sample_count(model, param_dict, t_min, t_max)
         t_fit = np.linspace(t_min, t_max, n_samples)
         y_fit = model.function(t_fit, **param_dict)
