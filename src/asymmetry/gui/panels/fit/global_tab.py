@@ -4725,6 +4725,11 @@ class GlobalFitTab(FitTabBase):
         self._synchronize_fraction_value_rows()
 
         self._status_text_from_global_wizard(assessment, recommendation)
+        # The wizard computed these results elsewhere, but applying them *is* a
+        # batch run as far as every listener is concerned: the started signal
+        # carries the launch context the completion is recorded against, so it
+        # must precede the completion here exactly as it does around the worker.
+        self.global_fit_started.emit()
         self.global_fit_completed.emit(
             {
                 run_number: (
