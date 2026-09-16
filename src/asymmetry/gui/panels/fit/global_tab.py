@@ -131,6 +131,7 @@ from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
 )
+from asymmetry.core.representation.series import normalise_recipe
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
 from asymmetry.gui.styles.fonts import mono_font
@@ -1122,20 +1123,6 @@ class GlobalFitTab(FitTabBase):
             "values": values_by_name,
         }
         self._refresh_inherited_single_fit_defaults()
-
-    def remove_single_fit_seeds(self, run_numbers: list[int] | set[int]) -> set[int]:
-        """Remove stored single-fit seeds for the given runs."""
-        removed: set[int] = set()
-        for run_number in run_numbers:
-            try:
-                run_key = int(run_number)
-            except (TypeError, ValueError):
-                continue
-            if self._single_fit_seed_by_run.pop(run_key, None) is not None:
-                removed.add(run_key)
-        if removed:
-            self._refresh_inherited_single_fit_defaults()
-        return removed
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting.
@@ -4542,24 +4529,12 @@ class GlobalFitTab(FitTabBase):
 
     # ── project state helpers ──────────────────────────────────────────
 
-    def get_state(self) -> dict:
-        """Return a serialisable snapshot of the global-fit tab state."""
-        if self._fit_wizard_window is not None:
-            recommendation = self._fit_wizard_window.current_recommendation()
-            signature = self._cached_wizard_signature
-            if recommendation is not None and signature is None:
-                try:
-                    parsed = self._parse_parameter_configuration()
-                except ValueError:
-                    parsed = None
-                if parsed is not None:
-                    signature = self._wizard_context_signature(parsed)
-            if recommendation is not None and signature is not None:
-                self._cache_wizard_analysis(
-                    recommendation,
-                    signature=signature,
-                    log_text=self._fit_wizard_window.current_log_text(),
-                )
+    def _parameter_rows_state(self) -> list[dict]:
+        """Return the parameter table's rows as name/value/type/bounds/seeded dicts.
+
+        The one reader of the table's cells, shared by :meth:`get_state` (which
+        renormalises the values afterwards) and :meth:`current_recipe`.
+        """
         params = []
         # Skip display-only derived-fraction rows: they carry no fitted parameter
         # and must not be serialised into the saved state.
@@ -4582,6 +4557,52 @@ class GlobalFitTab(FitTabBase):
                     "seeded": value_item is not None and _value_provenance(value_item) == SEEDED,
                 }
             )
+        return params
+
+    def current_recipe(self) -> dict:
+        """Return the tab's current setup as a :class:`FitSeries` recipe (D2).
+
+        The parameter rows, the fit window as numbers (the provenance *string*
+        stays a per-result summary field), the seeding mode and the co-add
+        block — everything a re-run compares against to decide whether it is
+        the same analysis (D3). Range fields that have never been given a
+        window (both still at their initial value) describe no window, and are
+        recorded as the recipe's unbounded one rather than as "0 to 0".
+        """
+        low = self._fit_range_min_spin.value()
+        high = self._fit_range_max_spin.value()
+        bounded = high > low
+        return normalise_recipe(
+            {
+                "parameters": self._parameter_rows_state(),
+                "fit_range": {
+                    "min": low if bounded else None,
+                    "max": high if bounded else None,
+                },
+                "seeding": self._batch_seeding_mode,
+                "coadd": {"mode": self._coadd_mode, "window": self._coadd_window},
+            }
+        )
+
+    def get_state(self) -> dict:
+        """Return a serialisable snapshot of the global-fit tab state."""
+        if self._fit_wizard_window is not None:
+            recommendation = self._fit_wizard_window.current_recommendation()
+            signature = self._cached_wizard_signature
+            if recommendation is not None and signature is None:
+                try:
+                    parsed = self._parse_parameter_configuration()
+                except ValueError:
+                    parsed = None
+                if parsed is not None:
+                    signature = self._wizard_context_signature(parsed)
+            if recommendation is not None and signature is not None:
+                self._cache_wizard_analysis(
+                    recommendation,
+                    signature=signature,
+                    log_text=self._fit_wizard_window.current_log_text(),
+                )
+        params = self._parameter_rows_state()
 
         normalized_values = _normalized_model_param_values(
             self._composite_model,

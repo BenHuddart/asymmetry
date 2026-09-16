@@ -43,7 +43,6 @@ from asymmetry.core.representation.series import (
     ORDER_KEYS,
     PARAM_ROLES,
     FitSeries,
-    canonical_model_matches,
     default_recipe,
     normalise_recipe,
 )
@@ -77,7 +76,6 @@ __all__ = [
     "TimeGroups",
     "TimeMaxEntReconstruction",
     "build_maxent_reconstruction_datasets",
-    "canonical_model_matches",
     "composite_model_label",
     "compute_group_input_digest",
     "default_recipe",

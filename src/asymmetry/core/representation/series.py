@@ -103,22 +103,6 @@ def normalise_recipe(recipe: dict | None) -> dict[str, Any]:
     }
 
 
-def canonical_model_matches(model_a: dict | None, model_b: dict | None) -> bool:
-    """Return ``True`` when two serialised models are structurally identical.
-
-    Comparison is done on the normalised ``CompositeModel.to_dict`` form so
-    two spellings of the same model compare equal.
-    """
-    if model_a is None or model_b is None:
-        return model_a is None and model_b is None
-    try:
-        norm_a = CompositeModel.from_dict(model_a).to_dict()
-        norm_b = CompositeModel.from_dict(model_b).to_dict()
-    except (ValueError, KeyError, TypeError):
-        return model_a == model_b
-    return norm_a == norm_b
-
-
 class FitSeries:
     """An ordered series of members fit with one canonical model.
 

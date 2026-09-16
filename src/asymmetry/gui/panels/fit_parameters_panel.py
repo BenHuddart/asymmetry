@@ -555,7 +555,6 @@ class FitParametersPanel(QWidget):
     #: Emitted when a single-series model fit completes (parameter_name, x_key,
     #: ParameterModelFit) so its per-range outputs become a trendable series.
     model_fit_completed = Signal(object, object, object)
-    delete_group_fits_requested = Signal(str, object)
     #: Emitted when the user activates a different fit series (batch_id).
     series_selection_changed = Signal(str)
     #: Emitted when the user renames a series via the context menu (batch_id, new_label).
@@ -697,8 +696,8 @@ class FitParametersPanel(QWidget):
         #: :meth:`load_representation_series` + ``series_selection_changed``).
         self._series_run_numbers: dict[str, list[int]] = {}
         #: Ids of group-bound series whose live membership no longer matches what
-        #: was last fit (D1). Surfaced on the series pill exactly like the
-        #: divergence channel — a warning glyph + tooltip; cleared by re-running.
+        #: was last fit (D1). Surfaced on the series pill as a warning glyph +
+        #: tooltip; cleared by re-running.
         self._stale_series_ids: set[str] = set()
 
         # Background machinery for the trend-overlay model evaluation, which runs
@@ -1844,9 +1843,9 @@ class FitParametersPanel(QWidget):
         strip_metrics = self._group_tabs_widget.fontMetrics()
         for group in groups:
             # A stale group-bound series (live membership ≠ last-fitted set, D1)
-            # carries a warning glyph + tooltip on its pill — the same surfacing
-            # channel as divergence. The clean ``group_name`` is left untouched so
-            # rename/sort/delete still read the user-facing label.
+            # carries a warning glyph + tooltip on its pill. The clean
+            # ``group_name`` is left untouched so rename/sort/delete still read
+            # the user-facing label.
             is_stale = group.group_id in self._stale_series_ids
             # Same rule as the y chips: the pill is a short handle capped at a
             # character count, and the full name lives on the tooltip. A pill that
@@ -1909,34 +1908,24 @@ class FitParametersPanel(QWidget):
         elif selected_action is delete_action:
             self._delete_group_fits(group_id)
 
-    def _group_run_numbers(self, group: _GroupFitData) -> list[int]:
-        run_numbers: set[int] = set()
-        for row in group.rows:
-            try:
-                run_numbers.add(int(row.run_number))
-            except (TypeError, ValueError):
-                continue
-        return sorted(run_numbers)
-
     def _delete_group_fits(self, group_id: str) -> None:
         group = self._group_fit_results.get(group_id)
         if group is None:
             return
 
-        reply = QMessageBox.question(
-            self,
-            "Delete series",
-            (
-                f'Delete series "{group.group_name}"?\n'
-                "This removes it from the project and clears its dataset fits."
-            ),
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Delete series")
+        box.setText(f'Delete series "{group.group_name}"?')
+        box.setInformativeText(
+            "Removes this series and its trend. Other series and single fits on "
+            "these runs are kept."
         )
-        if reply != QMessageBox.StandardButton.Ok:
+        box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if box.exec() != QMessageBox.StandardButton.Ok:
             return
 
-        run_numbers = self._group_run_numbers(group)
         self._sync_active_group_state()
         self._group_fit_results.pop(group_id, None)
 
@@ -1954,7 +1943,6 @@ class FitParametersPanel(QWidget):
         selected_ids = [self._active_group_id] if self._active_group_id is not None else []
         self._set_selected_group_ids(selected_ids, emit=False)
         self._apply_group_selection_to_view(sync_active=False)
-        self.delete_group_fits_requested.emit(group_id, run_numbers)
         self.series_delete_requested.emit(group_id)
 
     def _refresh_group_button_styles(self) -> None:

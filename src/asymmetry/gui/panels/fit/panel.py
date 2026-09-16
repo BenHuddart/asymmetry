@@ -714,42 +714,6 @@ class FitPanel(QWidget):
         except Exception:
             return None
 
-    def clear_fits_for_runs(self, run_numbers: list[int]) -> int:
-        """Clear cached single/global fit state for specific dataset runs."""
-        normalized_runs: set[int] = set()
-        for run_number in run_numbers:
-            try:
-                normalized_runs.add(int(run_number))
-            except (TypeError, ValueError):
-                continue
-
-        if not normalized_runs:
-            return 0
-
-        changed_runs: set[int] = set()
-        for run_number in normalized_runs:
-            if self._single_state_by_run.pop(run_number, None) is not None:
-                changed_runs.add(run_number)
-
-        changed_runs |= self._global_tab.remove_single_fit_seeds(normalized_runs)
-
-        active_run = self._active_single_run_number
-        if active_run is not None and active_run in normalized_runs:
-            self._single_tab._results_card.set_message("No fit performed yet")
-
-        # D5: the session's refresh source must not survive its own run's fit
-        # being cleared -- otherwise every other unprotected run would keep
-        # refreshing onto a fit that, as far as the browser is concerned, no
-        # longer exists.
-        if (
-            self._last_fitted_single_run is not None
-            and self._last_fitted_single_run in normalized_runs
-        ):
-            self._last_fitted_single_state = None
-            self._last_fitted_single_run = None
-
-        return len(changed_runs)
-
     def get_single_state_for_run(self, run_number: int) -> dict | None:
         """Return current single-fit state for one run, if available."""
         try:
@@ -1191,6 +1155,10 @@ class FitPanel(QWidget):
     def get_global_state(self) -> dict:
         """Return serialisable state of the global-fit tab."""
         return self._global_tab.get_state()
+
+    def batch_recipe(self) -> dict:
+        """Return the Batch tab's current setup as a ``FitSeries`` recipe (D2)."""
+        return self._global_tab.current_recipe()
 
     def get_grouped_state(self) -> dict:
         """Return the grouped-fit classification (physics roles + nuisance block)."""
