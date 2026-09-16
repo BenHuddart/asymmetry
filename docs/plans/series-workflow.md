@@ -78,11 +78,15 @@ record time and kept for readers), `order_key`, `group_id`,
 `results_by_run` (summary only, no curves, no HTML).
 
 **D3 — Run = identical replaces, anything else is a new series.** On run,
-the draft's normalised recipe plus effective member set is compared with the
-open series' recorded recipe. Identical → results replaced in place, same
-`batch_id`, same label. Different in any field → a new `FitSeries` with a
-fresh id and a default label from its recipe becomes the open and active
-series; the original is untouched. Signature-based superseding
+the draft's normalised recipe plus effective member set
+(`FitSeries.recipe_identity()`) is compared first with the open series'
+recorded identity, then with every other series of the representation
+(newest first). Identical → that series' results are replaced in place, same
+`batch_id`, same label — a truly identical re-run replaces automatically
+wherever it lives, which also keeps the Global Fit Wizard's per-phase applies
+from stacking (*lead*, 2026-09-16, after Phase 2). Different in any field →
+a new `FitSeries` with a fresh id and a default label from its recipe becomes
+the open and active series; the original is untouched. Signature-based superseding
 (`remove_superseded_batches`, `superseded_batch_ids`, `dedupe_batches`) is
 removed — the load-time dedupe would collapse series that differ only by
 range. Renaming never changes identity.
