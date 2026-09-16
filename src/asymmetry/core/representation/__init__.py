@@ -33,6 +33,8 @@ from asymmetry.core.representation.group import DataGroup, PhaseSpec
 from asymmetry.core.representation.naming import (
     composite_model_label,
     default_series_label,
+    disambiguate_series_label,
+    fit_range_label,
     format_run_range,
     member_range,
 )
@@ -42,6 +44,8 @@ from asymmetry.core.representation.series import (
     PARAM_ROLES,
     FitSeries,
     canonical_model_matches,
+    default_recipe,
+    normalise_recipe,
 )
 from asymmetry.core.representation.time import (
     TimeFBAsymmetry,
@@ -76,10 +80,14 @@ __all__ = [
     "canonical_model_matches",
     "composite_model_label",
     "compute_group_input_digest",
+    "default_recipe",
     "default_series_label",
+    "disambiguate_series_label",
+    "fit_range_label",
     "format_run_range",
     "make_representation",
     "member_range",
+    "normalise_recipe",
     "representation_from_dict",
     "study_from_legacy_cross_group_payload",
 ]
