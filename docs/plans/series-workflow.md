@@ -1,8 +1,7 @@
 # Series workflow: the Batch tab edits one series, series never overwrite each other
 
-Status: planned 2026-09-16, implemented on `feat/series-workflow`, one PR at
-the end; built phase by phase by subagents with a lead review gate after every
-phase. Mockups (Claude Design canvas):
+Status: implemented on `feat/series-workflow`, awaiting PR. Mockups (Claude
+Design canvas):
 https://claude.ai/artifact/8D3T4paNTXSMm6s2i3yxTx — page "Recommended" is the
 proposal (Batch tab as series editor, series menu, hints, chip rail, overlay
 pills, delete/replace dialogs, lifecycle and storage), page "Directions" holds
