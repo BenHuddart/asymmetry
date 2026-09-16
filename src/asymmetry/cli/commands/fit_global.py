@@ -74,31 +74,39 @@ def run(args: argparse.Namespace) -> None:
     except (KeyError, ValueError) as exc:
         raise UserError(str(exc)) from None
 
-    stored = outcome.to_dict() | {"name": name, "recipe": recipe.to_dict(), "kind": "global"}
-    series_path = workdir.write_series(name, stored)
-    plot_paths: list[Path] = []
-    if args.plot:
-        for result in outcome.results:
-            run_number = result["run"]
-            plot_paths.append(
-                plots.plot_fit(
-                    datasets[run_number].time,
-                    datasets[run_number].asymmetry,
-                    datasets[run_number].error,
-                    model_function=recipe.model().function,
-                    parameters=result["parameters"],
-                    t_min=recipe.t_min,
-                    t_max=recipe.t_max,
-                    run_number=run_number,
-                    expression=outcome.expression,
-                    out_path=workdir.series_plot_dir(name) / f"{run_number}.png",
-                )
-            )
-    result_payload = outcome.to_dict() | {
-        "name": name,
-        "series_path": str(series_path),
+    # The stored series carries its own path and its per-run plots', so a
+    # coupled fit read back from series/<name>.json names the same artefacts
+    # the CLI reports. The fit is written before the plots are drawn, so an
+    # expensive joint fit survives a failure in the (cheap) plotting step.
+    plot_paths: list[Path] = (
+        [workdir.series_plot_dir(name) / f"{result['run']}.png" for result in outcome.results]
+        if args.plot
+        else []
+    )
+    artefacts = {
+        "series_path": str(workdir.series_path(name)),
         "plots": [str(path) for path in plot_paths],
     }
+    stored = (
+        outcome.to_dict() | {"name": name, "recipe": recipe.to_dict(), "kind": "global"} | artefacts
+    )
+    workdir.write_series(name, stored)
+    if args.plot:
+        for result, plot_path in zip(outcome.results, plot_paths, strict=True):
+            run_number = result["run"]
+            plots.plot_fit(
+                datasets[run_number].time,
+                datasets[run_number].asymmetry,
+                datasets[run_number].error,
+                model_function=recipe.model().function,
+                parameters=result["parameters"],
+                t_min=recipe.t_min,
+                t_max=recipe.t_max,
+                run_number=run_number,
+                expression=outcome.expression,
+                out_path=plot_path,
+            )
+    result_payload = outcome.to_dict() | {"name": name} | artefacts
     if args.json:
         emit_json(payload(global_fit=result_payload))
         return

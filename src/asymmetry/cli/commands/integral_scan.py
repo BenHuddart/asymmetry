@@ -201,11 +201,17 @@ def run(args: argparse.Namespace) -> None:
         "fit_scan": field_scan_payload(fit_scan) if fit_payload is not None else None,
         "fit": fit_payload,
     }
-    scan_path = workdir.write_scan(name, result_payload)
+    # The stored scan carries its own path and its plot's, so an agent reading
+    # scans/<name>.json back finds the same artefacts the CLI reports. Both are
+    # known before either is produced, and the scan is written first so an
+    # expensive integral scan survives a failure in the (cheap) plotting step.
+    plot_path = workdir.plots_dir / f"{name}.png" if args.plot else None
+    result_payload["scan_path"] = str(workdir.scan_path(name))
+    result_payload["plot"] = None if plot_path is None else str(plot_path)
+    workdir.write_scan(name, result_payload)
 
-    plot_path = None
-    if args.plot:
-        plot_path = plots.plot_scan(
+    if plot_path is not None:
+        plots.plot_scan(
             fit_scan.x,
             fit_scan.value,
             fit_scan.error,
@@ -215,11 +221,9 @@ def run(args: argparse.Namespace) -> None:
             x_label=fit_scan.x_label,
             y_label=fit_scan.y_label,
             title=name,
-            out_path=workdir.plots_dir / f"{name}.png",
+            out_path=plot_path,
         )
 
-    result_payload["scan_path"] = str(scan_path)
-    result_payload["plot"] = None if plot_path is None else str(plot_path)
     if args.json:
         emit_json(payload(**result_payload))
         return

@@ -74,7 +74,14 @@ def run(args: argparse.Namespace) -> None:
     except ValueError as exc:
         raise UserError(str(exc)) from None
 
-    result = outcome.to_dict() | {"name": name, "run": args.run}
+    # The stored metadata names the plot, so a spectrum read back from
+    # spectra/<name>.json points at the same PNG the CLI reports.
+    plot_path = workdir.plots_dir / f"{name}.png" if args.plot else None
+    result = outcome.to_dict() | {
+        "name": name,
+        "run": args.run,
+        "plot": None if plot_path is None else str(plot_path),
+    }
     array_path, metadata_path = workdir.write_spectrum(
         name,
         frequency=outcome.frequency,
@@ -82,20 +89,15 @@ def run(args: argparse.Namespace) -> None:
         magnitude=outcome.magnitude,
         payload=result,
     )
-    plot_path = None
-    if args.plot:
-        plot_path = plots.plot_spectrum(
+    if plot_path is not None:
+        plots.plot_spectrum(
             outcome.frequency,
             outcome.real,
             outcome.magnitude,
             run_number=args.run,
-            out_path=workdir.plots_dir / f"{name}.png",
+            out_path=plot_path,
         )
-    result |= {
-        "array_path": str(array_path),
-        "metadata_path": str(metadata_path),
-        "plot": None if plot_path is None else str(plot_path),
-    }
+    result |= {"array_path": str(array_path), "metadata_path": str(metadata_path)}
     if args.json:
         emit_json(payload(**result))
         return

@@ -494,3 +494,88 @@ def test_trend_plot_writes_one_png_per_free_parameter(
     for path in trend_pngs:
         _assert_real_png(path)
         assert str(path) in payload["plots"]
+
+
+# -- stored products name their own artefacts -------------------------------
+
+
+def test_a_stored_scan_spectrum_and_global_fit_name_their_own_path_and_plots(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    """What the CLI reports is also what the stored product says about itself.
+
+    The skill sends an agent back to ``scans/``, ``spectra/`` and ``series/``
+    for provenance, so a product whose plot and own path live only in the
+    command's stdout is a dead end: the JSON on disk has to name them too.
+    """
+    cli.main(
+        [
+            "integral-scan",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[2]}",
+            "--order",
+            "run",
+            "--name",
+            "alc",
+            "--plot",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    reported = _json_output(capsys)
+    stored = json.loads((fitting_workdir / "scans" / "alc.json").read_text(encoding="utf-8"))
+    assert (
+        stored["scan_path"] == reported["scan_path"] == str(fitting_workdir / "scans" / "alc.json")
+    )
+    assert stored["plot"] == reported["plot"]
+    _assert_real_png(Path(stored["plot"]))
+
+    cli.main(
+        [
+            "fourier",
+            str(workflow_folder),
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--name",
+            "spectrum",
+            "--fmax",
+            "10",
+            "--plot",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    reported = _json_output(capsys)
+    stored = json.loads(Path(reported["metadata_path"]).read_text(encoding="utf-8"))
+    assert stored["plot"] == reported["plot"]
+    _assert_real_png(Path(stored["plot"]))
+
+    cli.main(
+        [
+            "fit-global",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+            "--recipe",
+            "relax",
+            "--shared",
+            "A_bg",
+            "--strategy",
+            "least_squares",
+            "--name",
+            "joint",
+            "--plot",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    reported = _json_output(capsys)["global_fit"]
+    stored = json.loads((fitting_workdir / "series" / "joint.json").read_text(encoding="utf-8"))
+    assert stored["series_path"] == reported["series_path"]
+    assert stored["plots"] == reported["plots"] and len(stored["plots"]) == 2
+    for path in stored["plots"]:
+        _assert_real_png(Path(path))

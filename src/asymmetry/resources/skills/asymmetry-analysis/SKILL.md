@@ -381,10 +381,19 @@ a run; a flag is.
 ### Step 5a — fit a simultaneous field group when the physics requires it
 
 Use `fit-global`, not `fit-series --global`, when several runs must constrain
-one set of physical parameters. Reduce the runs, create or choose one recipe,
-then name every parameter that should be fitted once across the group:
+one set of physical parameters. Reduce the runs, then get one recipe for the
+group: `--recipe` takes either a path to a recipe file or the name of one
+already in `recipes/`, so it is `wizard-<run>` from screening a member of the
+group, or a name you wrote yourself by hand-editing that recipe into the model
+the physics calls for (see "Hand-editing a recipe" below). Check it converges
+on a single run before spending the group on it, then name every parameter
+that should be fitted once across the group:
 
 ```bash
+asymmetry wizard <folder> --run 51343 --geometry LF --scope lf-dynamics
+# edit recipes/wizard-51343.json into recipes/dynamic-gkt.json if the family
+# the wizard ranked first is not the one the physics calls for
+asymmetry fit <folder> --run 51343 --recipe dynamic-gkt --fix B_L=10
 asymmetry fit-global <folder> --runs 51341-51343 --recipe dynamic-gkt \
     --shared A_1,Delta,nu,A_bg --field-param B_L --name ionic-160K --plot
 ```
