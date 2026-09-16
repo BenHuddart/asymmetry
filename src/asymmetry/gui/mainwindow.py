@@ -92,7 +92,18 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
-from PySide6.QtCore import QEvent, QEventLoop, QObject, QSettings, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QEventLoop,
+    QObject,
+    QSettings,
+    QStandardPaths,
+    Qt,
+    QThread,
+    QTimer,
+    QUrl,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -256,7 +267,11 @@ from asymmetry.core.utils.constants import (
 )
 from asymmetry.core.utils.perf import set_perf_logging
 from asymmetry.gui.export_paths import default_export_path, remember_export_path
-from asymmetry.gui.fit_settings import fit_quality_confidence, set_fit_quality_confidence
+from asymmetry.gui.fit_settings import (
+    autosave_interval_minutes,
+    fit_quality_confidence,
+    set_fit_quality_confidence,
+)
 from asymmetry.gui.gle_settings import GleSetupDialog
 from asymmetry.gui.panels.alc_panel import ALCFitPanel, ALCScanView, IntegralScanPanel
 from asymmetry.gui.panels.cross_group_config import run_cross_group_fit_from_config
@@ -797,6 +812,14 @@ class MainWindow(QMainWindow):
         self._dirty = False
         self._restoring_project = False
         self._project_save_active = False  # True while a background save is writing
+        #: Crash-recovery snapshot (D9). Single-shot: armed by _mark_dirty and
+        #: re-armed after it fires (while the session is still dirty) or when
+        #: a real save was in flight when it fired; stopped by _clear_dirty.
+        #: Shares _project_save_active with the real save so the two writes
+        #: never overlap.
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.timeout.connect(self._on_autosave_timeout)
         self._bulk_load_active = False  # True while a bulk load's nested loop runs
         self._bulk_load_cancel: Callable[[], None] | None = None
         self._fourier_compute_active = False  # True while a background FFT runs
@@ -15626,6 +15649,8 @@ class MainWindow(QMainWindow):
         self._current_project_path = path
         self._add_recent_project(path)
         self._clear_dirty()
+        # The autosave this project's file just superseded is stale (D9).
+        self._delete_autosave_file()
         self._update_window_title()
         self._log_panel.log(f"Project saved: {path}")
         self.statusBar().showMessage(f"Saved: {Path(path).name}")
@@ -15636,6 +15661,86 @@ class MainWindow(QMainWindow):
         self._clear_status_state_if_idle()
         QMessageBox.critical(self, "Save Failed", f"Could not save project:\n{message}")
         self._log_panel.log(f"ERROR saving project: {message}")
+
+    # ── autosave (D9) ───────────────────────────────────────────────────
+
+    def _arm_autosave_timer(self) -> None:
+        """Start the autosave timer if it is not already running.
+
+        A configured interval of ``0`` (autosave disabled) leaves the timer
+        stopped rather than arming it.
+        """
+        if self._autosave_timer.isActive():
+            return
+        minutes = autosave_interval_minutes()
+        if minutes <= 0:
+            return
+        self._autosave_timer.start(minutes * 60_000)
+
+    def _autosave_path(self) -> str:
+        """Return this session's crash-recovery snapshot path (D9).
+
+        Beside the project file (``<stem>.autosave.asymp``) once the session
+        has one; under the platform app-data directory, keyed as
+        ``untitled``, for a session that has never been saved.
+        """
+        if self._current_project_path:
+            current = Path(self._current_project_path)
+            return str(current.with_name(current.stem + ".autosave.asymp"))
+        directory = (
+            Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation))
+            / "autosave"
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        return str(directory / "untitled.autosave.asymp")
+
+    def _delete_autosave_file(self) -> None:
+        """Remove this session's autosave file, if one exists (D9)."""
+        Path(self._autosave_path()).unlink(missing_ok=True)
+
+    def _on_autosave_timeout(self) -> None:
+        """Write a crash-recovery snapshot while the project is dirty (D9).
+
+        Runs on the GUI thread, as the timer's own slot; ``collect_project_state``
+        must happen here, exactly as in :meth:`_write_project`. The write itself
+        goes to the shared ``_tasks`` runner and never touches
+        ``_current_project_path``, the recent-projects list, the window title,
+        or the dirty flag — only a real save does that.
+        """
+        if not self._dirty:
+            return
+        if self._project_save_active:
+            # A real save (or a previous autosave) is writing right now;
+            # retry once it clears rather than racing it for the same file.
+            self._autosave_timer.start(self._autosave_timer.interval() or 1)
+            return
+        try:
+            state = self.collect_project_state()
+        except Exception as e:
+            self._log_panel.log(f"Autosave skipped: {e}")
+            self._arm_autosave_timer()
+            return
+        path = self._autosave_path()
+        self._project_save_active = True
+        self._tasks.start(
+            lambda w, state=state, path=path: save_project(state, path),
+            on_finished=lambda _result, path=path: self._on_autosave_finished(path),
+            on_error=self._on_autosave_error,
+        )
+
+    def _on_autosave_finished(self, path: str) -> None:
+        """Record a completed autosave write (GUI thread) and re-arm while dirty."""
+        self._project_save_active = False
+        self._log_panel.log(f"Autosaved to {Path(path).name}")
+        if self._dirty:
+            self._arm_autosave_timer()
+
+    def _on_autosave_error(self, message: str) -> None:
+        """Log a failed autosave write (GUI thread) and re-arm while dirty."""
+        self._project_save_active = False
+        self._log_panel.log(f"Autosave failed: {message}")
+        if self._dirty:
+            self._arm_autosave_timer()
 
     def _open_recent_project(self, path: str) -> None:
         """Open a recent project, routed exactly like File ▸ Open Project…."""
@@ -15665,6 +15770,45 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(0, _run)
 
+    def _resolve_open_source(self, path: str) -> tuple[str | None, bool]:
+        """Pick which file :meth:`_open_project_file` reads for *path* (D9).
+
+        Returns ``(source_path, leave_dirty)``. When *path*'s autosave sibling
+        (``<stem>.autosave.asymp``) exists and is newer, offers to recover it:
+        "Load autosave" reads the autosave but reports *path* itself as
+        unrecovered work (``leave_dirty=True``, so the next save writes the
+        real file); "Open saved file" reads *path* normally and leaves the
+        autosave in place for a later attempt; "Cancel" aborts the open
+        (``source_path=None``). Returns ``(path, False)`` unchanged when there
+        is no newer autosave to offer.
+        """
+        target = Path(path)
+        autosave = target.with_name(target.stem + ".autosave.asymp")
+        if not (target.exists() and autosave.exists()):
+            return path, False
+        if autosave.stat().st_mtime <= target.stat().st_mtime:
+            return path, False
+        when_dt = datetime.fromtimestamp(autosave.stat().st_mtime)
+        when = f"{when_dt.strftime('%H:%M')}, {when_dt.day} {when_dt.strftime('%b')}"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Recover unsaved changes?")
+        box.setText(
+            f"An autosave from {when} is newer than this project. Load the autosave instead?"
+        )
+        load_btn = box.addButton("Load autosave", QMessageBox.ButtonRole.AcceptRole)
+        open_btn = box.addButton("Open saved file", QMessageBox.ButtonRole.RejectRole)
+        cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(load_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is load_btn:
+            return str(autosave), True
+        if clicked is open_btn:
+            return path, False
+        assert clicked is cancel_btn
+        return None, False
+
     def _open_project_file(self, path: str) -> None:
         """Load and restore a project from *path*."""
         if self._bulk_load_active:
@@ -15677,8 +15821,11 @@ class MainWindow(QMainWindow):
             )
             self._log_panel.log("Project open ignored: a file load is in progress.")
             return
+        source_path, leave_dirty = self._resolve_open_source(path)
+        if source_path is None:
+            return
         try:
-            state = load_project(path)
+            state = load_project(source_path)
         except UnsupportedSchemaVersion as e:
             QMessageBox.critical(self, "Unsupported Project File", str(e))
             self._log_panel.log(f"ERROR opening project: {e}")
@@ -15695,7 +15842,9 @@ class MainWindow(QMainWindow):
         # guard listens for; suppress marking so a freshly-opened project is
         # clean. A cancelled (incomplete) load is also "clean" — the user made
         # no edits — and the existing incomplete-save hard-confirm still guards
-        # an accidental overwrite.
+        # an accidental overwrite. Recovering from an autosave is the
+        # exception: the content just restored is not what is on disk at
+        # *path*, so the session is marked dirty once restore finishes instead.
         self._restoring_project = True
         try:
             self.restore_project_state(state, path)
@@ -15703,7 +15852,10 @@ class MainWindow(QMainWindow):
             self._restoring_project = False
         self._current_project_path = path
         self._add_recent_project(path)
-        self._clear_dirty()
+        if leave_dirty:
+            self._mark_dirty()
+        else:
+            self._clear_dirty()
         self._update_window_title()
         self._schedule_memory_settle()
 
@@ -16797,23 +16949,30 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("Asymmetry \u2014 \u03bcSR Data Analysis[*]")
 
     def _mark_dirty(self, *_args) -> None:
-        """Flag the session as holding unsaved work (no-op while restoring).
+        """Flag the session as holding unsaved work and arm autosave (D9).
 
         Connected to dataset/grouping/fit signals, so it accepts and ignores
         any signal payload. The ``_restoring_project`` guard keeps a project
-        load \u2014 which replays the very mutations we listen for \u2014 from
-        marking the freshly-opened project dirty.
+        load \u2014 which replays the very mutations we listen for \u2014 from marking
+        the freshly-opened project dirty or arming autosave for it. The
+        autosave timer is (re-)armed on every call, not only the clean\u2192dirty
+        transition, so it keeps cycling across a working session \u2014 see
+        :meth:`_arm_autosave_timer` (a no-op while it is already running) and
+        :meth:`_on_autosave_timeout` (which re-arms itself after firing).
         """
-        if self._restoring_project or self._dirty:
+        if self._restoring_project:
             return
-        self._dirty = True
-        self.setWindowModified(True)
-        self.dirty_changed.emit(True)
+        if not self._dirty:
+            self._dirty = True
+            self.setWindowModified(True)
+            self.dirty_changed.emit(True)
+        self._arm_autosave_timer()
 
     def _clear_dirty(self) -> None:
         """Mark the session as saved/clean (after save, open, or new)."""
         self._dirty = False
         self.setWindowModified(False)
+        self._autosave_timer.stop()
         self.dirty_changed.emit(False)
 
     def _maybe_save(self, action_label: str) -> bool:
@@ -16918,6 +17077,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Saving project — try closing again in a moment.")
             event.ignore()
             return
+        # A clean close means there is no unsaved work left to recover (D9);
+        # a dirty close (the user chose Discard above) leaves the autosave in
+        # place as a safety net.
+        if not self._dirty:
+            self._delete_autosave_file()
         self._shutdown_workers()
         # Parentless gleplot editor windows (Analysis ▸ GLE Figure Editor… and
         # post-export previews) outlive the panel that opened them — close them
