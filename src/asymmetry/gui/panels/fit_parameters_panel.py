@@ -776,8 +776,9 @@ class FitParametersPanel(QWidget):
         # ── Series strip ─────────────────────────────────────────────────────
         # One row per section (a data group, a phase's parent group, or the
         # group-less "Standalone" bucket): an optional swatch+name header
-        # (omitted when there is only one section, so a simple project's rail
-        # looks exactly as it always has) followed by that section's chips,
+        # (omitted when the only section is the group-less one, so a simple
+        # project's rail looks exactly as it always has) followed by that
+        # section's chips,
         # themselves wrapped in a FlowLayout — see _rebuild_group_buttons.
         self._group_tabs_widget = QWidget()
         self._group_tabs_layout = QVBoxLayout(self._group_tabs_widget)
@@ -1946,7 +1947,9 @@ class FitParametersPanel(QWidget):
 
         self._group_button_map = {}
         sections = self._resolved_sections()
-        single_section = len(sections) <= 1
+        # A lone group-less section is today's flat rail; a lone *group*
+        # section still earns its swatch-and-name header.
+        single_section = len(sections) <= 1 and all(colour is None for _, colour, _ in sections)
         strip_metrics = self._group_tabs_widget.fontMetrics()
         for title, colour, batch_ids in sections:
             chip_ids = [gid for gid in batch_ids if gid in self._group_fit_results]

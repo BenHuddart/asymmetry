@@ -13454,7 +13454,14 @@ class MainWindow(QMainWindow):
         if new_batch_id is None:
             panel.set_global_fits(fit_curves)
         else:
-            panel.set_global_fits(fit_curves, fit_id=new_batch_id)
+            # The legend names the series, not a generic "Batch Fit", so two
+            # series overlaid on one run read apart.
+            series = self._project_model.batch(new_batch_id)
+            name = series.label or self._series_fallback_name(series)
+            fit_curves = {
+                run: (curve[0], curve[1], name, *curve[3:]) for run, curve in fit_curves.items()
+            }
+            panel.set_global_fits(fit_curves, fit_id=new_batch_id, fit_labels={new_batch_id: name})
             panel.set_active_fit_id(new_batch_id)
 
         # Reload the trend panel from the project model (pull-based, Phase 4).

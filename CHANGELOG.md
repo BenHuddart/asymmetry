@@ -73,9 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its own Single-tab fit, so a run can belong to any number of series without one silently
   overwriting the others' per-run state. Because a member never stores its series' fit, the
   divergence concept — a member's stored model disagreeing with its series' canonical one —
-  cannot occur and is gone, along with its `⚠` glyph and the browser's amber diverged tint for
-  a fit series. Trend gating is now per series (`FitSeries.trend_excluded_runs`) rather than a
-  flag shared by every series that happened to contain the run.
+  cannot occur and is gone, along with its `⚠` glyph (the glyph now means only that the
+  series' membership changed since it was last run). Trend gating is now per series
+  (`FitSeries.trend_excluded_runs`) rather than a flag shared by every series that happened to
+  contain the run.
 - **Series chips and default labels read `<model> · <fit-range>[ · <group>]`** instead of the
   four previously inconsistent conventions, with ` (2)` appended when a group already holds a
   series with the same model and range; a user-given rename is untouched.
