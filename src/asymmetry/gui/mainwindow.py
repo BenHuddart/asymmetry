@@ -86,6 +86,7 @@ import weakref
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import nullcontext
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -334,6 +335,33 @@ from asymmetry.gui.windows.simulate_dialog import SimulateDialog
 if TYPE_CHECKING:
     # Imported for typing only: shell.py imports this module to build its pages.
     from asymmetry.gui.shell import ProjectShell
+
+
+@dataclass(frozen=True)
+class _GlobalFitLaunch:
+    """The workspace context a batch/global fit was launched from.
+
+    Results arrive on a later event-loop turn, by which time the user may have
+    switched view, domain or representation. Every decision the completion
+    handler makes belongs to the launch, not to whatever is on screen when the
+    results land: which representation the series is recorded under
+    (:attr:`rep_type`), which spectrum cache resolves its members
+    (:attr:`frequency_rep_type` — the representation the fit datasets were
+    actually collected from, which the selection path pins), and which plot
+    panel draws its curves (:attr:`domain`).
+
+    The class default is the pre-launch state: no fit has run, so there is no
+    representation to record under.
+    """
+
+    rep_type: RepresentationType | None = None
+    frequency_rep_type: RepresentationType | None = None
+    domain: str = "time"
+
+    @property
+    def is_frequency(self) -> bool:
+        """Whether the fit was launched against the frequency domain."""
+        return self.domain == "frequency"
 
 
 class _RecentProjectsBroadcast(QObject):
@@ -917,12 +945,12 @@ class MainWindow(QMainWindow):
         # time; the handler gates relaunch while one is in flight).
         self._refit_coadded_worker: TaskWorker | None = None
         # Frequency representation the fit-panel datasets were last collected
-        # from, and its snapshot at global-fit launch.  The async completion
-        # handler resolves run datasets against the LAUNCH snapshot: the
-        # collection pin is refreshed by view/selection changes and would
-        # otherwise drift mid-fit.
+        # from, and the whole workspace context snapshotted at global-fit
+        # launch.  The async completion handler reads the LAUNCH snapshot: the
+        # collection pin and the active view are refreshed by view/selection
+        # changes and would otherwise drift mid-fit.
         self._last_frequency_fit_rep_type: RepresentationType | None = None
-        self._active_global_fit_rep_type: RepresentationType | None = None
+        self._global_fit_launch = _GlobalFitLaunch()
         self._fourier_group_phase_state_by_run: dict[int, dict[str, object]] = {}
         # Runs whose FFT group inclusion has been seeded from the grouping
         # default (e.g. HAL-9500 MV excluded). Seeding happens once per run so
@@ -11332,7 +11360,7 @@ class MainWindow(QMainWindow):
             # The Batch tab was editing it: keep the runs and the setup on show
             # as a draft rather than emptying the surface under the user.
             self._fit_panel.open_draft(
-                datasets=self._batch_datasets_for_runs(members, window),
+                datasets=self._batch_datasets_for_runs(members, window, series.rep_type),
                 group_id=self._fit_panel.bound_group_id(),
                 group_name=self._data_group_name(self._fit_panel.bound_group_id() or ""),
             )
@@ -11426,12 +11454,17 @@ class MainWindow(QMainWindow):
                     continue
         return text
 
-    def _batch_datasets_for_runs(self, runs, fit_range=None) -> list[MuonDataset]:
-        """Fit-range crops of *runs* for the Batch tab's member pool.
+    def _batch_datasets_for_runs(self, runs, fit_range, rep_type) -> list[MuonDataset]:
+        """The Batch tab's member pool for *runs*, cropped to *fit_range*.
 
-        *fit_range* is the series' own window (D8); an unbounded side falls back
-        to the plot's bound inside :meth:`_get_fit_dataset`.
+        *rep_type* decides both where the members come from and what unit the
+        window is in: a frequency representation draws them from its cached
+        spectra and crops in MHz, every other one from the browser's time
+        datasets in µs. *fit_range* is the series' own window (D8); an unbounded
+        side falls back to the owning plot's bound.
         """
+        if rep_type is not None and rep_type.domain == "frequency":
+            return self._frequency_fit_datasets_for_runs(runs, rep_type, fit_range)
         datasets = []
         for run_number in runs:
             dataset = self._data_browser.get_dataset(int(run_number))
@@ -11464,8 +11497,10 @@ class MainWindow(QMainWindow):
         """Open a recorded series in the Batch tab and make it the active one (D1/D5).
 
         The single route from a ``batch_id`` to an edited series: it resolves
-        the owning group's members into datasets cropped to the series' own
-        window, hands the tab the whole recipe, and moves the active pointer so
+        the owning group's members into datasets *of the series' own
+        representation* — cached spectra for a frequency series, browser time
+        data otherwise — cropped to the series' own window in that domain's
+        unit, hands the tab the whole recipe, and moves the active pointer so
         the plot and the chip rail follow.
         """
         series = self._project_model.batch(str(batch_id))
@@ -11476,7 +11511,7 @@ class MainWindow(QMainWindow):
         self._fit_panel.open_series(
             series,
             display_name=series.label or self._series_fallback_name(series),
-            datasets=self._batch_datasets_for_runs(pool, window),
+            datasets=self._batch_datasets_for_runs(pool, window, series.rep_type),
             excluded_runs=series.excluded_run_numbers,
             group_id=series.group_id,
             group_name=self._data_group_name(series.group_id) if series.group_id else None,
@@ -11902,7 +11937,12 @@ class MainWindow(QMainWindow):
             ),
         )
 
-    def _record_global_fit_batch(self, normalized_payloads: dict, global_params) -> str | None:
+    def _record_global_fit_batch(
+        self,
+        normalized_payloads: dict,
+        global_params,
+        launch: _GlobalFitLaunch,
+    ) -> str | None:
         """Persist a completed batch/global fit as a :class:`FitSeries`.
 
         A batch fit (all parameters local/fixed) and a global fit (>=1 parameter
@@ -11910,8 +11950,12 @@ class MainWindow(QMainWindow):
         decides which. The series carries the Batch tab's recipe (D2) and the
         run-by-run results for trending; the members' own fit slots are left to
         their Single-tab fits (D4).
+
+        *launch* is the context the fit was started from: the series belongs to
+        the representation the user launched it against, even if they have
+        since switched view.
         """
-        rep_type = self._active_representation_type()
+        rep_type = launch.rep_type
         if rep_type is None or not normalized_payloads:
             return
         if not hasattr(self._fit_panel, "get_global_state"):
@@ -13004,7 +13048,9 @@ class MainWindow(QMainWindow):
             return
         seed = self._newest_series_for_group(group_id)
         window = self._recipe_window(seed.recipe) if seed is not None else None
-        analysis_datasets = self._batch_datasets_for_runs(run_numbers, window)
+        analysis_datasets = self._batch_datasets_for_runs(
+            run_numbers, window, self._active_representation_type()
+        )
         if not analysis_datasets:
             self.statusBar().showMessage("This group has no fittable datasets.")
             return
@@ -13366,7 +13412,11 @@ class MainWindow(QMainWindow):
 
     def _on_global_fit_started(self) -> None:
         """Snapshot launch-time fit context before any UI refresh changes it."""
-        self._active_global_fit_rep_type = self._last_frequency_fit_rep_type
+        self._global_fit_launch = _GlobalFitLaunch(
+            rep_type=self._active_representation_type(),
+            frequency_rep_type=self._last_frequency_fit_rep_type,
+            domain=self._fit_panel.domain(),
+        )
 
     def _on_global_fit_completed(self, results_dict, global_params) -> None:
         """Handle completed global fit.
@@ -13402,10 +13452,11 @@ class MainWindow(QMainWindow):
                 component_curves = []
             normalized_payloads[run_number] = (result, fitted_curve, component_curves)
 
-        # Store fit curves for all datasets
-        is_frequency_fit = (
-            hasattr(self._fit_panel, "domain") and self._fit_panel.domain() == "frequency"
-        )
+        # Every view-dependent decision below reads the launch snapshot, not
+        # the workspace: the user may have switched domain, view or
+        # representation while the fit ran.
+        launch = self._global_fit_launch
+        is_frequency_fit = launch.is_frequency
         global_fit_function = None
         if hasattr(self._fit_panel, "global_fit_formula_string"):
             global_fit_function = self._fit_panel.global_fit_formula_string()
@@ -13418,7 +13469,7 @@ class MainWindow(QMainWindow):
                 # launch, not the active view at result-arrival time (and not
                 # the collection pin, which view/selection refreshes rewrite
                 # mid-fit).
-                self._frequency_cache(self._active_global_fit_rep_type).get(run_number, [None])[0]
+                self._frequency_cache(launch.frequency_rep_type).get(run_number, [None])[0]
                 if is_frequency_fit
                 else self._data_browser.get_dataset(run_number)
             )
@@ -13443,7 +13494,7 @@ class MainWindow(QMainWindow):
         # The Batch tab's form is frozen while its fit runs, so the roles and
         # model read back off it here are the ones the batch was launched with.
         previously_open = self._fit_panel.open_series_id()
-        new_batch_id = self._record_global_fit_batch(normalized_payloads, global_params)
+        new_batch_id = self._record_global_fit_batch(normalized_payloads, global_params, launch)
         self._adopt_recorded_series(new_batch_id, previously_open)
         self._remember_trends_batch("batch", new_batch_id, self._fit_panel)
 
@@ -15321,37 +15372,55 @@ class MainWindow(QMainWindow):
         re-triggering it). Genuinely non-recomputable runs (no recipe) land in
         ``_last_frequency_fit_missing_run_numbers`` for the manual-compute status.
         """
-        selected = self._data_browser.get_selected_datasets()
-        datasets: list[MuonDataset] = []
-        missing_run_numbers: list[int] = []
-        recompute_runs: list[int] = []
+        run_numbers: list[int] = []
+        for source in self._data_browser.get_selected_datasets():
+            try:
+                run_numbers.append(int(source.run_number))
+            except (TypeError, ValueError):
+                continue
         # Pin the representation the fit datasets are collected from: the
         # async fit-completion handler must resolve run datasets against this
         # same cache, not whichever view happens to be active when the result
         # arrives (the user may switch FFT <-> MaxEnt mid-fit).
         rep_type = self._active_frequency_rep_type()
         self._last_frequency_fit_rep_type = rep_type
-        for source in selected:
-            try:
-                run_number = int(source.run_number)
-            except (TypeError, ValueError):
+        missing_run_numbers: list[int] = []
+        recompute_runs: list[int] = []
+        for run_number in run_numbers:
+            if self._cached_frequency_spectra(run_number, rep_type):
                 continue
-            spectra = self._cached_frequency_spectra(run_number, rep_type)
-            if not spectra:
-                if self._frequency_recompute_target(run_number, rep_type) is not None:
-                    recompute_runs.append(run_number)  # recipe-backed → kick fill later
-                else:
-                    missing_run_numbers.append(run_number)  # needs a manual Compute
-                continue
-            dataset = spectra[0]
-            analysis_dataset = self._frequency_plot_panel.get_analysis_dataset(dataset)
-            fit_dataset = self._frequency_plot_panel.get_fit_dataset(analysis_dataset)
-            if fit_dataset is not None:
-                safe_dataset = self._frequency_dataset_with_fit_errors(fit_dataset)
-                if safe_dataset is not None:
-                    datasets.append(safe_dataset)
+            if self._frequency_recompute_target(run_number, rep_type) is not None:
+                recompute_runs.append(run_number)  # recipe-backed → kick fill later
+            else:
+                missing_run_numbers.append(run_number)  # needs a manual Compute
         self._last_frequency_fit_missing_run_numbers = missing_run_numbers
         self._pending_frequency_fit_recompute = recompute_runs
+        return self._frequency_fit_datasets_for_runs(run_numbers, rep_type)
+
+    def _frequency_fit_datasets_for_runs(
+        self,
+        run_numbers,
+        rep_type: RepresentationType,
+        fit_range: tuple[float | None, float | None] | None = None,
+    ) -> list[MuonDataset]:
+        """Fittable spectra of *run_numbers* from *rep_type*'s cache.
+
+        A pure, cached-only read shared by the frequency selection path and by
+        opening a frequency series in the Batch tab: a run with no cached
+        spectrum is simply absent from the result. *fit_range* is the window to
+        crop to **in the frequency unit** (MHz) — a series' own recipe window
+        (D8); without one the frequency plot's range applies.
+        """
+        datasets: list[MuonDataset] = []
+        for run_number in run_numbers:
+            spectra = self._cached_frequency_spectra(int(run_number), rep_type)
+            if not spectra:
+                continue
+            analysis_dataset = self._frequency_plot_panel.get_analysis_dataset(spectra[0])
+            fit_dataset = self._frequency_plot_panel.get_fit_dataset(analysis_dataset, fit_range)
+            safe_dataset = self._frequency_dataset_with_fit_errors(fit_dataset)
+            if safe_dataset is not None:
+                datasets.append(safe_dataset)
         return datasets
 
     def _refresh_frequency_fit_datasets(self) -> list[MuonDataset]:

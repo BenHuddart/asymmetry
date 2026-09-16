@@ -107,6 +107,7 @@ def _set_range(mw: MainWindow, low: float, high: float) -> None:
 
 
 def _run(mw: MainWindow, runs: list[int], value: float = 0.2) -> str:
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({run: (_result(value), _CURVE, []) for run in runs}, ParameterSet())
     return mw._fit_panel.open_series_id()
 

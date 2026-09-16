@@ -112,6 +112,7 @@ def _set_batch_range(mw: MainWindow, low: float, high: float) -> None:
 
 
 def _run_batch(mw: MainWindow, runs: list[int], value: float = 0.2) -> str:
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({run: (_result(value), _CURVE, []) for run in runs}, ParameterSet())
     return mw._project_model.active_series_id(_FB)
 
@@ -415,3 +416,79 @@ def test_chip_press_batch_open_and_pill_double_click_keep_the_three_surfaces_agr
     # A "Fits on this run" pill double-click for the first series.
     mw._on_active_fit_requested(first_id)
     assert_agree(first_id)
+
+
+# ── the launch context owns the recording, and frequency members are spectra ──
+
+_FREQ = RepresentationType.FREQ_FFT
+#: Cached-spectrum x values, in MHz — unmistakably not the µs sample times.
+_FREQ_X = np.array([0.0, 10.0, 20.0, 30.0])
+
+
+def _spectrum(run_number: int) -> MuonDataset:
+    """One run's cached FFT spectrum."""
+    return MuonDataset(
+        _FREQ_X.copy(),
+        np.array([0.4, 0.3, 0.2, 0.1]),
+        np.array([0.01, 0.01, 0.01, 0.01]),
+        {"run_number": run_number, "field": 100.0},
+        None,
+    )
+
+
+def _enter_frequency_domain(mw: MainWindow, runs: list[int]) -> None:
+    """Cache a spectrum per run and move the whole workspace into the FFT view."""
+    for run_number in runs:
+        mw._frequency_spectra_by_run[run_number] = [_spectrum(run_number)]
+    mw._plot_workspace.set_available_views(["fb_asymmetry", "frequency"])
+    mw._plot_workspace.set_active_view("frequency")
+    mw._fit_panel.set_domain("frequency")
+
+
+def test_opening_a_frequency_series_rebuilds_its_members_from_the_spectra(mw, monkeypatch):
+    """A frequency series' member pool is its cached spectra, not the time data.
+
+    ``_open_series_in_batch_tab`` used to rebuild every series' members from the
+    browser's µs datasets, so re-opening an FFT series handed the Batch tab
+    time-domain data for a frequency model.
+    """
+    _load_runs(mw, [10, 11])
+    _enter_frequency_domain(mw, [10, 11])
+    _stub_batch_form(mw, monkeypatch)
+    _set_batch_range(mw, 0.0, 40.0)  # MHz — a frequency series' recipe window
+
+    mw._on_global_fit_started()
+    mw._on_global_fit_completed({run: (_result(), _CURVE, []) for run in (10, 11)}, ParameterSet())
+    batch_id = mw._project_model.active_series_id(_FREQ)
+    assert batch_id is not None
+
+    mw._open_series_in_batch_tab(batch_id)
+
+    members = mw._fit_panel.batch_datasets()
+    assert {int(d.metadata["run_number"]) for d in members} == {10, 11}
+    for member in members:
+        assert np.allclose(member.time, _FREQ_X), "member pool must be the MHz spectra"
+
+
+def test_a_batch_records_under_the_view_it_was_launched_from(mw, monkeypatch):
+    """Switching view mid-fit must not move the results to another representation.
+
+    The completion handler read the *live* workspace, so a user who wandered
+    into the FFT view while a time-domain batch ran got the series filed under
+    ``freq_fft`` with its curves on the frequency plot.
+    """
+    _load_runs(mw, [10, 11])
+    _stub_batch_form(mw, monkeypatch)
+    _set_batch_range(mw, 0.0, 8.0)
+
+    mw._on_global_fit_started()  # launched from the time-domain F-B view
+    _enter_frequency_domain(mw, [10, 11])  # …and the user wanders off mid-fit
+    mw._on_global_fit_completed({run: (_result(), _CURVE, []) for run in (10, 11)}, ParameterSet())
+
+    batch_id = mw._project_model.active_series_id(_FB)
+    assert batch_id is not None
+    assert mw._project_model.batch(batch_id).rep_type == _FB
+    assert mw._project_model.active_series_id(_FREQ) is None
+    # …and the curves land on the launch domain's plot panel.
+    assert mw._plot_panel.has_fits_for_series(batch_id)
+    assert not mw._frequency_plot_panel.has_fits_for_series(batch_id)

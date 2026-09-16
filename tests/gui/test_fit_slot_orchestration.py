@@ -189,6 +189,7 @@ def test_global_fit_creates_batch_and_leaves_member_slots_alone(mw, monkeypatch)
     )
     payloads = {rn: (_result(rchi=0.4 + 0.1 * i), _CURVE, []) for i, rn in enumerate([10, 11, 12])}
 
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed(payloads, ParameterSet())
 
     assert len(mw._project_model.batches) == 1
@@ -230,6 +231,7 @@ def test_global_classified_parameter_yields_global_provenance(mw, monkeypatch):
     )
     payloads = {rn: (_result(), _CURVE, []) for rn in (10, 11)}
 
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed(payloads, ParameterSet())
 
     batch = next(iter(mw._project_model.batches.values()))
@@ -429,6 +431,7 @@ def test_add_compatible_single_fit_to_series(mw, monkeypatch):
             "result_html": "",
         },
     )
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())
     series = next(iter(mw._project_model.batches.values()))
     assert set(series.member_run_numbers) == {10, 11}
@@ -486,6 +489,7 @@ def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
             "result_html": "",
         },
     )
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())
     series = next(iter(mw._project_model.batches.values()))
 

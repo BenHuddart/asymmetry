@@ -85,7 +85,10 @@ def _run_batch(win: MainWindow, coords: dict[int, tuple[float, float]]) -> str:
     payloads = {
         run: (_StubFitResult({"sigma": 1.0}), (np.zeros(2), np.zeros(2)), []) for run in coords
     }
-    batch_id = win._record_global_fit_batch(payloads, None)
+    # The fit panel's launch signal, as in production: the recorder reads the
+    # representation the fit was started against, not the live view.
+    win._on_global_fit_started()
+    batch_id = win._record_global_fit_batch(payloads, None, win._global_fit_launch)
     assert batch_id is not None
     return batch_id
 
@@ -435,7 +438,10 @@ def _record_over(win: MainWindow, runs: list[int]) -> str:
     payloads = {
         run: (_StubFitResult({"sigma": 1.0}), (np.zeros(2), np.zeros(2)), []) for run in runs
     }
-    batch_id = win._record_global_fit_batch(payloads, None)
+    # The fit panel's launch signal, as in production: the recorder reads the
+    # representation the fit was started against, not the live view.
+    win._on_global_fit_started()
+    batch_id = win._record_global_fit_batch(payloads, None, win._global_fit_launch)
     assert batch_id is not None
     return batch_id
 

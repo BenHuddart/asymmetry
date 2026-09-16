@@ -224,6 +224,7 @@ class TestRefreshTrendPanel:
             },
         )
         payloads = {rn: (_result(), _CURVE, []) for rn in (10, 11)}
+        mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(payloads, ParameterSet())
 
         panel = mw._fit_parameters_panel
@@ -249,6 +250,7 @@ class TestRefreshTrendPanel:
                 "result_html": "",
             },
         )
+        mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(
             {rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet()
         )
@@ -464,6 +466,7 @@ class TestRefreshTrendPanel:
                 "result_html": "",
             },
         )
+        mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(
             {rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet()
         )
@@ -524,6 +527,7 @@ class TestDataBrowserHighlighting:
                 "result_html": "",
             },
         )
+        mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(
             {rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet()
         )
@@ -566,6 +570,7 @@ class TestDataBrowserHighlighting:
         # Reset any pre-existing highlights.
         mw._data_browser.set_highlighted_runs(set())
 
+        mw._on_global_fit_started()  # the fit panel's launch signal, as in production
         mw._on_global_fit_completed(
             {rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet()
         )
@@ -635,6 +640,7 @@ def _setup_one_series(mw, monkeypatch, model="Exponential"):
             "result_html": "",
         },
     )
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())
     return next(iter(mw._project_model.batches.values()))
 
