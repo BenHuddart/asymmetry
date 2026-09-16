@@ -276,12 +276,15 @@ def _boot_qapplication():
 def _apply_determinism_patches() -> None:
     """Patch sources of non-determinism so PNGs are byte-stable across builds.
 
-    Currently this freezes the wall-clock used by the log panel for its
-    leading ``HH:MM:SS`` timestamps; without this the log column varies on
-    every CI run and bloats Pages deploy diffs.
+    Freezes the wall-clock used by the log panel for its leading
+    ``HH:MM:SS`` timestamps, and by ``MainWindow._fit_record_timestamp`` for
+    the recorded-series clock a Series section's status tag shows
+    (``"Fitted n/n · HH:MM"``, series.py's ``_recorded_status``); without
+    this, either one varies on every CI run and bloats Pages deploy diffs.
     """
     from datetime import datetime as _real_datetime
 
+    from asymmetry.gui import mainwindow as _mainwindow_module
     from asymmetry.gui.panels import log_panel as _log_panel_module
 
     class _FrozenDatetime(_real_datetime):
@@ -290,6 +293,7 @@ def _apply_determinism_patches() -> None:
             return _real_datetime(2026, 1, 1, 9, 30, 0, tzinfo=tz)
 
     _log_panel_module.datetime = _FrozenDatetime  # type: ignore[attr-defined]
+    _mainwindow_module.datetime = _FrozenDatetime  # type: ignore[attr-defined]
 
 
 def _import_scenarios() -> None:
@@ -301,6 +305,7 @@ def _import_scenarios() -> None:
         alpha_count_calibration,
         apodisation_comparison,
         batch_tab_group_binding,
+        batch_tab_series_menu,
         beta_calibration_dialog,
         bunching_comparison,
         composite_fractions_dialog,
@@ -335,6 +340,7 @@ def _import_scenarios() -> None:
         parameter_trending_phase,
         parameter_trending_redfield,
         period_mapping_dialog,
+        plot_fits_on_run,
         quickstart_first_fit,
         run_info_provenance,
         simulate_dialog,
