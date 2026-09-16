@@ -27,6 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the data, and matches the Fermi-function forms used in the μSR literature and Mantid's
   `SmoothTransition`. See `docs/reference/parameter_trending.rst` § "Transition step".
 
+### Changed
+
+- **The packaged `asymmetry-analysis` skill picks the Kubo–Toyabe family by physics, and
+  no longer reads an empty FFT peak table as an absent line.** Two Sonnet evaluations of the
+  new workflows failed on these: a dense nuclear-moment electrolyte was fitted with a
+  Lorentzian Kubo–Toyabe because AICc preferred it, and a cold Fourier spectrum whose peak
+  table was empty was reported as featureless even though the same session's survey and
+  time-domain fit both showed the line. The skill now separates the Gaussian KT of a dense
+  moment array from the Lorentzian KT of dilute moments (motion being the rate `nu` on top of
+  a Gaussian `Delta`), and requires a missing FFT line to be reconciled against the survey's
+  precession column and the run's own fit before it is described as absent.
+
 ### Fixed
 
 - **A Fixed or Global value typed on the Batch Fit tab is the value the fit uses.** After a

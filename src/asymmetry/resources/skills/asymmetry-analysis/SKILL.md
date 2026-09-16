@@ -454,6 +454,28 @@ Peak detection is deliberately conservative, so use this evidence ladder:
    quantities provisional. Do not suppress a supported qualitative assignment
    merely because the same FFT cannot make it a precision measurement.
 
+**Reconcile a missing line with what the session already knows.** By the time
+you transform a run you have usually measured its precession twice over, so an
+empty peak table is a claim to check, not a result to report. Before writing
+that a line is weak, absent or "broadband", hold the spectrum against (a) the
+`survey` precession column for that same run — a run reported as precessing at
+the Larmor frequency *has* a line — and (b) the run's own time-domain fit: a
+fitted oscillating amplitude of order the full asymmetry, damped at σ (or λ),
+is a line of width of order σ/2π in MHz. Broadened past the conservative
+detector, that line is still there, and the honest sentence is that it is too
+broad to be tabulated at this resolution — never that the spectrum has no
+structure. When those sources disagree with your reading of the plot, the
+transform or the displayed band is at fault, not the sample: put `--fmin`
+and `--fmax` a few linewidths either side of the expected frequency and look
+again. A full-record 0–10 MHz view of a damped line spreads it over a handful
+of bins among noise maxima of similar height, which is how a present line gets
+written up as absent.
+
+Note also that `fourier --run N --plot` writes `plots/run-N.png` every time,
+so a second transform of the same run replaces the first PNG. Read each plot
+before re-running, and say in the summary which window the spectrum you are
+describing actually used.
+
 Always compare like with like: the science and reference spectra need the same
 reduction, transform window, time range and displayed frequency range. Features
 that change with sample condition while the matched reference remains a simple
@@ -654,7 +676,19 @@ below), and say in the summary which you chose and why:
 - A **vortex lattice** in a superconductor gives a **Gaussian** field
   distribution: fit the Gaussian width σ.
 - **Static nuclear dipolar fields** give a **Kubo–Toyabe** shape with its
-  characteristic dip and one-third recovery, not a plain decay.
+  characteristic dip and one-third recovery, not a plain decay. *Which* KT is
+  a second physics choice the ranking cannot make for you. A **dense** array
+  of nuclear moments — the ordinary case for a stoichiometric compound, where
+  every muon site has many comparable neighbours (H, Li, F, Al, La, V, Nb,
+  Cu …) — gives a **Gaussian** field distribution: `StaticGaussianKT`,
+  `DynamicGaussianKT`, or `Keren` for a run in a longitudinal field. The
+  **Lorentzian** KT describes *dilute*, randomly sited moments — a few percent
+  of impurity or defect spins in an otherwise moment-free host — and its
+  width `a_L` is not a Gaussian `Delta`. Motion (ionic hopping, diffusion,
+  muon diffusion) is the fluctuation rate `nu` *on top of* the Gaussian
+  width, not a reason to switch distributions. Taking `DynamicLorentzianKT`
+  because AICc preferred it, in a compound whose nuclei are dense, reports a
+  field distribution the sample does not have. Name the KT you used and why.
 - A **fluoride** gives the F–μ–F three-spin beat.
 
 Taking a simple exponential because AICc liked it by two points, when the

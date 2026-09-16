@@ -659,6 +659,112 @@ image hashes and token usage. **All four Tier A datasets pass every Must.**
   unscoreable infrastructure events: one could not open Codex state under the
   restricted shell, and one hit the account usage limit before image review.
 
+### Sonnet workflow-expansion gate — 2026-09-16/17
+
+Host: Claude Code. Model: `sonnet` (claude-sonnet-5). Runner:
+`tools/agent_eval/run_eval.py`, the plan's fixed prompt, `--max-turns 80`,
+run on Windows with `--hdf4-dll-dir` for the legacy HDF4-container NeXus
+files. Outputs are under an external scratch root; only the verdicts are
+recorded here. This is the Sonnet counterpart to the Codex/Luna gate above,
+scored against the same four unchanged rubrics.
+
+The runner had never been exercised on Windows, and three of its assumptions
+were POSIX-only: the console scripts are `*.exe`, the agent stream is UTF-8
+rather than the ANSI code page, and Claude Code matches permission rules
+against Windows paths in POSIX form with the drive as a segment
+(`Read(//c/Users/.../data/**)`). All three are fixed in the runner, which also
+gained `--hdf4-dll-dir` and now records `"agent": "Claude Code"` in
+`cost.json`. A Haiku smoke run confirms the staged data copy is readable, a
+write into it is refused, and the HDF4 survey loads.
+
+#### Pass 1 — 2026-09-16
+
+| Dataset/workflow | Wall | Turns | Cost | Verdict |
+|---|---:|---:|---:|---|
+| TCNQ ALC / `integral-scan` | 125.9 s | 19 | $1.06 | **pass** (6/6) |
+| Silicon photo-µSR / period selection | 509.2 s | 50 | $2.88 | **pass** (6/6) |
+| Al-LLZ ionic motion / `fit-global` | 326.4 s | 36 | $1.94 | **fail** (2 Musts) |
+| CdS shallow donor / `fourier` | 546.2 s | 64 | $2.51 | **fail** (2 Musts) |
+
+- **alc-tcnq — pass.** All four 31-run blocks integrated with `integral-scan`
+  and fitted `LorentzianLCR + Cubic`; the fitted centres, widths and reduced
+  χ² match the passing Luna run to the decimal, including the two blocks whose
+  centre sits a few gauss below the rubric's 3.0–3.2 kG window. Uncertainties
+  came from reading the stored scan JSON, not from arithmetic: its one attempt
+  to compute in `python -c` was refused by the allow-list and recorded as a
+  permission denial. Gap (Should): the integration window and count-integral
+  method are not named.
+- **photo-musr-silicon — pass.** Both periods reduced into separate work
+  directories, ON/red relaxing at 2.11 μs⁻¹ against the dark gate's
+  0.146 μs⁻¹, the model and fit window stated, no carrier lifetime claimed,
+  and the unexposed `P scan` coordinate called out as a metadata limitation.
+  It then went further than the rubric asks and resolved the scan itself from
+  its own `fit-series`: Λ falls by an order of magnitude and resets twice, a
+  power ramp repeated across the block.
+- **ionic-motion-llz — fail** on the model Musts. All 13 triplets were fitted
+  with `fit-global` sharing the right parameters and taking `B_L` per run, but
+  the model was `DynamicLorentzianKT + Constant` — the wizard's AICc pick on
+  the 10 G run — rather than the Gaussian/`Keren` family the physics of a
+  dense nuclear-moment garnet calls for. The reported width is therefore an
+  `a_L` of 0.16 μs⁻¹ where the rubric expects `Delta` of 0.25–0.45, and
+  nothing is flagged as suspect. The summary also says "14 temperatures" where
+  the survey printed 13 and its own table lists 13.
+- **cds-fourier — fail** on the interpretation Musts. Run 20721 was selected
+  correctly from the event totals, reduced, and transformed unwindowed with a
+  saved plot, and the warm reference 20729 gave a tabulated line at
+  1.3916 MHz. But the cold run's empty peak table was reported as physical
+  absence — "no resolvable structure", "broadband" — when the same session's
+  survey reports that run precessing at the Larmor frequency with SNR 87 and
+  its own time-domain fit gives a 21.6 % oscillation damped at σ = 0.554 μs⁻¹.
+  The decisive PNG it read was a 0–10 MHz full-record view, which spreads the
+  damped line across a few bins among noise maxima of similar height; the
+  windowed plot of the same run had already been overwritten by it, since
+  `fourier --plot` writes `plots/run-<n>.png` every time.
+
+Skill changes after pass 1 (text only; no rubric and no CLI change):
+
+1. **Which Kubo–Toyabe is a physics choice, not an AICc one.** The decision
+   rule now separates the **Gaussian** KT of a dense nuclear-moment compound
+   (`StaticGaussianKT`, `DynamicGaussianKT`, `Keren` in LF) from the
+   **Lorentzian** KT of dilute, randomly sited moments, says that motion is
+   the rate `nu` on top of a Gaussian `Delta` rather than a reason to change
+   distribution, and requires the summary to name the KT used and why.
+2. **Reconcile a missing line with what the session already knows.** Step 5c
+   now requires an empty peak table to be checked against the `survey`
+   precession column and the run's own time-domain fit — a fitted oscillation
+   damped at σ is a line of width of order σ/2π, broadened past the detector
+   but present — and to be re-transformed with `--fmin`/`--fmax` a few
+   linewidths around the expected frequency when they disagree. It also warns
+   that a second transform of a run replaces its PNG.
+
+#### Pass 2 — 2026-09-17, the two failures on the corrected skill text
+
+| Dataset/workflow | Wall | Turns | Cost | Verdict |
+|---|---:|---:|---:|---|
+| Al-LLZ ionic motion / `fit-global` | 330.9 s | 37 | $1.90 | **pass** (6/6) |
+| CdS shallow donor / `fourier` | 436.3 s | 42 | $2.19 | **pass** (6/6) |
+
+- **ionic-motion-llz — pass.** The wizard still ranked `Dynamic Lorentzian KT`
+  above `Dynamic GKT` on the 10 G run (AICc 1950 against 1962) and the agent
+  overrode it in as many words — the garnet's ⁷Li, ²⁷Al and La nuclei are a
+  dense array, so the distribution is Gaussian — then hand-built a
+  `DynamicGaussianKT + Constant` recipe and fitted all 13 triplets with
+  `fit-global`, sharing `A_1`, `Delta`, `nu`, `A_bg` and taking `B_L` per run.
+  The 160 K group gives `Delta` = 0.351 ± 0.002 μs⁻¹ and `nu` = 0.344 ± 0.006,
+  both inside the rubric's windows; `Delta` is flat and `nu` rises 3.3× to
+  404 K, and no activation energy is claimed.
+- **cds-fourier — pass.** The cold run's peak table is still empty, and the
+  summary now says so *and* reads the plot: three visual maxima at roughly
+  1.24, 1.39 and 1.51 MHz, marked visual-only, roughly symmetric about the
+  warm reference's tabulated 1.3916 MHz line and absent from that reference.
+  It saved the reference spectrum under its own name rather than letting the
+  second transform overwrite the first PNG. Its time-domain fit corroborates
+  the reading independently: a two-oscillator model splits 1.2517/1.5269 MHz
+  at 5.2 K, converging to a single line by 30 K, with the three unconverged
+  runs reported as failed rather than as results.
+
+**Sonnet workflow-expansion gate: all four datasets pass.**
+
 ### Trigger check — 2026-09-15
 
 Six one-shot runs (`--max-turns 3`) on a copy of the PTFE folder, scored on

@@ -19,7 +19,17 @@ python tools/agent_eval/run_eval.py \
 
 Options: `--model` (default `sonnet`), `--prompt` (default is the plan's fixed
 sentence), `--max-turns` (default 80), `--claude` (path to the Claude Code
-CLI).
+CLI; the one on `PATH` by default), `--hdf4-dll-dir` (as for the Codex runner
+below). `cost.json` records `"agent": "Claude Code"` beside the model.
+
+The Claude Code CLI this runner launches is a **separate process with its own
+login**: the desktop app's session does not authenticate it. `claude auth
+status` must report `loggedIn: true`, or every run fails with an OAuth error
+and is unscoreable.
+
+On Windows, permission rules match paths in POSIX form with the drive as its
+own segment, so the data copy is granted as `Read(//c/Users/.../data/**)`;
+`_absolute_pattern` builds that from the staged path.
 
 This runner launches Claude Code, so its default remains Sonnet. When the same
 rubrics are evaluated through Codex, use the dedicated runner:
