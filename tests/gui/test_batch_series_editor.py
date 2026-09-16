@@ -141,6 +141,24 @@ def _hint_shown(mw: MainWindow) -> bool:
     return not _tab(mw)._selection_hint.isHidden()
 
 
+# ── D8: a draft's window starts as the project range, then belongs to the tab ──
+
+
+def test_a_fresh_draft_shows_the_project_range_not_a_blank_window(mw, monkeypatch):
+    for run in _RUNS:
+        mw._data_browser.add_dataset(_dataset(run))
+    mw._plot_panel.set_fit_range(0.0, 6.0)
+
+    _select_in_browser(mw, monkeypatch, _RUNS)
+
+    assert mw._fit_panel.open_series_id() is None
+    assert mw._fit_panel.batch_fit_range() == (0.0, 6.0)
+
+    # Once the draft has a window, the project range no longer overwrites it.
+    mw._plot_panel.set_fit_range(0.0, 4.0)
+    assert mw._fit_panel.batch_fit_range() == (0.0, 6.0)
+
+
 # ── D7: a browser click never rewrites the open series ───────────────────────
 
 

@@ -707,11 +707,19 @@ class FitPanel(QWidget):
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
         """Echo the plot's (project-wide) fit range into the Single tab.
 
-        The Batch tab is deliberately not echoed: its window is the open
-        series' own (D8), and the plot pushing the project range into it would
-        silently rewrite the series' recipe.
+        The Batch tab's window is the open series' own (D8), so the plot never
+        rewrites a window the tab already has. A draft that has *no* window yet
+        (the fields still blank) takes the project range the first time one
+        exists, so it shows the window a run would actually use rather than an
+        empty 0–0.
         """
         self._single_tab.set_fit_range_display(x_min, x_max)
+        if (
+            x_min is not None
+            and x_max is not None
+            and self._global_tab.fit_range_bounds() == (None, None)
+        ):
+            self._global_tab.set_fit_range_display(x_min, x_max)
 
     def set_batch_fit_range(self, x_min: float, x_max: float) -> None:
         """Write the Batch tab's own window (a drag on the plot's range guides)."""
