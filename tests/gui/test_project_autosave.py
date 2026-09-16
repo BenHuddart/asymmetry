@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -235,6 +236,78 @@ def test_dirty_close_via_discard_leaves_autosave_in_place(
     win.closeEvent(event)
 
     assert autosave_path.exists()
+
+
+def _redirect_app_data(monkeypatch, tmp_path) -> None:
+    """Point the untitled-session autosave directory at *tmp_path*."""
+
+    class _StandardPaths:
+        StandardLocation = mw_module.QStandardPaths.StandardLocation
+
+        @staticmethod
+        def writableLocation(_location) -> str:  # noqa: N802
+            return str(tmp_path / "appdata")
+
+    monkeypatch.setattr(mw_module, "QStandardPaths", _StandardPaths)
+
+
+def test_save_as_deletes_the_autosave_the_session_actually_wrote(
+    win: MainWindow, qapp: QApplication, tmp_path, monkeypatch
+) -> None:
+    """The untitled session's app-data snapshot goes, not only the new path's sibling.
+
+    An untitled session autosaves under the app-data directory; ``Save As``
+    then moves ``_current_project_path``, so deleting "this session's autosave"
+    after the move looked beside the *new* file and left the real one behind.
+    """
+    _redirect_app_data(monkeypatch, tmp_path)
+    monkeypatch.setattr(mw_module, "autosave_interval_minutes", lambda: 5)
+    assert win._current_project_path is None
+    win._mark_dirty()
+    untitled_autosave = Path(win._autosave_path())
+
+    win._on_autosave_timeout()
+    wait_for(lambda: not win._project_save_active, qapp, timeout_s=5.0)
+    assert untitled_autosave.exists()
+
+    target = tmp_path / "new.asymp"
+    win._write_project(str(target))
+    wait_for(lambda: not win._project_save_active, qapp, timeout_s=5.0)
+
+    assert win._current_project_path == str(target)
+    assert target.exists()
+    assert not untitled_autosave.exists()
+
+
+def test_a_save_the_session_outruns_leaves_it_dirty_and_keeps_the_autosave(
+    win: MainWindow, tmp_path, monkeypatch
+) -> None:
+    """Work done while a write is in flight is not in the file, so it stays unsaved."""
+    monkeypatch.setattr(mw_module, "autosave_interval_minutes", lambda: 5)
+    proj_path = tmp_path / "proj.asymp"
+    win._current_project_path = str(proj_path)
+    autosave_path = tmp_path / "proj.autosave.asymp"
+    autosave_path.write_text("{}")
+    win._mark_dirty()
+
+    finished_callbacks: list = []
+    monkeypatch.setattr(
+        win._tasks,
+        "start",
+        lambda _fn, on_finished=None, on_error=None: finished_callbacks.append(on_finished),
+    )
+    monkeypatch.setattr(mw_module, "save_project", lambda *a, **k: None)
+
+    win._write_project(str(proj_path))
+    # The user keeps working while the write is in flight.
+    win._mark_dirty()
+    finished_callbacks[0](None)
+
+    assert win._dirty is True, "the edit made mid-write is not in the saved file"
+    assert autosave_path.exists(), "…so its only other record must survive"
+    assert win._autosave_timer.isActive()
+    assert win._project_save_active is False
+    assert win._current_project_path == str(proj_path)
 
 
 # ── recovery on open ─────────────────────────────────────────────────────

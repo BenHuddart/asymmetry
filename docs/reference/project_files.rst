@@ -444,15 +444,21 @@ the temporary file, so a save can never leave a project half-written. The
 file the swap replaces is kept alongside it as ``<name>.asymp.bak`` — one
 generation, overwritten by the next save — as a manual fallback (open it by
 renaming away the ``.bak``); this is skipped for the autosave snapshot
-below, which is itself a backup and keeps none of its own.
+below, which is itself a backup and keeps none of its own. The ``.bak`` is
+copied from the existing project file rather than the file being renamed to
+it, so the project file itself stays in place right up to the swap: there is
+no moment at which a crash could leave no project file at all.
 
 While a project has unsaved changes, a timer (default every 5 minutes,
 ``0`` disables it — the ``QSettings`` key ``project/autosave_interval_minutes``)
 writes a crash-recovery snapshot to ``<name>.autosave.asymp`` beside a saved
 project, or to an ``untitled.autosave.asymp`` file under the platform's
 application-data directory for a session that has never been saved. A
-successful save or a clean window close deletes it. Opening a project whose
-autosave sibling is newer than the file itself asks "An autosave from
+successful save or a clean window close deletes it — including the
+``untitled`` snapshot a session wrote before its first **Save As**. If you
+keep working while a save is writing, that work is not in the saved file:
+the session stays marked as modified and its snapshot is kept. Opening a
+project whose autosave sibling is newer than the file itself asks "An autosave from
 *<time>* is newer than this project. Load the autosave instead?", with
 **Load autosave** (reads the snapshot but still treats the session as
 unsaved against the original path), **Open saved file** (reads the project

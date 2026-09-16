@@ -838,6 +838,11 @@ class MainWindow(QMainWindow):
         # _mark_dirty(); save/open/new clear it. _restoring_project suppresses
         # marking while a project load replays its own mutations.
         self._dirty = False
+        #: Monotonic counter bumped by every _mark_dirty. A save records the
+        #: value its state was collected at, so its completion can tell whether
+        #: the session has moved on since — and only clear the dirty flag and
+        #: the autosave when it has not (work done mid-write is not in the file).
+        self._dirty_generation = 0
         self._restoring_project = False
         self._project_save_active = False  # True while a background save is writing
         #: Crash-recovery snapshot (D9). Single-shot: armed by _mark_dirty and
@@ -15618,6 +15623,12 @@ class MainWindow(QMainWindow):
 
     def _on_save_project_as(self) -> None:
         """Save the current project to a user-selected path."""
+        path = self._prompt_save_project_path()
+        if path is not None:
+            self._write_project(path)
+
+    def _prompt_save_project_path(self) -> str | None:
+        """Ask where to save; ``None`` when the user cancels the dialog."""
         default = self._current_project_path or os.path.join(self._last_open_dir, "project.asymp")
         path, _ = QFileDialog.getSaveFileName(
             self,
@@ -15625,10 +15636,11 @@ class MainWindow(QMainWindow):
             default,
             _PROJECT_FILE_FILTER,
         )
-        if path:
-            if not path.endswith(".asymp"):
-                path += ".asymp"
-            self._write_project(path)
+        if not path:
+            return None
+        if not path.endswith(".asymp"):
+            path += ".asymp"
+        return path
 
     def _unsaved_synthetic_run_labels(self) -> list[str]:
         """Labels of synthetic/degraded runs with no backing file.
@@ -15709,27 +15721,80 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Failed", f"Could not save project:\n{e}")
             self._log_panel.log(f"ERROR saving project: {e}")
             return
+        # Everything the file will hold is now captured; work done from here on
+        # is *not* in it, and _apply_saved_project compares generations to see.
+        generation = self._dirty_generation
         self._project_save_active = True
         self._set_status_state("Saving project…")
         self.statusBar().showMessage(f"Saving {Path(path).name}…")
         self._tasks.start(
             lambda w, state=state, path=path: save_project(state, path),
-            on_finished=lambda _result, path=path: self._on_project_save_finished(path),
+            on_finished=lambda _r, path=path, gen=generation: self._on_project_save_finished(
+                path, gen
+            ),
             on_error=lambda message, path=path: self._on_project_save_error(path, message),
         )
 
-    def _on_project_save_finished(self, path: str) -> None:
-        """Record a completed background save (GUI thread)."""
-        self._project_save_active = False
-        self._clear_status_state_if_idle()
+    def _save_project_now(self, path: str) -> bool:
+        """Write *path* on the GUI thread; return whether the bytes reached disk.
+
+        The unsaved-changes guard's Save branch (:meth:`_maybe_save`): the
+        session is about to be replaced or closed, so "may the caller proceed?"
+        has to mean *the file exists*, not *a write has started*. A background
+        write would let the new session be built while the old one's write was
+        still in flight, and its completion callback would then stamp that new
+        session with this project's path and clean state.
+        """
+        if not self._confirm_save_with_unsaved_synthetic_runs():
+            return False
+        if not self._confirm_save_with_incomplete_load():
+            return False
+        try:
+            state = self.collect_project_state()
+            generation = self._dirty_generation
+            save_project(state, path)
+        except Exception as e:
+            QMessageBox.critical(self, "Save Failed", f"Could not save project:\n{e}")
+            self._log_panel.log(f"ERROR saving project: {e}")
+            return False
+        self._apply_saved_project(path, generation)
+        return True
+
+    def _apply_saved_project(self, path: str, generation: int) -> None:
+        """Session bookkeeping for a project that has just been written to *path*.
+
+        The one place a completed save is recorded, shared by the background
+        write's completion callback and the guard's synchronous save so both
+        leave exactly the same session behind.
+
+        *generation* is the :attr:`_dirty_generation` the saved state was
+        collected at. If work has dirtied the session since, that work is not in
+        the file: the session stays dirty and keeps its autosave — clearing
+        either would drop the only record of it — and the autosave timer is
+        re-armed to snapshot it.
+        """
+        # The autosave this session wrote sits beside the *old* path (or under
+        # the app-data directory, for a session that had none): resolve it
+        # before the new path takes over, so Save As deletes the right file.
+        previous_autosave = Path(self._autosave_path())
         self._current_project_path = path
         self._add_recent_project(path)
-        self._clear_dirty()
-        # The autosave this project's file just superseded is stale (D9).
-        self._delete_autosave_file()
         self._update_window_title()
         self._log_panel.log(f"Project saved: {path}")
         self.statusBar().showMessage(f"Saved: {Path(path).name}")
+        if generation != self._dirty_generation:
+            self._arm_autosave_timer()
+            return
+        self._clear_dirty()
+        # Both autosaves this project's file supersedes are stale (D9).
+        previous_autosave.unlink(missing_ok=True)
+        self._delete_autosave_file()
+
+    def _on_project_save_finished(self, path: str, generation: int) -> None:
+        """Record a completed background save (GUI thread)."""
+        self._project_save_active = False
+        self._clear_status_state_if_idle()
+        self._apply_saved_project(path, generation)
 
     def _on_project_save_error(self, path: str, message: str) -> None:
         """Report a failed background save (GUI thread)."""
@@ -17035,9 +17100,14 @@ class MainWindow(QMainWindow):
         transition, so it keeps cycling across a working session \u2014 see
         :meth:`_arm_autosave_timer` (a no-op while it is already running) and
         :meth:`_on_autosave_timeout` (which re-arms itself after firing).
+
+        ``_dirty_generation`` advances on every call, dirty already or not, so
+        a save in flight can tell that the session has moved past the state it
+        captured (see :meth:`_apply_saved_project`).
         """
         if self._restoring_project:
             return
+        self._dirty_generation += 1
         if not self._dirty:
             self._dirty = True
             self.setWindowModified(True)
@@ -17075,15 +17145,16 @@ class MainWindow(QMainWindow):
             return False
         if reply == QMessageBox.StandardButton.Discard:
             return True
-        # Save: a background write means we cannot synchronously confirm the
-        # bytes hit disk, so route through the same save path and treat a
-        # started save as success. If the user cancels the Save-As dialog,
-        # _current_project_path stays None and _dirty stays set \u2014 abort so
-        # the work is not silently dropped.
-        self._on_save_project()
-        if self._dirty and not self._project_save_active:
+        # Save: the caller is about to replace or close this session, so it may
+        # only proceed once the bytes are on disk \u2014 a write still in flight
+        # would finish against the *next* session and stamp it with this
+        # project's path and clean state. The user asked for this one write, so
+        # it happens here, on the GUI thread. Cancelling the Save-As dialog
+        # aborts the action rather than silently dropping the work.
+        path = self._current_project_path or self._prompt_save_project_path()
+        if path is None:
             return False
-        return True
+        return self._save_project_now(path)
 
     def _on_close_project(self) -> None:
         """File ▸ Close Project: drop this project, keeping the app running."""
@@ -17145,10 +17216,11 @@ class MainWindow(QMainWindow):
         if not self._maybe_save("closing"):
             event.ignore()
             return
-        # If the prompt kicked off a background save, the _tasks.shutdown()
-        # below would cancel it mid-write. Defer the close until the save
-        # finishes (it clears _dirty), so the next close attempt proceeds —
-        # the same try-again pattern the bulk-load guard above uses.
+        # The guard's own Save is synchronous, but a background write (an
+        # autosave, or a File ▸ Save the user started moments ago) may still be
+        # in flight, and the _tasks.shutdown() below would cancel it mid-write.
+        # Defer the close until it finishes, so the next close attempt proceeds
+        # — the same try-again pattern the bulk-load guard above uses.
         if self._project_save_active:
             self.statusBar().showMessage("Saving project — try closing again in a moment.")
             event.ignore()
