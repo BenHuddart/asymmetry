@@ -11419,7 +11419,8 @@ class MainWindow(QMainWindow):
             and series.batch_id != candidate.batch_id
             and series.recipe_identity() == identity
         ]
-        return max(matches, key=lambda s: s.batch_id) if matches else None
+        # ``batches`` preserves recording order, so the last match is the newest.
+        return matches[-1] if matches else None
 
     @staticmethod
     def _replace_series_results(open_series: FitSeries, candidate: FitSeries) -> FitSeries:
