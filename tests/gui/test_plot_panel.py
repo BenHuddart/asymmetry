@@ -5740,12 +5740,13 @@ class TestFitsMenuButton:
         panel.plot_fit(t, y, label="Fit", run_number=500, fit_id=SINGLE_FIT_ID)
         panel.set_active_fit_id("batch-2")
 
-    def test_disabled_for_a_run_with_no_fit(self, panel: PlotPanel) -> None:
+    def test_hidden_for_a_run_with_no_fit(self, panel: PlotPanel) -> None:
+        """No fit, no button: the empty plot row keeps its pre-series width."""
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         panel.plot_dataset(self._dataset(500))
         assert panel._fits_button.text() == "Fits"
-        assert not panel._fits_button.isEnabled()
+        assert panel._fits_button.isVisibleTo(panel) is False
 
     def test_reads_plain_fits_for_a_run_with_one_fit(self, panel: PlotPanel) -> None:
         if not getattr(panel, "_has_mpl", False):
@@ -5754,7 +5755,7 @@ class TestFitsMenuButton:
         t, y = self._curve()
         panel.plot_fit(t, y, label="Fit", run_number=500, fit_id=SINGLE_FIT_ID)
         assert panel._fits_button.text() == "Fits"
-        assert panel._fits_button.isEnabled()
+        assert panel._fits_button.isVisibleTo(panel) is True
         assert tokens.ACCENT_RED not in panel._fits_button.styleSheet()
 
     def test_counts_the_run_s_fits_once_it_holds_more_than_one(self, panel: PlotPanel) -> None:
@@ -5762,7 +5763,7 @@ class TestFitsMenuButton:
             pytest.skip("matplotlib not available")
         self._two_series_and_a_single_fit(panel)
         assert panel._fits_button.text() == "Fits · 3"
-        assert panel._fits_button.isEnabled()
+        assert panel._fits_button.isVisibleTo(panel) is True
         assert tokens.ACCENT_RED in panel._fits_button.styleSheet()
 
     def test_menu_lists_two_series_and_the_single_fit_in_order(self, panel: PlotPanel) -> None:
@@ -5846,13 +5847,18 @@ class TestFitsMenuButton:
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         panel.plot_dataset(self._dataset(500))
-        before = panel.minimumSizeHint().width()
+        empty = panel.minimumSizeHint().width()
 
         t, y = self._curve()
-        long_name = "Europium oxide transverse field temperature scan"[:60].ljust(60, "·")
+        # One short-named fit shows the button; that is the only width step.
         panel.set_global_fits(
-            {500: (t, y, "leg-a", [])}, fit_id="batch-1", fit_labels={"batch-1": long_name}
+            {500: (t, y, "leg-a", [])}, fit_id="batch-1", fit_labels={"batch-1": "a"}
         )
+        panel.layout().activate()
+        before = panel.minimumSizeHint().width()
+
+        long_name = "Europium oxide transverse field temperature scan"[:60].ljust(60, "·")
+        panel.set_fit_labels({"batch-1": long_name})
         panel.set_global_fits(
             {500: (t, y, "leg-b", [])}, fit_id="batch-2", fit_labels={"batch-2": long_name}
         )
@@ -5861,3 +5867,5 @@ class TestFitsMenuButton:
 
         assert panel._fits_button.text() == "Fits · 2"
         assert panel.minimumSizeHint().width() == before
+        # And a run with no fit at all keeps the pre-series row width.
+        assert empty < before

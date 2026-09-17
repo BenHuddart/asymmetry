@@ -465,8 +465,8 @@ curves simultaneously rather than the last writer overwriting the rest. The
 active series (`PlotPanel.set_active_fit_id`, driven by the same
 `ProjectModel.set_active_series` pointer) draws on every run it covers in
 the fit accent colour; a compact **Fits** button at the right of the plot's
-own toolbar row (reading `Fits · N` for a run holding N fits, disabled for a
-run holding none) opens a menu over every fit id stored for the currently
+own toolbar row (reading `Fits · N` for a run holding N fits, hidden for a
+run holding none so it never widens an empty panel) opens a menu over every fit id stored for the currently
 displayed run. The menu is rebuilt on `aboutToShow`, never per event, and it
 alone carries the fit names — the button's width is fixed, so a series' name
 never enters the panel's minimum width. Ticking an entry toggles that curve

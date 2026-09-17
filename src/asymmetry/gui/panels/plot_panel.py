@@ -552,7 +552,7 @@ class PlotPanel(QWidget):
             # panel's minimum width.
             self._fits_button.setFixedWidth(char_width(11))
             self._fits_button.setMenu(self._fits_menu)
-            self._fits_button.setEnabled(False)
+            self._fits_button.setVisible(False)
             self._fits_button.setStyleSheet(_fits_button_qss(multiple=False))
             nav_row.addWidget(self._fits_button)
 
@@ -1074,7 +1074,7 @@ class PlotPanel(QWidget):
         self._refresh_fits_button()
 
     def _refresh_fits_button(self) -> None:
-        """Retitle/enable the toolbar's Fits button for the run on screen.
+        """Retitle/show the toolbar's Fits button for the run on screen.
 
         Qt bookkeeping only, never a redraw: called on a run switch, on
         :meth:`set_active_fit_id`/:meth:`set_shown_fits`/
@@ -1087,7 +1087,10 @@ class PlotPanel(QWidget):
         stored = [] if run_number is None else self._fit_ids_recorded_for_run(run_number)
         multiple = len(stored) > 1
         self._fits_button.setText(f"Fits · {len(stored)}" if multiple else "Fits")
-        self._fits_button.setEnabled(bool(stored))
+        # Hidden, not disabled, while the run holds no fit: the button must not
+        # widen a panel that has nothing for it to show (a 13-inch display has
+        # no width to spare on the plot row).
+        self._fits_button.setVisible(bool(stored))
         self._fits_button.setStyleSheet(_fits_button_qss(multiple=multiple))
 
     def _rebuild_fits_menu(self) -> None:

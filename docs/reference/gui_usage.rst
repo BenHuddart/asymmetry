@@ -1112,8 +1112,8 @@ After a batch or global fit completes:
   series first (marked ``●``), the run's own **Single fit** last. Tick an
   entry to draw its curve, untick it to hide it, and pick a series from
   **Make active** to make it the active one (``Tick = show · ● = active``).
-  The button reads plain **Fits** for a run holding one fit or none, and is
-  greyed out when the run has none.
+  The button reads plain **Fits** for a run holding one fit, and is hidden
+  while the run has none, so an empty plot row is no wider than before.
 * The Results card carries a **Batch ✓**/**Batch ⚠** tag, an "*N* of *M*
   converged" headline, and one verdict chip per run (for example
   ``3001 ✓ 0.98``, coloured by that run's own fit quality); click a run's
