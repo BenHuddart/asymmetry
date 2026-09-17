@@ -357,11 +357,6 @@ class PlotPanel(QWidget):
     #: The user dismissed the grouping-hint bar (the ✕ button); the host records
     #: the dismissal so the nudge stays hidden for that run.
     grouping_hint_dismissed = Signal()
-    #: A series was picked from the Fits menu's **Make active** submenu
-    #: (fit_id, a FitSeries ``batch_id``) — never emitted for
-    #: ``SINGLE_FIT_ID``, which has no series to make active. The host routes
-    #: this to ``_set_active_series``.
-    active_fit_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
         super().__init__(parent)
@@ -542,7 +537,6 @@ class PlotPanel(QWidget):
             # active. A menu rather than a row of named buttons: the fit names
             # live in the popup, so the panel's minimum width never follows
             # them.
-            self._make_active_menu = QMenu("Make active", self)
             self._fits_menu = QMenu(self)
             self._fits_menu.aboutToShow.connect(self._rebuild_fits_menu)
             self._fits_button = QPushButton("Fits")
@@ -1096,14 +1090,12 @@ class PlotPanel(QWidget):
     def _rebuild_fits_menu(self) -> None:
         """Fill the Fits popup for the run on screen, on ``aboutToShow``.
 
-        One checkable entry per fit stored for the run (ticked = drawn, ``●``
-        = the active series), then a **Make active** submenu over the series
-        alone — a run's own single fit is not a series and can never be made
-        active.
+        One checkable entry per fit stored for the run: ticked = drawn, ``●``
+        = the active series. The menu only shows and hides; which series is
+        active is decided on the Batch tab or the Parameters chips (D5).
         """
         menu = self._fits_menu
         menu.clear()
-        self._make_active_menu.clear()
         run_number = self._fits_menu_run_number()
         if run_number is None:
             return
@@ -1120,17 +1112,7 @@ class PlotPanel(QWidget):
                 lambda _checked=False, fid=fit_id: self._on_fit_menu_toggled(fid)
             )
         menu.addSeparator()
-        for fit_id in fit_ids:
-            if fit_id == SINGLE_FIT_ID:
-                continue
-            action = self._make_active_menu.addAction(self.fit_label(fit_id))
-            action.setCheckable(True)
-            action.setChecked(fit_id == self._active_fit_id)
-            action.triggered.connect(
-                lambda _checked=False, fid=fit_id: self._on_make_active_chosen(fid)
-            )
-        menu.addMenu(self._make_active_menu)
-        footer = menu.addAction("Tick = show · ● = active")
+        footer = menu.addAction("Tick = show · ● = active series")
         footer.setEnabled(False)
 
     def _on_fit_menu_toggled(self, fit_id: str) -> None:
@@ -1145,11 +1127,6 @@ class PlotPanel(QWidget):
             shown.add(fit_id)
         ordered = [fid for fid in self._fit_ids_recorded_for_run(run_number) if fid in shown]
         self.set_shown_fits(run_number, ordered)
-
-    def _on_make_active_chosen(self, fit_id: str) -> None:
-        """Make *fit_id* the active series and tell the host to follow."""
-        self.set_active_fit_id(fit_id)
-        self.active_fit_requested.emit(fit_id)
 
     def _create_plot_footer(self) -> QWidget:
         """Return the control bar shown below the canvas."""

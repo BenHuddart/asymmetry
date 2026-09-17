@@ -142,9 +142,6 @@ class _StubPlotPanel(QWidget):
         # window reports it here rather than moving the project range.
         self.fit_range_guide_changed = _DummySignal()
         self.time_view_changed = _DummySignal()
-        # A series picked from the plot's Fits menu (item 3); MainWindow
-        # connects this unconditionally on both domain panels.
-        self.active_fit_requested = _DummySignal()
         self.factor = 1
         self.last_plotted_dataset = None
         self.last_grouped_datasets = None

@@ -358,11 +358,12 @@ Scope: `gui/panels/fit_parameters_panel.py`, `gui/panels/plot_panel.py`
   `MainWindow` to `FitPanel.open_series` / duplicate.
 - Plot `Fits` menu button at the right of the plot's own toolbar row,
   before `Pan`: `Fits · N` for the current run's N fits, its popup listing
-  one checkable entry per series covering the run plus the single fit, and
-  a `Make active` submenu over the series alone. Fixed width, so a fit's
-  name never enters the panel's minimum width.
-- Active-series sync: chip press, `Make active` and Batch tab open all go
-  through `ProjectModel.set_active_series` and one `MainWindow` refresher.
+  one checkable entry per series covering the run plus the single fit; it
+  shows and hides only, marking the active series with `●` (Ben,
+  2026-09-17: the plot never sets the active series). Fixed width, so a
+  fit's name never enters the panel's minimum width.
+- Active-series sync: chip press and Batch tab open go through
+  `ProjectModel.set_active_series` and one `MainWindow` refresher.
 
 Checklist: no second chip implementation; the `Fits` button is disabled for
 a run with no fit; toggling a menu entry never records anything.

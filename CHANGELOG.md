@@ -42,8 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   representation is *active* — driving the plot's default overlay, the Batch tab's open series
   and the Parameters chip rail together — and a `Fits` button on the plot toolbar (reading
   `Fits · N` when the run carries N fits) opens a menu over every fit that covers the displayed
-  run: other series, plus the run's own single fit. Tick an entry to show or hide its curve,
-  or pick a series from `Make active` to make it the active one (`Tick = show · ● = active`).
+  run: other series, plus the run's own single fit. Tick an entry to show or hide its curve
+  (`Tick = show · ● = active series`); which series is active is chosen on the Batch tab or
+  from a Parameters chip, never from the plot.
   See `docs/reference/gui_usage.rst` § "Batch fitting" and `docs/ARCHITECTURE.md` § "DataGroup
   and FitSeries".
 - **The Parameters chip rail is sectioned by the data group each series belongs to**, with a

@@ -2175,11 +2175,6 @@ class MainWindow(QMainWindow):
         self._fit_parameters_panel.series_duplicate_requested.connect(
             self._on_series_duplicate_requested
         )
-        # The plot toolbar's Fits menu: "Make active" makes that fit's series
-        # active (item 3), on whichever domain panel it was chosen.
-        for _panel in (self._plot_panel, self._frequency_plot_panel):
-            _panel.active_fit_requested.connect(self._on_active_fit_requested)
-
         # Unsaved-changes guard (P0-2): every fit result and trend-series edit
         # is work worth saving, so flag the session modified when one lands.
         # These signals are emitted on the GUI thread (their existing slots
@@ -11534,16 +11529,6 @@ class MainWindow(QMainWindow):
         self._open_series_in_batch_tab(batch_id)
         self._fit_panel.duplicate_open_series()
         self._show_panel("fit")
-
-    def _on_active_fit_requested(self, batch_id: str) -> None:
-        """A series was chosen from the plot's Fits menu: make it active.
-
-        The ``"single"`` id is never routed here (the **Make active** submenu
-        lists series only), so this always names a real series.
-        """
-        series = self._project_model.batch(str(batch_id))
-        if series is not None:
-            self._set_active_series(series.rep_type, series.batch_id)
 
     def _adopt_recorded_series(self, batch_id: str | None, previously_open: str | None) -> None:
         """Leave the Batch tab open on the series its run just recorded (D3).

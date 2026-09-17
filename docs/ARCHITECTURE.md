@@ -471,8 +471,8 @@ displayed run. The menu is rebuilt on `aboutToShow`, never per event, and it
 alone carries the fit names — the button's width is fixed, so a series' name
 never enters the panel's minimum width. Ticking an entry toggles that curve
 on or off (`shown_fits_by_run`, transient view state, never persisted or
-recorded); the **Make active** submenu lists the series alone (never
-`"single"`) and makes the chosen one active.
+recorded); the `●` marks the active series but the menu never sets it —
+that pointer moves only from the Batch tab or a Parameters chip.
 
 #### DataBrowserPanel — decorative highlight vs true selection
 

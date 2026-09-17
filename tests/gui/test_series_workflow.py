@@ -411,15 +411,16 @@ def test_chip_press_batch_open_and_fits_menu_keep_the_three_surfaces_agreeing(mw
     assert_agree(second_id)
     assert mw._fit_panel.open_series_id() == second_id
 
-    # The plot toolbar's Fits menu → "Make active" → the first series.
+    # The plot toolbar's Fits menu only reports the pointer: its ● follows
+    # the active series, and ticking an entry never moves it.
     panel = mw._plot_panel
     assert panel._fits_button.text() == "Fits · 2"
     panel._fits_menu.aboutToShow.emit()
-    make_active = [a for a in panel._fits_menu.actions() if a.menu() is not None]
-    assert [a.text() for a in make_active] == ["Make active"]
-    entries = {a.text(): a for a in make_active[0].menu().actions()}
-    entries[panel.fit_label(first_id)].trigger()
-    assert_agree(first_id)
+    marked = [a.text() for a in panel._fits_menu.actions() if a.text().startswith("● ")]
+    assert marked == [f"● {panel.fit_label(second_id)}"]
+    other = next(a for a in panel._fits_menu.actions() if a.text() == panel.fit_label(first_id))
+    other.trigger()
+    assert_agree(second_id)
 
 
 # ── the launch context owns the recording, and frequency members are spectra ──

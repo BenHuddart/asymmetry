@@ -1110,8 +1110,9 @@ After a batch or global fit completes:
   is covered by the plot toolbar's **Fits** button, which reads ``Fits · 2``
   for a run holding two fits and opens a menu listing them all — active
   series first (marked ``●``), the run's own **Single fit** last. Tick an
-  entry to draw its curve, untick it to hide it, and pick a series from
-  **Make active** to make it the active one (``Tick = show · ● = active``).
+  entry to draw its curve, untick it to hide it (``Tick = show · ● = active
+  series``). The menu never changes which series is active: that is chosen
+  on the Batch tab or by pressing a chip in the Parameters panel.
   The button reads plain **Fits** for a run holding one fit, and is hidden
   while the run has none, so an empty plot row is no wider than before.
 * The Results card carries a **Batch ✓**/**Batch ⚠** tag, an "*N* of *M*
@@ -1150,7 +1151,7 @@ After a batch or global fit completes:
 *a fitted curve is never extrapolated past its own recorded range, so only*
 *the wider series draws before 0.5 µs, the one visible difference at this*
 *zoom. The button's menu would untick either curve to hide it without*
-*discarding it, or make the other series active from* **Make active***.*
+*discarding it.*
 
 Fitting a group directly
 ^^^^^^^^^^^^^^^^^^^^^^^^^

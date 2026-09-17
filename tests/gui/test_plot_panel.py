@@ -5722,12 +5722,6 @@ class TestFitsMenuButton:
         panel._fits_menu.aboutToShow.emit()
         return list(panel._fits_menu.actions())
 
-    @classmethod
-    def _make_active_actions(cls, panel: PlotPanel) -> list[QAction]:
-        submenu = [a for a in cls._menu_actions(panel) if a.menu() is not None]
-        assert [a.text() for a in submenu] == ["Make active"]
-        return list(submenu[0].menu().actions())
-
     def _two_series_and_a_single_fit(self, panel: PlotPanel) -> None:
         panel.plot_dataset(self._dataset(500))
         t, y = self._curve()
@@ -5779,9 +5773,10 @@ class TestFitsMenuButton:
             "● T scan B",
             "T scan A",
             "Single fit",
-            "Make active",
-            "Tick = show · ● = active",
+            "Tick = show · ● = active series",
         ]
+        # Show/hide only: which series is active is decided elsewhere (D5).
+        assert all(a.menu() is None for a in actions)
         # The header and footer are read-only; only the fits are checkable.
         assert not actions[0].isEnabled()
         assert not actions[-1].isEnabled()
@@ -5811,22 +5806,20 @@ class TestFitsMenuButton:
         {a.text(): a for a in self._menu_actions(panel)}["● T scan B"].trigger()
         assert panel.shown_fit_ids(500) == []
 
-    def test_make_active_offers_the_series_only_and_emits_the_request(
+    def test_the_marker_follows_the_active_series_but_the_menu_never_sets_it(
         self, panel: PlotPanel
     ) -> None:
         if not getattr(panel, "_has_mpl", False):
             pytest.skip("matplotlib not available")
         self._two_series_and_a_single_fit(panel)
+        panel.set_active_fit_id("batch-1")
 
-        entries = self._make_active_actions(panel)
-        assert [a.text() for a in entries] == ["T scan B", "T scan A"]
-        assert [a.isChecked() for a in entries] == [True, False]
-
-        requested: list[str] = []
-        panel.active_fit_requested.connect(requested.append)
-        entries[1].trigger()
-        assert requested == ["batch-1"]
+        actions = [a for a in self._menu_actions(panel) if a.isCheckable()]
+        assert [a.text() for a in actions] == ["● T scan A", "T scan B", "Single fit"]
+        # Triggering an entry only toggles its curve; the active series stays.
+        actions[1].trigger()
         assert panel.active_fit_id() == "batch-1"
+        assert set(panel.shown_fit_ids(500)) == {"batch-1", "batch-2"}
 
     def test_refreshing_the_button_never_redraws(
         self, panel: PlotPanel, monkeypatch: pytest.MonkeyPatch
