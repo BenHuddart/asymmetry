@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -26,8 +28,8 @@ def _write_v2_file(
     include_corrected_time: bool = False,
     time_zero_us: float = 0.0,
     t0_bin_attr: int | None = None,
-    first_good_bin_attr: int | None = 0,
-    last_good_bin_attr: int | None = 3,
+    first_good_bin_attr: int | None = 1,
+    last_good_bin_attr: int | None = 4,
     first_good_time_us: float | None = None,
     last_good_time_us: float | None = None,
     orientation: str = "L",
@@ -48,7 +50,8 @@ def _write_v2_file(
     """Create a synthetic V2 NeXus file used by loader unit tests.
 
     Parameters control whether the file carries a pre-corrected time axis and
-    whether ``t0_bin`` is provided explicitly as an attribute. ``orientation``
+    whether ``t0_bin`` is provided explicitly as an attribute. Every bin
+    attribute is written the way ISIS writes it: **1-based**, inclusive. ``orientation``
     sets the detector-bank orientation; ``field_state`` writes
     ``sample/magnetic_field_state`` when not ``None``.
     """
@@ -680,29 +683,35 @@ def test_load_v1_single_period(tmp_path, loader: NexusLoader) -> None:
 
 
 def test_load_v2_prefers_corrected_time_axis_when_present(tmp_path, loader: NexusLoader) -> None:
-    """Use corrected_time directly when available instead of re-deriving from raw_time."""
+    """The 1-based ``t0_bin`` attribute decodes to a 0-based bin and an exact t0."""
     path = tmp_path / "run_v2_corrected_time.nxs"
     _write_v2_file(
         path,
         include_corrected_time=True,
         time_zero_us=0.04,
-        t0_bin_attr=2,
+        t0_bin_attr=3,
     )
 
     result = loader.load(str(path))
     assert not isinstance(result, list)
 
     ds = result
+    # Stamps are (k + 0.5)*w - time_zero; identical to the file corrected_time.
     assert ds.time == pytest.approx([-0.03, -0.01, 0.01, 0.03])
     assert ds.run is not None
     assert ds.run.histograms[0].t0_bin == 2
     assert ds.run.histograms[1].t0_bin == 2
+    assert ds.run.histograms[0].t0_time_us == pytest.approx(0.04)
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.run.grouping["t0_time_us"] == pytest.approx(0.04)
+    assert ds.run.grouping["t0_bin"] == 2
+    assert ds.run.grouping["detector_t0_bins"] == [2, 2]
 
 
 def test_load_v2_raw_time_fallback_applies_time_zero_correction(
     tmp_path, loader: NexusLoader
 ) -> None:
-    """Fall back to raw_time centres and subtract t0 when corrected_time is absent."""
+    """With no ``t0_bin`` attribute, ``time_zero`` alone gives the containing bin."""
     path = tmp_path / "run_v2_raw_time_only.nxs"
     _write_v2_file(
         path,
@@ -717,9 +726,11 @@ def test_load_v2_raw_time_fallback_applies_time_zero_correction(
     ds = result
     assert ds.time == pytest.approx([-0.03, -0.01, 0.01, 0.03])
     assert ds.run is not None
-    # With 0.02 us bins and time_zero=0.04 us, t0 maps to bin index 2.
+    # With 0.02 us bins and time_zero=0.04 us, t0 falls in 0-based bin 2.
     assert ds.run.histograms[0].t0_bin == 2
     assert ds.run.histograms[1].t0_bin == 2
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.run.grouping["t0_time_us"] == pytest.approx(0.04)
 
 
 def test_load_v2_prefers_bin_attributes_over_explicit_good_times(
@@ -731,9 +742,9 @@ def test_load_v2_prefers_bin_attributes_over_explicit_good_times(
         path,
         include_corrected_time=True,
         time_zero_us=0.04,
-        t0_bin_attr=2,
-        first_good_bin_attr=2,
-        last_good_bin_attr=3,
+        t0_bin_attr=3,
+        first_good_bin_attr=3,
+        last_good_bin_attr=4,
         first_good_time_us=-0.01,
         last_good_time_us=0.03,
     )
@@ -755,7 +766,7 @@ def test_load_v2_uses_good_times_when_bin_attributes_missing(tmp_path, loader: N
         path,
         include_corrected_time=True,
         time_zero_us=0.04,
-        t0_bin_attr=2,
+        t0_bin_attr=3,
         first_good_bin_attr=None,
         last_good_bin_attr=None,
         first_good_time_us=-0.01,
@@ -1111,3 +1122,289 @@ def test_v2_malformed_sidecar_log_does_not_raise(tmp_path, loader: NexusLoader) 
     ds = loader.load(str(path))  # must not raise
     assert ds.metadata["field_direction"] == ""
     assert "field_source" not in ds.metadata
+
+
+# --- ISIS 1-based bin decode, exact t0 and t0_source -------------------------
+#
+# ISIS writes ``t0_bin`` / ``first_good_bin`` / ``last_good_bin`` 1-based and
+# inclusive, and stores t0 twice: as that integer bin and as ``time_zero`` in
+# µs. Evidence and the representative numbers used below:
+# docs/porting/t0-determination/isis-header-index-base.md.
+
+_RES = 0.016  # µs, the common ISIS binning
+
+
+def _write_v2_t0_file(
+    path,
+    *,
+    n_bins: int = 64,
+    resolution_us: float = _RES,
+    t0_bin_attr: int | None = None,
+    time_zero_us: float | tuple[float, ...] | None = None,
+    first_good_bin_attr: int | None = 1,
+    last_good_bin_attr: int | None = None,
+    corrected_time_t0_bin: int | None = None,
+) -> None:
+    """A two-detector V2 file with exactly the t0 header fields under test.
+
+    Every bin attribute is 1-based, as ISIS writes them. ``time_zero_us`` may be
+    a scalar or one value per detector. ``corrected_time_t0_bin`` builds the
+    file's own axis from a *different* t0 than the attribute declares (the
+    2003-era stale-header case); by default the axis agrees with ``time_zero``.
+    """
+    counts = np.vstack(
+        [
+            100.0 + np.arange(n_bins, dtype=np.float64),
+            80.0 + np.arange(n_bins, dtype=np.float64),
+        ]
+    )
+    with h5py.File(path, "w") as f:
+        entry = f.create_group("raw_data_1")
+        entry.create_dataset("definition", data=np.bytes_("muonTD"))
+        entry.create_dataset("IDF_version", data=2)
+        entry.create_dataset("run_number", data=32482)
+        entry.create_dataset("name", data=np.bytes_("MUSR"))
+        detector = entry.create_group("instrument").create_group("detector_1")
+        counts_ds = detector.create_dataset("counts", data=counts)
+        if t0_bin_attr is not None:
+            counts_ds.attrs["t0_bin"] = np.int32(t0_bin_attr)
+        if first_good_bin_attr is not None:
+            counts_ds.attrs["first_good_bin"] = np.int32(first_good_bin_attr)
+        counts_ds.attrs["last_good_bin"] = np.int32(
+            n_bins if last_good_bin_attr is None else last_good_bin_attr
+        )
+        raw_time = np.arange(n_bins + 1, dtype=np.float64) * resolution_us
+        detector.create_dataset("raw_time", data=raw_time)
+        axis_t0 = time_zero_us
+        if isinstance(axis_t0, tuple):
+            axis_t0 = axis_t0[0]
+        if corrected_time_t0_bin is not None:
+            axis_t0 = (corrected_time_t0_bin + 0.5) * resolution_us
+        if axis_t0 is not None:
+            centres = 0.5 * (raw_time[:-1] + raw_time[1:])
+            detector.create_dataset("corrected_time", data=centres - float(axis_t0))
+        if time_zero_us is not None:
+            values = (
+                np.asarray(time_zero_us, dtype=np.float64)
+                if isinstance(time_zero_us, tuple)
+                else np.asarray([time_zero_us], dtype=np.float64)
+            )
+            detector.create_dataset("time_zero", data=values)
+        detector.create_dataset("grouping", data=np.array([1, 2], dtype=np.int32))
+
+
+def test_v2_t0_bin_attribute_decodes_one_based_and_keeps_the_exact_t0(
+    tmp_path, loader: NexusLoader
+) -> None:
+    """EMU-style: attr 11 with time_zero 0.167 µs at 16 ns ⇒ bin 10, exact t0 kept."""
+    path = tmp_path / "t0_attr_11.nxs"
+    _write_v2_t0_file(path, t0_bin_attr=11, time_zero_us=0.167)
+
+    ds = loader.load(str(path))
+    assert [h.t0_bin for h in ds.run.histograms] == [10, 10]
+    assert ds.run.histograms[0].t0_time_us == pytest.approx(0.167)
+    assert ds.run.grouping["t0_bin"] == 10
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.run.grouping["t0_time_us"] == pytest.approx(0.167)
+
+
+def test_v2_exact_bin_edge_time_zero_agrees_with_the_attribute(
+    tmp_path, loader: NexusLoader
+) -> None:
+    """EMU v2 0.160 µs reads back as 9.99999978 bins; attr 10 ⇒ bin 9, no conflict."""
+    path = tmp_path / "t0_attr_10.nxs"
+    _write_v2_t0_file(path, t0_bin_attr=10, time_zero_us=float(np.float32(0.160)))
+
+    ds = loader.load(str(path))
+    assert [h.t0_bin for h in ds.run.histograms] == [9, 9]
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.run.grouping["t0_time_us"] == pytest.approx(0.160, abs=1e-7)
+
+
+def test_v2_stale_time_zero_conflicts_and_the_attribute_wins(
+    tmp_path, loader: NexusLoader, caplog
+) -> None:
+    """MuSR 2003 32482.NXS: time_zero 0.278 µs against t0_bin 40 ⇒ conflict, bin 39."""
+    path = tmp_path / "t0_conflict.nxs"
+    _write_v2_t0_file(path, t0_bin_attr=40, time_zero_us=0.278, corrected_time_t0_bin=39)
+
+    with caplog.at_level("WARNING"):
+        ds = loader.load(str(path))
+
+    assert [h.t0_bin for h in ds.run.histograms] == [39, 39]
+    assert ds.run.histograms[0].t0_time_us is None
+    assert ds.run.grouping["t0_source"] == "conflict"
+    assert "t0_time_us" not in ds.run.grouping
+    assert any("disagrees with time_zero" in record.message for record in caplog.records)
+
+
+def test_v2_corrected_time_disagreeing_with_the_attribute_is_a_conflict(
+    tmp_path, loader: NexusLoader, caplog
+) -> None:
+    """The axis vote survives only as a cross-check: it flags, it never decides."""
+    path = tmp_path / "t0_axis_conflict.nxs"
+    _write_v2_t0_file(path, t0_bin_attr=11, time_zero_us=0.167, corrected_time_t0_bin=20)
+
+    with caplog.at_level("WARNING"):
+        ds = loader.load(str(path))
+
+    # The attribute still decides the bin; only the exact t0 is dropped.
+    assert [h.t0_bin for h in ds.run.histograms] == [10, 10]
+    assert ds.run.grouping["t0_source"] == "conflict"
+    assert any("corrected_time" in record.message for record in caplog.records)
+
+
+def test_v2_last_good_bin_equal_to_the_histogram_length_is_the_final_bin(
+    tmp_path, loader: NexusLoader
+) -> None:
+    """``last_good_bin == n_bins`` in every surveyed file — 1-based, inclusive."""
+    path = tmp_path / "t0_last_good.nxs"
+    _write_v2_t0_file(path, n_bins=2048, t0_bin_attr=11, time_zero_us=0.167)
+
+    ds = loader.load(str(path))
+    assert ds.run.histograms[0].good_bin_end == 2047
+    assert ds.run.histograms[0].good_bin_start == 0
+    assert ds.run.grouping["last_good_bin"] == 2047
+
+
+def test_v2_per_detector_time_zero_without_attribute_gives_per_detector_bins(
+    tmp_path, loader: NexusLoader
+) -> None:
+    """Only ``time_zero``: each detector's containing bin, the run's is the group max."""
+    path = tmp_path / "t0_per_detector.nxs"
+    _write_v2_t0_file(path, t0_bin_attr=None, time_zero_us=(0.167, 0.200))
+
+    ds = loader.load(str(path))
+    assert ds.run.grouping["detector_t0_bins"] == [10, 12]
+    assert ds.run.grouping["t0_bin"] == 12
+    assert ds.run.grouping["t0_source"] == "file"
+    # Only the detector sitting on the common bin contributes its exact t0 (D4).
+    assert ds.run.grouping["t0_time_us"] == pytest.approx(0.200)
+
+
+def test_v2_without_any_t0_field_reports_missing(tmp_path, loader: NexusLoader) -> None:
+    """No ``t0_bin``, no ``time_zero``: bin 0 and ``missing`` — resolution searches (D7)."""
+    path = tmp_path / "t0_absent.nxs"
+    _write_v2_t0_file(path, t0_bin_attr=None, time_zero_us=None)
+
+    ds = loader.load(str(path))
+    assert [h.t0_bin for h in ds.run.histograms] == [0, 0]
+    assert ds.run.grouping["t0_source"] == "missing"
+    assert "t0_time_us" not in ds.run.grouping
+
+
+def test_v2_dataset_axis_is_stamped_from_the_exact_t0(tmp_path, loader: NexusLoader) -> None:
+    """The loader axis is ``(k + 0.5)·w − t0_time_us`` over the good window."""
+    path = tmp_path / "t0_axis.nxs"
+    _write_v2_t0_file(path, n_bins=32, t0_bin_attr=11, time_zero_us=0.167, first_good_bin_attr=12)
+
+    ds = loader.load(str(path))
+    expected = (np.arange(11, 32, dtype=np.float64) + 0.5) * _RES - 0.167
+    assert ds.time == pytest.approx(expected)
+    # The file's own axis is kept for diagnostics, not used for stamps.
+    assert ds.metadata["nexus_corrected_time"][11] == pytest.approx(expected[0])
+
+
+def test_v1_t0_bin_attribute_decodes_one_based(tmp_path, loader: NexusLoader) -> None:
+    """The v1 ``/run`` layout carries the same 1-based counts attributes."""
+    path = tmp_path / "t0_v1.nxs"
+    n_bins = 64
+    with h5py.File(path, "w") as f:
+        run = f.create_group("run")
+        run.create_dataset("analysis", data=np.bytes_("muonTD"))
+        run.create_dataset("IDF_version", data=1)
+        run.create_dataset("number", data=2468)
+        h_data = run.create_group("histogram_data_1")
+        counts = np.vstack(
+            [
+                100.0 + np.arange(n_bins, dtype=np.float64),
+                80.0 + np.arange(n_bins, dtype=np.float64),
+            ]
+        )
+        counts_ds = h_data.create_dataset("counts", data=counts)
+        counts_ds.attrs["t0_bin"] = np.int32(11)
+        counts_ds.attrs["first_good_bin"] = np.int32(12)
+        counts_ds.attrs["last_good_bin"] = np.int32(n_bins)
+        centres = (np.arange(n_bins, dtype=np.float64) + 0.5) * _RES
+        h_data.create_dataset("corrected_time", data=centres - 0.167)
+        h_data.create_dataset("grouping", data=np.array([1, 2], dtype=np.int32))
+        # v1 stores time_zero in microseconds too, despite the bare name.
+        time_zero = h_data.create_dataset("time_zero", data=np.array([0.167], dtype=np.float64))
+        time_zero.attrs["units"] = np.bytes_("microseconds")
+
+    ds = loader.load(str(path))
+    assert [h.t0_bin for h in ds.run.histograms] == [10, 10]
+    assert ds.run.grouping["first_good_bin"] == 11
+    assert ds.run.grouping["last_good_bin"] == n_bins - 1
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.run.grouping["t0_time_us"] == pytest.approx(0.167)
+
+
+# --- reader parity against the musrfit example corpus ------------------------
+#
+# musrfit ships its ISIS example files in its own source tree, which Asymmetry
+# does not vendor. Point ``ASYMMETRY_MUSRFIT_DATA`` at
+# ``<musrfit>/doc/examples/data`` to run these; without it they skip.
+
+_MUSRFIT_DATA_DIR = os.environ.get("ASYMMETRY_MUSRFIT_DATA")
+_MUSRFIT_ISIS_FILES = (
+    "emu00046707.nxs",
+    "emu00046708.nxs",
+    "emu00046709.nxs",
+    "emu00046710.nxs",
+    "emu00139040.nxs",
+)
+
+
+def _musrfit_example_file(name: str):
+    if not _MUSRFIT_DATA_DIR:
+        pytest.skip("ASYMMETRY_MUSRFIT_DATA not set; musrfit reader-parity corpus unavailable")
+    path = Path(_MUSRFIT_DATA_DIR) / name
+    if not path.exists():
+        pytest.skip(f"musrfit example file not available: {name}")
+    return path
+
+
+def _counts_attrs(path) -> dict:
+    """The ``counts`` attributes of a real ISIS file, v1 or v2, HDF4 or HDF5."""
+    from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
+
+    if is_hdf4(str(path)):
+        pytest.importorskip("pyhdf.SD", exc_type=ImportError)
+        handle = open_hdf4(str(path))
+    else:
+        handle = h5py.File(path, "r")
+    if "run" in handle:
+        counts = handle["run"]["histogram_data_1"]["counts"]
+    else:
+        entry = next(key for key in handle.keys() if key.startswith("raw_data"))
+        counts = handle[entry]["instrument"]["detector_1"]["counts"]
+    return {key: np.asarray(value).ravel()[0] for key, value in counts.attrs.items()}
+
+
+@pytest.mark.parametrize("name", _MUSRFIT_ISIS_FILES)
+def test_musrfit_isis_examples_decode_one_based(name, loader: NexusLoader) -> None:
+    """Every real ISIS file decodes ``t0_bin − 1`` and keeps its exact t0."""
+    path = _musrfit_example_file(name)
+    attrs = _counts_attrs(path)
+
+    result = loader.load(str(path))
+    ds = result[0] if isinstance(result, list) else result
+    n_bins = ds.run.histograms[0].n_bins
+    assert ds.run.histograms[0].t0_bin == int(attrs["t0_bin"]) - 1
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.run.grouping["t0_time_us"] is not None
+    # last_good_bin is the histogram length in every surveyed file (E1).
+    assert int(attrs["last_good_bin"]) == n_bins
+    assert ds.run.histograms[0].good_bin_end == n_bins - 1
+
+
+def test_musrfit_2003_musr_file_is_a_conflict(loader: NexusLoader) -> None:
+    """32482.NXS stores EMU's time_zero against its own t0_bin 40 (E5)."""
+    path = _musrfit_example_file("32482.NXS")
+
+    result = loader.load(str(path))
+    ds = result[0] if isinstance(result, list) else result
+    assert ds.run.histograms[0].t0_bin == 39
+    assert ds.run.grouping["t0_source"] == "conflict"
+    assert "t0_time_us" not in ds.run.grouping

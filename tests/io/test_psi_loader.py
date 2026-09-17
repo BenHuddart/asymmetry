@@ -45,6 +45,8 @@ def _write_psi_bin(
     field: bytes = b"0.1T      ",
     title: bytes = b"PSI BIN test",
     run_number: int = 4321,
+    t0_values: list[int] | None = None,
+    first_good_values: list[int] | None = None,
 ) -> None:
     if labels is None:
         labels = [b"Back", b"Forw"]
@@ -80,8 +82,10 @@ def _write_psi_bin(
     for i, label in enumerate(labels):
         header[948 + i * 4 : 952 + i * 4] = label[:4].ljust(4, b" ")
     struct.pack_into("<f", header, 1012, 0.01)
-    t0_values = [1 + 2 * i for i in range(n_hist)]
-    first_good_values = [min(n_bins - 1, value + 2) for value in t0_values]
+    if t0_values is None:
+        t0_values = [1 + 2 * i for i in range(n_hist)]
+    if first_good_values is None:
+        first_good_values = [min(n_bins - 1, value + 2) for value in t0_values]
     last_good_values = [n_bins - 1 for _ in range(n_hist)]
     for i, value in enumerate(t0_values):
         struct.pack_into("<h", header, 458 + i * 2, value)
@@ -1034,3 +1038,59 @@ def test_prepare_deadtime_does_not_estimate_when_file_values_are_absent() -> Non
     assert "deadtime_method" not in grouping
     assert "estimated_dead_time_factors" not in grouping
     assert corrected[0].counts == pytest.approx(observed)
+
+
+# --- t0 provenance and the analysis-group good window ------------------------
+
+
+def test_psi_bin_header_t0_is_reported_as_a_file_value(tmp_path) -> None:
+    """A non-zero header t0 is a measurement; PSI carries no sub-bin value."""
+    path = tmp_path / "psi_4321.bin"
+    _write_psi_bin(path)
+
+    ds = load(path)
+    assert ds.run.grouping["t0_source"] == "file"
+    # PSI stores integer bins only, so the exact t0 stays the bin centre.
+    assert "t0_time_us" not in ds.run.grouping
+    assert all(hist.t0_time_us is None for hist in ds.run.histograms)
+
+
+def test_psi_bin_all_zero_header_t0_reports_missing(tmp_path) -> None:
+    """An all-zero t0 table means the header never recorded one (D7)."""
+    path = tmp_path / "psi_4322.bin"
+    counts = np.array(
+        [[0, 10, 20, 30, 40, 50], [0, 0, 0, 15, 25, 35]],
+        dtype="<i4",
+    )
+    _write_psi_bin(path, counts=counts, t0_values=[0, 0], first_good_values=[0, 0])
+
+    ds = load(path)
+    assert ds.run.grouping["t0_source"] == "missing"
+    assert ds.run.grouping["detector_t0_bins"] == [0, 0]
+
+
+def test_psi_good_window_ignores_detectors_outside_the_analysis_groups(tmp_path) -> None:
+    """F13: a spectator detector's late First Good Bin must not move the window."""
+    path = tmp_path / "psi_4323.bin"
+    counts = np.array(
+        [
+            [0, 10, 20, 30, 40, 50, 60, 70],
+            [0, 0, 0, 15, 25, 35, 45, 55],
+            [5, 5, 5, 5, 5, 5, 5, 5],
+        ],
+        dtype="<i4",
+    )
+    _write_psi_bin(
+        path,
+        labels=[b"Forw", b"Back", b"Rght"],
+        counts=counts,
+        t0_values=[2, 2, 2],
+        first_good_values=[3, 3, 7],
+    )
+
+    ds = load(path)
+    grouping = ds.run.grouping
+    # "Rght" is its own group, so its first good bin of 7 never reaches the
+    # forward/backward pair: the window starts at 3, not at 7.
+    assert grouping["detector_first_good_bins"] == [3, 3, 7]
+    assert grouping["first_good_bin"] == 3

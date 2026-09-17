@@ -22,6 +22,7 @@ from asymmetry.core.transform import (
     apply_grouping_aligned,
     common_t0_for_groups,
     compute_asymmetry,
+    run_t0_time_us,
 )
 from asymmetry.core.utils.perf import perf_timer
 
@@ -572,15 +573,27 @@ class RootLoader(BaseLoader):
         first_good_bins: list[int] = []
         last_good_bins: list[int] = []
 
+        t0_present = False
         for hist in selected:
             detector = self._detector_info(header, hist)
             label = detector.get("Name") or hist.title or f"hDecay{hist.histo_number:03d}"
-            t0 = self._int_from_value(detector.get("Time Zero Bin"), default=0)
+            t0_value = detector.get("Time Zero Bin")
+            t0_present = t0_present or t0_value is not None
+            t0 = self._int_from_value(t0_value, default=0)
             first_good = self._int_from_value(detector.get("First Good Bin"), default=t0)
             last_good = self._int_from_value(detector.get("Last Good Bin"), default=max_bin)
             t0 = max(0, min(max_bin, t0))
             first_good = max(0, min(max_bin, first_good))
             last_good = max(first_good, min(max_bin, last_good))
+            # musrfit stores "Time Zero Bin" as a Double_t and centres that bin
+            # on t = 0, so the exact t0 is the centre of the (possibly
+            # fractional) bin it names — kept alongside the integer bin, which
+            # still drives detector alignment and the good window (D4).
+            t0_time_us = (
+                None
+                if t0_value is None
+                else (self._float_from_value(t0_value, default=0.0) + 0.5) * bin_width_us
+            )
 
             histograms.append(
                 Histogram(
@@ -589,6 +602,7 @@ class RootLoader(BaseLoader):
                     t0_bin=t0,
                     good_bin_start=first_good,
                     good_bin_end=last_good,
+                    t0_time_us=t0_time_us,
                 )
             )
             labels.append(str(label))
@@ -611,11 +625,17 @@ class RootLoader(BaseLoader):
         asymmetry = asymmetry * 100.0
         error = error * 100.0
 
+        # The good window is the intersection over the *analysis* detectors only
+        # (F13): a spectator detector must not narrow the range the
+        # forward/backward groups share.
+        group_idx = sorted(
+            i for i in set(forward_idx) | set(backward_idx) if 0 <= i < len(histograms)
+        ) or list(range(len(histograms)))
         first_good = min(
             n - 1,
             int(common_t0)
             + max(
-                (max(0, first - t0) for first, t0 in zip(first_good_bins, detector_t0_bins)),
+                (max(0, first_good_bins[i] - detector_t0_bins[i]) for i in group_idx),
                 default=0,
             ),
         )
@@ -623,7 +643,7 @@ class RootLoader(BaseLoader):
             n - 1,
             int(common_t0)
             + min(
-                (max(0, last - t0) for last, t0 in zip(last_good_bins, detector_t0_bins)),
+                (max(0, last_good_bins[i] - detector_t0_bins[i]) for i in group_idx),
                 default=n - 1,
             ),
         )
@@ -654,10 +674,14 @@ class RootLoader(BaseLoader):
             "detector_t0_bins": detector_t0_bins,
             "detector_first_good_bins": first_good_bins,
             "detector_last_good_bins": last_good_bins,
+            "t0_source": "file" if t0_present else "missing",
             "histogram_labels": labels,
             "root_histo_numbers": root_numbers,
             "instrument": str(metadata.get("instrument", "")),
         }
+        t0_time_us = run_t0_time_us(histograms, common_t0)
+        if t0_time_us is not None:
+            grouping["t0_time_us"] = float(t0_time_us)
 
         run = Run(
             run_number=int(metadata.get("run_number", 0) or 0),

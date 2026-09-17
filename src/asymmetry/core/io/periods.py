@@ -405,6 +405,7 @@ def _clone_histogram(hist: Histogram) -> Histogram:
         t0_bin=int(hist.t0_bin),
         good_bin_start=int(hist.good_bin_start),
         good_bin_end=int(hist.good_bin_end),
+        t0_time_us=hist.t0_time_us,
     )
 
 
@@ -474,6 +475,7 @@ def sum_period_histograms(period_histograms: list[list[Histogram]]) -> list[Hist
                 t0_bin=first.t0_bin,
                 good_bin_start=first.good_bin_start,
                 good_bin_end=first.good_bin_end,
+                t0_time_us=first.t0_time_us,
             )
         )
     return summed

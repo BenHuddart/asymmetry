@@ -454,4 +454,5 @@ def _copy_histogram_with_counts(histogram: Histogram, counts) -> Histogram:
         t0_bin=histogram.t0_bin,
         good_bin_start=histogram.good_bin_start,
         good_bin_end=histogram.good_bin_end,
+        t0_time_us=histogram.t0_time_us,
     )

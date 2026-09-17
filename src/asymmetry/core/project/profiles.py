@@ -1292,6 +1292,8 @@ def resolve_effective_grouping(
 #: grouping (never stored on a profile).
 _PER_RUN_FACT_KEYS = (
     "t0_bin",
+    "t0_time_us",
+    "t0_source",
     "t_good_offset",
     "first_good_bin",
     "last_good_bin",
@@ -1356,19 +1358,35 @@ def _apply_t0_policy(
     """Resolve the analysis time-zero into the grouping per the policy.
 
     ``from_file`` (default) leaves the copied per-run t0 facts untouched — the
-    payload is bit-identical to today's file-derived resolution. ``manual``
-    shifts this run's *own* file common t0 by :attr:`T0Policy.offset_bins` (D3),
-    so one profile moves every run by the same amount whatever its header says;
-    ``auto_detect`` searches each run. Both rewrite the common ``t0_bin`` (and
-    ``first_good_bin`` so the good-window offset from t0 is preserved) and
-    publish the effective per-detector t0 bins under
+    payload is bit-identical to today's file-derived resolution — unless the
+    file carried no t0 at all (``t0_source == "missing"``), in which case the
+    search runs and its consensus becomes the run's base t0 (D7). ``manual``
+    shifts that base by :attr:`T0Policy.offset_bins` (D3), so one profile moves
+    every run by the same amount whatever its header says; ``auto_detect``
+    searches each run. All of them rewrite the common ``t0_bin`` (and
+    ``first_good_bin`` so the good-window offset from t0 is preserved, and the
+    exact ``t0_time_us`` by the same whole-bin amount) and publish the effective
+    per-detector t0 bins under
     :data:`~asymmetry.core.transform.t0.EFFECTIVE_DETECTOR_T0_KEY` so reduction
     aligns on them without ``Histogram.t0_bin`` ever being mutated.
     """
-    if policy.mode == "from_file" or not run.histograms:
+    if not run.histograms:
+        return
+    t0_missing = grouping.get("t0_source") == "missing"
+    if policy.mode == "from_file" and not t0_missing:
         return
 
     file_common_t0 = _file_common_t0(grouping, run, n_hist)
+    base_t0 = file_common_t0
+    if t0_missing and policy.mode != "auto_detect":
+        # D7: nothing in the file to honour or to offset from, so the run's own
+        # base is the detected value. A manual offset then applies to *that*.
+        search = find_t0_for_run(run.histograms, run.metadata)
+        if not search.ok:
+            return
+        base_t0 = max(0, int(search.consensus_t0_bin))
+        grouping["t0_search_strategy"] = str(search.strategy)
+        grouping["t0_search_spread_bins"] = int(search.spread_bins)
 
     if policy.mode == "manual":
         if policy.offset_bins is None:
@@ -1379,14 +1397,20 @@ def _apply_t0_policy(
                     "on project open before resolving."
                 )
             return
-        new_common_t0 = max(0, int(file_common_t0) + int(policy.offset_bins))
-    else:  # auto_detect
+        new_common_t0 = max(0, int(base_t0) + int(policy.offset_bins))
+    elif policy.mode == "auto_detect":
         search = find_t0_for_run(run.histograms, run.metadata)
         if not search.ok:
             return
         new_common_t0 = max(0, int(search.consensus_t0_bin))
         grouping["t0_search_strategy"] = str(search.strategy)
         grouping["t0_search_spread_bins"] = int(search.spread_bins)
+    else:  # from_file on a file with no t0 of its own
+        new_common_t0 = int(base_t0)
+    if t0_missing:
+        # Whichever mode got here, the run's t0 came from the search, not the
+        # file — the grouping window and run info say so (D7).
+        grouping["t0_source"] = "detected"
 
     delta = new_common_t0 - int(file_common_t0)
     if delta == 0:
@@ -1403,6 +1427,10 @@ def _apply_t0_policy(
     first_good = _as_int(grouping.get("first_good_bin"))
     if first_good is not None:
         grouping["first_good_bin"] = max(0, first_good + delta)
+    # The exact t0 moves with it by a whole number of bins (D4).
+    t0_time_us = grouping.get("t0_time_us")
+    if t0_time_us is not None:
+        grouping["t0_time_us"] = float(t0_time_us) + delta * float(run.histograms[0].bin_width)
 
 
 def _apply_alpha_policy(

@@ -89,6 +89,7 @@ from asymmetry.core.transform.t0 import (
     effective_detector_t0_bins,
     find_t0,
     find_t0_for_run,
+    run_t0_time_us,
     source_is_pulsed,
 )
 from asymmetry.core.transform.units import (
@@ -174,6 +175,7 @@ __all__ = [
     "T0Estimate",
     "find_t0",
     "find_t0_for_run",
+    "run_t0_time_us",
     "source_is_pulsed",
     "excluded_detector_indices",
     "filter_excluded_indices",

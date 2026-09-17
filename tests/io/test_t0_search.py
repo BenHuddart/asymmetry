@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform import find_t0, find_t0_for_run, source_is_pulsed
+from asymmetry.core.transform import find_t0, find_t0_for_run, run_t0_time_us, source_is_pulsed
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -159,3 +159,30 @@ def test_pulsed_edge_ignores_early_noise_spike():
     estimate = find_t0(counts, pulsed=True)
     assert estimate.ok
     assert abs(estimate.t0_bin - 200) <= 1
+
+
+# --- the run's exact t0 over per-detector values (D4) ------------------------
+
+
+def _hist(t0_bin: int, t0_time_us: float | None) -> Histogram:
+    return Histogram(counts=np.ones(10), bin_width=0.016, t0_bin=t0_bin, t0_time_us=t0_time_us)
+
+
+def test_run_t0_time_us_averages_the_detectors_on_the_common_bin():
+    """Detectors aligned onto the common bin set the run's exact t0; others don't."""
+    histograms = [_hist(10, 0.166), _hist(10, 0.168), _hist(12, 0.200)]
+    assert run_t0_time_us(histograms, 10) == pytest.approx(0.167)
+    assert run_t0_time_us(histograms, 12) == pytest.approx(0.200)
+
+
+def test_run_t0_time_us_is_none_without_any_exact_value():
+    """PSI-style runs carry integer bins only: the fact is absent, not a guess."""
+    histograms = [_hist(10, None), _hist(10, None)]
+    assert run_t0_time_us(histograms, 10) is None
+    # ...and so is a common bin no detector with an exact value sits on.
+    assert run_t0_time_us([_hist(10, 0.166), _hist(12, None)], 12) is None
+
+
+def test_run_t0_time_us_of_identical_detectors_is_that_value():
+    histograms = [_hist(40, 0.648), _hist(40, 0.648)]
+    assert run_t0_time_us(histograms, 40) == pytest.approx(0.648)

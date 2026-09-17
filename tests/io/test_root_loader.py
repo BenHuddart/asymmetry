@@ -931,3 +931,92 @@ def test_load_musrfit_musrroot_fixture_used_by_musrfit_histo_test() -> None:
             483329.0,
         ]
     )
+
+
+# --- exact t0, t0_source and the analysis-group good window -------------------
+
+
+def _write_t0_root_directory(
+    path: Path,
+    *,
+    time_zero_bins: list[str | None],
+    first_good_bins: list[str] | None = None,
+    labels: list[str] | None = None,
+) -> None:
+    """A MusrRoot directory file whose per-detector t0 fields are under test.
+
+    ``time_zero_bins`` entries are written verbatim (musrfit stores the field as
+    a ``Double_t``); ``None`` omits the key entirely.
+    """
+    labels = labels or ["Forward", "Backward"]
+    n_bins = 8
+    edges = np.arange(-0.5, n_bins + 0.5, 1.0)
+    with uproot.recreate(path) as root_file:
+        root_file["RunHeader/RunInfo/Run Number"] = "7777"
+        root_file["RunHeader/RunInfo/Laboratory"] = "PSI"
+        root_file["RunHeader/RunInfo/Instrument"] = "GPS"
+        root_file["RunHeader/RunInfo/No of Histos"] = str(len(labels))
+        root_file["RunHeader/RunInfo/Time Resolution"] = "10 ns"
+        for index, label in enumerate(labels, start=1):
+            prefix = f"RunHeader/DetectorInfo/Detector{index:03d}"
+            root_file[f"{prefix}/Name"] = label
+            root_file[f"{prefix}/Histo Number"] = str(index)
+            if time_zero_bins[index - 1] is not None:
+                root_file[f"{prefix}/Time Zero Bin"] = time_zero_bins[index - 1]
+            if first_good_bins is not None:
+                root_file[f"{prefix}/First Good Bin"] = first_good_bins[index - 1]
+            root_file[f"{prefix}/Last Good Bin"] = str(n_bins - 1)
+            root_file[f"histos/DecayAnaModule/hDecay{index:03d}"] = (
+                np.arange(n_bins, dtype=np.float64) + index,
+                edges,
+            )
+
+
+def test_root_fractional_time_zero_bin_becomes_an_exact_t0(tmp_path) -> None:
+    """musrfit centres the t0 bin on zero, so the exact t0 is ``(value + 0.5)·w``."""
+    path = tmp_path / "t0_fractional.root"
+    _write_t0_root_directory(path, time_zero_bins=["2.25", "2.25"])
+
+    ds = load(path)
+    assert [h.t0_bin for h in ds.run.histograms] == [2, 2]
+    assert ds.run.histograms[0].t0_time_us == pytest.approx((2.25 + 0.5) * 0.01)
+    assert ds.run.grouping["t0_source"] == "file"
+    assert ds.run.grouping["t0_time_us"] == pytest.approx(0.0275)
+
+
+def test_root_integer_time_zero_bin_keeps_the_bin_centre(tmp_path) -> None:
+    """An integer value is the bin centre, i.e. exactly today's implicit stamp."""
+    path = tmp_path / "t0_integer.root"
+    _write_t0_root_directory(path, time_zero_bins=["3", "3"])
+
+    ds = load(path)
+    assert ds.run.grouping["t0_time_us"] == pytest.approx((3 + 0.5) * 0.01)
+
+
+def test_root_without_time_zero_bin_reports_missing(tmp_path) -> None:
+    """No ``Time Zero Bin`` key at all: bin 0 is a default, not a measurement (D7)."""
+    path = tmp_path / "t0_absent.root"
+    _write_t0_root_directory(path, time_zero_bins=[None, None])
+
+    ds = load(path)
+    assert [h.t0_bin for h in ds.run.histograms] == [0, 0]
+    assert ds.run.grouping["t0_source"] == "missing"
+    assert "t0_time_us" not in ds.run.grouping
+
+
+def test_root_good_window_ignores_detectors_outside_the_analysis_groups(tmp_path) -> None:
+    """F13: a spectator detector's wild First Good Bin must not move the window."""
+    labels = ["Forward", "Backward", "Right"]
+    path = tmp_path / "t0_group_window.root"
+    _write_t0_root_directory(
+        path,
+        time_zero_bins=["2", "2", "2"],
+        first_good_bins=["3", "3", "6"],
+        labels=labels,
+    )
+
+    ds = load(path)
+    grouping = ds.run.grouping
+    assert grouping["forward_group"] != grouping["backward_group"]
+    # "Right" is its own group, so its 6 never reaches the forward/backward pair.
+    assert grouping["first_good_bin"] == 3

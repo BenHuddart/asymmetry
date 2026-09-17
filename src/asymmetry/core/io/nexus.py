@@ -16,6 +16,7 @@ mode selection in the grouping workflow.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,12 +28,22 @@ from asymmetry.core.io.base import BaseLoader, LoadResult
 from asymmetry.core.io.hdf4 import is_hdf4, open_hdf4
 from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
-from asymmetry.core.transform import apply_grouping, compute_asymmetry
+from asymmetry.core.transform import compute_asymmetry
+from asymmetry.core.transform.grouping import apply_grouping_aligned, common_t0_for_groups
+from asymmetry.core.transform.t0 import run_t0_time_us
 
 try:  # optional dependency
     import h5py  # type: ignore[import-untyped]
 except ImportError:  # pragma: no cover - exercised when h5py is not installed
     h5py = None
+
+logger = logging.getLogger(__name__)
+
+#: Tolerance, in bins, for comparing ``time_zero / resolution`` against the
+#: ``t0_bin`` attribute. ISIS writes both in float32, so an exact bin edge can
+#: read back as 9.99999978 or 25.00001; a whole-bin disagreement is a genuine
+#: header conflict (docs/porting/t0-determination/isis-header-index-base.md).
+_T0_BIN_TOLERANCE = 1.0e-6
 
 
 #: Unit tokens (lower-cased, with degree signs / spaces / dots stripped) that a
@@ -173,6 +184,20 @@ class _GroupingSelection:
     groups: dict[int, list[int]]
     forward_group_id: int
     backward_group_id: int
+
+
+@dataclass
+class _T0Decode:
+    """Per-detector time zero decoded from an ISIS file's header (D5–D7)."""
+
+    #: 0-based index of the bin containing t0, one per detector.
+    t0_bins: np.ndarray
+    #: Exact t0 in µs from acquisition start, one per detector (``None`` where
+    #: the file provides no usable sub-bin value).
+    t0_time_us: list[float | None]
+    #: ``"file"``, ``"conflict"`` (fields disagree — the attribute wins) or
+    #: ``"missing"`` (no t0 in the file at all).
+    source: str
 
 
 class NexusLoader(BaseLoader):
@@ -399,49 +424,31 @@ class NexusLoader(BaseLoader):
         counts_ds = h_data.get("counts")
         counts_attrs = getattr(counts_ds, "attrs", {}) if counts_ds is not None else {}
 
-        t0_bin_values = self._t0_bin_values_from_attr(
-            counts_attrs.get("t0_bin"), n_detectors=n_detectors
+        first_good_bin, last_good_bin = self._good_bin_window(counts_attrs, h_data, n_bins)
+        _, bin_width = self._build_time_axis(corrected_time, n_bins)
+        decode = self._decode_t0(
+            t0_bin_attr=counts_attrs.get("t0_bin"),
+            time_zero_values=time_zero_values,
+            n_detectors=n_detectors,
+            resolution_us=bin_width,
+            corrected_time=corrected_time,
+            n_bins=n_bins,
+            source_file=source_file,
         )
-
-        first_good_bin_raw = self._safe_int(counts_attrs.get("first_good_bin"), default=None)
-        if first_good_bin_raw is None:
-            first_good_bin_raw = self._safe_int(
-                self._read_optional(h_data, "first_good_bin"), default=None
-            )
-        last_good_bin_raw = self._safe_int(counts_attrs.get("last_good_bin"), default=None)
-        if last_good_bin_raw is None:
-            last_good_bin_raw = self._safe_int(
-                self._read_optional(h_data, "last_good_bin"), default=None
-            )
-
-        first_good_bin = 0 if first_good_bin_raw is None else int(first_good_bin_raw)
-        last_good_bin = (n_bins - 1) if last_good_bin_raw is None else int(last_good_bin_raw)
-
-        # Normalize 1-based bin metadata to 0-based using the corrected-time
-        # axis, sharing the v2 inference so both layouts agree on the window.
-        reference_axis, _ = self._build_time_axis(corrected_time, n_bins)
-        index_offset = self._infer_v2_bin_index_offset(reference_axis, t0_bin_values)
-        if index_offset:
-            if t0_bin_values is not None:
-                t0_bin_values = np.maximum(0, t0_bin_values - index_offset)
-            first_good_bin = max(0, first_good_bin - index_offset)
-            last_good_bin = max(0, last_good_bin - index_offset)
+        if corrected_time.size:
+            metadata_base["nexus_corrected_time"] = [float(v) for v in corrected_time]
 
         return self._build_period_datasets(
             counts_periods=counts_periods,
-            time_axis_source=corrected_time,
-            axis_needs_time_zero_correction=False,
+            bin_width=bin_width,
+            decode=decode,
             grouping_array=grouping_array,
             good_frames_values=good_frames_values,
             dead_time_values=dead_time_values,
-            time_zero_values=time_zero_values,
-            time_zero_is_microseconds=False,
-            t0_bin_values=t0_bin_values,
             metadata_base=metadata_base,
             run_number=run_number,
             first_good_bin=first_good_bin,
             last_good_bin=last_good_bin,
-            bin_index_base=int(index_offset),
             source_file=source_file,
         )
 
@@ -537,31 +544,14 @@ class NexusLoader(BaseLoader):
         field_direction = self._field_direction_from_state(field_state)
         field_vector = self._read_field_vector(sample)
 
-        counts_ds = detector.get("counts")
+        counts_attrs = getattr(detector.get("counts"), "attrs", {})
         n_bins = int(counts_periods[0].shape[-1])
         use_corrected_time = corrected_time.size in {n_bins, n_bins + 1}
         time_axis_source = corrected_time if use_corrected_time else raw_time
-        axis_needs_time_zero_correction = not use_corrected_time
 
-        t0_bin_values: np.ndarray | None = None
-        if counts_ds is not None:
-            t0_bin_values = self._t0_bin_values_from_attr(
-                getattr(counts_ds, "attrs", {}).get("t0_bin"),
-                n_detectors=counts_periods[0].shape[0],
-            )
-
-        first_good_bin_raw: int | None = None
-        last_good_bin_raw: int | None = None
-        if counts_ds is not None:
-            attrs = getattr(counts_ds, "attrs", {})
-            first_good_bin_raw = self._safe_int(attrs.get("first_good_bin"), default=None)
-            last_good_bin_raw = self._safe_int(attrs.get("last_good_bin"), default=None)
-
-        first_good_bin = 0 if first_good_bin_raw is None else int(first_good_bin_raw)
-        last_good_bin_default = counts_periods[0].shape[-1] - 1
-        last_good_bin = (
-            last_good_bin_default if last_good_bin_raw is None else int(last_good_bin_raw)
-        )
+        first_good_bin_raw = self._safe_int(counts_attrs.get("first_good_bin"), default=None)
+        last_good_bin_raw = self._safe_int(counts_attrs.get("last_good_bin"), default=None)
+        first_good_bin, last_good_bin = self._good_bin_window(counts_attrs, None, n_bins)
         first_good_time = self._safe_float(
             self._read_optional(detector, "first_good_time"),
             default=None,
@@ -601,16 +591,18 @@ class NexusLoader(BaseLoader):
                 default=len(counts_periods),
             )
 
-        reference_axis, _ = self._build_time_axis(time_axis_source, n_bins)
-        if axis_needs_time_zero_correction:
-            reference_axis = reference_axis - self._global_time_zero_value(time_zero_values)
-
-        index_offset = self._infer_v2_bin_index_offset(reference_axis, t0_bin_values)
-        if index_offset:
-            if t0_bin_values is not None:
-                t0_bin_values = np.maximum(0, t0_bin_values - index_offset)
-            first_good_bin = max(0, first_good_bin - index_offset)
-            last_good_bin = max(0, last_good_bin - index_offset)
+        _, bin_width = self._build_time_axis(time_axis_source, n_bins)
+        decode = self._decode_t0(
+            t0_bin_attr=counts_attrs.get("t0_bin"),
+            time_zero_values=time_zero_values,
+            n_detectors=counts_periods[0].shape[0],
+            resolution_us=bin_width,
+            corrected_time=corrected_time if use_corrected_time else np.asarray([]),
+            n_bins=n_bins,
+            source_file=source_file,
+        )
+        if use_corrected_time:
+            metadata_base["nexus_corrected_time"] = [float(v) for v in corrected_time]
 
         # Keep integer bin metadata as the canonical source of the good-data
         # window. Floating-point good-time values are used only as a fallback
@@ -635,14 +627,11 @@ class NexusLoader(BaseLoader):
 
         return self._build_period_datasets(
             counts_periods=counts_periods,
-            time_axis_source=time_axis_source,
-            axis_needs_time_zero_correction=axis_needs_time_zero_correction,
+            bin_width=bin_width,
+            decode=decode,
             grouping_array=grouping_array,
             good_frames_values=good_frames_values,
             dead_time_values=dead_time_values,
-            time_zero_values=time_zero_values,
-            time_zero_is_microseconds=True,
-            t0_bin_values=t0_bin_values,
             metadata_base=metadata_base,
             run_number=run_number,
             first_good_bin=first_good_bin,
@@ -651,7 +640,6 @@ class NexusLoader(BaseLoader):
             last_good_time=last_good_time,
             use_first_good_time=use_first_good_time,
             use_last_good_time=use_last_good_time,
-            bin_index_base=int(index_offset),
             source_file=source_file,
         )
 
@@ -681,14 +669,11 @@ class NexusLoader(BaseLoader):
         self,
         *,
         counts_periods: list[np.ndarray],
-        time_axis_source: np.ndarray,
-        axis_needs_time_zero_correction: bool,
+        bin_width: float,
+        decode: _T0Decode,
         grouping_array: np.ndarray,
         good_frames_values: np.ndarray,
         dead_time_values: np.ndarray,
-        time_zero_values: np.ndarray,
-        time_zero_is_microseconds: bool,
-        t0_bin_values: np.ndarray | None,
         metadata_base: dict[str, Any],
         run_number: int,
         first_good_bin: int,
@@ -697,27 +682,16 @@ class NexusLoader(BaseLoader):
         last_good_time: float | None = None,
         use_first_good_time: bool = False,
         use_last_good_time: bool = False,
-        bin_index_base: int = 0,
         source_file: str,
     ) -> list[MuonDataset]:
         """Construct one :class:`MuonDataset` per period from detector counts.
 
-        Parameters
-        ----------
-        time_axis_source
-            Axis array used to build the dataset time values. For V1 this is
-            ``corrected_time`` from file. For V2 this is either file
-            ``corrected_time`` (when trustworthy) or ``raw_time``.
-        axis_needs_time_zero_correction
-            If ``True``, subtract the global ``time_zero`` value from the
-            built axis so V2 raw-time paths align with Mantid behaviour.
-        time_zero_is_microseconds
-            Controls interpretation of ``time_zero_values`` when deriving
-            histogram ``t0_bin`` values.
-        t0_bin_values
-            Optional explicit per-detector t0 bins (for example from
-            ``counts.attrs['t0_bin']``). When provided these values take
-            precedence over conversion from ``time_zero_values``.
+        The dataset time axis is stamped from the run's own t0 rather than the
+        file's ``corrected_time``: ``(k + 0.5)·w − t0_time_us``, the bin-centre
+        convention reduction uses. With no exact t0 in the file this is
+        identical to ``(k − t0_bin)·w``; with one it places the axis on the
+        sub-bin position the DAQ recorded. The file's ``corrected_time`` is kept
+        in ``metadata["nexus_corrected_time"]`` for diagnostics.
         """
         datasets: list[MuonDataset] = []
         n_periods = len(counts_periods)
@@ -737,40 +711,56 @@ class NexusLoader(BaseLoader):
             if period_counts.ndim != 2:
                 raise ValueError("Detector counts must be 2D [n_detectors, n_bins] per period")
 
-            n_detectors, n_bins = period_counts.shape
-            time_axis, bin_width = self._build_time_axis(time_axis_source, n_bins)
-            if axis_needs_time_zero_correction:
-                time_zero_us = self._global_time_zero_value(time_zero_values)
-                time_axis = time_axis - time_zero_us
+            n_detectors = period_counts.shape[0]
+            histograms = self._build_histograms(
+                period_counts,
+                bin_width,
+                decode=decode,
+                first_good_bin=first_good_bin,
+                last_good_bin=last_good_bin,
+            )
 
             grouping = self._resolve_grouping(grouping_array, n_detectors)
-            forward = apply_grouping(
-                [
-                    Histogram(counts=period_counts[i], bin_width=bin_width)
-                    for i in range(n_detectors)
-                ],
-                grouping.forward_indices,
+            # ISIS files normally carry one t0 for every detector, in which case
+            # the aligned sum is bit-identical to the unaligned one; a
+            # per-detector ``t0_bin``/``time_zero`` array is aligned like PSI's.
+            common_t0 = common_t0_for_groups(
+                histograms, grouping.forward_indices, grouping.backward_indices
             )
-            backward = apply_grouping(
-                [
-                    Histogram(counts=period_counts[i], bin_width=bin_width)
-                    for i in range(n_detectors)
-                ],
-                grouping.backward_indices,
+            forward = apply_grouping_aligned(
+                histograms, grouping.forward_indices, common_t0_bin=common_t0
             )
+            backward = apply_grouping_aligned(
+                histograms, grouping.backward_indices, common_t0_bin=common_t0
+            )
+            n_grouped = min(len(forward), len(backward))
 
             alpha = 1.0
-            asymmetry, error = compute_asymmetry(forward, backward, alpha=alpha)
+            asymmetry, error = compute_asymmetry(
+                forward[:n_grouped], backward[:n_grouped], alpha=alpha
+            )
 
             # Asymmetry works in percent throughout Asymmetry/WiMDA-style UI.
             asymmetry = asymmetry * 100.0
             error = error * 100.0
 
+            t0_time_us = run_t0_time_us(histograms, common_t0)
+            t0_stamp = (
+                (float(common_t0) + 0.5) * bin_width if t0_time_us is None else float(t0_time_us)
+            )
+            time_axis = (np.arange(n_grouped, dtype=np.float64) + 0.5) * bin_width - t0_stamp
+
+            group_first_good, group_last_good = self._group_good_window(
+                histograms,
+                sorted(set(grouping.forward_indices) | set(grouping.backward_indices)),
+                common_t0=common_t0,
+                n_grouped=n_grouped,
+            )
             lo, hi = self._resolve_good_bin_range(
                 time_axis,
                 len(asymmetry),
-                first_good_bin=first_good_bin,
-                last_good_bin=last_good_bin,
+                first_good_bin=group_first_good,
+                last_good_bin=group_last_good,
                 first_good_time=first_good_time,
                 last_good_time=last_good_time,
                 use_first_good_time=use_first_good_time,
@@ -780,16 +770,6 @@ class NexusLoader(BaseLoader):
                 time_axis = time_axis[lo : hi + 1]
                 asymmetry = asymmetry[lo : hi + 1]
                 error = error[lo : hi + 1]
-
-            histograms = self._build_histograms(
-                period_counts,
-                bin_width,
-                time_zero_values,
-                time_zero_is_microseconds=time_zero_is_microseconds,
-                t0_bin_values=t0_bin_values,
-                first_good_bin=first_good_bin,
-                last_good_bin=last_good_bin,
-            )
 
             period_run_number = run_number
             run_label = str(run_number)
@@ -804,34 +784,40 @@ class NexusLoader(BaseLoader):
             run_meta["period_number"] = period_idx
             run_meta["period_count"] = n_periods
 
+            run_grouping = {
+                "groups": {gid: [idx + 1 for idx in dets] for gid, dets in grouping.groups.items()},
+                "forward_group": grouping.forward_group_id,
+                "backward_group": grouping.backward_group_id,
+                "alpha": alpha,
+                "first_good_bin": int(group_first_good),
+                "last_good_bin": int(group_last_good),
+                "t0_bin": int(common_t0),
+                "t_good_offset": max(0, int(group_first_good) - int(common_t0)),
+                # ISIS header bins are 1-based; the payload keeps 0-based values
+                # and records the file's convention for display only.
+                "bin_index_base": 1,
+                "bunching_factor": 1,
+                "deadtime_correction": False,
+                "detector_t0_bins": [int(hist.t0_bin) for hist in histograms],
+                "detector_first_good_bins": [int(hist.good_bin_start) for hist in histograms],
+                "detector_last_good_bins": [int(hist.good_bin_end) for hist in histograms],
+                "t0_source": decode.source,
+                "good_frames": float(good_frames_periods[period_idx - 1]),
+                "dead_time_us": [
+                    float(v)
+                    for v in np.asarray(
+                        dead_time_periods[period_idx - 1], dtype=np.float64
+                    ).tolist()
+                ],
+            }
+            if t0_time_us is not None:
+                run_grouping["t0_time_us"] = float(t0_time_us)
+
             run = Run(
                 run_number=period_run_number,
                 histograms=histograms,
                 metadata=run_meta,
-                grouping={
-                    "groups": {
-                        gid: [idx + 1 for idx in dets] for gid, dets in grouping.groups.items()
-                    },
-                    "forward_group": grouping.forward_group_id,
-                    "backward_group": grouping.backward_group_id,
-                    "alpha": alpha,
-                    "first_good_bin": int(first_good_bin),
-                    "last_good_bin": int(last_good_bin),
-                    "t0_bin": int(histograms[0].t0_bin) if histograms else 0,
-                    "t_good_offset": max(0, int(first_good_bin) - int(histograms[0].t0_bin))
-                    if histograms
-                    else 0,
-                    "bin_index_base": 1 if int(bin_index_base) == 1 else 0,
-                    "bunching_factor": 1,
-                    "deadtime_correction": False,
-                    "good_frames": float(good_frames_periods[period_idx - 1]),
-                    "dead_time_us": [
-                        float(v)
-                        for v in np.asarray(
-                            dead_time_periods[period_idx - 1], dtype=np.float64
-                        ).tolist()
-                    ],
-                },
+                grouping=run_grouping,
                 source_file=source_file,
             )
 
@@ -895,50 +881,50 @@ class NexusLoader(BaseLoader):
         self,
         period_counts: np.ndarray,
         bin_width: float,
-        time_zero_values: np.ndarray,
         *,
-        time_zero_is_microseconds: bool,
-        t0_bin_values: np.ndarray | None,
+        decode: _T0Decode,
         first_good_bin: int,
         last_good_bin: int,
     ) -> list[Histogram]:
         """Create per-detector :class:`Histogram` objects for a period.
 
-        ``time_zero`` may be stored either as a bin index (legacy V1) or as a
-        time value in microseconds (V2). This method supports both forms and
-        accepts an explicit ``t0_bin_values`` override from NeXus attributes
-        when available.
+        The good-data window is a single run-level pair in ISIS files, so every
+        detector carries the same one; t0 comes from :meth:`_decode_t0`.
         """
-        histograms: list[Histogram] = []
-        for i in range(period_counts.shape[0]):
-            t0_bin = 0
-
-            if t0_bin_values is not None and t0_bin_values.size == period_counts.shape[0]:
-                t0_bin = int(t0_bin_values[i])
-            else:
-                t0_value = 0.0
-                if time_zero_values.size == period_counts.shape[0]:
-                    t0_value = float(time_zero_values[i])
-                elif time_zero_values.size > 0:
-                    t0_value = float(time_zero_values.flat[0])
-
-                if np.isfinite(t0_value):
-                    if time_zero_is_microseconds:
-                        if np.isfinite(bin_width) and bin_width != 0.0:
-                            t0_bin = int(round(t0_value / bin_width))
-                    else:
-                        t0_bin = int(round(t0_value))
-
-            histograms.append(
-                Histogram(
-                    counts=np.asarray(period_counts[i], dtype=np.float64),
-                    bin_width=float(bin_width),
-                    t0_bin=t0_bin,
-                    good_bin_start=int(first_good_bin),
-                    good_bin_end=int(last_good_bin),
-                )
+        return [
+            Histogram(
+                counts=np.asarray(period_counts[i], dtype=np.float64),
+                bin_width=float(bin_width),
+                t0_bin=int(decode.t0_bins[i]),
+                good_bin_start=int(first_good_bin),
+                good_bin_end=int(last_good_bin),
+                t0_time_us=decode.t0_time_us[i],
             )
-        return histograms
+            for i in range(period_counts.shape[0])
+        ]
+
+    def _group_good_window(
+        self,
+        histograms: list[Histogram],
+        group_indices: list[int],
+        *,
+        common_t0: int,
+        n_grouped: int,
+    ) -> tuple[int, int]:
+        """The good window of the *aligned* group sums, in grouped-bin indices.
+
+        Alignment shifts each detector by ``common_t0 − t0_i``, so its good
+        window moves with it; the run's window is the intersection over the
+        forward/backward detectors only (F13) — a spectator detector with an odd
+        header must not narrow the analysed range.
+        """
+        firsts = [
+            int(histograms[i].good_bin_start) - int(histograms[i].t0_bin) for i in group_indices
+        ]
+        lasts = [int(histograms[i].good_bin_end) - int(histograms[i].t0_bin) for i in group_indices]
+        first_good = min(n_grouped - 1, max(0, common_t0 + max(firsts, default=0)))
+        last_good = min(n_grouped - 1, common_t0 + min(lasts, default=n_grouped - 1))
+        return first_good, max(first_good, last_good)
 
     def _build_time_axis(self, source_axis: np.ndarray, n_bins: int) -> tuple[np.ndarray, float]:
         """Build a usable time axis and bin width from NeXus time datasets."""
@@ -956,19 +942,6 @@ class NexusLoader(BaseLoader):
         if not np.isfinite(bin_width) or bin_width == 0.0:
             bin_width = 1.0
         return np.asarray(axis, dtype=np.float64), float(bin_width)
-
-    def _global_time_zero_value(self, time_zero_values: np.ndarray) -> float:
-        """Return a single global t0 value in microseconds.
-
-        For grouped asymmetry a single axis is used, so this method selects the
-        first available ``time_zero`` value when present and falls back to 0.0.
-        """
-        if time_zero_values.size == 0:
-            return 0.0
-        candidate = float(time_zero_values.flat[0])
-        if not np.isfinite(candidate):
-            return 0.0
-        return candidate
 
     def _resolve_good_bin_range(
         self,
@@ -1008,62 +981,175 @@ class NexusLoader(BaseLoader):
 
         return lo, hi
 
-    def _t0_bin_values_from_attr(self, t0_bin_attr: Any, *, n_detectors: int) -> np.ndarray | None:
-        """Build per-detector ``t0_bin`` values from a ``counts`` attribute.
+    def _attr_bin_values(self, attr: Any, *, n_detectors: int) -> np.ndarray | None:
+        """Per-detector values from an integer ``counts`` attribute, as written.
 
         Accepts a scalar (broadcast across detectors) or a per-detector array;
         returns ``None`` when the attribute is missing or unusable. Shared by
         the v1 and v2 layouts, which both store ``t0_bin`` on the counts SDS.
+        The values are the file's own 1-based indices — :meth:`_decode_t0`
+        converts them.
         """
-        if t0_bin_attr is None:
+        if attr is None:
             return None
-        t0_bin_array = np.asarray(t0_bin_attr, dtype=np.float64).ravel()
-        if t0_bin_array.size == 1 and np.isfinite(t0_bin_array[0]):
-            return np.full(n_detectors, int(round(float(t0_bin_array[0]))), dtype=np.int64)
-        if t0_bin_array.size == n_detectors:
-            return np.rint(t0_bin_array).astype(np.int64)
+        values = np.asarray(attr, dtype=np.float64).ravel()
+        if values.size == 1 and np.isfinite(values[0]):
+            return np.full(n_detectors, int(round(float(values[0]))), dtype=np.int64)
+        if values.size == n_detectors and np.all(np.isfinite(values)):
+            return np.rint(values).astype(np.int64)
         return None
 
-    def _infer_v2_bin_index_offset(
-        self, time_axis: np.ndarray, t0_bin_values: np.ndarray | None
-    ) -> int:
-        """Infer whether V2 integer bin metadata is 1-based.
+    def _good_bin_window(self, counts_attrs: Any, h_data: Any, n_bins: int) -> tuple[int, int]:
+        """The 0-based, inclusive good-data window from 1-based ISIS headers.
 
-        Some files encode ``t0_bin``/``first_good_bin`` using 1-based center-bin
-        numbering. When the explicit ``t0_bin`` points one sample past the value
-        closest to ``t = 0``, normalize all integer bin metadata by one.
+        ``first_good_bin`` / ``last_good_bin`` are 1-based and inclusive in
+        every ISIS file surveyed (``last_good_bin == n_bins`` in all 1,245 —
+        docs/porting/t0-determination/isis-header-index-base.md), so both simply
+        lose one. ``h_data`` supplies the legacy child-dataset spelling for v1
+        files that carry no attributes; an absent field means "the whole
+        histogram".
         """
-        if t0_bin_values is None or time_axis.size == 0:
-            return 0
+        first_raw = self._safe_int(counts_attrs.get("first_good_bin"), default=None)
+        last_raw = self._safe_int(counts_attrs.get("last_good_bin"), default=None)
+        if h_data is not None:
+            if first_raw is None:
+                first_raw = self._safe_int(
+                    self._read_optional(h_data, "first_good_bin"), default=None
+                )
+            if last_raw is None:
+                last_raw = self._safe_int(
+                    self._read_optional(h_data, "last_good_bin"), default=None
+                )
+        first_good = 0 if first_raw is None else max(0, int(first_raw) - 1)
+        last_good = (n_bins - 1) if last_raw is None else max(0, int(last_raw) - 1)
+        return first_good, last_good
 
-        flat = np.asarray(t0_bin_values, dtype=np.int64).ravel()
-        if flat.size == 0:
-            return 0
+    def _decode_t0(
+        self,
+        *,
+        t0_bin_attr: Any,
+        time_zero_values: np.ndarray,
+        n_detectors: int,
+        resolution_us: float,
+        corrected_time: np.ndarray,
+        n_bins: int,
+        source_file: str,
+    ) -> _T0Decode:
+        """Decode per-detector t0 from the ISIS header (decisions D5, D6, D7).
 
-        tol = 1e-12
-        if time_axis.size >= 2:
-            step = float(np.nanmedian(np.diff(time_axis)))
-            if np.isfinite(step) and step != 0.0:
-                tol = max(1e-12, abs(step) * 1e-6)
+        ``t0_bin`` is the 1-based index of the bin *containing* the file's own
+        ``time_zero`` (µs), so the 0-based bin is ``t0_bin − 1`` — deterministic,
+        never inferred. ``time_zero`` additionally places t0 *within* that bin;
+        it is kept when the two agree (``floor(time_zero / resolution) + 1 ==
+        t0_bin``) and dropped when they do not, in which case the attribute wins
+        and ``t0_source`` is ``"conflict"`` (D6). With only ``time_zero`` the
+        containing bin is derived from it; with neither field the run has no
+        usable t0 (``"missing"``, D7 — resolution searches for one).
+        """
+        attr_bins = self._attr_bin_values(t0_bin_attr, n_detectors=n_detectors)
+        time_zeros = self._time_zero_per_detector(time_zero_values, n_detectors)
 
-        votes_for_one_based = 0
-        votes_considered = 0
-        for raw_idx in flat[: min(8, flat.size)]:
-            idx = int(raw_idx)
-            if idx <= 0 or idx >= time_axis.size:
-                continue
+        if attr_bins is None and time_zeros is None:
+            return _T0Decode(np.zeros(n_detectors, dtype=np.int64), [None] * n_detectors, "missing")
 
-            current = abs(float(time_axis[idx]))
-            shifted = abs(float(time_axis[idx - 1]))
-            if shifted + tol < current:
-                votes_for_one_based += 1
-                votes_considered += 1
-            elif current + tol < shifted:
-                votes_considered += 1
+        if attr_bins is None:
+            # ``time_zero`` alone: the bin containing it, with the same edge
+            # tolerance the agreement test uses (a quotient one ulp below an
+            # integer is an exact edge).
+            bins = np.maximum(
+                0,
+                np.asarray(
+                    [int(np.floor(tz / resolution_us + _T0_BIN_TOLERANCE)) for tz in time_zeros],
+                    dtype=np.int64,
+                ),
+            )
+            exact: list[float | None] = list(time_zeros)
+        elif time_zeros is None:
+            bins = np.maximum(0, attr_bins - 1)
+            exact = [None] * n_detectors
+        else:
+            bins = np.maximum(0, attr_bins - 1)
+            disagree = [
+                i
+                for i, tz in enumerate(time_zeros)
+                if not self._t0_fields_agree(tz, resolution_us, int(attr_bins[i]))
+            ]
+            if disagree:
+                logger.warning(
+                    "%s: NeXus t0_bin attribute %d disagrees with time_zero %.6f us at %.6f us "
+                    "binning (detector %d); keeping the attribute and dropping the exact t0.",
+                    source_file,
+                    int(attr_bins[disagree[0]]),
+                    float(time_zeros[disagree[0]]),
+                    float(resolution_us),
+                    disagree[0] + 1,
+                )
+                return _T0Decode(bins, [None] * n_detectors, "conflict")
+            exact = list(time_zeros)
 
-        if votes_considered > 0 and votes_for_one_based == votes_considered:
-            return 1
-        return 0
+        return self._cross_check_corrected_time(
+            _T0Decode(bins, exact, "file"),
+            corrected_time=corrected_time,
+            n_bins=n_bins,
+            source_file=source_file,
+        )
+
+    def _time_zero_per_detector(
+        self, time_zero_values: np.ndarray, n_detectors: int
+    ) -> list[float] | None:
+        """``time_zero`` in µs per detector, or ``None`` when the file has none.
+
+        A scalar broadcasts across detectors; v2 files may store one value per
+        detector. Non-finite content counts as absent.
+        """
+        values = np.asarray(time_zero_values, dtype=np.float64).ravel()
+        if values.size == 0 or not np.all(np.isfinite(values)):
+            return None
+        if values.size == n_detectors:
+            return [float(v) for v in values]
+        return [float(values[0])] * n_detectors
+
+    def _t0_fields_agree(self, time_zero_us: float, resolution_us: float, attr_bin: int) -> bool:
+        """True when ``time_zero`` falls inside the bin ``t0_bin`` names.
+
+        That is ``attr_bin − 1 <= time_zero / resolution < attr_bin``, with a
+        tolerance of :data:`_T0_BIN_TOLERANCE` bins because both fields are
+        written in float32 (an exact edge reads back as 9.99999978).
+        """
+        q = float(time_zero_us) / float(resolution_us)
+        return (attr_bin - 1) - _T0_BIN_TOLERANCE <= q < attr_bin + _T0_BIN_TOLERANCE
+
+    def _cross_check_corrected_time(
+        self,
+        decode: _T0Decode,
+        *,
+        corrected_time: np.ndarray,
+        n_bins: int,
+        source_file: str,
+    ) -> _T0Decode:
+        """Flag a ``corrected_time`` axis that disagrees with the decoded t0.
+
+        The file's own axis is zero inside the t0 bin, so ``|ct|`` must not be
+        *smaller* one bin later. When it is, the axis was built from a different
+        t0 than the attribute declares (the 2003-era stale-header case) — the
+        attribute still wins, but the run is marked ``"conflict"``.
+        """
+        axis, _ = self._build_time_axis(corrected_time, n_bins)
+        if corrected_time.size == 0 or axis.size == 0:
+            return decode
+        k = int(np.max(decode.t0_bins))
+        if k + 1 >= axis.size:
+            return decode
+        if abs(float(axis[k + 1])) < abs(float(axis[k])):
+            logger.warning(
+                "%s: NeXus corrected_time is closer to zero at bin %d than at the "
+                "decoded t0 bin %d; keeping the t0_bin attribute.",
+                source_file,
+                k + 1,
+                k,
+            )
+            return _T0Decode(decode.t0_bins, [None] * len(decode.t0_time_us), "conflict")
+        return decode
 
     def _resolve_grouping(self, grouping_array: np.ndarray, n_detectors: int) -> _GroupingSelection:
         """Resolve forward/backward detector sets from file grouping or defaults."""

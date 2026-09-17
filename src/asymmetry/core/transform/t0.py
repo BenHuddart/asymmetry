@@ -76,6 +76,27 @@ def effective_detector_t0_bins(histograms: list[Histogram], grouping: dict | Non
     return [int(hist.t0_bin) for hist in histograms]
 
 
+def run_t0_time_us(histograms: list[Histogram], common_t0_bin: int) -> float | None:
+    """The run's exact t0 in µs, or ``None`` when no detector carries one (D4).
+
+    Per-detector data can carry a different exact t0 per detector while the run
+    reduces onto one common bin. The run's value is the mean exact t0 over the
+    detectors whose integer ``t0_bin`` *is* the common bin — the detectors whose
+    counts are not shifted by alignment. The others' sub-bin residuals (≤ ½ bin)
+    are dropped. ``None`` when none of those detectors has an exact t0, in which
+    case consumers fall back to
+    :attr:`~asymmetry.core.data.dataset.Histogram.t0_time_us_effective`.
+    """
+    values = [
+        float(hist.t0_time_us)
+        for hist in histograms
+        if hist.t0_time_us is not None and int(hist.t0_bin) == int(common_t0_bin)
+    ]
+    if not values:
+        return None
+    return float(np.mean(values))
+
+
 @dataclass(frozen=True)
 class T0Estimate:
     """Time-zero estimate for one histogram."""

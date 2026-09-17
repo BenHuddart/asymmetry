@@ -744,6 +744,90 @@ def test_t0_auto_detect_records_provenance_even_when_the_delta_is_zero():
 
 
 # --------------------------------------------------------------------------- #
+# Missing file t0 (D7) and the exact t0 (D4)
+# --------------------------------------------------------------------------- #
+
+
+def _run_without_file_t0(peak_bin: int = 7) -> Run:
+    """A run whose loader reported no t0 at all: bin 0 and ``t0_source`` missing."""
+    counts = np.ones(20, dtype=float)
+    counts[peak_bin] = 100.0
+    histograms = [
+        Histogram(
+            counts=counts.copy(), bin_width=0.016, t0_bin=0, good_bin_start=1, good_bin_end=19
+        )
+        for _ in range(4)
+    ]
+    return Run(
+        run_number=1,
+        histograms=histograms,
+        grouping={
+            "instrument": "EMU",
+            "t0_bin": 0,
+            "first_good_bin": 1,
+            "last_good_bin": 19,
+            "detector_t0_bins": [0, 0, 0, 0],
+            "t0_source": "missing",
+        },
+        metadata={"instrument": "EMU", "facility": "PSI"},
+    )
+
+
+def test_t0_from_file_on_a_missing_t0_detects_and_records_provenance():
+    """D7: with nothing in the file to honour, From file resolves to the search."""
+    resolved = resolve_effective_grouping(_base_profile(), _run_without_file_t0())
+
+    assert resolved["t0_bin"] == 7
+    assert resolved["t0_source"] == "detected"
+    assert resolved["t0_search_strategy"] == "prompt_peak"
+    assert resolved["t0_search_spread_bins"] == 0
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [7, 7, 7, 7]
+    # The good window keeps its offset from t0.
+    assert resolved["first_good_bin"] == 8
+
+
+def test_t0_auto_detect_on_a_missing_t0_also_records_it_as_detected():
+    """Whatever the mode, a run whose t0 came from the search says so (D7)."""
+    profile = _base_profile(t0_policy=T0Policy(mode="auto_detect"))
+    resolved = resolve_effective_grouping(profile, _run_without_file_t0())
+
+    assert resolved["t0_bin"] == 7
+    assert resolved["t0_source"] == "detected"
+
+
+def test_t0_manual_offset_on_a_missing_t0_applies_to_the_detected_value():
+    """A manual offset is measured from the run's own base — here the detected one."""
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=2))
+    resolved = resolve_effective_grouping(profile, _run_without_file_t0())
+
+    assert resolved["t0_bin"] == 9  # detected 7 + 2, not 0 + 2
+    assert resolved["t0_source"] == "detected"
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [9, 9, 9, 9]
+
+
+def test_t0_source_and_exact_t0_are_per_run_facts():
+    """Both new loader facts reach the resolved payload untouched by from_file."""
+    facts = _per_run_facts()
+    facts["t0_source"] = "file"
+    facts["t0_time_us"] = 0.088
+    resolved = resolve_effective_grouping(_base_profile(), _run(grouping=facts))
+    assert resolved["t0_source"] == "file"
+    assert resolved["t0_time_us"] == pytest.approx(0.088)
+
+
+def test_t0_manual_offset_shifts_the_exact_t0_by_whole_bins():
+    """D4: the sub-bin part of the exact t0 rides along with a manual shift."""
+    facts = _per_run_facts()
+    facts["t0_source"] = "file"
+    facts["t0_time_us"] = 0.088  # = (5 + 0.5) * 0.016
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=3))
+    resolved = resolve_effective_grouping(profile, _run(grouping=facts))
+
+    assert resolved["t0_bin"] == 8
+    assert resolved["t0_time_us"] == pytest.approx(0.088 + 3 * 0.016)
+
+
+# --------------------------------------------------------------------------- #
 # profile_from_payload / migration inference for t0
 # --------------------------------------------------------------------------- #
 
