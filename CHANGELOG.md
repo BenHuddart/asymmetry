@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outside the run. A warning never blocks Apply; it is also echoed to the
   analysis log, and the run info window shows where each run's t0 came from. See
   `docs/reference/data_reduction/t0_search.rst`.
+- **The t0 verdict also checks the good window against the detected time-zero.**
+  *First good bin G is at or before the detected t0 (bin D)* fires when the
+  analysis window opens on the muon arrival, so the prompt peak sits inside the
+  fitted asymmetry — which reads as a spuriously large early-time asymmetry
+  rather than as an error. At a pulsed source, *First good bin G is inside the
+  muon pulse (peak at bin P)* additionally catches a window that clears the
+  pulse centre but not the pulse itself.
 - **The agent CLI now covers four more μSR workflows needed by the WiMDA teaching
   corpus.** `reduce --period red|green|N` selects a named or numbered acquisition
   period and `survey` reports period counts and gross event totals;
@@ -105,6 +112,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   phase at 16 ns binning and 0.1 T) — correctly.** See
   `docs/reference/loading_data.rst` and `docs/reference/detector_grouping.rst`
   § "Time-zero (t0) modes".
+- **Auto-detect now gives every detector its own time-zero**, the model
+  musrfit's `musrt0 -g` writes, instead of shifting the whole run by one
+  common amount. The t0 row reports the detection as the file bin plus the
+  **median per-detector shift** with the *range of those shifts* as its spread,
+  and a detector counts as an outlier when it disagrees with the *other
+  detectors* about the shift rather than with its own header (*Detectors 1, 2,
+  … disagree with the other detectors' t0 shift by more than N bins*). On data where
+  detectors legitimately sit at different times — PSI headers carry a t0 per
+  detector — the old median-of-estimates versus maximum-of-headers comparison
+  measured two different quantities: on a 15-detector GPS run with two
+  detectors 170 bins early it shifted every detector 10 bins, dragged the good
+  window into the prompt peak (asymmetry at the first good bin read 40–70 %
+  instead of ~20 %) and reported a 180-bin detector spread that was only the
+  detectors' real stagger. See `docs/reference/detector_grouping.rst`
+  § "Time-zero (t0) modes".
+- **The t0 tolerance now follows the data's binning instead of a fixed bin
+  count.** Every t0 check is judged against the larger of its source-family
+  floor (2 bins continuous, 3 pulsed) and the measured width of the feature t0
+  was read off — the prompt peak's FWHM, or the pulse's 10 %→90 % rise. A bin
+  index cannot name a peak's centre more precisely than the peak is wide, and
+  the same PSI peak spans one bin at 1 ns binning and 4–11 at 98 ps: against the
+  bare floor, a few tenths of a nanosecond of jitter on a 98 ps GPS run reported
+  six of its fifteen detectors as disagreeing about time zero.
+- **The verdict messages moved off the t0 line into a `⚠` button beside it.**
+  The line is now `File: bin F · Detected: bin D (strategy, spread S) · Δ d`
+  and nothing else, so it keeps one shape whatever a run says; the button
+  appears only when there is something to report, tinted by severity, with
+  every message in its tooltip and in a click-to-read popup. The grouping
+  window opens wider to fit the single-line label, and its default size is now
+  derived from the UI font and capped to the screen's work area.
 - **Re-running a series with an identical setup replaces its results in place; anything else
   records a new series.** The check compares the Batch tab's recipe (model, parameter rows,
   fit range, seeding, co-add) and effective member set against the series open in the Batch
@@ -190,6 +227,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   105 (the true value was 100); it now moves towards the true value. See
   `docs/reference/count_domain_fitting.rst` § "Promoting α, t₀ and the
   background".
+- **A grouping profile whose analysis groups differ from the loader's default
+  pair no longer resolves to a payload that contradicts its own alignment.**
+  The common time-zero is a maximum over the analysed detectors and the good
+  window is the intersection of their own windows relative to it, so copying
+  the loader's `t0_bin` and window verbatim left the payload naming a
+  different bin from the one reduction aligned to (bin 1606 against an
+  alignment of 1612 on a 15-detector PSI GPS run). `t0_bin`, `first_good_bin`,
+  `last_good_bin` and `t_good_offset` are now re-derived for the profile's own
+  pair; files carrying one common t0 and window for the whole run keep the
+  loader's values exactly.
 - **A Fixed or Global value typed on the Batch Fit tab is the value the fit uses.** After a
   batch (or the single fits it inherits from), the next fit replaced the table's Fixed and
   Global values with the average of the earlier results, so a parameter re-fixed at a new

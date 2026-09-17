@@ -23,6 +23,7 @@ from asymmetry.core.transform import (
     common_t0_for_groups,
     common_t0_time_us,
     compute_asymmetry,
+    good_window_for_groups,
     run_t0_time_us,
 )
 from asymmetry.core.utils.perf import perf_timer
@@ -626,30 +627,17 @@ class RootLoader(BaseLoader):
         asymmetry = asymmetry * 100.0
         error = error * 100.0
 
-        # The good window is the intersection over the *analysis* detectors only
-        # (F13): a spectator detector must not narrow the range the
-        # forward/backward groups share.
         group_idx = sorted(
             i for i in set(forward_idx) | set(backward_idx) if 0 <= i < len(histograms)
         ) or list(range(len(histograms)))
-        first_good = min(
-            n - 1,
-            int(common_t0)
-            + max(
-                (max(0, first_good_bins[i] - detector_t0_bins[i]) for i in group_idx),
-                default=0,
-            ),
+        first_good, last_good = good_window_for_groups(
+            group_idx,
+            detector_t0_bins,
+            first_good_bins,
+            last_good_bins,
+            common_t0_bin=int(common_t0),
+            n_bins=n,
         )
-        last_good = min(
-            n - 1,
-            int(common_t0)
-            + min(
-                (max(0, last_good_bins[i] - detector_t0_bins[i]) for i in group_idx),
-                default=n - 1,
-            ),
-        )
-        if last_good < first_good:
-            last_good = first_good
 
         # Bin centres from the run's exact t0 (D4) — MusrRoot's fractional
         # "Time Zero Bin" moves this axis off the integer grid, and the

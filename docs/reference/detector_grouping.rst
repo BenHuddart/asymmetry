@@ -445,9 +445,9 @@ from. This mirrors WiMDA's *FileValues* checkbox on the grouping panel: with
 it ticked the header t0 and good-bin values are used and the manual controls
 are disabled; unticked, your own values apply. In every mode, a read-only
 line beneath the row shows the file value beside what Asymmetry's own search
-finds for the selected run, with a warning when the two disagree by more
-than a per-source tolerance — see :doc:`data_reduction/t0_search` for the
-line's format, the verdict messages, and the tolerances.
+finds for the selected run, and a ``⚠`` button appears beside it when there
+is a verdict to read — see :doc:`data_reduction/t0_search` for the line's
+format, the verdict messages, and the tolerances.
 
 * **From file** (the default) — every run uses its own file-derived t0. All
   loaders already read t0 verbatim from the file header (PSI per-detector
@@ -473,13 +473,31 @@ line's format, the verdict messages, and the tolerances.
   nothing is applied until you press Apply.
 * **Auto-detect** — run the t0 search on *every* run at reduction time (the
   prompt-peak maximum at continuous sources, the pulse-edge midpoint at
-  pulsed sources). The spinbox is read-only and shows the selected run's
-  detected value with its provenance (strategy and detector spread); each
-  run resolves its own detected t0.
+  pulsed sources), and give **every detector its own detected t0** — the model
+  musrfit's ``musrt0 -g`` writes. A run whose detectors genuinely sit at
+  different times (a PSI file with a t0 per detector) therefore keeps that
+  stagger: each detector moves to its own prompt peak rather than the whole
+  run moving by one common amount. A detector whose search failed — no counts,
+  no leading edge — keeps its file t0 moved by the median of the shifts the
+  others resolved, so it stays aligned with its neighbours; on a run with no
+  header t0 at all it takes the median detected bin instead. The spinbox is
+  read-only and shows the selected run's resulting common t0 with its
+  provenance (strategy, and the spread of the per-detector shifts).
 
 The *t_good* offset and last-good-bin controls are per-run facts and are
 unaffected by the t0 mode — a manual or detected t0 shift carries the good
 window with it so the offset from t0 stays fixed.
+
+**The payload follows the profile's groups.** A run's t0 and good window are
+file-derived facts, but they are not constants of the file: the common t0 is
+the maximum over the detectors the *analysis groups* use, and the good window
+is the intersection of those detectors' own windows relative to it. A profile
+that analyses a different forward/backward pair from the loader's default
+therefore resolves to a different common t0, and the resolved payload
+re-derives ``t0_bin``, ``first_good_bin``, ``last_good_bin`` and
+``t_good_offset`` for the profile's own pair rather than copying the loader's.
+Files that carry one common t0 and one window for the whole run have nothing
+to re-derive and keep the loader's values exactly.
 
 **One resolver for every consumer.** Whichever mode is active, the
 per-detector bins it resolves to are read back by reduction, grouped

@@ -31,6 +31,7 @@ from asymmetry.core.transform import (
     common_t0_for_groups,
     common_t0_time_us,
     compute_asymmetry,
+    good_window_for_groups,
     run_t0_time_us,
 )
 from asymmetry.core.utils.perf import perf_timer
@@ -1076,16 +1077,15 @@ class PsiLoader(BaseLoader):
         asymmetry = asymmetry * 100.0
         error = error * 100.0
 
-        # The good window is the intersection over the *analysis* detectors only
-        # (F13): a spectator detector (a veto counter, a ring this preset does
-        # not use) must not narrow the range the forward/backward groups share.
         group_idx = sorted(set(forward_idx) | set(backward_idx)) or list(range(n_hist))
-        good_offsets = [max(0, int(first_good_bins[i]) - int(t0_bins[i])) for i in group_idx]
-        last_offsets = [max(0, int(last_good_bins[i]) - int(t0_bins[i])) for i in group_idx]
-        first_good = min(n - 1, int(common_t0) + max(good_offsets, default=0))
-        last_good = min(n - 1, int(common_t0) + min(last_offsets, default=n - 1))
-        if last_good < first_good:
-            last_good = first_good
+        first_good, last_good = good_window_for_groups(
+            group_idx,
+            t0_bins,
+            first_good_bins,
+            last_good_bins,
+            common_t0_bin=int(common_t0),
+            n_bins=n,
+        )
 
         # Bin centres from the run's exact t0 (D4). PSI headers carry an integer
         # t0 only, so the residual is 0.0 and this is the integer-bin axis; the

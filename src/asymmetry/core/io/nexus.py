@@ -30,7 +30,7 @@ from asymmetry.core.io.icp_log import parse_icp_log_file, sibling_icp_log_path
 from asymmetry.core.io.periods import combine_mapped_periods, encode_period_run_number
 from asymmetry.core.transform import compute_asymmetry
 from asymmetry.core.transform.grouping import apply_grouping_aligned, common_t0_for_groups
-from asymmetry.core.transform.t0 import run_t0_time_us
+from asymmetry.core.transform.t0 import good_window_for_groups, run_t0_time_us
 
 try:  # optional dependency
     import h5py  # type: ignore[import-untyped]
@@ -913,18 +913,18 @@ class NexusLoader(BaseLoader):
     ) -> tuple[int, int]:
         """The good window of the *aligned* group sums, in grouped-bin indices.
 
-        Alignment shifts each detector by ``common_t0 − t0_i``, so its good
-        window moves with it; the run's window is the intersection over the
-        forward/backward detectors only (F13) — a spectator detector with an odd
-        header must not narrow the analysed range.
+        Thin adapter over :func:`good_window_for_groups`, which owns the rule for
+        every loader and for profile resolution; ISIS keeps the per-detector
+        tables on the histograms rather than in parallel lists.
         """
-        firsts = [
-            int(histograms[i].good_bin_start) - int(histograms[i].t0_bin) for i in group_indices
-        ]
-        lasts = [int(histograms[i].good_bin_end) - int(histograms[i].t0_bin) for i in group_indices]
-        first_good = min(n_grouped - 1, max(0, common_t0 + max(firsts, default=0)))
-        last_good = min(n_grouped - 1, common_t0 + min(lasts, default=n_grouped - 1))
-        return first_good, max(first_good, last_good)
+        return good_window_for_groups(
+            group_indices,
+            [int(hist.t0_bin) for hist in histograms],
+            [int(hist.good_bin_start) for hist in histograms],
+            [int(hist.good_bin_end) for hist in histograms],
+            common_t0_bin=common_t0,
+            n_bins=n_grouped,
+        )
 
     def _build_time_axis(self, source_axis: np.ndarray, n_bins: int) -> tuple[np.ndarray, float]:
         """Build a usable time axis and bin width from NeXus time datasets."""

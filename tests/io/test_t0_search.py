@@ -8,7 +8,15 @@ import numpy as np
 import pytest
 
 from asymmetry.core.data.dataset import Histogram
-from asymmetry.core.transform import find_t0, find_t0_for_run, run_t0_time_us, source_is_pulsed
+from asymmetry.core.transform import (
+    detector_t0_shifts,
+    find_t0,
+    find_t0_for_run,
+    run_t0_time_us,
+    shift_statistics,
+    source_is_pulsed,
+    tolerance_bins,
+)
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -186,3 +194,96 @@ def test_run_t0_time_us_is_none_without_any_exact_value():
 def test_run_t0_time_us_of_identical_detectors_is_that_value():
     histograms = [_hist(40, 0.648), _hist(40, 0.648)]
     assert run_t0_time_us(histograms, 40) == pytest.approx(0.648)
+
+
+# --- per-detector shift statistics (phase 7) ---------------------------------
+
+
+def _run_histograms(t0_bins: list[int], peaks: list[int]) -> list[Histogram]:
+    """Continuous histograms whose file t0 and prompt peak are set per detector."""
+    return [
+        Histogram(
+            counts=_continuous_histogram(t0_bin=peak, n=600, seed=peak),
+            bin_width=0.00125,
+            t0_bin=t0_bin,
+        )
+        for t0_bin, peak in zip(t0_bins, peaks, strict=True)
+    ]
+
+
+def test_shift_statistics_measure_each_detector_against_its_own_header():
+    """A staggered run: the shifts are small even though the estimates are not.
+
+    Detector 4 sits 170 bins before the rest and its header says so, so the raw
+    estimates span 172 bins while every detector moved by +2.
+    """
+    histograms = _run_histograms([220, 216, 220, 50], [222, 218, 222, 52])
+
+    search = find_t0_for_run(histograms, {"facility": "PSI"})
+
+    assert search.ok
+    assert search.spread_bins == 170  # the detectors' real stagger
+    assert search.shift_median_bins == 2
+    assert search.shift_spread_bins == 0
+
+
+def test_shift_statistics_take_the_median_so_one_stray_detector_cannot_drag_them():
+    histograms = _run_histograms([220, 220, 220, 220], [222, 222, 222, 260])
+
+    search = find_t0_for_run(histograms, {"facility": "PSI"})
+
+    assert search.shift_median_bins == 2
+    assert search.shift_spread_bins == 38
+
+
+def test_detector_t0_shifts_report_none_for_a_detector_that_did_not_resolve():
+    histograms = _run_histograms([220, 220], [222, 222])
+    histograms[1] = Histogram(counts=np.zeros(600), bin_width=0.00125, t0_bin=220)
+
+    search = find_t0_for_run(histograms, {"facility": "PSI"})
+
+    assert detector_t0_shifts(histograms, search.estimates) == [2, None]
+    # A detector with no counts contributes nothing to either statistic.
+    assert search.shift_median_bins == 2
+    assert search.shift_spread_bins == 0
+
+
+def test_shift_statistics_of_a_run_with_no_resolved_detector_are_zero():
+    assert shift_statistics([None, None]) == (0, 0)
+
+
+# --- how wide the feature t0 is read off is (phase 7) ------------------------
+
+
+def test_prompt_peak_width_is_the_peak_fwhm_in_bins():
+    """A narrow spike is one bin wide; a broadened one spans its own FWHM."""
+    counts = np.full(400, 10.0)
+    counts[200] = 5000.0
+    assert find_t0(counts, pulsed=False).width_bins == 1
+
+    # The same peak at finer binning: six bins at or above half maximum.
+    counts = np.full(400, 10.0)
+    counts[197:203] = [2600.0, 4000.0, 5000.0, 4800.0, 3600.0, 2600.0]
+    estimate = find_t0(counts, pulsed=False)
+    assert estimate.t0_bin == 199
+    assert estimate.width_bins == 6
+
+
+def test_pulse_edge_width_is_the_ten_to_ninety_rise_in_bins():
+    """A 21-bin linear rise measures ~16 bins between the 10 % and 90 % levels."""
+    estimate = find_t0(_pulsed_histogram(200, 10, seed=7), pulsed=True)
+    assert estimate.ok
+    assert 14 <= estimate.width_bins <= 18
+
+
+def test_run_width_is_the_median_of_the_detectors_that_resolved():
+    counts = np.full(400, 10.0)
+    counts[197:203] = [2600.0, 4000.0, 5000.0, 4800.0, 3600.0, 2600.0]
+    histograms = [Histogram(counts=counts.copy(), bin_width=0.000098, t0_bin=199) for _ in range(3)]
+    histograms[2] = Histogram(counts=np.zeros(400), bin_width=0.000098, t0_bin=199)
+
+    search = find_t0_for_run(histograms, {"facility": "PSI"})
+
+    assert search.width_bins == 6
+    # …which is the tolerance every verdict on this run is judged against.
+    assert tolerance_bins(search.strategy, search.width_bins) == 6

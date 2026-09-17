@@ -4,9 +4,10 @@ Crops to just the t0 row (mode selector, spinbox, Find t0 button) and the
 always-on read-only line beneath it that carries the file t0, the detected
 t0 with its strategy and spread, the signed difference, and the verdict — the
 same line shown in every mode. The synthesised run is a two-detector
-continuous source whose header t0 sits exactly on its own prompt peak, so the
-file and detected values agree and the verdict is the quiet "ok" case (no
-divergence message). Companion to
+continuous source whose header t0 sits exactly on its own prompt peak and
+whose good window opens clear of it, so the file and detected values agree,
+nothing is analysed on top of the prompt peak, and the verdict is the quiet
+"ok" case — no divergence message and no verdict button. Companion to
 :doc:`/reference/data_reduction/t0_search` and
 :doc:`/reference/detector_grouping`.
 """
@@ -30,6 +31,11 @@ _PEAK_COUNTS = 6000.0
 _BASELINE_COUNTS = 40.0
 _N0 = 400.0
 _LIFETIME_US = 2.19703
+#: Bins between t0 and the first analysed bin. Non-zero on purpose: a window
+#: that opens on t0 analyses the prompt peak itself, which is a verdict of its
+#: own ("First good bin G is at or before the detected t0"), and this capture is
+#: the quiet case.
+_T_GOOD_OFFSET = 5
 
 
 def _make_prompt_peak_run(seed: int = 2026) -> MuonDataset:
@@ -58,7 +64,7 @@ def _make_prompt_peak_run(seed: int = 2026) -> MuonDataset:
             counts=rng.poisson(clean).astype(float),
             bin_width=_BIN_WIDTH_US,
             t0_bin=_T0_BIN,
-            good_bin_start=_T0_BIN,
+            good_bin_start=_T0_BIN + _T_GOOD_OFFSET,
             good_bin_end=_N_BINS - 1,
         )
         for _ in range(2)
@@ -70,8 +76,8 @@ def _make_prompt_peak_run(seed: int = 2026) -> MuonDataset:
         "backward_group": 2,
         "alpha": 1.0,
         "t0_bin": _T0_BIN,
-        "t_good_offset": 0,
-        "first_good_bin": _T0_BIN,
+        "t_good_offset": _T_GOOD_OFFSET,
+        "first_good_bin": _T0_BIN + _T_GOOD_OFFSET,
         "last_good_bin": _N_BINS - 1,
         "bin_index_base": 0,
         "bunching_factor": 1,
@@ -110,11 +116,14 @@ class GroupingWindowT0RowScenario(Scenario):
     size = (620, 220)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
-        from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+        from asymmetry.gui.windows.grouping.dialog import (
+            GroupingDialog,
+            preferred_window_size,
+        )
 
         dataset = _make_prompt_peak_run()
         dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
-        dialog.resize(1180, 760)
+        dialog.resize(*preferred_window_size())
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
         # The detected value comes from a debounced background scan keyed on
@@ -124,10 +133,14 @@ class GroupingWindowT0RowScenario(Scenario):
         _pump_events(120)
 
         row = dialog._t0_row_widget
-        label = dialog._t0_detected_label
+        line = dialog._t0_detected_row_widget
         row_rect = QRect(row.mapTo(dialog, QPoint(0, 0)), row.size())
-        label_rect = QRect(label.mapTo(dialog, QPoint(0, 0)), label.size())
-        crop = row_rect.united(label_rect).adjusted(-16, -12, 16, 4)
+        line_rect = QRect(line.mapTo(dialog, QPoint(0, 0)), line.size())
+        crop = row_rect.united(line_rect).adjusted(-16, -12, 16, 4)
+        # Stop at the grouping column's edge: the line's row spans the whole
+        # column, so a crop a few pixels wider shows the corrections cards.
+        column = dialog._grouping_scroll.viewport()
+        crop.setRight(min(crop.right(), column.mapTo(dialog, QPoint(column.width(), 0)).x()))
         crop = crop.intersected(dialog.rect())
 
         pix = dialog.grab(crop)

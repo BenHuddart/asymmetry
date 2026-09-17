@@ -124,7 +124,12 @@ from asymmetry.core.transform.reduce import (
     corrected_grouped_counts,
     correction_flags_from_grouping,
 )
-from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY, find_t0_for_run
+from asymmetry.core.transform.t0 import (
+    EFFECTIVE_DETECTOR_T0_KEY,
+    detected_detector_t0_bins,
+    find_t0_for_run,
+    good_window_for_groups,
+)
 from asymmetry.core.utils.perf import perf_timer
 
 # --------------------------------------------------------------------------- #
@@ -1248,6 +1253,7 @@ def resolve_effective_grouping(
 
         # -- per-run / file-derived facts ---------------------------------------
         _copy_per_run_facts(grouping, run_grouping, run)
+        _rebase_on_profile_groups(grouping, run, n_hist)
 
         # -- binning ------------------------------------------------------------
         if profile.binning_mode and profile.binning_mode != "fixed":
@@ -1323,28 +1329,101 @@ def _copy_per_run_facts(grouping: dict[str, Any], run_grouping: dict[str, Any], 
         grouping["t0_bin"] = int(run.histograms[0].t0_bin)
 
 
-def _file_common_t0(grouping: dict[str, Any], run: Run, n_hist: int) -> int:
-    """The file-derived common t0: max histogram t0 over the analysis groups.
+def _analysis_group_indices(grouping: dict[str, Any], n_hist: int) -> list[int]:
+    """0-based indices of the detectors the profile's forward+backward groups use."""
+    forward_idx = effective_group_indices(
+        grouping, int(grouping.get("forward_group", 1)), n_histograms=n_hist
+    )
+    backward_idx = effective_group_indices(
+        grouping, int(grouping.get("backward_group", 2)), n_histograms=n_hist
+    )
+    return sorted(set(forward_idx) | set(backward_idx))
 
-    Reproduces :func:`common_t0_for_groups` over the forward+backward groups,
-    the same value today's reduction aligns to. Falls back to the copied
-    ``t0_bin`` (then the first histogram's t0, then 0) when the groups reference
-    no present detectors.
+
+def _common_t0_over_groups(
+    grouping: dict[str, Any],
+    run: Run,
+    n_hist: int,
+    detector_t0_bins: list[int] | None,
+) -> int:
+    """The common t0 the reduction will align this profile's groups to.
+
+    :func:`common_t0_for_groups` over the forward+backward groups with the given
+    per-detector bins. Falls back to the copied ``t0_bin`` (then the first
+    histogram's t0, then 0) when the groups reference no present detectors.
     """
-    forward_gid = int(grouping.get("forward_group", 1))
-    backward_gid = int(grouping.get("backward_group", 2))
-    forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
-    backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
-    if run.histograms and (forward_idx or backward_idx):
-        # `detector_t0_bins=None` on purpose: this is the *file* value a manual
-        # offset is measured against, so it must ignore any resolved override.
-        return common_t0_for_groups(
-            run.histograms, forward_idx, backward_idx, detector_t0_bins=None
-        )
+    indices = _analysis_group_indices(grouping, n_hist)
+    if run.histograms and indices:
+        return common_t0_for_groups(run.histograms, indices, detector_t0_bins=detector_t0_bins)
     stored = _as_int(grouping.get("t0_bin"))
     if stored is not None:
         return stored
     return int(run.histograms[0].t0_bin) if run.histograms else 0
+
+
+def _file_common_t0(grouping: dict[str, Any], run: Run, n_hist: int) -> int:
+    """The file-derived common t0: max histogram t0 over the analysis groups.
+
+    ``detector_t0_bins=None`` on purpose: this is the *file* value a manual
+    offset is measured against and the base every policy shift is relative to,
+    so it must ignore any resolved override.
+    """
+    return _common_t0_over_groups(grouping, run, n_hist, None)
+
+
+def _rebase_on_profile_groups(grouping: dict[str, Any], run: Run, n_hist: int) -> None:
+    """Re-derive the common t0 and good window for the *profile's* groups.
+
+    The per-run facts :func:`_copy_per_run_facts` just copied are the loader's,
+    computed over the loader's default forward/backward pair. A profile that
+    analyses a different pair aligns on a different common t0 —
+    :func:`common_t0_for_groups` is a max over the pair's detectors — and its
+    good window follows that t0, so copying the loader's ``t0_bin`` and window
+    verbatim leaves the payload contradicting the alignment the reduction
+    actually performs (observed on a 15-detector PSI GPS run: payload bin 1606,
+    alignment bin 1612). Every mode resolves from this consistent base, including
+    ``from_file``.
+
+    Without per-detector good-bin tables — a file carrying one common t0 and one
+    window for the whole run — there is nothing to re-derive and the loader's
+    window stands.
+    """
+    if not run.histograms:
+        return
+    common_t0 = _file_common_t0(grouping, run, n_hist)
+    grouping["t0_bin"] = common_t0
+
+    detector_t0 = grouping.get("detector_t0_bins")
+    firsts = grouping.get("detector_first_good_bins")
+    lasts = grouping.get("detector_last_good_bins")
+    indices = _analysis_group_indices(grouping, n_hist)
+    if not (indices and _is_detector_table(detector_t0, n_hist)):
+        return
+    if not (_is_detector_table(firsts, n_hist) and _is_detector_table(lasts, n_hist)):
+        return
+
+    # The aligned group sums are as long as the shortest shifted detector, which
+    # is the length the loaders clamp their window to — computed from the offsets
+    # alone, without summing anything.
+    n_grouped = min(
+        len(run.histograms[i].counts) + common_t0 - int(detector_t0[i]) for i in indices
+    )
+    first_good, last_good = good_window_for_groups(
+        indices,
+        detector_t0,
+        firsts,
+        lasts,
+        common_t0_bin=common_t0,
+        n_bins=n_grouped,
+    )
+    grouping["first_good_bin"] = first_good
+    grouping["last_good_bin"] = last_good
+    grouping["t_good_offset"] = max(0, first_good - common_t0)
+
+
+def _is_detector_table(raw: object, n_hist: int) -> bool:
+    """True when *raw* is a per-detector table covering every histogram."""
+    return isinstance(raw, (list, tuple)) and len(raw) == n_hist
 
 
 def _apply_t0_policy(
@@ -1357,16 +1436,26 @@ def _apply_t0_policy(
 ) -> None:
     """Resolve the analysis time-zero into the grouping per the policy.
 
-    ``from_file`` (default) leaves the copied per-run t0 facts untouched — the
-    payload is bit-identical to today's file-derived resolution — unless the
-    file carried no t0 at all (``t0_source == "missing"``), in which case the
-    search runs and its consensus becomes the run's base t0 (D7). ``manual``
-    shifts that base by :attr:`T0Policy.offset_bins` (D3), so one profile moves
-    every run by the same amount whatever its header says; ``auto_detect``
-    searches each run. All of them rewrite the common ``t0_bin`` (and
-    ``first_good_bin`` so the good-window offset from t0 is preserved, and the
-    exact ``t0_time_us`` by the same whole-bin amount) and publish the effective
-    per-detector t0 bins under
+    ``from_file`` (default) leaves the per-run t0 facts as
+    :func:`_rebase_on_profile_groups` left them — the payload is the file's own
+    resolution — unless the file carried no t0 at all (``t0_source ==
+    "missing"``), in which case the search runs and supplies the run's base t0
+    (D7). ``manual`` shifts that base by :attr:`T0Policy.offset_bins` (D3), so
+    one profile moves every run by the same amount whatever its header says.
+
+    ``auto_detect`` is **per detector**, the model ``musrt0 -g`` writes: each
+    detector's effective t0 is its own detected bin, so a run whose detectors
+    genuinely sit at different times keeps that stagger. Collapsing the
+    estimates into one median and comparing it with the group's header maximum
+    (the pre-Phase-7 rule) shifts every detector by the difference between two
+    incomparable numbers — on a 15-detector PSI GPS run with two detectors 170
+    bins early it moved the whole run 10 bins into the prompt peak. A detector
+    whose own search failed keeps its file t0 moved by the median of the shifts
+    that did resolve, so it stays aligned with its neighbours.
+
+    All of them rewrite the common ``t0_bin`` (and ``first_good_bin`` so the
+    good-window offset from t0 is preserved, and the exact ``t0_time_us`` by the
+    same whole-bin amount) and publish the effective per-detector t0 bins under
     :data:`~asymmetry.core.transform.t0.EFFECTIVE_DETECTOR_T0_KEY` so reduction
     aligns on them without ``Histogram.t0_bin`` ever being mutated.
     """
@@ -1376,18 +1465,7 @@ def _apply_t0_policy(
     if policy.mode == "from_file" and not t0_missing:
         return
 
-    file_common_t0 = _file_common_t0(grouping, run, n_hist)
-    base_t0 = file_common_t0
-    if t0_missing and policy.mode != "auto_detect":
-        # D7: nothing in the file to honour or to offset from, so the run's own
-        # base is the detected value. A manual offset then applies to *that*.
-        search = find_t0_for_run(run.histograms, run.metadata)
-        if not search.ok:
-            return
-        base_t0 = max(0, int(search.consensus_t0_bin))
-        grouping["t0_search_strategy"] = str(search.strategy)
-        grouping["t0_search_spread_bins"] = int(search.spread_bins)
-
+    offset = 0
     if policy.mode == "manual":
         if policy.offset_bins is None:
             if policy.legacy_value is not None:
@@ -1397,32 +1475,38 @@ def _apply_t0_policy(
                     "on project open before resolving."
                 )
             return
-        new_common_t0 = max(0, int(base_t0) + int(policy.offset_bins))
-    elif policy.mode == "auto_detect":
+        offset = int(policy.offset_bins)
+
+    file_bins = [int(hist.t0_bin) for hist in run.histograms]
+    if policy.mode == "auto_detect" or t0_missing:
+        # D7: a file with no t0 has nothing to honour or to offset from, so the
+        # detected per-detector values are the base a manual offset rides on.
         search = find_t0_for_run(run.histograms, run.metadata)
         if not search.ok:
             return
-        new_common_t0 = max(0, int(search.consensus_t0_bin))
+        base_bins = detected_detector_t0_bins(search, file_bins, missing=t0_missing)
         grouping["t0_search_strategy"] = str(search.strategy)
-        grouping["t0_search_spread_bins"] = int(search.spread_bins)
-    else:  # from_file on a file with no t0 of its own
-        new_common_t0 = int(base_t0)
+        grouping["t0_search_spread_bins"] = int(search.shift_spread_bins)
+    else:
+        base_bins = file_bins
     if t0_missing:
         # Whichever mode got here, the run's t0 came from the search, not the
         # file — the grouping window and run info say so (D7).
         grouping["t0_source"] = "detected"
 
-    delta = new_common_t0 - int(file_common_t0)
+    effective_bins = [max(0, value + offset) for value in base_bins]
+    file_common_t0 = _file_common_t0(grouping, run, n_hist)
+    new_common_t0 = _common_t0_over_groups(grouping, run, n_hist, effective_bins)
+
+    if effective_bins != file_bins:
+        # Published, not applied to the histograms: the run's counts and their
+        # file t0 are never touched.
+        grouping[EFFECTIVE_DETECTOR_T0_KEY] = effective_bins
+    grouping["t0_bin"] = new_common_t0
+
+    delta = new_common_t0 - file_common_t0
     if delta == 0:
         return
-
-    # Apply the common-t0 shift as an OFFSET on each detector's file t0 (the
-    # semantics the destructive MainWindow rewrite used), but only in the
-    # payload — the run's histograms are never touched.
-    grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
-        max(0, int(hist.t0_bin) + delta) for hist in run.histograms
-    ]
-    grouping["t0_bin"] = new_common_t0
     # Keep the good-window offset from t0 fixed: shift first_good_bin with t0.
     first_good = _as_int(grouping.get("first_good_bin"))
     if first_good is not None:

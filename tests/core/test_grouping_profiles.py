@@ -745,6 +745,169 @@ def test_t0_auto_detect_records_provenance_even_when_the_delta_is_zero():
 
 
 # --------------------------------------------------------------------------- #
+# Auto-detect is per detector (musrt0 -g), phase 7
+# --------------------------------------------------------------------------- #
+
+
+def _staggered_run(
+    detector_t0: list[int],
+    peaks: list[int],
+    *,
+    n_bins: int = 320,
+    t0_time_us: float | None = None,
+) -> Run:
+    """A PSI-style run whose detectors sit at genuinely different times.
+
+    Each histogram's prompt peak is a bin or two from its *own* header t0, and
+    one detector is far earlier than the rest — the 15-detector GPS shape that
+    exposed the median-vs-maximum bug.
+    """
+    histograms = []
+    for t0_bin, peak in zip(detector_t0, peaks, strict=True):
+        counts = np.ones(n_bins, dtype=float)
+        counts[peak] = 500.0
+        histograms.append(
+            Histogram(
+                counts=counts,
+                bin_width=0.016,
+                t0_bin=t0_bin,
+                good_bin_start=t0_bin + 10,
+                good_bin_end=n_bins - 1,
+            )
+        )
+    grouping = {
+        "instrument": "EMU",
+        "t0_bin": max(detector_t0),
+        "first_good_bin": max(detector_t0) + 10,
+        "last_good_bin": n_bins - 1,
+        "detector_t0_bins": list(detector_t0),
+        "detector_first_good_bins": [t0 + 10 for t0 in detector_t0],
+        "detector_last_good_bins": [n_bins - 1] * len(detector_t0),
+        "t0_source": "file",
+    }
+    if t0_time_us is not None:
+        grouping["t0_time_us"] = t0_time_us
+    return Run(
+        run_number=1,
+        histograms=histograms,
+        grouping=grouping,
+        metadata={"instrument": "EMU", "facility": "PSI"},
+    )
+
+
+def test_auto_detect_gives_every_detector_its_own_t0():
+    """Each detector aligns on its own prompt peak — musrfit's ``musrt0 -g`` model.
+
+    Detector 4 sits 170 bins before the rest and its header says so. The old
+    median-vs-maximum rule shifted every detector by −168 and dragged the good
+    window into the prompt peak; per detector, nothing moves but the +2 each
+    detector's own peak asks for.
+    """
+    run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222], t0_time_us=(220 + 0.5) * 0.016)
+    profile = _base_profile(t0_policy=T0Policy(mode="auto_detect"))
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [52, 48, 51, 222]
+    # The common t0 is the max over the profile's forward+backward detectors.
+    assert resolved["t0_bin"] == 222
+    # Good window and exact t0 move with it — by +2, not by −168.
+    assert resolved["first_good_bin"] == 232
+    assert resolved["t0_time_us"] == pytest.approx((220 + 0.5) * 0.016 + 2 * 0.016)
+    # The provenance spread is the spread of the SHIFTS (+2, +2, +1, +2 → 1),
+    # not of the raw estimates, which span 174 bins on this run.
+    assert resolved["t0_search_spread_bins"] == 1
+    assert resolved["t0_search_strategy"] == "prompt_peak"
+    assert [int(h.t0_bin) for h in run.histograms] == [50, 46, 50, 220]
+
+
+def test_auto_detect_heals_a_failed_detector_with_the_median_shift():
+    """A detector with no counts keeps its file t0 moved by what the others moved."""
+    run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222])
+    run.histograms[1] = Histogram(
+        counts=np.zeros(320),
+        bin_width=0.016,
+        t0_bin=46,
+        good_bin_start=56,
+        good_bin_end=319,
+    )
+    profile = _base_profile(t0_policy=T0Policy(mode="auto_detect"))
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    # Detectors 1, 3, 4 each moved +2; detector 2 takes 46 + 2.
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [52, 48, 51, 222]
+
+
+def test_auto_detect_on_a_missing_t0_gives_each_detector_its_estimate():
+    """With no header to shift from, every detector takes its own detected bin."""
+    run = _staggered_run([0, 0, 0, 0], [52, 48, 51, 222])
+    run.grouping["t0_source"] = "missing"
+    profile = _base_profile(t0_policy=T0Policy(mode="auto_detect"))
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [52, 48, 51, 222]
+    assert resolved["t0_bin"] == 222
+    assert resolved["t0_source"] == "detected"
+
+
+def test_a_manual_offset_on_a_missing_t0_rides_on_the_per_detector_base():
+    """D3 × D7: the offset applies to each detector's own detected bin."""
+    run = _staggered_run([0, 0, 0, 0], [52, 48, 51, 222])
+    run.grouping["t0_source"] = "missing"
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=3))
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [55, 51, 54, 225]
+    assert resolved["t0_bin"] == 225
+    assert resolved["t0_source"] == "detected"
+
+
+# --------------------------------------------------------------------------- #
+# The payload's t0 and good window follow the PROFILE's groups, phase 7
+# --------------------------------------------------------------------------- #
+
+
+def test_from_file_payload_t0_follows_the_profile_groups_not_the_loader_pair():
+    """The 1606-vs-1612 case: the payload must name the bin reduction aligns to.
+
+    The loader's default pair covers detectors 1–2 and reports their common t0;
+    a profile that analyses detectors 3–4 aligns on *their* max instead. Copying
+    the loader's ``t0_bin`` left the payload six bins away from the alignment.
+    """
+    run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222])
+    run.grouping["t0_bin"] = 50  # the loader's pair (detectors 1–2) max
+    run.grouping["first_good_bin"] = 60
+    profile = _base_profile(groups={1: [3], 2: [4]}, forward_group=1, backward_group=2)
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved["t0_bin"] == 220
+    assert EFFECTIVE_DETECTOR_T0_KEY not in resolved  # from_file: no override
+    # The window is re-derived for those detectors: both open 10 bins after
+    # their own t0, so the intersection opens 10 bins after the common one.
+    assert resolved["first_good_bin"] == 230
+    assert resolved["t_good_offset"] == 10
+    assert resolved["last_good_bin"] == 319
+
+
+def test_a_common_t0_file_keeps_the_loader_good_window():
+    """No per-detector tables, nothing to re-derive — the loader's values stand."""
+    facts = _per_run_facts()
+    del facts["detector_first_good_bins"]
+    del facts["detector_last_good_bins"]
+    facts["first_good_bin"] = 9
+    facts["last_good_bin"] = 17
+
+    resolved = resolve_effective_grouping(_base_profile(), _run(grouping=facts))
+
+    assert resolved["first_good_bin"] == 9
+    assert resolved["last_good_bin"] == 17
+
+
+# --------------------------------------------------------------------------- #
 # Missing file t0 (D7) and the exact t0 (D4)
 # --------------------------------------------------------------------------- #
 

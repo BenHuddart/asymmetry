@@ -39,18 +39,31 @@ def _grouping(n_hist: int, **extra: object) -> dict:
 def _search(
     per_detector: list[int],
     *,
-    consensus: int,
     strategy: str = "prompt_peak",
-    spread: int | None = None,
+    peaks: list[int] | None = None,
+    width: int = 0,
     ok: bool = True,
 ) -> RunT0Search:
-    estimates = [T0Estimate(t0, strategy, t0, ok=True) for t0 in per_detector]
+    """A finished search whose detectors resolved to ``per_detector``.
+
+    The consensus and raw spread are derived, not dictated: :func:`assess_t0`
+    reads the per-detector estimates and the histograms' file t0 and works out
+    the shifts itself, so a hand-written consensus could only lie. ``width`` is
+    the measured width of the feature t0 was read off; the default 0 leaves the
+    tolerance at its source-family floor.
+    """
+    peak_bins = per_detector if peaks is None else peaks
+    estimates = [
+        T0Estimate(t0, strategy, peak, ok=True, width_bins=width)
+        for t0, peak in zip(per_detector, peak_bins, strict=True)
+    ]
     return RunT0Search(
         estimates=estimates,
-        consensus_t0_bin=consensus,
-        spread_bins=max(per_detector) - min(per_detector) if spread is None else spread,
+        consensus_t0_bin=int(round(float(np.median(per_detector)))),
+        spread_bins=max(per_detector) - min(per_detector),
         strategy=strategy,
         ok=ok,
+        width_bins=width,
     )
 
 
@@ -67,6 +80,20 @@ def test_tolerance_bins_rejects_an_unknown_strategy() -> None:
         tolerance_bins("guesswork")
 
 
+def test_the_source_floor_is_a_floor_not_a_ceiling() -> None:
+    """A feature wider than the floor sets the tolerance; a narrower one does not.
+
+    A bin index cannot name the centre of a prompt peak more precisely than the
+    peak is wide, and how wide that is in bins depends on the binning: the same
+    PSI peak is 1 bin at 1 ns and 6 at 98 ps.
+    """
+    assert tolerance_bins("prompt_peak", 1) == 2  # floor wins on coarse binning
+    assert tolerance_bins("prompt_peak", 6) == 6  # 98 ps GPS binning
+    # A 16 ns ISIS run whose pulse rises over 5 bins gets 5, not the 3-bin floor.
+    assert tolerance_bins("pulse_edge", 5) == 5
+    assert tolerance_bins("pulse_edge", 2) == 3
+
+
 # -- error branches --------------------------------------------------------
 
 
@@ -75,7 +102,7 @@ def test_missing_header_t0_is_an_error_naming_the_detected_fallback() -> None:
     verdict = assess_t0(
         histograms,
         _grouping(2, t0_source="missing"),
-        _search([10, 10], consensus=10),
+        _search([10, 10]),
     )
 
     assert verdict.level == "error"
@@ -91,7 +118,7 @@ def test_t0_outside_the_histogram_range_is_an_error(base: int, shown: int) -> No
     # message quotes it in the run's display base, never the internal index.
     grouping = _grouping(2, bin_index_base=base, **{EFFECTIVE_DETECTOR_T0_KEY: [10, 99]})
 
-    verdict = assess_t0(histograms, grouping, _search([3, 3], consensus=3))
+    verdict = assess_t0(histograms, grouping, _search([3, 3]))
 
     assert verdict.level == "error"
     assert verdict.messages == (f"Time zero is bin {shown}, outside the run's 8 bins",)
@@ -115,7 +142,7 @@ def test_missing_wins_over_the_range_error() -> None:
 def test_clean_run_is_ok_with_the_signed_delta() -> None:
     histograms = _histograms([10, 10])
 
-    verdict = assess_t0(histograms, _grouping(2), _search([9, 11], consensus=11))
+    verdict = assess_t0(histograms, _grouping(2), _search([11, 11]))
 
     assert verdict.level == "ok"
     assert verdict.messages == ()
@@ -126,9 +153,7 @@ def test_clean_run_is_ok_with_the_signed_delta() -> None:
 def test_header_conflict_warns_and_says_which_value_is_used() -> None:
     histograms = _histograms([10, 10])
 
-    verdict = assess_t0(
-        histograms, _grouping(2, t0_source="conflict"), _search([10, 10], consensus=10)
-    )
+    verdict = assess_t0(histograms, _grouping(2, t0_source="conflict"), _search([10, 10]))
 
     assert verdict.level == "warn"
     assert verdict.messages == ("Header time_zero disagrees with t0_bin; using t0_bin",)
@@ -142,9 +167,7 @@ def test_divergent_consensus_warns_naming_both_bins_and_the_tolerance(
     """Both bins are quoted in the run's display base; the delta is base-free."""
     histograms = _histograms([10, 10])
 
-    verdict = assess_t0(
-        histograms, _grouping(2, bin_index_base=base), _search([14, 14], consensus=14)
-    )
+    verdict = assess_t0(histograms, _grouping(2, bin_index_base=base), _search([14, 14]))
 
     assert verdict.level == "warn"
     assert verdict.delta_bins == 4
@@ -157,7 +180,7 @@ def test_divergent_consensus_warns_naming_both_bins_and_the_tolerance(
 def test_base_shifts_no_message_that_carries_no_bin_number() -> None:
     """Detector numbers and spreads are counts, not indices — the base misses them."""
     histograms = _histograms([10, 10, 10, 10])
-    search = _search([10, 20, 20, 20], consensus=20, spread=10)
+    search = _search([10, 20, 20, 20])
 
     zero_based = assess_t0(histograms, _grouping(4), search)
     one_based = assess_t0(histograms, _grouping(4, bin_index_base=1), search)
@@ -173,7 +196,7 @@ def test_base_shifts_no_message_that_carries_no_bin_number() -> None:
 def test_divergence_within_tolerance_does_not_warn() -> None:
     histograms = _histograms([10, 10])
 
-    verdict = assess_t0(histograms, _grouping(2), _search([12, 12], consensus=12))
+    verdict = assess_t0(histograms, _grouping(2), _search([12, 12]))
 
     assert verdict.level == "ok"
     assert verdict.delta_bins == 2
@@ -181,24 +204,27 @@ def test_divergence_within_tolerance_does_not_warn() -> None:
 
 def test_pulsed_tolerance_is_one_bin_wider_than_continuous() -> None:
     histograms = _histograms([10, 10])
-    search = _search([13, 13], consensus=13, strategy="pulse_edge")
+    search = _search([13, 13], strategy="pulse_edge")
 
     verdict = assess_t0(histograms, _grouping(2), search)
 
     assert verdict.level == "ok"  # |3| <= 3 for a pulsed source
-    assert assess_t0(histograms, _grouping(2), _search([13, 13], consensus=13)).level == "warn"
+    assert assess_t0(histograms, _grouping(2), _search([13, 13])).level == "warn"
 
 
 def test_per_detector_outliers_are_named_one_based() -> None:
     histograms = _histograms([10, 10, 10, 10])
     # Detectors 2 and 4 (1-based) sit 5 bins from their own file t0.
-    search = _search([10, 15, 11, 5], consensus=10)
+    search = _search([10, 15, 11, 5])
 
     verdict = assess_t0(histograms, _grouping(4), search)
 
     assert verdict.level == "warn"
     assert verdict.outlier_detectors == (2, 4)
-    assert "Detectors 2, 4 disagree with their file t0 by more than 2 bins" in verdict.messages
+    assert (
+        "Detectors 2, 4 disagree with the other detectors' t0 shift by more than 2 bins"
+        in verdict.messages
+    )
 
 
 def test_failed_per_detector_estimates_are_skipped() -> None:
@@ -221,18 +247,159 @@ def test_failed_per_detector_estimates_are_skipped() -> None:
 
 
 def test_wide_detector_spread_warns_about_the_strategy() -> None:
+    """The spread that warns is the spread of the *shifts*, not of the estimates."""
     histograms = _histograms([10] * 4)
-    search = _search([10, 10, 10, 10], consensus=10, spread=9)  # > 4 * 2
+    search = _search([10, 10, 10, 19])  # shifts 0, 0, 0, +9 — range 9 > 4 * 2
 
     verdict = assess_t0(histograms, _grouping(4), search)
 
     assert verdict.level == "warn"
-    assert verdict.messages == ("Detector spread 9 bins — check the source type",)
+    assert "Detector spread 9 bins — check the source type" in verdict.messages
+
+
+def test_a_staggered_run_is_clean_when_every_detector_matches_its_own_header() -> None:
+    """The PSI GPS case: detector 4 sits 170 bins early and its header says so.
+
+    The raw estimates span 172 bins, but every detector is within 2 of its own
+    file t0, so the run's shift is +2 with a spread of 2 — nothing to report. The
+    pre-Phase-7 rule compared the estimates' median (52) with the group maximum
+    (220) and declared a 168-bin divergence plus a 172-bin spread.
+    """
+    histograms = _histograms([50, 46, 50, 220], n_bins=512)
+    search = _search([52, 48, 51, 222])
+
+    verdict = assess_t0(histograms, _grouping(4), search)
+
+    assert verdict.level == "ok"
+    assert verdict.messages == ()
+    assert verdict.delta_bins == 2
+    assert verdict.outlier_detectors == ()
+
+
+def test_peak_jitter_inside_the_peak_width_is_not_a_disagreement() -> None:
+    """The real 98 ps GPS run: shifts −1…6 around a median of 2, peak FWHM 6 bins.
+
+    0.3–0.4 ns of jitter well inside the prompt peak. Against the bare 2-bin
+    floor six of the fifteen detectors read as outliers; against the peak's own
+    width, none does.
+    """
+    histograms = _histograms([50, 50, 50, 50, 50, 50], n_bins=512)
+    search = _search([49, 52, 51, 56, 52, 53], width=6)
+
+    verdict = assess_t0(histograms, _grouping(6), search)
+
+    assert verdict.level == "ok"
+    assert verdict.messages == ()
+    assert verdict.delta_bins == 2
+    assert verdict.outlier_detectors == ()
+    # The same shifts against the 2-bin floor alone would have named detectors.
+    assert assess_t0(histograms, _grouping(6), _search([49, 52, 51, 56, 52, 53])).level == "warn"
+
+
+def test_a_detector_outside_the_peak_width_is_still_an_outlier() -> None:
+    """The wider tolerance forgives jitter, not a genuine 10-bin disagreement."""
+    histograms = _histograms([50, 50, 50, 50, 50, 50], n_bins=512)
+    search = _search([49, 52, 51, 62, 52, 53], width=6)
+
+    verdict = assess_t0(histograms, _grouping(6), search)
+
+    assert verdict.level == "warn"
+    assert verdict.outlier_detectors == (4,)
+    assert (
+        "Detectors 4 disagree with the other detectors' t0 shift by more than 6 bins"
+        in verdict.messages
+    )
+
+
+def test_one_detector_disagreeing_with_the_others_about_the_shift_is_the_outlier() -> None:
+    """Outliers are measured against the run's shift, not against each header."""
+    histograms = _histograms([50, 46, 50, 220], n_bins=512)
+    # Detector 3 moved 10 bins where the rest moved 2.
+    search = _search([52, 48, 60, 222])
+
+    verdict = assess_t0(histograms, _grouping(4), search)
+
+    assert verdict.level == "warn"
+    assert verdict.outlier_detectors == (3,)
+    assert (
+        "Detectors 3 disagree with the other detectors' t0 shift by more than 2 bins"
+        in verdict.messages
+    )
+
+
+# -- good window against the detected t0 -----------------------------------
+
+
+def test_good_window_opening_on_the_detected_t0_warns() -> None:
+    histograms = _histograms([10, 10])
+
+    verdict = assess_t0(histograms, _grouping(2, first_good_bin=12), _search([12, 12]))
+
+    assert verdict.level == "warn"
+    assert verdict.messages == ("First good bin 12 is at or before the detected t0 (bin 12)",)
+
+
+@pytest.mark.parametrize(("base", "first", "detected"), [(0, 11, 12), (1, 12, 13)])
+def test_the_good_window_warning_is_written_in_the_display_base(
+    base: int, first: int, detected: int
+) -> None:
+    histograms = _histograms([10, 10])
+    grouping = _grouping(2, bin_index_base=base, first_good_bin=11)
+
+    verdict = assess_t0(histograms, grouping, _search([12, 12]))
+
+    assert (
+        f"First good bin {first} is at or before the detected t0 (bin {detected})"
+        in verdict.messages
+    )
+
+
+def test_a_good_window_after_the_detected_t0_says_nothing() -> None:
+    histograms = _histograms([10, 10])
+
+    verdict = assess_t0(histograms, _grouping(2, first_good_bin=13), _search([12, 12]))
+
+    assert verdict.level == "ok"
+    assert verdict.messages == ()
+
+
+def test_a_pulsed_window_inside_the_muon_pulse_warns() -> None:
+    """At a pulsed source the window must clear the pulse, not just its midpoint."""
+    histograms = _histograms([10, 10])
+    # Edge midpoint at bin 12, pulse peak four bins later.
+    search = _search([12, 12], strategy="pulse_edge", peaks=[16, 16])
+
+    verdict = assess_t0(histograms, _grouping(2, first_good_bin=14), search)
+
+    assert verdict.level == "warn"
+    assert verdict.messages == ("First good bin 14 is inside the muon pulse (peak at bin 16)",)
+
+
+def test_a_pulsed_window_clear_of_the_pulse_says_nothing() -> None:
+    histograms = _histograms([10, 10])
+    search = _search([12, 12], strategy="pulse_edge", peaks=[16, 16])
+
+    verdict = assess_t0(histograms, _grouping(2, first_good_bin=17), search)
+
+    assert verdict.level == "ok"
+    assert verdict.messages == ()
+
+
+def test_the_pulse_check_reads_peaks_on_the_common_bin_not_each_detector_axis() -> None:
+    """A detector aligned 10 bins forward carries its peak 10 bins forward too."""
+    histograms = _histograms([10, 20])
+    # Common t0 is 20 (the group max). Detector 1's peak at bin 16 lands on
+    # 16 + (20 − 10) = 26; detector 2's peak at 26 lands on 26.
+    search = _search([12, 22], strategy="pulse_edge", peaks=[16, 26])
+
+    verdict = assess_t0(histograms, _grouping(2, first_good_bin=26), search)
+
+    assert "First good bin 26 is inside the muon pulse (peak at bin 26)" in verdict.messages
 
 
 def test_warnings_accumulate_in_check_order() -> None:
     histograms = _histograms([10, 10, 10, 10])
-    search = _search([10, 20, 20, 20], consensus=20, spread=10)
+    search = _search([10, 20, 20, 20])
 
     verdict = assess_t0(histograms, _grouping(4, t0_source="conflict"), search)
 
