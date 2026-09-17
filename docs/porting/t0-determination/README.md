@@ -27,6 +27,7 @@ against WiMDA, Mantid and musrfit before any fix lands.
 | [implementation-options.md](implementation-options.md) | Findings ranked by consequence, the recommended design (file default, always-visible detected value, tolerance-based divergence warning, one effective-t0 chokepoint), and the alternatives considered. |
 | [test-data.md](test-data.md) | Corpora and synthetic records available to calibrate the divergence tolerance and to pin parity. |
 | [verification-plan.md](verification-plan.md) | Tests to add per phase, oracles transcribed from the reference programs, and the corpus sweep that sets the warning thresholds. |
+| [isis-header-index-base.md](isis-header-index-base.md) | Resolves the 0/1-based question for ISIS header bins (1-based, inclusive) from 1,245 files, and quantifies the sub-bin t0 the integer index discards. |
 
 ## Reference-source placeholders
 
@@ -60,7 +61,11 @@ local checkouts.
 5. **Missing header t0 silently becomes bin 0** in every loader. musrfit
    treats a file t0 ≤ 0 as absent, falls back to the prompt-peak estimate and
    prints a loud warning; Mantid and WiMDA trust whatever is there.
-6. **NeXus runs are second-class** — the loader writes `t0_bin` from
+6. **ISIS header bins are 1-based** (resolved from the corpus, see
+   isis-header-index-base.md); the loader's axis-vote heuristic gets this
+   right on most files but not on exact-edge ones, and the integer `t0_bin`
+   discards up to half a bin (8 ns) of the file's exact `time_zero`.
+7. **NeXus runs are second-class** — the loader writes `t0_bin` from
    detector 0 (not the group max) and no `detector_t0_bins`, so per-detector
    `time_zero` arrays (which ISIS v2 files can carry, and which Mantid reads)
    never reach the profile machinery.
@@ -82,5 +87,7 @@ local checkouts.
 - Re-express **Manual** as an offset from the file t0 (what it already is
   at apply time), with the spinbox still showing the resolved absolute bin
   for the preview run.
+- Decode ISIS header bins as 1-based deterministically and carry the exact
+  `time_zero` for the time axis (decision pending — R10).
 - Fix the promotion sign, the NeXus loader's payload, the `nexus_writer`
   mix of file and effective values, and the plot mask's detector-0 axis.

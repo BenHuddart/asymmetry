@@ -188,14 +188,17 @@ loader-time NeXus axis not being rebuilt from `t0_bin`.
 | T9 | tgood | file, hist 1 only; offset 7 (ISIS) / 3 (PSI) | file, absolute, does not track t0 | msr `data`; fallback t0 + 10 ns | file, shifted with t0 under policy | keep; warn if `first_good < t0` or, pulsed, before the pulse has ended |
 | T10 | Fit-time t0 | free "t0 offset (ns)" parameter (`Analyse.pas:1358`) | none | none (phase absorbs it; RRF memo) | free µs nuisance + promotion | keep; fix promotion sign and shift the good window with it |
 | T11 | NeXus per-detector t0 | arrays read then overwritten by element 1 | v2 array read, common applied | one value for all | attrs read per detector, but payload carries detector 0 only | write `detector_t0_bins` and group-max `t0_bin` like PSI/ROOT |
-| T12 | 0/1-based header bins (ISIS) | verbatim into 1-based arrays | index × width, no adjustment | 0-based verbatim | axis-vote heuristic, ≤ 8 detectors, needs explicit `t0_bin` attr | keep heuristic; add a corpus test on the pulse position |
+| T12 | 0/1-based header bins (ISIS) — **resolved: 1-based** | verbatim into 1-based arrays (correct) | index × width, no adjustment (fgb one bin late; t0 exact from µs) | 0-based verbatim (one bin late) | axis-vote heuristic, ≤ 8 detectors, needs explicit `t0_bin` attr; fails on exact-edge files | decode `attr − 1` deterministically; keep the vote as a cross-check warning |
 
 ## 8. Uncertainties carried forward
 
-- Whether ISIS writes `t0_bin`/`first_good_bin` 0- or 1-based is undocumented
-  in all three references (WiMDA indexes 1-based arrays verbatim; Mantid and
-  musrfit treat them as 0-based). Asymmetry's heuristic resolves it per file;
-  verification-plan.md adds a corpus check of the pulse position.
+- ~~Whether ISIS writes `t0_bin`/`first_good_bin` 0- or 1-based~~ **Resolved
+  2026-09-17: 1-based, inclusive** — see
+  [isis-header-index-base.md](isis-header-index-base.md) (1,245 files:
+  `last_good_bin == n_bins` everywhere; `t0_bin = floor(time_zero/res) + 1`
+  in all 1,144 unambiguous cases). WiMDA's verbatim 1-based indexing is
+  therefore correct; musrfit's NeXus reader (0-based verbatim) is one bin
+  late; Mantid sidesteps it by using the µs `time_zero`.
 - No PSI document in the musrfit tree states who fills `Time Zero Bin`
   (DAQ vs offline). The LEM reader sets `fgb := t0`, and example MusrRoot
   headers carry `First Good Bin == Time Zero Bin`.

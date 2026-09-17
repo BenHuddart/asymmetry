@@ -23,6 +23,7 @@ means reproduced in this study, not just read.
 | F14 | `rebin.py:196-201` docstring says "left-edge" stamps; arithmetic is bin-centre (matches WiMDA/musrfit) | comparison.md §5 | Doc-only | docs |
 | F15 | `Histogram.good_bin_start` docstring says "offset from t0"; loaders store absolute | `core/data/dataset.py:32-33` | Doc-only | docs |
 | F16 | Corpus t0-recovery tests use hard-coded `~/Documents/...` paths | `tests/io/test_t0_search.py:118-123` | Not runnable elsewhere | tests |
+| F17 | ISIS `t0_bin`/good-bin attributes are 1-based (resolved, [isis-header-index-base.md](isis-header-index-base.md)); the loader infers this per file from an axis vote that abstains on exact-edge files, and the integer bin discards the sub-bin position of `time_zero` (up to 8 ns at 16 ns binning ⇒ 39° TF phase at 0.1 T) | `nexus.py:1027-1068`; survey of 1,245 files | Half-bin stamp errors on some files; no cross-check when `time_zero` and `t0_bin` disagree (2003-era files) | correctness |
 
 ## B. Recommended design
 
@@ -106,7 +107,29 @@ the observed `|Δ|` distributions per instrument before the thresholds ship.
   verdict instead of trusting bin 0 — F5.
 - NeXus dataset axis rebuilt from `t0_bin` like PSI/ROOT (F8); the file
   `corrected_time` is kept in metadata for diagnostics.
+- ISIS header bins decoded as **1-based, always**: 0-based `t0_bin = attr − 1`,
+  `first_good_bin = attr − 1`, `last_good_bin = attr − 1` inclusive (F17). The
+  axis vote survives only as a cross-check; when it, or `floor(time_zero/res) + 1`,
+  disagrees with the attribute the loader records `t0_source = "conflict"`
+  and prefers `t0_bin` (the 2003 file with a stale `time_zero`).
 - PSI/ROOT good window derived over the F/B group detectors (F13).
+
+### R10. Carry the exact t0 (decision needed)
+
+ISIS `time_zero` sits at arbitrary sub-bin positions and PSI MusrRoot stores
+`Time Zero Bin` as a double for the same reason. Proposal: loaders record
+`t0_time_us` per run (ISIS: `time_zero`; MusrRoot: value × width; PSI bin:
+the float "real t0" at byte 792 when non-zero) alongside the integer bin, and
+the time-axis stamp becomes `(k + 0.5)·w − t0_time_us` (bin centre minus
+exact t0) instead of `(k − t0_bin)·w`. Integer bins remain for detector
+alignment, the good window, and every existing payload key, so the change
+is confined to `rebin.py`/`asymmetry.py` stamps plus a `t0_time_us`
+fallback of `(t0_bin + 0.5)·w` when the file has no exact value (which
+reproduces today's numbers exactly). Mantid already does this; musrfit
+does on its asymmetry path. Cost: a half-bin change on files whose exact
+t0 is not at a bin centre, i.e. a visible (and correct) phase shift in
+existing TF fits. Alternative: keep integer bins and document the ≤ ½-bin
+limit — cheaper, but leaves up to 39° of TF phase error at 0.1 T on ISIS.
 
 ### R7. Fix the count-fit promotion (F4, F12)
 

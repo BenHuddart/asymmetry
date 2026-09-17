@@ -19,7 +19,9 @@ after core changes, affected GUI files focused, `validate` once per PR.
 
 | Test | Pins |
 |---|---|
-| `tests/io/test_nexus_loader.py`: per-detector `time_zero` array ⇒ `detector_t0_bins`, `t0_bin` = group max; scalar ⇒ broadcast; bin-centre axis tie ⇒ no 1-based normalisation and `bin_index_base = 0` | F6, T12 |
+| `tests/io/test_nexus_loader.py`: per-detector `time_zero` array ⇒ `detector_t0_bins`, `t0_bin` = group max; scalar ⇒ broadcast | F6 |
+| `tests/io/test_nexus_loader.py`: `t0_bin` attr N ⇒ `Histogram.t0_bin == N − 1` regardless of the axis (exact-edge file included); `last_good_bin` attr == n_bins ⇒ `good_bin_end == n_bins − 1`; `time_zero` inconsistent with `t0_bin` ⇒ `t0_source == "conflict"` and the attribute wins | F17, T12 |
+| Corpus (gated `ASYMMETRY_WIMDA_CORPUS`): `tests/porting/t0-determination/isis_t0_header_survey.py` reproduces `floor+1` on 100 % of unambiguous files and `last_good_bin == n_bins` everywhere | T12 (done 2026-09-17 on 1,245 files) |
 | `tests/io/test_{psi,root,nexus}_loader.py`: all-zero/missing t0 ⇒ `t0_source == "missing"`, `t0_bin == 0` | F5 |
 | `tests/io/test_nexus_loader.py`: loader dataset axis equals `(k − t0_bin)·w` | F8 |
 | `tests/io/test_psi_loader.py`: good window derived over F/B detectors only | F13 |
