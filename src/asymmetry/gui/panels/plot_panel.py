@@ -64,7 +64,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -124,11 +124,7 @@ from asymmetry.gui.styles.plots import (
     style_figure,
     style_legend,
 )
-from asymmetry.gui.styles.widgets import (
-    build_nav_button_qss,
-    clear_layout,
-    style_group_state_button,
-)
+from asymmetry.gui.styles.widgets import build_nav_button_qss
 from asymmetry.gui.tasks import TaskRunner
 from asymmetry.gui.utils.errorbar_dots import add_errorbar_dots
 from asymmetry.gui.utils.gle_export import (
@@ -284,6 +280,22 @@ _SIGNAL_FRAME_WEIGHTED_QUANTILE = 0.0025
 _SIGNAL_FRAME_WEIGHT_ERROR_FLOOR = 1e-6
 
 
+def _fits_button_qss(*, multiple: bool) -> str:
+    """QSS for the toolbar's Fits button — the nav treatment its neighbours wear.
+
+    A run carrying more than one fit takes the red FitSeries accent, so the
+    one state worth noticing (this run's curves come from several fits) reads
+    from the toolbar without opening the menu.
+    """
+    qss = build_nav_button_qss() + "QPushButton::menu-indicator { image: none; }"
+    if multiple:
+        qss += (
+            f"QPushButton {{ background-color: {tokens.ACCENT_RED_SOFT};"
+            f" color: {tokens.ACCENT_RED}; border: 1px solid {tokens.ACCENT_RED}; }}"
+        )
+    return qss
+
+
 @dataclass(frozen=True)
 class _DisplayEntry:
     """One dataset's drawable display arrays, materialised once per render.
@@ -345,9 +357,10 @@ class PlotPanel(QWidget):
     #: The user dismissed the grouping-hint bar (the ✕ button); the host records
     #: the dismissal so the nudge stays hidden for that run.
     grouping_hint_dismissed = Signal()
-    #: A "Fits on this run" pill was double-clicked (fit_id, a FitSeries
-    #: ``batch_id``) — never emitted for ``SINGLE_FIT_ID``, which has no
-    #: series to make active. The host routes this to ``_set_active_series``.
+    #: A series was picked from the Fits menu's **Make active** submenu
+    #: (fit_id, a FitSeries ``batch_id``) — never emitted for
+    #: ``SINGLE_FIT_ID``, which has no series to make active. The host routes
+    #: this to ``_set_active_series``.
     active_fit_requested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None, *, domain: str = "time") -> None:
@@ -524,6 +537,25 @@ class PlotPanel(QWidget):
             nav_row.addSpacing(4)
 
             _nav_qss = build_nav_button_qss()
+
+            # Which of the current run's fits are drawn, and which series is
+            # active. A menu rather than a row of named buttons: the fit names
+            # live in the popup, so the panel's minimum width never follows
+            # them.
+            self._make_active_menu = QMenu("Make active", self)
+            self._fits_menu = QMenu(self)
+            self._fits_menu.aboutToShow.connect(self._rebuild_fits_menu)
+            self._fits_button = QPushButton("Fits")
+            self._fits_button.setToolTip("Show or hide this run's fits, and pick the active series")
+            # Sized for the widest text it ever carries ("Fits · NN"), never
+            # for a fit's name — that is what keeps the names out of the
+            # panel's minimum width.
+            self._fits_button.setFixedWidth(char_width(11))
+            self._fits_button.setMenu(self._fits_menu)
+            self._fits_button.setEnabled(False)
+            self._fits_button.setStyleSheet(_fits_button_qss(multiple=False))
+            nav_row.addWidget(self._fits_button)
+
             self._pan_btn = QPushButton("Pan")
             self._pan_btn.setCheckable(True)
             self._pan_btn.setMaximumWidth(60)
@@ -546,8 +578,6 @@ class PlotPanel(QWidget):
             layout.addWidget(self._plot_header)
             self._grouping_hint_bar = self._create_grouping_hint_bar()
             layout.addWidget(self._grouping_hint_bar)
-            self._fit_pill_strip = self._create_fit_pill_strip()
-            layout.addWidget(self._fit_pill_strip)
             layout.addWidget(self._canvas_scroll_area)
             self._plot_footer = self._create_plot_footer()
             layout.addWidget(self._plot_footer)
@@ -615,11 +645,11 @@ class PlotPanel(QWidget):
 
             #: The active series' fit id (D5), drawn on every run it covers.
             self._active_fit_id: str | None = None
-            #: Transient per-run override of which fit ids are drawn ("Fits on
-            #: this run"). Session-only view state; absent means "the default"
-            #: (:meth:`shown_fit_ids`).
+            #: Transient per-run override of which fit ids are drawn (the
+            #: toolbar's Fits menu). Session-only view state; absent means
+            #: "the default" (:meth:`shown_fit_ids`).
             self._shown_fits_by_run: dict[int, list[str]] = {}
-            #: A series' own display name, keyed by fit id — the pill strip's
+            #: A series' own display name, keyed by fit id — the Fits menu's
             #: label source (:meth:`set_fit_labels`/:meth:`fit_label`), kept
             #: separate from whatever generic legend text ("Batch Fit", …) a
             #: curve was drawn under. Session-only: the host re-supplies it
@@ -991,35 +1021,8 @@ class PlotPanel(QWidget):
             self._grouping_hint_label.clear()
             bar.hide()
 
-    def _create_fit_pill_strip(self) -> QWidget:
-        """Return the (hidden) "Fits on this run" pill row.
-
-        Sits between the grouping-hint bar and the canvas: one pill per fit id
-        this panel holds a curve for on the current run (the active series,
-        other series, the run's own single fit), plus a trailing usage hint.
-        Hidden whenever the run carries one fit or none — see
-        :meth:`_refresh_fit_pill_strip`, the only method that shows it.
-        """
-        strip = QWidget()
-        strip.setObjectName("fitPillStrip")
-        row = QHBoxLayout(strip)
-        row.setContentsMargins(10, 4, 10, 4)
-        row.setSpacing(6)
-        row.addWidget(QLabel("Fits on this run"))
-        self._fit_pill_container = QWidget()
-        self._fit_pill_layout = QHBoxLayout(self._fit_pill_container)
-        self._fit_pill_layout.setContentsMargins(0, 0, 0, 0)
-        self._fit_pill_layout.setSpacing(4)
-        row.addWidget(self._fit_pill_container)
-        row.addStretch(1)
-        hint = QLabel("click = show/hide · double-click = make active")
-        hint.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
-        row.addWidget(hint)
-        strip.hide()
-        return strip
-
-    def _fit_pill_run_number(self) -> int | None:
-        """The run the pill strip currently speaks for, or ``None`` (hide it).
+    def _fits_menu_run_number(self) -> int | None:
+        """The run the Fits button speaks for, or ``None`` (the button is off).
 
         Only a genuine single-run view has one: a multi-dataset overlay shows
         several runs at once, so no one run's fit set applies.
@@ -1039,8 +1042,21 @@ class PlotPanel(QWidget):
                 ordered.append(fit_id)
         return ordered
 
+    def _ordered_fit_ids_for_run(self, run_number: int) -> list[str]:
+        """*run_number*'s fit ids as the Fits menu lists them.
+
+        The active series first, every other series in recording order, the
+        run's own single fit last.
+        """
+        stored = self._fit_ids_recorded_for_run(run_number)
+        ordered = [fid for fid in stored if fid == self._active_fit_id]
+        ordered += [fid for fid in stored if fid not in ordered and fid != SINGLE_FIT_ID]
+        if SINGLE_FIT_ID in stored:
+            ordered.append(SINGLE_FIT_ID)
+        return ordered
+
     def fit_label(self, fit_id: str) -> str:
-        """The pill/legend name for *fit_id*: "Single fit", a series' own name, or itself."""
+        """The menu/legend name for *fit_id*: "Single fit", a series' own name, or itself."""
         if fit_id == SINGLE_FIT_ID:
             return "Single fit"
         return self._fit_label_by_id.get(fit_id, fit_id)
@@ -1050,17 +1066,73 @@ class PlotPanel(QWidget):
 
         Pushed by the host from ``FitSeries``' own name — never re-derived
         here — whenever it refreshes the representation's series (recording,
-        project restore, a rename). Does not draw; the caller's own refresh
-        (or, if none is in flight, this call) updates the pill strip.
+        project restore, a rename). Does not draw.
         """
         if not labels:
             return
         self._fit_label_by_id.update({str(k): str(v) for k, v in labels.items()})
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
 
-    def _on_fit_pill_clicked(self, fit_id: str) -> None:
+    def _refresh_fits_button(self) -> None:
+        """Retitle/enable the toolbar's Fits button for the run on screen.
+
+        Qt bookkeeping only, never a redraw: called on a run switch, on
+        :meth:`set_active_fit_id`/:meth:`set_shown_fits`/
+        :meth:`clear_shown_fits`/:meth:`set_fit_labels`, and whenever a curve
+        is added or removed for the run.
+        """
+        if not self._has_mpl:
+            return
+        run_number = self._fits_menu_run_number()
+        stored = [] if run_number is None else self._fit_ids_recorded_for_run(run_number)
+        multiple = len(stored) > 1
+        self._fits_button.setText(f"Fits · {len(stored)}" if multiple else "Fits")
+        self._fits_button.setEnabled(bool(stored))
+        self._fits_button.setStyleSheet(_fits_button_qss(multiple=multiple))
+
+    def _rebuild_fits_menu(self) -> None:
+        """Fill the Fits popup for the run on screen, on ``aboutToShow``.
+
+        One checkable entry per fit stored for the run (ticked = drawn, ``●``
+        = the active series), then a **Make active** submenu over the series
+        alone — a run's own single fit is not a series and can never be made
+        active.
+        """
+        menu = self._fits_menu
+        menu.clear()
+        self._make_active_menu.clear()
+        run_number = self._fits_menu_run_number()
+        if run_number is None:
+            return
+        header = menu.addAction(f"Fits on run {run_number}")
+        header.setEnabled(False)
+        shown = set(self.shown_fit_ids(run_number))
+        fit_ids = self._ordered_fit_ids_for_run(run_number)
+        for fit_id in fit_ids:
+            label = self.fit_label(fit_id)
+            action = menu.addAction(f"● {label}" if fit_id == self._active_fit_id else label)
+            action.setCheckable(True)
+            action.setChecked(fit_id in shown)
+            action.triggered.connect(
+                lambda _checked=False, fid=fit_id: self._on_fit_menu_toggled(fid)
+            )
+        menu.addSeparator()
+        for fit_id in fit_ids:
+            if fit_id == SINGLE_FIT_ID:
+                continue
+            action = self._make_active_menu.addAction(self.fit_label(fit_id))
+            action.setCheckable(True)
+            action.setChecked(fit_id == self._active_fit_id)
+            action.triggered.connect(
+                lambda _checked=False, fid=fit_id: self._on_make_active_chosen(fid)
+            )
+        menu.addMenu(self._make_active_menu)
+        footer = menu.addAction("Tick = show · ● = active")
+        footer.setEnabled(False)
+
+    def _on_fit_menu_toggled(self, fit_id: str) -> None:
         """Toggle *fit_id* in the current run's shown set (never removes others)."""
-        run_number = self._fit_pill_run_number()
+        run_number = self._fits_menu_run_number()
         if run_number is None:
             return
         shown = set(self.shown_fit_ids(run_number))
@@ -1071,62 +1143,10 @@ class PlotPanel(QWidget):
         ordered = [fid for fid in self._fit_ids_recorded_for_run(run_number) if fid in shown]
         self.set_shown_fits(run_number, ordered)
 
-    def _on_fit_pill_double_clicked(self, fit_id: str) -> None:
-        """Make *fit_id* the active series — never for the run's own single fit."""
-        if fit_id == SINGLE_FIT_ID:
-            return
+    def _on_make_active_chosen(self, fit_id: str) -> None:
+        """Make *fit_id* the active series and tell the host to follow."""
         self.set_active_fit_id(fit_id)
         self.active_fit_requested.emit(fit_id)
-
-    def _refresh_fit_pill_strip(self) -> None:
-        """Rebuild the pill row for the current run (Qt bookkeeping only, no draw).
-
-        Called on a run switch, on :meth:`set_active_fit_id`/
-        :meth:`set_shown_fits`/:meth:`set_fit_labels`, and whenever a curve is
-        added or removed for the run — never the other way around, so a pill
-        click's own redraw is the only one that happens.
-        """
-        strip = getattr(self, "_fit_pill_strip", None)
-        if strip is None:
-            return
-        clear_layout(self._fit_pill_layout)
-        run_number = self._fit_pill_run_number()
-        stored = [] if run_number is None else self._fit_ids_recorded_for_run(run_number)
-        if run_number is None or len(stored) <= 1:
-            strip.setVisible(False)
-            return
-        shown = set(self.shown_fit_ids(run_number))
-        # Active series first, other series in recording order, "single" last.
-        ordered = [fid for fid in stored if fid == self._active_fit_id]
-        ordered += [fid for fid in stored if fid not in ordered and fid != SINGLE_FIT_ID]
-        if SINGLE_FIT_ID in stored:
-            ordered.append(SINGLE_FIT_ID)
-        for fit_id in ordered:
-            is_shown = fit_id in shown
-            text = f"✓ {self.fit_label(fit_id)}" if is_shown else self.fit_label(fit_id)
-            button = QPushButton(text)
-            state = (
-                "active"
-                if fit_id == self._active_fit_id
-                else ("selected" if is_shown else "unselected")
-            )
-            style_group_state_button(button, state, palette="red")
-            button.clicked.connect(
-                lambda _checked=False, fid=fit_id: self._on_fit_pill_clicked(fid)
-            )
-            button.setProperty("_fit_pill_id", fit_id)
-            button.installEventFilter(self)
-            self._fit_pill_layout.addWidget(button)
-        strip.setVisible(True)
-
-    def eventFilter(self, watched, event) -> bool:  # noqa: N802
-        """Turn a double-click on a "Fits on this run" pill into "make active"."""
-        if event.type() == QEvent.Type.MouseButtonDblClick:
-            fit_id = watched.property("_fit_pill_id")
-            if fit_id:
-                self._on_fit_pill_double_clicked(str(fit_id))
-                return True
-        return super().eventFilter(watched, event)
 
     def _create_plot_footer(self) -> QWidget:
         """Return the control bar shown below the canvas."""
@@ -3687,12 +3707,12 @@ class PlotPanel(QWidget):
         self._shown_fits_by_run[int(run_number)] = [str(fid) for fid in fit_ids]
         if self._has_mpl:
             self._redraw_current_view()
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
 
     def clear_shown_fits(self, run_number: int) -> None:
         """Drop *run_number*'s override so :meth:`shown_fit_ids` defaults again."""
         self._shown_fits_by_run.pop(int(run_number), None)
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
 
     def set_active_fit_id(self, fit_id: str | None) -> None:
         """Make *fit_id* the active series' overlay, redrawing the current view.
@@ -3706,7 +3726,7 @@ class PlotPanel(QWidget):
         self._active_fit_id = fit_id
         if self._has_mpl:
             self._redraw_current_view()
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
 
     def active_fit_id(self) -> str | None:
         """Return the active series' fit id, or ``None``."""
@@ -3740,7 +3760,7 @@ class PlotPanel(QWidget):
             self._update_export_enabled()
             self._redraw_current_view()
         if removed:
-            self._refresh_fit_pill_strip()
+            self._refresh_fits_button()
         return removed
 
     def _fit_curve_for_dataset(
@@ -4407,7 +4427,7 @@ class PlotPanel(QWidget):
         self._current_datasets = list(self._vector_subplot_datasets.get(order[0], []))
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
         self._update_plot_header()
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
 
         # Materialise every subplot's display arrays first: the shared x window
         # is resolved from all of them together and must be known before any
@@ -5060,7 +5080,7 @@ class PlotPanel(QWidget):
         self._current_datasets = list(datasets)
         self._update_plot_header()
         self._set_frequency_reference_from_dataset(datasets[0])
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
         self._ax.clear()
         style_axes(self._ax)
         draw_zero_line(self._ax)
@@ -5413,7 +5433,7 @@ class PlotPanel(QWidget):
         self._current_datasets = [dataset]
         self._update_plot_header()
         self._set_frequency_reference_from_dataset(dataset)
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
 
         analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
         if not self._has_plottable_samples(analysis_dataset):
@@ -7323,7 +7343,7 @@ class PlotPanel(QWidget):
         self._fit_components = list(component_curves or [])
 
         self._update_export_enabled()
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
 
         if self._subplot_axes_by_polarization and self._vector_subplot_datasets:
             # Stacked multi-subplot view: re-render the subplots so the fit
@@ -7358,7 +7378,7 @@ class PlotPanel(QWidget):
             recorded series, or ``"single"`` for the transient overlays (grouped
             previews, count fits) that are not series work.
         fit_labels : dict, optional
-            ``{fit_id: display name}`` for the "Fits on this run" pill strip
+            ``{fit_id: display name}`` for the toolbar's Fits menu
             (:meth:`set_fit_labels`) — the series' own name, not the generic
             per-curve legend text a caller may pass as *label*.
         """
@@ -7411,7 +7431,7 @@ class PlotPanel(QWidget):
         self._fit_components = None
 
         self._update_export_enabled()
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
 
         # Redraw current view while preserving multi-selection overlays.
         self._redraw_current_view()
@@ -7483,7 +7503,7 @@ class PlotPanel(QWidget):
                 self._apply_axis_labels(*self._default_axis_labels())
             self._update_export_enabled()
             self._fit_label_by_id = {}
-            self._refresh_fit_pill_strip()
+            self._refresh_fits_button()
 
     def resizeEvent(self, event) -> None:
         """Keep the canvas width aligned with the viewport during grouped scrolling."""
@@ -7518,7 +7538,7 @@ class PlotPanel(QWidget):
         self._active_fit_id = None
         self._fit_label_by_id = {}
         self._update_export_enabled()
-        self._refresh_fit_pill_strip()
+        self._refresh_fits_button()
         self._redraw_current_view()
 
     def clear_fits_for_runs(self, run_numbers: list[int]) -> int:
@@ -7568,7 +7588,7 @@ class PlotPanel(QWidget):
 
         if removed > 0:
             self._update_export_enabled()
-            self._refresh_fit_pill_strip()
+            self._refresh_fits_button()
             self._redraw_current_view()
 
         return removed

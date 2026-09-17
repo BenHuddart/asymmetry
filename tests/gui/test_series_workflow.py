@@ -328,7 +328,7 @@ def test_project_reload_restores_the_active_series_and_selects_it(mw, monkeypatc
     assert restored._fit_parameters_panel._active_group_id == first_id
 
 
-# ── Phase 4: chip rail sections, chip menu, pill strip, active-series sync ──
+# ── Phase 4: chip rail sections, chip menu, Fits menu, active-series sync ──
 
 
 def test_trend_panel_sections_nest_phase_series_under_their_parent(mw):
@@ -374,10 +374,8 @@ def test_chip_menu_open_and_duplicate_route_through_mainwindow(mw, monkeypatch):
     assert mw._fit_panel.open_series_id() is None
 
 
-def test_chip_press_batch_open_and_pill_double_click_keep_the_three_surfaces_agreeing(
-    mw, monkeypatch
-):
-    """Chip press, Batch tab open and a pill double-click all move the one pointer (D5).
+def test_chip_press_batch_open_and_fits_menu_keep_the_three_surfaces_agreeing(mw, monkeypatch):
+    """Chip press, Batch tab open and the Fits menu all move the one pointer (D5).
 
     ``_set_active_series`` is the GUI's only writer reached by a user gesture
     (the recording path, ``_record_fit_series``, separately makes a just-run
@@ -413,8 +411,14 @@ def test_chip_press_batch_open_and_pill_double_click_keep_the_three_surfaces_agr
     assert_agree(second_id)
     assert mw._fit_panel.open_series_id() == second_id
 
-    # A "Fits on this run" pill double-click for the first series.
-    mw._on_active_fit_requested(first_id)
+    # The plot toolbar's Fits menu → "Make active" → the first series.
+    panel = mw._plot_panel
+    assert panel._fits_button.text() == "Fits · 2"
+    panel._fits_menu.aboutToShow.emit()
+    make_active = [a for a in panel._fits_menu.actions() if a.menu() is not None]
+    assert [a.text() for a in make_active] == ["Make active"]
+    entries = {a.text(): a for a in make_active[0].menu().actions()}
+    entries[panel.fit_label(first_id)].trigger()
     assert_agree(first_id)
 
 

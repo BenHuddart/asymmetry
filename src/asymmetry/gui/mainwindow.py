@@ -2175,8 +2175,8 @@ class MainWindow(QMainWindow):
         self._fit_parameters_panel.series_duplicate_requested.connect(
             self._on_series_duplicate_requested
         )
-        # Plot "Fits on this run" pill strip: a double-click makes that fit's
-        # series active (item 3), on whichever domain panel it was clicked.
+        # The plot toolbar's Fits menu: "Make active" makes that fit's series
+        # active (item 3), on whichever domain panel it was chosen.
         for _panel in (self._plot_panel, self._frequency_plot_panel):
             _panel.active_fit_requested.connect(self._on_active_fit_requested)
 
@@ -11083,12 +11083,12 @@ class MainWindow(QMainWindow):
             )
             refreshed = True
 
-        # Authoritative "Fits on this run" pill labels (item 3): the series'
-        # own display name, not whatever generic legend text a recording path
-        # drew the curve under ("Batch Fit", …). Every series of the
-        # representation is pushed here — not only the active one — so a
-        # restored project's pills read correctly even though its curves came
-        # back from ``plot_state`` rather than a fresh ``_overlay_series`` draw.
+        # Authoritative Fits-menu labels (item 3): the series' own display
+        # name, not whatever generic legend text a recording path drew the
+        # curve under ("Batch Fit", …). Every series of the representation is
+        # pushed here — not only the active one — so a restored project's menu
+        # reads correctly even though its curves came back from ``plot_state``
+        # rather than a fresh ``_overlay_series`` draw.
         self._plot_panel_for_rep(rep_type).set_fit_labels(
             {batch_id: name for batch_id, _series, name in named_series}
         )
@@ -11536,10 +11536,10 @@ class MainWindow(QMainWindow):
         self._show_panel("fit")
 
     def _on_active_fit_requested(self, batch_id: str) -> None:
-        """A "Fits on this run" pill was double-clicked: make its series active.
+        """A series was chosen from the plot's Fits menu: make it active.
 
-        The ``"single"`` id is never routed here (the plot panel itself never
-        emits it for a double-click), so this always names a real series.
+        The ``"single"`` id is never routed here (the **Make active** submenu
+        lists series only), so this always names a real series.
         """
         series = self._project_model.batch(str(batch_id))
         if series is not None:
