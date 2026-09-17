@@ -126,6 +126,26 @@ def common_t0_time_us(
     return (float(common_t0_bin) + 0.5) * float(histograms[0].bin_width)
 
 
+def t0_stamp_residual_us(
+    histograms: list[Histogram],
+    grouping: dict | None,
+    common_t0_bin: int,
+) -> float:
+    r"""The sub-bin offset of the exact t0 from the centre of ``common_t0_bin`` (D4).
+
+    Every aligned time axis in the app is stamped as the integer-bin axis plus
+    this residual: ``t_k = (k − common_t0_bin)·w + residual``. Folds the
+    repeated ``(common_t0_bin + 0.5)·w − common_t0_time_us(...)`` expression
+    into one place. Exactly ``0.0`` when the run carries no exact t0 (
+    :func:`common_t0_time_us` then returns the bin centre itself), which keeps
+    the integer-bin axis unchanged to the last bit.
+    """
+    bin_width = float(histograms[0].bin_width)
+    return (float(common_t0_bin) + 0.5) * bin_width - common_t0_time_us(
+        histograms, grouping, common_t0_bin
+    )
+
+
 @dataclass(frozen=True)
 class T0Estimate:
     """Time-zero estimate for one histogram."""

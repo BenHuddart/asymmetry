@@ -100,10 +100,16 @@ from asymmetry.core.transform.background import (
     resolve_background_mode,
     resolve_facility,
 )
-from asymmetry.core.transform.grouping import good_event_count, group_forward_backward
+from asymmetry.core.transform.grouping import (
+    common_t0_for_groups,
+    effective_group_indices,
+    good_event_count,
+    group_forward_backward,
+)
 from asymmetry.core.transform.integral import integrate_curve
 from asymmetry.core.transform.peakfit import parabolic_peak
 from asymmetry.core.transform.rebin import rebin, resolve_binning_mode
+from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import (
     PeriodMode,
 )
@@ -6268,8 +6274,24 @@ class PlotPanel(QWidget):
         histograms = getattr(run, "histograms", None)
         axis = np.asarray([], dtype=float)
         if histograms:
-            hist0 = histograms[0]
-            axis = np.asarray(hist0.time_axis, dtype=float)
+            # Stamp from the reduction's common t0 (D10/F11), not detector 0's
+            # own file t0 — a staggered-t0 run would otherwise draw the good
+            # window at the wrong boundary. O(n_detectors) work only.
+            n_hist = len(histograms)
+            forward_gid = int(grouping.get("forward_group", 1))
+            backward_gid = int(grouping.get("backward_group", 2))
+            forward_idx = effective_group_indices(grouping, forward_gid, n_histograms=n_hist)
+            backward_idx = effective_group_indices(grouping, backward_gid, n_histograms=n_hist)
+            detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
+            common_t0 = common_t0_for_groups(
+                histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0_bins
+            )
+            bin_width = float(histograms[0].bin_width)
+            residual_us = t0_stamp_residual_us(histograms, grouping, common_t0)
+            n_bins = len(histograms[0].counts)
+            axis = (
+                np.arange(n_bins, dtype=np.float64) - float(common_t0)
+            ) * bin_width + residual_us
 
         try:
             lo_idx = max(0, int(first_good))

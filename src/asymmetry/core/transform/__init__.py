@@ -92,6 +92,7 @@ from asymmetry.core.transform.t0 import (
     find_t0_for_run,
     run_t0_time_us,
     source_is_pulsed,
+    t0_stamp_residual_us,
 )
 from asymmetry.core.transform.units import (
     ASYMMETRY_FRACTION,
@@ -179,6 +180,7 @@ __all__ = [
     "find_t0_for_run",
     "run_t0_time_us",
     "source_is_pulsed",
+    "t0_stamp_residual_us",
     "excluded_detector_indices",
     "filter_excluded_indices",
     "good_frames",

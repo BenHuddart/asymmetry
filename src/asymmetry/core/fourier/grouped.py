@@ -20,7 +20,7 @@ from asymmetry.core.transform.grouping import (
     resolve_group_indices,
 )
 from asymmetry.core.transform.rebin import rebin_counts
-from asymmetry.core.transform.t0 import common_t0_time_us
+from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -127,6 +127,7 @@ def _resolve_group_reference_counts(
     group_indices: list[int],
     common_t0: int,
     apply_deadtime: bool,
+    detector_t0_bins: list[int],
     cache: dict | None = None,
 ) -> tuple[np.ndarray | None, float | None]:
     """Resolve+group a ``reference_run`` background for one detector group.
@@ -171,7 +172,10 @@ def _resolve_group_reference_counts(
         )
         cache[prepared_key] = reference_prepared
     reference_counts = apply_grouping_aligned(
-        reference_prepared, group_indices, common_t0_bin=common_t0
+        reference_prepared,
+        group_indices,
+        common_t0_bin=common_t0,
+        detector_t0_bins=detector_t0_bins,
     )
     if reference_counts.size == 0:
         return None, None
@@ -306,6 +310,10 @@ def build_group_signal_dataset(
         if not prepared_histograms:
             raise ValueError("Prepared histograms are empty for Fourier analysis.")
 
+    # One resolved per-detector t0 for every alignment this call makes (D10):
+    # the policy-resolved override when the grouping carries one, else each
+    # histogram's own file t0.
+    detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
     if reference_t0_bin is None:
         # t0 reference spans every named detector (exclusion is irrelevant to
         # alignment), so use the raw decoder here rather than the reduction
@@ -313,12 +321,15 @@ def build_group_signal_dataset(
         all_group_indices = [
             decoded for decoded in (resolve_group_indices(groups, gid) for gid in groups) if decoded
         ]
-        reference_t0_bin = common_t0_for_groups(prepared_histograms, *all_group_indices)
+        reference_t0_bin = common_t0_for_groups(
+            prepared_histograms, *all_group_indices, detector_t0_bins=detector_t0_bins
+        )
     common_t0 = max(0, int(reference_t0_bin))
     counts = apply_grouping_aligned(
         prepared_histograms,
         indices,
         common_t0_bin=common_t0,
+        detector_t0_bins=detector_t0_bins,
     )
     if counts.size == 0:
         raise ValueError(f"Detector group {group_id!r} produced an empty signal.")
@@ -329,6 +340,7 @@ def build_group_signal_dataset(
         group_indices=indices,
         common_t0=common_t0,
         apply_deadtime=apply_deadtime,
+        detector_t0_bins=detector_t0_bins,
         cache=background_reference_cache,
     )
     counts, background_applied, background_value = _apply_group_background_correction(
@@ -369,9 +381,7 @@ def build_group_signal_dataset(
     axis_start = first_good - common_t0
     # Bin centres from the run's exact t0 (D4): the residual is exactly 0.0 when
     # the run carries no sub-bin t0, leaving the integer-bin axis untouched.
-    residual_us = (float(common_t0) + 0.5) * bin_width - common_t0_time_us(
-        prepared_histograms, grouping, common_t0
-    )
+    residual_us = t0_stamp_residual_us(prepared_histograms, grouping, common_t0)
     time = (
         np.arange(trimmed_counts.size, dtype=float) + float(axis_start)
     ) * bin_width + residual_us

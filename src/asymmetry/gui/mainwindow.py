@@ -246,6 +246,7 @@ from asymmetry.core.transform import (
     common_t0_for_groups,
     detector_t0_overrides,
     differentiate_scan,
+    effective_detector_t0_bins,
     effective_group_indices,
     format_detector_list,
     good_frames,
@@ -5441,7 +5442,11 @@ class MainWindow(QMainWindow):
         # chokepoints (common_t0_for_groups / apply_grouping_aligned) prefer. A
         # manual t0 therefore no longer permanently rewrites the loaded histograms.
         file_common_t0 = (
-            common_t0_for_groups(run.histograms, forward_idx, backward_idx)
+            # Explicit ``detector_t0_bins=None``: this establishes the FILE
+            # baseline the new manual delta is measured against, so it must
+            # ignore any override already stored from a previous edit rather
+            # than resolving through it.
+            common_t0_for_groups(run.histograms, forward_idx, backward_idx, detector_t0_bins=None)
             if run.histograms and (forward_idx or backward_idx)
             else t0_default
         )
@@ -8301,7 +8306,11 @@ class MainWindow(QMainWindow):
 
         reference_t0_bin = 0
         if all_group_indices:
-            reference_t0_bin = common_t0_for_groups(prepared_histograms, *all_group_indices)
+            reference_t0_bin = common_t0_for_groups(
+                prepared_histograms,
+                *all_group_indices,
+                detector_t0_bins=effective_detector_t0_bins(prepared_histograms, grouping),
+            )
         return prepared_histograms, int(reference_t0_bin)
 
     def _current_fourier_time_window_us(self) -> tuple[float | None, float | None]:
@@ -9426,6 +9435,7 @@ class MainWindow(QMainWindow):
             t_good_offset=int(grouping.get("t_good_offset", 0) or 0),
             last_good_bin=grouping.get("last_good_bin"),
             num_good_frames=good_frames(grouping),
+            detector_t0_bins=effective_detector_t0_bins(list(run.histograms), grouping),
         )
         if not deadtimes:
             self._maxent_panel.set_deadtime_text("Deadtime fit failed.", can_apply=False)

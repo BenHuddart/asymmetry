@@ -39,6 +39,7 @@ def estimate_deadtime_from_histograms(
     last_good_bin: int | None = None,
     num_good_frames: float = 1.0,
     max_bins: int = 400,
+    detector_t0_bins: list[int] | None = None,
 ) -> float | None:
     """Estimate a uniform deadtime value from early-time detector counts.
 
@@ -53,6 +54,7 @@ def estimate_deadtime_from_histograms(
         last_good_bin=last_good_bin,
         num_good_frames=num_good_frames,
         max_bins=max_bins,
+        detector_t0_bins=detector_t0_bins,
     )
     if not calibrated:
         return None
@@ -66,12 +68,17 @@ def calibrate_deadtime_from_histograms(
     last_good_bin: int | None = None,
     num_good_frames: float = 1.0,
     max_bins: int = 400,
+    detector_t0_bins: list[int] | None = None,
 ) -> list[float] | None:
     """Calibrate per-detector deadtime values from early-time count data.
 
     This mirrors WiMDA's ``Cal`` button behavior: fit each detector histogram
     independently using the same ``countfit`` model and return one deadtime
     value per detector in microseconds.
+
+    ``detector_t0_bins`` optionally overrides each detector's alignment t0
+    (D10) so a Manual/Auto-detect t0 policy moves the calibration window with
+    it; ``None`` uses each histogram's own file ``t0_bin``.
     """
     if not histograms:
         return None
@@ -90,12 +97,13 @@ def calibrate_deadtime_from_histograms(
         return None
 
     calibrated: list[float] = []
-    for histogram in histograms:
+    for i, histogram in enumerate(histograms):
         counts = np.asarray(histogram.counts, dtype=np.float64)
         if counts.size <= 0:
             return None
 
-        start = max(0, int(histogram.t0_bin) + offset)
+        t0_bin = int(detector_t0_bins[i]) if detector_t0_bins is not None else int(histogram.t0_bin)
+        start = max(0, t0_bin + offset)
         end = counts.size - 1
         if last_good_bin is not None:
             try:

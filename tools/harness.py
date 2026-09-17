@@ -50,10 +50,6 @@ T0_ALIGNMENT_OWNER_DIRS = ("core/io/",)
 # The rule fails when an entry stops having a violation, so the list can only
 # shrink to empty.
 T0_ALIGNMENT_BASELINE: dict[str, str] = {
-    "core/fitting/grouped_time_domain.py": "count-domain groups (plan phase 4)",
-    "core/fourier/grouped.py": "grouped Fourier signal + reference background (plan phase 4)",
-    "core/fourier/spectrum.py": "grouped-average reference t0 (plan phase 4)",
-    "gui/mainwindow.py": "grouped Fourier reference t0 (plan phase 4)",
     "gui/windows/grouping/dialog.py": "t0 row preview seed (plan phase 5)",
 }
 

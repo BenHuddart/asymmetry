@@ -46,7 +46,7 @@ from asymmetry.core.transform.grouping import (
     group_names,
 )
 from asymmetry.core.transform.rebin import resolve_binning_mode
-from asymmetry.core.transform.t0 import detector_t0_overrides
+from asymmetry.core.transform.t0 import detector_t0_overrides, effective_detector_t0_bins
 from asymmetry.core.utils.coerce import optional_float
 
 #: Minimum applied field (Gauss) for a diamagnetic fit to be attempted.
@@ -715,7 +715,11 @@ def precompute_group_fourier_inputs(
 
     reference_t0_bin = 0
     if all_group_indices:
-        reference_t0_bin = common_t0_for_groups(prepared_histograms, *all_group_indices)
+        reference_t0_bin = common_t0_for_groups(
+            prepared_histograms,
+            *all_group_indices,
+            detector_t0_bins=effective_detector_t0_bins(prepared_histograms, grouping),
+        )
     return prepared_histograms, int(reference_t0_bin)
 
 

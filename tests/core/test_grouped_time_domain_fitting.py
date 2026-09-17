@@ -23,6 +23,8 @@ from asymmetry.core.fitting.grouped_time_domain import (
     validate_grouped_model_contract,
 )
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
+from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -112,6 +114,59 @@ def test_build_grouped_time_domain_datasets_applies_group_bunching_before_lifeti
         datasets[1].asymmetry,
         np.array([11.0, 7.0, 3.0]) * np.exp(expected_time / MUON_LIFETIME_US),
     )
+
+
+def test_build_grouped_time_domain_datasets_follows_manual_t0_override_like_reduction() -> None:
+    """A Manual t0 override (D10) must move the count-fit trace's start exactly
+    as `group_forward_backward` reduces it (plan phase 4)."""
+    counts_a = np.array([100.0, 120.0, 140.0, 130.0, 110.0, 95.0, 88.0])
+    counts_b = np.array([90.0, 95.0, 100.0, 98.0, 92.0, 88.0, 84.0])
+    base_grouping = {
+        "groups": {1: [1], 2: [2]},
+        "group_names": {1: "Forward", 2: "Backward"},
+        "forward_group": 1,
+        "backward_group": 2,
+        "first_good_bin": 0,
+        "last_good_bin": 6,
+        "bunching_factor": 1,
+    }
+    histograms = [
+        Histogram(counts=counts_a, bin_width=0.01, t0_bin=1),
+        Histogram(counts=counts_b, bin_width=0.01, t0_bin=1),
+    ]
+
+    def _source_dataset(grouping: dict) -> MuonDataset:
+        run = Run(
+            run_number=60,
+            histograms=histograms,
+            grouping=grouping,
+            metadata={"field": 100.0},
+        )
+        return MuonDataset(
+            time=np.zeros(7),
+            asymmetry=np.zeros(7),
+            error=np.ones(7),
+            metadata={"run_number": 60},
+            run=run,
+        )
+
+    baseline_grouping = dict(base_grouping)
+    baseline_datasets = build_grouped_time_domain_datasets(
+        _source_dataset(baseline_grouping), lifetime_corrected=False
+    )
+    baseline_fb = group_forward_backward(histograms, baseline_grouping)
+    np.testing.assert_allclose(baseline_datasets[0].asymmetry, baseline_fb.forward[0:7])
+
+    shifted_grouping = dict(base_grouping)
+    shifted_grouping[EFFECTIVE_DETECTOR_T0_KEY] = [3, 3]
+    shifted_datasets = build_grouped_time_domain_datasets(
+        _source_dataset(shifted_grouping), lifetime_corrected=False
+    )
+    shifted_fb = group_forward_backward(histograms, shifted_grouping)
+
+    assert shifted_fb.common_t0 == 3
+    np.testing.assert_allclose(shifted_datasets[0].asymmetry, shifted_fb.forward[0:7])
+    assert shifted_datasets[0].time[0] - baseline_datasets[0].time[0] == pytest.approx(-2 * 0.01)
 
 
 def test_build_grouped_time_domain_datasets_respects_time_window() -> None:

@@ -21,6 +21,8 @@ from asymmetry.core.fourier.fft import (
 from asymmetry.core.fourier.grouped import build_group_signal_dataset
 from asymmetry.core.fourier.maxent import maxent
 from asymmetry.core.fourier.window import apply_fft_filter, apply_window
+from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 
 
 def _dataset(n: int = 128) -> MuonDataset:
@@ -297,6 +299,62 @@ def test_build_group_signal_dataset_uses_common_run_t0_reference() -> None:
 
     assert early.time[0] == pytest.approx(late.time[0])
     assert int(np.argmax(early.asymmetry)) == int(np.argmax(late.asymmetry)) + 2
+
+
+def test_build_group_signal_dataset_follows_manual_t0_override_like_reduction() -> None:
+    """A Manual t0 override (D10) must move the grouped Fourier signal exactly
+    as `group_forward_backward` reduces it, and shift the dataset axis by the
+    same number of bins (plan phase 4)."""
+    counts_a = np.array([100.0, 120.0, 140.0, 130.0, 110.0, 95.0, 88.0], dtype=float)
+    counts_b = np.array([90.0, 95.0, 100.0, 98.0, 92.0, 88.0, 84.0], dtype=float)
+    base_grouping = {
+        "groups": {1: [1], 2: [2]},
+        "group_names": {1: "Forward", 2: "Backward"},
+        "forward_group": 1,
+        "backward_group": 2,
+        "first_good_bin": 0,
+        "last_good_bin": 6,
+        "deadtime_correction": False,
+    }
+    histograms = [
+        Histogram(counts=counts_a, bin_width=0.01, t0_bin=1),
+        Histogram(counts=counts_b, bin_width=0.01, t0_bin=1),
+    ]
+
+    def _run(grouping: dict) -> Run:
+        return Run(
+            run_number=51,
+            histograms=histograms,
+            grouping=grouping,
+            metadata={"run_number": 51},
+        )
+
+    baseline_run = _run(dict(base_grouping))
+    baseline = build_group_signal_dataset(
+        baseline_run, 1, center_signal=False, apply_lifetime_correction=False
+    )
+    baseline_fb = group_forward_backward(baseline_run.histograms, baseline_run.grouping)
+    assert np.allclose(baseline.asymmetry, baseline_fb.forward[0:7])
+
+    shifted_grouping = dict(base_grouping)
+    shifted_grouping[EFFECTIVE_DETECTOR_T0_KEY] = [3, 3]
+    shifted_run = _run(shifted_grouping)
+    shifted = build_group_signal_dataset(
+        shifted_run, 1, center_signal=False, apply_lifetime_correction=False
+    )
+    shifted_fb = group_forward_backward(shifted_run.histograms, shifted_run.grouping)
+
+    assert shifted_fb.common_t0 == 3
+    assert np.allclose(shifted.asymmetry, shifted_fb.forward[0:7])
+
+    # A uniform per-detector shift preserves every detector's alignment
+    # relative to the others, so the counts inside the (absolute-indexed) good
+    # window are unchanged — only the axis's t0 origin moves. Before phase 4
+    # rerouted `build_group_signal_dataset` through the resolver, the override
+    # had no effect at all here; now the axis moves with it, exactly like
+    # `group_forward_backward`'s.
+    bin_width = 0.01
+    assert shifted.time[0] - baseline.time[0] == pytest.approx(-2.0 * bin_width)
 
 
 def test_build_group_signal_dataset_applies_bunching_factor_to_group_counts() -> None:
