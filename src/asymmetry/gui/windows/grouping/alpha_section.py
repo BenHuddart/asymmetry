@@ -474,7 +474,7 @@ class AlphaSectionWidget(QWidget):
         method_row.addWidget(self._estimate_btn)
         root.addLayout(method_row)
 
-        # A single-line status ("α = 1.0349(15)  ·  Diamagnetic (TF)  ·  run 372"):
+        # A single-line status ("α = 1.0123(15)  ·  Diamagnetic (TF)  ·  run 12"):
         # ElidedLabel (not word-wrap) so a long method label or run title can
         # never set a minimum width that forces the corrections column into a
         # horizontal scrollbar — it elides with the full text as a tooltip

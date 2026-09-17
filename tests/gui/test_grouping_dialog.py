@@ -471,7 +471,7 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
     calibration_run = _fifteen_detector_dataset(
         run_number=373,
         metadata_extra={
-            "title": "pwdr, VETO on, ROTATE sample stage test long title",
+            "title": "Calibration sample, spin rotated, deliberately long title",
             "temperature": 100.0,
             "field": 200.0,
         },
@@ -495,7 +495,7 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
     found = alpha._run_combo.findData(373)
     assert found >= 0
     alpha._run_combo.setCurrentIndex(found)
-    alpha._result_label.setText("α = 1.0349(15)  ·  Diamagnetic (TF)  ·  run 372")
+    alpha._result_label.setText("α = 1.0123(15)  ·  Diamagnetic (TF)  ·  run 12")
     dialog._alpha_card.set_expanded(True)
     QApplication.processEvents()
 
@@ -527,7 +527,7 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
 
     alpha = dialog._alpha_section
     alpha._run_combo.setCurrentIndex(alpha._run_combo.findData(373))
-    alpha._result_label.setText("α = 1.0349(15)  ·  Diamagnetic (TF)  ·  run 372")
+    alpha._result_label.setText("α = 1.0123(15)  ·  Diamagnetic (TF)  ·  run 12")
     dialog._alpha_card.set_expanded(True)
 
     worst_case_line = (
