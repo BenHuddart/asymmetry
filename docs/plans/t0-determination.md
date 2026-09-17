@@ -339,3 +339,21 @@ the survey script on the local corpus, and the GPS project re-check
 - The GUI detection worker must not race the resolve worker; keying both on
   the run digest and reusing the cached resolve is the intended guard by
   construction.
+
+## Phase 7 (added 2026-09-17 after the GPS re-check) and a deferred item
+
+Auto-detect collapsed per-detector estimates into a median bin and compared
+it with the group-maximum header, shifting every detector by the difference
+(−10 bins on a staggered GPS run, good window inside the prompt peak). Phase
+7 makes Auto-detect per detector like `musrt0 -g`, reports Δ as the median
+per-detector shift with the spread of those shifts, recomputes the payload
+`t0_bin` and good window for the profile's own groups under every mode, adds
+good-window checks to the verdict (window at/before the detected t0; pulsed
+window inside the pulse), replaces the inline messages with a ⚠ button, and
+widens the grouping window so no horizontal scroll is needed.
+
+**Deferred (Ben, 2026-09-17):** the t_good offset is a per-run fact, not a
+profile setting; an edit in the grouping window is written onto each run in
+scope at Apply, and runs that follow a profile do not persist per-run
+payloads, so the edit is expected not to survive a project reopen. Needs a
+test and a decision (profile setting vs per-run only) in a separate PR.
