@@ -227,6 +227,15 @@ _GLE_BAND_TINT = {
     "green": "lightgreen",
 }
 
+#: Fit id of the run's own Single-tab fit (D5). Every other fit id stored here
+#: is a :class:`~asymmetry.core.representation.series.FitSeries` ``batch_id``.
+SINGLE_FIT_ID = "single"
+
+#: Colours for the *non-active* fits a run shows alongside the active series'
+#: (the Okabe-Ito trace ordering; ``PLOT_FIT`` is not a period base colour, so
+#: this is the panel's default overlay palette).
+_EXTRA_FIT_COLORS = period_overlay_palette(tokens.PLOT_FIT)
+
 # Neutral y-range for a stacked projection subplot whose asymmetry is entirely
 # non-finite (no data). Without it matplotlib keeps its default (0, 1) box,
 # which reads as "counts" rather than "asymmetry, no data".
@@ -271,6 +280,22 @@ _SIGNAL_FRAME_WEIGHTED_QUANTILE = 0.0025
 _SIGNAL_FRAME_WEIGHT_ERROR_FLOOR = 1e-6
 
 
+def _fits_button_qss(*, multiple: bool) -> str:
+    """QSS for the toolbar's Fits button — the nav treatment its neighbours wear.
+
+    A run carrying more than one fit takes the red FitSeries accent, so the
+    one state worth noticing (this run's curves come from several fits) reads
+    from the toolbar without opening the menu.
+    """
+    qss = build_nav_button_qss() + "QPushButton::menu-indicator { image: none; }"
+    if multiple:
+        qss += (
+            f"QPushButton {{ background-color: {tokens.ACCENT_RED_SOFT};"
+            f" color: {tokens.ACCENT_RED}; border: 1px solid {tokens.ACCENT_RED}; }}"
+        )
+    return qss
+
+
 @dataclass(frozen=True)
 class _DisplayEntry:
     """One dataset's drawable display arrays, materialised once per render.
@@ -301,6 +326,10 @@ class PlotPanel(QWidget):
 
     bunch_factor_changed = Signal(int)
     fit_range_changed = Signal(float, float)
+    #: A handle of the range guides moved while they were showing a window other
+    #: than the project's own (the Batch tab's series window, D8). The project
+    #: range is untouched; whoever set the guide owns the new window.
+    fit_range_guide_changed = Signal(float, float)
     view_limits_changed = Signal(float, float, float, float)
     polarization_axis_changed = Signal(str)
     #: Emitted with the projection label when a stacked subplot is clicked to
@@ -454,6 +483,10 @@ class PlotPanel(QWidget):
             # Fit-range interaction state.
             self._fit_x_min: float | None = None
             self._fit_x_max: float | None = None
+            # A window the guides show *instead of* the project range (D8): the
+            # Batch tab's series window while that tab is visible. ``None`` when
+            # the guides speak for the project range, as they always used to.
+            self._fit_guide_override: tuple[float, float] | None = None
             self._fit_span_artists: list[object] = []
             self._fit_min_handles: list[object] = []
             self._fit_max_handles: list[object] = []
@@ -499,6 +532,24 @@ class PlotPanel(QWidget):
             nav_row.addSpacing(4)
 
             _nav_qss = build_nav_button_qss()
+
+            # Which of the current run's fits are drawn, and which series is
+            # active. A menu rather than a row of named buttons: the fit names
+            # live in the popup, so the panel's minimum width never follows
+            # them.
+            self._fits_menu = QMenu(self)
+            self._fits_menu.aboutToShow.connect(self._rebuild_fits_menu)
+            self._fits_button = QPushButton("Fits")
+            self._fits_button.setToolTip("Show or hide this run's fits, and pick the active series")
+            # Sized for the widest text it ever carries ("Fits · NN"), never
+            # for a fit's name — that is what keeps the names out of the
+            # panel's minimum width.
+            self._fits_button.setFixedWidth(char_width(11))
+            self._fits_button.setMenu(self._fits_menu)
+            self._fits_button.setVisible(False)
+            self._fits_button.setStyleSheet(_fits_button_qss(multiple=False))
+            nav_row.addWidget(self._fits_button)
+
             self._pan_btn = QPushButton("Pan")
             self._pan_btn.setCheckable(True)
             self._pan_btn.setMaximumWidth(60)
@@ -568,17 +619,37 @@ class PlotPanel(QWidget):
             # Store fit curve data to persist across redraws
             self._fit_curve = None  # (t_fit, y_fit, label) for single fits
             self._fit_curve_run_number = None
-            self._fit_curves = {}  # {run_number: (t_fit, y_fit, label)} for global fits
-            self._fit_curves_by_key: dict[tuple[int, str | None], tuple] = {}
+            self._fit_curves = {}  # {run_number: (t_fit, y_fit, label)} — single fits only
+            # Keyed overlay store: ``(run, axis_key, fit_id)`` where ``fit_id`` is
+            # a FitSeries ``batch_id`` or the literal ``"single"`` (D5). A run can
+            # therefore hold one curve per series it belongs to plus its own
+            # single fit, and switching the active series switches which is drawn.
+            self._fit_curves_by_key: dict[tuple[int, str | None, str], tuple] = {}
 
             # Per-fit additive component curves for shading.
             self._fit_components = None  # list[(name, y_component)] for single fit
             self._fit_components_by_run = {}  # {run_number: list[(name, y_component)]}
-            self._fit_components_by_key: dict[tuple[int, str | None], list[tuple[str, object]]] = {}
+            self._fit_components_by_key: dict[
+                tuple[int, str | None, str], list[tuple[str, object]]
+            ] = {}
 
             # Per-run fit metadata for export headers.
             self._fit_metadata: dict[int, dict] = {}  # {run_number: {formula, chi2, ...}}
-            self._fit_metadata_by_key: dict[tuple[int, str | None], dict] = {}
+            self._fit_metadata_by_key: dict[tuple[int, str | None, str], dict] = {}
+
+            #: The active series' fit id (D5), drawn on every run it covers.
+            self._active_fit_id: str | None = None
+            #: Transient per-run override of which fit ids are drawn (the
+            #: toolbar's Fits menu). Session-only view state; absent means
+            #: "the default" (:meth:`shown_fit_ids`).
+            self._shown_fits_by_run: dict[int, list[str]] = {}
+            #: A series' own display name, keyed by fit id — the Fits menu's
+            #: label source (:meth:`set_fit_labels`/:meth:`fit_label`), kept
+            #: separate from whatever generic legend text ("Batch Fit", …) a
+            #: curve was drawn under. Session-only: the host re-supplies it
+            #: from ``FitSeries`` on every representation refresh, including
+            #: after a project restore.
+            self._fit_label_by_id: dict[str, str] = {}
 
             # Interactive plot labels (text annotations).
             self._default_annotations: list[dict] = []
@@ -943,6 +1014,119 @@ class PlotPanel(QWidget):
         else:
             self._grouping_hint_label.clear()
             bar.hide()
+
+    def _fits_menu_run_number(self) -> int | None:
+        """The run the Fits button speaks for, or ``None`` (the button is off).
+
+        Only a genuine single-run view has one: a multi-dataset overlay shows
+        several runs at once, so no one run's fit set applies.
+        """
+        if self._current_dataset is None or len(self._current_datasets) > 1:
+            return None
+        try:
+            return int(self._current_dataset.run_number)
+        except (TypeError, ValueError):
+            return None
+
+    def _fit_ids_recorded_for_run(self, run_number: int) -> list[str]:
+        """Fit ids stored for *run_number*, in the order their curves were set."""
+        ordered: list[str] = []
+        for key_run, _axis, fit_id in self._fit_curves_by_key:
+            if key_run == run_number and fit_id not in ordered:
+                ordered.append(fit_id)
+        return ordered
+
+    def _ordered_fit_ids_for_run(self, run_number: int) -> list[str]:
+        """*run_number*'s fit ids as the Fits menu lists them.
+
+        The active series first, every other series in recording order, the
+        run's own single fit last.
+        """
+        stored = self._fit_ids_recorded_for_run(run_number)
+        ordered = [fid for fid in stored if fid == self._active_fit_id]
+        ordered += [fid for fid in stored if fid not in ordered and fid != SINGLE_FIT_ID]
+        if SINGLE_FIT_ID in stored:
+            ordered.append(SINGLE_FIT_ID)
+        return ordered
+
+    def fit_label(self, fit_id: str) -> str:
+        """The menu/legend name for *fit_id*: "Single fit", a series' own name, or itself."""
+        if fit_id == SINGLE_FIT_ID:
+            return "Single fit"
+        return self._fit_label_by_id.get(fit_id, fit_id)
+
+    def set_fit_labels(self, labels: dict[str, str]) -> None:
+        """Record display names for fit ids, read back by :meth:`fit_label`.
+
+        Pushed by the host from ``FitSeries``' own name — never re-derived
+        here — whenever it refreshes the representation's series (recording,
+        project restore, a rename). Does not draw.
+        """
+        if not labels:
+            return
+        self._fit_label_by_id.update({str(k): str(v) for k, v in labels.items()})
+        self._refresh_fits_button()
+
+    def _refresh_fits_button(self) -> None:
+        """Retitle/show the toolbar's Fits button for the run on screen.
+
+        Qt bookkeeping only, never a redraw: called on a run switch, on
+        :meth:`set_active_fit_id`/:meth:`set_shown_fits`/
+        :meth:`clear_shown_fits`/:meth:`set_fit_labels`, and whenever a curve
+        is added or removed for the run.
+        """
+        if not self._has_mpl:
+            return
+        run_number = self._fits_menu_run_number()
+        stored = [] if run_number is None else self._fit_ids_recorded_for_run(run_number)
+        multiple = len(stored) > 1
+        self._fits_button.setText(f"Fits · {len(stored)}" if multiple else "Fits")
+        # Hidden, not disabled, while the run holds no fit: the button must not
+        # widen a panel that has nothing for it to show (a 13-inch display has
+        # no width to spare on the plot row).
+        self._fits_button.setVisible(bool(stored))
+        self._fits_button.setStyleSheet(_fits_button_qss(multiple=multiple))
+
+    def _rebuild_fits_menu(self) -> None:
+        """Fill the Fits popup for the run on screen, on ``aboutToShow``.
+
+        One checkable entry per fit stored for the run: ticked = drawn, ``●``
+        = the active series. The menu only shows and hides; which series is
+        active is decided on the Batch tab or the Parameters chips (D5).
+        """
+        menu = self._fits_menu
+        menu.clear()
+        run_number = self._fits_menu_run_number()
+        if run_number is None:
+            return
+        header = menu.addAction(f"Fits on run {run_number}")
+        header.setEnabled(False)
+        shown = set(self.shown_fit_ids(run_number))
+        fit_ids = self._ordered_fit_ids_for_run(run_number)
+        for fit_id in fit_ids:
+            label = self.fit_label(fit_id)
+            action = menu.addAction(f"● {label}" if fit_id == self._active_fit_id else label)
+            action.setCheckable(True)
+            action.setChecked(fit_id in shown)
+            action.triggered.connect(
+                lambda _checked=False, fid=fit_id: self._on_fit_menu_toggled(fid)
+            )
+        menu.addSeparator()
+        footer = menu.addAction("Tick = show · ● = active series")
+        footer.setEnabled(False)
+
+    def _on_fit_menu_toggled(self, fit_id: str) -> None:
+        """Toggle *fit_id* in the current run's shown set (never removes others)."""
+        run_number = self._fits_menu_run_number()
+        if run_number is None:
+            return
+        shown = set(self.shown_fit_ids(run_number))
+        if fit_id in shown:
+            shown.discard(fit_id)
+        else:
+            shown.add(fit_id)
+        ordered = [fid for fid in self._fit_ids_recorded_for_run(run_number) if fid in shown]
+        self.set_shown_fits(run_number, ordered)
 
     def _create_plot_footer(self) -> QWidget:
         """Return the control bar shown below the canvas."""
@@ -3161,12 +3345,22 @@ class PlotPanel(QWidget):
         self._update_export_enabled()
         self._canvas.draw_idle()
 
-    def get_fit_dataset(self, dataset: MuonDataset | None) -> MuonDataset | None:
-        """Return *dataset* restricted to the currently selected fit range."""
+    def get_fit_dataset(
+        self,
+        dataset: MuonDataset | None,
+        fit_range: tuple[float | None, float | None] | None = None,
+    ) -> MuonDataset | None:
+        """Return *dataset* restricted to a fit range.
+
+        *fit_range* is the window to crop to; without one the plot's own
+        (project-wide) fit range applies. A batch run passes its series' recipe
+        range (D8), which is the series' own property and independent of what
+        the plot is showing.
+        """
         if dataset is None:
             return None
 
-        t_min, t_max = self.get_fit_range()
+        t_min, t_max = fit_range if fit_range is not None else self.get_fit_range()
         if t_min is None or t_max is None:
             return dataset
         crop = dataset.time_range(t_min, t_max)
@@ -3398,15 +3592,22 @@ class PlotPanel(QWidget):
         return None
 
     @staticmethod
-    def _encode_fit_storage_key(run_number: int, axis_key: str | None) -> str:
-        """Encode ``(run_number, axis_key)`` to a serialisable key string."""
-        return f"{int(run_number)}|{axis_key or ''}"
+    def _encode_fit_storage_key(run_number: int, axis_key: str | None, fit_id: str) -> str:
+        """Encode ``(run_number, axis_key, fit_id)`` to a serialisable key string."""
+        return f"{int(run_number)}|{axis_key or ''}|{fit_id}"
 
-    def _decode_fit_storage_key(self, value: object) -> tuple[int, str | None] | None:
-        """Decode serialised fit key values."""
+    def _decode_fit_storage_key(self, value: object) -> tuple[int, str | None, str] | None:
+        """Decode a serialised fit key, tolerating the pre-series two-part form.
+
+        A ``plot_state`` written before overlays were keyed by fit id spells the
+        key ``"<run>|<axis>"``; those curves are the run's one stored fit, which
+        is exactly what ``"single"`` now means.
+        """
         if not isinstance(value, str) or "|" not in value:
             return None
-        run_token, axis_token = value.split("|", 1)
+        parts = value.split("|", 2)
+        run_token, axis_token = parts[0], parts[1]
+        fit_id = parts[2] if len(parts) > 2 and parts[2] else SINGLE_FIT_ID
         try:
             run_number = int(run_token)
         except (TypeError, ValueError):
@@ -3414,15 +3615,16 @@ class PlotPanel(QWidget):
         axis_key = self._axis_canonical_key(axis_token) if axis_token else None
         if axis_key == "ALL":
             axis_key = None
-        return run_number, axis_key
+        return run_number, axis_key, fit_id
 
     def _fit_storage_key_for_dataset(
         self,
         dataset: MuonDataset | None,
         *,
         axis_override: str | None = None,
-    ) -> tuple[int, str | None] | None:
-        """Return axis-aware fit storage key for *dataset*."""
+        fit_id: str = SINGLE_FIT_ID,
+    ) -> tuple[int, str | None, str] | None:
+        """Return axis-aware fit storage key for *dataset* under *fit_id*."""
         if dataset is None:
             return None
         try:
@@ -3430,7 +3632,7 @@ class PlotPanel(QWidget):
         except (TypeError, ValueError):
             return None
         axis_key = self._axis_key_for_dataset(dataset, axis_override=axis_override)
-        return run_number, axis_key
+        return run_number, axis_key, fit_id
 
     @staticmethod
     def _is_raw_counts_dataset(dataset: MuonDataset | None) -> bool:
@@ -3453,33 +3655,134 @@ class PlotPanel(QWidget):
             key += ":raw"
         return key
 
+    def _stored_fit_ids_for_run(self, run_number: int) -> set[str]:
+        """Fit ids this panel holds a curve for on *run_number*."""
+        return {key[2] for key in self._fit_curves_by_key if key[0] == int(run_number)}
+
+    def shown_fit_ids(self, run_number: int) -> list[str]:
+        """Ordered fit ids drawn on *run_number*, active series first (D5).
+
+        Defaults to the active series when this run is one of its members (i.e.
+        the panel holds a curve for it under that id), and to the run's own
+        single fit otherwise. :meth:`set_shown_fits` overrides the default for
+        one run; the override is transient view state, not project state.
+        """
+        run_number = int(run_number)
+        override = self._shown_fits_by_run.get(run_number)
+        if override is not None:
+            ordered = [fid for fid in override if fid == self._active_fit_id]
+            return ordered + [fid for fid in override if fid != self._active_fit_id]
+        if self._active_fit_id is not None and self._active_fit_id in self._stored_fit_ids_for_run(
+            run_number
+        ):
+            return [self._active_fit_id]
+        return [SINGLE_FIT_ID]
+
+    def set_shown_fits(self, run_number: int, fit_ids: list[str]) -> None:
+        """Override which fits are drawn on *run_number* (transient view state).
+
+        Pass an empty list to draw none; the default is restored by
+        :meth:`clear_shown_fits`.
+        """
+        self._shown_fits_by_run[int(run_number)] = [str(fid) for fid in fit_ids]
+        if self._has_mpl:
+            self._redraw_current_view()
+        self._refresh_fits_button()
+
+    def clear_shown_fits(self, run_number: int) -> None:
+        """Drop *run_number*'s override so :meth:`shown_fit_ids` defaults again."""
+        self._shown_fits_by_run.pop(int(run_number), None)
+        self._refresh_fits_button()
+
+    def set_active_fit_id(self, fit_id: str | None) -> None:
+        """Make *fit_id* the active series' overlay, redrawing the current view.
+
+        The active fit is drawn in the fit colour on every run it covers; every
+        other shown fit takes a trace colour and a legend entry.
+        """
+        fit_id = None if fit_id is None else str(fit_id)
+        if fit_id == self._active_fit_id:
+            return
+        self._active_fit_id = fit_id
+        if self._has_mpl:
+            self._redraw_current_view()
+        self._refresh_fits_button()
+
+    def active_fit_id(self) -> str | None:
+        """Return the active series' fit id, or ``None``."""
+        return self._active_fit_id
+
+    def has_fits_for_series(self, fit_id: str) -> bool:
+        """Return ``True`` when any run holds a stored curve under *fit_id*."""
+        return any(key[2] == str(fit_id) for key in self._fit_curves_by_key)
+
+    def clear_fits_for_series(self, fit_id: str) -> int:
+        """Drop every run's curve, components and metadata stored under *fit_id*.
+
+        The overlay half of deleting a series (D6): other series' overlays and
+        the runs' own single fits are untouched.
+        """
+        fit_id = str(fit_id)
+        removed = len([key for key in self._fit_curves_by_key if key[2] == fit_id])
+        for store in (
+            self._fit_curves_by_key,
+            self._fit_components_by_key,
+            self._fit_metadata_by_key,
+        ):
+            for key in [k for k in store if k[2] == fit_id]:
+                store.pop(key, None)
+        for run_number, shown in list(self._shown_fits_by_run.items()):
+            self._shown_fits_by_run[run_number] = [fid for fid in shown if fid != fit_id]
+        if self._active_fit_id == fit_id:
+            self._active_fit_id = None
+        self._fit_label_by_id.pop(fit_id, None)
+        if removed and self._has_mpl:
+            self._update_export_enabled()
+            self._redraw_current_view()
+        if removed:
+            self._refresh_fits_button()
+        return removed
+
     def _fit_curve_for_dataset(
         self,
         dataset: MuonDataset | None,
         *,
         axis_override: str | None = None,
+        fit_id: str | None = None,
     ) -> tuple | None:
-        """Return best-matching fit curve payload for *dataset*."""
+        """Return best-matching fit curve payload for *dataset*.
+
+        *fit_id* defaults to the dataset run's primary shown fit (the active
+        series' curve when it covers the run, else the run's single fit).
+        """
         if self._is_raw_counts_dataset(dataset):
             return None
         storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
         if storage_key is not None:
-            fit_data = self._fit_curves_by_key.get(storage_key)
+            run_number, axis_key, _ = storage_key
+            if fit_id is None:
+                shown = self.shown_fit_ids(run_number)
+                fit_id = shown[0] if shown else SINGLE_FIT_ID
+            fit_data = self._fit_curves_by_key.get((run_number, axis_key, fit_id))
             if fit_data is not None:
                 return fit_data
 
-            run_number, axis_key = storage_key
             if axis_key is not None:
                 has_axis_specific_fit = any(
-                    key_run == run_number and key_axis is not None
-                    for key_run, key_axis in self._fit_curves_by_key
+                    key_run == run_number and key_axis is not None and key_fit == fit_id
+                    for key_run, key_axis, key_fit in self._fit_curves_by_key
                 )
                 if has_axis_specific_fit:
                     return None
 
-                fit_data = self._fit_curves_by_key.get((run_number, None))
+                fit_data = self._fit_curves_by_key.get((run_number, None, fit_id))
                 if fit_data is not None:
                     return fit_data
+
+            # Legacy per-run stores mirror the single fit only, so they can only
+            # answer for it.
+            if fit_id != SINGLE_FIT_ID:
+                return None
 
             fit_data = self._fit_curves.get(run_number)
             if fit_data is not None:
@@ -3490,33 +3793,63 @@ class PlotPanel(QWidget):
 
         return None
 
+    def _shown_fit_curves_for_dataset(
+        self,
+        dataset: MuonDataset | None,
+        *,
+        axis_override: str | None = None,
+    ) -> list[tuple[str, tuple]]:
+        """Return ``(fit_id, curve)`` for every fit shown on *dataset*'s run.
+
+        The active series' curve comes first; the caller draws it in the fit
+        colour and the rest in trace colours.
+        """
+        storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
+        if storage_key is None:
+            return []
+        curves: list[tuple[str, tuple]] = []
+        for fit_id in self.shown_fit_ids(storage_key[0]):
+            curve = self._fit_curve_for_dataset(dataset, axis_override=axis_override, fit_id=fit_id)
+            if curve is not None:
+                curves.append((fit_id, curve))
+        return curves
+
     def _fit_components_for_dataset(
         self,
         dataset: MuonDataset | None,
         *,
         axis_override: str | None = None,
     ) -> list[tuple[str, object]]:
-        """Return best-matching additive component curves for *dataset*."""
+        """Return best-matching additive component curves for *dataset*.
+
+        Shading follows the run's primary shown fit — only one fit's components
+        can be legible at a time.
+        """
         if self._is_raw_counts_dataset(dataset):
             return []
         storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
         if storage_key is not None:
-            components = self._fit_components_by_key.get(storage_key)
+            run_number, axis_key, _ = storage_key
+            shown = self.shown_fit_ids(run_number)
+            fit_id = shown[0] if shown else SINGLE_FIT_ID
+            components = self._fit_components_by_key.get((run_number, axis_key, fit_id))
             if components:
                 return list(components)
 
-            run_number, axis_key = storage_key
             if axis_key is not None:
                 has_axis_specific_components = any(
-                    key_run == run_number and key_axis is not None
-                    for key_run, key_axis in self._fit_components_by_key
+                    key_run == run_number and key_axis is not None and key_fit == fit_id
+                    for key_run, key_axis, key_fit in self._fit_components_by_key
                 )
                 if has_axis_specific_components:
                     return []
 
-                components = self._fit_components_by_key.get((run_number, None))
+                components = self._fit_components_by_key.get((run_number, None, fit_id))
                 if components:
                     return list(components)
+
+            if fit_id != SINGLE_FIT_ID:
+                return []
 
             components = self._fit_components_by_run.get(run_number)
             if components:
@@ -3533,27 +3866,32 @@ class PlotPanel(QWidget):
         *,
         axis_override: str | None = None,
     ) -> dict:
-        """Return best-matching fit metadata for *dataset*."""
+        """Return best-matching fit metadata for *dataset*'s primary shown fit."""
         storage_key = self._fit_storage_key_for_dataset(dataset, axis_override=axis_override)
         if storage_key is None:
             return {}
 
-        meta = self._fit_metadata_by_key.get(storage_key)
+        run_number, axis_key, _ = storage_key
+        shown = self.shown_fit_ids(run_number)
+        fit_id = shown[0] if shown else SINGLE_FIT_ID
+        meta = self._fit_metadata_by_key.get((run_number, axis_key, fit_id))
         if isinstance(meta, dict):
             return meta
 
-        run_number, axis_key = storage_key
         if axis_key is not None:
             has_axis_specific_meta = any(
-                key_run == run_number and key_axis is not None
-                for key_run, key_axis in self._fit_metadata_by_key
+                key_run == run_number and key_axis is not None and key_fit == fit_id
+                for key_run, key_axis, key_fit in self._fit_metadata_by_key
             )
             if has_axis_specific_meta:
                 return {}
 
-            meta = self._fit_metadata_by_key.get((run_number, None))
+            meta = self._fit_metadata_by_key.get((run_number, None, fit_id))
             if isinstance(meta, dict):
                 return meta
+
+        if fit_id != SINGLE_FIT_ID:
+            return {}
 
         meta = self._fit_metadata.get(run_number)
         return meta if isinstance(meta, dict) else {}
@@ -3991,17 +4329,25 @@ class PlotPanel(QWidget):
                 label=self._dataset_label_for(dataset),
             )
 
-            fit_to_plot = self._fit_curve_for_dataset(dataset, axis_override=axis_key)
-            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot, entry.analysis)
-            if fit_to_plot is not None:
+            for order, (_fit_id, curve) in enumerate(
+                self._shown_fit_curves_for_dataset(dataset, axis_override=axis_key)
+            ):
+                fit_to_plot = rrf_display_fit_curve(self, curve, entry.analysis)
+                if fit_to_plot is None:
+                    continue
                 t_fit, y_fit, fit_label = fit_to_plot
-                fit_color = self._fit_line_color_for_dataset(
-                    dataset,
-                    default_color=color,
-                    variant_index=i,
-                    fit_label=fit_label,
-                )
-                ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label="_nolegend_")
+                if order == 0:
+                    fit_color = self._fit_line_color_for_dataset(
+                        dataset,
+                        default_color=color,
+                        variant_index=i,
+                        fit_label=fit_label,
+                    )
+                    fit_legend = "_nolegend_"
+                else:
+                    fit_color = _EXTRA_FIT_COLORS[order % len(_EXTRA_FIT_COLORS)]
+                    fit_legend = fit_label
+                ax.plot(t_fit, y_fit, "-", color=fit_color, linewidth=2, label=fit_legend)
 
         _, y_label = self._axis_labels_for_dataset(
             entries[0].dataset if entries else None, axis_key
@@ -4061,6 +4407,7 @@ class PlotPanel(QWidget):
         self._current_datasets = list(self._vector_subplot_datasets.get(order[0], []))
         self._current_dataset = self._current_datasets[-1] if self._current_datasets else None
         self._update_plot_header()
+        self._refresh_fits_button()
 
         # Materialise every subplot's display arrays first: the shared x window
         # is resolved from all of them together and must be known before any
@@ -4565,6 +4912,54 @@ class PlotPanel(QWidget):
         """Set fit range limits and refresh visual handles."""
         self._set_fit_range(x_min, x_max, emit_signal=True, redraw=True)
 
+    def set_fit_range_guide(self, x_min: float | None, x_max: float | None) -> None:
+        """Draw (and drag) the range guides over a window other than the project's.
+
+        The Batch tab's series window while that tab is visible (D8); either
+        bound left ``None`` falls back to the project range's, and two ``None``s
+        hand the guides back to the project range. The stored range — what a
+        single fit crops to — never moves.
+        """
+        if not self._has_mpl:
+            return
+        if x_min is None and x_max is None:
+            override = None
+        else:
+            low = self._fit_x_min if x_min is None else float(x_min)
+            high = self._fit_x_max if x_max is None else float(x_max)
+            override = None if low is None or high is None else (min(low, high), max(low, high))
+        if override == self._fit_guide_override:
+            return
+        self._fit_guide_override = override
+        self._draw_fit_range_artists()
+        self._canvas.draw_idle()
+
+    def _fit_guide_window(self) -> tuple[float | None, float | None]:
+        """The window the range guides currently describe (override, else project)."""
+        if self._fit_guide_override is not None:
+            return self._fit_guide_override
+        return self._fit_x_min, self._fit_x_max
+
+    def _apply_fit_handle(self, handle: str, value: float) -> None:
+        """Move one range-guide handle to *value*.
+
+        With a guide override in place the drag edits *that* window and reports
+        it (D8) — the guides and the gesture stay one thing — instead of moving
+        the project range the guides are not showing.
+        """
+        low, high = self._fit_guide_window()
+        if self._fit_guide_override is None:
+            if handle == "min":
+                self._set_fit_range(value, high, emit_signal=True, redraw=True)
+            else:
+                self._set_fit_range(low, value, emit_signal=True, redraw=True)
+            return
+        low, high = (value, high) if handle == "min" else (low, value)
+        self._fit_guide_override = (min(low, high), max(low, high))
+        self._draw_fit_range_artists()
+        self._canvas.draw_idle()
+        self.fit_range_guide_changed.emit(*self._fit_guide_override)
+
     def _waterfall_active_for(self, datasets: list[MuonDataset]) -> bool:
         """Return True when waterfall stacking applies to this overlay draw.
 
@@ -4665,6 +5060,7 @@ class PlotPanel(QWidget):
         self._current_datasets = list(datasets)
         self._update_plot_header()
         self._set_frequency_reference_from_dataset(datasets[0])
+        self._refresh_fits_button()
         self._ax.clear()
         style_axes(self._ax)
         draw_zero_line(self._ax)
@@ -4814,21 +5210,29 @@ class PlotPanel(QWidget):
                 if waterfall_delta is not None:
                     draw_zero_line(self._ax, offset, linewidth=0.6, alpha=0.6, zorder=1.4)
 
-            # Overlay fit curve in same colour; excluded from legend by "_" prefix.
-            fit_to_plot = self._fit_curve_for_dataset(dataset)
-            fit_to_plot = rrf_display_fit_curve(self, fit_to_plot, analysis_dataset)
-            if fit_to_plot is not None:
+            # Overlay each shown fit: the active series' in the dataset's own
+            # colour (excluded from the legend by "_nolegend_"), any further
+            # shown fit in a trace colour with its own legend entry.
+            for order, (_fit_id, curve) in enumerate(self._shown_fit_curves_for_dataset(dataset)):
+                fit_to_plot = rrf_display_fit_curve(self, curve, analysis_dataset)
+                if fit_to_plot is None:
+                    continue
                 t_fit, y_fit, fit_label = fit_to_plot
-                fit_color = self._fit_line_color_for_dataset(
-                    dataset,
-                    default_color=color,
-                    variant_index=i,
-                    fit_label=fit_label,
-                )
+                if order == 0:
+                    fit_color = self._fit_line_color_for_dataset(
+                        dataset,
+                        default_color=color,
+                        variant_index=i,
+                        fit_label=fit_label,
+                    )
+                    fit_legend = "_nolegend_"
+                else:
+                    fit_color = _EXTRA_FIT_COLORS[order % len(_EXTRA_FIT_COLORS)]
+                    fit_legend = fit_label
                 y_fit_display = self._convert_frequency_values_for_display(y_fit, dataset)
                 y_fit_shifted = y_fit_display + offset if offset else y_fit_display
                 self._ax.plot(
-                    t_fit, y_fit_shifted, "-", color=fit_color, linewidth=2, label="_nolegend_"
+                    t_fit, y_fit_shifted, "-", color=fit_color, linewidth=2, label=fit_legend
                 )
 
             if np.any(finite_mask):
@@ -5009,6 +5413,7 @@ class PlotPanel(QWidget):
         self._current_datasets = [dataset]
         self._update_plot_header()
         self._set_frequency_reference_from_dataset(dataset)
+        self._refresh_fits_button()
 
         analysis_dataset = rrf_display_dataset(self, self.get_analysis_dataset(dataset))
         if not self._has_plottable_samples(analysis_dataset):
@@ -5099,17 +5504,22 @@ class PlotPanel(QWidget):
         self._apply_axis_labels(x_label, y_label)
         self._set_alpha_label(self._single_dataset_alpha_label_text(dataset))
 
-        # Re-plot fit curve if it exists (check both single and global fits)
-        fit_to_plot = self._fit_curve_for_dataset(dataset)
-        fit_to_plot = rrf_display_fit_curve(self, fit_to_plot, analysis_dataset)
-
-        if fit_to_plot is not None:
+        # Re-plot every fit shown on this run: the active series' (or the run's
+        # single fit) in the fit colour, then any other shown fit in a trace
+        # colour. Each carries its own legend entry here, where there is room.
+        for order, (_fit_id, curve) in enumerate(self._shown_fit_curves_for_dataset(dataset)):
+            fit_to_plot = rrf_display_fit_curve(self, curve, analysis_dataset)
+            if fit_to_plot is None:
+                continue
             t_fit, y_fit, fit_label = fit_to_plot
-            fit_color = self._fit_line_color_for_dataset(
-                dataset,
-                default_color=tokens.PLOT_FIT,
-                fit_label=fit_label,
-            )
+            if order == 0:
+                fit_color = self._fit_line_color_for_dataset(
+                    dataset,
+                    default_color=tokens.PLOT_FIT,
+                    fit_label=fit_label,
+                )
+            else:
+                fit_color = _EXTRA_FIT_COLORS[order % len(_EXTRA_FIT_COLORS)]
             self._ax.plot(
                 t_fit,
                 # Fit curves are stored on the canonical footing; a unit-area
@@ -6411,12 +6821,13 @@ class PlotPanel(QWidget):
         drawing/hit-testing exactly as the moments overlay does in
         :meth:`_moments_window_display`.
         """
-        if self._fit_x_min is None or self._fit_x_max is None:
+        low, high = self._fit_guide_window()
+        if low is None or high is None:
             return None
         unit = self._current_frequency_x_unit
         mode = self._frequency_axis_mode
-        lo = self._convert_canonical_mhz_to_display_limit(self._fit_x_min, unit=unit, mode=mode)
-        hi = self._convert_canonical_mhz_to_display_limit(self._fit_x_max, unit=unit, mode=mode)
+        lo = self._convert_canonical_mhz_to_display_limit(low, unit=unit, mode=mode)
+        hi = self._convert_canonical_mhz_to_display_limit(high, unit=unit, mode=mode)
         return lo, hi
 
     def _draw_fit_range_artists(self) -> None:
@@ -6428,7 +6839,8 @@ class PlotPanel(QWidget):
         self._draw_moments_artists()
         self._clear_fit_range_artists()
 
-        if self._fit_x_min is None or self._fit_x_max is None:
+        guide_min, guide_max = self._fit_guide_window()
+        if guide_min is None or guide_max is None:
             return
 
         # Frequency panels draw a single span on the main axis, converting the
@@ -6448,9 +6860,7 @@ class PlotPanel(QWidget):
             return
 
         for axis in axes:
-            span, left_line, right_line = draw_fit_range_span(
-                axis, self._fit_x_min, self._fit_x_max
-            )
+            span, left_line, right_line = draw_fit_range_span(axis, guide_min, guide_max)
             self._fit_span_artists.append(span)
             self._fit_min_handles.append(left_line)
             self._fit_max_handles.append(right_line)
@@ -6466,9 +6876,10 @@ class PlotPanel(QWidget):
         (checked next in ``_on_canvas_button_press``) rather than steal its
         clicks.
         """
+        guide_min, guide_max = self._fit_guide_window()
         if (
-            self._fit_x_min is None
-            or self._fit_x_max is None
+            guide_min is None
+            or guide_max is None
             or event.inaxes is None
             or event.x is None
             or event.y is None
@@ -6498,7 +6909,7 @@ class PlotPanel(QWidget):
 
         return nearest_handle(
             hit_axis,
-            [(self._fit_x_min, "min"), (self._fit_x_max, "max")],
+            [(guide_min, "min"), (guide_max, "max")],
             event.x,
             tolerance_px=8.0,
         )
@@ -6618,10 +7029,7 @@ class PlotPanel(QWidget):
                     unit=self._current_frequency_x_unit,
                     mode=self._frequency_axis_mode,
                 )
-            if self._active_fit_handle == "min":
-                self._set_fit_range(new_value, self._fit_x_max, emit_signal=True, redraw=True)
-            else:
-                self._set_fit_range(self._fit_x_min, new_value, emit_signal=True, redraw=True)
+            self._apply_fit_handle(self._active_fit_handle, new_value)
 
         if self._active_moments_handle is not None and event.inaxes is self._ax:
             self._drag_started = True
@@ -6794,10 +7202,11 @@ class PlotPanel(QWidget):
         """
         if self._is_frequency_plot_panel():
             return
-        if self._fit_x_min is None or self._fit_x_max is None:
+        guide_min, guide_max = self._fit_guide_window()
+        if guide_min is None or guide_max is None:
             return
 
-        current = self._fit_x_min if handle == "min" else self._fit_x_max
+        current = guide_min if handle == "min" else guide_max
         prompt = "Fit x-value (µs):"
         value, ok = QInputDialog.getDouble(
             self,
@@ -6811,10 +7220,7 @@ class PlotPanel(QWidget):
         if not ok:
             return
 
-        if handle == "min":
-            self._set_fit_range(value, self._fit_x_max, emit_signal=True, redraw=True)
-        else:
-            self._set_fit_range(self._fit_x_min, value, emit_signal=True, redraw=True)
+        self._apply_fit_handle(handle, float(value))
 
     def plot_fit(
         self,
@@ -6825,6 +7231,7 @@ class PlotPanel(QWidget):
         fit_result: object | None = None,
         fit_function: str | None = None,
         run_number: int | None = None,
+        fit_id: str = SINGLE_FIT_ID,
     ) -> None:
         """Overlay a fit curve on the current plot.
 
@@ -6846,6 +7253,10 @@ class PlotPanel(QWidget):
             the fitted (selected) run, so the caller passes the fitted run
             explicitly to keep the overlay key and the persisted single-fit slot
             on the same run. Defaults to inferring it from ``_current_dataset``.
+        fit_id : str, optional
+            Which fit this curve *is*: a ``FitSeries.batch_id`` or the default
+            ``"single"`` (D5). A run keeps one curve per fit id, so a series
+            overlay never displaces the run's own single fit.
         """
         if not self._has_mpl:
             return
@@ -6891,21 +7302,28 @@ class PlotPanel(QWidget):
         self._fit_curve_run_number = run_number
 
         if run_number is not None:
-            self._fit_curves[run_number] = (t_fit, y_fit, label)
-            self._fit_curves_by_key[(run_number, axis_key)] = (t_fit, y_fit, label)
-            self._fit_components_by_run[run_number] = list(component_curves or [])
-            self._fit_components_by_key[(run_number, axis_key)] = list(component_curves or [])
+            # The legacy per-run stores mirror the single fit only; a series'
+            # curve lives solely under its own fit id so it cannot displace it.
+            if fit_id == SINGLE_FIT_ID:
+                self._fit_curves[run_number] = (t_fit, y_fit, label)
+                self._fit_components_by_run[run_number] = list(component_curves or [])
+            self._fit_curves_by_key[(run_number, axis_key, fit_id)] = (t_fit, y_fit, label)
+            self._fit_components_by_key[(run_number, axis_key, fit_id)] = list(
+                component_curves or []
+            )
             if fit_result is not None or fit_function:
                 self._store_fit_metadata(
                     run_number,
                     fit_result,
                     fit_function=fit_function,
                     axis_key=axis_key,
+                    fit_id=fit_id,
                 )
 
         self._fit_components = list(component_curves or [])
 
         self._update_export_enabled()
+        self._refresh_fits_button()
 
         if self._subplot_axes_by_polarization and self._vector_subplot_datasets:
             # Stacked multi-subplot view: re-render the subplots so the fit
@@ -6919,7 +7337,13 @@ class PlotPanel(QWidget):
             style_legend(self._ax.legend())
             self._canvas.draw()
 
-    def set_global_fits(self, fit_curves_dict: dict) -> None:
+    def set_global_fits(
+        self,
+        fit_curves_dict: dict,
+        *,
+        fit_id: str = SINGLE_FIT_ID,
+        fit_labels: dict[str, str] | None = None,
+    ) -> None:
         """Set fit curves from global fitting.
 
         Parameters
@@ -6929,9 +7353,19 @@ class PlotPanel(QWidget):
             (t_fit, y_fit, label, component_curves, fit_result), or
             (t_fit, y_fit, label, component_curves, fit_result, fit_function), or
             (t_fit, y_fit, label, component_curves, fit_result, fit_function, axis_key).
+        fit_id : str, optional
+            The fit these curves belong to: a ``FitSeries.batch_id`` for a
+            recorded series, or ``"single"`` for the transient overlays (grouped
+            previews, count fits) that are not series work.
+        fit_labels : dict, optional
+            ``{fit_id: display name}`` for the toolbar's Fits menu
+            (:meth:`set_fit_labels`) — the series' own name, not the generic
+            per-curve legend text a caller may pass as *label*.
         """
         if not self._has_mpl:
             return
+        if fit_labels:
+            self._fit_label_by_id.update({str(k): str(v) for k, v in fit_labels.items()})
 
         # Update fit curves, preserving results from other groups
         for run_number, payload in fit_curves_dict.items():
@@ -6958,16 +7392,18 @@ class PlotPanel(QWidget):
                 run_key = int(run_number)
             except (TypeError, ValueError):
                 continue
-            self._fit_curves[run_key] = (t_fit, y_fit, label)
-            self._fit_curves_by_key[(run_key, axis_key)] = (t_fit, y_fit, label)
-            self._fit_components_by_run[run_key] = list(component_curves or [])
-            self._fit_components_by_key[(run_key, axis_key)] = list(component_curves or [])
+            if fit_id == SINGLE_FIT_ID:
+                self._fit_curves[run_key] = (t_fit, y_fit, label)
+                self._fit_components_by_run[run_key] = list(component_curves or [])
+            self._fit_curves_by_key[(run_key, axis_key, fit_id)] = (t_fit, y_fit, label)
+            self._fit_components_by_key[(run_key, axis_key, fit_id)] = list(component_curves or [])
             if fit_result is not None or fit_function:
                 self._store_fit_metadata(
                     run_key,
                     fit_result,
                     fit_function=fit_function,
                     axis_key=axis_key,
+                    fit_id=fit_id,
                 )
         # Clear single fit curve
         self._fit_curve = None
@@ -6975,6 +7411,7 @@ class PlotPanel(QWidget):
         self._fit_components = None
 
         self._update_export_enabled()
+        self._refresh_fits_button()
 
         # Redraw current view while preserving multi-selection overlays.
         self._redraw_current_view()
@@ -7045,6 +7482,8 @@ class PlotPanel(QWidget):
                 self._frequency_reference_mhz = None
                 self._apply_axis_labels(*self._default_axis_labels())
             self._update_export_enabled()
+            self._fit_label_by_id = {}
+            self._refresh_fits_button()
 
     def resizeEvent(self, event) -> None:
         """Keep the canvas width aligned with the viewport during grouped scrolling."""
@@ -7075,7 +7514,11 @@ class PlotPanel(QWidget):
         self._fit_components_by_key = {}
         self._fit_metadata = {}
         self._fit_metadata_by_key = {}
+        self._shown_fits_by_run = {}
+        self._active_fit_id = None
+        self._fit_label_by_id = {}
         self._update_export_enabled()
+        self._refresh_fits_button()
         self._redraw_current_view()
 
     def clear_fits_for_runs(self, run_numbers: list[int]) -> int:
@@ -7114,6 +7557,8 @@ class PlotPanel(QWidget):
             self._fit_components_by_key.pop(key, None)
         for key in removed_metadata_keys:
             self._fit_metadata_by_key.pop(key, None)
+        for run_number in normalized_runs:
+            self._shown_fits_by_run.pop(run_number, None)
 
         if self._fit_curve_run_number in normalized_runs:
             self._fit_curve = None
@@ -7123,6 +7568,7 @@ class PlotPanel(QWidget):
 
         if removed > 0:
             self._update_export_enabled()
+            self._refresh_fits_button()
             self._redraw_current_view()
 
         return removed
@@ -7133,6 +7579,7 @@ class PlotPanel(QWidget):
         fit_result: object | None,
         fit_function: str | None = None,
         axis_key: str | None = None,
+        fit_id: str = SINGLE_FIT_ID,
     ) -> None:
         """Extract and store fit metadata from a FitResult for export headers."""
         meta: dict = {}
@@ -7161,8 +7608,9 @@ class PlotPanel(QWidget):
             fit_function_value = getattr(fit_result, "fit_function", None)
         if fit_function_value:
             meta["fit_function"] = str(fit_function_value)
-        self._fit_metadata[int(run_number)] = meta
-        self._fit_metadata_by_key[(int(run_number), axis_key)] = meta
+        if fit_id == SINGLE_FIT_ID:
+            self._fit_metadata[int(run_number)] = meta
+        self._fit_metadata_by_key[(int(run_number), axis_key, fit_id)] = meta
 
     def _update_export_enabled(self) -> None:
         """Enable export controls when there is plotted data to export."""
@@ -8570,8 +9018,8 @@ class PlotPanel(QWidget):
                     "y": list(y_fit),
                     "label": label,
                 }
-            for (run_number, axis_key), (t_fit, y_fit, label) in self._fit_curves_by_key.items():
-                state["fit_curves_by_key"][self._encode_fit_storage_key(run_number, axis_key)] = {
+            for key, (t_fit, y_fit, label) in self._fit_curves_by_key.items():
+                state["fit_curves_by_key"][self._encode_fit_storage_key(*key)] = {
                     "t": list(t_fit),
                     "y": list(y_fit),
                     "label": label,
@@ -8584,10 +9032,10 @@ class PlotPanel(QWidget):
                 state["fit_components_by_run"][str(run_number)] = [
                     {"name": name, "y": list(y_vals)} for name, y_vals in curves
                 ]
-            for (run_number, axis_key), curves in self._fit_components_by_key.items():
-                state["fit_components_by_key"][
-                    self._encode_fit_storage_key(run_number, axis_key)
-                ] = [{"name": name, "y": list(y_vals)} for name, y_vals in curves]
+            for key, curves in self._fit_components_by_key.items():
+                state["fit_components_by_key"][self._encode_fit_storage_key(*key)] = [
+                    {"name": name, "y": list(y_vals)} for name, y_vals in curves
+                ]
             state["annotations"] = self._serialize_annotations(self._default_annotations)
             state["annotations_by_group"] = {
                 str(group_id): self._serialize_annotations(annotations)
@@ -8595,8 +9043,8 @@ class PlotPanel(QWidget):
             }
             state["fit_metadata"] = {str(rn): meta for rn, meta in self._fit_metadata.items()}
             state["fit_metadata_by_key"] = {
-                self._encode_fit_storage_key(run_number, axis_key): meta
-                for (run_number, axis_key), meta in self._fit_metadata_by_key.items()
+                self._encode_fit_storage_key(*key): meta
+                for key, meta in self._fit_metadata_by_key.items()
             }
 
         return state
@@ -8779,11 +9227,12 @@ class PlotPanel(QWidget):
                     np.array(curve_data.get("y", [])),
                     curve_data.get("label", "Global Fit"),
                 )
-            for (run_number, _axis_key), curve_data in self._fit_curves_by_key.items():
-                self._fit_curves.setdefault(run_number, curve_data)
+            for (run_number, _axis_key, key_fit_id), curve_data in self._fit_curves_by_key.items():
+                if key_fit_id == SINGLE_FIT_ID:
+                    self._fit_curves.setdefault(run_number, curve_data)
         else:
             for run_number, curve_data in self._fit_curves.items():
-                self._fit_curves_by_key[(run_number, None)] = curve_data
+                self._fit_curves_by_key[(run_number, None, SINGLE_FIT_ID)] = curve_data
 
         fit_components = state.get("fit_components")
         if isinstance(fit_components, list):
@@ -8813,11 +9262,16 @@ class PlotPanel(QWidget):
                     for entry in entries
                     if isinstance(entry, dict)
                 ]
-            for (run_number, _axis_key), curves in self._fit_components_by_key.items():
-                self._fit_components_by_run.setdefault(run_number, list(curves))
+            for (
+                run_number,
+                _axis_key,
+                key_fit_id,
+            ), curves in self._fit_components_by_key.items():
+                if key_fit_id == SINGLE_FIT_ID:
+                    self._fit_components_by_run.setdefault(run_number, list(curves))
         else:
             for run_number, curves in self._fit_components_by_run.items():
-                self._fit_components_by_key[(run_number, None)] = list(curves)
+                self._fit_components_by_key[(run_number, None, SINGLE_FIT_ID)] = list(curves)
 
         self._default_annotations = self._deserialize_annotations(state.get("annotations", []))
         raw_annotations_by_group = state.get("annotations_by_group", {})
@@ -8848,11 +9302,12 @@ class PlotPanel(QWidget):
                 if decoded is None or not isinstance(meta, dict):
                     continue
                 self._fit_metadata_by_key[decoded] = meta
-            for (run_number, _axis_key), meta in self._fit_metadata_by_key.items():
-                self._fit_metadata.setdefault(run_number, meta)
+            for (run_number, _axis_key, key_fit_id), meta in self._fit_metadata_by_key.items():
+                if key_fit_id == SINGLE_FIT_ID:
+                    self._fit_metadata.setdefault(run_number, meta)
         else:
             for run_number, meta in self._fit_metadata.items():
-                self._fit_metadata_by_key[(run_number, None)] = meta
+                self._fit_metadata_by_key[(run_number, None, SINGLE_FIT_ID)] = meta
 
         self._update_export_enabled()
 

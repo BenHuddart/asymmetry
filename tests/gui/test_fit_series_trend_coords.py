@@ -85,7 +85,10 @@ def _run_batch(win: MainWindow, coords: dict[int, tuple[float, float]]) -> str:
     payloads = {
         run: (_StubFitResult({"sigma": 1.0}), (np.zeros(2), np.zeros(2)), []) for run in coords
     }
-    batch_id = win._record_global_fit_batch(payloads, None)
+    # The fit panel's launch signal, as in production: the recorder reads the
+    # representation the fit was started against, not the live view.
+    win._on_global_fit_started()
+    batch_id = win._record_global_fit_batch(payloads, None, win._global_fit_launch)
     assert batch_id is not None
     return batch_id
 
@@ -123,11 +126,11 @@ def test_batch_series_has_informative_default_label(win: MainWindow) -> None:
     coords = {1276: (125.0, 400.0), 1289: (10.0, 400.0)}
     batch_id = _run_batch(win, coords)
     series = win._project_model.batch(batch_id)
-    # ``label`` is reserved for user renames; the informative default (model +
-    # run range) is rendered on demand as the display fallback.
+    # ``label`` is reserved for user renames and collision suffixes; the
+    # informative default (D10: model, then the fit window that tells two runs
+    # of one analysis apart) is rendered on demand as the display fallback.
     assert series.label is None
-    default = win._series_fallback_name(series)
-    assert "1276" in default and "1289" in default
+    assert win._series_fallback_name(series).startswith("Gaussian + Constant")
 
 
 def test_missing_metadata_point_is_off_axis_not_zero(win: MainWindow) -> None:
@@ -327,7 +330,7 @@ def test_fit_this_group_prefills_batch_regardless_of_visibility(win: MainWindow)
 
     win._on_fit_group_requested(gid)
 
-    fed_runs = sorted(int(ds.run_number) for ds in win._fit_panel._all_datasets)
+    fed_runs = sorted(int(ds.run_number) for ds in win._fit_panel.batch_datasets())
     assert fed_runs == sorted(coords)
 
 
@@ -435,7 +438,10 @@ def _record_over(win: MainWindow, runs: list[int]) -> str:
     payloads = {
         run: (_StubFitResult({"sigma": 1.0}), (np.zeros(2), np.zeros(2)), []) for run in runs
     }
-    batch_id = win._record_global_fit_batch(payloads, None)
+    # The fit panel's launch signal, as in production: the recorder reads the
+    # representation the fit was started against, not the live view.
+    win._on_global_fit_started()
+    batch_id = win._record_global_fit_batch(payloads, None, win._global_fit_launch)
     assert batch_id is not None
     return batch_id
 
@@ -549,23 +555,25 @@ def test_ungroup_keep_fits_freezes_owned_series(win: MainWindow, monkeypatch) ->
     assert series.group_id is None
 
 
-def test_ungroup_delete_fits_removes_series_and_slots(win: MainWindow, monkeypatch) -> None:
-    """Ungroup → "Delete fits" removes owned series and clears their FitSlot pointers."""
+def test_ungroup_delete_fits_removes_series_and_its_overlays(win: MainWindow, monkeypatch) -> None:
+    """Ungroup → "Delete fits" removes owned series and clears only their overlays."""
     coords = {1277: (10.0, 400.0), 1280: (70.0, 400.0)}
     for run, (temp, field) in coords.items():
         _add_dataset(win, run, temp, field)
     gid = win._data_browser.create_data_group(list(coords), name="T scan")
     _stub_fit_panel(win)
     batch_id = _record_over(win, list(coords))
-    rep = RepresentationType.TIME_FB_ASYMMETRY
-    assert win._project_model.representation(1277, rep).fit.batch_id == batch_id
 
+    cleared: list[str] = []
+    monkeypatch.setattr(
+        win._plot_panel, "clear_fits_for_series", lambda fit_id: cleared.append(fit_id) or 0
+    )
     _patch_ungroup_choice(monkeypatch, "delete")
     win._on_ungroup_requested(gid)
 
     assert win._project_model.data_group(gid) is None
     assert win._project_model.batch(batch_id) is None  # series deleted
-    assert win._project_model.representation(1277, rep).fit.batch_id is None  # slot cleared
+    assert cleared == [batch_id]
 
 
 def test_detector_group_series_recording_mints_no_group(win: MainWindow) -> None:

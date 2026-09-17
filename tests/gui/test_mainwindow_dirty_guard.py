@@ -176,6 +176,50 @@ def test_maybe_save_cancel_aborts(win: MainWindow, monkeypatch) -> None:
     assert win._maybe_save("closing") is False
 
 
+def test_maybe_save_save_branch_finishes_the_write_before_returning(
+    win: MainWindow, qapp: QApplication, tmp_path, monkeypatch
+) -> None:
+    """Save means saved: the caller may only proceed once the file exists.
+
+    The branch used to start a background write and report success, so the
+    caller tore the session down while the write was in flight and its
+    completion callback then stamped the *next* session with this project's
+    path and clean state.
+    """
+    win._data_browser.add_dataset(_ds())
+    qapp.processEvents()
+    target = tmp_path / "guarded.asymp"
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Save),
+    )
+    monkeypatch.setattr(win, "_prompt_save_project_path", lambda: str(target))
+
+    assert win._maybe_save("closing") is True
+
+    assert target.exists(), "the bytes must be on disk before the guard says yes"
+    assert win._current_project_path == str(target)
+    assert win._dirty is False
+    assert win._project_save_active is False, "no write left running behind the caller"
+
+
+def test_maybe_save_save_branch_aborts_when_the_save_as_dialog_is_cancelled(
+    win: MainWindow, monkeypatch
+) -> None:
+    win._mark_dirty()
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Save),
+    )
+    monkeypatch.setattr(win, "_prompt_save_project_path", lambda: None)
+
+    assert win._maybe_save("closing") is False
+    assert win._dirty is True
+    assert win._current_project_path is None
+
+
 def test_close_when_dirty_and_cancel_keeps_window_open(
     win: MainWindow, qapp: QApplication, monkeypatch
 ) -> None:

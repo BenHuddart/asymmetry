@@ -244,10 +244,9 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 19 for nested *phase* data groups (Global Fit
-    # Wizard transitions, v18->v19). A future accidental bump must consciously
-    # update this literal.
-    assert CURRENT_SCHEMA_VERSION == 19
+    # Baseline guard: bumped to 20 for the series recipe / active series
+    # (v19->v20). A future accidental bump must consciously update this literal.
+    assert CURRENT_SCHEMA_VERSION == 20
 
 
 def test_restore_state_tolerates_absent_moments():

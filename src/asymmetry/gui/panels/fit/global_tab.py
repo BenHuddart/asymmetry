@@ -44,11 +44,14 @@ import copy
 import dataclasses
 import functools
 import html
+import json
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 
 import numpy as np
 from PySide6.QtCore import QSettings, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -57,6 +60,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QTableWidget,
@@ -131,8 +135,11 @@ from asymmetry.core.fitting.spectral import (
     append_frequency_field_derived_parameters,
     default_frequency_model,
 )
+from asymmetry.core.representation.naming import format_run_range
+from asymmetry.core.representation.series import FitSeries, normalise_recipe
 from asymmetry.gui.panels.fit_function_builder import FitFunctionBuilderDialog
 from asymmetry.gui.panels.initial_values_dialog import InitialValuesDialog
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.styles.fonts import mono_font
 from asymmetry.gui.styles.metrics import char_width, row_height
 from asymmetry.gui.styles.typography import SIZE_NUMERIC
@@ -147,6 +154,7 @@ from asymmetry.gui.styles.widgets import (
     fit_quality_tooltip,
     info_html,
     make_section_header,
+    make_warning_banner,
     success_html,
     verdict_chip_qss,
     warning_html,
@@ -163,6 +171,7 @@ from asymmetry.gui.widgets.flow_layout import FlowLayout
 from asymmetry.gui.widgets.info_popover import InfoPopover
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollSpinBox
 from asymmetry.gui.widgets.panel_section import PanelSection
+from asymmetry.gui.widgets.series_dialogs import confirm_series_delete, prompt_series_rename
 from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
@@ -256,6 +265,11 @@ _BOUNDS_COL_CHARS = 7
 #: the list is a filter, not the batch's contents, so a glance at three runs plus
 #: a scrollbar says as much as a column of twelve.
 _MEMBERS_LIST_MAX_ROWS = 3
+
+#: Widest the series selector's label gets before it elides (the chip rail's
+#: rule): the full ``<group> · <model> · <range>`` is on the tooltip, and a
+#: button that grew with it would set the Batch tab's minimum width.
+_SERIES_SELECTOR_MAX_CHARS = 34
 
 #: Hand-off labels on the results card. Named so the construction and the
 #: ``action_triggered`` router cannot drift apart.
@@ -393,6 +407,40 @@ class FitLaunch:
     run_number: int | None = None
 
 
+@dataclasses.dataclass(frozen=True)
+class SeriesMenuEntry:
+    """One recorded series, as the Batch tab's series menu lists it (D1).
+
+    The tab neither holds the project model nor the browser, so the host
+    resolves everything a menu line needs: which data group owns the series and
+    in which colour that group reads, the ``model · range · status`` line, and
+    the members the "Open a series for these runs" filter matches against.
+    """
+
+    batch_id: str
+    #: Owning data group's name, or ``"Standalone"`` for a group-less series.
+    group_name: str
+    #: The owning group's kind colour (a ``styles.tokens`` value).
+    group_colour: str
+    #: ``"<model> · <range> · <status>"``, already rendered by the host.
+    text: str
+    members: tuple[int, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class SeriesCatalogue:
+    """What the Batch tab's series menus can offer right now.
+
+    Pulled from the host on every menu popup (see
+    :meth:`GlobalFitTab.set_series_catalogue_provider`) rather than pushed on
+    every project change: a menu is opened rarely and the answer is cheap.
+    """
+
+    series: tuple[SeriesMenuEntry, ...] = ()
+    #: ``(group_id, name)`` for every data group a new series could be built on.
+    groups: tuple[tuple[str, str], ...] = ()
+
+
 class GlobalFitTab(FitTabBase):
     """Global fitting interface for simultaneous multi-dataset fitting.
 
@@ -436,6 +484,21 @@ class GlobalFitTab(FitTabBase):
     # is the main window's bookkeeping, so the tab only asks.
     trends_requested = Signal()
 
+    # ── Series row (D1): the tab asks, the main window resolves ──────────────
+    #: Open this recorded series in the tab (carries its ``batch_id``).
+    series_open_requested = Signal(str)
+    #: Start a draft over the browser's current selection (today's ad-hoc batch).
+    series_new_from_selection_requested = Signal()
+    #: Start a draft bound to this data group (carries its ``group_id``).
+    series_new_from_group_requested = Signal(str)
+    #: Rename the open series: ``(batch_id, new_label)``.
+    series_rename_requested = Signal(str, str)
+    #: Delete the open series (carries its ``batch_id``); already confirmed.
+    series_delete_requested = Signal(str)
+    #: The Batch tab's fit window changed — the plot's range guides follow it
+    #: while this tab is visible (D8). It never moves the project's own range.
+    batch_fit_range_changed = Signal(float, float)
+
     def __init__(
         self,
         parent: QWidget | None = None,
@@ -475,6 +538,8 @@ class GlobalFitTab(FitTabBase):
         # batch was launched from a group header, ``None`` for an ad-hoc selection
         # (which auto-creates its group at record time). Plain attribute + accessor.
         self._bound_group_id: str | None = None
+        #: Display name of the bound group, for the binding label and selector.
+        self._group_binding_name: str | None = None
         # Last grouped fit's per-group simulate seed, keyed by source run number
         # (shared normalised model + base values + per-group amplitude/phase),
         # for the multi-group Generate Synthetic Run dialog.
@@ -552,6 +617,25 @@ class GlobalFitTab(FitTabBase):
         self._updating_group_model_fraction_values = False
         self._updating_group_param_values = False
         self._group_param_group_specs: list[tuple[object, str]] = []
+
+        # ── The open series (D1) ────────────────────────────────────────────
+        # The tab always edits one series: a recorded one, or a draft that has
+        # never run. ``_open_series_id`` is ``None`` for a draft;
+        # ``_open_series_signature`` is what the form said when the series was
+        # opened, so any later divergence *is* the "Edited" state.
+        self._open_series_id: str | None = None
+        self._open_series_name = ""
+        self._open_series_signature: str | None = None
+        self._open_series_status = ""
+        #: The open series id the last ``restore_state`` carried, for the host
+        #: to reopen once the project model is loaded.
+        self._saved_open_series_id: str | None = None
+        self._series_catalogue_provider: Callable[[], SeriesCatalogue] | None = None
+        self._series_group: PanelSection | None = None
+        #: Runs the browser has selected that the open series does not fit.
+        self._differing_selection: list[int] = []
+        if self._member_kind == "runs":
+            layout.addWidget(self._build_series_section())
 
         # Model selection
         model_group = PanelSection("Model")
@@ -661,6 +745,9 @@ class GlobalFitTab(FitTabBase):
         self._param_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._param_table.setWordWrap(False)
         self._param_table.itemChanged.connect(self._on_param_table_item_changed)
+        # Values and bounds are recipe identity (D2): any committed cell can put
+        # the open series into its "Edited" state.
+        self._param_table.itemChanged.connect(self._refresh_series_row)
         layout.addWidget(self._param_group)
 
         self._grouped_context_label = QLabel()
@@ -823,7 +910,7 @@ class GlobalFitTab(FitTabBase):
         layout.addWidget(seeding_row)
 
         # ── Run row ─────────────────────────────────────────────────────────
-        self._fit_btn = QPushButton("Run batch fit")
+        self._fit_btn = QPushButton("Run series")
         self._fit_btn.setStyleSheet(build_primary_button_qss())
         self._fit_btn.clicked.connect(self._run_global_fit)
         self._fit_btn.setEnabled(False)
@@ -1090,6 +1177,572 @@ class GlobalFitTab(FitTabBase):
         self._set_composite_model(self._default_composite_model())
         self._update_mode_ui(preserve_result=False)
 
+    # ── The open series (D1) ───────────────────────────────────────────────
+
+    def _build_series_section(self) -> PanelSection:
+        """Build the series row that sits above Model on the runs surface.
+
+        Three strips: the selector naming the series this tab edits (and the
+        menu of the representation's other series), the actions that make or
+        unmake one, and the hint the browser raises when the selection stops
+        matching what is open (D7). The status tag rides the section header.
+        """
+        section = PanelSection("Series")
+        self._series_group = section
+
+        self._series_selector_btn = QPushButton()
+        # Left-align: a centred name reads oddly once the dot icon pins the
+        # left edge (render review, item 4) — "● Draft" should read like a
+        # label, not float mid-button.
+        self._series_selector_btn.setStyleSheet(
+            build_segmented_button_qss() + "QPushButton { text-align: left; }"
+        )
+        # The series dot: the same red accent the Parameters panel's chips carry,
+        # so the two surfaces read as one object seen twice.
+        self._series_selector_btn.setIcon(self._series_dot())
+        self._series_selector_btn.setIconSize(QSize(10, 10))
+        self._series_selector_btn.clicked.connect(self._show_series_menu)
+        section.addWidget(self._series_selector_btn)
+
+        actions = QWidget()
+        # A wrapping row, like every other button strip on this surface: four
+        # buttons side by side would set the Batch tab's minimum width past the
+        # dock's character budget (pinned by test_fit_panel_density).
+        actions_layout = FlowLayout(actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        self._new_series_btn = QPushButton("New series ▾")
+        self._new_series_btn.setStyleSheet(build_segmented_button_qss())
+        self._new_series_btn.clicked.connect(self._show_new_series_menu)
+        self._duplicate_series_btn = QPushButton("Duplicate")
+        self._duplicate_series_btn.setStyleSheet(build_segmented_button_qss())
+        self._duplicate_series_btn.setToolTip(
+            "Start a draft with this series' setup and members, leaving it untouched."
+        )
+        self._duplicate_series_btn.clicked.connect(self.duplicate_open_series)
+        self._rename_series_btn = QPushButton("Rename…")
+        self._rename_series_btn.setStyleSheet(build_segmented_button_qss())
+        self._rename_series_btn.clicked.connect(self._rename_open_series)
+        self._delete_series_btn = QPushButton("Delete…")
+        self._delete_series_btn.setStyleSheet(
+            build_segmented_button_qss() + f"QPushButton {{ color: {tokens.ACCENT_RED}; }}"
+        )
+        self._delete_series_btn.clicked.connect(self._delete_open_series)
+        # Delete comes last, after the three that make or copy a series.
+        for button in (
+            self._new_series_btn,
+            self._duplicate_series_btn,
+            self._rename_series_btn,
+            self._delete_series_btn,
+        ):
+            actions_layout.addWidget(button)
+        section.addWidget(actions)
+
+        self._selection_hint = QWidget()
+        hint_layout = QVBoxLayout(self._selection_hint)
+        hint_layout.setContentsMargins(0, 0, 0, 0)
+        hint_layout.setSpacing(4)
+        self._selection_hint_banner = make_warning_banner("")
+        hint_layout.addWidget(self._selection_hint_banner)
+        hint_actions = QWidget()
+        hint_actions_layout = FlowLayout(hint_actions)
+        hint_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self._hint_new_series_btn = QPushButton("New series from selection")
+        self._hint_new_series_btn.setStyleSheet(build_segmented_button_qss())
+        self._hint_new_series_btn.clicked.connect(self._request_series_from_selection)
+        self._hint_open_series_btn = QPushButton("Open a series for these runs ▾")
+        self._hint_open_series_btn.setStyleSheet(build_segmented_button_qss())
+        self._hint_open_series_btn.clicked.connect(self._show_series_for_selection_menu)
+        self._hint_keep_editing_btn = QPushButton("Keep editing")
+        self._hint_keep_editing_btn.setStyleSheet(build_segmented_button_qss())
+        self._hint_keep_editing_btn.clicked.connect(self._hide_selection_hint)
+        for button in (
+            self._hint_new_series_btn,
+            self._hint_open_series_btn,
+            self._hint_keep_editing_btn,
+        ):
+            hint_actions_layout.addWidget(button)
+        hint_layout.addWidget(hint_actions)
+        self._selection_hint.hide()
+        section.addWidget(self._selection_hint)
+        return section
+
+    # ── Series state the host reads ────────────────────────────────────────
+
+    def open_series_id(self) -> str | None:
+        """The recorded series this tab is editing, or ``None`` for a draft.
+
+        The recorder compares a completed run's identity against this series
+        first (D3): identical replaces it in place, anything else records a new
+        series beside it.
+        """
+        return self._open_series_id
+
+    def set_series_catalogue_provider(self, provider: Callable[[], SeriesCatalogue]) -> None:
+        """Install the host callback that answers what the series menus offer."""
+        self._series_catalogue_provider = provider
+
+    def _series_catalogue(self) -> SeriesCatalogue:
+        """The catalogue for the menus — empty until a host installs a provider."""
+        if self._series_catalogue_provider is None:
+            return SeriesCatalogue()
+        return self._series_catalogue_provider()
+
+    def _tab_signature(self) -> str:
+        """What the form currently describes, as one comparable string.
+
+        The tab's own view of :meth:`FitSeries.recipe_identity`: the model, the
+        recipe (rows, window, seeding, co-add), the members that are ticked and
+        the group the batch is bound to — everything a user can change here.
+        Captured when a series is opened, so a later difference is exactly the
+        "Edited" state (D1); a string compare, never a re-derived identity.
+        """
+        return json.dumps(
+            {
+                "model": self._composite_model.to_dict(),
+                "recipe": self.current_recipe(),
+                "members": sorted(int(ds.run_number) for ds in self._datasets),
+                "group": self._bound_group_id,
+            },
+            sort_keys=True,
+            default=str,
+        )
+
+    def is_series_edited(self) -> bool:
+        """``True`` when the form has moved off the open series' recorded setup."""
+        if self._open_series_signature is None:
+            return False
+        return self._tab_signature() != self._open_series_signature
+
+    # ── Opening, recording, duplicating ────────────────────────────────────
+
+    def open_series(
+        self,
+        series: FitSeries,
+        *,
+        display_name: str,
+        datasets: list[MuonDataset],
+        excluded_runs: Sequence[int] = (),
+        group_id: str | None = None,
+        group_name: str | None = None,
+    ) -> None:
+        """Make *series* the series this tab edits, restoring its whole recipe (D1).
+
+        Members come from the owning group (*datasets*) with the series'
+        *excluded_runs* unticked; the model, parameter rows, fit window, seeding
+        and co-add come from ``series.recipe``; the results card replays the
+        series' last recorded outcome. The form is left exactly where the run
+        that recorded it stood, so re-running it without an edit replaces it.
+        """
+        self._set_member_pool(datasets, excluded_runs)
+        self.set_bound_group(group_id, group_name)
+        self._apply_recipe(series.canonical_model, series.recipe)
+        self._open_series_id = series.batch_id
+        self._open_series_name = display_name
+        self._open_series_status = self._recorded_status(series)
+        self._render_recorded_summary(series)
+        self._open_series_signature = self._tab_signature()
+        self._differing_selection = []
+        self._refresh_series_row()
+
+    def open_draft(
+        self,
+        *,
+        datasets: list[MuonDataset],
+        excluded_runs: Sequence[int] = (),
+        group_id: str | None = None,
+        group_name: str | None = None,
+        seed_from: FitSeries | None = None,
+        label: str = "",
+    ) -> None:
+        """Drop the tab to a draft over *datasets* — a series that has never run.
+
+        *seed_from* pre-fills the draft with a recorded series' recipe (what
+        "Fit this group…" does with the group's newest series, D7) so the
+        natural next run is either an identical re-run or a deliberate
+        variation; without it the tab keeps whatever it currently shows.
+        *label* names the draft in the selector (``"<source> (copy)"``).
+        """
+        self._set_member_pool(datasets, excluded_runs)
+        self.set_bound_group(group_id, group_name)
+        if seed_from is not None:
+            self._apply_recipe(seed_from.canonical_model, seed_from.recipe)
+        else:
+            self._reseed_batch_parameter_table()
+            self._refresh_inherited_single_fit_defaults()
+            self._update_mode_ui(preserve_result=False)
+        self._results_card.set_notice("")
+        self._become_draft(label)
+
+    def note_series_recorded(self, series: FitSeries, *, display_name: str, replaced: bool) -> None:
+        """Adopt the series a completed run just recorded as the open one (D3).
+
+        Nothing is restored: the recorder read this very form, so the tab
+        already *is* the series. Only the identity, the status tag and the
+        notice that says what the run did to the record move.
+        """
+        self._open_series_id = series.batch_id
+        self._open_series_name = display_name
+        self._open_series_status = self._recorded_status(series)
+        self._open_series_signature = self._tab_signature()
+        self._results_card.set_notice(
+            f"Re-ran {display_name} — results replaced."
+            if replaced
+            else f"Saved as a new series: {display_name}."
+        )
+        self._refresh_series_row()
+
+    def duplicate_open_series(self) -> None:
+        """Copy the open series into a draft, leaving the recorded one alone.
+
+        The draft keeps the recipe, the members and the binding, and names
+        itself after its source until a run records it (D7, *Copy of current*).
+        """
+        source = self._selector_name()
+        self._results_card.set_notice("")
+        self._become_draft(f"{source} (copy)")
+
+    def _rename_open_series(self) -> None:
+        """Ask for a new name for the open series and hand it to the host."""
+        if self._open_series_id is None:
+            return
+        new_name = prompt_series_rename(self, self._open_series_name)
+        if new_name is None:
+            return
+        self._open_series_name = new_name or self._open_series_name
+        self.series_rename_requested.emit(self._open_series_id, new_name)
+        self._refresh_series_row()
+
+    def _delete_open_series(self) -> None:
+        """Confirm, then ask the host to delete the open series (D6)."""
+        if self._open_series_id is None:
+            return
+        if not confirm_series_delete(self, self._open_series_name):
+            return
+        self.series_delete_requested.emit(self._open_series_id)
+
+    # ── Restoring a recipe into the form ───────────────────────────────────
+
+    def _set_member_pool(self, datasets: list[MuonDataset], excluded_runs: Sequence[int]) -> None:
+        """Take *datasets* as the member pool with *excluded_runs* unticked.
+
+        The membership half of :meth:`set_datasets`, without its "a new member
+        set is a fresh ad-hoc batch" reset: a series' exclusions are part of its
+        recipe and survive the pool being rebuilt from the owning group.
+        """
+        self._member_pool = list(datasets or [])
+        self._excluded_runs = {int(run) for run in excluded_runs}
+        self._datasets = [
+            ds for ds in self._member_pool if int(ds.run_number) not in self._excluded_runs
+        ]
+        self._populate_members_list()
+        self._invalidate_wizard_cache_if_stale()
+
+    def _apply_recipe(self, canonical_model: dict | None, recipe: dict) -> None:
+        """Replay a series' model and recipe into the form (D2)."""
+        recipe = normalise_recipe(recipe)
+        if isinstance(canonical_model, dict):
+            try:
+                model = CompositeModel.from_dict(canonical_model, allow_missing=True)
+            except ValueError:
+                model = None
+            if model is not None:
+                self._set_composite_model(model, seed_from_record=False)
+        self._apply_parameter_rows(recipe["parameters"])
+        self._apply_recipe_fit_range(recipe["fit_range"])
+        self.set_batch_seeding_mode(str(recipe["seeding"]))
+        self._apply_coadd(recipe["coadd"])
+        # The recipe is the whole setup: the members' shared single-fit model
+        # (which a previous batch over the same runs wrote) must not replace it.
+        self._update_mode_ui(preserve_result=True)
+
+    def _apply_recipe_fit_range(self, fit_range: dict) -> None:
+        """Write a recipe's window into the range fields, filling unbounded sides.
+
+        A side the recipe leaves open (a pre-v20 series whose window could not
+        be recovered) takes the members' own extent — what the fit actually
+        saw — so the fields always describe a real window.
+        """
+        low, high = fit_range["min"], fit_range["max"]
+        if low is None or high is None:
+            extent = self._member_extent()
+            if extent is not None:
+                low = extent[0] if low is None else low
+                high = extent[1] if high is None else high
+        if low is None or high is None:
+            return
+        self.set_fit_range_display(float(low), float(high))
+
+    def _member_extent(self) -> tuple[float, float] | None:
+        """The x-extent the current members span, or ``None`` without members."""
+        spans = [
+            (float(ds.time[0]), float(ds.time[-1]))
+            for ds in self._datasets
+            if ds is not None and len(ds.time)
+        ]
+        if not spans:
+            return None
+        return min(span[0] for span in spans), max(span[1] for span in spans)
+
+    def _apply_coadd(self, coadd: dict) -> None:
+        """Write a recipe's co-add block into its controls without re-emitting."""
+        self._coadd_mode = str(coadd["mode"])
+        self._coadd_window = int(coadd["window"])
+        index = self._coadd_mode_combo.findData(self._coadd_mode)
+        if index >= 0:
+            blocked = self._coadd_mode_combo.blockSignals(True)
+            self._coadd_mode_combo.setCurrentIndex(index)
+            self._coadd_mode_combo.blockSignals(blocked)
+        blocked = self._coadd_window_spin.blockSignals(True)
+        self._coadd_window_spin.setValue(self._coadd_window)
+        self._coadd_window_spin.blockSignals(blocked)
+        self._coadd_window_spin.setEnabled(self._coadd_mode != "off")
+        self._coadd_window_label.setEnabled(self._coadd_mode != "off")
+
+    # ── Rendering the row ──────────────────────────────────────────────────
+
+    def _recorded_status(self, series: FitSeries) -> str:
+        """``"Fitted 4/4 · 14:32"`` for *series*' last recorded outcome."""
+        summaries = [series.results_by_run.get(member) for member in series.member_run_numbers]
+        summaries = [summary for summary in summaries if isinstance(summary, dict)]
+        if not summaries:
+            return ""
+        converged = sum(1 for summary in summaries if summary.get("success"))
+        clock = self._recorded_clock(summaries)
+        text = f"Fitted {converged}/{len(summaries)}"
+        return f"{text} · {clock}" if clock else text
+
+    @staticmethod
+    def _recorded_clock(summaries: Sequence[dict]) -> str:
+        """``"14:32"`` from the first summary carrying a readable timestamp."""
+        for summary in summaries:
+            stamp = summary.get("timestamp")
+            if not isinstance(stamp, str):
+                continue
+            try:
+                return datetime.fromisoformat(stamp).strftime("%H:%M")
+            except ValueError:
+                continue
+        return ""
+
+    def _render_recorded_summary(self, series: FitSeries) -> None:
+        """Replay *series*' last outcome onto the results card.
+
+        The recorded per-member summaries carry the three things the card's
+        header says — how many converged, the χ²ᵣ span and how it went — so an
+        opened series reads like the run that produced it. Member chips are the
+        live run's own (they open a full read-out this series no longer holds),
+        so an opened series shows none.
+        """
+        summaries = {
+            member: series.results_by_run[member]
+            for member in series.member_run_numbers
+            if isinstance(series.results_by_run.get(member), dict)
+        }
+        self._member_results = {}
+        self._refresh_member_results_windows()
+        if not summaries:
+            self._results_card.set_message(
+                "This series has no recorded results yet — click Run series.",
+                tag=RESTORED_TAG,
+            )
+            return
+        converged = [s for s in summaries.values() if s.get("success")]
+        chi2 = [
+            float(s["reduced_chi_squared"])
+            for s in converged
+            if isinstance(s.get("reduced_chi_squared"), int | float)
+            and np.isfinite(float(s["reduced_chi_squared"]))
+        ]
+        flagged = sum(1 for s in converged if set(s.get("quality_flags") or ()) - {"failed"})
+        warned = len(summaries) - len(converged) + flagged
+        meta = (
+            f"χ²ᵣ {min(chi2):.3g}–{max(chi2):.3g}"
+            if len(chi2) > 1
+            else (f"χ²ᵣ {chi2[0]:.3g}" if chi2 else "")
+        )
+        self._results_card.set_summary(
+            FitCardSummary(
+                tag=f"Batch {'✓' if not warned else '⚠'}",
+                tone="ok" if not warned else "warn",
+                headline=f"{len(converged)} of {len(summaries)} converged",
+                meta=meta,
+                detail_html=info_html(f"Recorded results for {self._open_series_name}."),
+            )
+        )
+
+    def _selector_name(self) -> str:
+        """What the selector calls the open series.
+
+        A recorded series reads ``<group> · <model> · <range>`` — where it
+        lives, what it fits and over what window — rather than its stored label,
+        which a rename may have turned into anything. A draft says so.
+        """
+        if self._open_series_id is None:
+            return self._open_series_name or "Draft"
+        group = self._group_binding_name or "Standalone"
+        parts = [group, self._composite_model.formula_string()]
+        window = self.current_fit_range_text()
+        if window:
+            parts.append(window)
+        return " · ".join(parts)
+
+    def _refresh_series_row(self, *_args) -> None:
+        """Re-render the selector, the status tag and the action buttons.
+
+        Wired to every per-event signal that can change what the form describes
+        (a cell edit, a role, a member tick, the window, seeding, co-add), so it
+        only ever reads widgets and compares two strings. A table rebuild is
+        skipped wholesale — the caller that drives it refreshes once at the end.
+        """
+        if self._series_group is None or self._updating_fraction_values:
+            return
+        # The selector is a handle capped at a character count (the chip rail's
+        # rule): a series named after its model and window would otherwise set
+        # the dock's width. The full name lives on the tooltip.
+        name = self._selector_name()
+        self._series_selector_btn.setText(
+            self._series_selector_btn.fontMetrics().elidedText(
+                name, Qt.TextElideMode.ElideRight, char_width(_SERIES_SELECTOR_MAX_CHARS)
+            )
+        )
+        self._series_selector_btn.setToolTip(
+            f"{name}\nClick to open another series, or start a new one."
+        )
+        if self._open_series_id is None:
+            tag = "Draft"
+        elif self.is_series_edited():
+            tag = "Edited · results show last run"
+        else:
+            tag = self._open_series_status or "Draft"
+        self._series_group.set_title_suffix(html.escape(tag))
+        recorded = self._open_series_id is not None
+        self._rename_series_btn.setEnabled(recorded)
+        self._delete_series_btn.setEnabled(recorded)
+
+    # ── The selection hint (D7) ────────────────────────────────────────────
+
+    def note_selection_differs(self, run_numbers: Sequence[int]) -> None:
+        """Say that the browser selection is not what this tab is fitting (D7).
+
+        A selection change never rewrites an open series, so the hint offers the
+        three ways out instead. A selection that matches the open series' members
+        is not a difference and takes the hint down again.
+        """
+        selected = sorted({int(run) for run in run_numbers})
+        members = sorted(int(ds.run_number) for ds in self._datasets)
+        if not selected or selected == members:
+            self._hide_selection_hint()
+            return
+        self._differing_selection = selected
+        self._selection_hint_banner.setText(
+            f"You selected runs {format_run_range(selected)}, but this tab is editing "
+            f"{self._selector_name()}. The series keeps its members until you say otherwise."
+        )
+        self._selection_hint.show()
+
+    def _request_series_from_selection(self) -> None:
+        """Ask the host for a draft over the browser selection (the hint's first action)."""
+        self.series_new_from_selection_requested.emit()
+
+    def _hide_selection_hint(self) -> None:
+        """Take the selection hint down (``Keep editing``, or a matching selection)."""
+        self._differing_selection = []
+        if self._series_group is not None:
+            self._selection_hint.hide()
+
+    # ── Menus ──────────────────────────────────────────────────────────────
+
+    def _exec_menu(self, menu: QMenu, pos) -> object:
+        """Show *menu* and return the chosen action — the seam a headless test replaces."""
+        return menu.exec(pos)
+
+    @staticmethod
+    def _group_swatch(colour: str) -> QIcon:
+        """A small filled square in a data group's kind colour."""
+        pixmap = QPixmap(10, 10)
+        pixmap.fill(QColor(colour))
+        return QIcon(pixmap)
+
+    @staticmethod
+    def _series_dot() -> QIcon:
+        """The red series dot, matching the Parameters panel's chip accent."""
+        pixmap = QPixmap(10, 10)
+        pixmap.fill(QColor(Qt.GlobalColor.transparent))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(tokens.ACCENT_RED))
+        painter.drawEllipse(1, 1, 8, 8)
+        painter.end()
+        return QIcon(pixmap)
+
+    def _popup_position(self, button: QPushButton):
+        """Where a menu opened from *button* should appear."""
+        return button.mapToGlobal(button.rect().bottomLeft())
+
+    def _add_series_entries(self, menu: QMenu, entries: Sequence[SeriesMenuEntry]) -> dict:
+        """Add *entries* to *menu*, sectioned by owning group; return action → id."""
+        by_group: dict[tuple[str, str], list[SeriesMenuEntry]] = {}
+        for entry in entries:
+            by_group.setdefault((entry.group_name, entry.group_colour), []).append(entry)
+        actions: dict[object, str] = {}
+        for (group_name, colour), group_entries in by_group.items():
+            menu.addSeparator()
+            header = menu.addAction(group_name)
+            header.setEnabled(False)
+            header.setIcon(self._group_swatch(colour))
+            for entry in group_entries:
+                action = menu.addAction(entry.text)
+                action.setCheckable(True)
+                action.setChecked(entry.batch_id == self._open_series_id)
+                actions[action] = entry.batch_id
+        return actions
+
+    def _show_series_menu(self) -> None:
+        """The selector's menu: every series of this representation, plus a new one."""
+        menu = QMenu(self)
+        new_action = menu.addAction("New series from browser selection")
+        actions = self._add_series_entries(menu, self._series_catalogue().series)
+        chosen = self._exec_menu(menu, self._popup_position(self._series_selector_btn))
+        if chosen is new_action:
+            self.series_new_from_selection_requested.emit()
+        elif chosen in actions:
+            self.series_open_requested.emit(actions[chosen])
+
+    def _show_new_series_menu(self) -> None:
+        """``New series ▾``: from the selection, from a data group, or a copy."""
+        menu = QMenu(self)
+        selection_action = menu.addAction("From browser selection")
+        group_menu = menu.addMenu("From data group…")
+        group_actions: dict[object, str] = {}
+        for group_id, name in self._series_catalogue().groups:
+            group_actions[group_menu.addAction(name)] = group_id
+        group_menu.setEnabled(bool(group_actions))
+        copy_action = menu.addAction("Copy of current")
+        chosen = self._exec_menu(menu, self._popup_position(self._new_series_btn))
+        if chosen is selection_action:
+            self.series_new_from_selection_requested.emit()
+        elif chosen is copy_action:
+            self.duplicate_open_series()
+        elif chosen in group_actions:
+            self.series_new_from_group_requested.emit(group_actions[chosen])
+
+    def _show_series_for_selection_menu(self) -> None:
+        """The hint's menu: series whose members cover the differing selection."""
+        selected = set(self._differing_selection)
+        entries = [
+            entry
+            for entry in self._series_catalogue().series
+            if selected and selected.issubset(set(entry.members))
+        ]
+        menu = QMenu(self)
+        if not entries:
+            menu.addAction("No series fits these runs").setEnabled(False)
+        actions = self._add_series_entries(menu, entries)
+        chosen = self._exec_menu(menu, self._popup_position(self._hint_open_series_btn))
+        if chosen in actions:
+            self.series_open_requested.emit(actions[chosen])
+
     def register_single_fit_seed(
         self, run_number: int, model: CompositeModel, fit_result: object
     ) -> None:
@@ -1123,20 +1776,6 @@ class GlobalFitTab(FitTabBase):
         }
         self._refresh_inherited_single_fit_defaults()
 
-    def remove_single_fit_seeds(self, run_numbers: list[int] | set[int]) -> set[int]:
-        """Remove stored single-fit seeds for the given runs."""
-        removed: set[int] = set()
-        for run_number in run_numbers:
-            try:
-                run_key = int(run_number)
-            except (TypeError, ValueError):
-                continue
-            if self._single_fit_seed_by_run.pop(run_key, None) is not None:
-                removed.add(run_key)
-        if removed:
-            self._refresh_inherited_single_fit_defaults()
-        return removed
-
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the datasets for global fitting.
 
@@ -1153,6 +1792,20 @@ class GlobalFitTab(FitTabBase):
         self._reseed_batch_parameter_table()
         self._update_mode_ui(preserve_result=False)
         self._refresh_inherited_single_fit_defaults()
+        # A fresh member pool is a fresh analysis: whatever series was open no
+        # longer describes what the tab fits (D7 keeps this off the selection
+        # path, so only the deliberate "new series over these runs" gestures
+        # reach here).
+        self._become_draft()
+
+    def _become_draft(self, label: str = "") -> None:
+        """Forget the open series: the tab now edits a draft that has never run."""
+        self._open_series_id = None
+        self._open_series_name = label
+        self._open_series_signature = None
+        self._open_series_status = ""
+        self._hide_selection_hint()
+        self._refresh_series_row()
 
     def set_bound_group(self, group_id: str | None, name: str | None = None) -> None:
         """Bind (or unbind) this Batch tab to a data group (D1).
@@ -1162,14 +1815,17 @@ class GlobalFitTab(FitTabBase):
         change (an ad-hoc batch auto-creates its own group at record time).
         """
         self._bound_group_id = str(group_id) if group_id else None
-        if self._group_binding_label is None:
-            return
-        if self._bound_group_id:
-            self._group_binding_label.setText(f"Fitting group: {name or self._bound_group_id}")
-            self._group_binding_label.setVisible(True)
-        else:
-            self._group_binding_label.clear()
-            self._group_binding_label.setVisible(False)
+        self._group_binding_name = (
+            str(name or self._bound_group_id) if self._bound_group_id else None
+        )
+        if self._group_binding_label is not None:
+            if self._bound_group_id:
+                self._group_binding_label.setText(f"Fitting group: {self._group_binding_name}")
+                self._group_binding_label.setVisible(True)
+            else:
+                self._group_binding_label.clear()
+                self._group_binding_label.setVisible(False)
+        self._refresh_series_row()
 
     def clear_bound_group(self) -> None:
         """Clear any group binding (ordinary selection → ad-hoc batch)."""
@@ -1250,6 +1906,7 @@ class GlobalFitTab(FitTabBase):
         self._reseed_batch_parameter_table()
         self._update_mode_ui(preserve_result=True)
         self._refresh_inherited_single_fit_defaults()
+        self._refresh_series_row()
 
     def set_member_datasets(self, datasets: list[MuonDataset]) -> None:
         """Set the member runs for a grouped *series* fit.
@@ -1642,6 +2299,10 @@ class GlobalFitTab(FitTabBase):
         self._inherited_seed_by_run = {}
         self._inherited_model_dict = None
 
+        # An open series' model and rows are its recipe (D1); only an ad-hoc
+        # draft adopts the members' shared single-fit model.
+        if self._open_series_id is not None:
+            return
         grouped = self._member_kind == "groups"
         datasets = self._member_datasets if grouped else self._datasets
         if len(datasets) < 2:
@@ -1927,6 +2588,9 @@ class GlobalFitTab(FitTabBase):
                 previous_index = type_combo.findText(previous_type)
                 if previous_index >= 0:
                     type_combo.setCurrentIndex(previous_index)
+            # A role is part of the recipe's identity (D2), so changing one is an
+            # edit of the open series — a string compare, cheap enough per change.
+            type_combo.currentTextChanged.connect(self._refresh_series_row)
             self._param_table.setCellWidget(i, 2, type_combo)
 
             # Bounds (min, max) — a bound seeded from the single-fit tab wins
@@ -1958,6 +2622,9 @@ class GlobalFitTab(FitTabBase):
             _set_formula_label_text(
                 self._formula_label, _grouped_formula_string(self._grouped_fit_model())
             )
+        # The model names the series in the selector and is recipe identity, so
+        # the row is refreshed once here rather than per rebuilt cell.
+        self._refresh_series_row()
 
     def _grouped_fit_model(self) -> CompositeModel:
         """Return the grouped-mode model with default fraction semantics applied."""
@@ -2445,6 +3112,25 @@ class GlobalFitTab(FitTabBase):
     def batch_datasets(self) -> list[MuonDataset]:
         """Return the datasets currently configured for the batch/scan."""
         return list(self._datasets)
+
+    def _on_fit_range_spinbox_committed(self) -> None:
+        """A committed window edits the *series*, not the project range (D8).
+
+        The Batch tab's window belongs to the series it is editing: committing
+        one flags the edit and tells the plot which window to draw its range
+        guides over while this tab is visible. The project-wide range the Single
+        tab shares is untouched — which is why the runs surface does not emit
+        ``fit_range_edit_committed`` at all. The detector-group surface has no
+        series editor and keeps the plot-owned range.
+        """
+        if self._member_kind != "runs":
+            super()._on_fit_range_spinbox_committed()
+            return
+        self._refresh_series_row()
+        self.batch_fit_range_changed.emit(
+            self._fit_range_min_spin.value(),
+            self._fit_range_max_spin.value(),
+        )
 
     def _run_global_fit(self) -> None:
         """Execute global fit on all datasets."""
@@ -3436,6 +4122,7 @@ class GlobalFitTab(FitTabBase):
         """On-tab seeding selector changed: apply it and notify the menu to mirror."""
         mode = str(self._seeding_combo.currentData() or "auto")
         self._batch_seeding_mode = mode
+        self._refresh_series_row()
         self.batch_seeding_mode_changed.emit(mode)
 
     def _on_coadd_mode_changed(self, _index: int) -> None:
@@ -3446,6 +4133,7 @@ class GlobalFitTab(FitTabBase):
         self._grouped_context_cache = None
         self._grouped_seed_cache = None
         self._update_mode_ui(preserve_result=False)
+        self._refresh_series_row()
 
     def _on_coadd_window_changed(self, value: int) -> None:
         """In-batch co-add window size changed: refresh the grouped-series context."""
@@ -3454,6 +4142,7 @@ class GlobalFitTab(FitTabBase):
             self._grouped_context_cache = None
             self._grouped_seed_cache = None
             self._update_mode_ui(preserve_result=False)
+        self._refresh_series_row()
 
     def _set_form_enabled(self, enabled: bool) -> None:
         """Enable/disable everything that defines *what* the next fit fits.
@@ -4041,6 +4730,11 @@ class GlobalFitTab(FitTabBase):
         self._synchronize_fraction_value_rows()
 
         self._status_text_from_global_wizard(assessment, recommendation)
+        # The wizard computed these results elsewhere, but applying them *is* a
+        # batch run as far as every listener is concerned: the started signal
+        # carries the launch context the completion is recorded against, so it
+        # must precede the completion here exactly as it does around the worker.
+        self.global_fit_started.emit()
         self.global_fit_completed.emit(
             {
                 run_number: (
@@ -4542,24 +5236,12 @@ class GlobalFitTab(FitTabBase):
 
     # ── project state helpers ──────────────────────────────────────────
 
-    def get_state(self) -> dict:
-        """Return a serialisable snapshot of the global-fit tab state."""
-        if self._fit_wizard_window is not None:
-            recommendation = self._fit_wizard_window.current_recommendation()
-            signature = self._cached_wizard_signature
-            if recommendation is not None and signature is None:
-                try:
-                    parsed = self._parse_parameter_configuration()
-                except ValueError:
-                    parsed = None
-                if parsed is not None:
-                    signature = self._wizard_context_signature(parsed)
-            if recommendation is not None and signature is not None:
-                self._cache_wizard_analysis(
-                    recommendation,
-                    signature=signature,
-                    log_text=self._fit_wizard_window.current_log_text(),
-                )
+    def _parameter_rows_state(self) -> list[dict]:
+        """Return the parameter table's rows as name/value/type/bounds/seeded dicts.
+
+        The one reader of the table's cells, shared by :meth:`get_state` (which
+        renormalises the values afterwards) and :meth:`current_recipe`.
+        """
         params = []
         # Skip display-only derived-fraction rows: they carry no fitted parameter
         # and must not be serialised into the saved state.
@@ -4582,6 +5264,58 @@ class GlobalFitTab(FitTabBase):
                     "seeded": value_item is not None and _value_provenance(value_item) == SEEDED,
                 }
             )
+        return params
+
+    def fit_range_bounds(self) -> tuple[float | None, float | None]:
+        """The window the range fields describe, ``(None, None)`` when they have none.
+
+        Read straight off the two fields — the cheap half of
+        :meth:`current_recipe`, for the per-event callers (the plot's range
+        guides, the batch dataset crop) that need only the window.
+        """
+        low = self._fit_range_min_spin.value()
+        high = self._fit_range_max_spin.value()
+        return (low, high) if high > low else (None, None)
+
+    def current_recipe(self) -> dict:
+        """Return the tab's current setup as a :class:`FitSeries` recipe (D2).
+
+        The parameter rows, the fit window as numbers (the provenance *string*
+        stays a per-result summary field), the seeding mode and the co-add
+        block — everything a re-run compares against to decide whether it is
+        the same analysis (D3). Range fields that have never been given a
+        window (both still at their initial value) describe no window, and are
+        recorded as the recipe's unbounded one rather than as "0 to 0".
+        """
+        low, high = self.fit_range_bounds()
+        return normalise_recipe(
+            {
+                "parameters": self._parameter_rows_state(),
+                "fit_range": {"min": low, "max": high},
+                "seeding": self._batch_seeding_mode,
+                "coadd": {"mode": self._coadd_mode, "window": self._coadd_window},
+            }
+        )
+
+    def get_state(self) -> dict:
+        """Return a serialisable snapshot of the global-fit tab state."""
+        if self._fit_wizard_window is not None:
+            recommendation = self._fit_wizard_window.current_recommendation()
+            signature = self._cached_wizard_signature
+            if recommendation is not None and signature is None:
+                try:
+                    parsed = self._parse_parameter_configuration()
+                except ValueError:
+                    parsed = None
+                if parsed is not None:
+                    signature = self._wizard_context_signature(parsed)
+            if recommendation is not None and signature is not None:
+                self._cache_wizard_analysis(
+                    recommendation,
+                    signature=signature,
+                    log_text=self._fit_wizard_window.current_log_text(),
+                )
+        params = self._parameter_rows_state()
 
         normalized_values = _normalized_model_param_values(
             self._composite_model,
@@ -4610,6 +5344,9 @@ class GlobalFitTab(FitTabBase):
                 for name, entry in self._current_group_param_table_state().items()
             ],
             "group_model_parameters": self._table_state_for(self._group_model_table),
+            # Which series these rows belong to (D1). A draft records nothing —
+            # it has never run, so there is no series to come back to.
+            "open_series_id": self._open_series_id,
         }
         wizard_state_by_run_set = self._wizard_cache_store_entries()
         if wizard_state_by_run_set:
@@ -4660,7 +5397,81 @@ class GlobalFitTab(FitTabBase):
                         tone="error",
                     )
 
-        params_data = {p["name"]: p for p in state.get("parameters", [])}
+        self._apply_parameter_rows(state.get("parameters", []))
+
+        self._restore_group_param_table_state(state.get("group_parameters"))
+        self._restore_table_state(self._group_model_table, state.get("group_model_parameters"))
+        if isinstance(self._group_model_table, FitParameterTable):
+            _configure_fraction_rows_in_table(
+                self._group_model_table,
+                self._grouped_fit_model(),
+                min_column=FitParameterTable.COL_MIN,
+                max_column=FitParameterTable.COL_MAX,
+            )
+        else:
+            _configure_fraction_rows_in_table(
+                self._group_model_table,
+                self._grouped_fit_model(),
+                min_column=_COL_MIN,
+                max_column=_COL_MAX,
+                type_column=2,
+            )
+        self._synchronize_grouped_model_fraction_rows()
+
+        result_html = state.get("result_html")
+        if isinstance(result_html, str) and result_html:
+            # A state written before the tag was persisted carries none; it is
+            # still a recorded read-out, so it goes back under RESTORED_TAG
+            # rather than under the "no fit" placeholder.
+            tag = state.get("result_tag")
+            tag = tag if isinstance(tag, str) and tag else RESTORED_TAG
+            self._results_card.set_message(
+                result_html, tag=tag, tone=TONE_BY_TAG.get(tag, "neutral")
+            )
+
+        wizard_state_by_run_set = state.get("wizard_state_by_run_set")
+        if isinstance(wizard_state_by_run_set, list):
+            self._restore_wizard_cache_store(wizard_state_by_run_set)
+
+        # Both shapes: the session handle (shared by reference) and a persisted
+        # dict from a project file / grouped fit slot.
+        active_entry = global_wizard_cache_entry(state.get("wizard_state"))
+        if active_entry is not None:
+            self._cache_wizard_analysis(
+                active_entry.recommendation,
+                signature=active_entry.signature_copy(),
+                log_text=active_entry.log_text,
+            )
+        self._sync_active_wizard_cache_from_selection()
+        self._update_mode_ui(preserve_result=True)
+        # The rows are back, but which *series* they describe is the host's to
+        # resolve (it holds the project model): the tab is a draft until
+        # ``open_series`` lands, and ``saved_open_series_id`` says what to open.
+        self._saved_open_series_id = state.get("open_series_id")
+        self._become_draft()
+
+    def saved_open_series_id(self) -> str | None:
+        """The series id the last :meth:`restore_state` carried, if any.
+
+        The host reopens it once the project model is loaded — the tab cannot
+        resolve a ``batch_id`` into members, a group and results on its own.
+        """
+        return self._saved_open_series_id if isinstance(self._saved_open_series_id, str) else None
+
+    def _apply_parameter_rows(self, entries: Sequence[dict]) -> None:
+        """Replay stored parameter rows (value, provenance, role, bounds) into the table.
+
+        The one writer of the classification table's cells from a stored form:
+        :meth:`restore_state` replays a project blob's rows and
+        :meth:`open_series` a series recipe's, which are the same shape (D2).
+        Rows the current model does not have are ignored, and rows it has that
+        the store does not mention keep their seeds.
+        """
+        params_data = {
+            str(entry["name"]): entry
+            for entry in entries
+            if isinstance(entry, dict) and "name" in entry
+        }
         normalized_state_values = _normalized_model_param_values(
             self._composite_model,
             {
@@ -4709,52 +5520,6 @@ class GlobalFitTab(FitTabBase):
         self._updating_fraction_values = False
         self._synchronize_fraction_value_rows()
 
-        self._restore_group_param_table_state(state.get("group_parameters"))
-        self._restore_table_state(self._group_model_table, state.get("group_model_parameters"))
-        if isinstance(self._group_model_table, FitParameterTable):
-            _configure_fraction_rows_in_table(
-                self._group_model_table,
-                self._grouped_fit_model(),
-                min_column=FitParameterTable.COL_MIN,
-                max_column=FitParameterTable.COL_MAX,
-            )
-        else:
-            _configure_fraction_rows_in_table(
-                self._group_model_table,
-                self._grouped_fit_model(),
-                min_column=_COL_MIN,
-                max_column=_COL_MAX,
-                type_column=2,
-            )
-        self._synchronize_grouped_model_fraction_rows()
-
-        result_html = state.get("result_html")
-        if isinstance(result_html, str) and result_html:
-            # A state written before the tag was persisted carries none; it is
-            # still a recorded read-out, so it goes back under RESTORED_TAG
-            # rather than under the "no fit" placeholder.
-            tag = state.get("result_tag")
-            tag = tag if isinstance(tag, str) and tag else RESTORED_TAG
-            self._results_card.set_message(
-                result_html, tag=tag, tone=TONE_BY_TAG.get(tag, "neutral")
-            )
-
-        wizard_state_by_run_set = state.get("wizard_state_by_run_set")
-        if isinstance(wizard_state_by_run_set, list):
-            self._restore_wizard_cache_store(wizard_state_by_run_set)
-
-        # Both shapes: the session handle (shared by reference) and a persisted
-        # dict from a project file / grouped fit slot.
-        active_entry = global_wizard_cache_entry(state.get("wizard_state"))
-        if active_entry is not None:
-            self._cache_wizard_analysis(
-                active_entry.recommendation,
-                signature=active_entry.signature_copy(),
-                log_text=active_entry.log_text,
-            )
-        self._sync_active_wizard_cache_from_selection()
-        self._update_mode_ui(preserve_result=True)
-
     def is_grouped_time_domain_mode(self) -> bool:
         """Return whether this is the group-membered (Individual-groups) surface.
 
@@ -4778,7 +5543,7 @@ class GlobalFitTab(FitTabBase):
         self._group_model_group.setVisible(grouped)
         # In-batch co-add only applies to grouped-series fits (≥2 members).
         self._coadd_group.setVisible(grouped)
-        self._fit_btn.setText("Run grouped fit" if grouped else "Run batch fit")
+        self._fit_btn.setText("Run grouped fit" if grouped else "Run series")
         self._preview_btn.setVisible(grouped)
         _set_formula_label_text(
             self._formula_label,
@@ -4840,7 +5605,7 @@ class GlobalFitTab(FitTabBase):
         else:
             domain_label = "frequency spectra" if self._domain == "frequency" else "datasets"
             self._results_card.set_message(
-                f"{n} {domain_label} selected. Configure parameters and click Run batch fit."
+                f"{n} {domain_label} selected. Configure parameters and click Run series."
             )
 
     def _grouped_mode_context(

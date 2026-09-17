@@ -6,6 +6,39 @@ subsystems or days.
 
 ## Active
 
+### Series workflow: Batch tab edits one series, series never overwrite each other
+
+Status: planned 2026-09-16, implementing on `feat/series-workflow` (one PR,
+phased subagents with a lead review gate). Full decision log (D1–D11), code
+map and per-phase briefs live in
+[plans/series-workflow.md](plans/series-workflow.md); mockups at
+https://claude.ai/artifact/8D3T4paNTXSMm6s2i3yxTx.
+
+The Batch tab always edits one *series* whose recipe (model, parameter rows,
+fit range, seeding, co-add, members, exclusions) is stored on the
+`FitSeries`. Running with an identical recipe replaces results in place;
+any change records a new series and leaves the old one untouched. Member
+runs no longer hold batch pointer slots — the per-run `FitSlot` is the
+Single tab's exploratory fit only — so a run can belong to any number of
+series, divergence marking is deleted, and deleting a series touches only
+that series. One active series per representation drives the Parameters
+chip, the Batch tab and the plot overlay; the plot toolbar's per-run `Fits`
+menu overlays other series for comparison. Project saves go through a temp
+file + rename with a `.bak`, plus a timed autosave with recovery. Schema
+v19 → v20.
+
+Acceptance criteria:
+
+- Opening series A, then B, then A in the Batch tab restores A's full recipe;
+  a browser click while a series is open changes nothing in the tab.
+- Re-running an unchanged series keeps its id and label; changing the fit
+  range and running records a second series alongside the first.
+- A run in two series draws the active series' overlay; deleting one series
+  leaves the other's results, overlays and the run's single fit intact.
+- v19 projects migrate with every series' results and labels preserved and
+  batch pointer slots dropped; `harness validate` and `gui-smoke` green;
+  docs + screenshots + changelog updated in the same PR.
+
 ### Agent analysis CLI and skill (proof of concept)
 
 Status: implemented 2026-09-15 on `feat/agent-cli-skill`; PR pending; all

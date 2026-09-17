@@ -36,15 +36,26 @@ broadening directly against field, temperature, or run number.
 Panel layout
 ------------
 
-The panel reads top to bottom, nothing scrolling at rest. A **series strip**
-lists the recorded fit series for the active representation as coloured pill
-buttons: click one to view it, **Shift+click** a second to overlay it
-(`Overlaying Several Series`_), right-click for rename / select-members /
-delete. A pill carries a short handle — the series' run range (``394–397``),
-or the name you renamed it to — and its full name on the tooltip; two series
-over the same runs have the model appended (``394–397 · Exponential``) so the
-pills stay distinct. The strip wraps onto further rows rather than widening
-the panel.
+The panel reads top to bottom, nothing scrolling at rest. A **chip rail**
+lists the active representation's recorded series as coloured pills,
+sectioned by the data group that owns them: a swatch-and-name header per
+group, an un-headered "Standalone" section for group-less series, and no
+header at all when every series is standalone. A chip under a group heading
+names only its model and fit window (``Exponential + Constant · 0–6 µs`` —
+the header already says which group); a Standalone chip, with no heading to
+lean on, keeps its member run range too. Either way the chip is a short
+handle elided in the middle, so the window at the end — what usually tells
+two otherwise-identical series apart — survives the elision, and the full
+name is always on the tooltip. Click a chip to make it the active series;
+**Shift+click** a second to overlay it (`Overlaying Several Series`_);
+double-click to jump straight to **Open in Batch tab**, the same action a
+right-click's chip menu leads with: **Open in Batch tab**, **Duplicate…**,
+**Rename…**, **Select members in browser**, **Show fit overlay** (the
+menu's way to make a series active without pressing its chip — ticked and
+disabled when it already is), and **Delete series…**, which removes only
+that series and its trend — other series and single fits on the same runs
+are untouched. The rail wraps onto
+further rows rather than widening the panel.
 
 The **x rail** carries the abscissa: the **x** picker (temperature, field,
 run number, angle, a fitted parameter, or a custom logbook column), the **ƒ**
@@ -179,15 +190,26 @@ Because membership is live-derived, adding a run to the group or excluding
 one from the series does not retroactively change already-recorded results:
 those stay a snapshot of what was actually fit. When the group's current
 effective membership no longer matches that snapshot, the series is *stale*,
-and its button in the panel's series row grows a **⚠** with the tooltip
-"Membership changed since last fit — re-run to refresh."; re-running the
-series (from the Batch tab, still bound to the same group) refreshes the
-snapshot and clears the marker. Re-running a group-bound series always
-replaces its previous results in place rather than accumulating a second
-series for the same group and model. A series with no owning group (a legacy
-analysis, or one kept as a standalone record after its group was deleted) is
-never stale — its membership is a fixed snapshot, exactly as before this
-distinction existed. See :doc:`project_files` for the persisted
+and its chip grows a **⚠** with the tooltip "Membership changed since last
+fit — re-run to refresh."; opening it in the Batch tab
+(:ref:`batch-tab-groups` in :doc:`gui_usage`) and clicking **Run series**
+refreshes the snapshot and clears the marker.
+
+The Batch tab is a *series editor*: it always has one series open, and a run
+either replaces that series' results or records a new one, never both at
+once. An identical re-run — the same model, parameters, fit range, seeding
+and effective members as what is already recorded — replaces the series'
+results in place, under its existing name; changing anything first, a wider
+window, a different model, a run ticked back in, records the run as a
+**new** series instead and leaves the one you opened alone. The check looks
+at the series open in the Batch tab first, then the representation's active
+series, then the newest series already describing the same analysis, so a
+truly identical re-run replaces its series wherever it lives — which also
+keeps the Global Fit Wizard's per-phase re-applies from stacking a fresh
+series on every pass. A series with no owning group (a legacy analysis, or
+one kept as a standalone record after its group was deleted) is never
+stale — its membership is a fixed snapshot, exactly as before this
+distinction existed. See :doc:`project_files` for the persisted ``recipe``,
 ``group_id`` / ``excluded_run_numbers`` / ``last_fitted_members`` fields and
 :doc:`gui_usage` for the Data Browser and Batch tab controls that drive them.
 

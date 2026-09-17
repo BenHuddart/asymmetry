@@ -71,56 +71,45 @@ def _batch(batch_id: str, *, model=None, runs=(1, 2), roles=None, fit_range="0.1
     )
 
 
-def test_remove_superseded_batches_dedupes_identical_rerun():
-    """Re-running the same batch supersedes the earlier identical series.
-
-    The replacement inherits the superseded twin's ``batch_id`` so the chip and
-    any back-references stay stable across the re-run.
-    """
-    model = ProjectModel()
-    first = _batch("b1")
-    model.add_batch(first)
-    second = _batch("b2")  # same model / runs / roles / range as b1
-    removed = model.remove_superseded_batches(second)
-    assert removed == ["b1"]
-    assert second.batch_id == "b1"  # inherited the stable id
-    model.add_batch(second)
-    assert model.batch("b1") is second
-    assert model.batch("b2") is None
-
-
-def test_remove_superseded_ignores_fit_range_and_roles():
-    """Fit window and Global/Local split are attributes, not identity (D4).
-
-    Re-running the same members+model with a different fit window or a different
-    parameter classification supersedes the earlier series in place rather than
-    spawning a duplicate trend pill.
-    """
-    model = ProjectModel()
-    model.add_batch(_batch("b1", fit_range="0.1-8 µs", roles={"A": "global"}))
-    # Same members + model, but a narrower window and an all-local split.
-    other = _batch("b2", fit_range="0.2-6 µs", roles={"A": "local"})
-    assert model.remove_superseded_batches(other) == ["b1"]
-
-
-def test_remove_superseded_keeps_distinct_model():
-    """A different model is not a duplicate even over the same runs."""
+def test_active_series_round_trips_through_to_dict():
     model = ProjectModel()
     model.add_batch(_batch("b1"))
-    other = _batch(
-        "b2",
-        model=CompositeModel(["Gaussian", "Constant"], operators=["+"]).to_dict(),
-    )
-    assert model.remove_superseded_batches(other) == []
+    model.set_active_series(_FB, "b1")
+
+    restored = ProjectModel.from_dict(model.to_dict())
+    assert restored.active_series_id(_FB) == "b1"
+    # Absent block (a pre-v20 standalone payload) loads with no active series.
+    payload = model.to_dict()
+    del payload["active_series"]
+    assert ProjectModel.from_dict(payload).active_series == {}
+    assert ProjectModel.from_dict(None).active_series == {}
 
 
-def test_remove_superseded_ignores_computed_series():
-    """Computed (model-less) scans over the same runs are not de-duplicated."""
+def test_active_series_round_trips_through_project_state():
+    project = {"datasets": [{"run_number": 1, "source_file": "/tmp/a.nxs"}]}
     model = ProjectModel()
-    scan = FitSeries("s1", _FB, member_run_numbers=[1, 2], canonical_model=None)
-    model.add_batch(scan)
-    other = FitSeries("s2", _FB, member_run_numbers=[1, 2], canonical_model=None)
-    assert model.remove_superseded_batches(other) == []
+    model.add_batch(_batch("b1"))
+    model.set_active_series(_FB, "b1")
+    model.write_to_project_state(project)
+    assert project["active_series"] == {"time_fb_asymmetry": "b1"}
+
+    rebuilt = ProjectModel.from_project_state(project)
+    assert rebuilt.active_series_id(_FB) == "b1"
+    # A project saved before v20 has no active_series key at all.
+    del project["active_series"]
+    assert ProjectModel.from_project_state(project).active_series == {}
+
+
+def test_trend_excluded_runs_round_trip_through_project_state():
+    project = {"datasets": []}
+    model = ProjectModel()
+    model.add_batch(_batch("b1", runs=(1, 2, 3)))
+    model.set_trend_excluded("b1", 2, True)
+
+    model.write_to_project_state(project)
+    rebuilt = ProjectModel.from_project_state(project)
+    assert rebuilt.batch("b1").trend_excluded_runs == [2]
+    assert rebuilt.batch("b1").trend_member_run_numbers() == [1, 3]
 
 
 def test_standalone_round_trip():
@@ -201,57 +190,11 @@ def test_recompute_all_preserves_persisted_result_metadata():
     assert maxent.result_metadata["cycles"] == 25
 
 
-def _batched_model(pm: ProjectModel, model: dict) -> FitSeries:
-    for run_number in (10, 11):
-        rep = pm.ensure_dataset(run_number).ensure(_FB)
-        rep.fit = FitSlot(model=model, provenance="batch", batch_id="b1")
-    batch = FitSeries(
-        "b1", _FB, member_run_numbers=[10, 11], canonical_model=model, param_roles={"A": "local"}
-    )
-    pm.add_batch(batch)
-    return batch
-
-
-def test_refresh_divergence_flags_excludes_and_re_includes():
-    model_a = CompositeModel(["Exponential", "Constant"]).to_dict()
-    model_b = CompositeModel(["Gaussian", "Constant"]).to_dict()
+def test_computed_series_is_flagged():
+    """A model-less "computed" series (e.g. an integral scan) owns no fit model."""
     pm = ProjectModel()
-    batch = _batched_model(pm, model_a)
-
-    pm.refresh_divergence()
-    assert pm.trend_runs_for_batch(batch) == [10, 11]
-    assert not batch.is_diverged(11)
-
-    # Edit member 11's model -> diverged, excluded from trend by default.
-    pm.representation(11, _FB).fit.model = model_b
-    pm.refresh_divergence()
-    assert batch.is_diverged(11)
-    assert pm.representation(11, _FB).fit.diverged
-    assert pm.trend_runs_for_batch(batch) == [10]
-
-    # Manual re-inclusion is honoured and preserved across refresh.
-    pm.set_member_trend_inclusion("b1", 11, True)
-    assert pm.trend_runs_for_batch(batch) == [10, 11]
-    pm.refresh_divergence()
-    assert pm.trend_runs_for_batch(batch) == [10, 11]
-    assert batch.is_diverged(11)  # still flagged, just re-included
-
-    # Revert the model -> re-converges, flag cleared.
-    pm.representation(11, _FB).fit.model = model_a
-    pm.refresh_divergence()
-    assert not batch.is_diverged(11)
-    assert pm.trend_runs_for_batch(batch) == [10, 11]
-
-
-def test_computed_series_is_flagged_and_skips_divergence():
-    # A model-less "computed" series (e.g. an integral scan) must not flip the
-    # divergence/trend state of a real fit that shares the same run numbers.
-    model_a = CompositeModel(["Exponential", "Constant"]).to_dict()
-    pm = ProjectModel()
-    real = _batched_model(pm, model_a)  # real fit on runs 10, 11
-    pm.refresh_divergence()
-    assert pm.representation(11, _FB).fit.include_in_trend is True
-
+    real = _batch("b1", runs=(10, 11))
+    pm.add_batch(real)
     scan = FitSeries(
         "scan-1",
         _FB,
@@ -263,15 +206,9 @@ def test_computed_series_is_flagged_and_skips_divergence():
             11: {"success": True, "parameters": {"Integral asymmetry": 0.2}},
         },
     )
+    pm.add_batch(scan)
     assert scan.is_computed is True
     assert real.is_computed is False
-    pm.add_batch(scan)
-
-    pm.refresh_divergence()
-    # The real fit's per-run state is untouched by the computed series.
-    assert pm.representation(11, _FB).fit.diverged is False
-    assert pm.representation(11, _FB).fit.include_in_trend is True
-    assert not real.is_diverged(11)
 
 
 def test_recompute_all_skips_missing_runs():
@@ -380,21 +317,6 @@ def test_fitseries_source_group_id_round_trips():
     # Default / ad-hoc series carry no provenance.
     assert FitSeries("b2", _FB).source_group_id is None
     assert FitSeries.from_dict(FitSeries("b2", _FB).to_dict()).source_group_id is None
-
-
-def test_fitseries_source_group_id_excluded_from_identity_signature():
-    """Provenance is an attribute, not identity (same lesson as param_roles/fit_range).
-
-    Re-running the same members+model under a different group association still
-    supersedes the earlier series in place rather than spawning a duplicate.
-    """
-    model = ProjectModel()
-    first = _batch("b1")
-    first.source_group_id = "grp-1"
-    model.add_batch(first)
-    second = _batch("b2")
-    second.source_group_id = "grp-2"  # different provenance, same identity
-    assert model.remove_superseded_batches(second) == ["b1"]
 
 
 def test_data_group_round_trips_through_project_model():
@@ -528,17 +450,19 @@ def test_remove_data_group_delete_branch_removes_series_and_returns_ids():
     group = model.create_data_group("scan", [1, 2])
     linked = _batch("b1", runs=(1, 2))
     linked.group_id = group.group_id
-    # Give run 1 a FitSlot pointing at the batch so we can assert it is cleared.
+    # Run 1 has its own single fit; deleting the group's series must not touch it.
     rep1 = model.ensure_dataset(1).ensure(_FB)
-    rep1.fit = FitSlot(model=_model_dict(), provenance="batch", batch_id="b1")
+    rep1.fit = FitSlot(model=_model_dict(), provenance="single")
     model.add_batch(linked)
+    model.set_active_series(_FB, "b1")
 
     removed = model.remove_data_group(group.group_id, orphan_series=False)
     assert removed == ["b1"]
     assert model.batch("b1") is None
-    # remove_batch cleared the member FitSlot pointer.
-    assert rep1.fit.batch_id is None
+    # The run keeps its single fit; the active pointer at the deleted series goes.
     assert rep1.fit.provenance == "single"
+    assert rep1.fit.model == _model_dict()
+    assert model.active_series_id(_FB) is None
 
 
 def test_remove_data_group_resolves_legacy_source_group_id_fallback():
@@ -795,86 +719,6 @@ def test_move_run_to_phase_run_not_in_targets_parent_raises():
     (phase_b,) = model.create_phase_groups(parent_b.group_id, [_phase(1, "Phase I", [10, 11, 12])])
     with pytest.raises(ValueError, match="not a member of series group"):
         model.move_run_to_phase(1, phase_b, series_group_id=parent_b.group_id, runs_by_number={})
-
-
-# ── series signature: group-bound vs frozen keying (D7) ───────────────────────
-
-
-def test_group_bound_series_supersede_on_same_group_model_and_exclusions():
-    model = ProjectModel()
-    group = model.create_data_group("scan", [1, 2, 3])
-    first = _batch("b1", runs=(1, 2))
-    first.group_id = group.group_id
-    first.excluded_run_numbers = [3]
-    model.add_batch(first)
-    # Re-run: same group + model + exclusions, but the group has since gained a
-    # run so the member list differs. Identity is group+model+exclusions, so it
-    # still supersedes in place.
-    second = _batch("b2", runs=(1, 2, 3))
-    second.group_id = group.group_id
-    second.excluded_run_numbers = [3]
-    assert model.remove_superseded_batches(second) == ["b1"]
-    assert second.batch_id == "b1"
-
-
-def test_group_bound_series_differing_exclusions_do_not_collide():
-    model = ProjectModel()
-    group = model.create_data_group("scan", [1, 2, 3])
-    first = _batch("b1", runs=(1, 2, 3))
-    first.group_id = group.group_id
-    first.excluded_run_numbers = []
-    model.add_batch(first)
-    other = _batch("b2", runs=(1, 2))
-    other.group_id = group.group_id
-    other.excluded_run_numbers = [3]  # a genuinely different analysis
-    assert model.remove_superseded_batches(other) == []
-
-
-def test_frozen_series_keying_unchanged_by_member_set():
-    """A frozen (group_id None) run series still keys on rep+kind+members+model."""
-    model = ProjectModel()
-    first = _batch("b1", runs=(1, 2))  # group_id None
-    model.add_batch(first)
-    same = _batch("b2", runs=(1, 2))
-    assert model.remove_superseded_batches(same) == ["b1"]
-    # A frozen series and a group-bound series over the same runs never collide.
-    model2 = ProjectModel()
-    frozen = _batch("f1", runs=(1, 2))
-    model2.add_batch(frozen)
-    bound = _batch("g1", runs=(1, 2))
-    bound.group_id = "grp-1"
-    assert model2.remove_superseded_batches(bound) == []
-
-
-def test_dedupe_relinks_member_slot_that_pointed_at_dropped_twin():
-    """A legacy project whose member FitSlot referenced an EARLIER duplicate twin
-    must not lose its series link when dedupe drops that twin.
-
-    remove_batch clears a slot only when it references the dropped id; without a
-    relink step the run would be orphaned from the surviving keeper (batch_id
-    cleared, provenance 'single') even though the keeper still lists it.
-    """
-    model = ProjectModel()
-    canonical = _model_dict()
-    # Two identically-keyed twins over the same members+model (duplicate era).
-    old = _batch("old", model=canonical, runs=(10, 11))
-    new = _batch("new", model=canonical, runs=(10, 11))
-    model.add_batch(old)
-    model.add_batch(new)
-    # Legacy inconsistency: run 10's slot points at the OLD (to-be-dropped) twin,
-    # run 11's at the keeper.
-    rep10 = model.ensure_dataset(10).ensure(_FB)
-    rep10.fit = FitSlot(model=canonical, provenance="batch", batch_id="old")
-    rep11 = model.ensure_dataset(11).ensure(_FB)
-    rep11.fit = FitSlot(model=canonical, provenance="batch", batch_id="new")
-
-    records = model.dedupe_batches()
-    assert len(records) == 1 and records[0]["kept"] == "new"
-    assert set(model.batches) == {"new"}
-    # Run 10's slot was repointed at the keeper rather than orphaned.
-    assert rep10.fit.batch_id == "new"
-    assert rep10.fit.provenance == "batch"
-    assert rep11.fit.batch_id == "new"
 
 
 def test_move_run_to_phase_touches_only_the_named_series():

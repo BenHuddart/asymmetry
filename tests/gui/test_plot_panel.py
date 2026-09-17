@@ -17,13 +17,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 # Import PySide6 conditionally
 pyside6 = pytest.importorskip("PySide6")
+from PySide6.QtGui import QAction  # type: ignore
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # type: ignore
 
 import asymmetry.gui.utils.gle_export as gle_export
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import resolve_gle_export_paths
-from asymmetry.gui.panels.plot_panel import PlotPanel
+from asymmetry.gui.panels.plot_panel import SINGLE_FIT_ID, PlotPanel
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.utils.gle_editor import open_gle_editor_count
 from asymmetry.gui.widgets.axis_limits import FloatLimitField
@@ -2354,8 +2355,8 @@ class TestPlotPanel:
         panel.plot_fit(t, np.zeros_like(t), label="Fit")
 
         # The fit is keyed under the selected projection (P_y), not P_x.
-        assert (9302, "P_y") in panel._fit_curves_by_key
-        assert (9302, "P_x") not in panel._fit_curves_by_key
+        assert (9302, "P_y", "single") in panel._fit_curves_by_key
+        assert (9302, "P_x", "single") not in panel._fit_curves_by_key
 
     def test_axis_key_for_dataset_passes_through_tf_label(self, panel: PlotPanel) -> None:
         """A transverse-field projection label keys the dataset's fit storage,
@@ -2401,8 +2402,8 @@ class TestPlotPanel:
 
         panel.plot_fit(t, np.zeros_like(t), label="Fit")
 
-        assert (9303, "Fwd-Back") in panel._fit_curves_by_key
-        assert (9303, "Top-Bottom") not in panel._fit_curves_by_key
+        assert (9303, "Fwd-Back", "single") in panel._fit_curves_by_key
+        assert (9303, "Top-Bottom", "single") not in panel._fit_curves_by_key
 
     def test_plot_fit_keys_under_the_explicit_fitted_run_in_multi_run_overlay(
         self, panel: PlotPanel
@@ -2442,8 +2443,8 @@ class TestPlotPanel:
         # The user fitted the FIRST run (501); the caller passes it explicitly.
         panel.plot_fit(t, np.zeros_like(t), label="Fit", run_number=501)
 
-        assert (501, "P_y") in panel._fit_curves_by_key
-        assert (502, "P_y") not in panel._fit_curves_by_key
+        assert (501, "P_y", "single") in panel._fit_curves_by_key
+        assert (502, "P_y", "single") not in panel._fit_curves_by_key
         assert panel._fit_curve_run_number == 501
 
     def test_plot_fit_axis_key_follows_the_fitted_run_in_mixed_axis_overlay(
@@ -2477,8 +2478,8 @@ class TestPlotPanel:
         # Fit the first run (601, P_x); its key must use P_x, not the panel's P_y.
         panel.plot_fit(t, np.zeros_like(t), label="Fit", run_number=601)
 
-        assert (601, "P_x") in panel._fit_curves_by_key
-        assert (601, "P_y") not in panel._fit_curves_by_key
+        assert (601, "P_x", "single") in panel._fit_curves_by_key
+        assert (601, "P_y", "single") not in panel._fit_curves_by_key
 
     def test_empty_projection_subplot_uses_neutral_y_range(self, panel: PlotPanel) -> None:
         """An all-NaN projection subplot gets a neutral asymmetry range, not (0, 1).
@@ -2942,10 +2943,10 @@ class TestPlotPanel:
         panel.plot_dataset(ds_py)
         panel.plot_fit(t, fit_py, label="Fit Py")
 
-        assert (9901, "P_x") in panel._fit_curves_by_key
-        assert (9901, "P_y") in panel._fit_curves_by_key
-        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_x")][1], fit_px)
-        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_y")][1], fit_py)
+        assert (9901, "P_x", "single") in panel._fit_curves_by_key
+        assert (9901, "P_y", "single") in panel._fit_curves_by_key
+        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_x", "single")][1], fit_px)
+        np.testing.assert_allclose(panel._fit_curves_by_key[(9901, "P_y", "single")][1], fit_py)
 
     def test_all_mode_axis_plotting_uses_matching_axis_fit_curve(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -2973,8 +2974,8 @@ class TestPlotPanel:
         fit_px = 0.21 * np.exp(-0.27 * t)
         fit_py = 0.14 * np.exp(-0.20 * t)
 
-        panel._fit_curves_by_key[(9902, "P_x")] = (t, fit_px, "Fit Px")
-        panel._fit_curves_by_key[(9902, "P_y")] = (t, fit_py, "Fit Py")
+        panel._fit_curves_by_key[(9902, "P_x", "single")] = (t, fit_px, "Fit Px")
+        panel._fit_curves_by_key[(9902, "P_y", "single")] = (t, fit_py, "Fit Py")
 
         ax_px = _FakeAxis()
         ax_py = _FakeAxis()
@@ -3008,7 +3009,7 @@ class TestPlotPanel:
         )
 
         fit_pz = 0.19 * np.exp(-0.22 * t)
-        panel._fit_curves_by_key[(9903, "P_z")] = (t, fit_pz, "Fit Pz")
+        panel._fit_curves_by_key[(9903, "P_z", "single")] = (t, fit_pz, "Fit Pz")
         # Legacy run-only cache should not override axis-specific separation.
         panel._fit_curves[9903] = (t, fit_pz, "Fit")
 
@@ -3489,10 +3490,10 @@ class TestPlotPanel:
         fit_px = np.array([0.2, 0.15, 0.1], dtype=float)
         fit_py = np.array([0.18, 0.12, 0.08], dtype=float)
 
-        panel._fit_curves_by_key[(1101, "P_x")] = (t, fit_px, "Fit Px")
-        panel._fit_curves_by_key[(1101, "P_y")] = (t, fit_py, "Fit Py")
-        panel._fit_components_by_key[(1101, "P_x")] = [("Component", fit_px)]
-        panel._fit_metadata_by_key[(1101, "P_x")] = {"fit_function": "A0*exp(-lambda*t)"}
+        panel._fit_curves_by_key[(1101, "P_x", "single")] = (t, fit_px, "Fit Px")
+        panel._fit_curves_by_key[(1101, "P_y", "single")] = (t, fit_py, "Fit Py")
+        panel._fit_components_by_key[(1101, "P_x", "single")] = [("Component", fit_px)]
+        panel._fit_metadata_by_key[(1101, "P_x", "single")] = {"fit_function": "A0*exp(-lambda*t)"}
 
         state = panel.get_state()
 
@@ -3501,11 +3502,14 @@ class TestPlotPanel:
             pytest.skip("matplotlib not available")
         restored.restore_state(state, dataset=None)
 
-        assert (1101, "P_x") in restored._fit_curves_by_key
-        assert (1101, "P_y") in restored._fit_curves_by_key
-        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_x")][1], fit_px)
-        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_y")][1], fit_py)
-        assert restored._fit_metadata_by_key[(1101, "P_x")]["fit_function"] == "A0*exp(-lambda*t)"
+        assert (1101, "P_x", "single") in restored._fit_curves_by_key
+        assert (1101, "P_y", "single") in restored._fit_curves_by_key
+        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_x", "single")][1], fit_px)
+        np.testing.assert_allclose(restored._fit_curves_by_key[(1101, "P_y", "single")][1], fit_py)
+        assert (
+            restored._fit_metadata_by_key[(1101, "P_x", "single")]["fit_function"]
+            == "A0*exp(-lambda*t)"
+        )
 
     def test_label_field_selection_is_tracked_per_data_group(self, panel: PlotPanel) -> None:
         if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
@@ -5695,3 +5699,166 @@ class TestSwitchCostPins:
         panel._moments_span_artists = [panel._ax.axvspan(0.1, 0.2)]
         panel.clear_moments_overlay()
         assert draws == [1]
+
+
+class TestFitsMenuButton:
+    """The toolbar's **Fits** button and its popup (series-workflow item 3)."""
+
+    @staticmethod
+    def _dataset(run_number: int) -> MuonDataset:
+        t = np.linspace(0.0, 5.0, 20)
+        a = 0.2 * np.exp(-0.4 * t)
+        e = np.full_like(t, 0.01)
+        return MuonDataset(time=t, asymmetry=a, error=e, metadata={"run_number": run_number})
+
+    @staticmethod
+    def _curve() -> tuple[np.ndarray, np.ndarray]:
+        t = np.linspace(0.0, 5.0, 10)
+        return t, np.zeros_like(t)
+
+    @staticmethod
+    def _menu_actions(panel: PlotPanel) -> list[QAction]:
+        """Rebuild the popup the way opening it does, and return its entries."""
+        panel._fits_menu.aboutToShow.emit()
+        return list(panel._fits_menu.actions())
+
+    def _two_series_and_a_single_fit(self, panel: PlotPanel) -> None:
+        panel.plot_dataset(self._dataset(500))
+        t, y = self._curve()
+        panel.set_global_fits(
+            {500: (t, y, "leg-a", [])}, fit_id="batch-1", fit_labels={"batch-1": "T scan A"}
+        )
+        panel.set_global_fits(
+            {500: (t, y, "leg-b", [])}, fit_id="batch-2", fit_labels={"batch-2": "T scan B"}
+        )
+        panel.plot_fit(t, y, label="Fit", run_number=500, fit_id=SINGLE_FIT_ID)
+        panel.set_active_fit_id("batch-2")
+
+    def test_hidden_for_a_run_with_no_fit(self, panel: PlotPanel) -> None:
+        """No fit, no button: the empty plot row keeps its pre-series width."""
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(self._dataset(500))
+        assert panel._fits_button.text() == "Fits"
+        assert panel._fits_button.isVisibleTo(panel) is False
+
+    def test_reads_plain_fits_for_a_run_with_one_fit(self, panel: PlotPanel) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(self._dataset(500))
+        t, y = self._curve()
+        panel.plot_fit(t, y, label="Fit", run_number=500, fit_id=SINGLE_FIT_ID)
+        assert panel._fits_button.text() == "Fits"
+        assert panel._fits_button.isVisibleTo(panel) is True
+        assert tokens.ACCENT_RED not in panel._fits_button.styleSheet()
+
+    def test_counts_the_run_s_fits_once_it_holds_more_than_one(self, panel: PlotPanel) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        self._two_series_and_a_single_fit(panel)
+        assert panel._fits_button.text() == "Fits · 3"
+        assert panel._fits_button.isVisibleTo(panel) is True
+        assert tokens.ACCENT_RED in panel._fits_button.styleSheet()
+
+    def test_menu_lists_two_series_and_the_single_fit_in_order(self, panel: PlotPanel) -> None:
+        """Active series first, other series in recording order, "Single fit" last."""
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        self._two_series_and_a_single_fit(panel)
+
+        actions = self._menu_actions(panel)
+        texts = [a.text() for a in actions if not a.isSeparator()]
+        assert texts == [
+            "Fits on run 500",
+            "● T scan B",
+            "T scan A",
+            "Single fit",
+            "Tick = show · ● = active series",
+        ]
+        # Show/hide only: which series is active is decided elsewhere (D5).
+        assert all(a.menu() is None for a in actions)
+        # The header and footer are read-only; only the fits are checkable.
+        assert not actions[0].isEnabled()
+        assert not actions[-1].isEnabled()
+        # Only the active series is drawn by default, so only it is ticked.
+        checked = [a.text() for a in actions if a.isCheckable() and a.isChecked()]
+        assert checked == ["● T scan B"]
+
+    def test_menu_entry_toggles_shown_fit_ids(self, panel: PlotPanel) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        self._two_series_and_a_single_fit(panel)
+        assert set(panel.shown_fit_ids(500)) == {"batch-2"}
+
+        entry = {a.text(): a for a in self._menu_actions(panel)}["T scan A"]
+        entry.trigger()
+        assert set(panel.shown_fit_ids(500)) == {"batch-1", "batch-2"}
+
+        entry = {a.text(): a for a in self._menu_actions(panel)}["T scan A"]
+        assert entry.isChecked()
+        entry.trigger()
+        assert set(panel.shown_fit_ids(500)) == {"batch-2"}
+
+    def test_unticking_every_entry_draws_no_fit(self, panel: PlotPanel) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        self._two_series_and_a_single_fit(panel)
+        {a.text(): a for a in self._menu_actions(panel)}["● T scan B"].trigger()
+        assert panel.shown_fit_ids(500) == []
+
+    def test_the_marker_follows_the_active_series_but_the_menu_never_sets_it(
+        self, panel: PlotPanel
+    ) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        self._two_series_and_a_single_fit(panel)
+        panel.set_active_fit_id("batch-1")
+
+        actions = [a for a in self._menu_actions(panel) if a.isCheckable()]
+        assert [a.text() for a in actions] == ["● T scan A", "T scan B", "Single fit"]
+        # Triggering an entry only toggles its curve; the active series stays.
+        actions[1].trigger()
+        assert panel.active_fit_id() == "batch-1"
+        assert set(panel.shown_fit_ids(500)) == {"batch-1", "batch-2"}
+
+    def test_refreshing_the_button_never_redraws(
+        self, panel: PlotPanel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        self._two_series_and_a_single_fit(panel)
+        draws: list[int] = []
+        monkeypatch.setattr(panel._canvas, "draw_idle", lambda: draws.append(1))
+
+        panel.set_fit_labels({"batch-1": "T scan A (renamed)"})
+        panel._refresh_fits_button()
+        assert draws == []
+        assert panel._fits_button.text() == "Fits · 3"
+
+    def test_a_long_series_name_never_widens_the_panel(self, panel: PlotPanel) -> None:
+        """The fit names live in the popup, so the panel's minimum width ignores them."""
+        if not getattr(panel, "_has_mpl", False):
+            pytest.skip("matplotlib not available")
+        panel.plot_dataset(self._dataset(500))
+        empty = panel.minimumSizeHint().width()
+
+        t, y = self._curve()
+        # One short-named fit shows the button; that is the only width step.
+        panel.set_global_fits(
+            {500: (t, y, "leg-a", [])}, fit_id="batch-1", fit_labels={"batch-1": "a"}
+        )
+        panel.layout().activate()
+        before = panel.minimumSizeHint().width()
+
+        long_name = "Europium oxide transverse field temperature scan"[:60].ljust(60, "·")
+        panel.set_fit_labels({"batch-1": long_name})
+        panel.set_global_fits(
+            {500: (t, y, "leg-b", [])}, fit_id="batch-2", fit_labels={"batch-2": long_name}
+        )
+        panel.set_active_fit_id("batch-2")
+        panel.layout().activate()
+
+        assert panel._fits_button.text() == "Fits · 2"
+        assert panel.minimumSizeHint().width() == before
+        # And a run with no fit at all keeps the pre-series row width.
+        assert empty < before
