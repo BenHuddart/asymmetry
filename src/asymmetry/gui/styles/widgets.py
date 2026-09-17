@@ -108,17 +108,26 @@ RESULT_BOX_SUCCESS_STYLE = (
 
 
 def clear_layout(layout) -> None:
-    """Remove every widget from *layout* and schedule it for deletion.
+    """Remove every widget from *layout*, hide it, and schedule it for deletion.
 
     Shared by panels that rebuild a dynamic section in place (parameter group
     tabs, fit ranges, the per-projection alpha table). Takes each item off the
     layout and calls ``deleteLater`` on its widget; sub-layout items (no widget)
     are simply detached, matching the prior per-call-site loops.
+
+    ``hide()`` runs immediately, before the deferred ``deleteLater`` fires: a
+    widget detached from its layout keeps its old parent and last-laid-out
+    geometry until Qt actually destroys it, so a rebuild called more than once
+    before the event loop turns (a nested wrapper widget whose own child count
+    changes between calls, e.g. a sectioned chip rail gaining a row) would
+    otherwise leave a stale, still-visible widget painted at its previous
+    position on top of the freshly laid-out ones.
     """
     while layout.count():
         item = layout.takeAt(0)
         widget = item.widget()
         if widget is not None:
+            widget.hide()
             widget.deleteLater()
 
 

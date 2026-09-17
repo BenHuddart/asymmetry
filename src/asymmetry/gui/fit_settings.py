@@ -1,8 +1,10 @@
-"""User-configurable fit-display settings, backed by ``QSettings``.
+"""User-configurable fit-display and project settings, backed by ``QSettings``.
 
-These are presentation preferences (not project data): they tune how fit
-diagnostics are *shown*, never how a fit is computed, so they live with the GUI
-rather than in a saved ``.asymp``. Kept Qt-side so the core stays headless.
+These are presentation/session preferences (not project data): the fit-quality
+settings tune how fit diagnostics are *shown*, never how a fit is computed, and
+the autosave interval tunes session crash-recovery cadence, never a saved
+project's contents — so both live with the GUI rather than in a saved
+``.asymp``. Kept Qt-side so the core stays headless.
 """
 
 from __future__ import annotations
@@ -20,6 +22,13 @@ FIT_QUALITY_CONFIDENCE_SETTINGS_KEY = "fit/quality_confidence"
 #: the band outside the range the core will honour.
 _CONFIDENCE_MIN = 0.5
 _CONFIDENCE_MAX = 0.999
+
+#: QSettings key for the autosave interval (minutes); ``0`` disables autosave.
+AUTOSAVE_INTERVAL_SETTINGS_KEY = "project/autosave_interval_minutes"
+
+#: Default autosave cadence (D9): frequent enough to bound crash loss, rare
+#: enough not to contend with a background project save.
+_AUTOSAVE_INTERVAL_DEFAULT = 5
 
 
 def fit_quality_confidence(settings: QSettings | None = None) -> float:
@@ -45,6 +54,30 @@ def set_fit_quality_confidence(value: float, settings: QSettings | None = None) 
     settings = settings or QSettings()
     clamped = _clamp_confidence(value)
     settings.setValue(FIT_QUALITY_CONFIDENCE_SETTINGS_KEY, clamped)
+    return clamped
+
+
+def autosave_interval_minutes(settings: QSettings | None = None) -> int:
+    """Return the configured autosave interval in minutes; ``0`` disables it.
+
+    Falls back to the default (5 minutes) when the setting is unset or
+    unparseable, and clamps a negative stored value to 0 (disabled) rather
+    than arming a timer with a negative interval.
+    """
+    settings = settings or QSettings()
+    raw = settings.value(AUTOSAVE_INTERVAL_SETTINGS_KEY, _AUTOSAVE_INTERVAL_DEFAULT)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _AUTOSAVE_INTERVAL_DEFAULT
+    return max(value, 0)
+
+
+def set_autosave_interval_minutes(value: int, settings: QSettings | None = None) -> int:
+    """Persist *value* (clamped to >= 0) and return the stored figure."""
+    settings = settings or QSettings()
+    clamped = max(int(value), 0)
+    settings.setValue(AUTOSAVE_INTERVAL_SETTINGS_KEY, clamped)
     return clamped
 
 

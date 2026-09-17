@@ -34,6 +34,8 @@ from .global_tab import (
     BATCH_SEEDING_MODES,
     BATCH_SEEDING_TOOLTIP,
     GlobalFitTab,
+    SeriesCatalogue,
+    SeriesMenuEntry,
 )
 from .panel import FitPanel
 from .seeding import (
@@ -75,6 +77,8 @@ __all__ = [
     "FitTabBase",
     "GlobalFitTab",
     "QMessageBox",
+    "SeriesCatalogue",
+    "SeriesMenuEntry",
     "SingleFitTab",
     "_CommitOnTabDelegate",
     "_MAX_PHASE_SEED_FFT_POINTS",

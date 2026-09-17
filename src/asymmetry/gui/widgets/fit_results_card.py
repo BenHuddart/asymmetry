@@ -166,6 +166,14 @@ class FitResultsCard(QWidget):
         self._meta_tag = make_context_chip("")
         header_row.addWidget(self._meta_tag)
 
+        # ── Notice: what the last action did to the *record* ────────────────
+        self._notice = QLabel(self._surface)
+        self._notice.setWordWrap(True)
+        self._notice.setFont(footer_font())
+        self._notice.setStyleSheet(f"QLabel {{ color: {tokens.TEXT_MUTED}; }}")
+        self._notice.hide()
+        surface_layout.addWidget(self._notice)
+
         # ── Body: the detail line ───────────────────────────────────────────
         self._detail = QLabel(self._surface)
         self._detail.setTextFormat(Qt.TextFormat.RichText)
@@ -219,6 +227,7 @@ class FitResultsCard(QWidget):
         *tooltip* is the body line's hover text, and defaults to none so the next
         message never inherits the last one's.
         """
+        self.set_notice("")
         self._apply_tag(tag, tone)
         self._headline.setText("")
         self._meta.setText("")
@@ -230,6 +239,7 @@ class FitResultsCard(QWidget):
 
     def set_summary(self, summary: FitCardSummary) -> None:
         """Render a completed fit."""
+        self.set_notice("")
         self._apply_tag(summary.tag, summary.tone)
         self._headline.setText(summary.headline)
         self._meta.setText(summary.meta)
@@ -252,6 +262,16 @@ class FitResultsCard(QWidget):
         outcome survives rather than only the statistics.
         """
         return self._content_html
+
+    def set_notice(self, text: str) -> None:
+        """Show a muted line above the read-out, or clear it with ``""``.
+
+        The notice says what the last action did to the *record* rather than how
+        the fit went — "Re-ran … — results replaced." — so it is set after the
+        read-out it annotates and is dropped by the next one.
+        """
+        self._notice.setText(str(text))
+        self._notice.setVisible(bool(text))
 
     def set_meta_tag(self, text: str | None, tooltip: str = "") -> None:
         """Show a tag in place of the mono meta read-out ("seeds from 3001").

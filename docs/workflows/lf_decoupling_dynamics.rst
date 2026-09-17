@@ -210,9 +210,10 @@ its data, so it governs the plotted points, the propagated error bars (with
 :math:`\sigma_{1/\lambda} = \sigma_\lambda/\lambda^2`), **and** the trend fit
 in one lens: fitting the built-in ``Linear`` model with the Y axis reciprocal
 and the X axis squared *is* the Redfield line. The two off-plateau points are
-left in the series but unticked from the trend (``include_in_trend`` off), so
-they remain visible and ringed but do not pull the fit — the 0.4 T point below
-the plateau and the 3.8 T saturated point. See
+left in the series but excluded from the trend (the series'
+``trend_excluded_runs``, toggled with the plot's **Exclude from trend**
+action), so they remain visible and ringed but do not pull the fit — the
+0.4 T point below the plateau and the 3.8 T saturated point. See
 :doc:`/reference/parameter_trending` for the transform presets and the
 model-fit dialog.
 

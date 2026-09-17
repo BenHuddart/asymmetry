@@ -22,6 +22,7 @@ is always estimated separately per member and is therefore excluded from
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from asymmetry.core.data.dataset import Run
@@ -38,21 +39,68 @@ PARAM_ROLES = ("global", "local", "fixed")
 #: Allowed member kinds.
 MEMBER_KINDS = ("runs", "groups")
 
+#: Default co-add block of a recipe (D2): co-adding off, window of 2.
+DEFAULT_COADD: dict[str, Any] = {"mode": "off", "window": 2}
 
-def canonical_model_matches(model_a: dict | None, model_b: dict | None) -> bool:
-    """Return ``True`` when two serialised models are structurally identical.
+#: Default seeding mode of a recipe (D2) — the Batch tab's ``_batch_seeding_mode``.
+DEFAULT_SEEDING = "auto"
 
-    Comparison is done on the normalised ``CompositeModel.to_dict`` form so
-    semantically-equal models do not falsely register as diverged.
+
+def default_recipe() -> dict[str, Any]:
+    """Return an empty :attr:`FitSeries.recipe` (D2).
+
+    A series that has never been run — or one loaded from a pre-v20 project the
+    migration could not seed — carries this shape: no parameter rows, an
+    unbounded fit range ("as fitted, unknown"), automatic seeding and co-adding
+    off.
     """
-    if model_a is None or model_b is None:
-        return model_a is None and model_b is None
-    try:
-        norm_a = CompositeModel.from_dict(model_a).to_dict()
-        norm_b = CompositeModel.from_dict(model_b).to_dict()
-    except (ValueError, KeyError, TypeError):
-        return model_a == model_b
-    return norm_a == norm_b
+    return {
+        "parameters": [],
+        "fit_range": {"min": None, "max": None},
+        "seeding": DEFAULT_SEEDING,
+        "coadd": dict(DEFAULT_COADD),
+    }
+
+
+def _recipe_parameter_row(entry: dict) -> dict[str, Any]:
+    """Normalise one Batch-tab parameter row into its recipe form."""
+    return {
+        "name": str(entry.get("name", "")),
+        "value": float(entry.get("value", 0.0)),
+        "type": str(entry.get("type", "")),
+        "bounds": str(entry.get("bounds", "")),
+        "seeded": bool(entry.get("seeded", False)),
+    }
+
+
+def _optional_float(value: object) -> float | None:
+    """Return *value* as a float, or ``None`` when it is absent."""
+    return None if value is None else float(value)
+
+
+def normalise_recipe(recipe: dict | None) -> dict[str, Any]:
+    """Return *recipe* in the canonical D2 shape, filling absent blocks.
+
+    The single normalising boundary for a recipe: every :class:`FitSeries`
+    holds this exact shape, so :meth:`FitSeries.recipe_identity` can compare
+    two recipes as strings without re-deriving defaults, and the Batch tab can
+    read every key without asking whether it is present.
+    """
+    source = recipe or {}
+    fit_range = source.get("fit_range") or {}
+    coadd = source.get("coadd") or {}
+    return {
+        "parameters": [_recipe_parameter_row(entry) for entry in source.get("parameters") or []],
+        "fit_range": {
+            "min": _optional_float(fit_range.get("min")),
+            "max": _optional_float(fit_range.get("max")),
+        },
+        "seeding": str(source.get("seeding") or DEFAULT_SEEDING),
+        "coadd": {
+            "mode": str(coadd.get("mode") or DEFAULT_COADD["mode"]),
+            "window": int(coadd.get("window") or DEFAULT_COADD["window"]),
+        },
+    }
 
 
 class FitSeries:
@@ -79,12 +127,13 @@ class FitSeries:
         param_roles: dict[str, str] | None = None,
         nuisance_params: list[str] | None = None,
         results_by_run: dict[int, dict] | None = None,
-        diverged_runs: set[int] | list[int] | None = None,
         extra: dict | None = None,
         source_group_id: str | None = None,
         group_id: str | None = None,
         excluded_run_numbers: list[int] | None = None,
         last_fitted_members: list[int] | None = None,
+        recipe: dict | None = None,
+        trend_excluded_runs: list[int] | None = None,
     ) -> None:
         self.batch_id = str(batch_id)
         self.label: str | None = str(label).strip() or None if label else None
@@ -111,7 +160,19 @@ class FitSeries:
         self.results_by_run: dict[int, dict] = {
             int(run): dict(result) for run, result in (results_by_run or {}).items()
         }
-        self.diverged_runs: set[int] = {int(r) for r in (diverged_runs or set())}
+        #: The Batch tab's setup for this series (D2): ``parameters`` (the table
+        #: rows), ``fit_range``, ``seeding`` and ``coadd``. Always in the
+        #: canonical shape :func:`normalise_recipe` produces, so every reader
+        #: finds every key. Re-running a series with an identical recipe and
+        #: member set replaces its results in place (D3); anything else records
+        #: a new series.
+        self.recipe: dict[str, Any] = normalise_recipe(recipe)
+        #: Members the user has dropped from *trending* without removing them
+        #: from the series (D4). Series-level, so a run trended in one series
+        #: and excluded from another keeps both answers. Sorted, de-duplicated,
+        #: and expressed in member keys (synthetic group keys for a group
+        #: series), mirroring :attr:`member_run_numbers`.
+        self.trend_excluded_runs: list[int] = sorted({int(r) for r in (trend_excluded_runs or [])})
         #: Freeform JSON-able state attached to this series (e.g. the ALC scan's
         #: baseline regions / peaks / view options). Empty for ordinary fits.
         self.extra: dict = dict(extra) if isinstance(extra, dict) else {}
@@ -124,11 +185,10 @@ class FitSeries:
         self.source_group_id: str | None = str(source_group_id) if source_group_id else None
         #: Structural ownership link (D1/D7): the id of the DataGroup that *owns*
         #: this run-membered series. Unlike ``source_group_id`` this is identity,
-        #: not provenance — it keys the series' dedupe signature (see
-        #: ``_series_signature`` in ``project_model.py``) and drives live
-        #: membership derivation (:meth:`effective_members`). ``None`` for a
-        #: *frozen* series (a legacy/orphaned analysis with snapshot membership)
-        #: and for detector-group series (``member_kind == "groups"``, D8).
+        #: not provenance — it drives live membership derivation
+        #: (:meth:`effective_members`). ``None`` for a *frozen* series (a
+        #: legacy/orphaned analysis with snapshot membership) and for
+        #: detector-group series (``member_kind == "groups"``, D8).
         self.group_id: str | None = str(group_id) if group_id else None
         #: Per-series exclusions (D1): run numbers the user has dropped from this
         #: analysis without removing them from the owning group. Effective
@@ -155,10 +215,9 @@ class FitSeries:
         """True for a model-less *computed* series (e.g. an integral/field scan).
 
         A computed series carries per-run results directly in
-        :attr:`results_by_run` but owns **no** fit model and **no** per-run
-        :class:`FitSlot`\\ s. It must therefore be skipped by divergence checks
-        and must not clear runs' fit state when deleted (a real fit on the same
-        run is unrelated). A real batch/global fit always has a canonical model.
+        :attr:`results_by_run` but owns **no** fit model, so it has no recipe
+        worth re-running and no model to render in its label. A real
+        batch/global fit always has a canonical model.
         """
         return self.canonical_model is None
 
@@ -298,7 +357,7 @@ class FitSeries:
         self.member_run_numbers = [r for r in self.member_run_numbers if r != run_number]
         self.member_source_run.pop(run_number, None)
         self.results_by_run.pop(run_number, None)
-        self.diverged_runs.discard(run_number)
+        self.trend_excluded_runs = [r for r in self.trend_excluded_runs if r != run_number]
 
     def sort_members(self, runs_by_number: dict[int, Run]) -> None:
         """Order members by :attr:`order_key` using the supplied runs.
@@ -320,20 +379,58 @@ class FitSeries:
 
         self.member_run_numbers.sort(key=key)
 
-    # ── divergence ─────────────────────────────────────────────────────────
+    # ── identity (D3) ──────────────────────────────────────────────────────
 
-    def mark_diverged(self, run_number: int) -> None:
-        self.diverged_runs.add(int(run_number))
+    def recipe_identity(self) -> str:
+        """Return this series' canonical identity string.
 
-    def clear_diverged(self, run_number: int) -> None:
-        self.diverged_runs.discard(int(run_number))
+        Two series describe **the same analysis exactly when their identity
+        strings are equal** — that equivalence is the whole contract, and the
+        string itself is an opaque token (never parsed, never shown). On a run,
+        the Batch tab compares the draft's identity with the open series' (D3):
+        identical replaces the results in place under the same ``batch_id`` and
+        label; anything else records a new series.
 
-    def is_diverged(self, run_number: int) -> bool:
-        return int(run_number) in self.diverged_runs
+        Included: the representation, member kind, the normalised
+        :attr:`canonical_model`, :attr:`param_roles`, :attr:`order_key`,
+        :attr:`excluded_run_numbers`, the effective member set (the sorted
+        :attr:`last_fitted_members`, so member *ordering* is not identity), and
+        the whole :attr:`recipe` (parameter rows, fit range, seeding, co-add).
+
+        Excluded: :attr:`label` (renaming never changes identity),
+        :attr:`batch_id`, :attr:`group_id` and every recorded result — they say
+        which series this is or how it went, not what analysis it describes.
+        """
+        model = self.canonical_model
+        if model is not None:
+            try:
+                model = CompositeModel.from_dict(model).to_dict()
+            except (ValueError, KeyError, TypeError):
+                model = self.canonical_model
+        return json.dumps(
+            {
+                "rep_type": self.rep_type.value,
+                "member_kind": self.member_kind,
+                "members": sorted(int(r) for r in self.last_fitted_members),
+                "model": model,
+                "param_roles": dict(self.param_roles),
+                "order_key": self.order_key,
+                "excluded_run_numbers": list(self.excluded_run_numbers),
+                "recipe": self.recipe,
+            },
+            sort_keys=True,
+            default=str,
+        )
+
+    # ── trending ───────────────────────────────────────────────────────────
 
     def trend_member_run_numbers(self) -> list[int]:
-        """Return ordered members eligible for trending (non-diverged)."""
-        return [r for r in self.member_run_numbers if r not in self.diverged_runs]
+        """Return ordered members eligible for trending (D4).
+
+        Every member except those in :attr:`trend_excluded_runs`.
+        """
+        excluded = set(self.trend_excluded_runs)
+        return [r for r in self.member_run_numbers if r not in excluded]
 
     # ── persistence ────────────────────────────────────────────────────────
 
@@ -352,12 +449,13 @@ class FitSeries:
             "param_roles": dict(self.param_roles),
             "nuisance_params": list(self.nuisance_params),
             "results_by_run": {str(run): dict(res) for run, res in self.results_by_run.items()},
-            "diverged_runs": sorted(self.diverged_runs),
             "extra": dict(self.extra),
             "source_group_id": self.source_group_id,
             "group_id": self.group_id,
             "excluded_run_numbers": list(self.excluded_run_numbers),
             "last_fitted_members": list(self.last_fitted_members),
+            "recipe": normalise_recipe(self.recipe),
+            "trend_excluded_runs": list(self.trend_excluded_runs),
         }
 
     @classmethod
@@ -386,7 +484,6 @@ class FitSeries:
             param_roles=data.get("param_roles"),
             nuisance_params=data.get("nuisance_params"),
             results_by_run=results,
-            diverged_runs=data.get("diverged_runs"),
             extra=data.get("extra"),
             source_group_id=data.get("source_group_id"),
             # Tolerant reads: pre-v15 saves lack these. ``group_id`` stays absent
@@ -397,4 +494,8 @@ class FitSeries:
             group_id=data.get("group_id"),
             excluded_run_numbers=data.get("excluded_run_numbers"),
             last_fitted_members=data.get("last_fitted_members"),
+            # An absent ``recipe`` (a series the v19->v20 migration could not
+            # seed) becomes the empty default rather than a missing key.
+            recipe=data.get("recipe"),
+            trend_excluded_runs=data.get("trend_excluded_runs"),
         )

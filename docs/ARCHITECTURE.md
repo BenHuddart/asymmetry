@@ -74,7 +74,7 @@ asymmetry/
 │   │   ├── factory.py        # from_rep_type() — constructs concrete Representation subclasses
 │   │   ├── time.py           # TimeFBAsymmetry, TimeGroups representations
 │   │   ├── frequency.py      # FrequencyFFT, FrequencyMaxEnt representations
-│   │   ├── series.py         # FitSeries — ordered member series + divergence tracking
+│   │   ├── series.py         # FitSeries — ordered member series, its recipe + identity
 │   │   ├── trend_state.py    # TrendState dataclass for Fit Parameters panel state
 │   │   ├── global_fit_study.py # GlobalFitStudy — persisted named cross-group fit + staleness digest
 │   │   └── project_model.py  # ProjectModel — in-memory owner of representations + batches
@@ -269,10 +269,16 @@ Each `Representation` stores:
 
 - **recipe** — generation parameters (e.g. FFT window, padding, phase). Transient
   arrays are *not* persisted; they are recomputed from the recipe on project load.
-- **fit** (`FitSlot`) — the most recent fit for this `(dataset, representation)`
-  pair: model dict, fitted-parameter list, result summary, provenance
-  (`"none"` / `"single"` / `"batch"` / `"global"`), and flags used by the
-  trending panel (`diverged`, `include_in_trend`, `batch_id`).
+- **fit** (`FitSlot`) — the *Single tab's own fit* for this `(dataset,
+  representation)` pair, and nothing else: model dict, fitted-parameter
+  list, result summary, provenance (`"none"` / `"single"` / `"wizard"`), and
+  an optional `ui_state` blob that restores the single-fit form verbatim. A
+  batch, global, grouped or scan run never writes this slot — its results
+  live only on the `FitSeries` that recorded them (see below), so a run
+  belonging to several series still carries one exploratory single fit
+  rather than whichever series wrote last. `"batch"`/`"global"` remain valid
+  `provenance` values only so an older file's slot parses on its way through
+  the v19→v20 migration, which drops such a slot entirely.
 - **trend_state** — opaque dict persisting the user's axis/parameter selections
   in the Fit Parameters panel.
 
@@ -290,21 +296,17 @@ the Data Browser's one-row-per-membership rendering (primary row plus marked
 copy rows, `docs/reference/gui_usage.rst` § "Data groups") is the GUI's own
 concern on top of it.
 
-This supersedes the earlier "D1 Option B" design, where `DataGroup` and
-`FitSeries` were only weakly linked: a series recorded the group it was
-launched from as pure provenance (`source_group_id`), and membership was
-frozen into the series at record time. Under the current model **the group
-owns its fits**: a run-membered `FitSeries` (`member_kind="runs"`) carries a
-structural `group_id` back to its owning group, and its *effective*
+**The group owns its fits**: a run-membered `FitSeries` (`member_kind="runs"`)
+carries a structural `group_id` back to its owning group, and its *effective*
 membership is derived live — the group's `member_run_numbers` minus the
 series' own `excluded_run_numbers` (`FitSeries.effective_members`) — rather
 than snapshot at record time. Results remain a snapshot of what was actually fit
 (`FitSeries.last_fitted_members`); when the live effective membership no
-longer matches that snapshot the series is **stale**
-(`FitSeries.is_stale`), surfaced through the same channel as divergence (a
-`⚠` on the series' trend pill, cleared by re-running). A group with zero
-owned series behaves exactly as before this model existed; a group can also
-own several series at once (the same run collection fit two different ways).
+longer matches that snapshot the series is **stale** (`FitSeries.is_stale`),
+surfaced as a `⚠` on the series' chip, cleared by re-running. A group with
+zero owned series behaves exactly as before this model existed; a group can
+also own several series at once (the same run collection fit two different
+ways, or fit twice over two different fit ranges).
 
 `source_group_id` is retained on `FitSeries` as a **legacy provenance**
 field only — read for backward compatibility (older saves, and the v14→v15
@@ -323,19 +325,44 @@ detector groups (`member_kind="groups"`) — into one trendable unit. Members
 are keyed by integer: real run numbers for run series, synthetic negative keys
 `-(source_run * 1000 + group_index)` for group series.
 
-Key attributes: `canonical_model`, `param_roles` (Global / Local / Fixed per
-physics parameter), `nuisance_params` (group-only, always local),
-`results_by_run` (per-member summary dicts that drive the trending panel),
-`diverged_runs` (members whose stored model no longer matches the canonical),
-`group_id` (structural owning-group link, `None` for frozen/detector-group
-series), `excluded_run_numbers` (per-series exclusions from the owning
-group's membership), `last_fitted_members` (last-fitted snapshot, for
-staleness), `label` (optional user-given name, `None` when unset — the GUI
-renders a positional `"Series {idx}"` fallback).
+Key attributes: `recipe` (the Batch tab's setup that produced this series —
+`parameters`, `fit_range`, `seeding`, `coadd` — normalised by
+`normalise_recipe` so every reader finds every key), `canonical_model`,
+`param_roles` (Global / Local / Fixed per physics parameter, now derived
+from `recipe["parameters"]` at record time), `nuisance_params` (group-only,
+always local), `results_by_run` (per-member summary dicts that drive the
+trending panel), `trend_excluded_runs` (member keys ticked out of *this*
+series' trend, the per-series successor to the old per-slot
+`include_in_trend`), `group_id` (structural owning-group link, `None` for
+frozen/detector-group series), `excluded_run_numbers` (per-series exclusions
+from the owning group's membership), `last_fitted_members` (last-fitted
+snapshot, for staleness), `label` (optional user-given name, `None` when
+unset — the GUI renders a default `"<model> · <fit-range>[ · <group>]"`
+fallback, `naming.default_series_label`). `recipe_identity()` returns a
+canonical string of the normalised recipe plus the sorted effective member
+set — the single thing a re-run compares to decide whether it replaces this
+series or starts a new one (below). Divergence — a member's stored model
+disagreeing with the series' canonical one — cannot occur under this model,
+since a member never stores the series' fit at all; the concept, and its
+`⚠` glyph, no longer exist.
 
 `display_name(fallback: str) -> str` returns `self.label` when set, otherwise
 the caller-supplied fallback — used in series buttons, chooser dialogs, and log
 messages so that user-assigned labels appear everywhere consistently.
+
+**Recording and identity (D3).** `MainWindow._record_fit_series` is the
+shared choke point for every recording path (batch, global, grouped, scan).
+It never writes a member `FitSlot`. It resolves what the new result is a
+re-run *of* — `MainWindow._open_series_for`, checking the Batch tab's open
+series first, then the representation's `active_series`, then the newest
+series of that representation with an identical `recipe_identity()` — and
+either folds the new result into that series in place (same `batch_id`,
+same label) or records a brand-new `FitSeries` that becomes the open and
+active one, leaving the original untouched. There is no load-time
+superseding or deduplication pass any more (the old `_series_signature`,
+`remove_superseded_batches` and `dedupe_batches` are gone): two series that
+differ only in fit range are two entries, kept side by side, forever, until
+one is explicitly deleted.
 
 #### ProjectModel
 
@@ -356,22 +383,28 @@ owns itself, persisted in `browser_state` (view state, not group identity).
   group's owned series). `series_for_group(group_id)` resolves the owned
   series by structural `group_id` with a legacy `source_group_id` fallback for
   frozen series that predate the structural link.
-- `_series_signature` / `remove_superseded_batches` / `dedupe_batches` —
-  group-bound run series identify on `(rep_type, member_kind, group_id, model,
-  exclusions)`, so re-running a group's analysis replaces its series in place;
-  frozen and detector-group series keep the original frozen keying
-  (`(rep_type, member_kind, member-keys, model)`).
-- `refresh_divergence()` — re-evaluates every batch member's model against its
-  series canonical model; group series are evaluated at the source-run level.
-- `trend_runs_for_batch(batch)` — returns ordered member keys where the
-  source-run `FitSlot.include_in_trend` is True (group-aware).
-- `set_member_trend_inclusion(batch_id, run_number, include)` — manually
-  toggles a member's inclusion, routing synthetic keys to their source run.
+- **`active_series: dict[str, str]`** — representation value → `batch_id` of
+  its active series (D5), persisted top-level as `active_series`.
+  `set_active_series(rep_type, batch_id | None)` writes it; pressing a
+  Parameters chip, opening a series in the Batch tab, or picking it from the
+  plot's Fits menu all call it, so the three surfaces always agree on which
+  series is active. `active_series_id(rep_type)` reads it back.
+- `set_trend_excluded(batch_id, run_number, excluded)` — toggles one
+  member's inclusion in *that series'* trend (`trend_excluded_runs`);
+  exclusion is per series, so a run dropped from one series' trend still
+  trends in every other series that contains it.
 - `rename_batch(batch_id, label)` — sets `FitSeries.label` (empty/whitespace →
   `None`, reverting to the positional fallback); returns `True` on success.
-- `remove_batch(batch_id)` — pops and returns the `FitSeries`; clears each
-  member's `FitSlot.batch_id`, resets provenance to `"single"`, and calls
-  `refresh_divergence()`. Unknown `batch_id` returns `None`.
+- `remove_batch(batch_id)` — pops and returns the `FitSeries`, and clears any
+  `active_series` entry pointing at it (D6). Touches nothing else: with no
+  member `FitSlot`s to clear and no other series to re-evaluate, deleting a
+  series only ever affects that series and its own trend. Unknown `batch_id`
+  returns `None`.
+
+Series identity resolution (`recipe_identity`, the open/active/newest-match
+walk) lives in `MainWindow` rather than `ProjectModel` — it needs the Batch
+tab's notion of "currently open", which is GUI state — so `ProjectModel`
+itself no longer signature-matches or deduplicates series on its own.
 
 #### Fit Parameters panel (pull model)
 
@@ -380,21 +413,32 @@ completes or the active representation changes, `MainWindow._refresh_trend_panel
 reads the relevant `FitSeries` from `ProjectModel`, builds per-member row dicts
 (using `_frequency_spectra_by_run` for FFT series), and calls
 `FitParametersPanel.load_representation_series`. The panel shows a **"Showing:"**
-label indicating the active representation and a **Series** button row — one
-button per `FitSeries` for the active representation, styled with the red accent
-(`ACCENT_RED`) so that FitSeries identity reads red consistently across the UI.
+label indicating the active representation and a **chip rail** — one chip
+per `FitSeries` for the active representation, styled with the red accent
+(`ACCENT_RED`) so that FitSeries identity reads red consistently across the
+UI, sectioned by the data group that owns each series (a swatch-and-name
+header per group; a header-less "Standalone" section for group-less series;
+no header row at all when every series is standalone).
 
-Selecting a series button emits `series_selection_changed(batch_id)`. While the
-Parameters dock is **visible**, the main window forwards this to
+Pressing a chip makes that series **active** (`ProjectModel.set_active_series`)
+and emits `series_selection_changed(batch_id)`; while the Parameters dock is
+**visible**, the main window forwards this to
 `DataBrowserPanel.set_highlighted_runs`, tinting member dataset rows with a red
-tint (`ACCENT_RED_SOFT`). This is a **decorative** highlight: it never alters
-the real Qt selection. The tint clears automatically when the dock is hidden
-(e.g. when the user switches to the Fit tab in the tabified dock group) and
-restores when the dock becomes visible again, driven by
-`QDockWidget.visibilityChanged`.
+tint (`ACCENT_RED_SOFT`) — a **decorative** highlight that never touches the
+real Qt selection, clearing when the dock hides and restoring when it shows
+again (`QDockWidget.visibilityChanged`). Double-clicking a chip opens it in
+the Batch tab (`MainWindow._open_series_in_batch_tab`), the same route the
+chip menu's first entry takes.
 
-**Context menu on series buttons** (right-click):
+**Context menu on a chip** (right-click), in order:
 
+- **Open in Batch tab** — emits `series_open_requested(batch_id)`; the main
+  window resolves the owning group's members, crops them to the series' own
+  fit-range window, and hands the whole recipe to `FitPanel.open_series`,
+  making it the open and active series.
+- **Duplicate…** — emits `series_duplicate_requested(batch_id)`: opens the
+  series, then calls `FitPanel.duplicate_open_series` to copy its recipe and
+  members into an untouched draft beside it.
 - **Rename…** — opens an input dialog prefilled with the current label; on
   accept emits `series_rename_requested(batch_id, new_label)`. The main window
   calls `rename_batch` and re-renders the panel.
@@ -402,10 +446,33 @@ restores when the dock becomes visible again, driven by
   The main window resolves the member run numbers and calls
   `DataBrowserPanel.select_runs`, performing a true Qt selection that drives
   the normal `selection_changed` pathway. The decorative tint is unaffected.
-- **Delete series…** — confirms with a `QMessageBox`, then emits
-  `series_delete_requested(batch_id)`. The main window calls `remove_batch`,
-  clears dataset fit state, and refreshes the panel; a surviving series retains
-  its highlight, and the empty case clears the tint.
+- **Show fit overlay** — a checkable action, ticked and disabled when the
+  chip is already active; otherwise it makes the series active exactly as
+  pressing the chip would (the menu's route to the same call).
+- **Delete series…** — confirms with a `QMessageBox` (`confirm_series_delete`
+  in `gui/widgets/series_dialogs.py`, naming what survives), then emits
+  `series_delete_requested(batch_id)`. The main window calls `remove_batch`
+  and clears only that series' plot overlays (`PlotPanel.clear_fits_for_series`)
+  — every other series' and every run's own single fit are untouched — and
+  refreshes the panel; a surviving series retains its highlight, and the
+  empty case clears the tint.
+
+**Overlay keying and the plot toolbar's Fits menu.** `PlotPanel` keys every
+fit curve by `(run, axis, fit_id)`, where `fit_id` is a `FitSeries.batch_id`
+or the literal `"single"` for a run's own exploratory fit — never by run
+alone — so a run belonging to several series keeps every one of their
+curves simultaneously rather than the last writer overwriting the rest. The
+active series (`PlotPanel.set_active_fit_id`, driven by the same
+`ProjectModel.set_active_series` pointer) draws on every run it covers in
+the fit accent colour; a compact **Fits** button at the right of the plot's
+own toolbar row (reading `Fits · N` for a run holding N fits, hidden for a
+run holding none so it never widens an empty panel) opens a menu over every fit id stored for the currently
+displayed run. The menu is rebuilt on `aboutToShow`, never per event, and it
+alone carries the fit names — the button's width is fixed, so a series' name
+never enters the panel's minimum width. Ticking an entry toggles that curve
+on or off (`shown_fits_by_run`, transient view state, never persisted or
+recorded); the `●` marks the active series but the menu never sets it —
+that pointer moves only from the Batch tab or a Parameters chip.
 
 #### DataBrowserPanel — decorative highlight vs true selection
 
@@ -716,8 +783,9 @@ persisted object.
   into a `FitSeries(member_kind="groups")` so parameter trending is available
   for grouped fits on the same footing as asymmetry fits.
 - `asymmetry.core.representation.project_model.ProjectModel` owns the
-  in-memory representation + series state and handles group-aware divergence
-  detection.
+  in-memory representation + series state, including these group series'
+  staleness (`FitSeries.is_stale`, § 3.5) against their owning group's live
+  membership.
 - `asymmetry.gui.windows.multi_group_fit_window.MultiGroupFitWindow` owns the
   grouped-fit surface. It presents two `GlobalFitTab(member_kind="groups")`
   instances — a **Single** tab for fitting one run's detector groups and a

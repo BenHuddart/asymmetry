@@ -111,6 +111,17 @@ class FitPanel(QWidget):
     apply_wizard_phases_requested = Signal(object, int)
     add_single_fit_to_series_requested = Signal()
     fit_range_edit_committed = Signal(float, float)  # forwarded from SingleFitTab
+    # Forwarded from the Batch tab's series row (D1/D7): open a recorded series,
+    # start a draft over the browser selection or over a data group, rename or
+    # delete the open series. Each needs the project model, so they travel up.
+    series_open_requested = Signal(str)
+    series_new_from_selection_requested = Signal()
+    series_new_from_group_requested = Signal(str)
+    series_rename_requested = Signal(str, str)
+    series_delete_requested = Signal(str)
+    # The Batch tab's own fit window (D8) — the plot's range guides follow it
+    # while that tab is visible; it never moves the project-wide range.
+    batch_fit_range_changed = Signal(float, float)
     # Forwarded from the Batch tab's on-tab seeding selector so the main window's
     # Analysis ▸ Batch seeding menu can mirror it (two-way sync).
     batch_seeding_mode_changed = Signal(str)
@@ -159,7 +170,6 @@ class FitPanel(QWidget):
         # form payload to show, falling back to the run-keyed blob when unset or
         # when it returns ``None``.  See ``set_single_fit_restore_provider``.
         self._single_fit_restore_provider: Callable[[MuonDataset | None], dict | None] | None = None
-        self._all_datasets: list[MuonDataset] = []  # Track all datasets fed to the panel
         # Active single-fit projection (driven by the main window via
         # ``set_active_projection_label``); part of the binding identity that
         # guards the Single↔Batch tab-switch snapshot below.
@@ -199,9 +209,20 @@ class FitPanel(QWidget):
             self.apply_wizard_phases_requested.emit
         )
         self._global_tab.grouped_fit_completed.connect(self.grouped_fit_completed.emit)
-        self._global_tab.fit_range_edit_committed.connect(self.fit_range_edit_committed.emit)
+        # D8: the Batch tab's window edits its series, not the plot's range, so
+        # its commits reach the host as ``batch_fit_range_changed`` instead.
+        self._global_tab.batch_fit_range_changed.connect(self.batch_fit_range_changed.emit)
         self._global_tab.batch_seeding_mode_changed.connect(self.batch_seeding_mode_changed.emit)
         self._global_tab.trends_requested.connect(self.trends_requested.emit)
+        self._global_tab.series_open_requested.connect(self.series_open_requested.emit)
+        self._global_tab.series_new_from_selection_requested.connect(
+            self.series_new_from_selection_requested.emit
+        )
+        self._global_tab.series_new_from_group_requested.connect(
+            self.series_new_from_group_requested.emit
+        )
+        self._global_tab.series_rename_requested.connect(self.series_rename_requested.emit)
+        self._global_tab.series_delete_requested.connect(self.series_delete_requested.emit)
         self._tabs.addTab(self._global_tab, "Batch")
 
         # Preserve the single-fit form across a Single↔Batch view switch (see #3
@@ -332,7 +353,6 @@ class FitPanel(QWidget):
         # onto the cleared panel when setCurrentIndex(0) below re-enters Single.
         self._single_form_snapshot = None
         self._active_single_projection = None
-        self._all_datasets = []
         # A new project has no fitted function yet: clear the D5 refresh
         # source, or a closed project's fit would leak into the next one.
         self._last_fitted_single_state = None
@@ -646,8 +666,7 @@ class FitPanel(QWidget):
             self._reset_single_fit_form()
 
     def set_datasets(self, datasets: list[MuonDataset]) -> None:
-        """Set the datasets for the global fitting tab, tracking all datasets fed in."""
-        self._all_datasets = datasets
+        """Set the Batch tab's member pool, dropping it to a draft over them (D7)."""
         self._global_tab.set_datasets(datasets)
 
     def batch_datasets(self) -> list[MuonDataset]:
@@ -686,9 +705,33 @@ class FitPanel(QWidget):
         self._global_tab.set_fit_blocked(blocked, reason)
 
     def set_fit_range_display(self, x_min: float | None, x_max: float | None) -> None:
-        """Forward fit-range display update to both single and global tabs."""
+        """Echo the plot's (project-wide) fit range into the Single tab.
+
+        The Batch tab's window is the open series' own (D8), so the plot never
+        rewrites a window the tab already has. A draft that has *no* window yet
+        (the fields still blank) takes the project range the first time one
+        exists, so it shows the window a run would actually use rather than an
+        empty 0–0.
+        """
         self._single_tab.set_fit_range_display(x_min, x_max)
+        if (
+            x_min is not None
+            and x_max is not None
+            and self._global_tab.fit_range_bounds() == (None, None)
+        ):
+            self._global_tab.set_fit_range_display(x_min, x_max)
+
+    def set_batch_fit_range(self, x_min: float, x_max: float) -> None:
+        """Write the Batch tab's own window (a drag on the plot's range guides)."""
         self._global_tab.set_fit_range_display(x_min, x_max)
+
+    def batch_tab_visible(self) -> bool:
+        """``True`` when the Batch tab is the page the user is looking at."""
+        return self._tabs.currentWidget() is self._global_tab
+
+    def batch_fit_range(self) -> tuple[float | None, float | None]:
+        """The Batch tab's window as ``(min, max)``, ``(None, None)`` when unset."""
+        return self._global_tab.fit_range_bounds()
 
     def single_fit_formula_string(self) -> str | None:
         """Return the active single-fit formula string, if available."""
@@ -713,42 +756,6 @@ class FitPanel(QWidget):
             return str(model.formula_string())
         except Exception:
             return None
-
-    def clear_fits_for_runs(self, run_numbers: list[int]) -> int:
-        """Clear cached single/global fit state for specific dataset runs."""
-        normalized_runs: set[int] = set()
-        for run_number in run_numbers:
-            try:
-                normalized_runs.add(int(run_number))
-            except (TypeError, ValueError):
-                continue
-
-        if not normalized_runs:
-            return 0
-
-        changed_runs: set[int] = set()
-        for run_number in normalized_runs:
-            if self._single_state_by_run.pop(run_number, None) is not None:
-                changed_runs.add(run_number)
-
-        changed_runs |= self._global_tab.remove_single_fit_seeds(normalized_runs)
-
-        active_run = self._active_single_run_number
-        if active_run is not None and active_run in normalized_runs:
-            self._single_tab._results_card.set_message("No fit performed yet")
-
-        # D5: the session's refresh source must not survive its own run's fit
-        # being cleared -- otherwise every other unprotected run would keep
-        # refreshing onto a fit that, as far as the browser is concerned, no
-        # longer exists.
-        if (
-            self._last_fitted_single_run is not None
-            and self._last_fitted_single_run in normalized_runs
-        ):
-            self._last_fitted_single_state = None
-            self._last_fitted_single_run = None
-
-        return len(changed_runs)
 
     def get_single_state_for_run(self, run_number: int) -> dict | None:
         """Return current single-fit state for one run, if available."""
@@ -1191,6 +1198,44 @@ class FitPanel(QWidget):
     def get_global_state(self) -> dict:
         """Return serialisable state of the global-fit tab."""
         return self._global_tab.get_state()
+
+    def batch_recipe(self) -> dict:
+        """Return the Batch tab's current setup as a ``FitSeries`` recipe (D2)."""
+        return self._global_tab.current_recipe()
+
+    # ── The Batch tab's open series (D1) ───────────────────────────────────
+
+    def open_series_id(self) -> str | None:
+        """The series the Batch tab is editing, or ``None`` for a draft."""
+        return self._global_tab.open_series_id()
+
+    def open_series(self, series, **context) -> None:
+        """Open a recorded *series* in the Batch tab (see ``GlobalFitTab.open_series``)."""
+        self._global_tab.open_series(series, **context)
+
+    def open_draft(self, **context) -> None:
+        """Drop the Batch tab to a draft (see ``GlobalFitTab.open_draft``)."""
+        self._global_tab.open_draft(**context)
+
+    def duplicate_open_series(self) -> None:
+        """Copy the Batch tab's open series into a draft beside it (D7)."""
+        self._global_tab.duplicate_open_series()
+
+    def note_series_recorded(self, series, *, display_name: str, replaced: bool) -> None:
+        """Tell the Batch tab which series its completed run recorded (D3)."""
+        self._global_tab.note_series_recorded(series, display_name=display_name, replaced=replaced)
+
+    def note_selection_differs(self, run_numbers) -> None:
+        """Raise the Batch tab's "Selection differs" hint for *run_numbers* (D7)."""
+        self._global_tab.note_selection_differs(run_numbers)
+
+    def set_series_catalogue_provider(self, provider) -> None:
+        """Install the callback the Batch tab's series menus read (host-resolved)."""
+        self._global_tab.set_series_catalogue_provider(provider)
+
+    def saved_open_series_id(self) -> str | None:
+        """The open series id the last restored project state carried, if any."""
+        return self._global_tab.saved_open_series_id()
 
     def get_grouped_state(self) -> dict:
         """Return the grouped-fit classification (physics roles + nuisance block)."""

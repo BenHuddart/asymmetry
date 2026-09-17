@@ -265,9 +265,9 @@ def test_alc_build_needs_two_runs(mainwindow: MainWindow, monkeypatch):
     assert scans == []
 
 
-def test_deleting_scan_series_does_not_clear_run_fits(mainwindow: MainWindow, monkeypatch):
-    # A computed scan series owns no per-run FitSlots, so deleting it must not
-    # clear the fit overlays of runs it shares with a real fit.
+def test_deleting_scan_series_clears_only_its_own_overlays(mainwindow: MainWindow, monkeypatch):
+    # Deleting a series clears the curves it drew and nothing else (D6): the
+    # runs it shares with a real fit keep theirs.
     mw = mainwindow
     _enter_alc(mw, monkeypatch)
     mw._fit_panel.set_datasets([_ds(11, 110.0, 90.0, 100.0), _ds(12, 120.0, 80.0, 200.0)])
@@ -275,11 +275,17 @@ def test_deleting_scan_series_does_not_clear_run_fits(mainwindow: MainWindow, mo
     scan = next(s for s in mw._project_model.batches.values() if s.batch_id.startswith("scan-"))
 
     cleared: list[object] = []
-    monkeypatch.setattr(mw._fit_panel, "clear_fits_for_runs", lambda runs: cleared.append(runs))
-    monkeypatch.setattr(mw._plot_panel, "clear_fits_for_runs", lambda runs: cleared.append(runs))
+    monkeypatch.setattr(
+        mw._plot_panel, "clear_fits_for_series", lambda fit_id: cleared.append(fit_id) or 0
+    )
+    monkeypatch.setattr(
+        mw._frequency_plot_panel,
+        "clear_fits_for_series",
+        lambda fit_id: cleared.append(fit_id) or 0,
+    )
 
     mw._on_series_delete_requested(scan.batch_id)
-    assert cleared == []
+    assert cleared == [scan.batch_id, scan.batch_id]
     assert mw._project_model.batch(scan.batch_id) is None
 
 

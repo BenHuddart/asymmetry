@@ -173,7 +173,7 @@ def test_single_fit_slot_targets_active_domain(mw, monkeypatch):
     assert mw._project_model.representation(301, RepresentationType.TIME_FB_ASYMMETRY) is None
 
 
-def test_global_fit_creates_batch_and_member_slots(mw, monkeypatch):
+def test_global_fit_creates_batch_and_leaves_member_slots_alone(mw, monkeypatch):
     for run_number, field in [(10, 100.0), (11, 50.0), (12, 150.0)]:
         mw._data_browser.add_dataset(_dataset(run_number, field))
     mw._on_dataset_selected(10)
@@ -189,6 +189,7 @@ def test_global_fit_creates_batch_and_member_slots(mw, monkeypatch):
     )
     payloads = {rn: (_result(rchi=0.4 + 0.1 * i), _CURVE, []) for i, rn in enumerate([10, 11, 12])}
 
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed(payloads, ParameterSet())
 
     assert len(mw._project_model.batches) == 1
@@ -199,17 +200,19 @@ def test_global_fit_creates_batch_and_member_slots(mw, monkeypatch):
     assert not batch.is_global()  # all-local -> pure batch
     assert set(batch.results_by_run) == {10, 11, 12}
 
+    # D4: per-run state is the Single tab's fit alone — a batch writes no
+    # member slot, so a run in two series keeps one exploratory single fit.
     rep = mw._project_model.representation(11, RepresentationType.TIME_FB_ASYMMETRY)
-    assert rep.fit.provenance == "batch"
-    assert rep.fit.batch_id == batch.batch_id
+    assert rep is None or rep.fit.is_empty()
     # Every batch member record carries the composite model name + provenance.
     for summary in batch.results_by_run.values():
         assert summary["model_name"] == "Exponential + Constant"
         assert summary["provenance"] == "batch"
         assert "timestamp" in summary
-    # The member FitSlot result mirrors the series entry (no recompute drift).
-    assert rep.fit.result["model_name"] == "Exponential + Constant"
-    assert rep.fit.result["provenance"] == "batch"
+    # The series is the active one for its representation (D5).
+    assert mw._project_model.active_series_id(RepresentationType.TIME_FB_ASYMMETRY) == (
+        batch.batch_id
+    )
 
 
 def test_global_classified_parameter_yields_global_provenance(mw, monkeypatch):
@@ -228,14 +231,13 @@ def test_global_classified_parameter_yields_global_provenance(mw, monkeypatch):
     )
     payloads = {rn: (_result(), _CURVE, []) for rn in (10, 11)}
 
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed(payloads, ParameterSet())
 
     batch = next(iter(mw._project_model.batches.values()))
     assert batch.is_global()
     assert batch.global_params() == ["A"]
-    rep = mw._project_model.representation(10, RepresentationType.TIME_FB_ASYMMETRY)
-    assert rep.fit.provenance == "global"
-    assert rep.fit.batch_id == batch.batch_id
+    assert all(summary["provenance"] == "global" for summary in batch.results_by_run.values())
 
 
 def _group_member(source_run: int, group: int) -> MuonDataset:
@@ -254,7 +256,7 @@ def _group_member(source_run: int, group: int) -> MuonDataset:
     )
 
 
-def test_grouped_batch_creates_group_series_and_pointer_slot(mw, monkeypatch):
+def test_grouped_batch_creates_group_series_without_member_slots(mw, monkeypatch):
     # A multi-run batch (≥2 source runs) is the unit that records a FitSeries.
     for rn in (42, 43):
         mw._data_browser.add_dataset(_dataset(rn))
@@ -286,10 +288,9 @@ def test_grouped_batch_creates_group_series_and_pointer_slot(mw, monkeypatch):
     assert series.is_global()  # Lambda global -> global provenance
     assert series.nuisance_params == ["N0", "background", "amplitude", "relative_phase"]
 
+    # D4: the source runs' grouped slots stay untouched.
     rep = mw._project_model.representation(42, RepresentationType.TIME_GROUPS)
-    assert rep is not None
-    assert rep.fit.provenance == "global"
-    assert rep.fit.batch_id == series.batch_id
+    assert rep is None or rep.fit.is_empty()
 
 
 def test_grouped_batch_series_named_after_data_group(mw, monkeypatch):
@@ -320,9 +321,9 @@ def test_grouped_batch_series_named_after_data_group(mw, monkeypatch):
     series = next(iter(mw._project_model.batches.values()))
     assert series.label is None
     name = series.display_name(mw._series_fallback_name(series))
-    assert name.startswith("Exponential")
-    assert "groups 42–43" in name
-    assert name.endswith("· T = 150 K")
+    # D10: "<model> · <fit range> · <group>"; a grouped series carries the
+    # empty default recipe, so its window contributes nothing.
+    assert name == "Exponential · T = 150 K"
 
 
 def test_single_grouped_fit_writes_slot_not_series(mw, monkeypatch):
@@ -352,11 +353,10 @@ def test_single_grouped_fit_writes_slot_not_series(mw, monkeypatch):
     assert mw._project_model.batches == {}
 
     # The grouped representation's FitSlot carries the single fit's per-group
-    # results (provenance "single", no batch id).
+    # results (provenance "single").
     rep = mw._project_model.representation(42, RepresentationType.TIME_GROUPS)
     assert rep is not None
     assert rep.fit.provenance == "single"
-    assert rep.fit.batch_id is None
     assert not rep.fit.is_empty()
     assert set(rep.fit.result["groups"]) == {"-42001", "-42002"}
     assert rep.fit.result["groups"]["-42001"]["reduced_chi_squared"] == pytest.approx(0.3)
@@ -431,6 +431,7 @@ def test_add_compatible_single_fit_to_series(mw, monkeypatch):
             "result_html": "",
         },
     )
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())
     series = next(iter(mw._project_model.batches.values()))
     assert set(series.member_run_numbers) == {10, 11}
@@ -446,9 +447,10 @@ def test_add_compatible_single_fit_to_series(mw, monkeypatch):
 
     assert mw._add_single_fit_to_series(12, series.batch_id) is True
     assert 12 in series.member_run_numbers
-    rep = mw._project_model.representation(12, RepresentationType.TIME_FB_ASYMMETRY)
-    assert rep.fit.batch_id == series.batch_id
     assert 12 in series.results_by_run
+    # The run's own slot is untouched: it is still its single fit (D4).
+    rep = mw._project_model.representation(12, RepresentationType.TIME_FB_ASYMMETRY)
+    assert rep.fit.provenance == "single"
 
     # An incompatible model (different components) is rejected.
     mw._on_dataset_selected(13)
@@ -487,6 +489,7 @@ def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
             "result_html": "",
         },
     )
+    mw._on_global_fit_started()  # the fit panel's launch signal, as in production
     mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())
     series = next(iter(mw._project_model.batches.values()))
 
@@ -503,8 +506,7 @@ def test_add_to_series_action_finds_and_adds_compatible_series(mw, monkeypatch):
     mw._on_add_single_fit_to_series_requested()
 
     assert 12 in series.member_run_numbers
-    rep = mw._project_model.representation(12, RepresentationType.TIME_FB_ASYMMETRY)
-    assert rep.fit.batch_id == series.batch_id
+    assert 12 in series.results_by_run
 
 
 def test_add_to_series_action_disabled_without_a_completed_fit(mw):
@@ -583,8 +585,10 @@ def test_add_to_series_offers_create_new_series_when_none_compatible(mw, monkeyp
     assert len(mw._project_model.batches) == 1
     series = next(iter(mw._project_model.batches.values()))
     assert series.member_run_numbers == [21]
+    assert 21 in series.results_by_run
+    # The single fit it was built from stays the run's own slot (D4).
     rep = mw._project_model.representation(21, RepresentationType.TIME_FB_ASYMMETRY)
-    assert rep.fit.batch_id == series.batch_id
+    assert rep.fit.provenance == "single"
 
 
 def test_create_series_from_single_fit_stamps_trend_coords(mw, monkeypatch):
@@ -643,38 +647,3 @@ def test_add_to_series_create_new_series_cancelled(mw, monkeypatch):
     mw._on_add_single_fit_to_series_requested()
 
     assert not mw._project_model.batches
-
-
-def test_editing_member_model_diverges_and_excludes_from_trend(mw, monkeypatch):
-    for run_number, field in [(10, 100.0), (11, 50.0)]:
-        mw._data_browser.add_dataset(_dataset(run_number, field))
-    mw._on_dataset_selected(10)
-    mw._plot_workspace.set_active_view("fb_asymmetry")
-    monkeypatch.setattr(
-        mw._fit_panel,
-        "get_global_state",
-        lambda: {
-            "composite_model": {"component_names": ["Exponential", "Constant"], "operators": ["+"]},
-            "parameters": [{"name": "A", "type": "Local"}],
-            "result_html": "",
-        },
-    )
-    mw._on_global_fit_completed({rn: (_result(), _CURVE, []) for rn in (10, 11)}, ParameterSet())
-    batch = next(iter(mw._project_model.batches.values()))
-    assert set(mw._project_model.trend_runs_for_batch(batch)) == {10, 11}
-
-    # Single-fit member 11 with a different model -> diverges, excluded from trend.
-    mw._on_dataset_selected(11)
-    monkeypatch.setattr(
-        mw._fit_panel,
-        "get_single_form_state",
-        lambda: {
-            "composite_model": {"component_names": ["Gaussian"], "operators": []},
-            "parameters": [],
-            "result_html": "",
-        },
-    )
-    mw._on_fit_completed(_result(), _CURVE, [])
-
-    assert batch.is_diverged(11)
-    assert mw._project_model.trend_runs_for_batch(batch) == [10]

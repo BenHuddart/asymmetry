@@ -3151,34 +3151,6 @@ def test_fit_panel_refresh_reseeds_bl_from_target_field(
     assert _bl_value(panel._single_tab) == pytest.approx(300.0)
 
 
-def test_fit_panel_clear_fits_for_runs_removes_cached_fit_state(
-    qapp: QApplication,
-    dataset: MuonDataset,
-) -> None:
-    panel = FitPanel()
-    d1 = dataset
-    d2 = MuonDataset(dataset.time, dataset.asymmetry, dataset.error, {"run_number": 102})
-
-    panel.set_dataset(d1)
-    panel._single_tab._results_card.set_message("fit for run 101")
-    panel._single_state_by_run[101] = panel._single_tab.get_state()
-
-    panel.set_dataset(d2)
-    panel._single_tab._results_card.set_message("fit for run 102")
-    panel._single_state_by_run[102] = panel._single_tab.get_state()
-
-    panel._global_tab._single_fit_seed_by_run[101] = {"model": {}, "values": {"A": 0.1}}
-    panel._global_tab._single_fit_seed_by_run[102] = {"model": {}, "values": {"A": 0.2}}
-
-    cleared = panel.clear_fits_for_runs([101])
-
-    assert cleared == 1
-    assert 101 not in panel._single_state_by_run
-    assert 101 not in panel._global_tab._single_fit_seed_by_run
-    assert 102 in panel._single_state_by_run
-    assert 102 in panel._global_tab._single_fit_seed_by_run
-
-
 def test_global_fit_wizard_button_tracks_dataset_and_block_state(
     qapp: QApplication, dataset: MuonDataset
 ) -> None:

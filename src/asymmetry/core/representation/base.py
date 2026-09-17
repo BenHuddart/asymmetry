@@ -47,34 +47,36 @@ DOMAIN_OF: dict[RepresentationType, str] = {
     RepresentationType.FREQ_MAXENT: "frequency",
 }
 
-#: Allowed fit provenance markers.
+#: Allowed fit provenance markers. Only ``"none"``, ``"single"`` and
+#: ``"wizard"`` are ever written now that a slot holds the Single tab's fit
+#: alone (D4); ``"batch"``/``"global"`` stay in the tuple so a pre-v20 file
+#: still parses on its way through the migration.
 FIT_PROVENANCE = ("none", "single", "batch", "global", "wizard")
 
 
 @dataclass
 class FitSlot:
-    """The single stored fit for one ``(dataset, representation)`` pair.
+    """The Single tab's stored fit for one ``(dataset, representation)`` pair.
+
+    Per-run fit state is the single fit only (D4): a batch, global, grouped or
+    scan run records its results on its
+    :class:`~asymmetry.core.representation.series.FitSeries`, never on its
+    members' slots, so a run that belongs to several series keeps one
+    exploratory single fit rather than whichever series wrote last.
 
     ``model`` is a :meth:`CompositeModel.to_dict` payload (or ``None`` for an
-    empty slot); ``result`` is a JSON-serialisable fit-result summary.  A fit
-    produced as a member of a
-    :class:`~asymmetry.core.representation.series.FitSeries` records the series
-    id (``batch_id``) so trending and divergence can find its series.
+    empty slot); ``result`` is a JSON-serialisable fit-result summary.
     """
 
     model: dict | None = None
     parameters: list[dict] = field(default_factory=list)
     result: dict | None = None
     provenance: str = "none"
-    batch_id: str | None = None
-    diverged: bool = False
-    include_in_trend: bool = True
     #: The fit panel's single-fit *form* payload (composite_model, parameters,
     #: result_html, wizard_state) for restoring the editor when this slot is
     #: re-selected.  It carries the GUI-only extras (result HTML, wizard cache)
     #: that ``model``/``parameters`` do not, so a per-projection single fit can
-    #: be restored verbatim.  Empty for slots produced outside the single-fit
-    #: GUI path (batch/global members) and for pre-this-change projects.
+    #: be restored verbatim.  Empty for pre-this-change projects.
     ui_state: dict = field(default_factory=dict)
 
     def is_empty(self) -> bool:
@@ -88,20 +90,22 @@ class FitSlot:
             "parameters": [dict(p) for p in self.parameters],
             "result": None if self.result is None else dict(self.result),
             "provenance": self.provenance,
-            "batch_id": self.batch_id,
-            "diverged": bool(self.diverged),
-            "include_in_trend": bool(self.include_in_trend),
         }
-        # Only persist ``ui_state`` when populated — batch/global members and
-        # pre-this-change slots carry none, and an empty dict would bloat every
-        # saved slot for no gain.
+        # Only persist ``ui_state`` when populated — pre-this-change slots carry
+        # none, and an empty dict would bloat every saved slot for no gain.
         if self.ui_state:
             payload["ui_state"] = dict(self.ui_state)
         return payload
 
     @classmethod
     def from_dict(cls, data: dict | None) -> FitSlot:
-        """Reconstruct a :class:`FitSlot` from serialised data."""
+        """Reconstruct a :class:`FitSlot` from serialised data.
+
+        ``batch_id``, ``diverged`` and ``include_in_trend`` written by a pre-v20
+        project are ignored: the v19->v20 migration moves what they meant onto
+        the series, and a file hand-edited back to the old shape must not
+        resurrect them.
+        """
         if not isinstance(data, dict):
             return cls()
         provenance = str(data.get("provenance", "none"))
@@ -143,9 +147,6 @@ class FitSlot:
             parameters=parameters,
             result=dict(result) if isinstance(result, dict) else None,
             provenance=provenance,
-            batch_id=(str(data["batch_id"]) if data.get("batch_id") is not None else None),
-            diverged=bool(data.get("diverged", False)),
-            include_in_trend=bool(data.get("include_in_trend", True)),
             ui_state=dict(raw_ui_state) if isinstance(raw_ui_state, dict) else {},
         )
 

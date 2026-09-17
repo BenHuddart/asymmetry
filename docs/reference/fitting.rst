@@ -419,7 +419,7 @@ all runs) or local (independent per run):
 
 The GUI **Batch** tab automates the same workflow: select multiple
 datasets, mark parameters as **Global** (shared across runs) or **Local**
-(per-run) in the parameter table, and click **Run batch fit**. A fit where
+(per-run) in the parameter table, and click **Run series**. A fit where
 at least one parameter is **Global** is a global fit; otherwise each run is
 fitted independently but the results are collected into one trendable series.
 The classification table's **Min** and **Max** columns — the same pair the

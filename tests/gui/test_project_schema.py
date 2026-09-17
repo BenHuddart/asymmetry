@@ -236,7 +236,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 19
+        assert CURRENT_SCHEMA_VERSION == 20
 
     def test_v15_migrates_to_v16_frequency_axis_mode(self):
         # v16 replaces the frequency relative-axis boolean with a real axis mode
@@ -584,10 +584,16 @@ class TestSchemaMigrationV7toV8:
         none_batches = {"schema_version": 7, "datasets": [], "batches": None}
         assert migrate_to_current(none_batches)["schema_version"] == CURRENT_SCHEMA_VERSION
         out = migrate_to_current(
-            {"schema_version": 7, "datasets": [], "batches": ["stray", {"batch_id": "b"}]}
+            {
+                "schema_version": 7,
+                "datasets": [],
+                "batches": ["stray", {"batch_id": "b", "rep_type": "time_fb_asymmetry"}],
+            }
         )
-        assert out["batches"][0] == "stray"
-        assert out["batches"][1]["extra"] == {}
+        # "stray" cannot be read back as a FitSeries, so the v19->v20 step drops
+        # it rather than letting it abort the open.
+        assert [entry["batch_id"] for entry in out["batches"]] == ["b"]
+        assert out["batches"][0]["extra"] == {}
 
     def test_trend_state_unknown_keys_preserved_under_legacy(self):
         state = {

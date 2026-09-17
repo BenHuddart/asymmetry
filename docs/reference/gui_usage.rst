@@ -1012,9 +1012,13 @@ the run currently shown.
 
 Selecting a different run in the Data Browser does not always blank the
 Single tab's form. A run that already carries a **recorded fit result** —
-its own single fit, or its role as a member of a batch/global fit — is
-*protected*: selecting it always restores exactly that fitted state, so it is
-never silently overwritten. Every other run is *refreshable*: selecting it
+its own single fit, or, lacking that, the result the representation's
+*active* series recorded for it — is *protected*: selecting it always
+restores exactly that fitted state, so it is never silently overwritten. A
+single fit never joins or alters a series (batch and global fits stopped
+writing to a member's own fit slot); it is only ever a fallback read, so
+fitting the run yourself on the Single tab afterwards is what actually
+becomes its own protected result. Every other run is *refreshable*: selecting it
 loads the composite model and parameter setup of the most recently fitted
 function in the session (superseding anything it was showing before,
 including a hand-edited form you never fitted — the protection trigger is
@@ -1040,7 +1044,28 @@ seeds** instead of naming a run.
 ~~~~~~~~~~~~~~~~~
 
 The **Batch** tab fits multiple datasets simultaneously with shared and
-per-dataset parameters:
+per-dataset parameters. It is also a *series editor*: it always has one
+recorded series or draft **open**, and everything below the **Series**
+section — model, parameter table, fit range, seeding, co-add — is that
+series' recipe. The **Series** section sits above **Model**, with a selector
+button naming what is open (``<group or Standalone> · <model> · <range>``,
+or ``Draft`` before the first run) and a status tag beside the **Series**
+heading (``Fitted n/n · HH:MM``, ``Edited · results show last run`` once you
+change something, or ``Draft``). Clicking the selector opens a menu of every
+series on the active representation, sectioned by owning data group, plus
+**New series from browser selection**; **New series ▾** offers the same
+**From browser selection**, a **From data group…** submenu, and **Copy of
+current** (an untouched duplicate of what is open); **Duplicate**,
+**Rename…** and **Delete…** act on the open series itself. Selecting a
+different run or group in the Data Browser never rewrites an open series —
+it raises a hint instead: "You selected runs *<range>*, but this tab is
+editing *<series>*. The series keeps its members until you say otherwise.",
+with **New series from selection**, **Open a series for these runs ▾** and
+**Keep editing**. The fit range fields edit the *open series'* own window
+(the plot's range guides follow it while the Batch tab is visible); the
+Single tab keeps the plot-owned, project-wide range, since a single fit is
+exploration and a batch is production. A fresh draft with no prior series
+inherits the project's current range once.
 
 1. **Select multiple datasets** in the data browser (Ctrl+Click or Shift+Click)
 2. Switch to the **Batch** tab in the fit panel
@@ -1069,7 +1094,7 @@ per-dataset parameters:
    the previous one's converged fit, which suits an ordered temperature or
    field scan — and **Per-run seeds…** opens a dialog to edit individual
    runs' values directly.
-6. **Click "Run batch fit"**
+6. **Click "Run series"**
 
    Batch/global fitting follows the same rule: current grouped/bunched
    dataset settings are applied to each selected dataset before fitting.
@@ -1080,33 +1105,66 @@ per-dataset parameters:
 
 After a batch or global fit completes:
 
-* Fit curves appear on the plot for all datasets
+* Fit curves appear on the plot for all datasets. A run that already carried
+  another fit — its own single fit, or its place in a different series —
+  is covered by the plot toolbar's **Fits** button, which reads ``Fits · 2``
+  for a run holding two fits and opens a menu listing them all — active
+  series first (marked ``●``), the run's own **Single fit** last. Tick an
+  entry to draw its curve, untick it to hide it (``Tick = show · ● = active
+  series``). The menu never changes which series is active: that is chosen
+  on the Batch tab or by pressing a chip in the Parameters panel.
+  The button reads plain **Fits** for a run holding one fit, and is hidden
+  while the run has none, so an empty plot row is no wider than before.
 * The Results card carries a **Batch ✓**/**Batch ⚠** tag, an "*N* of *M*
   converged" headline, and one verdict chip per run (for example
   ``3001 ✓ 0.98``, coloured by that run's own fit quality); click a run's
   chip to open its fitted-parameter window
+* The tab's own notice says what the run did to the record: "Re-ran
+  *<name>* — results replaced." for an identical re-run, or "Saved as a new
+  series: *<name>*." otherwise (see :ref:`group-bound-series-staleness` in
+  :doc:`parameter_trending`)
 * **Use as seeds** — enabled when the batch's own diagnostics find a cleaner
   descending-frequency ordering across the runs that fitted well — fills the
   per-run seed table with values interpolated from that ordering and re-runs
-  the batch; **Trends →** brings the Parameters panel to the front with this
-  batch's series already selected
+  the series; **Trends →** brings the Parameters panel to the front with
+  this series already selected
 * The **Global Parameter Fit** window opens automatically when the fit has at
   least one **Global** parameter (see below)
 * The log panel shows a summary with average χ²ᵣ
-* The results are recorded as a group-bound fit series (see `Data groups`_
-  above and :ref:`group-bound-series-staleness` in :doc:`parameter_trending`)
+* The results are recorded onto the open series — the one named in the
+  **Series** selector — and that series becomes the *active* one for this
+  representation, so its overlay is what the plot draws by default on every
+  run it covers (see `Data groups`_ above and
+  :ref:`group-bound-series-staleness` in :doc:`parameter_trending`)
+
+.. image:: /_generated/screenshots/plot_fits_on_run.png
+   :alt: A run in two series, with both shown and the plot toolbar's Fits
+      button reading Fits dot 2
+   :width: 100%
+
+*A run belonging to two series — a real 0.5–5 µs and 0–6 µs batch fit over*
+*the same EuO group, zoomed to resolve the ~22 MHz precession — with the*
+*toolbar's* **Fits · 2** *button flagging both and both curves drawn. The*
+*active series (the wider window, opened most recently) draws in the fit*
+*accent colour; the other takes a trace colour, though the two agree*
+*closely enough over their shared window that one mostly hides the other —*
+*a fitted curve is never extrapolated past its own recorded range, so only*
+*the wider series draws before 0.5 µs, the one visible difference at this*
+*zoom. The button's menu would untick either curve to hide it without*
+*discarding it.*
 
 Fitting a group directly
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. image:: /_generated/screenshots/batch_tab_group_binding.png
-   :alt: Batch tab bound to a data group with one member unticked in the Batch members list
+   :alt: Batch tab bound to a data group, showing the Series section reading
+      Draft and one member unticked in the Batch members list
    :width: 100%
 
 *The Batch tab bound to the "T scan — EuO" group via* **Fit this group…***,*
-*showing the group-binding banner and the* **Batch members** *checklist with*
-*the 69 K run unticked — excluded from this analysis without leaving the*
-*group.*
+*before its first run: the* **Series** *section reads* **Draft** *(no*
+*series recorded yet), and the* **Batch members** *checklist has the 69 K*
+*run unticked — excluded from this analysis without leaving the group.*
 
 Choosing **Fit this group…** from a data group's context menu (rather than
 just selecting its runs) binds the Batch tab to that group: a **Fitting
@@ -1115,10 +1173,27 @@ every member run with a checkbox (three at a time, scrolling for a longer
 batch). Untick a run to exclude it from *this* analysis without removing it
 from the group — the exclusion is recorded on the fit series, not the group,
 so the same group can still be fit a second time with a different model over
-its full membership. An ordinary run
-selection (rather than **Fit this group…**) clears any existing binding, so
-the next batch fit auto-creates its own group instead of extending the
-previous one.
+its full membership. When the group already owns a series, the draft is
+seeded from its newest one's recipe, so the natural next run is either an
+identical re-run or a deliberate variation; a group with none falls back to
+the tab's own defaults, as above. An ordinary run selection (rather than
+**Fit this group…**) never touches an open series — it raises the "selection
+differs" hint described above instead.
+
+.. image:: /_generated/screenshots/batch_tab_series_menu.png
+   :alt: Batch tab with a recorded series open, after a second was recorded
+      on the same group
+   :width: 100%
+
+*The same group after two real batch fits, both converging on the same*
+*injected precession (χ²ᵣ ≈ 1 for all four runs): widening the fit range*
+*from* ``0.5–5 µs`` *to* ``0–6 µs`` *before the second run is a recipe*
+*change, so it records a* **second** *series rather than replacing the*
+*first — the group now owns two, and the newer (wider) one is open, its*
+**Series** *status tag reading* ``Fitted 4/4`` *and its Results card*
+*replaying the recorded outcome. Re-running this same setup unchanged*
+*would instead replace it in place; see* :ref:`group-bound-series-staleness`
+*in* :doc:`parameter_trending`.
 
 **Grouped time-domain fitting**
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

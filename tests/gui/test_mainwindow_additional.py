@@ -5488,25 +5488,6 @@ class TestMainWindowBasic:
         assert mainwindow._global_parameter_fit_window is not None
         assert mainwindow._global_parameter_fit_window.isVisible()
 
-    def test_fit_parameters_delete_group_handler_clears_matching_run_fits(
-        self,
-        mainwindow: MainWindow,
-    ) -> None:
-        """Deleting a fit-parameter group should clear fit data for its runs."""
-        captured: dict[str, list[int]] = {"fit": [], "plot": []}
-
-        mainwindow._fit_panel.clear_fits_for_runs = lambda runs: (
-            captured["fit"].extend(runs) or len(runs)
-        )
-        mainwindow._plot_panel.clear_fits_for_runs = lambda runs: (
-            captured["plot"].extend(runs) or len(runs)
-        )
-
-        mainwindow._on_fit_parameters_group_fits_deleted("g1", [101, "102", 101, "bad"])
-
-        assert captured["fit"] == [101, 102]
-        assert captured["plot"] == [101, 102]
-
     def test_load_files_auto_applies_existing_grouping(
         self,
         mainwindow: MainWindow,

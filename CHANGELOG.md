@@ -37,6 +37,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the orientation of the muon polarization, `theta_h` and `phi_h`, which also reshape the
   line because fields along the polarization do not precess. Both start with `phase` fixed at 0,
   since a zero-field helix has no true phase. See `docs/reference/fit_functions/oscillation.rst`.
+- **The Batch tab is a series editor: it always has one series open, a browser click never
+  resets it, and re-opening a recorded series restores its whole setup.** A **Series** section
+  above **Model** names what is open (`<group or Standalone> · <model> · <range>`, or `Draft`
+  before the first run) with a status tag (`Fitted n/n · HH:MM`, `Edited · results show last
+  run`, or `Draft`), a selector menu of every series on the representation sectioned by owning
+  data group, and `New series ▾` (from the browser selection, from a data group, or a copy of
+  the open series), `Duplicate`, `Rename…` and `Delete…`. Selecting different runs while a
+  series is open no longer rewrites it: a hint offers `New series from selection`, `Open a
+  series for these runs ▾` or `Keep editing` instead. The fit range fields are the open
+  series' own window, shown on the plot's range guides while the Batch tab is visible, separate
+  from the Single tab's project-wide range. See `docs/reference/gui_usage.rst` § "Batch fitting".
+- **A run can show every fit that covers it, not just the last one written.** One series per
+  representation is *active* — driving the plot's default overlay, the Batch tab's open series
+  and the Parameters chip rail together — and a `Fits` button on the plot toolbar (reading
+  `Fits · N` when the run carries N fits) opens a menu over every fit that covers the displayed
+  run: other series, plus the run's own single fit. Tick an entry to show or hide its curve
+  (`Tick = show · ● = active series`); which series is active is chosen on the Batch tab or
+  from a Parameters chip, never from the plot.
+  See `docs/reference/gui_usage.rst` § "Batch fitting" and `docs/ARCHITECTURE.md` § "DataGroup
+  and FitSeries".
+- **The Parameters chip rail is sectioned by the data group each series belongs to**, with a
+  swatch-and-name header per group and a header-less `Standalone` section for group-less
+  series. A chip's context menu now reads `Open in Batch tab`, `Duplicate…`, `Rename…`,
+  `Select members in browser`, `Show fit overlay` and `Delete series…`; double-clicking a chip
+  opens it in the Batch tab. See `docs/reference/parameter_trending.rst` § "Panel layout".
+- **Saving a project is crash-safe, and a dirty session autosaves itself.** `save_project`
+  writes to a temporary file and swaps it into place atomically, keeping the file it replaced
+  as one `.bak` generation. While a project has unsaved changes, a background timer (default
+  5 minutes, `0` disables it) writes a `<name>.autosave.asymp` crash-recovery snapshot; opening
+  a project whose autosave is newer than the file itself offers `Load autosave` or `Open saved
+  file`. See `docs/reference/project_files.rst` § "Crash-safe save and autosave".
+
+### Changed
+
+- **Re-running a series with an identical setup replaces its results in place; anything else
+  records a new series.** The check compares the Batch tab's recipe (model, parameter rows,
+  fit range, seeding, co-add) and effective member set against the series open in the Batch
+  tab first, then the representation's active series, then the newest series already
+  describing the same analysis — so a truly identical re-run replaces its series wherever it
+  lives, which also keeps the Global Fit Wizard's per-phase re-applies from stacking a series
+  per phase-apply. A different window, model, classification or member set now always records
+  a **new** series instead of silently overwriting the old one, even when it shares the same
+  owning group and model the old signature-based matching used to key on.
+- **A single fit no longer joins, alters or diverges a series.** Batch, global, grouped and
+  scan recording paths stopped writing their members' own fit slots; a run's slot holds only
+  its own Single-tab fit, so a run can belong to any number of series without one silently
+  overwriting the others' per-run state. Because a member never stores its series' fit, the
+  divergence concept — a member's stored model disagreeing with its series' canonical one —
+  cannot occur and is gone, along with its `⚠` glyph (the glyph now means only that the
+  series' membership changed since it was last run). Trend gating is now per series
+  (`FitSeries.trend_excluded_runs`) rather than a flag shared by every series that happened to
+  contain the run.
+- **Series chips and default labels read `<model> · <fit-range>[ · <group>]`** instead of the
+  four previously inconsistent conventions, with ` (2)` appended when a group already holds a
+  series with the same model and range; a user-given rename is untouched.
+- **Project schema bumped to v20.** Every recorded series gains its `recipe` (seeded, on
+  migration, from its canonical model, parameter roles and first member's template) and
+  `trend_excluded_runs` (from members previously marked `include_in_trend=False`); a
+  representation slot recorded as a batch/global member is dropped entirely (its result
+  already lives on the series), and every remaining slot loses `batch_id`, `diverged` and
+  `include_in_trend`; a top-level `active_series` map records each representation's newest
+  model-bearing series as active. See `docs/reference/project_files.rst` § "Fit series recipe
+  and active series".
+
+### Removed
+
+- **Divergence marking** (`FitSeries.diverged_runs`, `mark_diverged`/`clear_diverged`/
+  `is_diverged`, `ProjectModel.refresh_divergence`, the trend pill's `⚠` divergence glyph and
+  the Data Browser's amber "diverged" tint for a fit series) — impossible now that a batch or
+  global fit never writes a member's own fit slot.
+- **Signature-based series superseding and load-time dedup**
+  (`ProjectModel._series_signature`, `remove_superseded_batches`, `dedupe_batches`) — replaced
+  by the open-series-first identity check above; two series that differ only in fit range are
+  now kept side by side rather than one silently replacing the other.
+- **The "Run batch fit" button label** — the Batch tab's run button now reads `Run series`,
+  reflecting that it edits and records one series rather than firing an anonymous batch.
 
 ### Changed
 

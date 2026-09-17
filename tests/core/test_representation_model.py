@@ -72,10 +72,8 @@ def test_fit_slot_round_trip_and_provenance_guard():
         model={"component_names": ["Exponential"], "operators": []},
         parameters=[{"name": "A", "value": 1.0}],
         result={"chi_squared": 2.0},
-        provenance="batch",
-        batch_id="b1",
-        diverged=True,
-        include_in_trend=False,
+        provenance="single",
+        ui_state={"result_html": "<p>ok</p>"},
     )
     restored = FitSlot.from_dict(slot.to_dict())
     assert restored == slot
@@ -83,6 +81,22 @@ def test_fit_slot_round_trip_and_provenance_guard():
     # Unknown provenance is coerced to "none".
     assert FitSlot.from_dict({"provenance": "bogus"}).provenance == "none"
     assert FitSlot().is_empty()
+
+
+def test_fit_slot_ignores_pre_v20_series_fields():
+    """A slot is the Single tab's fit alone (D4): the moved fields never return."""
+    restored = FitSlot.from_dict(
+        {
+            "model": {"component_names": ["Exponential"], "operators": []},
+            "provenance": "single",
+            "batch_id": "b1",
+            "diverged": True,
+            "include_in_trend": False,
+        }
+    )
+    assert restored.provenance == "single"
+    assert not hasattr(restored, "batch_id")
+    assert set(restored.to_dict()) == {"model", "parameters", "result", "provenance"}
 
 
 def test_fit_slot_migrates_legacy_fraction_parameters():

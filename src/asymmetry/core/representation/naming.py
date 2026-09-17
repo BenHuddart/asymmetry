@@ -7,21 +7,32 @@ chip, replacing the four divergent conventions the D4/D8 audit found ("Model ·
 rename stored on :attr:`FitSeries.label` always wins via
 :meth:`FitSeries.display_name`.
 
-The scheme is ``"<model> · <member-range>[ · <group>]"``:
+The scheme is ``"<model> · <fit-range>[ · <group>]"`` (D10):
 
 * ``<model>`` — the composite-model expression (e.g. ``"Exponential + Constant"``);
   omitted for model-less (computed) series.
-* ``<member-range>`` — the source-run span (``"2923"`` / ``"2923–2960"``), with a
-  ``"groups "`` prefix for detector-group series so a grouped fit reads distinctly
-  from a run batch over the same runs.
+* ``<fit-range>`` — the series recipe's fit window in its domain's unit
+  (``"0–6 µs"`` in the time domain, ``"0–20 MHz"`` in the frequency domain);
+  omitted when the recipe leaves the window unbounded. The window is what
+  distinguishes two otherwise identical runs of one analysis (D3), so it is the
+  part of the label that tells them apart.
 * ``<group>`` — an optional :class:`DataGroup`-name suffix (e.g. ``"B = 60 G"``)
   when the batch's members coincide with a browser data group. It is a *suffix*,
   not a replacement, so the group hint survives without colliding with the model.
+
+Two series in one group can still land on the same default label (same model,
+same window); :func:`disambiguate_series_label` appends ``" (2)"``, ``" (3)"``…
+at record time so the chips stay distinguishable.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from asymmetry.core.representation.series import FitSeries
+
+#: Axis unit rendered in a default label, per representation domain.
+_DOMAIN_UNITS = {"time": "µs", "frequency": "MHz"}
 
 
 def composite_model_label(composite: object) -> str | None:
@@ -70,17 +81,55 @@ def member_range(series: FitSeries) -> str:
     return f"groups {span}" if series.member_kind == "groups" else span
 
 
-def default_series_label(series: FitSeries, *, group_name: str | None = None) -> str:
-    """Return the default (fallback) label for *series*.
+def _format_bound(value: float | None) -> str:
+    """Render one fit-range bound compactly (``6.0`` -> ``"6"``, ``None`` -> ``""``)."""
+    if value is None:
+        return ""
+    text = f"{float(value):.3f}".rstrip("0").rstrip(".")
+    return text or "0"
 
-    ``"<model> · <member-range>[ · <group>]"``. *group_name*, when supplied, is
+
+def fit_range_label(series: FitSeries) -> str:
+    """Return the series' fit window as a label fragment, or ``""``.
+
+    ``"0–6 µs"`` for a time-domain series, ``"0–20 MHz"`` for a frequency-domain
+    one. An unbounded side renders as nothing (``"–6 µs"`` reads "up to 6 µs");
+    a window unbounded on *both* sides has nothing to say and returns ``""``.
+    """
+    fit_range = series.recipe["fit_range"]
+    low, high = fit_range["min"], fit_range["max"]
+    if low is None and high is None:
+        return ""
+    unit = _DOMAIN_UNITS[series.rep_type.domain]
+    return f"{_format_bound(low)}–{_format_bound(high)} {unit}"
+
+
+def default_series_label(series: FitSeries, *, group_name: str | None = None) -> str:
+    """Return the default (fallback) label for *series* (D10).
+
+    ``"<model> · <fit-range>[ · <group>]"``. *group_name*, when supplied, is
     the browser :class:`DataGroup` name shared by every member; it is appended as
     a suffix. A user rename on :attr:`FitSeries.label` takes precedence — this is
     only the fallback rendered when no label is set.
     """
     model = composite_model_label(series.canonical_model)
-    rng = member_range(series)
+    rng = fit_range_label(series)
     parts = [part for part in (model, rng) if part]
     base = " · ".join(parts) if parts else "Series"
     suffix = (group_name or "").strip()
     return f"{base} · {suffix}" if suffix else base
+
+
+def disambiguate_series_label(label: str, existing_labels: Iterable[str]) -> str:
+    """Return *label*, suffixed ``" (2)"``, ``" (3)"``… until it is unused.
+
+    Called at record time with the labels already on show, so two series that
+    share a model, a window and a group still read as distinct chips (D10).
+    """
+    taken = {str(existing) for existing in existing_labels}
+    if label not in taken:
+        return label
+    ordinal = 2
+    while f"{label} ({ordinal})" in taken:
+        ordinal += 1
+    return f"{label} ({ordinal})"

@@ -7,7 +7,10 @@ the Batch tab shows the group-binding banner and the per-member **Batch
 members** checkbox list this creates. One member is unticked exactly as a
 user would via the checkbox, exercising the same
 ``itemChanged``/``_on_member_check_changed`` path -- excluding it from this
-particular analysis without touching the group's own membership. See
+particular analysis without touching the group's own membership. No fit ever
+runs, so the **Series** section above **Model** reads its pre-first-run state:
+the selector shows a red dot and **Draft**, and **Rename...**/**Delete...**
+are disabled -- there is nothing recorded yet to rename or delete. See
 *Reference > GUI usage > Fitting a group directly*.
 """
 
