@@ -386,8 +386,8 @@ owns itself, persisted in `browser_state` (view state, not group identity).
 - **`active_series: dict[str, str]`** — representation value → `batch_id` of
   its active series (D5), persisted top-level as `active_series`.
   `set_active_series(rep_type, batch_id | None)` writes it; pressing a
-  Parameters chip, opening a series in the Batch tab, or double-clicking a
-  plot overlay pill all call it, so the three surfaces always agree on which
+  Parameters chip, opening a series in the Batch tab, or picking it from the
+  plot's Fits menu all call it, so the three surfaces always agree on which
   series is active. `active_series_id(rep_type)` reads it back.
 - `set_trend_excluded(batch_id, run_number, excluded)` — toggles one
   member's inclusion in *that series'* trend (`trend_excluded_runs`);
@@ -457,18 +457,22 @@ chip menu's first entry takes.
   refreshes the panel; a surviving series retains its highlight, and the
   empty case clears the tint.
 
-**Overlay keying and the "Fits on this run" strip.** `PlotPanel` keys every
+**Overlay keying and the plot toolbar's Fits menu.** `PlotPanel` keys every
 fit curve by `(run, axis, fit_id)`, where `fit_id` is a `FitSeries.batch_id`
 or the literal `"single"` for a run's own exploratory fit — never by run
 alone — so a run belonging to several series keeps every one of their
 curves simultaneously rather than the last writer overwriting the rest. The
 active series (`PlotPanel.set_active_fit_id`, driven by the same
 `ProjectModel.set_active_series` pointer) draws on every run it covers in
-the fit accent colour; a small pill strip above the time plot, "Fits on this
-run", lists every other fit id stored for the currently displayed run
-(hidden when there is only one) — click toggles a pill's curve on or off
-(`shown_fits_by_run`, transient view state, never persisted or recorded),
-double-click makes that series the active one.
+the fit accent colour; a compact **Fits** button at the right of the plot's
+own toolbar row (reading `Fits · N` for a run holding N fits, disabled for a
+run holding none) opens a menu over every fit id stored for the currently
+displayed run. The menu is rebuilt on `aboutToShow`, never per event, and it
+alone carries the fit names — the button's width is fixed, so a series' name
+never enters the panel's minimum width. Ticking an entry toggles that curve
+on or off (`shown_fits_by_run`, transient view state, never persisted or
+recorded); the **Make active** submenu lists the series alone (never
+`"single"`) and makes the chosen one active.
 
 #### DataBrowserPanel — decorative highlight vs true selection
 

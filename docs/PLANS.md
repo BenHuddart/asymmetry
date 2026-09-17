@@ -22,8 +22,8 @@ runs no longer hold batch pointer slots — the per-run `FitSlot` is the
 Single tab's exploratory fit only — so a run can belong to any number of
 series, divergence marking is deleted, and deleting a series touches only
 that series. One active series per representation drives the Parameters
-chip, the Batch tab and the plot overlay; a per-run "Fits on this run" pill
-strip overlays other series for comparison. Project saves go through a temp
+chip, the Batch tab and the plot overlay; the plot toolbar's per-run `Fits`
+menu overlays other series for comparison. Project saves go through a temp
 file + rename with a `.bak`, plus a timed autosave with recovery. Schema
 v19 → v20.
 

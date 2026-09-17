@@ -1,4 +1,4 @@
-"""A run in two series, with both fits shown on the "Fits on this run" strip.
+"""A run in two series, with both fits drawn and the toolbar reading "Fits · 2".
 
 Forms a data group over four runs of the EuO ZF temperature scan and runs
 two real, synchronous batch fits over it (``GlobalFitTab._run_global_fit`` +
@@ -23,8 +23,11 @@ the whole axis), the two series' curves end up visibly distinct even where
 the physics agrees closely: the narrower series' curve stops at t=0.5 and
 t=5, the wider one spans the full 0–6 canvas. Both are switched on for the
 displayed run with the public ``PlotPanel.set_shown_fits`` (the same store a
-pill click writes to), so the "Fits on this run" strip shows two checked
-pills with a legend naming both.
+menu tick writes to), so the plot toolbar's Fits button reads "Fits · 2" in
+its more-than-one-fit accent and the legend names both. The popup itself is
+not captured: a QMenu is its own top-level window, which the offscreen
+platform never renders into the grabbed window, so the shot shows the
+button and both overlays instead.
 
 The Parameters dock is widened past its layout-negotiated default (the same
 ``setMinimumWidth`` + ``resizeDocks`` pairing ``fit_asymmetric_errors`` uses
@@ -55,7 +58,7 @@ _SEEDS_BY_RUN = {
 
 class PlotFitsOnRunScenario(Scenario):
     name = "plot_fits_on_run"
-    description = 'A run in two series, with both fits shown on the "Fits on this run" strip.'
+    description = 'A run in two series, with both fits drawn and the toolbar reading "Fits · 2".'
     size = (1500, 920)
     requires_fit = True
 
@@ -120,6 +123,12 @@ class PlotFitsOnRunScenario(Scenario):
         window._on_dataset_selected(run_numbers[0])
         window._plot_panel.set_shown_fits(run_numbers[0], [series_a_id, series_b_id])
         _process_events_for(milliseconds=80)
+
+        fits_button = window._plot_panel._fits_button
+        assert fits_button.text() == "Fits · 2", (
+            f"the toolbar's Fits button reads {fits_button.text()!r}, not the two fits this "
+            "run carries"
+        )
 
         # ν(30 K) ≈ 22.3 MHz gives a ~0.045 µs period; the default 6 µs view
         # compresses ~130 cycles into the canvas and renders both fitted

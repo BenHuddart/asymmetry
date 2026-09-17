@@ -1107,10 +1107,13 @@ After a batch or global fit completes:
 
 * Fit curves appear on the plot for all datasets. A run that already carried
   another fit — its own single fit, or its place in a different series —
-  gains a **Fits on this run** pill strip above the plot: one pill per fit,
-  active series first, checked (``✓``) pills shown; click toggles a pill,
-  double-click makes that series active (``click = show/hide ·
-  double-click = make active``). It is hidden while the run holds only one.
+  is covered by the plot toolbar's **Fits** button, which reads ``Fits · 2``
+  for a run holding two fits and opens a menu listing them all — active
+  series first (marked ``●``), the run's own **Single fit** last. Tick an
+  entry to draw its curve, untick it to hide it, and pick a series from
+  **Make active** to make it the active one (``Tick = show · ● = active``).
+  The button reads plain **Fits** for a run holding one fit or none, and is
+  greyed out when the run has none.
 * The Results card carries a **Batch ✓**/**Batch ⚠** tag, an "*N* of *M*
   converged" headline, and one verdict chip per run (for example
   ``3001 ✓ 0.98``, coloured by that run's own fit quality); click a run's
@@ -1134,20 +1137,20 @@ After a batch or global fit completes:
   :ref:`group-bound-series-staleness` in :doc:`parameter_trending`)
 
 .. image:: /_generated/screenshots/plot_fits_on_run.png
-   :alt: A run in two series, with both shown on the Fits on this run pill
-      strip above the time-domain plot
+   :alt: A run in two series, with both shown and the plot toolbar's Fits
+      button reading Fits dot 2
    :width: 100%
 
 *A run belonging to two series — a real 0.5–5 µs and 0–6 µs batch fit over*
 *the same EuO group, zoomed to resolve the ~22 MHz precession — with the*
-**Fits on this run** *strip above the canvas showing both checked. The*
+*toolbar's* **Fits · 2** *button flagging both and both curves drawn. The*
 *active series (the wider window, opened most recently) draws in the fit*
 *accent colour; the other takes a trace colour, though the two agree*
 *closely enough over their shared window that one mostly hides the other —*
 *a fitted curve is never extrapolated past its own recorded range, so only*
 *the wider series draws before 0.5 µs, the one visible difference at this*
-*zoom. Double-clicking a pill would make the other series active instead;*
-*clicking either would hide its curve without discarding it.*
+*zoom. The button's menu would untick either curve to hide it without*
+*discarding it, or make the other series active from* **Make active***.*
 
 Fitting a group directly
 ^^^^^^^^^^^^^^^^^^^^^^^^^

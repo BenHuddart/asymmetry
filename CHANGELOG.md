@@ -40,9 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the Single tab's project-wide range. See `docs/reference/gui_usage.rst` § "Batch fitting".
 - **A run can show every fit that covers it, not just the last one written.** One series per
   representation is *active* — driving the plot's default overlay, the Batch tab's open series
-  and the Parameters chip rail together — and a `Fits on this run` pill strip above the plot
-  lists every other fit (other series, the run's own single fit) whenever a run carries more
-  than one: click a pill to show or hide its curve, double-click to make that series active.
+  and the Parameters chip rail together — and a `Fits` button on the plot toolbar (reading
+  `Fits · N` when the run carries N fits) opens a menu over every fit that covers the displayed
+  run: other series, plus the run's own single fit. Tick an entry to show or hide its curve,
+  or pick a series from `Make active` to make it the active one (`Tick = show · ● = active`).
   See `docs/reference/gui_usage.rst` § "Batch fitting" and `docs/ARCHITECTURE.md` § "DataGroup
   and FitSeries".
 - **The Parameters chip rail is sectioned by the data group each series belongs to**, with a

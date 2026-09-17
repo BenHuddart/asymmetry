@@ -107,13 +107,14 @@ staleness (`is_stale`) is unchanged.
 dict[str, str]` (rep_type value → batch_id), persisted top-level as
 `active_series`. The Parameters chip, the Batch tab's open series and the
 plot overlay read and write the same pointer: pressing a chip, opening a
-series in the Batch tab or double-clicking an overlay pill all set it. The
+series in the Batch tab or picking one from the plot's `Fits` menu all set
+it. The
 plot draws the active series' fit for every run it covers. Which *other*
-fits are shown on a run (the "Fits on this run" pills: other series, the
+fits are shown on a run (the plot toolbar's `Fits` menu: other series, the
 single fit) is transient view state in the plot panel, default = active
 series only. A single fit that has just completed on the Single tab shows
 its overlay for that run, as today, until the active series changes or the
-pills are toggled. The Single tab stays project-wide and exploratory; a run
+menu is toggled. The Single tab stays project-wide and exploratory; a run
 with no single slot but a series result restores its form from the active
 series' result (today's `build_single_fit_payload_from_slot`, fed from the
 series), labelled as such, and `register_global_fit_results` keeps seeding
@@ -343,10 +344,10 @@ recipe exactly (test); identical re-run keeps the id and label; a range
 change then run creates a new series and leaves the old one (test);
 project reload reopens the active series.
 
-### Phase 4 — Parameters rail sections, chip menu, overlay pills (agent: Sonnet)
+### Phase 4 — Parameters rail sections, chip menu, plot Fits menu (agent: Sonnet)
 
 Scope: `gui/panels/fit_parameters_panel.py`, `gui/panels/plot_panel.py`
-(pill strip only), `mainwindow.py` wiring, tests in `tests/gui/`.
+(the Fits menu only), `mainwindow.py` wiring, tests in `tests/gui/`.
 
 - Chip rail sectioned by owning data group with the group's colour swatch
   and name; standalone series under "Standalone" (mockup "Parameters · chip
@@ -355,16 +356,16 @@ Scope: `gui/panels/fit_parameters_panel.py`, `gui/panels/plot_panel.py`
   members in browser`, `Show fit overlay` (sets active), `Delete series…`.
   Double-click a chip = Open in Batch tab. New signals routed through
   `MainWindow` to `FitPanel.open_series` / duplicate.
-- Plot "Fits on this run" pill strip above the time plot for the current
-  run: one pill per series covering the run plus the single fit; click
-  toggles shown, double-click makes active; hidden when the run has one
-  fit. Uses the chip styling.
-- Active-series sync: chip press, pill double-click and Batch tab open all
-  go through `ProjectModel.set_active_series` and one `MainWindow`
-  refresher.
+- Plot `Fits` menu button at the right of the plot's own toolbar row,
+  before `Pan`: `Fits · N` for the current run's N fits, its popup listing
+  one checkable entry per series covering the run plus the single fit, and
+  a `Make active` submenu over the series alone. Fixed width, so a fit's
+  name never enters the panel's minimum width.
+- Active-series sync: chip press, `Make active` and Batch tab open all go
+  through `ProjectModel.set_active_series` and one `MainWindow` refresher.
 
-Checklist: no second chip implementation; the pill strip is hidden for
-single-fit runs; toggling a pill never records anything.
+Checklist: no second chip implementation; the `Fits` button is disabled for
+a run with no fit; toggling a menu entry never records anything.
 
 ### Phase 5 — Crash-safe save and autosave (agent: Sonnet)
 
@@ -389,7 +390,7 @@ project file itself; `_project_save_active` guards both.
 
 - `docs/reference/parameter_trending.rst` § "Group-bound series and
   staleness": rewrite for D1/D3/D5/D6 (drop divergence text); add the chip
-  menu items and overlay pills, quoting UI strings verbatim.
+  menu items and the plot's Fits menu, quoting UI strings verbatim.
 - `docs/reference/fitting.rst` Batch tab section and
   `docs/reference/gui_usage.rst` (~1102): the series row, `New series ▾`,
   the selection hint, per-series range, "Fit this group…" behaviour.
@@ -403,7 +404,7 @@ project file itself; `_project_save_active` guards both.
   `plot_fits_on_run` (two series on one run); register both in
   `docs/screenshots/capture.py`; stay within the size budget.
 - `CHANGELOG.md` `[Unreleased]`: Added (series editor, active series,
-  overlay pills, crash-safe save, autosave), Changed (identical re-run
+  the plot's Fits menu, crash-safe save, autosave), Changed (identical re-run
   replaces, otherwise new series; single fits no longer join or diverge a
   series), Removed (divergence marking).
 
