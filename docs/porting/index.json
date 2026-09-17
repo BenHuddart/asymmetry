@@ -1272,6 +1272,32 @@
       "status": "implemented",
       "tests_path": "tests/core/test_helical.py",
       "updated": "2026-09-15"
+    },
+    {
+      "depends_on": [
+        "data-reduction-parity"
+      ],
+      "docs": {
+        "comparison": "docs/porting/t0-determination/comparison.md",
+        "implementation_options": "docs/porting/t0-determination/implementation-options.md",
+        "readme": "docs/porting/t0-determination/README.md",
+        "test_data": "docs/porting/t0-determination/test-data.md",
+        "verification_plan": "docs/porting/t0-determination/verification-plan.md"
+      },
+      "feature_name": "Time-zero (t0) determination: file default, always-visible detected value, divergence warning",
+      "notes": "Audit of the t0 lifecycle against WiMDA, Mantid, musrfit and the ISIS/PSI/textbook definitions. Findings: fresh drafts mislabelled Manual (inference compares group-max t0_bin with all-detector max); Manual/Auto policy honoured by reduction only (grouped Fourier, MaxEnt, count fits align on file t0); count-fit t0 promotion sign inverted (confirmed numerically); missing header t0 silently bin 0; NeXus payload lacks detector_t0_bins. Recommendation: stored (never inferred) policy defaulting to from_file, one effective-t0 resolver enforced by the harness, detected value shown beside the file value in every mode with per-source bin tolerances (2 continuous / 3 pulsed, corpus-calibrated), Manual stored as an offset.",
+      "path": "docs/porting/t0-determination",
+      "references": [
+        "WiMDA",
+        "Mantid",
+        "musrfit",
+        "Literature"
+      ],
+      "slug": "t0-determination",
+      "src_path": "src/asymmetry/core/transform/t0.py",
+      "status": "study",
+      "tests_path": "tests/io/test_t0_search.py",
+      "updated": "2026-09-17"
     }
   ]
 }
