@@ -296,7 +296,7 @@ profiles healed to From file and a log line each; `gui-smoke` green.
   (`offset_bins`, `t0_time_us`, `t0_source`, `effective_detector_t0_bins`,
   `t0_search_*`, `t0_method`, `t0_reference_run`; v21),
   `count_domain_fitting.rst` (promotion sign statement), glossary,
-  `ARCHITECTURE.md`, screenshot scenario for the grouping window's t0 row,
+  `ARCHITECTURE.md`, screenshot scenario for the grouping window's t0 row (`docs/screenshots/scenarios/grouping_window_profile_editor.py`),
   `CHANGELOG.md [Unreleased]`, and `docs/porting/t0-determination/README.md`
   status → implemented with the final decisions.
 - `python tools/harness.py docs`.
