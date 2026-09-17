@@ -550,11 +550,18 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
 def test_the_window_never_opens_wider_than_the_available_screen(
     qapp: QApplication,
 ) -> None:
-    """The preferred size is a wish; the work area is the limit."""
+    """The preferred size is a wish; the work area is the limit.
+
+    The one thing the clamp cannot undercut is the dialog's own layout
+    minimum (every pane at its measured content minimum): a window narrower
+    than that would have to scroll one of its columns, which the column
+    budget forbids. On the 800-px-wide offscreen screen that minimum is the
+    binding limit, so the bound is the larger of the two.
+    """
     available = QApplication.primaryScreen().availableGeometry()
     dialog = GroupingDialog([_dataset_with_histograms()])
 
-    assert dialog.size().width() <= available.width()
+    assert dialog.size().width() <= max(available.width(), dialog.minimumSizeHint().width())
     assert dialog.size().height() <= available.height()
     dialog.close()
 

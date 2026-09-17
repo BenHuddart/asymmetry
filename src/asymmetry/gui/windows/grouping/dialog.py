@@ -232,7 +232,6 @@ def _t0_line_column_width_px(label: QLabel, verdict_button: QToolButton) -> int:
     )
 
 
-
 class GroupingDialog(QDialog):
     """Profile editor for detector grouping.
 
@@ -1228,15 +1227,6 @@ class GroupingDialog(QDialog):
             + 2 * self._corrections_scroll.frameWidth()
         )
 
-        # Open at the size where every pane sits at its measured minimum and
-        # the grouping column has reached its t0-line cap, capped to the work
-        # area of the screen (see ``preferred_window_size``). Done here, after
-        # both scroll minimums above, so the numbers are the real ones for this
-        # platform's fonts — an average-character budget read too narrow on
-        # Linux and elided the t0 line at the default width.
-        self._preferred_window_size = self._measure_preferred_window_size()
-        resize_to_available(self, *self._preferred_window_size)
-
         # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
         # the configured corrections, directly above the preview so it works from
         # either column (the preview is pinned below both). Pure wrapper over the
@@ -1302,6 +1292,15 @@ class GroupingDialog(QDialog):
         # by _seed_source (which resolves the target), so no re-seed is needed.
         self._scope_panel.set_current_run(int(self._reference_dataset.run_number))
         self._refresh_editing_strip()
+
+        # Open at the size where every pane sits at its measured minimum and
+        # the grouping column has reached its t0-line cap, capped to the work
+        # area of the screen (see ``preferred_window_size``). Last, once every
+        # widget exists, so the minimum is the finished dialog's on this
+        # platform's fonts — an average-character budget read too narrow on
+        # Linux and elided the t0 line at the default width.
+        self._preferred_window_size = self._measure_preferred_window_size()
+        resize_to_available(self, *self._preferred_window_size)
 
     def _choose_reference_dataset(self) -> MuonDataset:
         """Return preferred reference dataset for initial grouping values."""
