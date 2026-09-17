@@ -79,6 +79,7 @@ from __future__ import annotations
 import copy
 import functools
 import hashlib
+import logging
 import ntpath
 import os
 import time
@@ -138,7 +139,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from asymmetry.core.data.dataset import Histogram, MuonDataset
+from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.fitting import (
     FitLog,
     as_composite_model,
@@ -211,6 +212,7 @@ from asymmetry.core.project.profiles import (
     GroupingProfile,
     default_profile_for_run,
     effective_grouping_for_loaded_run,
+    heal_t0_policies,
     named_profile_for_run,
     profile_fingerprint_for_run,
     reconcile_instrument_for_payload,
@@ -256,6 +258,7 @@ from asymmetry.core.transform import (
     reduce_grouped_asymmetry,
     resolve_background_mode,
     resolve_facility,
+    run_t0_time_us,
 )
 from asymmetry.core.transform.deadtime import (
     calibrate_deadtime_from_histograms,
@@ -4200,6 +4203,11 @@ class MainWindow(QMainWindow):
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
 
+        # D9: the t0 verdict never blocks Apply, but it is recorded where the
+        # user can find it after the window has closed.
+        for warning in dialog.t0_apply_warnings:
+            self._log_panel.log(f"Time zero: {warning}", tag="grouping")
+
         grouping_result = dialog.get_grouping_result()
         if not grouping_result:
             return
@@ -5457,6 +5465,19 @@ class MainWindow(QMainWindow):
             ]
         else:
             run.grouping.pop(EFFECTIVE_DETECTOR_T0_KEY, None)
+        # The exact t0 moves with the same whole-bin delta (D4), exactly as
+        # ``_apply_t0_policy`` moves it — otherwise the per-run override would
+        # shift the alignment but leave the time stamps on the file's t0.
+        # Re-derived from the FILE baseline (not from the stored value) for the
+        # same reason as the override list above: this path mutates
+        # ``run.grouping`` in place and runs again on every apply, so reading
+        # back its own output would compound the shift.
+        if run.histograms:
+            file_t0_time_us = run_t0_time_us(run.histograms, file_common_t0)
+            if file_t0_time_us is not None:
+                run.grouping["t0_time_us"] = file_t0_time_us + delta * float(
+                    run.histograms[0].bin_width
+                )
 
         if has_file_deadtime(existing_grouping, len(run.histograms)):
             run.grouping["deadtime_file_us"] = list(existing_grouping.get("dead_time_us", []))
@@ -16508,6 +16529,19 @@ class MainWindow(QMainWindow):
         loaded_file_cache: dict[str, object] = {
             path: prefetched.get(path, RuntimeError("file load cancelled")) for path in unique_paths
         }
+        # D2/D3: a pre-v21 absolute manual t0 and a manual policy that never
+        # shifted anything can only be repaired now that the runs are loaded —
+        # resolution raises on the former. Heal before the per-dataset pass
+        # below resolves any profile against a run.
+        runs_by_number: dict[int, Run] = {}
+        for loaded_obj in loaded_file_cache.values():
+            candidates = loaded_obj if isinstance(loaded_obj, list) else [loaded_obj]
+            for candidate in candidates:
+                if isinstance(candidate, MuonDataset) and candidate.run is not None:
+                    runs_by_number.setdefault(int(candidate.run_number), candidate.run)
+        for message in heal_t0_policies(self._grouping_profiles, runs_by_number):
+            logging.getLogger(__name__).info(message)
+            self._log_panel.log(message, tag="grouping")
         combined_id_map: dict[int, int] = {}
         with self._browser_batch():
             # Each dataset's re-application (profile resolve + grouping apply +

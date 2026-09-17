@@ -25,6 +25,7 @@ from asymmetry.core.project.profiles import (
     default_profile_for_run,
     detect_instrument_for_run,
     effective_grouping_for_loaded_run,
+    heal_t0_policies,
     named_profile_for_run,
     profile_fingerprint_for_run,
     profile_from_payload,
@@ -1086,3 +1087,84 @@ def test_profile_color_round_trips_and_defaults_none():
     colorless = _base_profile()
     assert "color" not in colorless.to_dict()
     assert GroupingProfile.from_dict(colorless.to_dict()).color is None
+
+
+# --------------------------------------------------------------------------- #
+# Project-open t0 repair (heal_t0_policies; decisions D2/D3)
+# --------------------------------------------------------------------------- #
+
+
+def test_heal_converts_a_legacy_absolute_t0_into_an_offset():
+    run = _run_with_detector_t0([4, 6])
+    profile = _base_profile(
+        fingerprint=ProfileFingerprint("EMU", 2),
+        groups={1: [1], 2: [2]},
+        t0_policy=T0Policy(mode="manual", legacy_value=9),
+    )
+
+    messages = heal_t0_policies([profile], {1: run})
+
+    # The run's file common t0 is max(4, 6) = 6, so bin 9 was a +3 offset.
+    assert profile.t0_policy == T0Policy(mode="manual", offset_bins=3)
+    assert messages == [
+        "Grouping profile 'Default (EMU)': converted the stored manual t0 bin 9 to "
+        "offset +3 bins against run 1's file t0 (bin 6)."
+    ]
+
+
+def test_heal_converts_a_legacy_value_equal_to_the_file_t0_to_from_file():
+    run = _run_with_detector_t0([4, 6])
+    profile = _base_profile(
+        fingerprint=ProfileFingerprint("EMU", 2),
+        groups={1: [1], 2: [2]},
+        t0_policy=T0Policy(mode="manual", legacy_value=6),
+    )
+
+    messages = heal_t0_policies([profile], {1: run})
+
+    assert profile.t0_policy == T0Policy(mode="from_file")
+    assert len(messages) == 1
+    assert messages[0].endswith("to mode from_file against run 1's file t0 (bin 6).")
+
+
+def test_heal_prefers_the_policys_source_run_as_the_reference():
+    typed_against = _run_with_detector_t0([4, 6])
+    typed_against.run_number = 7
+    other = _run_with_detector_t0([1, 1])
+    other.run_number = 3
+    profile = _base_profile(
+        fingerprint=ProfileFingerprint("EMU", 2),
+        groups={1: [1], 2: [2]},
+        t0_policy=T0Policy(mode="manual", legacy_value=9, source_run=7),
+    )
+
+    heal_t0_policies([profile], {3: other, 7: typed_against})
+
+    assert profile.t0_policy.offset_bins == 3  # 9 - 6, not 9 - 1
+
+
+def test_heal_leaves_a_legacy_value_alone_when_no_run_is_loaded():
+    """Nothing resolves such a profile, so the stored value survives untouched."""
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", legacy_value=9))
+
+    assert heal_t0_policies([profile], {}) == []
+    assert profile.t0_policy.legacy_value == 9
+
+
+def test_heal_rewrites_a_zero_offset_manual_policy_to_from_file():
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=0))
+
+    messages = heal_t0_policies([profile], {})
+
+    assert profile.t0_policy == T0Policy(mode="from_file")
+    assert messages == [
+        "Grouping profile 'Default (EMU)': manual t0 offset is 0 on every run in "
+        "scope, healed to mode from_file."
+    ]
+
+
+def test_heal_keeps_a_real_manual_offset():
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=-2))
+
+    assert heal_t0_policies([profile], {}) == []
+    assert profile.t0_policy == T0Policy(mode="manual", offset_bins=-2)

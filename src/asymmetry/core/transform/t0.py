@@ -30,6 +30,15 @@ from asymmetry.core.data.dataset import Histogram
 _PULSED_TOKENS = ("isis", "ral", "rutherford", "j-parc", "jparc", "kek", "riken")
 _CONTINUOUS_TOKENS = ("psi", "triumf", "lem")
 
+#: How far the detected t0 may sit from the file's before it is worth a warning,
+#: per source family (D8, from the ISIS/PSI header survey). Continuous sources
+#: resolve the prompt peak to a bin or two; a pulsed source's edge midpoint is
+#: broader, so it gets one more.
+T0_TOLERANCE_BINS: dict[str, int] = {"continuous": 2, "pulsed": 3}
+
+#: Which family each :func:`find_t0` strategy belongs to.
+_STRATEGY_FAMILY = {"prompt_peak": "continuous", "pulse_edge": "pulsed"}
+
 #: Grouping-dict key carrying the T0Policy-resolved effective per-detector t0
 #: bins (0-based, one per histogram). Distinct from the file-derived
 #: ``detector_t0_bins`` per-run fact so a *manual* policy can shift alignment
@@ -263,4 +272,116 @@ def find_t0_for_run(
         spread_bins=spread,
         strategy=strategy,
         ok=True,
+    )
+
+
+def tolerance_bins(strategy: str) -> int:
+    """The divergence tolerance in bins for a :func:`find_t0` *strategy* (D8)."""
+    return T0_TOLERANCE_BINS[_STRATEGY_FAMILY[strategy]]
+
+
+@dataclass(frozen=True)
+class T0Assessment:
+    """The verdict on a run's time zero: what to show and how loudly (D8).
+
+    ``level`` is ``"ok"``, ``"warn"`` or ``"error"``. An *error* is a notice, not
+    a block (D9): the reduction always proceeds with the chosen mode, so the
+    levels only drive the colour and the Apply summary. ``messages`` are plain
+    sentences rendered verbatim by the GUI; ``outlier_detectors`` are the
+    1-based detector numbers whose own estimate diverges from their file t0.
+    """
+
+    level: str
+    delta_bins: int | None
+    messages: tuple[str, ...]
+    outlier_detectors: tuple[int, ...]
+
+
+def assess_t0(
+    histograms: list[Histogram],
+    grouping: dict | None,
+    search: RunT0Search | None,
+) -> T0Assessment:
+    """Compare a run's file t0 with the detected one and return the verdict (D8).
+
+    Checks run in severity order and the first *error* wins outright; warnings
+    accumulate. ``search`` is the detection for this run
+    (:func:`find_t0_for_run`) or ``None`` while one is still pending, in which
+    case only the file-side checks can fire.
+
+    Every bin number inside a message is written in the run's own display base
+    (``grouping["bin_index_base"]``, 1 for ISIS), because the messages are shown
+    beside bin numbers the GUI already displays that way — a message quoting the
+    internal 0-based index would contradict the line it sits on. Comparisons and
+    :attr:`T0Assessment.delta_bins` stay internal: a difference is base-free.
+    """
+    # Imported here, not at module scope: grouping.py imports this module for
+    # the resolver, so a top-level import would close the cycle.
+    from asymmetry.core.transform.grouping import common_t0_for_groups, effective_group_indices
+
+    grouping = grouping if isinstance(grouping, dict) else {}
+    n_hist = len(histograms)
+    base = int(grouping.get("bin_index_base", 0))
+    detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
+    forward_idx = effective_group_indices(
+        grouping, int(grouping.get("forward_group", 1)), n_histograms=n_hist
+    )
+    backward_idx = effective_group_indices(
+        grouping, int(grouping.get("backward_group", 2)), n_histograms=n_hist
+    )
+    file_common = common_t0_for_groups(
+        histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0_bins
+    )
+
+    if grouping.get("t0_source") == "missing":
+        return T0Assessment(
+            level="error",
+            delta_bins=None,
+            messages=("No time zero in the file header; using the detected value",),
+            outlier_detectors=(),
+        )
+
+    n_bins = int(histograms[0].n_bins)
+    if not 0 <= file_common < n_bins:
+        return T0Assessment(
+            level="error",
+            delta_bins=None,
+            messages=(f"Time zero is bin {file_common + base}, outside the run's {n_bins} bins",),
+            outlier_detectors=(),
+        )
+
+    messages: list[str] = []
+    if grouping.get("t0_source") == "conflict":
+        messages.append("Header time_zero disagrees with t0_bin; using t0_bin")
+
+    delta: int | None = None
+    outliers: tuple[int, ...] = ()
+    if search is not None and search.ok:
+        tol = tolerance_bins(search.strategy)
+        delta = int(search.consensus_t0_bin) - int(file_common)
+        if abs(delta) > tol:
+            messages.append(
+                f"Detected t0 is bin {int(search.consensus_t0_bin) + base}, file t0 is bin "
+                f"{file_common + base} — further apart than the {tol}-bin tolerance"
+            )
+        outliers = tuple(
+            index + 1
+            for index, (estimate, effective) in enumerate(
+                zip(search.estimates, detector_t0_bins, strict=True)
+            )
+            if estimate.ok and abs(int(estimate.t0_bin) - int(effective)) > tol
+        )
+        if outliers:
+            listed = ", ".join(str(number) for number in outliers)
+            messages.append(
+                f"Detectors {listed} disagree with their file t0 by more than {tol} bins"
+            )
+        if int(search.spread_bins) > 4 * tol:
+            messages.append(f"Detector spread {search.spread_bins} bins — check the source type")
+
+    return T0Assessment(
+        level="warn" if messages else "ok",
+        delta_bins=delta,
+        messages=tuple(messages),
+        outlier_detectors=outliers,
     )

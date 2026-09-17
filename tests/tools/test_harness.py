@@ -289,6 +289,20 @@ def test_t0_alignment_check_forces_a_fixed_baseline_entry_to_be_dropped(tmp_path
     assert "T0_ALIGNMENT_BASELINE" in failures[0].message
 
 
+def test_t0_alignment_baseline_is_empty_and_the_tree_is_clean() -> None:
+    """Every consumer now aligns through the resolver (plan phase 5 closes D10).
+
+    The baseline can only shrink, and it has reached zero: the grouping dialog's
+    last bare ``common_t0_for_groups`` call now passes ``detector_t0_bins=None``
+    explicitly, because the From-file display and the Manual-offset baseline are
+    the file values by definition.
+    """
+    harness = _load_harness()
+
+    assert harness.T0_ALIGNMENT_BASELINE == {}
+    assert harness.find_t0_alignment_violations() == []
+
+
 def test_current_gui_has_no_widget_screen_calls() -> None:
     harness = _load_harness()
 

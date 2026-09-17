@@ -1598,6 +1598,87 @@ def _apply_background_policy(grouping: dict[str, Any], policy: BackgroundPolicy)
 
 
 # --------------------------------------------------------------------------- #
+# Project-open repair of stored t0 policies (D2, D3)
+# --------------------------------------------------------------------------- #
+
+
+def _profile_file_common_t0(profile: GroupingProfile, run: Run) -> int:
+    """*run*'s file-derived common t0 over *profile*'s analysis groups."""
+    grouping = {
+        "groups": {int(gid): [int(d) for d in dets] for gid, dets in profile.groups.items()},
+        "forward_group": int(profile.forward_group),
+        "backward_group": int(profile.backward_group),
+        "excluded_detectors": [int(d) for d in profile.excluded_detectors],
+    }
+    return _file_common_t0(grouping, run, len(run.histograms))
+
+
+def _t0_reference_run(profile: GroupingProfile, runs_by_number: dict[int, Run]) -> Run | None:
+    """The run a stored absolute t0 was typed against, if the project has one.
+
+    The policy's ``source_run`` when that run is loaded, else the first loaded
+    run of the profile's own fingerprint — the runs the policy governs all share
+    it, so any of them measures the same file t0 the editor showed.
+    """
+    stored = runs_by_number.get(profile.t0_policy.source_run)
+    if stored is not None:
+        return stored
+    for _number, candidate in sorted(runs_by_number.items()):
+        if profile.fingerprint.matches(profile_fingerprint_for_run(candidate)):
+            return candidate
+    return None
+
+
+def heal_t0_policies(profiles: list[GroupingProfile], runs_by_number: dict[int, Run]) -> list[str]:
+    """Repair stored t0 policies in place at project open (D2, D3).
+
+    Two repairs that can only be made once the runs are known:
+
+    * a pre-v21 absolute manual ``value`` becomes the equivalent signed *offset*
+      from the reference run's own file t0 (D3). :func:`_apply_t0_policy` raises
+      on an unconverted value, so this is what stands between a v20 project and
+      a hard failure. A profile none of whose runs are loaded is left alone —
+      nothing resolves it, and the stored value survives to be converted the day
+      one of its runs is.
+    * a manual policy resolving to a zero shift on every run in scope — which,
+      for an offset policy, is exactly ``offset_bins == 0`` — was never a shift
+      at all (the pre-D1 payload comparison mislabelled it), so it becomes
+      ``from_file`` (D2).
+
+    Returns one line per repaired profile for the caller to log. The project
+    file is not rewritten until the user saves.
+    """
+    messages: list[str] = []
+    for profile in profiles:
+        legacy_value = profile.t0_policy.legacy_value
+        if legacy_value is not None:
+            run = _t0_reference_run(profile, runs_by_number)
+            if run is None or not run.histograms:
+                continue
+            file_common_t0 = _profile_file_common_t0(profile, run)
+            profile.t0_policy = T0Policy.from_legacy_value(legacy_value, file_common_t0)
+            healed = profile.t0_policy
+            became = (
+                f"offset {healed.offset_bins:+d} bins"
+                if healed.mode == "manual"
+                else "mode from_file"
+            )
+            messages.append(
+                f"Grouping profile {profile.name!r}: converted the stored manual t0 "
+                f"bin {legacy_value} to {became} against run {run.run_number}'s "
+                f"file t0 (bin {file_common_t0})."
+            )
+        policy = profile.t0_policy
+        if policy.mode == "manual" and policy.offset_bins == 0:
+            profile.t0_policy = T0Policy(mode="from_file")
+            messages.append(
+                f"Grouping profile {profile.name!r}: manual t0 offset is 0 on every "
+                "run in scope, healed to mode from_file."
+            )
+    return messages
+
+
+# --------------------------------------------------------------------------- #
 # Application helper: attach the effective grouping for a freshly loaded run
 # --------------------------------------------------------------------------- #
 

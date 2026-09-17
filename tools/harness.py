@@ -48,10 +48,8 @@ T0_ALIGNMENT_OWNERS = frozenset(
 T0_ALIGNMENT_OWNER_DIRS = ("core/io/",)
 # Consumers still aligning on file t0, each with the phase that reroutes it.
 # The rule fails when an entry stops having a violation, so the list can only
-# shrink to empty.
-T0_ALIGNMENT_BASELINE: dict[str, str] = {
-    "gui/windows/grouping/dialog.py": "t0 row preview seed (plan phase 5)",
-}
+# shrink to empty -- and it now is.
+T0_ALIGNMENT_BASELINE: dict[str, str] = {}
 
 CORE_IMPORT_BANS = ("PySide6", "matplotlib", "asymmetry.gui")
 CORE_DEPENDENCY_BANS = ("PySide6", "matplotlib")

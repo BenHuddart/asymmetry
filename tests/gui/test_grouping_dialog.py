@@ -20,6 +20,7 @@ import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.gui.styles import tokens
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
@@ -2334,8 +2335,9 @@ def test_find_t0_fills_spinner_without_applying(qapp: QApplication) -> None:
     dataset.run.grouping["last_good_bin"] = 199
     dialog = GroupingDialog([dataset])
     dialog._on_find_t0()
+    # Find fills the absolute bin; nothing is applied until Apply. The outcome
+    # is reported by the shared detected line, not a separate result label.
     assert dialog._t0_spin.value() == 37 + dialog._bin_index_base()
-    assert "t0" in dialog._alpha_result_label.text()
 
 
 def test_exclusion_field_round_trips_and_validates(qapp: QApplication, monkeypatch) -> None:
@@ -2724,7 +2726,7 @@ def test_t0_mode_defaults_to_from_file_with_readonly_spin(qapp: QApplication) ->
     assert dialog._find_t0_btn.isEnabled() is False
     # Read-only spin shows the preview run's file common t0 (max over groups = 3).
     assert dialog._t0_spin.value() == 3
-    assert "each run's file" in dialog._t0_mode_label.text()
+    assert dialog._t0_detected_label.text().startswith("File: bin 3 · ")
     assert dialog._draft.t0_policy.mode == "from_file"
 
 
@@ -2741,7 +2743,8 @@ def test_t0_manual_mode_enables_spin_and_dirties_draft(qapp: QApplication) -> No
     assert dialog._draft_dirty is True
     dialog._sync_draft_from_form()
     assert dialog._draft.t0_policy.mode == "manual"
-    assert dialog._draft.t0_policy.value == 5
+    # Manual stores an OFFSET from the run's own file t0 (= 3), not the bin.
+    assert dialog._draft.t0_policy.offset_bins == 5 - 3
 
 
 def test_t0_from_file_shows_file_value_not_stored_override(qapp: QApplication) -> None:
@@ -2780,7 +2783,9 @@ def test_t0_auto_detect_shows_detected_value_and_provenance(qapp: QApplication) 
     # PSI (continuous) → prompt-peak argmax. h1 peak at bin 2, h2 peak at bin 3.
     # median consensus rounds to 2 or 3; provenance text names the strategy.
     assert dialog._t0_spin.value() in (2, 3)
-    assert "prompt peak" in dialog._t0_mode_label.text()
+    # The auto-detect toggle scans once and caches it, so the shared line is
+    # already populated with the strategy it used.
+    assert "prompt peak" in dialog._t0_detected_label.text()
     dialog._sync_draft_from_form()
     assert dialog._draft.t0_policy.mode == "auto_detect"
 
@@ -2792,3 +2797,192 @@ def test_t0_find_button_fills_manual_spin(qapp: QApplication) -> None:
     dialog._on_find_t0()
     # Find fills the spin with the detected consensus (prompt peak).
     assert dialog._t0_spin.value() in (2, 3)
+
+
+# ---------------------------------------------------------------------------
+# The always-on file / detected / Δ line and its verdicts (plan phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _t0_line_dataset(
+    run_number: int = 4700,
+    t0_bins: tuple[int, ...] = (10, 10),
+    peaks: tuple[int, ...] = (10, 10),
+    n_bins: int = 40,
+    **grouping_extra,
+) -> MuonDataset:
+    """A PSI (continuous) run whose file t0 and prompt peak are set per detector."""
+    histograms = []
+    for t0_bin, peak in zip(t0_bins, peaks, strict=True):
+        counts = np.full(n_bins, 10.0)
+        counts[peak] = 500.0
+        histograms.append(Histogram(counts=counts, bin_width=0.016, t0_bin=t0_bin))
+    n_det = len(t0_bins)
+    half = max(1, n_det // 2)
+    run = Run(
+        run_number=run_number,
+        histograms=histograms,
+        metadata={"run_number": run_number, "facility": "PSI"},
+        grouping={
+            "groups": {1: list(range(1, half + 1)), 2: list(range(half + 1, n_det + 1))},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": max(t0_bins),
+            "first_good_bin": max(t0_bins),
+            "last_good_bin": n_bins - 1,
+            "detector_t0_bins": list(t0_bins),
+            **grouping_extra,
+        },
+    )
+    t = np.arange(n_bins, dtype=float) * 0.016
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "facility": "PSI"},
+        run=run,
+    )
+
+
+def _wait_for_t0_detection(dialog: GroupingDialog) -> None:
+    """Let the debounced off-thread t0 detection land and repaint the line."""
+    _wait_until(lambda: dialog._t0_search_cache.get(dialog._t0_cache_key()) is not None)
+
+
+def test_t0_line_is_identical_in_every_mode_on_the_same_run(qapp: QApplication) -> None:
+    """D11: the file/detected/Δ line says the same thing whatever the mode is."""
+    dialog = GroupingDialog([_t0_line_dataset()])
+    _wait_for_t0_detection(dialog)
+    baseline = dialog._t0_detected_label.text()
+    assert baseline == "File: bin 10 · Detected: bin 10 (prompt peak, spread 0) · Δ +0"
+
+    texts = {}
+    for mode in ("from_file", "manual", "auto_detect"):
+        dialog._set_t0_mode_combo(mode)
+        dialog._on_t0_mode_changed()
+        texts[mode] = dialog._t0_detected_label.text()
+
+    assert set(texts.values()) == {baseline}
+
+
+def test_t0_line_reports_a_run_with_no_header_t0_as_an_error(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_t0_line_dataset(t0_source="missing")])
+    _wait_for_t0_detection(dialog)
+
+    text = dialog._t0_detected_label.text()
+    assert text.startswith("File: none (detected) · Detected: bin 10")
+    assert text.endswith("No time zero in the file header; using the detected value")
+    assert tokens.ERROR in dialog._t0_detected_label.styleSheet()
+
+
+def test_t0_line_reports_a_header_conflict_as_a_warning(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_t0_line_dataset(t0_source="conflict")])
+    _wait_for_t0_detection(dialog)
+
+    assert dialog._t0_detected_label.text().endswith(
+        "Header time_zero disagrees with t0_bin; using t0_bin"
+    )
+    assert tokens.WARN in dialog._t0_detected_label.styleSheet()
+
+
+def test_t0_line_warns_when_the_detected_t0_is_beyond_tolerance(qapp: QApplication) -> None:
+    # File t0 = 10, prompt peak at bin 2: Δ = −8, well past the 2-bin continuous
+    # tolerance, and both detectors are their own outliers.
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2))])
+    _wait_for_t0_detection(dialog)
+
+    text = dialog._t0_detected_label.text()
+    assert "Detected: bin 2 (prompt peak, spread 0) · Δ -8" in text
+    assert (
+        "Detected t0 is bin 2, file t0 is bin 10 — further apart than the 2-bin tolerance" in text
+    )
+    assert "Detectors 1, 2 disagree with their file t0 by more than 2 bins" in text
+    assert tokens.WARN in dialog._t0_detected_label.styleSheet()
+
+
+def test_t0_line_names_only_the_outlying_detector(qapp: QApplication) -> None:
+    # Detector 2's peak sits 8 bins from its own file t0; detector 1 is clean and
+    # holds the consensus, so only detector 2 is named.
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10, 10), peaks=(10, 2, 10))])
+    _wait_for_t0_detection(dialog)
+
+    text = dialog._t0_detected_label.text()
+    assert "Detectors 2 disagree with their file t0 by more than 2 bins" in text
+    assert dialog._current_t0_verdict().outlier_detectors == (2,)
+
+
+def test_apply_records_the_t0_warning_and_still_succeeds(qapp: QApplication) -> None:
+    """D9: a divergent t0 is reported, never a block."""
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2))])
+    _wait_for_t0_detection(dialog)
+
+    dialog._on_apply()
+
+    assert dialog.result() == GroupingDialog.DialogCode.Accepted
+    assert any("further apart than the 2-bin tolerance" in m for m in dialog.t0_apply_warnings)
+
+
+def test_apply_records_no_t0_warning_for_a_clean_run(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_t0_line_dataset()])
+    _wait_for_t0_detection(dialog)
+
+    dialog._on_apply()
+
+    assert dialog.t0_apply_warnings == []
+
+
+# -- Manual is an offset (D3) ----------------------------------------------
+
+
+def test_manual_t0_offset_follows_the_preview_run_file_t0(qapp: QApplication) -> None:
+    """D3: the stored value is an offset; the spin shows each run's absolute bin."""
+    ds_a = _t0_line_dataset(run_number=4701, t0_bins=(10, 10), peaks=(10, 10))
+    ds_b = _t0_line_dataset(run_number=4702, t0_bins=(4, 4), peaks=(4, 4))
+    dialog = GroupingDialog([ds_a, ds_b], selected_run_number=4701)
+    dialog._set_t0_mode_combo("manual")
+    dialog._on_t0_mode_changed()
+
+    dialog._t0_spin.setValue(13)  # run 4701's file t0 is 10 → offset +3
+    dialog._sync_draft_from_form()
+    assert dialog._draft.t0_policy.offset_bins == 3
+
+    dialog._scope_panel.set_current_run(4702)
+
+    # Same offset, re-resolved against run 4702's file t0 of 4.
+    assert dialog._draft.t0_policy.offset_bins == 3
+    assert dialog._t0_spin.value() == 7
+
+
+def test_find_t0_stores_the_offset_from_the_file_value(qapp: QApplication) -> None:
+    # File t0 = 10, prompt peak at bin 6 → Find fills bin 6, i.e. offset −4.
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(6, 6))])
+    dialog._set_t0_mode_combo("manual")
+    dialog._on_t0_mode_changed()
+
+    dialog._on_find_t0()
+
+    assert dialog._t0_spin.value() == 6
+    dialog._sync_draft_from_form()
+    assert dialog._draft.t0_policy.offset_bins == -4
+
+
+def test_t0_line_and_verdict_agree_on_the_index_base(qapp: QApplication) -> None:
+    """A 1-based run must not read ``File: bin 11 … file t0 is bin 10``.
+
+    The line's ``File:``/``Detected:`` parts are written in the run's display
+    base; the verdict messages come from core, so core has to use the same base
+    (it reads ``bin_index_base`` off the grouping). Before the fix the two
+    halves of one sentence disagreed by a bin on every ISIS run.
+    """
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2), bin_index_base=1)])
+    _wait_for_t0_detection(dialog)
+
+    text = dialog._t0_detected_label.text()
+    assert dialog._bin_index_base() == 1
+    assert text.startswith("File: bin 11 · Detected: bin 3 (prompt peak, spread 0) · Δ -8")
+    assert "Detected t0 is bin 3, file t0 is bin 11 — further apart than the 2-bin tolerance" in (
+        text
+    )
+    # The spin (also base-adjusted) shows the same file bin the sentence names.
+    assert dialog._t0_spin.value() == 11
