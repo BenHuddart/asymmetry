@@ -197,39 +197,63 @@ _T0_DETECT_DEBOUNCE_MS = 300
 #: Display names for the two :func:`~asymmetry.core.transform.find_t0` strategies.
 _T0_STRATEGY_LABELS = {"prompt_peak": "prompt peak", "pulse_edge": "pulse-edge midpoint"}
 
-#: Width budget of the t0 row's ``File … · Detected … · Δ`` line, in characters
-#: of the UI font. The line itself (an :class:`~asymmetry.gui.widgets.elided_
-#: label.ElidedLabel`) no longer *demands* this width — it only carries a
-#: small readable-prefix floor (see ``_t0_detected_label.setMinimumWidth``
-#: below) and elides itself under real width pressure, with the full text in
-#: its tooltip. This budget instead feeds ``preferred_window_size()`` (and the
-#: grouping column's own maximum, alongside the verdict slack) so the
-#: *default* window still opens wide enough to show the whole line unelided
-#: for a typical run. Measured offscreen at base scale, the widest real line —
-#: a pulsed run with no header t0, ``File: none (detected) · Detected: bin
-#: 1601 (pulse-edge midpoint, spread 12) · Δ +1601`` — is 498 px against this
-#: budget's 504.
-_T0_LINE_CHARS = 72
+#: The longest line ``_refresh_t0_line`` can produce: the longest file part
+#: ("File: none (detected)"), the longest strategy name ("pulse-edge
+#: midpoint"), and generously-wide bin/spread/Δ numbers. Used to *measure* the
+#: grouping column's width budget in real font-metric pixels — never rendered
+#: — so the budget is exact for whatever font a platform actually substitutes
+#: (a plain average-character-width estimate reads narrower than this line's
+#: real digits/"·"/"Δ"/parentheses on at least one CI font, eliding a line
+#: that fit comfortably on the developer's own machine).
+_T0_LINE_WORST_CASE = (
+    "File: none (detected) · Detected: bin 99999 (pulse-edge midpoint, spread 999) · Δ +99999"
+)
 
-#: Width budget of the window's three panes, in characters of the UI font.
-#: Characters rather than pixels so the window opens at the right size under the
-#: font-driven UI zoom. The grouping column has no budget of its own: it is
-#: bound by the t0 line's own ``_T0_LINE_CHARS`` plus its verdict button (see
-#: ``_GROUPING_VERDICT_SLACK_CHARS`` below), read wherever the column's width
-#: is set, so a second hardcoded number can never drift from the row that
-#: actually bounds the column. The corrections column's budget is a starting
-#: guess only — its own measured content sets a hard floor at construction
-#: (see the ``_corrections_scroll.setMinimumWidth`` call below), so a run whose
+#: Width budget of the window's three panes, in pixels/characters. The
+#: corrections column's budget is a starting guess only — its own measured
+#: content sets a hard floor at construction (see the
+#: ``_corrections_scroll.setMinimumWidth`` call below), so a run whose
 #: α/background text is wider than this guess grows the window instead of
-#: clipping into a horizontal scroll.
+#: clipping into a horizontal scroll. The grouping column has no char budget
+#: of its own: :func:`preferred_window_size` and the column's own maximum both
+#: take a pixel width measured from the live t0 line + verdict button (see
+#: ``_t0_line_column_width_px``), so a second hardcoded number — in the wrong
+#: units for a platform's real font metrics — can never drift from the row it
+#: actually bounds (see the Linux/DejaVu Sans CI failure this replaced: an
+#: average-character-width budget read narrower than the line's real digits
+#: and punctuation on that font).
 _SCOPE_PANE_CHARS = 44
-#: The ⚠ verdict button + its spacing beside the t0 line, in characters —
-#: added to ``_T0_LINE_CHARS`` wherever the grouping column's width is bound.
-_GROUPING_VERDICT_SLACK_CHARS = 4
 _CORRECTIONS_COLUMN_CHARS = 64
 
+#: Spacing between the t0 label and the verdict button in their row
+#: (``t0_detected_row.setSpacing``) — folded into the grouping column's
+#: measured pixel budget below.
+_T0_ROW_SPACING_PX = 4
 
-def preferred_window_size() -> tuple[int, int]:
+
+def _t0_line_column_width_px(
+    label: QLabel | None = None, verdict_button: QToolButton | None = None
+) -> int:
+    """Pixel width of the t0 line + verdict button, from real font metrics.
+
+    ``label``/``verdict_button`` default to freshly built throwaway widgets
+    (for callers without a live dialog, e.g. tests and doc-screenshot
+    scenarios calling :func:`preferred_window_size` standalone) — a fresh
+    widget reports the same font metrics as the dialog's real one, since
+    neither carries a custom font. :meth:`GroupingDialog.__init__` passes its
+    own ``_t0_detected_label``/``_t0_verdict_button`` once they exist, so the
+    same number also bounds ``grouping_column.setMaximumWidth`` there.
+    """
+    label = label if label is not None else QLabel()
+    verdict_button = verdict_button if verdict_button is not None else QToolButton()
+    return (
+        label.fontMetrics().horizontalAdvance(_T0_LINE_WORST_CASE)
+        + verdict_button.sizeHint().width()
+        + _T0_ROW_SPACING_PX
+    )
+
+
+def preferred_window_size(grouping_column_width_px: int | None = None) -> tuple[int, int]:
     """The grouping window's default size *before* the available-screen clamp.
 
     Font-derived width (the three panes' budgets above) so the window tracks the
@@ -237,15 +261,17 @@ def preferred_window_size() -> tuple[int, int]:
     (deadtime-off) state free of a vertical scrollbar. The dialog itself opens at
     ``resize_to_available`` of this, which is smaller on a small display — the
     tests that pin the column budget therefore resize to this value rather than
-    reading the window back.
+    reading the window back. ``grouping_column_width_px`` lets
+    :class:`GroupingDialog` pass its own real, already-measured value; standalone
+    callers (tests, doc scenarios) get one measured fresh (see
+    ``_t0_line_column_width_px``) so both agree without a dialog instance.
     """
-    width = sum(
-        metrics.field_width_for(chars)
-        for chars in (
-            _SCOPE_PANE_CHARS,
-            _T0_LINE_CHARS + _GROUPING_VERDICT_SLACK_CHARS,
-            _CORRECTIONS_COLUMN_CHARS,
-        )
+    if grouping_column_width_px is None:
+        grouping_column_width_px = _t0_line_column_width_px()
+    width = (
+        metrics.field_width_for(_SCOPE_PANE_CHARS)
+        + grouping_column_width_px
+        + metrics.field_width_for(_CORRECTIONS_COLUMN_CHARS)
     )
     return width, 680
 
@@ -679,10 +705,11 @@ class GroupingDialog(QDialog):
         # minimum ~504px even on a run whose actual line is much shorter,
         # starving the corrections column of width it never used. Expanding
         # lets the row's stretch give it room to show the whole line when
-        # there's space (see the grouping column's own maximum, capped at
-        # _T0_LINE_CHARS + the verdict slack); a small explicit floor keeps a
-        # readable prefix ("File: bin 1612 · Detected: bin 1614 (…") when
-        # squeezed, eliding the rest with the full text in the tooltip.
+        # there's space (see the grouping column's own maximum, measured in
+        # real font-metric pixels from this label below); a small explicit
+        # floor keeps a readable prefix ("File: bin 1612 · Detected: bin 1614
+        # (…") when squeezed, eliding the rest with the full text in the
+        # tooltip.
         self._t0_detected_label = ElidedLabel("")
         self._t0_detected_label.setWordWrap(False)
         self._t0_detected_label.setSizePolicy(
@@ -717,6 +744,19 @@ class GroupingDialog(QDialog):
         policy.setRetainSizeWhenHidden(True)
         self._t0_verdict_button.setSizePolicy(policy)
         self._t0_verdict_button.hide()
+
+        # Real font-metric pixels, not an average-character-width guess: measured
+        # now that both widgets exist, from the label's own font and the button's
+        # own (style-dependent) sizeHint, so it is exact for whatever font a
+        # platform actually substitutes (see ``_t0_line_column_width_px``). Bounds
+        # the grouping column's maximum below; re-resizing here with the real
+        # value (the earlier, pre-widget call above used a fresh throwaway
+        # widget's identical metrics) makes this the one authoritative
+        # computation the window's default width and the column's cap agree on.
+        self._t0_line_max_px = _t0_line_column_width_px(
+            self._t0_detected_label, self._t0_verdict_button
+        )
+        resize_to_available(self, *preferred_window_size(self._t0_line_max_px))
 
         self._t_good_offset_spin = NoScrollSpinBox()
         self._t_good_offset_spin.setRange(0, max_bin)
@@ -1095,15 +1135,16 @@ class GroupingDialog(QDialog):
         # Cap the narrow column so it never grows to swallow the right pane
         # (the AdjustToContents scroll over-reserves ~60px otherwise) or hog
         # width the corrections column (equal stretch, below) needs. Capped at
-        # the t0 line's own budget plus its verdict button's slack — the widest
-        # row this column carries when shown unelided — so it tracks the
-        # UI-font zoom and never reserves more than that row needs (a
-        # separate, hand-tuned column budget would just drift from it). Below
-        # this cap the column is free to shrink to its real content minimum
-        # (the t0 line elides itself; see ElidedLabel above).
-        grouping_column.setMaximumWidth(
-            metrics.field_width_for(_T0_LINE_CHARS + _GROUPING_VERDICT_SLACK_CHARS)
-        )
+        # the t0 line's own real font-metric pixel width plus its verdict
+        # button — the widest row this column carries when shown unelided —
+        # measured once in __init__ (``self._t0_line_max_px``, above) so it is
+        # exact for the platform's real font rather than an average-character
+        # guess (a char-count budget read narrower than this line's actual
+        # digits/"·"/"Δ"/parentheses on at least one CI font, eliding a line
+        # that fit on the developer's own machine). Below this cap the column
+        # is free to shrink to its real content minimum (the t0 line elides
+        # itself; see ElidedLabel above).
+        grouping_column.setMaximumWidth(self._t0_line_max_px)
         grouping_col_layout = QVBoxLayout(grouping_column)
         grouping_col_layout.setContentsMargins(0, 0, 0, 0)
         grouping_col_layout.setSpacing(2)

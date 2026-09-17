@@ -512,11 +512,11 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
 
     # Deliberately narrow the window (the dialog clamps to its real minimum
     # when that is wider than the target, exactly like resize_to_available
-    # clamping the other way) and force the t0 line to its historical worst
-    # case (docstring of _T0_LINE_CHARS: a pulsed run with no header t0). The
-    # ElidedLabel must shrink and elide *that* line instead of forcing the
-    # grouping column into a horizontal scroll — and Corrections, sharing the
-    # reclaimed width, must still not need one either.
+    # clamping the other way) and force the t0 line to a pulsed run's worst
+    # case (no header t0, "pulse-edge midpoint" — see _T0_LINE_WORST_CASE in
+    # dialog.py). The ElidedLabel must shrink and elide *that* line instead of
+    # forcing the grouping column into a horizontal scroll — and Corrections,
+    # sharing the reclaimed width, must still not need one either.
     dialog = GroupingDialog([_fifteen_detector_dataset(), calibration_run])
     preferred_w, preferred_h = preferred_window_size()
     narrow_w = preferred_w - metrics.field_width_for(40)
