@@ -439,36 +439,72 @@ single-period data.
 Time-zero (t0) modes
 --------------------
 
-The **t0 Bin** row carries a mode selector that decides where each run's
-analysis time-zero comes from. This mirrors WiMDA's *FileValues* checkbox on
-the grouping panel: with it ticked the header t0 and good-bin values are used
-and the manual controls are disabled; unticked, your own values apply.
+The **t0 Bin** row carries a mode selector (**From file** / **Manual** /
+**Auto-detect**) that decides where each run's analysis time-zero comes
+from. This mirrors WiMDA's *FileValues* checkbox on the grouping panel: with
+it ticked the header t0 and good-bin values are used and the manual controls
+are disabled; unticked, your own values apply. In every mode, a read-only
+line beneath the row shows the file value beside what Asymmetry's own search
+finds for the selected run, with a warning when the two disagree by more
+than a per-source tolerance — see :doc:`data_reduction/t0_search` for the
+line's format, the verdict messages, and the tolerances.
 
 * **From file** (the default) — every run uses its own file-derived t0. All
   loaders already read t0 verbatim from the file header (PSI per-detector
   ``nt0``, MusrRoot ``DetectorInfo``, NeXus ``time_zero``), and the common t0
   is the maximum over the analysis groups, so per-detector values are
   preserved and each run is aligned by its own time-zero. The spinbox is
-  read-only and shows the selected run's resolved t0; switching the selected run
-  updates it. Nothing is stored on the profile — resolution reads each run's
-  file again.
-* **Manual** — type a common t0 override. It is applied to every run of the
-  profile as an *offset*: the difference between your value and the run's file
-  common t0 is added to each detector's own file t0. Crucially this is
-  non-destructive — the run's loaded histograms keep their file-derived t0, and
-  the shift lives only in the resolved grouping (so an override can be changed
-  or cleared without re-loading the data). **Find t0** is the one-shot fill for
-  this mode: it runs the search on the selected run and drops the result into the
-  spinbox for you to confirm.
+  read-only and shows the selected run's resolved t0; switching the selected
+  run updates it. Nothing is stored on the profile — resolution reads each
+  run's file again. A run whose file carries **no** usable t0 at all falls
+  back to the detected value automatically (the line reads ``File: none
+  (detected)`` and a warning names it), so From file always resolves to
+  something even on a header-less run.
+* **Manual** — type a *signed offset*, in bins, from each run's own file t0.
+  The spinbox itself shows the selected run's resulting **absolute** bin (so
+  it reads the same as From file when the offset is zero), but what a
+  profile stores and what every run in scope is shifted by is the offset —
+  one profile therefore moves a whole set of runs by the same amount however
+  their individual headers differ. This is non-destructive: the run's loaded
+  histograms keep their file-derived t0, and the shift lives only in the
+  resolved grouping, so it can be changed or cleared without re-loading the
+  data. **Find t0** is the one-shot fill for this mode: it runs the search
+  on the selected run and converts the result into the equivalent offset —
+  nothing is applied until you press Apply.
 * **Auto-detect** — run the t0 search on *every* run at reduction time (the
-  prompt-peak maximum at continuous sources, the pulse-edge midpoint at pulsed
-  sources). The spinbox is read-only and shows the selected run's detected value
-  with its provenance (strategy and detector spread); each run resolves its own
-  detected t0.
+  prompt-peak maximum at continuous sources, the pulse-edge midpoint at
+  pulsed sources). The spinbox is read-only and shows the selected run's
+  detected value with its provenance (strategy and detector spread); each
+  run resolves its own detected t0.
 
 The *t_good* offset and last-good-bin controls are per-run facts and are
 unaffected by the t0 mode — a manual or detected t0 shift carries the good
 window with it so the offset from t0 stays fixed.
+
+**One resolver for every consumer.** Whichever mode is active, the
+per-detector bins it resolves to are read back by reduction, grouped
+Fourier, MaxEnt, count-domain fits, the deadtime calibration window, and the
+plot's good-window mask through a single function,
+``effective_detector_t0_bins`` (``core/transform/t0.py``) — a structural
+rule fails the build if any of them re-derives alignment from the file
+values directly instead. A Manual offset or an Auto-detect result therefore
+shifts every one of those consistently; nothing downstream can silently fall
+back to the file t0 that the mode overrode.
+
+**The exact time-zero.** A header integer bin only places t0 to the nearest
+bin; where the file also carries a continuous value — ISIS ``time_zero`` (µs)
+or MusrRoot's ``Time Zero Bin`` (a ``Double_t``, not an integer) — Asymmetry
+keeps it and stamps every time axis from it: bin *k*'s time stamp is
+``(k + ½)·w − t0`` (the bin's centre, minus the exact t0), rather than the
+coarser ``(k − t0_bin)·w``. On a file with no exact value the two are
+identical, since the fallback is defined as the centre of ``t0_bin`` itself
+— so this changes nothing for a run without one. Where it does apply, the
+sub-bin correction is small (up to half a bin) but not negligible for a TF
+phase: at 16 ns binning and 0.1 T it is worth up to 39° (see
+``docs/porting/t0-determination/isis-header-index-base.md``), so some
+existing ISIS/MusrRoot TF fits shift phase by up to half a bin once this
+lands — correctly. Integer bins remain authoritative for detector alignment
+and the good-bin window; only the time *stamp* uses the exact value.
 
 Alpha calibration
 ------------------
@@ -795,7 +831,10 @@ the displayed names unique with numeric suffixes.
 PSI data can carry a separate ``t0`` for each detector. Asymmetry stores these
 values as ``detector_t0_bins`` and aligns each detector histogram to its own
 ``t0`` before summing groups. This avoids shifting all PSI spectra through a
-single global time-zero before grouping.
+single global time-zero before grouping. A file whose header ``t0`` is zero
+for every histogram — no calibration was ever written — is treated as having
+none: the run's ``t0_source`` is ``missing`` and From file falls back to the
+detected value (above), rather than aligning every detector on bin zero.
 
 PSI detector names use the PSI instrument convention: ``Forward`` and
 ``Backward`` are measured along the beam direction. Asymmetry's pair-asymmetry
@@ -826,7 +865,11 @@ combined counters (see `PSI GPS`_ below).
 ROOT ``DetectorInfo`` entries can provide detector-specific ``Time Zero Bin``,
 ``First Good Bin``, and ``Last Good Bin`` values. Asymmetry stores these in the
 grouping payload and aligns detector histograms by their own ``t0`` before
-constructing the initial asymmetry.
+constructing the initial asymmetry. ``Time Zero Bin`` is stored as a
+``Double_t`` rather than an integer index; Asymmetry keeps that exact value
+(``t0_time_us``) for the time-stamp convention above rather than rounding it
+to the nearest bin. A file with no ``Time Zero Bin`` key at all gets
+``t0_source = "missing"``, the same fallback as a zero PSI header.
 
 Detector layout editor workflow
 --------------------------------

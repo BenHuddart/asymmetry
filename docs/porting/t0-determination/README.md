@@ -1,6 +1,10 @@
 # Time-zero (t0) determination — audit and study
 
-**Status:** study (2026-09-17). No behaviour changed in this pass.
+**Status:** implemented (2026-09-17), on branch `feat/t0-determination`, per
+[`docs/plans/t0-determination.md`](../../plans/t0-determination.md) (six
+phases, one PR). All decisions below (D1-D12) landed as designed; the
+"Decision summary" section is superseded by the plan's decision log, which
+also records anything refined during implementation.
 
 **Question.** How should Asymmetry decide the analysis time-zero of a run —
 from the file header, from an automatic search, or from the user — and how
@@ -70,24 +74,35 @@ local checkouts.
    `time_zero` arrays (which ISIS v2 files can carry, and which Mantid reads)
    never reach the profile machinery.
 
-## Decision summary (proposed — awaiting confirmation)
+## Decision summary (as implemented — see the plan's decision log for D1-D12)
 
-- Keep **From file** as the default and make the policy an explicit stored
-  choice; never infer Manual from a value comparison again.
-- Always compute the automatic estimate for the preview run (cached, off the
-  GUI thread) and show it read-only beside the file value in every mode,
-  with the per-detector spread.
-- Warn when `|detected − file|` exceeds a per-source tolerance (initially 2
-  bins continuous, 3 bins pulsed, to be calibrated by the corpus sweep in
-  verification-plan.md), when any single detector disagrees with the file
-  by more than that, when the file t0 is missing/zero, or when the file t0
-  lies outside the histogram.
-- Route *every* consumer of per-detector alignment through one
-  `effective_detector_t0_bins` resolver, harness-enforced.
-- Re-express **Manual** as an offset from the file t0 (what it already is
-  at apply time), with the spinbox still showing the resolved absolute bin
-  for the preview run.
-- Decode ISIS header bins as 1-based deterministically and carry the exact
-  `time_zero` for the time axis (decision pending — R10).
-- Fix the promotion sign, the NeXus loader's payload, the `nexus_writer`
-  mix of file and effective values, and the plot mask's detector-0 axis.
+- Kept **From file** as the default and made the policy an explicit stored
+  choice (`T0Policy.mode`); Manual is never inferred from a value comparison
+  for a payload written since (D1). A file with no header t0 at all falls
+  back to the detected consensus (D7).
+- The automatic estimate for the preview run is computed off the GUI thread,
+  cached per run digest, and shown read-only beside the file value in every
+  mode, with the per-detector spread (D11).
+- Warns when `|detected − file|` exceeds a per-source tolerance — **2 bins
+  continuous, 3 bins pulsed**, as calibrated by the 1,245-file ISIS survey in
+  [isis-header-index-base.md](isis-header-index-base.md) rather than the
+  placeholder numbers this study proposed — when any single detector
+  disagrees with its own file t0 by more than that, when the per-detector
+  spread exceeds four tolerances, when the file t0 is missing, or when the
+  file t0 lies outside the histogram (D8, D9: a warning never blocks Apply).
+- Every consumer of per-detector alignment — reduction, grouped Fourier,
+  MaxEnt, count-domain fits, the deadtime window, the plot mask — is routed
+  through one `effective_detector_t0_bins` resolver, harness-enforced (D10).
+- **Manual** is stored as a signed offset from each run's own file t0
+  (`T0Policy.offset_bins`), with the spinbox still showing the resolved
+  absolute bin for the preview run (D3). A pre-v21 absolute value is
+  converted to the equivalent offset, or healed to From file when the offset
+  resolves to zero everywhere, on project open (D2; schema v21).
+- ISIS header bins decode as 1-based deterministically (D5), and the exact
+  `time_zero`/MusrRoot `Time Zero Bin` sets the time-axis stamp rather than
+  the nearest integer bin (D4) — resolving R10 in favour of keeping the
+  exact value; a conflicting `time_zero`/`t0_bin` pair defers to the
+  attribute (D6).
+- Fixed the promotion sign (D12), the NeXus loader's payload, the
+  `nexus_writer` mix of file and effective values, and the plot mask's
+  detector-0 axis.

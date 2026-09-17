@@ -223,10 +223,15 @@ legitimate calibration to persist.
   after a *Forward + Backward (free α)* fit.
 * **Promote t₀** converts the fitted continuous time-zero offset (μs) to the
   nearest integer ``t0_bin`` via the bin width and **discloses the sub-bin
-  residual** the integer index cannot represent. The fitted t₀ is per group but
-  ``t0_bin`` is a single run-level index, so the promote applies the fitted
-  group's value run-wide and says so. Available after a fit with **Fit t₀
-  offset** enabled.
+  residual** the integer index cannot represent. The model evaluates
+  ``t_eval = time + t0``, so a *positive* fitted t₀ means the data's stamps
+  run early against the physics — the stored zero was too late — and the
+  promotion moves it earlier: ``new_bin = current − round(t0 / w)``. The good
+  window moves with it (``first_good_bin`` and any resolved per-detector
+  offset shift by the same applied delta), so the offset from t0 is
+  preserved. The fitted t₀ is per group but ``t0_bin`` is a single run-level
+  index, so the promote applies the fitted group's value run-wide and says
+  so. Available after a fit with **Fit t₀ offset** enabled.
 * **Promote background** writes the fitted flat count background into the
   grouping's *fixed* background mode as a ``[forward, backward]`` pair. Because
   the count fit reads **raw counts**, this background term measures the *full*

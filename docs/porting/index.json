@@ -1285,7 +1285,7 @@
         "verification_plan": "docs/porting/t0-determination/verification-plan.md"
       },
       "feature_name": "Time-zero (t0) determination: file default, always-visible detected value, divergence warning",
-      "notes": "Audit of the t0 lifecycle against WiMDA, Mantid, musrfit and the ISIS/PSI/textbook definitions. Findings: fresh drafts mislabelled Manual (inference compares group-max t0_bin with all-detector max); Manual/Auto policy honoured by reduction only (grouped Fourier, MaxEnt, count fits align on file t0); count-fit t0 promotion sign inverted (confirmed numerically); missing header t0 silently bin 0; NeXus payload lacks detector_t0_bins. Recommendation: stored (never inferred) policy defaulting to from_file, one effective-t0 resolver enforced by the harness, detected value shown beside the file value in every mode with per-source bin tolerances (2 continuous / 3 pulsed, corpus-calibrated), Manual stored as an offset. Resolved: ISIS t0_bin/first_good_bin/last_good_bin are 1-based inclusive (1,245-file survey: last_good_bin == n_bins everywhere, t0_bin = floor(time_zero/res)+1 in all unambiguous cases); the integer bin discards up to half a bin of the exact time_zero (R10 pending).",
+      "notes": "Implemented on feat/t0-determination per docs/plans/t0-determination.md (six phases, one PR), landing decisions D1-D12: T0Policy.mode is an explicit stored field (from_file default), never inferred from a value comparison, fixing the fresh-draft Manual mislabelling; every per-detector alignment consumer (reduction, grouped Fourier, MaxEnt, count-domain fits, deadtime window, plot mask) routes through one effective_detector_t0_bins resolver, harness-enforced; the count-fit t0 promotion sign is corrected; Manual is a signed offset from each run's own file t0 (schema v21), with project-open healing of pre-v21 absolute values and mislabelled zero-offset policies; ISIS header bins (t0_bin, first_good_bin, last_good_bin) decode as 1-based deterministically per the corpus survey, and the exact time_zero / MusrRoot Time Zero Bin sets the time-axis stamp (bin centre minus t0) rather than the nearest integer bin, moving some existing TF fit phases by up to half a bin, correctly; a missing header t0 is recorded as such and resolved against the automatic search; the grouping window shows the file value beside the detected one in every mode with a verdict, using the survey-calibrated tolerances (2 bins continuous, 3 pulsed).",
       "path": "docs/porting/t0-determination",
       "references": [
         "WiMDA",
@@ -1295,7 +1295,7 @@
       ],
       "slug": "t0-determination",
       "src_path": "src/asymmetry/core/transform/t0.py",
-      "status": "study",
+      "status": "implemented",
       "tests_path": "tests/porting/t0-determination",
       "updated": "2026-09-17"
     }
