@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication, QHeaderView, QLabel
 import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.t0 import T0Assessment
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.windows.grouping.dialog import preferred_window_size
@@ -3112,6 +3113,53 @@ def test_t0_verdict_button_carries_the_messages_as_tooltip_and_menu(
     assert dialog._t0_verdict_button.toolTip() == "\n".join(entries)
     # Statements, not commands: every entry reads but does nothing.
     assert all(not action.isEnabled() for action in dialog._t0_verdict_menu.actions())
+    dialog.close()
+
+
+def test_verdict_button_reserves_its_width_when_hidden(qapp: QApplication) -> None:
+    """The button's size policy bakes its width into the construction-time floor.
+
+    ``_grouping_scroll.setMinimumWidth`` is captured once at construction from
+    ``minimumSizeHint()`` while the verdict button starts hidden. Qt excludes a
+    hidden widget from a layout's minimum unless its size policy retains it, so
+    without ``retainSizeWhenHidden`` a later warn/error verdict showing the
+    button would grow the row's true minimum past that frozen floor.
+    """
+    dialog = GroupingDialog([_t0_line_dataset()])
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+
+    assert dialog._t0_verdict_button.sizePolicy().retainSizeWhenHidden()
+    assert not dialog._t0_verdict_button.isVisible()
+    hidden_width = dialog._grouping_scroll.widget().minimumSizeHint().width()
+
+    dialog._refresh_t0_verdict_button(
+        T0Assessment(level="warn", delta_bins=5, messages=("x",), outlier_detectors=())
+    )
+
+    assert dialog._t0_verdict_button.isVisible()
+    shown_width = dialog._grouping_scroll.widget().minimumSizeHint().width()
+    assert shown_width == hidden_width
+    dialog.close()
+
+
+def test_grouping_column_does_not_scroll_when_a_verdict_appears(qapp: QApplication) -> None:
+    """The reserved footprint holds even at the dialog's own tightest width.
+
+    Resizing to ``minimumSizeHint()`` is the width at which a construction-time
+    minimum that excluded the hidden verdict button would first show up as a
+    horizontal scrollbar once the button appears (see the retainSizeWhenHidden
+    fix on ``_t0_verdict_button`` above).
+    """
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2))])
+    dialog.resize(dialog.minimumSizeHint())
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+    QApplication.processEvents()
+
+    assert dialog._current_t0_verdict().level == "warn"
+    assert dialog._t0_verdict_button.isVisible()
+    assert dialog._grouping_scroll.horizontalScrollBar().maximum() == 0
     dialog.close()
 
 

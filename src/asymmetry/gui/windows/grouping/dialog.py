@@ -704,6 +704,18 @@ class GroupingDialog(QDialog):
         self._t0_verdict_button.setAutoRaise(True)
         self._t0_verdict_button.setMenu(self._t0_verdict_menu)
         self._t0_verdict_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        # Retain its layout footprint while hidden: Qt excludes a hidden widget
+        # from its layout's minimumSizeHint, but the grouping scroll's minimum
+        # width is captured once at construction (below, "Set once here") while
+        # this button starts hidden. Without retention, a later warn/error
+        # verdict shows the button and grows the row's true minimum past that
+        # frozen floor, opening a horizontal scrollbar the width tests don't
+        # catch. Retaining the size bakes the button's width into the
+        # construction-time minimum, so showing/hiding it never changes the
+        # layout.
+        policy = self._t0_verdict_button.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self._t0_verdict_button.setSizePolicy(policy)
         self._t0_verdict_button.hide()
 
         self._t_good_offset_spin = NoScrollSpinBox()
@@ -1195,6 +1207,12 @@ class GroupingDialog(QDialog):
         # (test_both_columns_fit_without_scroll_at_default_size). Set once here:
         # the row structure is fixed at construction (dataset-gated rows are
         # decided by the dataset set, which does not change after __init__).
+        # The t0 verdict button is the one row widget that toggles visibility
+        # after construction (background detection lands a warn/error verdict
+        # later), but it does not violate the "fixed at construction" premise:
+        # its size policy retains its footprint while hidden (see its
+        # construction above), so this captured minimum already includes it
+        # and showing/hiding it later changes nothing.
         self._grouping_scroll.setMinimumWidth(
             self._grouping_scroll.widget().minimumSizeHint().width()
             + 2 * self._grouping_scroll.frameWidth()
