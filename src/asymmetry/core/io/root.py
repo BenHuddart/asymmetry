@@ -21,6 +21,7 @@ from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
     apply_grouping_aligned,
     common_t0_for_groups,
+    common_t0_time_us,
     compute_asymmetry,
     run_t0_time_us,
 )
@@ -650,7 +651,15 @@ class RootLoader(BaseLoader):
         if last_good < first_good:
             last_good = first_good
 
-        time_axis = (np.arange(n, dtype=np.float64) - float(common_t0)) * bin_width_us
+        # Bin centres from the run's exact t0 (D4) — MusrRoot's fractional
+        # "Time Zero Bin" moves this axis off the integer grid, and the
+        # reduction stamps the same way, so the two agree by construction.
+        t0_residual_us = (float(common_t0) + 0.5) * bin_width_us - common_t0_time_us(
+            histograms, None, int(common_t0)
+        )
+        time_axis = (
+            np.arange(n, dtype=np.float64) - float(common_t0)
+        ) * bin_width_us + t0_residual_us
         time_axis = time_axis[first_good : last_good + 1]
         asymmetry = asymmetry[first_good : last_good + 1]
         error = error[first_good : last_good + 1]

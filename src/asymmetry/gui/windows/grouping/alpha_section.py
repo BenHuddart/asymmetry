@@ -207,7 +207,12 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
 
     time_us = None
     if request.method == "general":
-        time_us = (np.arange(forward.size, dtype=np.float64) - float(common_t0)) * bin_width
+        # Same bin-centre stamps the reduction uses (D4): the residual is the
+        # sub-bin offset of the run's exact t0, exactly 0.0 without one.
+        residual_us = (float(common_t0) + 0.5) * bin_width - corrected.t0_time_us
+        time_us = (
+            np.arange(forward.size, dtype=np.float64) - float(common_t0)
+        ) * bin_width + residual_us
 
     if worker.is_cancelled():
         raise TaskCancelledError

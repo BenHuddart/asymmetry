@@ -97,6 +97,35 @@ def run_t0_time_us(histograms: list[Histogram], common_t0_bin: int) -> float | N
     return float(np.mean(values))
 
 
+def common_t0_time_us(
+    histograms: list[Histogram],
+    grouping: dict | None,
+    common_t0_bin: int,
+) -> float:
+    r"""The run's exact common t0 in µs — the origin of every time stamp (D4).
+
+    Time stamps are bin *centres* measured from this value:
+    ``t_k = (k + 0.5)·w − T0``. Three sources, in order:
+
+    1. ``grouping["t0_time_us"]`` — the per-run fact a loader recorded, already
+       moved by ``delta·w`` if a :class:`~asymmetry.core.project.profiles.T0Policy`
+       shifted the alignment. It belongs to the *effective* common bin, so pass
+       the bin the alignment actually used.
+    2. :func:`run_t0_time_us` over ``histograms`` at ``common_t0_bin`` — the mean
+       exact t0 of the detectors that sit on that bin.
+    3. The bin centre ``(common_t0_bin + 0.5)·w``. This fallback makes
+       ``t_k = (k − common_t0_bin)·w``, the integer-bin axis, to the last bit.
+    """
+    grouping = grouping if isinstance(grouping, dict) else {}
+    stored = grouping.get("t0_time_us")
+    if stored is not None:
+        return float(stored)
+    measured = run_t0_time_us(histograms, common_t0_bin)
+    if measured is not None:
+        return measured
+    return (float(common_t0_bin) + 0.5) * float(histograms[0].bin_width)
+
+
 @dataclass(frozen=True)
 class T0Estimate:
     """Time-zero estimate for one histogram."""

@@ -20,6 +20,7 @@ from asymmetry.core.transform.grouping import (
     resolve_group_indices,
 )
 from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.t0 import common_t0_time_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -366,7 +367,14 @@ def build_group_signal_dataset(
 
     bin_width = float(prepared_histograms[0].bin_width)
     axis_start = first_good - common_t0
-    time = (np.arange(trimmed_counts.size, dtype=float) + float(axis_start)) * bin_width
+    # Bin centres from the run's exact t0 (D4): the residual is exactly 0.0 when
+    # the run carries no sub-bin t0, leaving the integer-bin axis untouched.
+    residual_us = (float(common_t0) + 0.5) * bin_width - common_t0_time_us(
+        prepared_histograms, grouping, common_t0
+    )
+    time = (
+        np.arange(trimmed_counts.size, dtype=float) + float(axis_start)
+    ) * bin_width + residual_us
     if bunch_factor > 1:
         time, trimmed_counts = rebin_counts(time, trimmed_counts, bunch_factor)
 

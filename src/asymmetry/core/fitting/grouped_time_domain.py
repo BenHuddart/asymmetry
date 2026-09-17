@@ -43,6 +43,7 @@ from asymmetry.core.transform.grouping import (
     effective_group_indices,
 )
 from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.t0 import common_t0_time_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
 
@@ -238,6 +239,9 @@ class _CountGroupContext:
     bunch_factor: int
     bin_width: float
     axis_start: float
+    #: Sub-bin offset of the exact t0 from the centre of ``common_t0``, added to
+    #: every stamp (D4). Exactly 0.0 when the run carries no exact t0.
+    t0_residual_us: float
     group_names: dict[Any, Any]
 
 
@@ -308,6 +312,9 @@ def _count_group_context(
 
     bin_width = float(prepared_histograms[0].bin_width)
     axis_start = first_good - common_t0
+    t0_residual_us = (float(common_t0) + 0.5) * bin_width - common_t0_time_us(
+        prepared_histograms, grouping, common_t0
+    )
     group_names = (
         grouping.get("group_names") if isinstance(grouping.get("group_names"), dict) else {}
     )
@@ -320,6 +327,7 @@ def _count_group_context(
         bunch_factor=bunch_factor,
         bin_width=bin_width,
         axis_start=axis_start,
+        t0_residual_us=t0_residual_us,
         group_names=group_names,
     )
 
@@ -350,7 +358,9 @@ def _build_one_count_group(
     if counts.size == 0:
         return None
     trimmed_counts = np.asarray(counts[ctx.first_good : ctx.last_good + 1], dtype=np.float64)
-    time = (np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)) * ctx.bin_width
+    time = (
+        np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)
+    ) * ctx.bin_width + ctx.t0_residual_us
     if ctx.bunch_factor > 1:
         time, trimmed_counts = rebin_counts(time, trimmed_counts, ctx.bunch_factor)
 

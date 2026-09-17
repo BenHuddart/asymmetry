@@ -42,7 +42,7 @@ from asymmetry.core.transform.grouping import (
     resolve_group_indices,
 )
 from asymmetry.core.transform.rebin import rebin_counts
-from asymmetry.core.transform.t0 import effective_detector_t0_bins
+from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
 from asymmetry.core.utils.coerce import optional_float
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -600,7 +600,11 @@ def _good_bin_time_axis(run: Run) -> tuple[NDArray[np.float64], float, int] | No
     )
     bin_width = float(histograms[0].bin_width)
     bins = np.arange(first_good, last_good + 1, dtype=np.float64)
-    time_us = (bins - float(reference_t0)) * bin_width
+    # Bin centres from the run's exact t0 (D4); 0.0 residual without one.
+    residual_us = (float(reference_t0) + 0.5) * bin_width - common_t0_time_us(
+        histograms, grouping, reference_t0
+    )
+    time_us = (bins - float(reference_t0)) * bin_width + residual_us
     base_bunch = _parse_positive_int(grouping.get("bunching_factor", 1))
     return time_us, bin_width, base_bunch
 

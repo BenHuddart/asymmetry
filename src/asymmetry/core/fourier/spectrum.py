@@ -341,6 +341,10 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
     ``background_values``/``background_ranges`` needs them to route entries to
     groups (see :func:`_background_values_are_list_routed`).
 
+    ``t0_time_us``/``t0_source`` are digested alongside ``t0_bin``: the exact t0
+    sets the origin of every time stamp (D4), and a T0Policy shift or a searched
+    t0 for a ``"missing"`` run moves it without moving the integer bin.
+
     ``signal_source="fb_asymmetry"`` additionally folds in the keys the
     forward−backward reduction (:func:`asymmetry.core.simulate.
     reduce_run_to_dataset` → :func:`asymmetry.core.transform.grouping.
@@ -417,6 +421,17 @@ def fourier_grouping_digest(run: Run | None, signal_source: str = "grouped_avera
         parsed = _digest_int(grouping.get(key))
         if parsed is not None:
             payload[key] = parsed
+
+    # The exact t0 (D4) moves every time stamp by a sub-bin amount without
+    # moving ``t0_bin``, so a policy change that only shifts it would otherwise
+    # hand back a stale cached reduction. ``t0_source`` rides along: a
+    # "missing" run resolves its t0 by search, which changes the values too.
+    t0_time_us = grouping.get("t0_time_us")
+    if t0_time_us is not None:
+        payload["t0_time_us"] = float(t0_time_us)
+    t0_source = grouping.get("t0_source")
+    if t0_source is not None:
+        payload["t0_source"] = str(t0_source)
 
     if signal_source == "fb_asymmetry":
         # The forward−backward reduction consumes run state the grouped path

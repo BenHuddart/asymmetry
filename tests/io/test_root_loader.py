@@ -12,6 +12,7 @@ import pytest
 pytestmark = [pytest.mark.io]
 
 from asymmetry.core.io import RootLoader, load
+from asymmetry.core.representation.time import TimeFBAsymmetry
 
 uproot = pytest.importorskip("uproot")
 
@@ -982,6 +983,26 @@ def test_root_fractional_time_zero_bin_becomes_an_exact_t0(tmp_path) -> None:
     assert ds.run.histograms[0].t0_time_us == pytest.approx((2.25 + 0.5) * 0.01)
     assert ds.run.grouping["t0_source"] == "file"
     assert ds.run.grouping["t0_time_us"] == pytest.approx(0.0275)
+
+
+def test_root_fractional_t0_gives_the_loader_axis_the_reduction_stamps(tmp_path) -> None:
+    """The loader dataset axis and a fresh reduction of the same run agree (D4).
+
+    The MusrRoot axis used to be built from the integer ``common_t0`` alone, so
+    a fractional ``Time Zero Bin`` produced a loader axis a quarter-bin away
+    from every axis the reduction pipeline later produced for that run.
+    """
+    path = tmp_path / "t0_axis.root"
+    _write_t0_root_directory(path, time_zero_bins=["2.25", "2.25"])
+
+    ds = load(path)
+    reduced = TimeFBAsymmetry().compute(ds.run)[0]
+    np.testing.assert_allclose(ds.time, reduced.time, rtol=0, atol=1e-15)
+    # The exact t0 (2.25 + 0.5)·w sits a quarter-bin *after* the centre of bin
+    # 2, so every stamp is 0.25·w earlier than the integer-bin axis.
+    first_good = ds.run.grouping["first_good_bin"]
+    integer_axis = (np.arange(ds.time.size, dtype=np.float64) + first_good - 2) * 0.01
+    np.testing.assert_allclose(ds.time, integer_axis - 0.25 * 0.01, rtol=0, atol=1e-15)
 
 
 def test_root_integer_time_zero_bin_keeps_the_bin_centre(tmp_path) -> None:

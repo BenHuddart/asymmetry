@@ -29,6 +29,7 @@ from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
     apply_grouping_aligned,
     common_t0_for_groups,
+    common_t0_time_us,
     compute_asymmetry,
     run_t0_time_us,
 )
@@ -1086,7 +1087,16 @@ class PsiLoader(BaseLoader):
         if last_good < first_good:
             last_good = first_good
 
-        time_axis = (np.arange(n, dtype=np.float64) - float(common_t0)) * float(raw.bin_width_us)
+        # Bin centres from the run's exact t0 (D4). PSI headers carry an integer
+        # t0 only, so the residual is 0.0 and this is the integer-bin axis; the
+        # call keeps the loader axis and the reduction axis one formula.
+        bin_width_us = float(raw.bin_width_us)
+        t0_residual_us = (float(common_t0) + 0.5) * bin_width_us - common_t0_time_us(
+            histograms, None, int(common_t0)
+        )
+        time_axis = (
+            np.arange(n, dtype=np.float64) - float(common_t0)
+        ) * bin_width_us + t0_residual_us
         time_axis = time_axis[first_good : last_good + 1]
         asymmetry = asymmetry[first_good : last_good + 1]
         error = error[first_good : last_good + 1]

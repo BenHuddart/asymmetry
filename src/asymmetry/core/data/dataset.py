@@ -66,9 +66,16 @@ class Histogram:
 
     @property
     def time_axis(self) -> NDArray[np.float64]:
-        r"""Time axis in microseconds, centred on *t*\ :sub:`0`."""
+        r"""Time axis in microseconds, centred on *t*\ :sub:`0`.
+
+        Bin *k* is stamped at its centre, ``(k + 0.5)·w − t0``, using the exact
+        :attr:`t0_time_us_effective`. Written as the integer-bin axis plus the
+        sub-bin residual so a histogram without an exact t0 keeps the old
+        ``(k − t0_bin)·w`` values bit for bit.
+        """
         bins = np.arange(self.n_bins)
-        return (bins - self.t0_bin) * self.bin_width
+        residual = (float(self.t0_bin) + 0.5) * float(self.bin_width) - self.t0_time_us_effective
+        return (bins - self.t0_bin) * self.bin_width + residual
 
 
 @dataclass

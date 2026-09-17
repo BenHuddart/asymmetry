@@ -29,6 +29,7 @@ from asymmetry.core.maxent import (
 from asymmetry.core.representation.base import Representation, RepresentationType
 from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.t0 import common_t0_time_us
 
 
 class TimeFBAsymmetry(Representation):
@@ -82,6 +83,7 @@ class TimeFBAsymmetry(Representation):
             first_good_bin=first_good,
             last_good_bin=last_good,
             beta=fb.beta,
+            t0_time_us=common_t0_time_us(histograms, grouping, common_t0),
         )
 
         metadata = dict(run.metadata)
