@@ -184,6 +184,7 @@ def binned_fb_asymmetry(
     forward_error: NDArray[np.float64] | None = None,
     backward_error: NDArray[np.float64] | None = None,
     beta: float = 1.0,
+    t0_time_us: float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Reduce grouped counts to a binned asymmetry curve (all binning modes).
 
@@ -196,9 +197,15 @@ def binned_fb_asymmetry(
     on sparse data. Fixed mode merges ``bunching_factor`` raw bins per
     output bin (trailing remainder dropped, like :func:`rebin`); the
     non-fixed modes use :func:`binning_slice_edges`. Output times are the mean of
-    the merged raw bins' reduction time stamps ``(k − t0)·w`` — the same
-    convention :func:`rebin` uses, so switching binning modes never shifts the
-    time axis.
+    the merged raw bins' reduction time stamps — the same convention
+    :func:`rebin` uses, so switching binning modes never shifts the time axis.
+
+    Raw bin ``k`` is stamped at its **centre** measured from the run's exact t0,
+    ``(k + 0.5)·w − t0_time_us`` (D4). ``t0_time_us`` defaults to the centre of
+    ``common_t0``, which collapses the stamp to the integer-bin axis
+    ``(k − common_t0)·w`` — today's values, bit for bit. Callers that can resolve
+    the run's exact t0 pass
+    :func:`~asymmetry.core.transform.t0.common_t0_time_us`.
 
     Returns
     -------
@@ -220,7 +227,15 @@ def binned_fb_asymmetry(
         lo, hi = 0, n - 1
     f = f[lo : hi + 1]
     b = b[lo : hi + 1]
-    t_start = (lo - int(common_t0)) * float(bin_width_us)
+    # Sub-bin residual of the exact t0 against the centre of the common t0 bin:
+    # exactly 0.0 for the bin-centre default, so the integer-bin stamps below
+    # are untouched to the last bit.
+    residual_us = (
+        0.0
+        if t0_time_us is None
+        else (int(common_t0) + 0.5) * float(bin_width_us) - float(t0_time_us)
+    )
+    t_start = (lo - int(common_t0)) * float(bin_width_us) + residual_us
 
     if mode == "fixed":
         try:
@@ -258,8 +273,8 @@ def binned_fb_asymmetry(
         )
     else:
         asymmetry, error = compute_asymmetry(f_out, b_out, alpha=alpha, beta=beta)
-    # Mean of the merged raw bins' time stamps (k − t0)·w: for the slice
-    # [e0, e1) that is ((e0 + e1 − 1)/2)·w — matching the fixed-mode path,
-    # where rebin() averages the same left-edge stamps.
+    # Mean of the merged raw bins' stamps: for the slice [e0, e1) that is
+    # t_start + ((e0 + e1 − 1)/2)·w — matching the fixed-mode path, where
+    # rebin() averages the same per-bin stamps.
     time = t_start + (edges[:-1] + edges[1:] - 1) * 0.5 * float(bin_width_us)
     return np.asarray(time, dtype=np.float64), asymmetry, error

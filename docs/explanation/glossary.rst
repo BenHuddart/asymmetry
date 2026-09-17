@@ -101,8 +101,17 @@ For a narrative introduction rather than isolated definitions, read the
    time-zero
       The bin at which the muons arrive and the polarisation is maximal, from
       which the analysis clock is measured. An error in t0 biases early-time
-      amplitudes and phases, so Asymmetry locates it explicitly; see
-      :doc:`/reference/data_reduction/t0_search`.
+      amplitudes and phases, so Asymmetry always shows the file value beside
+      what its own search finds and warns when they disagree, whichever mode
+      is in use; see :doc:`/reference/data_reduction/t0_search`. Where a file
+      also records a continuous, sub-bin time-zero (ISIS ``time_zero``,
+      MusrRoot's ``Double_t`` ``Time Zero Bin``), Asymmetry keeps it and
+      stamps every time axis from it rather than the nearer integer bin —
+      see :doc:`/reference/detector_grouping` § Time-zero (t0) modes. Every
+      per-detector alignment in the app — reduction, grouped Fourier, MaxEnt,
+      count-domain fits, the deadtime window, the plot mask — reads the
+      resolved t0 through one shared resolver, so a manual or detected shift
+      moves all of them together.
 
    dead time
       The short interval after a detected event during which a detector cannot

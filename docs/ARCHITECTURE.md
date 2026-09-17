@@ -494,12 +494,32 @@ loading a fifth run of a series meant editing it a fifth time, with no
 guardrail against two runs of the same series silently drifting apart.
 
 **Model.** `asymmetry.core.project.profiles` splits the payload into
-*shareable* settings (detector groups, forward/backward assignment, and three
-policy objects — `AlphaPolicy`, `DeadtimePolicy`, `BackgroundPolicy`, each a
-mode plus whatever value the mode needs) and *per-run* facts (`t0`, good-bin
+*shareable* settings (detector groups, forward/backward assignment, and
+policy objects — `AlphaPolicy`, `BetaPolicy`, `DeadtimePolicy`,
+`BackgroundPolicy`, `T0Policy`, each a mode plus whatever value the mode
+needs) and *per-run* facts (`t0_bin`, `t0_time_us`, `t0_source`, good-bin
 window, per-detector file deadtime, period tables) that always come from the
 run itself. A `GroupingProfile` holds only the shareable half, is named, and
 belongs to the project rather than to any one run.
+
+`T0Policy.mode` (`"from_file"`, `"manual"`, `"auto_detect"`) is an explicit
+stored field, never inferred by comparing a stored value against a
+recomputed one — that inference (`t0_bin` vs. the max header t0 over *all*
+detectors, rather than just the analysis groups) is what mislabelled fresh
+drafts as Manual before `docs/plans/t0-determination.md`. Manual is stored
+as a signed *offset* in bins from each run's own file t0, so one profile
+shifts a whole set of runs consistently however their headers differ; the
+per-detector bins every consumer aligns on — reduction, grouped Fourier,
+MaxEnt, count-domain fits, the deadtime window, the plot mask — come from a
+single resolver, `effective_detector_t0_bins()`
+(`core/transform/t0.py`), enforced by a structural rule so a new consumer
+cannot silently re-derive alignment from the file values alone. Where a
+loader records a continuous t0 (ISIS `time_zero`, MusrRoot's `Double_t`
+`Time Zero Bin`) alongside the integer `t0_bin`, every time axis is stamped
+from the exact value — `(k + ½)·w − t0`, bin *k*'s centre minus t0 — rather
+than the coarser integer-bin arithmetic; a file without one falls back to
+the centre of `t0_bin` itself, so the two conventions agree exactly when
+there is nothing to gain from the finer one.
 
 **Resolution.** A profile applies to every run whose *fingerprint* —
 `(instrument, histogram_count)` — matches. Each fingerprint has exactly one

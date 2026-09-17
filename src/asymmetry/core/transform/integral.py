@@ -63,6 +63,7 @@ import numpy as np
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.transform.asymmetry import compute_asymmetry
 from asymmetry.core.transform.grouping import effective_grouping, group_forward_backward
+from asymmetry.core.transform.t0 import t0_stamp_residual_us
 from asymmetry.core.transform.units import ASYMMETRY_FRACTION, AsymmetryUnit
 from asymmetry.core.utils.constants import ORDER_KEYS
 
@@ -657,7 +658,10 @@ def _reduce_run_to_fb(
         first_good, last_good = 0, n - 1
 
     bin_width = float(histograms[0].bin_width)
-    time = (np.arange(n, dtype=np.float64) - float(fb.common_t0)) * bin_width
+    # Bin centres from the run's exact t0 (D4); the residual is 0.0 whenever the
+    # run carries no sub-bin t0, leaving the integer-bin axis untouched.
+    residual = t0_stamp_residual_us(histograms, grouping, fb.common_t0)
+    time = (np.arange(n, dtype=np.float64) - float(fb.common_t0)) * bin_width + residual
     return time, forward, backward, alpha_used, fb.beta, (first_good, last_good)
 
 

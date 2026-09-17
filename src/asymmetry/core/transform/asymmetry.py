@@ -177,6 +177,7 @@ def slice_to_good_window(
     *,
     common_t0: int,
     bin_width: float,
+    t0_time_us: float | None = None,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """Slice reduced arrays to the grouping's good-bin window and build the axis.
 
@@ -186,6 +187,10 @@ def slice_to_good_window(
     microseconds, measured from ``common_t0``. Used by both the loader-style
     reduction (:func:`asymmetry.core.simulate._reduce_histograms`) and the
     run-arithmetic subtraction reduction so the two agree by construction.
+
+    Bin ``k`` is stamped at its centre relative to the run's exact t0,
+    ``(k + 0.5)·w − t0_time_us`` (D4); the default is the centre of
+    ``common_t0``, which reproduces the integer-bin axis exactly.
     """
     size = int(asymmetry.size)
     try:
@@ -202,7 +207,12 @@ def slice_to_good_window(
 
     asymmetry = asymmetry[first_good : last_good + 1]
     error = error[first_good : last_good + 1]
-    time = (np.arange(asymmetry.size, dtype=float) + first_good - int(common_t0)) * float(bin_width)
+    residual = (
+        0.0 if t0_time_us is None else (int(common_t0) + 0.5) * float(bin_width) - float(t0_time_us)
+    )
+    time = (np.arange(asymmetry.size, dtype=float) + first_good - int(common_t0)) * float(
+        bin_width
+    ) + residual
     return time, asymmetry, error
 
 

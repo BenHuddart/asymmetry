@@ -244,9 +244,9 @@ def test_spectral_moments_info_affordance():
 
 
 def test_no_schema_version_bump():
-    # Baseline guard: bumped to 20 for the series recipe / active series
-    # (v19->v20). A future accidental bump must consciously update this literal.
-    assert CURRENT_SCHEMA_VERSION == 20
+    # Baseline guard: bumped to 21 for the offset-based manual t0 policy
+    # (v20->v21). A future accidental bump must consciously update this literal.
+    assert CURRENT_SCHEMA_VERSION == 21
 
 
 def test_restore_state_tolerates_absent_moments():

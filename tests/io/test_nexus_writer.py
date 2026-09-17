@@ -146,6 +146,67 @@ class TestRoundTrip:
         reloaded = load(path).run
         assert [h.t0_bin for h in reloaded.histograms] == [40, 57]
 
+    def test_written_bin_attributes_are_one_based(self, tmp_path) -> None:
+        """ISIS numbers t0/good bins from 1; the writer must too, or the round
+        trip through the 1-based decode shifts everything by a bin."""
+        run = _simulated(t0_bins=[40, 57])
+        path = tmp_path / "one_based.nxs"
+        write_nexus_v1(run, path)
+
+        with h5py.File(path, "r") as handle:
+            attrs = handle["run/histogram_data_1/counts"].attrs
+            assert list(np.asarray(attrs["t0_bin"]).ravel()) == [41, 58]
+            assert int(attrs["first_good_bin"]) == run.histograms[0].good_bin_start + 1
+            assert int(attrs["last_good_bin"]) == run.histograms[0].good_bin_end + 1
+            time_zero = np.asarray(handle["run/histogram_data_1/time_zero"])
+        # time_zero is the exact t0 in µs, not a bin index.
+        assert time_zero == pytest.approx([(40.5) * BIN_WIDTH, (57.5) * BIN_WIDTH])
+
+    def test_exact_t0_round_trips(self, tmp_path) -> None:
+        """A sub-bin t0 survives the write/read cycle unchanged."""
+        run = _simulated()
+        for hist in run.histograms:
+            hist.t0_time_us = (T0_BIN + 0.3) * BIN_WIDTH
+        path = tmp_path / "exact_t0.nxs"
+        write_nexus_v1(run, path)
+
+        reloaded = load(path).run
+        assert reloaded.grouping["t0_source"] == "file"
+        assert reloaded.grouping["t0_time_us"] == pytest.approx((T0_BIN + 0.3) * BIN_WIDTH)
+        for original, again in zip(run.histograms, reloaded.histograms, strict=True):
+            assert again.t0_bin == original.t0_bin
+            assert again.t0_time_us == pytest.approx(original.t0_time_us)
+
+    def test_effective_mode_writes_the_resolved_t0_throughout(self, tmp_path) -> None:
+        """``effective=True`` writes the policy's t0, good window and axis — and
+        nothing from the file, so the two can never be mixed (F7)."""
+        from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
+
+        run = _simulated()
+        delta = 3
+        run.grouping[EFFECTIVE_DETECTOR_T0_KEY] = [hist.t0_bin + delta for hist in run.histograms]
+        run.grouping["t0_bin"] = T0_BIN + delta
+        run.grouping["first_good_bin"] = run.grouping["first_good_bin"] + delta
+
+        file_path = tmp_path / "as_file.nxs"
+        effective_path = tmp_path / "as_effective.nxs"
+        write_nexus_v1(run, file_path)
+        write_nexus_v1(run, effective_path, effective=True)
+
+        from_file = load(file_path).run
+        from_effective = load(effective_path).run
+        assert [h.t0_bin for h in from_file.histograms] == [T0_BIN, T0_BIN]
+        assert [h.t0_bin for h in from_effective.histograms] == [T0_BIN + delta] * 2
+        assert from_file.grouping["first_good_bin"] == T0_BIN + 5
+        assert from_effective.grouping["first_good_bin"] == T0_BIN + 5 + delta
+        # Each file is internally consistent: its own axis is stamped from its
+        # own t0, so neither reloads as a conflict.
+        assert from_file.grouping["t0_source"] == "file"
+        assert from_effective.grouping["t0_source"] == "file"
+        assert from_effective.grouping["t0_time_us"] == pytest.approx(
+            from_file.grouping["t0_time_us"] + delta * BIN_WIDTH
+        )
+
     def test_provenance_survives_reload(self, tmp_path) -> None:
         run = _simulated(seed=9)
         path = tmp_path / "synthetic.nxs"

@@ -121,6 +121,49 @@ def test_calibrate_deadtime_from_histograms_recovers_per_detector_tau() -> None:
     assert calibrated == pytest.approx(taus, rel=1e-2, abs=5e-4)
 
 
+def test_calibrate_deadtime_from_histograms_uses_detector_t0_bins_override() -> None:
+    """The calibration window starts from the resolver's t0 override (D10),
+    not the histogram's file `t0_bin`, when one is supplied (plan phase 4)."""
+    bin_width = 0.01
+    num_good_frames = 1000.0
+    lifetime_us = 2.1969811
+    tau_us = 0.02
+    amplitude = 120.0
+    n_fit = 12
+    times = (np.arange(n_fit, dtype=float) + 1.0) * bin_width
+    frame_scale = num_good_frames * bin_width
+    true_counts = amplitude * np.exp(-times / lifetime_us)
+    clean = true_counts * (
+        1.0 - (true_counts / frame_scale) * lifetime_us * (1.0 - np.exp(-tau_us / lifetime_us))
+    )
+    # Two prompt-spike bins ahead of the clean early-time decay: a calibration
+    # window that starts at the file `t0_bin` (0) would fit through them, but
+    # a policy-resolved t0 override of 2 must move the window past them.
+    counts = np.concatenate([np.array([5000.0, 5000.0]), clean])
+    histogram = Histogram(counts, bin_width=bin_width, t0_bin=0)
+
+    calibrated = calibrate_deadtime_from_histograms(
+        [histogram],
+        t_good_offset=0,
+        last_good_bin=len(counts) - 1,
+        num_good_frames=num_good_frames,
+        max_bins=n_fit,
+        detector_t0_bins=[2],
+    )
+
+    assert calibrated is not None
+    assert calibrated[0] == pytest.approx(tau_us, rel=1e-2, abs=5e-4)
+
+    without_override = calibrate_deadtime_from_histograms(
+        [histogram],
+        t_good_offset=0,
+        last_good_bin=len(counts) - 1,
+        num_good_frames=num_good_frames,
+        max_bins=n_fit,
+    )
+    assert without_override is None or without_override[0] != pytest.approx(tau_us, rel=1e-2)
+
+
 def test_parse_deadtime_calibration_text_reads_wimda_style_file() -> None:
     text = "\n".join(
         [

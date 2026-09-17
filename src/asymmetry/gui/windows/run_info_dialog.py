@@ -29,6 +29,16 @@ from asymmetry.gui.styles.widgets import apply_param_table_style
 from asymmetry.gui.utils.series_scoring import score_series_path
 from asymmetry.gui.windows.log_plot_dialog import LogPlotDialog
 
+#: How the run's ``t0_source`` fact reads in the summary table. ``missing``
+#: shares ``detected``'s wording because both reduce on the detected value (D7);
+#: the difference is only whether resolution has run yet.
+_T0_SOURCE_LABELS = {
+    "file": "file",
+    "detected": "detected (no header value)",
+    "missing": "detected (no header value)",
+    "conflict": "header conflict",
+}
+
 
 class RunInfoDialog(QDialog):
     """Display key and advanced metadata for a selected run."""
@@ -151,6 +161,27 @@ class RunInfoDialog(QDialog):
                     ),
                 ]
             )
+            # Where the analysis time zero came from (D7): a file with no usable
+            # header t0 is reduced on the detected value, and a header whose
+            # ``time_zero`` contradicts its ``t0_bin`` is reduced on the bin.
+            grouping = run.grouping if isinstance(run.grouping, dict) else {}
+            rows.append(
+                (
+                    "Time Zero",
+                    _T0_SOURCE_LABELS[str(grouping.get("t0_source", "file"))],
+                    "run_info.t0_source",
+                    None,
+                )
+            )
+            if grouping.get("t0_time_us") is not None:
+                rows.append(
+                    (
+                        "Time Zero (us)",
+                        self._fmt_float(grouping["t0_time_us"]),
+                        "run_info.t0_time_us",
+                        None,
+                    )
+                )
 
             # Summing every histogram's full counts array is O(bins x
             # detectors) and can run to GB-scale on long high-rate runs.

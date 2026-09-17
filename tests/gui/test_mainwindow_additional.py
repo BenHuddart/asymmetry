@@ -5810,7 +5810,8 @@ class TestMainWindowBasic:
                 Accepted = 1
 
             def __init__(self, *_args, **_kwargs):
-                pass
+                # Part of the dialog's result contract (D9): the caller logs it.
+                self.t0_apply_warnings: list[str] = []
 
             def exec(self):
                 return self.DialogCode.Accepted
@@ -5878,7 +5879,8 @@ class TestMainWindowBasic:
                 Accepted = 1
 
             def __init__(self, *_args, **_kwargs):
-                pass
+                # Part of the dialog's result contract (D9): the caller logs it.
+                self.t0_apply_warnings: list[str] = []
 
             def exec(self):
                 return self.DialogCode.Accepted
@@ -5948,7 +5950,8 @@ class TestMainWindowBasic:
                 Accepted = 1
 
             def __init__(self, *_args, **_kwargs):
-                pass
+                # Part of the dialog's result contract (D9): the caller logs it.
+                self.t0_apply_warnings: list[str] = []
 
             def exec(self):
                 return self.DialogCode.Accepted
@@ -6114,7 +6117,8 @@ class TestMainWindowBasic:
                 Accepted = 1
 
             def __init__(self, *_args, **_kwargs):
-                pass
+                # Part of the dialog's result contract (D9): the caller logs it.
+                self.t0_apply_warnings: list[str] = []
 
             def exec(self):
                 return self.DialogCode.Accepted
@@ -7925,6 +7929,8 @@ class TestGroupingSkipDiagnostic:
 
             def __init__(self, *args, **kwargs) -> None:
                 self.period_mapping_request = None
+                # Part of the dialog's result contract (D9): the caller logs it.
+                self.t0_apply_warnings: list[str] = []
 
             def exec(self) -> QDialog.DialogCode:
                 return QDialog.DialogCode.Accepted
@@ -7966,3 +7972,189 @@ class TestGroupingSkipDiagnostic:
         assert "Applied grouping to 0 dataset(s); skipped 1" in log_text
         assert "none of its detector(s) 10-17" in log_text
         assert "9 detector(s)" in log_text
+
+
+# ---------------------------------------------------------------------------
+# Time-zero policy repair on project open, and the per-run override's exact t0
+# (plan phase 5; decisions D2/D3/D4)
+# ---------------------------------------------------------------------------
+
+
+def _detector_t0_dataset_for_project(
+    run_number: int, *, detector_t0: tuple[int, int] = (2, 3)
+) -> MuonDataset:
+    """A two-detector run whose file common t0 is ``max(detector_t0)``."""
+    counts = np.array([100.0, 95.0, 90.0, 85.0], dtype=float)
+    run = Run(
+        run_number=run_number,
+        histograms=[
+            Histogram(counts=counts, bin_width=0.01, t0_bin=detector_t0[0], t0_time_us=0.021),
+            Histogram(counts=counts * 0.8, bin_width=0.01, t0_bin=detector_t0[1], t0_time_us=0.033),
+        ],
+        metadata={"run_number": run_number, "instrument": "EMU"},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": max(detector_t0),
+            "first_good_bin": max(detector_t0),
+            "last_good_bin": 3,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "detector_t0_bins": list(detector_t0),
+            "detector_first_good_bins": list(detector_t0),
+            "instrument": "EMU",
+            "t0_time_us": 0.033,
+        },
+    )
+    t = np.array([0.0, 0.01, 0.02, 0.03])
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "instrument": "EMU"},
+        run=run,
+    )
+
+
+def _project_state_with_t0_policy(
+    mainwindow: MainWindow, source_file: Path, run_number: int, t0_policy: dict
+) -> dict:
+    """A one-run project state whose single profile carries *t0_policy* verbatim."""
+    from asymmetry.core.project.profiles import GroupingProfile, ProfileFingerprint
+
+    profile = GroupingProfile(
+        name="Stored (EMU)",
+        fingerprint=ProfileFingerprint("EMU", 2),
+        groups={1: [1], 2: [2]},
+        forward_group=1,
+        backward_group=2,
+        active=True,
+    )
+    profile_data = profile.to_dict()
+    profile_data["t0_policy"] = t0_policy
+    state = mainwindow.collect_project_state()
+    state["datasets"] = [
+        {
+            "run_number": run_number,
+            "source_file": str(source_file),
+            "profile": "Stored (EMU)",
+        }
+    ]
+    state["grouping_profiles"] = [profile_data]
+    return state
+
+
+def _restore_with_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+    state: dict,
+    project_path: Path,
+    source_file: Path,
+    run_number: int,
+) -> MainWindow:
+    restored = MainWindow()
+
+    def _fake_load_file(_path: str) -> MuonDataset:
+        loaded = _detector_t0_dataset_for_project(run_number)
+        assert loaded.run is not None
+        loaded.run.source_file = str(source_file)
+        loaded.metadata["source_file"] = str(source_file)
+        return loaded
+
+    monkeypatch.setattr(restored, "_load_file", _fake_load_file)
+    restored.restore_project_state(state, str(project_path))
+    return restored
+
+
+def test_project_open_converts_a_legacy_manual_t0_value_to_an_offset(
+    mainwindow: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """D3: a v20 absolute ``value`` becomes an offset from the run's file t0."""
+    import logging
+
+    from asymmetry.core.project.profiles import T0Policy
+
+    source_file = tmp_path / "run_9101.nxs"
+    source_file.write_text("placeholder", encoding="utf-8")
+    state = _project_state_with_t0_policy(
+        mainwindow, source_file, 9101, {"mode": "manual", "value": 5}
+    )
+
+    caplog.set_level(logging.INFO, logger="asymmetry.gui.mainwindow")
+    restored = _restore_with_dataset(
+        monkeypatch, state, tmp_path / "legacy_t0.asymp", source_file, 9101
+    )
+
+    # The run's file common t0 is max(2, 3) = 3, so bin 5 was a +2 offset.
+    assert restored._grouping_profiles[0].t0_policy == T0Policy(mode="manual", offset_bins=2)
+    assert any(
+        "converted the stored manual t0 bin 5 to offset +2 bins" in record.message
+        for record in caplog.records
+    )
+
+
+def test_project_open_heals_a_zero_offset_manual_policy_to_from_file(
+    mainwindow: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """D2: a manual policy that shifted nothing opens as From file, and says so."""
+    import logging
+
+    from asymmetry.core.project.profiles import T0Policy
+
+    source_file = tmp_path / "run_9102.nxs"
+    source_file.write_text("placeholder", encoding="utf-8")
+    state = _project_state_with_t0_policy(
+        mainwindow, source_file, 9102, {"mode": "manual", "offset_bins": 0}
+    )
+
+    caplog.set_level(logging.INFO, logger="asymmetry.gui.mainwindow")
+    restored = _restore_with_dataset(
+        monkeypatch, state, tmp_path / "zero_offset.asymp", source_file, 9102
+    )
+
+    assert restored._grouping_profiles[0].t0_policy == T0Policy(mode="from_file")
+    assert any(
+        "manual t0 offset is 0 on every run in scope, healed to mode from_file" in record.message
+        for record in caplog.records
+    )
+
+
+def test_per_run_t0_override_shifts_the_exact_t0(
+    mainwindow: MainWindow, qapp: QApplication
+) -> None:
+    """D4: a released run's absolute t0 override moves ``t0_time_us`` with it."""
+    dataset = _detector_t0_dataset_for_project(9103)
+    assert dataset.run is not None
+    payload = dict(dataset.run.grouping)
+    payload["t0_bin"] = 1  # file common t0 is 3 → delta = −2
+
+    applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+    assert applied
+    # The file exact t0 is detector 2's 0.033 µs (the one sitting on bin 3);
+    # a −2 bin shift at 0.01 µs per bin lands on 0.013 µs.
+    assert dataset.run.grouping["t0_time_us"] == pytest.approx(0.013)
+
+
+def test_repeated_per_run_t0_override_does_not_compound_the_exact_t0(
+    mainwindow: MainWindow, qapp: QApplication
+) -> None:
+    """Re-applying the same override is idempotent — the shift is re-derived."""
+    dataset = _detector_t0_dataset_for_project(9104)
+    assert dataset.run is not None
+    payload = dict(dataset.run.grouping)
+    payload["t0_bin"] = 1
+
+    mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+    mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+    assert dataset.run.grouping["t0_time_us"] == pytest.approx(0.013)

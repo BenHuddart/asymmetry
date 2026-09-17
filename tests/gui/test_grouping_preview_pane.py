@@ -1070,3 +1070,39 @@ def test_release_captures_view_only_when_the_drag_moved_it(qapp: QApplication) -
         pane._nav_toolbar.pan()  # disengage
     finally:
         pane.shutdown()
+
+
+def test_preview_axis_uses_the_runs_exact_t0(qapp: QApplication) -> None:
+    """D4: the preview axis is stamped from ``t0_time_us``, like the reduction.
+
+    Without it the preview sat up to half a bin away from the curve Apply
+    produces on every ISIS/MusrRoot run — a silent divergence between the thing
+    the user judges the settings by and the thing they get.
+    """
+    # Exact t0 0.3 of a bin past the centre of bin 0 (w = 0.016 µs).
+    dataset = _histogram_dataset(grouping_extra={"t0_time_us": 0.016 * 0.8})
+    pane = GroupingPreviewPane()
+    pane.request_preview(
+        histograms=dataset.run.histograms,
+        grouping=dataset.run.grouping,
+        run_number=int(dataset.run_number),
+    )
+    pane.flush()
+    _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
+
+    expected = reduce_grouped_asymmetry(
+        histograms=dataset.run.histograms,
+        grouping=dataset.run.grouping,
+        forward_idx=[0],
+        backward_idx=[1],
+        alpha=1.0,
+        use_deadtime=False,
+        deadtime_mode="off",
+        use_background=False,
+        facility="TESTINST",
+    )
+    drawn = np.asarray(pane._axes.get_lines()[0].get_xdata(), dtype=float)
+    np.testing.assert_allclose(drawn, expected.time)
+    # And the axis genuinely moved off the integer-bin grid.
+    assert not np.allclose(drawn, np.arange(drawn.size) * 0.016)
+    pane.shutdown()

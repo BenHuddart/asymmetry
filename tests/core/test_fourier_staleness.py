@@ -69,6 +69,30 @@ def test_digest_changes_with_t0_bin():
     assert fourier_grouping_digest(_run(base)) != fourier_grouping_digest(_run(changed))
 
 
+def test_digest_changes_with_the_exact_t0():
+    """A policy shift can move ``t0_time_us`` without moving ``t0_bin`` (D4).
+
+    Every reduction/Fourier cache is keyed on this digest, so if the exact t0
+    were left out a sub-bin t0 change would hand back the previous axis.
+    """
+    base = _base_grouping()
+    changed = _base_grouping()
+    changed["t0_time_us"] = 0.088
+    assert fourier_grouping_digest(_run(base)) != fourier_grouping_digest(_run(changed))
+    moved = _base_grouping()
+    moved["t0_time_us"] = 0.104
+    assert fourier_grouping_digest(_run(changed)) != fourier_grouping_digest(_run(moved))
+
+
+def test_digest_changes_with_t0_source():
+    """A ``"missing"`` run resolves its t0 by search; the values change with it."""
+    base = _base_grouping()
+    base["t0_source"] = "missing"
+    detected = _base_grouping()
+    detected["t0_source"] = "detected"
+    assert fourier_grouping_digest(_run(base)) != fourier_grouping_digest(_run(detected))
+
+
 def test_digest_changes_with_dead_time_us_when_correction_enabled():
     base = _base_grouping()
     base["deadtime_correction"] = True

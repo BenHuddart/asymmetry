@@ -326,6 +326,7 @@ def _import_scenarios() -> None:
         global_fit_wizard_transitions,
         grouped_fit_ybco_knight,
         grouping_window_profile_editor,
+        grouping_window_t0_row,
         hifi_transverse_layout,
         knight_shift_window,
         lf_kt_global_results,

@@ -11,8 +11,14 @@ sample logs leak into the synthetic file.
 
 Notes on the V1 contract (verified against ``nexus.py``):
 
-* ``histogram_data_1/time_zero`` is interpreted as a **bin index**; writing
-  one value per detector preserves PSI-style staggered t0.
+* Time zero is written the way ISIS writes it: a **1-based** ``t0_bin``
+  attribute on the ``counts`` dataset (one value per detector, so PSI-style
+  staggered t0 survives) plus ``histogram_data_1/time_zero`` in **microseconds**
+  from the start of acquisition. ``first_good_bin`` / ``last_good_bin`` are
+  1-based inclusive attributes on the same dataset. A round trip through
+  :class:`~asymmetry.core.io.nexus.NexusLoader` is the identity.
+* The file carries *either* the run's file t0 throughout or its policy-resolved
+  effective t0 throughout (``effective=True``) — never a mix (F7).
 * The loader treats the two lowest group ids in ``grouping`` as forward and
   backward, so the writer renumbers the run's forward group to 1 and
   backward to 2 (further groups follow in stable order).
@@ -32,6 +38,7 @@ import numpy as np
 
 from asymmetry.core.data.dataset import Run
 from asymmetry.core.transform.grouping import resolve_group_indices
+from asymmetry.core.transform.t0 import effective_detector_t0_bins
 
 try:
     import h5py  # type: ignore[import-untyped]
@@ -99,14 +106,19 @@ def _provenance_items(metadata: dict) -> dict[str, Any]:
     return items
 
 
-def write_nexus_v1(run: Run, path: str | Path) -> None:
+def write_nexus_v1(run: Run, path: str | Path, *, effective: bool = False) -> None:
     """Write *run* as a loadable ISIS muon NeXus V1 (HDF5) file.
 
     The file reloads through :func:`asymmetry.core.io.load` with identical
-    per-detector counts, bin width, per-detector t0 bins, good-bin window,
-    grouping (forward/backward renumbered to 1/2) and good frames. Raises
-    :class:`ValueError` for runs without histograms or with ragged histogram
-    lengths, and :class:`ImportError` when ``h5py`` is unavailable.
+    per-detector counts, bin width, per-detector t0 bins, exact t0, good-bin
+    window, grouping (forward/backward renumbered to 1/2) and good frames.
+    Raises :class:`ValueError` for runs without histograms or with ragged
+    histogram lengths, and :class:`ImportError` when ``h5py`` is unavailable.
+
+    With ``effective=True`` every t0-derived field — the per-detector bins, the
+    exact ``time_zero``, the good window and ``corrected_time`` — comes from the
+    grouping's policy-resolved t0 instead of the file's, so the written run is
+    the analysed one. The two sets are never mixed.
     """
     if h5py is None:
         raise ImportError(
@@ -126,24 +138,33 @@ def write_nexus_v1(run: Run, path: str | Path) -> None:
     metadata = run.metadata if isinstance(run.metadata, dict) else {}
 
     bin_width = float(run.histograms[0].bin_width)
-    t0_bins = np.array([int(hist.t0_bin) for hist in run.histograms], dtype=np.float64)
-    try:
-        common_t0 = int(grouping.get("t0_bin", int(t0_bins.max())))
-    except (TypeError, ValueError):
-        common_t0 = int(t0_bins.max())
+    if effective:
+        t0_bins = np.asarray(effective_detector_t0_bins(run.histograms, grouping), dtype=np.int64)
+        # A policy shift is a whole number of bins (D4), so the sub-bin part of
+        # each detector's exact t0 rides along with it.
+        time_zero = np.asarray(
+            [
+                hist.t0_time_us_effective + (int(bin_) - int(hist.t0_bin)) * bin_width
+                for hist, bin_ in zip(run.histograms, t0_bins, strict=True)
+            ],
+            dtype=np.float64,
+        )
+        first_good = int(grouping.get("first_good_bin", 0))
+        last_good = int(grouping.get("last_good_bin", n_bins - 1))
+    else:
+        t0_bins = np.asarray([int(hist.t0_bin) for hist in run.histograms], dtype=np.int64)
+        time_zero = np.asarray(
+            [hist.t0_time_us_effective for hist in run.histograms], dtype=np.float64
+        )
+        first_good = max(int(hist.good_bin_start) for hist in run.histograms)
+        last_good = min(int(hist.good_bin_end) for hist in run.histograms)
+    # ``corrected_time`` is a single run-level axis, so it is stamped from the
+    # common (latest) detector t0 — the bin reduction aligns the groups onto.
+    common_time_zero = float(time_zero[int(np.argmax(t0_bins))])
 
     counts = np.vstack([np.asarray(hist.counts, dtype=np.float64) for hist in run.histograms])
     counts = np.clip(np.rint(counts), 0, None)
     counts_dtype = np.int32 if counts.max(initial=0.0) <= np.iinfo(np.int32).max else np.int64
-
-    try:
-        first_good = int(grouping.get("first_good_bin", 0))
-    except (TypeError, ValueError):
-        first_good = 0
-    try:
-        last_good = int(grouping.get("last_good_bin", n_bins - 1))
-    except (TypeError, ValueError):
-        last_good = n_bins - 1
 
     dead_time = np.asarray(grouping.get("dead_time_us", []), dtype=np.float64)
     if dead_time.size != n_det:
@@ -182,18 +203,22 @@ def write_nexus_v1(run: Run, path: str | Path) -> None:
             _write_str(sample, "magnetic_field_state", str(field_state))
 
         h_data = entry.create_group("histogram_data_1")
-        h_data.create_dataset("counts", data=counts.astype(counts_dtype))
+        counts_ds = h_data.create_dataset("counts", data=counts.astype(counts_dtype))
+        # ISIS bin metadata is 1-based and inclusive
+        # (docs/porting/t0-determination/isis-header-index-base.md).
+        counts_ds.attrs["t0_bin"] = (t0_bins + 1).astype(np.int32)
+        counts_ds.attrs["first_good_bin"] = np.int32(first_good + 1)
+        counts_ds.attrs["last_good_bin"] = np.int32(last_good + 1)
         h_data.create_dataset(
             "corrected_time",
-            data=(np.arange(n_bins, dtype=np.float64) - common_t0) * bin_width,
+            data=(np.arange(n_bins, dtype=np.float64) + 0.5) * bin_width - common_time_zero,
         )
         h_data.create_dataset("grouping", data=_detector_group_ids(grouping, n_det))
         h_data.create_dataset("dead_time", data=dead_time)
-        # V1 time_zero is a bin index; one value per detector preserves
-        # staggered t0 (WiMDA quantised a single value to whole µs here).
-        h_data.create_dataset("time_zero", data=t0_bins)
-        h_data.create_dataset("first_good_bin", data=np.int32(first_good))
-        h_data.create_dataset("last_good_bin", data=np.int32(last_good))
+        # time_zero is the exact t0 in µs from the start of acquisition, one
+        # value per detector (WiMDA quantised a single value to whole µs here).
+        time_zero_ds = h_data.create_dataset("time_zero", data=time_zero)
+        time_zero_ds.attrs["units"] = np.bytes_(b"microseconds")
 
         provenance = _provenance_items(metadata)
         if metadata.get("synthetic") or provenance:

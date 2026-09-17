@@ -10,6 +10,7 @@ from ``AsymFitFunction.pas``, and parameter recovery is checked against
 from __future__ import annotations
 
 import inspect
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -39,6 +40,7 @@ from asymmetry.core.simulate import (
     simulate_run,
 )
 from asymmetry.core.transform.deadtime import promote_deadtime_to_grouping
+from asymmetry.core.transform.promote import promote_t0_to_grouping
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
 
@@ -1219,3 +1221,69 @@ def test_fb_overlay_keys_both_banks():
         assert np.all(np.isfinite(corrected))
         # Corrected counts are positive (raw counts modulated by the decay envelope).
         assert np.all(corrected > 0.0)
+
+
+# --- D12: promote t0 round-trip ---------------------------------------------
+
+
+def _t0_corrupted_run(delta_bins: int) -> MuonDataset:
+    """The pulsed F/B fixture with its stored time-zero moved by *delta_bins*.
+
+    The histograms' ``t0_bin`` and the grouping's common ``t0_bin`` move
+    together, exactly as a wrong header would have them; the counts themselves
+    are untouched, so the truth stays at the template's bin 100.
+    """
+    run = _pulsed_tf_run(alpha=1.25, seed=1).run
+    histograms = [replace(hist, t0_bin=int(hist.t0_bin) + delta_bins) for hist in run.histograms]
+    grouping = dict(run.grouping)
+    grouping["t0_bin"] = int(grouping["t0_bin"]) + delta_bins
+    return MuonDataset(
+        time=np.array([]),
+        asymmetry=np.array([]),
+        error=np.array([]),
+        metadata={},
+        run=replace(run, histograms=histograms, grouping=grouping),
+    )
+
+
+@pytest.mark.parametrize("delta_bins", [3, -3])
+def test_promote_t0_round_trip_recovers_a_corrupted_time_zero(delta_bins):
+    """A stored t0 off by ±3 bins is fitted and promoted back onto the truth (D12).
+
+    ``phi`` is held at the simulation truth: a time shift at frequency ``f`` *is*
+    a phase shift (2π·f·δ), so a free phase absorbs most of the offset and the
+    fitted ``t0`` under-reads. Pinning the phase isolates the time-zero error,
+    which is what a real promote-t0 workflow does by fitting a run whose phase is
+    already known.
+    """
+    truth_bin = int(_pulsed_tf_run(alpha=1.25, seed=1).run.grouping["t0_bin"])
+    ds = _t0_corrupted_run(delta_bins)
+    grouping = dict(ds.run.grouping)
+    assert grouping["t0_bin"] == truth_bin + delta_bins
+    first_good_before = int(grouping["first_good_bin"])
+
+    params = ParameterSet(
+        [
+            Parameter("alpha", 1.25, min=0.1, max=5.0),
+            Parameter("N0", 1.5e5, min=0.0),
+            Parameter("background", 0.0),
+            Parameter("background_b", 0.0),
+            Parameter("A", 20.0, min=0.0, max=50.0),
+            Parameter("f", 1.5, min=0.0),
+            Parameter("phi", 0.3, fixed=True),
+            Parameter("t0", 0.0, min=-0.5, max=0.5),
+        ]
+    )
+    result = fit_fb_alpha(ds, 1, 2, _tf, params, cost="gaussian")
+    assert result.success
+    fitted_t0_us = result.shared_parameters["t0"].value
+    bin_width = float(ds.run.histograms[0].bin_width)
+    # A stored t0 that is `delta` bins LATE than the truth reads as a POSITIVE
+    # fitted offset (the model evaluates t_eval = time + t0).
+    assert fitted_t0_us / bin_width == pytest.approx(delta_bins, abs=0.5)
+
+    out = promote_t0_to_grouping(grouping, fitted_t0_us, bin_width_us=bin_width)
+    assert abs(grouping["t0_bin"] - truth_bin) <= 1
+    applied = grouping["t0_bin"] - out["before"]["t0_bin"]
+    assert applied == pytest.approx(-delta_bins, abs=1)
+    assert grouping["first_good_bin"] == first_good_before + applied

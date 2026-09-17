@@ -16,6 +16,18 @@ class TestHistogram:
         assert t[10] == pytest.approx(0.0)
         assert t[11] == pytest.approx(0.01)
 
+    def test_time_axis_uses_the_exact_t0_when_the_file_carried_one(self):
+        """Stamps are bin centres from the exact t0: ``(k + 0.5)·w − t0`` (D4)."""
+        w = 0.01
+        plain = Histogram(counts=np.ones(100), bin_width=w, t0_bin=10)
+        # 0.2 bins before the centre of bin 10 -> every stamp grows by 0.2·w.
+        exact = Histogram(counts=np.ones(100), bin_width=w, t0_bin=10, t0_time_us=(10 + 0.3) * w)
+        assert exact.t0_time_us_effective == pytest.approx(0.103)
+        np.testing.assert_allclose(exact.time_axis - plain.time_axis, 0.2 * w, rtol=0, atol=1e-15)
+        # The bin-centre fallback leaves the integer-bin axis bit for bit.
+        centred = Histogram(counts=np.ones(100), bin_width=w, t0_bin=10, t0_time_us=(10 + 0.5) * w)
+        np.testing.assert_array_equal(centred.time_axis, plain.time_axis)
+
     def test_n_bins(self):
         h = Histogram(counts=np.zeros(256), bin_width=0.016)
         assert h.n_bins == 256

@@ -340,6 +340,46 @@ Each dataset entry records which profile it follows (schema v17):
     follows its fingerprint's default profile, as does one whose assigned
     name no longer resolves.
 
+.. _t0-policy-schema:
+
+t0 policy (schema v21)
+~~~~~~~~~~~~~~~~~~~~~~
+
+Each profile's ``t0_policy`` block stores which of the three t0 modes
+(:doc:`detector_grouping` § Time-zero (t0) modes) it uses — it is always an
+explicit, stored choice, never inferred from comparing values:
+
+``mode``
+    ``"from_file"`` (the default), ``"manual"`` or ``"auto_detect"``.
+
+``offset_bins``
+    *Manual* only — the signed offset, in bins, from each run's own file t0
+    (not an absolute bin: one profile shifts every run in scope by the same
+    amount, however their individual headers differ).
+
+``legacy_value``
+    A pre-v21 absolute-bin manual t0, carried over unconverted from schema
+    v20 and older. It is not itself resolvable: only project *open*, once the
+    runs are loaded, can convert it into the equivalent ``offset_bins``
+    against the run the value was originally typed against (``source_run``
+    when recorded, else the first loaded run of the profile's fingerprint).
+    Resolving a policy that still carries ``legacy_value`` raises. Schema
+    v20's absolute ``value`` is renamed to ``legacy_value`` on migration
+    (``_migrate_v20_to_v21``); nothing is converted at that point.
+
+``strategy`` / ``spread_bins`` / ``source_run``
+    *Auto-detect* only — provenance from the last resolution's search
+    (strategy name and detector spread), plus which run the values came from.
+
+On project open, ``heal_t0_policies`` repairs two states that can only be
+recognised once the runs are known: it converts any surviving
+``legacy_value`` (see above), and it heals a ``manual`` policy whose
+``offset_bins`` resolves to zero against every run in its scope back to
+``from_file`` — a leftover of the pre-v21 comparison-based inference that
+mislabelled a plain From file profile as Manual. Each repair is logged (see
+:doc:`detector_grouping`); the project file itself is not rewritten until
+the next save.
+
 Grouping overrides
 ------------------
 
@@ -406,10 +446,56 @@ is preserved without re-running the Grouping dialog.
     Optional forward/backward background values that were subtracted from the
     grouped histograms during the last grouping apply.
 
+``t0_bin``
+    The run's common analysis time-zero: an absolute, 0-based bin index (the
+    max of ``detector_t0_bins`` over the forward/backward analysis groups,
+    unless a t0 policy shifted it — see :ref:`t0-policy-schema` below).
+
+``t0_time_us``
+    Optional exact time-zero in microseconds, kept alongside ``t0_bin`` for
+    formats that record a continuous value (ISIS ``time_zero``, MusrRoot's
+    ``Double_t`` ``Time Zero Bin``). Absent when the file carries only an
+    integer bin; see :doc:`detector_grouping` § Time-zero (t0) modes for the
+    bin-centre time-stamp convention this feeds.
+
+``t0_source``
+    How the run's t0 was determined: ``"file"`` (the header value, the
+    default), ``"conflict"`` (an ISIS file whose ``time_zero`` and ``t0_bin``
+    disagreed — the attribute won), ``"missing"`` (no usable header t0 at
+    all, not yet resolved) or ``"detected"`` (a ``"missing"`` run resolved
+    against the automatic search's consensus). See :doc:`data_reduction/t0_search`.
+
 ``detector_t0_bins``
     Optional per-detector time-zero bins, used by formats such as PSI BIN/MDU
     and MusrRoot/LEM ROOT where each detector can carry its own ``t0``.
     Grouping aligns detector histograms by these values before summing.
+
+``effective_detector_t0_bins``
+    Optional per-detector t0 bins actually used for alignment, written only
+    when a *manual* or *auto-detect* t0 policy resolves to a shift from the
+    file values. Every alignment consumer in the app reads this (when
+    present) in preference to ``detector_t0_bins`` through one resolver,
+    ``effective_detector_t0_bins()`` in ``core/transform/t0.py`` — the run's
+    loaded histograms and their file-derived ``detector_t0_bins`` are never
+    mutated.
+
+``t0_search_strategy`` / ``t0_search_spread_bins``
+    Provenance recorded when a t0 policy runs the automatic search (Auto-detect,
+    or a From file run whose header t0 was missing): the strategy used
+    (``"prompt_peak"`` or ``"pulse_edge"``) and the detector-to-detector
+    spread of the estimates, in bins.
+
+``t0_method`` / ``t0_reference_run``
+    Provenance written by **Promote t₀** (:doc:`count_domain_fitting`):
+    ``t0_method`` is always ``"count_fit"``, and ``t0_reference_run`` is the
+    run number the fitted offset came from — the same pattern as
+    ``alpha_method`` / ``alpha_reference_run``.
+
+``bin_index_base``
+    Display-only numbering base for the bin indices above (1 for ISIS,
+    0 otherwise). The internal, zero-based bin indices are unaffected; this
+    only tells the GUI which number to add back when showing a bin index to
+    the user.
 
 ``root_histo_numbers``
     Optional list of original ROOT ``hDecay`` histogram numbers. Present for

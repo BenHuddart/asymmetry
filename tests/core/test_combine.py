@@ -531,3 +531,55 @@ def test_subtract_routes_through_chokepoint(monkeypatch):
     b = simulate_run(_template(), _cos, total_events=1e5, seed=2)
     combine_runs([a, b], sign=-1, scales=[1.0, 1.0])
     assert calls["n"] == 2  # one per detector
+
+
+# ---------------------------------------------------------------------------
+# Exact t0 across a combine (D4)
+# ---------------------------------------------------------------------------
+
+
+def _run_with_exact_t0(seed: int, t0_time_us: float) -> Run:
+    run = simulate_run(_template(), _cos, total_events=1e5, seed=seed)
+    run.histograms = [
+        Histogram(
+            counts=hist.counts,
+            bin_width=hist.bin_width,
+            t0_bin=hist.t0_bin,
+            good_bin_start=hist.good_bin_start,
+            good_bin_end=hist.good_bin_end,
+            t0_time_us=t0_time_us,
+        )
+        for hist in run.histograms
+    ]
+    run.grouping["t0_time_us"] = t0_time_us
+    return run
+
+
+@pytest.mark.parametrize("sign", [1, -1])
+def test_combined_run_takes_the_mean_exact_t0_of_its_members(sign):
+    """Two runs on the same integer t0 but different exact t0 average (D4).
+
+    The combined histograms carry the mean, and the reduced axis is stamped
+    from it — not from the first run's value mirrored through the grouping.
+    """
+    early = (T0_BIN + 0.2) * BIN_WIDTH
+    late = (T0_BIN + 0.6) * BIN_WIDTH
+    a = _run_with_exact_t0(0, early)
+    b = _run_with_exact_t0(1, late)
+    combined = combine_runs([a, b], sign=sign)
+
+    mean_t0 = 0.5 * (early + late)
+    assert all(hist.t0_time_us == pytest.approx(mean_t0) for hist in combined.histograms)
+    # The base run's own value must not survive the mirror.
+    assert "t0_time_us" not in combined.grouping
+
+    # (T0_BIN + 0.5)·w − mean = +0.1 bin on every stamp against the bin centre.
+    plain = combine_runs(
+        [
+            simulate_run(_template(), _cos, total_events=1e5, seed=0),
+            simulate_run(_template(), _cos, total_events=1e5, seed=1),
+        ],
+        sign=sign,
+    )
+    shift = reduce_combined_run(combined).time - reduce_combined_run(plain).time
+    np.testing.assert_allclose(shift, 0.1 * BIN_WIDTH, rtol=0, atol=1e-15)

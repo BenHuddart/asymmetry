@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from asymmetry.core.data.dataset import Histogram, Run
+from asymmetry.core.transform.t0 import effective_detector_t0_bins
 from asymmetry.core.utils.perf import perf_timer
 
 
@@ -52,30 +53,6 @@ def apply_grouping(
     for a in arrays:
         total += a[:min_len]
     return total
-
-
-#: Grouping-dict key carrying the T0Policy-resolved effective per-detector t0
-#: bins (0-based, one per histogram). Distinct from the file-derived
-#: ``detector_t0_bins`` per-run fact so a *manual* policy can shift alignment
-#: without touching the file values. Absent for the ``from_file`` default.
-EFFECTIVE_DETECTOR_T0_KEY = "effective_detector_t0_bins"
-
-
-def detector_t0_overrides(grouping: dict | None, n_histograms: int) -> list[int] | None:
-    """Extract policy-resolved per-detector t0 overrides from a grouping dict.
-
-    Reads :data:`EFFECTIVE_DETECTOR_T0_KEY` (a *manual* T0Policy writes it) and
-    returns it as an int list when it lines up with the histogram count, else
-    ``None`` (the ``from_file`` default aligns on ``Histogram.t0_bin``).
-    """
-    grouping = grouping if isinstance(grouping, dict) else {}
-    raw = grouping.get(EFFECTIVE_DETECTOR_T0_KEY)
-    if not isinstance(raw, (list, tuple)) or len(raw) != n_histograms:
-        return None
-    try:
-        return [int(v) for v in raw]
-    except (TypeError, ValueError):
-        return None
 
 
 def _detector_t0(
@@ -548,7 +525,7 @@ def group_forward_backward(
     if not np.isfinite(beta) or beta <= 0.0:
         beta = 1.0
 
-    detector_t0_bins = detector_t0_overrides(grouping, len(histograms))
+    detector_t0_bins = effective_detector_t0_bins(histograms, grouping)
     common_t0 = common_t0_for_groups(
         histograms, forward_indices, backward_indices, detector_t0_bins=detector_t0_bins
     )

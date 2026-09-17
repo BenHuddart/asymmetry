@@ -15,6 +15,7 @@ from asymmetry.core.transform.promote import (
     promote_beta_to_grouping,
     promote_t0_to_grouping,
 )
+from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 
 # --- F7: alpha --------------------------------------------------------------
 
@@ -64,26 +65,49 @@ def test_promote_beta_defaults_before_to_unity():
 
 
 def test_promote_t0_rounds_to_nearest_bin_and_discloses_residual():
-    # bin width 0.05 µs; a +0.16 µs offset → +3 bins (0.15 µs), residual +0.01 µs.
+    # bin width 0.05 µs; a +0.16 µs offset → −3 bins (D12: the model evaluates
+    # ``t_eval = time + t0``, so a positive fitted t0 means the stored zero sits
+    # 3 bins too late). Residual +0.01 µs.
     grouping = {"t0_bin": 100}
     out = promote_t0_to_grouping(grouping, 0.16, bin_width_us=0.05, group_id=1, reference_run=42)
     assert out["before"] == {"t0_bin": 100}
-    assert out["after"] == {"t0_bin": 103}
+    assert out["after"] == {"t0_bin": 97}
     assert out["residual_us"] == pytest.approx(0.16 - 3 * 0.05)
     assert out["group_id"] == 1
-    assert grouping["t0_bin"] == 103
+    assert grouping["t0_bin"] == 97
     assert grouping["t0_method"] == "count_fit"
     assert grouping["t0_reference_run"] == 42
 
 
+def test_promote_t0_negative_offset_moves_the_stored_zero_later():
+    grouping = {"t0_bin": 100}
+    out = promote_t0_to_grouping(grouping, -0.15, bin_width_us=0.05)
+    assert out["after"]["t0_bin"] == 103
+    assert out["residual_us"] == pytest.approx(0.0)
+
+
+def test_promote_t0_shifts_first_good_bin_and_detector_override_with_it():
+    """The good window and the per-detector alignment keep their offsets from t0."""
+    grouping = {
+        "t0_bin": 100,
+        "first_good_bin": 110,
+        EFFECTIVE_DETECTOR_T0_KEY: [98, 100, 1],
+    }
+    promote_t0_to_grouping(grouping, 0.1, bin_width_us=0.05)  # −2 bins
+    assert grouping["t0_bin"] == 98
+    assert grouping["first_good_bin"] == 108
+    # Each detector moves by the same delta; the ≥0 clamp holds per entry.
+    assert grouping[EFFECTIVE_DETECTOR_T0_KEY] == [96, 98, 0]
+
+
 def test_promote_t0_clamps_negative_bin_to_zero():
     grouping = {"t0_bin": 2}
-    out = promote_t0_to_grouping(grouping, -1.0, bin_width_us=0.05)
+    out = promote_t0_to_grouping(grouping, 1.0, bin_width_us=0.05)
     assert out["after"]["t0_bin"] == 0
     # The residual reflects the delta ACTUALLY applied after the ≥0 clamp
-    # (−2 bins = −0.1 µs), not the rounded −20 bins — so the clamp's lost shift
-    # is disclosed, not hidden as a zero residual.
-    assert out["residual_us"] == pytest.approx(-1.0 - (-2) * 0.05)
+    # (−2 bins = 0.1 µs of the offset), not the rounded −20 bins — so the
+    # clamp's lost shift is disclosed, not hidden as a zero residual.
+    assert out["residual_us"] == pytest.approx(1.0 - 2 * 0.05)
 
 
 def test_promote_t0_rejects_nonpositive_bin_width():

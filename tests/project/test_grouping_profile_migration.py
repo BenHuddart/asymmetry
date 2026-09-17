@@ -328,7 +328,7 @@ def test_migration_infers_from_file_t0_when_stored_matches_file():
 
 
 def test_migration_infers_manual_t0_when_stored_differs_from_file():
-    """A payload whose common t0 was shifted from the file t0 migrates to manual."""
+    """A payload whose common t0 was shifted from the file t0 migrates to a manual offset."""
     shifted = _overrides(extra={"t0_bin": 9})  # detector_t0_bins stay [5,5,5,5]
     state = _v11_state(
         [
@@ -338,8 +338,72 @@ def test_migration_infers_manual_t0_when_stored_differs_from_file():
     )
     migrated = migrate_to_current(copy.deepcopy(state))
     profile = migrated["grouping_profiles"][0]
-    assert profile["t0_policy"] == {"mode": "manual", "value": 9}
-    assert GroupingProfile.from_dict(profile).t0_policy.value == 9
+    assert profile["t0_policy"] == {"mode": "manual", "offset_bins": 4}
+    assert GroupingProfile.from_dict(profile).t0_policy.offset_bins == 4
+
+
+def test_migration_ignores_out_of_group_detector_t0():
+    """The bug that started the t0 work: a later t0 outside the F/B groups is not a shift.
+
+    ``detector_t0_bins`` covers every detector in the run, but the loader's
+    common t0 — and so the payload's ``t0_bin`` — is the max over the
+    forward/backward groups only. Comparing against the max over *all* detectors
+    flipped freshly loaded PSI runs into Manual.
+    """
+    payload = _overrides(
+        n_hist=6,
+        groups={1: [1, 2], 2: [3, 4]},
+        # Detectors 5 and 6 (indices 4, 5) sit outside both groups and carry a
+        # later header t0; the stored t0_bin is still the in-group max of 5.
+        extra={"detector_t0_bins": [5, 5, 5, 5, 9, 9]},
+    )
+    state = _v11_state(
+        [
+            {"run_number": 1, "source_file": "a.nxs", "grouping_overrides": payload},
+            {"run_number": 2, "source_file": "b.nxs", "grouping_overrides": copy.deepcopy(payload)},
+        ]
+    )
+    migrated = migrate_to_current(copy.deepcopy(state))
+    profile = migrated["grouping_profiles"][0]
+    assert "t0_policy" not in profile
+    assert GroupingProfile.from_dict(profile).t0_policy.mode == "from_file"
+
+
+# --------------------------------------------------------------------------- #
+# v20 -> v21: manual t0 becomes an offset; the absolute value is quarantined
+# --------------------------------------------------------------------------- #
+
+
+def test_v21_renames_manual_t0_value_to_legacy_value():
+    state = {
+        "schema_version": 20,
+        "created_with_app_version": "0.1.0",
+        "datasets": [],
+        "grouping_profiles": [
+            {
+                "name": "Default (EMU)",
+                "fingerprint": {"instrument": "EMU", "histogram_count": 4},
+                "groups": {1: [1, 2], 2: [3, 4]},
+                "t0_policy": {"mode": "manual", "value": 9},
+            },
+            {
+                "name": "Other (EMU)",
+                "fingerprint": {"instrument": "EMU", "histogram_count": 4},
+                "groups": {1: [1, 2], 2: [3, 4]},
+                "t0_policy": {"mode": "auto_detect", "strategy": "prompt_peak"},
+            },
+        ],
+    }
+    migrated = migrate_to_current(copy.deepcopy(state))
+    assert migrated["schema_version"] == CURRENT_SCHEMA_VERSION
+    first, second = migrated["grouping_profiles"]
+    assert first["t0_policy"] == {"mode": "manual", "legacy_value": 9}
+    # Untouched: nothing but a manual `value` is rewritten.
+    assert second["t0_policy"] == {"mode": "auto_detect", "strategy": "prompt_peak"}
+    # The quarantined value survives a policy round-trip and is not resolvable.
+    policy = GroupingProfile.from_dict(first).t0_policy
+    assert policy.legacy_value == 9
+    assert policy.offset_bins is None
 
 
 # --------------------------------------------------------------------------- #

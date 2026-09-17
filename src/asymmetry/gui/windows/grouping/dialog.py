@@ -21,7 +21,7 @@ from dataclasses import replace
 from typing import Any
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
@@ -37,10 +37,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -70,9 +72,13 @@ from asymmetry.core.project.profiles import (
     resolve_effective_grouping,
 )
 from asymmetry.core.transform import (
+    RunT0Search,
+    T0Assessment,
+    assess_t0,
     available_background_modes,
     calibrate_deadtime_from_histograms,
     common_t0_for_groups,
+    detected_detector_t0_bins,
     estimate_deadtime_from_histograms,
     excluded_detector_indices,
     filter_excluded_indices,
@@ -99,11 +105,13 @@ from asymmetry.gui.utils.profile_colors import (
     soft_profile_background,
     used_profile_colors,
 )
+from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollComboBox,
     NoScrollDoubleSpinBox,
     NoScrollSpinBox,
 )
+from asymmetry.gui.widgets.screen_sizing import resize_to_available
 from asymmetry.gui.widgets.section_overflow_indicator import SectionOverflowIndicator
 from asymmetry.gui.windows.grouping.alpha_section import (
     AlphaEstimateResult,
@@ -181,6 +189,47 @@ _CARD_STATUS_PREFIXES: dict[str, str] = {
     "alpha": "α = ",
     "beta": "β = ",
 }
+
+#: Debounce before the detected-t0 scan starts, in ms. Matches the live
+#: preview's coalescing window, so a burst of group edits costs one scan.
+_T0_DETECT_DEBOUNCE_MS = 300
+
+#: Display names for the two :func:`~asymmetry.core.transform.find_t0` strategies.
+_T0_STRATEGY_LABELS = {"prompt_peak": "prompt peak", "pulse_edge": "pulse-edge midpoint"}
+
+#: The longest line ``_refresh_t0_line`` can produce: the longest file part
+#: ("File: none (detected)"), the longest strategy name ("pulse-edge
+#: midpoint"), and generously-wide bin/spread/Δ numbers. Used to *measure* the
+#: grouping column's width budget in real font-metric pixels — never rendered
+#: — so the budget is exact for whatever font a platform actually substitutes
+#: (a plain average-character-width estimate reads narrower than this line's
+#: real digits/"·"/"Δ"/parentheses on at least one CI font, eliding a line
+#: that fit comfortably on the developer's own machine).
+_T0_LINE_WORST_CASE = (
+    "File: none (detected) · Detected: bin 99999 (pulse-edge midpoint, spread 999) · Δ +99999"
+)
+
+#: The window has no per-pane character budgets: every pane advertises its
+#: measured content minimum at construction, the grouping column's cap is a
+#: pixel width measured from the live t0 line + verdict button
+#: (``_t0_line_column_width_px``), and ``GroupingDialog.preferred_window_size``
+#: derives the default width from those. A hardcoded number in average
+#: characters read narrower than the line's real digits and punctuation on the
+#: Linux runner's font and elided the t0 line at the default width.
+
+#: Spacing between the t0 label and the verdict button in their row
+#: (``t0_detected_row.setSpacing``) — folded into the grouping column's
+#: measured pixel budget below.
+_T0_ROW_SPACING_PX = 4
+
+
+def _t0_line_column_width_px(label: QLabel, verdict_button: QToolButton) -> int:
+    """Pixel width of the t0 line + verdict button, from the label's own font metrics."""
+    return (
+        label.fontMetrics().horizontalAdvance(_T0_LINE_WORST_CASE)
+        + verdict_button.sizeHint().width()
+        + _T0_ROW_SPACING_PX
+    )
 
 
 class GroupingDialog(QDialog):
@@ -304,8 +353,9 @@ class GroupingDialog(QDialog):
         # Wide enough that the grouping and corrections columns sit side by side
         # (the pipeline strip and section headers fit without horizontal
         # scrolling) and tall enough that both columns' default (deadtime-off)
-        # state needs no vertical scrolling either.
-        self.resize(1220, 680)
+        # state needs no vertical scrolling either — then capped to the work area
+        # of the screen this window lands on, so it never opens with its title
+        # bar above a laptop's menu bar.
 
         if not self._datasets:
             layout = QVBoxLayout(self)
@@ -328,6 +378,23 @@ class GroupingDialog(QDialog):
         #: resolve already computed from here instead of re-scanning every
         #: detector a second time (see :meth:`_seed_t0_spin_from_detection`).
         self._last_resolved_seed: dict[str, Any] | None = None
+        #: One detection per preview run, for the always-on detected line (D11).
+        #: The key is the run's identity, which *is* its content key here: the
+        #: dialog never mutates a run's histograms and holds every dataset for
+        #: its own lifetime, so a digest over the counts would cost exactly what
+        #: the scan it guards costs. Populated by the off-thread detection and by
+        #: the one-shot auto-detect scan, so neither repeats the other's work.
+        self._t0_search_cache: dict[tuple[int, int], RunT0Search] = {}
+        #: Cache key of the detection currently in flight (single-flight guard).
+        self._t0_detection_key: tuple[int, int] | None = None
+        #: Verdict messages recorded at Apply (D9) — warnings, never a block.
+        self.t0_apply_warnings: list[str] = []
+        # Debounce: the preview run and the analysis groups both move under
+        # keystroke-frequency signals, and the scan is O(detectors x bins).
+        self._t0_detect_timer = QTimer(self)
+        self._t0_detect_timer.setSingleShot(True)
+        self._t0_detect_timer.setInterval(_T0_DETECT_DEBOUNCE_MS)
+        self._t0_detect_timer.timeout.connect(self._start_t0_detection)
         # The draft resolved against the preview run: a full payload with the
         # historical ``run.grouping`` shape that the form controls seed from. It
         # merges the draft's shareable settings with the preview run's per-run
@@ -490,6 +557,11 @@ class GroupingDialog(QDialog):
         self._group_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setMinimumHeight(0)
+        # The detector-indices column absorbs any width the scope pane doesn't
+        # need instead of leaving it empty to the right of the table; the other
+        # three stay content-sized (set once — resizeColumnsToContents in
+        # _populate_group_table only touches the non-stretch columns).
+        self._group_table.horizontalHeader().setStretchLastSection(True)
         left_layout.addWidget(self._group_table)
         self._populate_group_table()
 
@@ -576,10 +648,69 @@ class GroupingDialog(QDialog):
         self._t0_spin.setRange(index_base, max_bin + index_base)
         self._t0_spin.setValue(default_t0_internal + index_base)
 
-        # Provenance / per-run note shown beneath the mode selector.
-        self._t0_mode_label = QLabel("")
-        self._t0_mode_label.setWordWrap(True)
-        self._t0_mode_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        # The always-on file-vs-detected line (D11): one read-only label under the
+        # t0 row carrying the file t0, the detected t0 with its strategy/spread
+        # and the signed difference. Identical in every mode — the per-mode
+        # provenance notes it replaced said different things about the same run,
+        # which is exactly the divergence D11 exists to show. Single-line: the
+        # verdict messages live in the button beside it, not inline, so the line
+        # keeps a fixed shape whatever the run says.
+        # ElidedLabel (not a plain QLabel with a hardcoded width reservation):
+        # a fixed 72-char minimum here made the grouping column's content
+        # minimum ~504px even on a run whose actual line is much shorter,
+        # starving the corrections column of width it never used. Expanding
+        # lets the row's stretch give it room to show the whole line when
+        # there's space (see the grouping column's own maximum, measured in
+        # real font-metric pixels from this label below); a small explicit
+        # floor keeps a readable prefix ("File: bin 1612 · Detected: bin 1614
+        # (…") when squeezed, eliding the rest with the full text in the
+        # tooltip.
+        self._t0_detected_label = ElidedLabel("")
+        self._t0_detected_label.setWordWrap(False)
+        self._t0_detected_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._t0_detected_label.setMinimumWidth(metrics.char_width(40))
+        # set_pen_color, not setStyleSheet: ElidedLabel's custom paintEvent
+        # bypasses QSS colour rules (see its docstring), so a stylesheet color
+        # here would silently never render.
+        self._t0_detected_label.set_pen_color(tokens.TEXT_MUTED)
+
+        # The verdict, one click away: shown only when there is something to say
+        # (D8 warn/error), with every message in the tooltip and in an
+        # instant-popup menu of disabled entries — they are statements to read,
+        # not commands.
+        self._t0_verdict_menu = QMenu(self)
+        self._t0_verdict_button = QToolButton()
+        self._t0_verdict_button.setText("⚠")
+        self._t0_verdict_button.setAutoRaise(True)
+        self._t0_verdict_button.setMenu(self._t0_verdict_menu)
+        self._t0_verdict_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        # Retain its layout footprint while hidden: Qt excludes a hidden widget
+        # from its layout's minimumSizeHint, but the grouping scroll's minimum
+        # width is captured once at construction (below, "Set once here") while
+        # this button starts hidden. Without retention, a later warn/error
+        # verdict shows the button and grows the row's true minimum past that
+        # frozen floor, opening a horizontal scrollbar the width tests don't
+        # catch. Retaining the size bakes the button's width into the
+        # construction-time minimum, so showing/hiding it never changes the
+        # layout.
+        policy = self._t0_verdict_button.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self._t0_verdict_button.setSizePolicy(policy)
+        self._t0_verdict_button.hide()
+
+        # Real font-metric pixels, not an average-character-width guess: measured
+        # now that both widgets exist, from the label's own font and the button's
+        # own (style-dependent) sizeHint, so it is exact for whatever font a
+        # platform actually substitutes (see ``_t0_line_column_width_px``). Bounds
+        # the grouping column's maximum below; re-resizing here with the real
+        # value (the earlier, pre-widget call above used a fresh throwaway
+        # widget's identical metrics) makes this the one authoritative
+        # computation the window's default width and the column's cap agree on.
+        self._t0_line_max_px = _t0_line_column_width_px(
+            self._t0_detected_label, self._t0_verdict_button
+        )
 
         self._t_good_offset_spin = NoScrollSpinBox()
         self._t_good_offset_spin.setRange(0, max_bin)
@@ -879,7 +1010,17 @@ class GroupingDialog(QDialog):
         t0_row.addWidget(self._t0_spin)
         t0_row.addWidget(self._find_t0_btn)
         form.addRow("t0 Bin", self._t0_row_widget)
-        form.addRow("", self._t0_mode_label)
+        self._t0_detected_row_widget = QWidget()
+        t0_detected_row = QHBoxLayout(self._t0_detected_row_widget)
+        t0_detected_row.setContentsMargins(0, 0, 0, 0)
+        t0_detected_row.setSpacing(4)
+        t0_detected_row.addWidget(self._t0_detected_label)
+        t0_detected_row.addWidget(self._t0_verdict_button)
+        t0_detected_row.addStretch()
+        # Spans both form columns: the line is a sentence about the row above it,
+        # not a field, and indenting it into the field column would spend the
+        # label column's width on nothing and widen the whole window for it.
+        form.addRow(self._t0_detected_row_widget)
         form.addRow("t_good Offset", self._t_good_offset_spin)
         form.addRow("Last Good Bin", self._last_good_spin)
         binning_row_widget = QWidget()
@@ -945,12 +1086,19 @@ class GroupingDialog(QDialog):
         )
         self._grouping_scroll.setWidget(grouping_content)
         grouping_column = QWidget()
-        # Hold the narrow column near its natural width so it never grows to
-        # swallow the right pane (the AdjustToContents scroll over-reserves ~60px
-        # otherwise); the corrections column (stretch 1) takes the rest. Derived
-        # from the UI-font metrics so it tracks the zoom with the capped fields it
-        # bounds, keeping every row inside the width with no horizontal scroll.
-        grouping_column.setMaximumWidth(metrics.field_width_for(56))
+        # Cap the narrow column so it never grows to swallow the right pane
+        # (the AdjustToContents scroll over-reserves ~60px otherwise) or hog
+        # width the corrections column (equal stretch, below) needs. Capped at
+        # the t0 line's own real font-metric pixel width plus its verdict
+        # button — the widest row this column carries when shown unelided —
+        # measured once in __init__ (``self._t0_line_max_px``, above) so it is
+        # exact for the platform's real font rather than an average-character
+        # guess (a char-count budget read narrower than this line's actual
+        # digits/"·"/"Δ"/parentheses on at least one CI font, eliding a line
+        # that fit on the developer's own machine). Below this cap the column
+        # is free to shrink to its real content minimum (the t0 line elides
+        # itself; see ElidedLabel above).
+        grouping_column.setMaximumWidth(self._t0_line_max_px)
         grouping_col_layout = QVBoxLayout(grouping_column)
         grouping_col_layout.setContentsMargins(0, 0, 0, 0)
         grouping_col_layout.setSpacing(2)
@@ -1020,7 +1168,14 @@ class GroupingDialog(QDialog):
         columns_row = QHBoxLayout()
         columns_row.setContentsMargins(0, 0, 0, 0)
         columns_row.setSpacing(8)
-        columns_row.addWidget(grouping_column, stretch=0)
+        # Equal stretch: with the t0 line's hard reservation gone, grouping's
+        # own content minimum is usually well under its maximum cap (below),
+        # so it needs an equal claim on spare width to actually reach that cap
+        # (and show the whole t0 line) at the default size — otherwise it would
+        # just sit at its smaller natural size and hand every pixel of slack to
+        # corrections, unelided-by-default no longer being the common case.
+        # The maximum cap still stops it from hogging space corrections needs.
+        columns_row.addWidget(grouping_column, stretch=1)
         columns_row.addWidget(corrections_column, stretch=1)
         right_layout.addLayout(columns_row, stretch=1)
 
@@ -1047,9 +1202,29 @@ class GroupingDialog(QDialog):
         # (test_both_columns_fit_without_scroll_at_default_size). Set once here:
         # the row structure is fixed at construction (dataset-gated rows are
         # decided by the dataset set, which does not change after __init__).
+        # The t0 verdict button is the one row widget that toggles visibility
+        # after construction (background detection lands a warn/error verdict
+        # later), but it does not violate the "fixed at construction" premise:
+        # its size policy retains its footprint while hidden (see its
+        # construction above), so this captured minimum already includes it
+        # and showing/hiding it later changes nothing.
         self._grouping_scroll.setMinimumWidth(
             self._grouping_scroll.widget().minimumSizeHint().width()
             + 2 * self._grouping_scroll.frameWidth()
+        )
+        # Mirror that floor on the corrections side: it is the stretch-1 column
+        # so it normally just absorbs whatever width the capped grouping column
+        # doesn't need, but a run whose calibration-run label, method and
+        # provenance text are wider than the column's share must still not clip
+        # into a horizontal scroll — advertise
+        # the real minimum so the dialog's own layout grows to fit it instead
+        # (the window is `resize()`d, not fixed, so a minimum raised past the
+        # current size still enlarges it). Set once here for the same reason
+        # as the grouping floor above: the row structure is fixed at
+        # construction.
+        self._corrections_scroll.setMinimumWidth(
+            self._corrections_scroll.widget().minimumSizeHint().width()
+            + 2 * self._corrections_scroll.frameWidth()
         )
 
         # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
@@ -1117,6 +1292,15 @@ class GroupingDialog(QDialog):
         # by _seed_source (which resolves the target), so no re-seed is needed.
         self._scope_panel.set_current_run(int(self._reference_dataset.run_number))
         self._refresh_editing_strip()
+
+        # Open at the size where every pane sits at its measured minimum and
+        # the grouping column has reached its t0-line cap, capped to the work
+        # area of the screen (see ``preferred_window_size``). Last, once every
+        # widget exists, so the minimum is the finished dialog's on this
+        # platform's fonts — an average-character budget read too narrow on
+        # Linux and elided the t0 line at the default width.
+        self._preferred_window_size = self._measure_preferred_window_size()
+        resize_to_available(self, *self._preferred_window_size)
 
     def _choose_reference_dataset(self) -> MuonDataset:
         """Return preferred reference dataset for initial grouping values."""
@@ -2334,16 +2518,28 @@ class GroupingDialog(QDialog):
             self._t0_mode_combo.blockSignals(blocked)
 
     def _seed_t0_mode_from_draft(self) -> None:
-        """Set the t0 mode combo + manual value from the draft policy, then gate."""
+        """Set the t0 mode combo + manual value from the draft policy, then gate.
+
+        A Manual policy stores a signed *offset* from each run's own file t0
+        (D3), so the spin shows the preview run's resolved absolute bin:
+        ``file common t0 + offset``. Switching the preview run therefore keeps
+        the offset and re-resolves the displayed bin.
+        """
         policy = self._draft.t0_policy
         self._set_t0_mode_combo(policy.mode)
-        if policy.mode == "manual" and policy.value is not None:
+        # A pre-v21 absolute `value` is converted on project open, before any
+        # profile reaches this editor — resolution would raise on one too.
+        assert policy.legacy_value is None, (
+            f"Grouping profile {self._draft.name!r} reached the editor with an "
+            "unconverted pre-v21 manual t0 value."
+        )
+        if policy.mode == "manual" and policy.offset_bins is not None:
             base = self._bin_index_base()
             max_bin = self._max_bin_index_for_reference_dataset()
-            value = max(0, min(max_bin, int(policy.value)))
+            resolved = self._file_common_t0_for_preview_run() + int(policy.offset_bins)
             blocked = self._t0_spin.blockSignals(True)
             try:
-                self._t0_spin.setValue(value + base)
+                self._t0_spin.setValue(max(0, min(max_bin, resolved)) + base)
             finally:
                 self._t0_spin.blockSignals(blocked)
         self._apply_t0_mode_to_controls()
@@ -2356,63 +2552,142 @@ class GroupingDialog(QDialog):
     def _current_t0_policy(self) -> T0Policy:
         """Build the draft :class:`T0Policy` from the t0 mode selector + spinbox.
 
-        Manual mode carries the spinbox value (internal, base-adjusted). The
-        other modes carry no value — resolution reads each run's file / detected
-        t0. Auto-detect provenance is display-only and recomputed at resolve time.
+        Manual mode stores the spinbox value as a signed *offset* from the
+        preview run's own file common t0 (D3), so one profile shifts every run
+        it covers by the same amount however their headers differ. The other
+        modes carry no value — resolution reads each run's file / detected t0.
+        Auto-detect provenance is display-only and recomputed at resolve time.
         """
         mode = self._current_t0_mode()
         if mode == "manual":
             base = self._bin_index_base()
             max_bin = self._max_bin_index_for_reference_dataset()
             value = max(0, min(max_bin, int(self._t0_spin.value()) - base))
-            return T0Policy(mode="manual", value=value)
+            return T0Policy(
+                mode="manual", offset_bins=value - self._file_common_t0_for_preview_run()
+            )
         return T0Policy(mode=mode)
 
     def _apply_t0_mode_to_controls(self) -> None:
-        """Gate the t0 spinbox / Find button and set the provenance note per mode.
+        """Gate the t0 spinbox / Find button and seed the displayed bin per mode.
 
-        * ``from_file`` — spinbox read-only, shows the preview run's file t0;
-          note records the per-run derivation.
-        * ``manual`` — spinbox editable (the historical behaviour); Find t0 fills it.
-        * ``auto_detect`` — spinbox read-only, shows the preview run's detected t0
-          plus the strategy / spread provenance.
+        * ``from_file`` — spinbox read-only, shows the preview run's file t0.
+        * ``manual`` — spinbox editable (the historical behaviour); Find t0 fills
+          it, and what is stored is its *offset* from the file t0 (D3).
+        * ``auto_detect`` — spinbox read-only, shows the preview run's detected t0.
+
+        Provenance is not per mode any more: the detected line under the row
+        carries file, detected, Δ and the verdict in every mode (D11).
         """
         mode = self._current_t0_mode()
         self._t0_spin.setReadOnly(mode != "manual")
         self._find_t0_btn.setEnabled(mode == "manual")
         if mode == "from_file":
-            self._t0_mode_label.setText("t0 from each run's file")
             self._seed_t0_spin_from_preview()
         elif mode == "auto_detect":
             self._seed_t0_spin_from_detection()
-        else:  # manual
-            self._t0_mode_label.setText("Common t0 override applied to every run")
+        # Manual leaves the spin alone: it already holds the resolved absolute
+        # bin (_seed_t0_mode_from_draft) or the user's own edit.
+        self._refresh_t0_line()
+
+    def _file_common_t0_for_preview_run(self) -> int:
+        """The preview run's **file** common t0 over the live analysis groups.
+
+        Derived from the run's own histograms and the current forward/backward
+        groups — never from the stored payload ``t0_bin``, which can carry a
+        manual/override shift (e.g. in override-editing mode). This is both what
+        "From file" displays and the baseline a Manual *offset* is measured
+        against (D3), so it must show the genuine file value; selecting From
+        file then genuinely clears any stored shift on Apply.
+        """
+        # ``detector_t0_bins=None`` on purpose: the From-file display and the
+        # Manual-offset baseline are the FILE values, so this one alignment call
+        # must ignore any resolved override rather than route through the
+        # resolver (D10's exception, spelled out).
+        return self._common_t0_for_preview_run(None)
+
+    def preferred_window_size(self) -> tuple[int, int]:
+        """The window's default size *before* the available-screen clamp.
+
+        Measured once at the end of construction (``_measure_preferred_window_size``)
+        and cached: a shown window's minimum size hint settles a pixel or two
+        wider than the pre-show value, and callers that resize to this size
+        must read back exactly what they set.
+        """
+        return self._preferred_window_size
+
+    def _measure_preferred_window_size(self) -> tuple[int, int]:
+        """Derive the default size from the panes' measured minimums.
+
+        Width: the dialog's own minimum (every pane at its measured content
+        minimum, which is where the platform's fonts enter) plus the room the
+        grouping column needs to grow from that minimum to its t0-line cap.
+        The two right-hand columns share spare width equally, so the column
+        reaches the cap only when the same amount has also gone to
+        Corrections — hence twice the difference. Height: the design floor
+        that keeps both columns' default (deadtime-off) state free of a
+        vertical scrollbar. The window opens at ``resize_to_available`` of
+        this, which is smaller on a small display; tests that pin the budget
+        resize to this value rather than reading the window back.
+        """
+        self.layout().activate()
+        grouping_room = max(0, self._t0_line_max_px - self._grouping_scroll.minimumWidth())
+        return self.minimumSizeHint().width() + 2 * grouping_room, 680
+
+    def _common_t0_for_preview_run(self, detector_t0_bins: list[int] | None) -> int:
+        """The common t0 the live analysis groups align to on the given bins.
+
+        Mirrors what ``resolve_effective_grouping`` will compute for this run:
+        a max over the forward+backward detectors present in it, exclusions
+        applied. ``None`` asks for the file values.
+        """
+        if self._run is None or not self._run.histograms:
+            return 0
+        n_hist = len(self._run.histograms)
+        forward_idx = [
+            i
+            for i in self._filtered_group_indices(int(self._forward_combo.currentData() or 1))
+            if 0 <= i < n_hist
+        ]
+        backward_idx = [
+            i
+            for i in self._filtered_group_indices(int(self._backward_combo.currentData() or 2))
+            if 0 <= i < n_hist
+        ]
+        if not forward_idx and not backward_idx:
+            bins = detector_t0_bins or [int(h.t0_bin) for h in self._run.histograms]
+            return int(max(bins))
+        return int(
+            common_t0_for_groups(
+                self._run.histograms,
+                forward_idx,
+                backward_idx,
+                detector_t0_bins=detector_t0_bins,
+            )
+        )
+
+    def _detected_common_t0_for_preview_run(self, search: RunT0Search) -> int:
+        """The common t0 a per-detector Auto-detect resolves for the live groups.
+
+        Auto-detect gives every detector its own detected t0 (``musrt0 -g``), so
+        the common bin is a max over the analysis detectors' *estimates* — not
+        the median of all of them. Routed through the same core helper
+        ``_apply_t0_policy`` uses, so the read-only spin cannot show a bin the
+        reduction will not align to.
+        """
+        source = (self._run.grouping or {}).get("t0_source")
+        bins = detected_detector_t0_bins(
+            search,
+            [int(hist.t0_bin) for hist in self._run.histograms],
+            missing=source in ("missing", "detected"),
+        )
+        return self._common_t0_for_preview_run(bins)
 
     def _seed_t0_spin_from_preview(self) -> None:
-        """Show the preview run's file-derived common t0 in the (read-only) spin.
-
-        Derives the value from the run's own histograms and the current
-        forward/backward groups — never from the stored payload ``t0_bin``,
-        which can carry a manual/override shift (e.g. in override-editing
-        mode). "From file" must always display the file value, and selecting
-        it must genuinely clear any stored shift on Apply.
-        """
+        """Show the preview run's file-derived common t0 in the (read-only) spin."""
         max_bin = self._max_bin_index_for_reference_dataset()
         base = self._bin_index_base()
-        t0_internal = 0
-        if self._run is not None and self._run.histograms:
-            forward_idx = self._filtered_group_indices(int(self._forward_combo.currentData() or 1))
-            backward_idx = self._filtered_group_indices(
-                int(self._backward_combo.currentData() or 2)
-            )
-            n_hist = len(self._run.histograms)
-            forward_idx = [i for i in forward_idx if 0 <= i < n_hist]
-            backward_idx = [i for i in backward_idx if 0 <= i < n_hist]
-            if forward_idx or backward_idx:
-                t0_internal = common_t0_for_groups(self._run.histograms, forward_idx, backward_idx)
-            else:
-                t0_internal = max(h.t0_bin for h in self._run.histograms)
-        t0_internal = max(0, min(max_bin, int(t0_internal)))
+        t0_internal = max(0, min(max_bin, self._file_common_t0_for_preview_run()))
         blocked = self._t0_spin.blockSignals(True)
         try:
             self._t0_spin.setValue(t0_internal + base)
@@ -2428,13 +2703,13 @@ class GroupingDialog(QDialog):
         every detector a second time on the GUI thread — hundreds of ms at HiFi
         scale — and, because it merged the reference-dataset metadata that
         core's :func:`resolve_effective_grouping` does not, could even display a
-        t0 that disagreed with the one the reduction actually uses. Only an
-        explicit toggle to auto-detect (no fresh resolve in scope) falls back to
-        a scan, using the same ``run.metadata`` core does so the display cannot
-        diverge, under a wait cursor.
+        t0 that disagreed with the one the reduction actually uses. Failing
+        that it reads the detected line's own cache (``_t0_search_cache``), and
+        only an explicit toggle with neither in hand falls back to a scan —
+        using the same ``run.metadata`` core does so the display cannot diverge,
+        under a wait cursor, and caching the result so the line never repeats it.
         """
         if self._run is None or not self._run.histograms:
-            self._t0_mode_label.setText("Auto-detect: preview run has no histograms")
             return
         resolved = self._last_resolved_seed
         # Require ``t0_bin`` too, not just the strategy: ``_apply_t0_policy``
@@ -2444,37 +2719,174 @@ class GroupingDialog(QDialog):
         # scan then yields the right value, whereas a ``t0_bin`` default of 0
         # would silently display the wrong t0.
         if resolved is not None and resolved.get("t0_search_strategy") and "t0_bin" in resolved:
-            self._apply_detected_t0_to_spin(
-                consensus_t0=int(resolved["t0_bin"]),
-                strategy=str(resolved["t0_search_strategy"]),
-                spread_bins=int(resolved.get("t0_search_spread_bins", 0)),
-            )
+            self._apply_detected_t0_to_spin(int(resolved["t0_bin"]))
+            return
+        cached = self._t0_search_cache.get(self._t0_cache_key())
+        if cached is not None:
+            if cached.ok:
+                self._apply_detected_t0_to_spin(self._detected_common_t0_for_preview_run(cached))
             return
         with self._busy_cursor():
             search = find_t0_for_run(self._run.histograms, self._run.metadata or {})
-        if not search.ok:
-            self._t0_mode_label.setText(f"Auto-detect: {search.message}")
-            return
-        self._apply_detected_t0_to_spin(
-            consensus_t0=int(search.consensus_t0_bin),
-            strategy=str(search.strategy),
-            spread_bins=int(search.spread_bins),
-        )
+        # The detected line needs the full search (per-detector outliers), and
+        # this scan is exactly the one it would otherwise queue — cache it.
+        self._t0_search_cache[self._t0_cache_key()] = search
+        if search.ok:
+            self._apply_detected_t0_to_spin(self._detected_common_t0_for_preview_run(search))
 
-    def _apply_detected_t0_to_spin(
-        self, *, consensus_t0: int, strategy: str, spread_bins: int
-    ) -> None:
-        """Write a detected common t0 (+ provenance label) into the read-only spin."""
-        base = self._bin_index_base()
+    def _apply_detected_t0_to_spin(self, consensus_t0: int) -> None:
+        """Write a detected common t0 into the read-only spin."""
         blocked = self._t0_spin.blockSignals(True)
         try:
-            self._t0_spin.setValue(consensus_t0 + base)
+            self._t0_spin.setValue(consensus_t0 + self._bin_index_base())
         finally:
             self._t0_spin.blockSignals(blocked)
-        label = "prompt peak" if strategy == "prompt_peak" else "pulse-edge midpoint"
-        self._t0_mode_label.setText(
-            f"Auto-detect: {label}, detector spread {spread_bins} bins (per run)"
+
+    # -- the always-on file / detected / Δ line (D11) --------------------
+
+    def _t0_cache_key(self) -> tuple[int, int]:
+        """Cache key for the preview run's detection (see ``_t0_search_cache``)."""
+        return (int(self._run.run_number), id(self._run))
+
+    def _schedule_t0_detection(self) -> None:
+        """Queue the preview run's detection unless it is cached or in flight."""
+        key = self._t0_cache_key()
+        if key in self._t0_search_cache or key == self._t0_detection_key:
+            return
+        self._t0_detect_timer.start()
+
+    def _start_t0_detection(self) -> None:
+        """Run :func:`find_t0_for_run` for the preview run on a worker thread.
+
+        Single-flight: one scan at a time, keyed on the run. A preview-run switch
+        while one is in flight is picked up by :meth:`_on_t0_detection_finished`,
+        which re-queues for whatever run is current when the result lands.
+        """
+        key = self._t0_cache_key()
+        if key in self._t0_search_cache or self._t0_detection_key is not None:
+            return
+        self._t0_detection_key = key
+        histograms = list(self._run.histograms)
+        metadata = dict(self._run.metadata or {})
+        # No error/cancel callbacks: find_t0_for_run reports a failed search in
+        # its own result (``ok=False``) rather than raising, and the only
+        # cancellation is the dialog's own shutdown.
+        self._tasks.start(
+            lambda _worker: find_t0_for_run(histograms, metadata),
+            on_finished=self._on_t0_detection_finished,
         )
+
+    def _on_t0_detection_finished(self, result: object) -> None:
+        """Store a finished detection and repaint the line (GUI thread)."""
+        key, self._t0_detection_key = self._t0_detection_key, None
+        assert isinstance(result, RunT0Search)
+        assert key is not None
+        self._t0_search_cache[key] = result
+        self._refresh_t0_line()
+
+    def _t0_assessment_grouping(self) -> dict[str, Any]:
+        """The grouping :func:`assess_t0` reads: live groups + the run's t0 facts.
+
+        Deliberately free of ``effective_detector_t0_bins``: the line compares
+        the run's *file* alignment with the detection, so a policy shift already
+        in the stored payload must not move the baseline it is measured against.
+        ``bin_index_base`` rides along so the bins in the verdict messages are
+        written in the same base as the bins the line and the spin display, and
+        ``first_good_bin`` comes from the live controls so the good-window checks
+        judge the window the user is editing, not the one the run was loaded with.
+        """
+        run_grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        grouping: dict[str, Any] = {
+            "groups": {gid: [idx + 1 for idx in values] for gid, values in self._groups.items()},
+            "forward_group": int(self._forward_combo.currentData() or 1),
+            "backward_group": int(self._backward_combo.currentData() or 2),
+            "bin_index_base": self._bin_index_base(),
+            "first_good_bin": self._resolve_good_bin_limits_from_controls()[2],
+        } | self._exclusion_payload()
+        if run_grouping.get("t0_source") is not None:
+            grouping["t0_source"] = run_grouping["t0_source"]
+        return grouping
+
+    def _current_t0_verdict(self) -> T0Assessment:
+        """The live t0 verdict for the preview run (D8), from the cached detection."""
+        return assess_t0(
+            self._run.histograms,
+            self._t0_assessment_grouping(),
+            self._t0_search_cache.get(self._t0_cache_key()),
+        )
+
+    def _refresh_t0_line(self) -> None:
+        """Repaint the file / detected / Δ line and its verdict button (D8, D11).
+
+        Cheap by construction — a cache read plus :func:`assess_t0`, which is
+        O(detectors) — so it is safe on the per-edit refresh seam. The scan it
+        displays is the debounced worker's, never this call's.
+
+        The detected bin is the file bin plus the **median per-detector shift**,
+        and the spread is the range of those shifts, not of the raw estimates:
+        on per-detector-t0 data (PSI) the raw median and the group's header
+        maximum are different quantities, so quoting them side by side reported
+        a divergence that was only the detectors' real stagger.
+        """
+        if self._run is None or not self._run.histograms:
+            self._t0_detected_label.setText("")
+            self._t0_verdict_button.hide()
+            return
+        self._schedule_t0_detection()
+        search = self._t0_search_cache.get(self._t0_cache_key())
+        verdict = self._current_t0_verdict()
+
+        base = self._bin_index_base()
+        file_common = self._file_common_t0_for_preview_run()
+        source = (self._run.grouping or {}).get("t0_source")
+        if source in ("detected", "missing"):
+            file_part = "File: none (detected)"
+        else:
+            file_part = f"File: bin {file_common + base}"
+        if search is None:
+            detected_part = "Detected: …"
+        elif not search.ok:
+            detected_part = "Detected: unavailable"
+        else:
+            strategy = _T0_STRATEGY_LABELS[search.strategy]
+            detected_part = (
+                f"Detected: bin {file_common + int(search.shift_median_bins) + base} "
+                f"({strategy}, spread {int(search.shift_spread_bins)})"
+            )
+        parts = [file_part, detected_part]
+        if verdict.delta_bins is not None:
+            parts.append(f"Δ {verdict.delta_bins:+d}")
+        text = " · ".join(parts)
+        # The label is an ElidedLabel: it elides itself to whatever width the
+        # row is actually given (down to its own readable-prefix floor), so a
+        # run with unusually long bin numbers no longer needs a manual elide
+        # here. set_hover_text (not the default elision-only tooltip) always
+        # shows the untruncated line on hover, even when the current width
+        # happens to fit it — matching the line's previous, always-on tooltip.
+        self._t0_detected_label.setText(text)
+        self._t0_detected_label.set_hover_text(text)
+        color = {"error": tokens.ERROR, "warn": tokens.WARN}.get(verdict.level, tokens.TEXT_MUTED)
+        self._t0_detected_label.set_pen_color(color)
+        self._refresh_t0_verdict_button(verdict)
+
+    def _refresh_t0_verdict_button(self, verdict: T0Assessment) -> None:
+        """Show (or hide) the ⚠ button carrying the verdict messages.
+
+        Hidden at level ``ok`` — a clean run says nothing. Otherwise the button
+        is tinted by severity and holds every message twice over: in the tooltip,
+        for a hover, and as *disabled* menu entries, so a click parks them on
+        screen to be read while nothing about them is clickable.
+        """
+        self._t0_verdict_menu.clear()
+        if verdict.level == "ok":
+            self._t0_verdict_button.hide()
+            return
+        tint = tokens.ERROR if verdict.level == "error" else tokens.WARN
+        self._t0_verdict_button.setStyleSheet(f"color: {tint};")
+        self._t0_verdict_button.setToolTip("\n".join(verdict.messages))
+        for message in verdict.messages:
+            self._t0_verdict_menu.addAction(message).setEnabled(False)
+        self._t0_verdict_button.show()
 
     @contextlib.contextmanager
     def _busy_cursor(self) -> Iterator[None]:
@@ -3070,6 +3482,10 @@ class GroupingDialog(QDialog):
         # getters return it. Snapshot the dirty overrides as *committed* so
         # get_profile_result still reports them after the dirty set is cleared,
         # then disarm the close guard.
+        # The t0 verdict is advisory (D9): whatever it says, Apply proceeds with
+        # the chosen mode. The messages ride out on the result so the caller can
+        # log them, and the detected line keeps showing them in its own colour.
+        self.t0_apply_warnings = list(self._current_t0_verdict().messages)
         self._sync_draft_from_form()
         self._committed_override_runs = set(self._pending_override_runs())
         self._draft_dirty = False
@@ -3537,6 +3953,11 @@ class GroupingDialog(QDialog):
         is advisory. Datasets without raw histograms (co-added curves) make the
         pane hide itself with a note.
         """
+        # The detected line reads the live analysis groups (its file baseline
+        # moves with them), so it rides the same per-edit seam. It is a cache
+        # read plus an O(detectors) assessment — the scan itself is debounced
+        # onto a worker.
+        self._refresh_t0_line()
         pane = getattr(self, "_preview_pane", None)
         if pane is None:
             return
@@ -3728,6 +4149,11 @@ class GroupingDialog(QDialog):
         and ``self._tasks`` is this dialog's runner for the background-configure
         preview grouping. Every ``shutdown()`` is safe to call more than once.
         """
+        # Stop the detected-t0 debounce first: a timer left armed would start a
+        # fresh worker on the runner we are about to shut down.
+        detect_timer = getattr(self, "_t0_detect_timer", None)
+        if detect_timer is not None:
+            detect_timer.stop()
         pane = getattr(self, "_preview_pane", None)
         if pane is not None:
             pane.shutdown()
@@ -4283,7 +4709,13 @@ class GroupingDialog(QDialog):
             return None
 
     def _on_find_t0(self) -> None:
-        """Estimate t0 from the reference run and fill the override spinner."""
+        """Estimate t0 from the reference run and fill the Manual spin.
+
+        The spin holds the *absolute* bin, so filling it with the consensus
+        makes the stored Manual offset ``consensus − file common t0`` (D3). The
+        outcome is read off the shared detected line, which the spin edit
+        refreshes — there is no separate result label.
+        """
         if self._run is None or not self._run.histograms:
             QMessageBox.warning(self, "Find t0", "Reference run has no histograms.")
             return
@@ -4299,13 +4731,7 @@ class GroupingDialog(QDialog):
         if not search.ok:
             QMessageBox.warning(self, "Find t0", search.message)
             return
-        index_base = self._bin_index_base()
-        self._t0_spin.setValue(int(search.consensus_t0_bin) + index_base)
-        strategy = "pulse-edge midpoint" if search.strategy == "pulse_edge" else "prompt peak"
-        self._alpha_result_label.setText(
-            f"t0 = bin {search.consensus_t0_bin + index_base} ({strategy}, "
-            f"detector spread {search.spread_bins} bins) — press Apply to use it."
-        )
+        self._t0_spin.setValue(int(search.consensus_t0_bin) + self._bin_index_base())
 
     def _update_map_periods_visibility(self) -> None:
         """Show Map periods… only when the reference run has 3+ periods."""

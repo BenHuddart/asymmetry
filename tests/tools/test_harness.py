@@ -220,6 +220,89 @@ def test_qthread_check_reports_construction_outside_tasks_module(tmp_path: Path)
     assert "TaskRunner" in failures[0].message
 
 
+def test_current_source_matches_the_t0_resolver_baseline() -> None:
+    harness = _load_harness()
+
+    assert harness.find_t0_alignment_violations() == []
+
+
+def _t0_src_tree(tmp_path: Path) -> Path:
+    src_root = tmp_path / "asymmetry"
+    (src_root / "core" / "transform").mkdir(parents=True)
+    (src_root / "core" / "transform" / "grouping.py").write_text(
+        "common_t0_for_groups(histograms, forward, backward)\n", encoding="utf-8"
+    )
+    return src_root
+
+
+def test_t0_alignment_check_reports_a_bare_alignment_call(tmp_path: Path) -> None:
+    src_root = _t0_src_tree(tmp_path)
+    stray = src_root / "core" / "fourier" / "grouped.py"
+    stray.parent.mkdir(parents=True)
+    stray.write_text(
+        "counts = apply_grouping_aligned(\n    hists,\n    indices,\n    common_t0_bin=t0,\n)\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.T0_ALIGNMENT_BASELINE = {}
+
+    failures = harness.find_t0_alignment_violations(src_root)
+
+    assert len(failures) == 1
+    assert failures[0].path == stray
+    assert "effective_detector_t0_bins" in failures[0].message
+
+
+def test_t0_alignment_check_accepts_a_call_that_passes_the_resolver(tmp_path: Path) -> None:
+    src_root = _t0_src_tree(tmp_path)
+    consumer = src_root / "core" / "fourier" / "grouped.py"
+    consumer.parent.mkdir(parents=True)
+    consumer.write_text(
+        "counts = apply_grouping_aligned(\n"
+        "    hists,\n"
+        "    indices,\n"
+        "    common_t0_bin=t0,\n"
+        "    detector_t0_bins=effective_detector_t0_bins(hists, grouping),\n"
+        ")\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.T0_ALIGNMENT_BASELINE = {}
+
+    assert harness.find_t0_alignment_violations(src_root) == []
+
+
+def test_t0_alignment_check_forces_a_fixed_baseline_entry_to_be_dropped(tmp_path: Path) -> None:
+    src_root = _t0_src_tree(tmp_path)
+    fixed = src_root / "core" / "fourier" / "grouped.py"
+    fixed.parent.mkdir(parents=True)
+    fixed.write_text(
+        "counts = apply_grouping_aligned(hists, indices, detector_t0_bins=bins)\n",
+        encoding="utf-8",
+    )
+    harness = _load_harness()
+    harness.T0_ALIGNMENT_BASELINE = {"core/fourier/grouped.py": "plan phase 4"}
+
+    failures = harness.find_t0_alignment_violations(src_root)
+
+    assert len(failures) == 1
+    assert "T0_ALIGNMENT_BASELINE" in failures[0].message
+
+
+def test_t0_alignment_baseline_is_empty_and_the_tree_is_clean() -> None:
+    """Every consumer now aligns through the resolver (plan phase 5 closes D10).
+
+    The baseline can only shrink, and it has reached zero: the grouping dialog's
+    last bare ``common_t0_for_groups`` call now passes ``detector_t0_bins=None``
+    explicitly, because the From-file display and the Manual-offset baseline are
+    the file values by definition.
+    """
+    harness = _load_harness()
+
+    assert harness.T0_ALIGNMENT_BASELINE == {}
+    assert harness.find_t0_alignment_violations() == []
+
+
 def test_current_gui_has_no_widget_screen_calls() -> None:
     harness = _load_harness()
 

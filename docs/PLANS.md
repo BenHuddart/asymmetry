@@ -6,6 +6,23 @@ subsystems or days.
 
 ## Active
 
+### t0 determination: file default, always-visible detected value, divergence warning
+
+Status: planned 2026-09-17 on `study/t0-determination`; implementation to
+land as one PR in six phased subagent steps with a lead review gate. Full
+decision log (D1–D12), code map, per-phase briefs and acceptance criteria in
+[plans/t0-determination.md](plans/t0-determination.md); the audit and the
+ISIS 1-based header evidence in
+[porting/t0-determination](porting/t0-determination/README.md).
+
+The t0 policy becomes an explicit stored choice defaulting to From file
+(never inferred), Manual stores an offset from the file t0, every consumer
+aligns through one `effective_detector_t0_bins` resolver (harness-enforced),
+loaders decode ISIS header bins as 1-based and carry the exact `time_zero`
+for the time-axis stamp, missing/conflicting headers are flagged and
+auto-detected, and the grouping window shows the detected t0 beside the file
+value in every mode with per-source tolerance warnings that never block.
+
 ### Series workflow: Batch tab edits one series, series never overwrite each other
 
 Status: planned 2026-09-16, implementing on `feat/series-workflow` (one PR,

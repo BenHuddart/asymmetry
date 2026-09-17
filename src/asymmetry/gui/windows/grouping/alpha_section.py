@@ -54,6 +54,7 @@ from asymmetry.core.transform.reduce import (
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
+from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.no_scroll_spin import NoScrollComboBox
 from asymmetry.gui.windows.grouping.format import (
     ALPHA_METHOD_ITEMS,
@@ -207,7 +208,12 @@ def run_alpha_estimate(worker: TaskWorker, request: AlphaEstimateRequest) -> Alp
 
     time_us = None
     if request.method == "general":
-        time_us = (np.arange(forward.size, dtype=np.float64) - float(common_t0)) * bin_width
+        # Same bin-centre stamps the reduction uses (D4): the residual is the
+        # sub-bin offset of the run's exact t0, exactly 0.0 without one.
+        residual_us = (float(common_t0) + 0.5) * bin_width - corrected.t0_time_us
+        time_us = (
+            np.arange(forward.size, dtype=np.float64) - float(common_t0)
+        ) * bin_width + residual_us
 
     if worker.is_cancelled():
         raise TaskCancelledError
@@ -468,9 +474,13 @@ class AlphaSectionWidget(QWidget):
         method_row.addWidget(self._estimate_btn)
         root.addLayout(method_row)
 
-        self._result_label = QLabel("Pick a calibration run and press Estimate α.")
-        self._result_label.setWordWrap(True)
-        self._result_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        # A single-line status ("α = 1.0123(15)  ·  Diamagnetic (TF)  ·  run 12"):
+        # ElidedLabel (not word-wrap) so a long method label or run title can
+        # never set a minimum width that forces the corrections column into a
+        # horizontal scrollbar — it elides with the full text as a tooltip
+        # instead, the same pattern the t0 line uses in dialog.py.
+        self._result_label = ElidedLabel("Pick a calibration run and press Estimate α.")
+        self._result_label.set_pen_color(tokens.TEXT_MUTED)
         root.addWidget(self._result_label)
 
         self._note_label = QLabel("")
@@ -545,7 +555,7 @@ class AlphaSectionWidget(QWidget):
             facility=str(context.get("facility", "")),
         )
         self._estimate_btn.setEnabled(False)
-        self._result_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._result_label.set_pen_color(tokens.TEXT_MUTED)
         self._result_label.setText("Computing estimate…")
         self._tasks.start(
             lambda worker: run_alpha_estimate(worker, request),
@@ -555,7 +565,7 @@ class AlphaSectionWidget(QWidget):
 
     def _on_estimate_finished(self, result: object) -> None:
         self._estimate_btn.setEnabled(True)
-        self._result_label.setStyleSheet("")
+        self._result_label.set_pen_color(tokens.TEXT)
         if not isinstance(result, AlphaEstimateResult) or result.token != self._estimate_token:
             return  # superseded by a later Estimate click
         estimate = result.estimate
@@ -584,6 +594,6 @@ class AlphaSectionWidget(QWidget):
 
     def _on_estimate_error(self, message: str) -> None:
         self._estimate_btn.setEnabled(True)
-        self._result_label.setStyleSheet("")
+        self._result_label.set_pen_color(tokens.TEXT)
         self._result_label.setText("Press Estimate α to measure α from this run.")
         QMessageBox.warning(self, "Alpha Calibration", message)

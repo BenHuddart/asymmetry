@@ -507,3 +507,53 @@ def test_advanced_dialog_search_filters_rows(qapp: QApplication) -> None:
     if dialog._advanced_dialog is not None:
         dialog._advanced_dialog.close()
     dialog.close()
+
+
+# ---------------------------------------------------------------------------
+# Time-zero provenance rows (decisions D4/D6/D7)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("t0_source", "expected"),
+    [
+        (None, "file"),
+        ("file", "file"),
+        ("detected", "detected (no header value)"),
+        ("missing", "detected (no header value)"),
+        ("conflict", "header conflict"),
+    ],
+)
+def test_summary_table_reports_the_time_zero_source(
+    qapp: QApplication, t0_source: str | None, expected: str
+) -> None:
+    ds = _dataset_with_run()
+    if t0_source is not None:
+        ds.run.grouping["t0_source"] = t0_source
+
+    dialog = RunInfoDialog(ds)
+
+    row = _row_for_field(dialog._summary_table, "Time Zero")
+    assert row >= 0
+    assert dialog._summary_table.item(row, 2).text() == expected
+
+
+def test_summary_table_shows_the_exact_time_zero_when_the_run_carries_one(
+    qapp: QApplication,
+) -> None:
+    ds = _dataset_with_run()
+    ds.run.grouping["t0_time_us"] = 0.1234
+
+    dialog = RunInfoDialog(ds)
+
+    row = _row_for_field(dialog._summary_table, "Time Zero (us)")
+    assert row >= 0
+    assert dialog._summary_table.item(row, 2).text().startswith("0.123")
+
+
+def test_summary_table_omits_the_exact_time_zero_when_the_run_has_none(
+    qapp: QApplication,
+) -> None:
+    dialog = RunInfoDialog(_dataset_with_run())
+
+    assert _row_for_field(dialog._summary_table, "Time Zero (us)") == -1

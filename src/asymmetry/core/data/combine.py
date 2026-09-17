@@ -45,6 +45,7 @@ from asymmetry.core.transform.asymmetry import (
 )
 from asymmetry.core.transform.background import subtract_scaled_counts
 from asymmetry.core.transform.grouping import good_frames, group_forward_backward
+from asymmetry.core.transform.t0 import common_t0_time_us, run_t0_time_us
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from numpy.typing import NDArray
@@ -248,6 +249,7 @@ def reduce_combined_run(run: Run) -> MuonDataset:
         grouping,
         common_t0=fb.common_t0,
         bin_width=float(run.histograms[0].bin_width),
+        t0_time_us=common_t0_time_us(run.histograms, grouping, fb.common_t0),
     )
 
     metadata = dict(run.metadata)
@@ -416,7 +418,8 @@ def _combine_histograms_add(
         total = np.zeros_like(shifted[0])
         for arr, scale in zip(shifted, scales, strict=True):
             total += scale * arr
-        out.append(_clone_geometry(runs[0].histograms[det], total, common_t0))
+        det_t0_us = run_t0_time_us([run.histograms[det] for run in runs], common_t0)
+        out.append(_clone_geometry(runs[0].histograms[det], total, common_t0, det_t0_us))
     return out
 
 
@@ -468,7 +471,8 @@ def _combine_histograms_subtract(
         # Zero-variance guard once, matching subtract_scaled_counts' 1.0 sentinel.
         variance = np.where(variance > 0.0, variance, 1.0)
         negative_bins += int(np.count_nonzero(diff < 0.0))
-        out.append(_clone_geometry(sample.histograms[det], diff, common_t0))
+        det_t0_us = run_t0_time_us([run.histograms[det] for run in runs], common_t0)
+        out.append(_clone_geometry(sample.histograms[det], diff, common_t0, det_t0_us))
         variances.append(variance)
     return out, variances, negative_bins
 
@@ -526,14 +530,23 @@ def _clone_geometry(
     template: Histogram,
     counts: NDArray[np.float64],
     t0_bin: int,
+    t0_time_us: float | None,
 ) -> Histogram:
-    """A histogram with ``counts`` but ``template``'s bin geometry at ``t0_bin``."""
+    """A histogram with ``counts`` but ``template``'s bin geometry at ``t0_bin``.
+
+    ``t0_time_us`` is the combined detector's exact t0 — the mean over the runs
+    that sit on ``t0_bin`` (:func:`~asymmetry.core.transform.t0.run_t0_time_us`
+    across runs for this detector), ``None`` when no contributing run carries
+    one. Dropping it here would silently reduce the combined run on the bin
+    centre while each source run reduced on its exact t0.
+    """
     return Histogram(
         counts=np.asarray(counts, dtype=np.float64),
         bin_width=float(template.bin_width),
         t0_bin=int(t0_bin),
         good_bin_start=int(template.good_bin_start),
         good_bin_end=int(template.good_bin_end),
+        t0_time_us=t0_time_us,
     )
 
 
@@ -549,11 +562,16 @@ def _variance_histograms(
     """
     if isinstance(variance, list) and len(variance) == len(histograms):
         return [
-            _clone_geometry(hist, np.asarray(var, dtype=np.float64), hist.t0_bin)
+            _clone_geometry(hist, np.asarray(var, dtype=np.float64), hist.t0_bin, hist.t0_time_us)
             for hist, var in zip(histograms, variance, strict=True)
         ]
     return [
-        _clone_geometry(hist, np.abs(np.asarray(hist.counts, dtype=np.float64)), hist.t0_bin)
+        _clone_geometry(
+            hist,
+            np.abs(np.asarray(hist.counts, dtype=np.float64)),
+            hist.t0_bin,
+            hist.t0_time_us,
+        )
         for hist in histograms
     ]
 
@@ -574,7 +592,11 @@ def _mirror_grouping(
     The run-level ``good_frames`` is set to the accumulated ``exposure`` so the
     deadtime normaliser sees the combined frame count.
     """
-    grouping = copy.deepcopy({k: v for k, v in base.grouping.items() if k not in _PERIOD_KEYS})
+    # ``t0_time_us`` is a per-run fact of the *base* run; the combined run's is
+    # the mean over its own aligned detectors, which the combined histograms
+    # carry, so drop it and let common_t0_time_us re-derive it.
+    dropped = (*_PERIOD_KEYS, "t0_time_us")
+    grouping = copy.deepcopy({k: v for k, v in base.grouping.items() if k not in dropped})
     if exposure > 0.0:
         grouping["good_frames"] = float(exposure)
     if period_payload is not None:

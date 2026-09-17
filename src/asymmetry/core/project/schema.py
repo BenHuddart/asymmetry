@@ -11,8 +11,16 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 20)
+Current schema (version 21)
 ---------------------------
+
+Version 21 renames a grouping profile's manual ``t0_policy.value`` (an absolute
+bin index) to ``legacy_value``. Manual t0 is now an *offset* from each run's own
+file t0 (``offset_bins``, decision D3), and converting an absolute bin into one
+needs the reference run's file t0 — which the schema layer does not have. The
+rename makes the unconverted state explicit and unresolvable: project open does
+the conversion via ``T0Policy.from_legacy_value``. See
+:func:`_migrate_v20_to_v21`.
 
 Version 20 makes the Batch tab a series editor (D1-D5). Each entry in
 ``batches`` gains ``recipe`` — the setup that produced it: ``parameters`` (the
@@ -232,10 +240,10 @@ from pathlib import Path
 
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 20
+CURRENT_SCHEMA_VERSION: int = 21
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -358,6 +366,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 19
     if version == 19:
         migrated = _migrate_v19_to_v20(migrated)
+        version = 20
+    if version == 20:
+        migrated = _migrate_v20_to_v21(migrated)
     return migrated
 
 
@@ -1328,6 +1339,43 @@ def _v20_trend_excluded(series: dict, slots: dict[tuple[int, str], dict]) -> lis
         if slot.get("include_in_trend") is False:
             excluded.add(member_key)
     return sorted(excluded)
+
+
+def _migrate_v20_to_v21(data: dict) -> dict:
+    """Migrate schema v20 project state to v21.
+
+    Manual t0 becomes an offset from each run's own file t0 (D3), so a stored
+    absolute ``t0_policy.value`` no longer means anything on its own. Rename it
+    to ``legacy_value`` in every grouping profile: the offset conversion needs
+    the reference run's file t0, which only the project *open* path has, and
+    resolving an unconverted policy raises rather than silently misplacing t0.
+
+    Tolerant: a malformed profile or policy is skipped, never raised on.
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 21
+
+    profiles = migrated.get("grouping_profiles")
+    if not isinstance(profiles, list):
+        return migrated
+
+    updated: list = []
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            updated.append(profile)
+            continue
+        policy = profile.get("t0_policy")
+        if not isinstance(policy, dict) or "value" not in policy:
+            updated.append(profile)
+            continue
+        entry = dict(profile)
+        policy = dict(policy)
+        policy["legacy_value"] = policy.pop("value")
+        entry["t0_policy"] = policy
+        updated.append(entry)
+
+    migrated["grouping_profiles"] = updated
+    return migrated
 
 
 def _migrate_v19_to_v20(data: dict) -> dict:

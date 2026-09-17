@@ -43,6 +43,7 @@ from asymmetry.core.transform.grouping import (
     effective_group_indices,
 )
 from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.t0 import effective_detector_t0_bins, t0_stamp_residual_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 from asymmetry.core.utils.perf import perf_timer
 
@@ -233,11 +234,18 @@ class _CountGroupContext:
     run: Any
     prepared_histograms: list[Any]
     common_t0: int
+    #: Per-detector t0 bins every alignment in this context uses (D10): the
+    #: policy-resolved override when the grouping carries one, else each
+    #: histogram's own file t0.
+    detector_t0_bins: list[int]
     first_good: int
     last_good: int
     bunch_factor: int
     bin_width: float
     axis_start: float
+    #: Sub-bin offset of the exact t0 from the centre of ``common_t0``, added to
+    #: every stamp (D4). Exactly 0.0 when the run carries no exact t0.
+    t0_residual_us: float
     group_names: dict[Any, Any]
 
 
@@ -289,7 +297,12 @@ def _count_group_context(
         grouping,
         apply_deadtime,
     )
-    common_t0 = common_t0_for_groups(prepared_histograms, *(indices for _, indices in group_specs))
+    detector_t0_bins = effective_detector_t0_bins(prepared_histograms, grouping)
+    common_t0 = common_t0_for_groups(
+        prepared_histograms,
+        *(indices for _, indices in group_specs),
+        detector_t0_bins=detector_t0_bins,
+    )
 
     try:
         first_good = max(0, int(grouping.get("first_good_bin", 0)))
@@ -308,6 +321,7 @@ def _count_group_context(
 
     bin_width = float(prepared_histograms[0].bin_width)
     axis_start = first_good - common_t0
+    t0_residual_us = t0_stamp_residual_us(prepared_histograms, grouping, common_t0)
     group_names = (
         grouping.get("group_names") if isinstance(grouping.get("group_names"), dict) else {}
     )
@@ -315,11 +329,13 @@ def _count_group_context(
         run=run,
         prepared_histograms=prepared_histograms,
         common_t0=common_t0,
+        detector_t0_bins=detector_t0_bins,
         first_good=first_good,
         last_good=last_good,
         bunch_factor=bunch_factor,
         bin_width=bin_width,
         axis_start=axis_start,
+        t0_residual_us=t0_residual_us,
         group_names=group_names,
     )
 
@@ -346,11 +362,14 @@ def _build_one_count_group(
         ctx.prepared_histograms,
         indices,
         common_t0_bin=ctx.common_t0,
+        detector_t0_bins=ctx.detector_t0_bins,
     )
     if counts.size == 0:
         return None
     trimmed_counts = np.asarray(counts[ctx.first_good : ctx.last_good + 1], dtype=np.float64)
-    time = (np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)) * ctx.bin_width
+    time = (
+        np.arange(trimmed_counts.size, dtype=float) + float(ctx.axis_start)
+    ) * ctx.bin_width + ctx.t0_residual_us
     if ctx.bunch_factor > 1:
         time, trimmed_counts = rebin_counts(time, trimmed_counts, ctx.bunch_factor)
 

@@ -47,6 +47,7 @@ from asymmetry.core.transform.grouping import (
     resolve_group_indices,
 )
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.t0 import common_t0_time_us
 from asymmetry.core.utils.constants import MUON_LIFETIME_US, PeriodMode
 
 #: A per-group asymmetry signal: a callable evaluated on the time axis in
@@ -1866,6 +1867,7 @@ def _reduce_histograms(
         first_good_bin=first_good,
         last_good_bin=last_good,
         beta=fb.beta,
+        t0_time_us=common_t0_time_us(histograms, grouping, fb.common_t0),
     )
     return time, asymmetry * 100.0, error * 100.0
 
