@@ -22,6 +22,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton  # 
 
 import asymmetry.gui.utils.gle_export as gle_export
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.export_paths import resolve_gle_export_paths
 from asymmetry.gui.panels.plot_panel import SINGLE_FIT_ID, PlotPanel
@@ -1531,6 +1532,75 @@ class TestPlotPanel:
         assert mask.shape == (10,)
         assert np.array_equal(
             mask, np.array([False, False, False, False, False, True, True, True, True, True])
+        )
+
+    def test_low_count_mask_boundary_follows_common_t0_not_detector_zero(
+        self,
+        panel: PlotPanel,
+    ) -> None:
+        """A staggered-t0 run's good-window mask must sit at the *common* t0
+        (D10), not detector 0's own file t0; a t0 override moves it too
+        (plan phase 4, F11)."""
+        if not hasattr(panel, "_has_mpl") or not panel._has_mpl:
+            pytest.skip("matplotlib not available")
+
+        counts = np.full(10, 50.0)
+
+        def _run(grouping: dict) -> Run:
+            return Run(
+                run_number=325,
+                histograms=[
+                    Histogram(counts=counts, bin_width=1.0, t0_bin=0),
+                    Histogram(counts=counts, bin_width=1.0, t0_bin=2),
+                ],
+                grouping=grouping,
+            )
+
+        base_grouping = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "first_good_bin": 2,
+            "last_good_bin": 9,
+        }
+        # Stamped as a real reduction would: bin k -> (k - common_t0)·w, with
+        # the run's common t0 (2, the group max) as the origin, not detector
+        # 0's own t0_bin (0).
+        time = np.arange(10, dtype=float) - 2.0
+        ds = MuonDataset(
+            time=time,
+            asymmetry=np.zeros(10),
+            error=np.ones(10),
+            metadata={"run_number": 325},
+            run=_run(dict(base_grouping)),
+        )
+
+        mask = panel._low_count_mask_for_dataset(ds, source_dataset=ds)
+
+        # Correct: good window is time in [axis[2], axis[9]] = [0.0, 7.0].
+        assert np.array_equal(
+            mask,
+            np.array([True, True, False, False, False, False, False, False, False, False]),
+        )
+
+        shifted_grouping = dict(base_grouping)
+        shifted_grouping[EFFECTIVE_DETECTOR_T0_KEY] = [2, 4]
+        shifted_ds = MuonDataset(
+            time=time,
+            asymmetry=np.zeros(10),
+            error=np.ones(10),
+            metadata={"run_number": 325},
+            run=_run(shifted_grouping),
+        )
+
+        shifted_mask = panel._low_count_mask_for_dataset(shifted_ds, source_dataset=shifted_ds)
+
+        # +2 override -> common t0 becomes 4 -> good window is
+        # [axis[2], axis[9]] = [-2.0, 5.0], i.e. the boundary moves by 2 bins.
+        assert np.array_equal(
+            shifted_mask,
+            np.array([False, False, False, False, False, False, False, False, True, True]),
         )
 
     def test_low_count_mask_skips_raw_denominator_under_variable_binning(

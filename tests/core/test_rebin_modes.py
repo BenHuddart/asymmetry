@@ -321,3 +321,145 @@ def test_fixed_mode_bunching_reaches_time_representation():
     asym_ref, err_ref = compute_asymmetry(f_packed, b_packed, alpha=1.0)
     np.testing.assert_allclose(dataset.asymmetry, asym_ref)
     np.testing.assert_allclose(dataset.error, err_ref)
+
+
+# --------------------------------------------------------------------------- #
+# Exact-t0 bin-centre stamps (D4)
+# --------------------------------------------------------------------------- #
+
+
+def _stamp_case(grouping: dict, *, t0_time_us: float | None):
+    n, t0 = 300, 10
+    rng = np.random.default_rng(31)
+    forward = rng.poisson(500.0, n).astype(float)
+    backward = rng.poisson(450.0, n).astype(float)
+    return binned_fb_asymmetry(
+        forward,
+        backward,
+        grouping=grouping,
+        common_t0=t0,
+        bin_width_us=BIN_WIDTH_US,
+        alpha=1.2,
+        first_good_bin=t0 + 3,
+        last_good_bin=n - 1,
+        beta=1.0,
+        t0_time_us=t0_time_us,
+    )
+
+
+@pytest.mark.parametrize(
+    "grouping",
+    [
+        {},
+        {"bunching_factor": 5},
+        {"binning_mode": "constant_error", "bin0_us": 0.5},
+    ],
+    ids=["fixed_1", "fixed_5", "constant_error"],
+)
+def test_exact_t0_moves_every_stamp_by_the_sub_bin_amount(grouping):
+    """An exact t0 0.2 bins *before* the bin centre moves every stamp +0.2·w.
+
+    ``t0_time_us = (t0 + 0.3)·w`` against the bin-centre default ``(t0 + 0.5)·w``
+    means ``t_k = (k + 0.5)·w − t0_time_us`` grows by exactly ``0.2·w`` — for
+    merged bins too, since each is the mean of its members' stamps. The
+    good-bin window and the asymmetry values themselves must not move.
+    """
+    t0 = 10
+    base_time, base_asym, base_err = _stamp_case(grouping, t0_time_us=None)
+    time, asym, err = _stamp_case(grouping, t0_time_us=(t0 + 0.3) * BIN_WIDTH_US)
+
+    assert time.size == base_time.size
+    np.testing.assert_allclose(time - base_time, 0.2 * BIN_WIDTH_US, rtol=0, atol=1e-15)
+    # Only the axis moves: the same raw bins are selected and merged.
+    np.testing.assert_array_equal(asym, base_asym)
+    np.testing.assert_array_equal(err, base_err)
+
+
+def test_bin_centre_default_reproduces_the_integer_bin_axis_bit_for_bit():
+    """The acceptance gate: passing the fallback explicitly changes nothing."""
+    t0 = 10
+    base_time, _, _ = _stamp_case({"bunching_factor": 4}, t0_time_us=None)
+    explicit, _, _ = _stamp_case({"bunching_factor": 4}, t0_time_us=(t0 + 0.5) * BIN_WIDTH_US)
+    np.testing.assert_array_equal(explicit, base_time)
+
+
+@pytest.mark.parametrize("packing", [1, 5])
+def test_fixed_bunching_stamps_match_the_musrfit_packing_oracle(packing):
+    """musrfit ``PRunSingleHisto.cpp:1245-1275`` packing time, transcribed.
+
+    ``t_k = dt·((fgb − 0.5) + p/2 − t0) + k·p·dt`` for an integer ``t0``. This
+    pins the bin-centre convention against the reference program: our stamp is
+    the mean of the merged raw bins' centres, which is the same number.
+    """
+    n, t0, fgb = 400, 12, 20
+    dt = BIN_WIDTH_US
+    forward = np.full(n, 900.0)
+    backward = np.full(n, 800.0)
+    time, _, _ = binned_fb_asymmetry(
+        forward,
+        backward,
+        grouping={"bunching_factor": packing},
+        common_t0=t0,
+        bin_width_us=dt,
+        alpha=1.0,
+        first_good_bin=fgb,
+        last_good_bin=n - 1,
+    )
+    k = np.arange(time.size, dtype=np.float64)
+    musrfit = dt * ((fgb - 0.5) + packing / 2.0 - t0) + k * packing * dt
+    np.testing.assert_allclose(time, musrfit, rtol=0, atol=1e-12)
+
+
+def _exact_t0_run(*, hist_t0_us: float | None, grouping_extra: dict | None = None) -> Run:
+    n, t0 = 300, 8
+    rng = np.random.default_rng(32)
+    grouping = {
+        "groups": {1: [1], 2: [2]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "alpha": 1.0,
+        "t0_bin": t0,
+        "first_good_bin": t0,
+        "last_good_bin": n - 1,
+    }
+    grouping.update(grouping_extra or {})
+    return Run(
+        run_number=7100,
+        histograms=[
+            Histogram(
+                counts=rng.poisson(500.0, n).astype(float),
+                bin_width=BIN_WIDTH_US,
+                t0_bin=t0,
+                t0_time_us=hist_t0_us,
+            ),
+            Histogram(
+                counts=rng.poisson(450.0, n).astype(float),
+                bin_width=BIN_WIDTH_US,
+                t0_bin=t0,
+                t0_time_us=hist_t0_us,
+            ),
+        ],
+        metadata={"run_number": 7100},
+        grouping=grouping,
+    )
+
+
+@pytest.mark.parametrize("via", ["histograms", "grouping"])
+def test_reduction_axis_follows_the_runs_exact_t0(via):
+    """The exact t0 reaches the reduced dataset from either source.
+
+    Detector ``t0_time_us`` (a loader fact) and ``grouping["t0_time_us"]`` (the
+    same fact after a T0Policy shift) both resolve through
+    ``common_t0_time_us``; the grouping wins when both are set.
+    """
+    exact = (8 + 0.3) * BIN_WIDTH_US
+    base = TimeFBAsymmetry().compute(_exact_t0_run(hist_t0_us=None))[0]
+    if via == "histograms":
+        shifted = TimeFBAsymmetry().compute(_exact_t0_run(hist_t0_us=exact))[0]
+    else:
+        shifted = TimeFBAsymmetry().compute(
+            _exact_t0_run(hist_t0_us=None, grouping_extra={"t0_time_us": exact})
+        )[0]
+    assert base.time[0] == pytest.approx(0.0, abs=1e-15)
+    np.testing.assert_allclose(shifted.time - base.time, 0.2 * BIN_WIDTH_US, rtol=0, atol=1e-15)
+    np.testing.assert_array_equal(shifted.asymmetry, base.asymmetry)

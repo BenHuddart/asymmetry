@@ -22,9 +22,34 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
     tomllib = None
 
 ROOT = Path(__file__).resolve().parents[1]
-CORE_ROOT = ROOT / "src" / "asymmetry" / "core"
-GUI_ROOT = ROOT / "src" / "asymmetry" / "gui"
+SRC_ROOT = ROOT / "src" / "asymmetry"
+CORE_ROOT = SRC_ROOT / "core"
+GUI_ROOT = SRC_ROOT / "gui"
 TESTS_ROOT = ROOT / "tests"
+
+# ── One t0 resolver (decision D10) ────────────────────────────────────────────
+# `effective_detector_t0_bins` in core/transform/t0.py is the ONLY source of
+# per-detector alignment: it returns the T0Policy-resolved override when the
+# grouping carries one and the file `Histogram.t0_bin` otherwise. An alignment
+# call that omits `detector_t0_bins=` silently re-derives alignment from the
+# histograms alone, so the user's Manual / Auto-detect t0 applies to reduction
+# and to nothing else — the bug D10 exists to make unrepeatable.
+T0_ALIGNMENT_CALLS = frozenset({"common_t0_for_groups", "apply_grouping_aligned"})
+# Paths (relative to src/asymmetry) that legitimately align without the
+# resolver: the alignment chokepoints themselves, and the loaders, which run
+# before any policy exists.
+T0_ALIGNMENT_OWNERS = frozenset(
+    {
+        "core/transform/grouping.py",
+        "core/transform/reduce.py",
+        "core/transform/t0.py",
+    }
+)
+T0_ALIGNMENT_OWNER_DIRS = ("core/io/",)
+# Consumers still aligning on file t0, each with the phase that reroutes it.
+# The rule fails when an entry stops having a violation, so the list can only
+# shrink to empty -- and it now is.
+T0_ALIGNMENT_BASELINE: dict[str, str] = {}
 
 CORE_IMPORT_BANS = ("PySide6", "matplotlib", "asymmetry.gui")
 CORE_DEPENDENCY_BANS = ("PySide6", "matplotlib")
@@ -442,6 +467,60 @@ def find_bespoke_qthread_violations(gui_root: Path = GUI_ROOT) -> list[HarnessFa
                         ),
                     )
                 )
+    return failures
+
+
+def find_t0_alignment_violations(src_root: Path = SRC_ROOT) -> list[HarnessFailure]:
+    """Return alignment calls that bypass the one per-detector t0 resolver (D10).
+
+    See :data:`T0_ALIGNMENT_CALLS`. Files on :data:`T0_ALIGNMENT_BASELINE` are
+    exempt *and required to stay in violation*: the moment one is rerouted its
+    baseline entry must go, so the allowlist can only ever shrink.
+    """
+
+    failures: list[HarnessFailure] = []
+    still_violating: set[str] = set()
+    for path in _iter_python_files(src_root):
+        relpath = path.relative_to(src_root).as_posix()
+        if relpath in T0_ALIGNMENT_OWNERS or relpath.startswith(T0_ALIGNMENT_OWNER_DIRS):
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name not in T0_ALIGNMENT_CALLS:
+                continue
+            if any(keyword.arg == "detector_t0_bins" for keyword in node.keywords):
+                continue
+            still_violating.add(relpath)
+            if relpath in T0_ALIGNMENT_BASELINE:
+                continue
+            failures.append(
+                HarnessFailure(
+                    path,
+                    node.lineno,
+                    (
+                        f"`{name}(` without `detector_t0_bins=`. Pass "
+                        "`effective_detector_t0_bins(histograms, grouping)` "
+                        "(asymmetry.core.transform.t0) so a Manual/Auto-detect t0 "
+                        "policy reaches this alignment too."
+                    ),
+                )
+            )
+    for relpath, reason in sorted(T0_ALIGNMENT_BASELINE.items()):
+        if relpath not in still_violating:
+            failures.append(
+                HarnessFailure(
+                    src_root / relpath,
+                    0,
+                    (
+                        f"No longer bypasses the t0 resolver ({reason}) — drop it from "
+                        "`T0_ALIGNMENT_BASELINE` in tools/harness.py."
+                    ),
+                )
+            )
     return failures
 
 
@@ -1092,6 +1171,7 @@ def run_structural_checks() -> int:
         *find_duplicate_mpl_canvas_violations(),
         *find_axis_limit_policy_violations(),
         *find_bespoke_qthread_violations(),
+        *find_t0_alignment_violations(),
         *find_widget_screen_call_violations(),
         *find_process_events_violations(),
         *find_bespoke_gle_export_violations(),

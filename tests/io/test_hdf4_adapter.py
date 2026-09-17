@@ -290,7 +290,7 @@ def test_v1_multiperiod_flat_counts_split_by_switching_states() -> None:
 
 
 def test_v1_without_counts_attrs_falls_back_to_full_range() -> None:
-    """Attr-less v1 files keep the prior behaviour (no window, zero-based)."""
+    """Attr-less v1 files keep the full range and report a missing t0 (D7)."""
     loader = NexusLoader()
     result = loader._reduce_handle(_v1_handle(with_bin_attrs=False), "synthetic")
     ds = result[0] if isinstance(result, list) else result
@@ -298,7 +298,11 @@ def test_v1_without_counts_attrs_falls_back_to_full_range() -> None:
     g = ds.run.grouping
     assert g["first_good_bin"] == 0
     assert g["last_good_bin"] == 7
-    assert g["bin_index_base"] == 0
+    # ISIS bin metadata is 1-based whether or not this file carried any.
+    assert g["bin_index_base"] == 1
+    assert g["t0_source"] == "missing"
+    assert "t0_time_us" not in g
+    assert ds.run.histograms[0].t0_bin == 0
     assert ds.n_points == 8
 
 

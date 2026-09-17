@@ -57,15 +57,40 @@ canonical (``first_good_bin``, ``last_good_bin``, and ``t0_bin``). When
 fallback if the corresponding integer bin attributes are missing.
 
 Asymmetry's internal ``Histogram`` and grouping bin indices are always
-zero-based array indices. Real ISIS files (both V1 and V2) often encode
-integer bin metadata using one-based centre-bin numbering. The loader compares
-explicit ``t0_bin`` values with the time axis; when all available detector
-``t0`` values point one sample past ``t = 0``, it subtracts one from
-``t0_bin``, ``first_good_bin``, and ``last_good_bin`` and records
-``bin_index_base = 1`` in grouping metadata. Otherwise it leaves the integers
-unchanged with ``bin_index_base = 0``. For V1, this good-data window and
-``t0_bin`` are read from the attributes of the ``counts`` dataset (where ISIS
-stores them), matching the V2 behaviour.
+zero-based array indices. ISIS header bins are **one-based and inclusive**,
+decoded deterministically rather than inferred: ``t0_bin``, ``first_good_bin``
+and ``last_good_bin`` each become ``attribute − 1`` and ``bin_index_base = 1``
+is recorded in grouping metadata for display, unconditionally, for every ISIS
+NeXus/HDF4 file. This is resolved evidence, not a heuristic — a 1,245-file
+survey across EMU, HiFi, MuSR and ARGUS (HDF4 V1 and HDF5 V2, 16 ns and 8 ns
+binning) found ``last_good_bin == n_bins`` in every file (a 0-based index can
+never equal the length) and ``t0_bin == floor(time_zero / resolution) + 1`` on
+every file whose quotient was unambiguously fractional; see
+``docs/porting/t0-determination/isis-header-index-base.md`` for the full
+evidence and the two counter-examples it also explains (a stale pre-2003
+header and an exact-edge tie). The file's own ``corrected_time`` axis — which
+musrfit and WiMDA both also read — is kept only as a *cross-check*: when it
+disagrees with the decoded ``t0_bin`` the run is flagged ``t0_source =
+"conflict"`` (the attribute still wins) rather than silently trusted or
+silently ignored.
+
+The integer ``t0_bin`` only places t0 to the nearest bin. ISIS additionally
+stores ``time_zero``, the exact time of t0 in microseconds, which can fall
+anywhere within that bin (the survey found fractional positions from 0 to
+nearly 1). Asymmetry keeps this exact value (``t0_time_us``) and stamps the
+time axis from it — see :doc:`detector_grouping` § Time-zero (t0) modes for
+the bin-centre convention — rather than discarding up to half a bin of
+genuine precision. When ``time_zero`` and ``t0_bin`` disagree about which bin
+contains t0, the attribute ``t0_bin`` wins and the exact value is dropped
+(``t0_source = "conflict"``, with a loader warning); a file with neither
+field carries no usable t0 at all (``t0_source = "missing"``), and analysis
+falls back to the automatic search — see :doc:`data_reduction/t0_search` and
+:doc:`detector_grouping`. ``bin_index_base`` is display-only: the internal
+bins are always zero-based, and this field only tells the GUI which number to
+add back when showing a bin index to the user. For V1 (HDF4), this good-data
+window and ``t0_bin`` are read from the attributes of the ``counts`` dataset
+(where ISIS stores them) and decoded by the same one-based rule, matching the
+V2 behaviour.
 
 HDF4 container (legacy ``.nxs``)
 """"""""""""""""""""""""""""""""

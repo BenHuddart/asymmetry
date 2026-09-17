@@ -29,7 +29,10 @@ from asymmetry.core.io.base import BaseLoader, field_direction_from_text
 from asymmetry.core.transform import (
     apply_grouping_aligned,
     common_t0_for_groups,
+    common_t0_time_us,
     compute_asymmetry,
+    good_window_for_groups,
+    run_t0_time_us,
 )
 from asymmetry.core.utils.perf import perf_timer
 
@@ -1074,14 +1077,26 @@ class PsiLoader(BaseLoader):
         asymmetry = asymmetry * 100.0
         error = error * 100.0
 
-        good_offsets = [max(0, int(first_good_bins[i]) - int(t0_bins[i])) for i in range(n_hist)]
-        last_offsets = [max(0, int(last_good_bins[i]) - int(t0_bins[i])) for i in range(n_hist)]
-        first_good = min(n - 1, int(common_t0) + max(good_offsets, default=0))
-        last_good = min(n - 1, int(common_t0) + min(last_offsets, default=n - 1))
-        if last_good < first_good:
-            last_good = first_good
+        group_idx = sorted(set(forward_idx) | set(backward_idx)) or list(range(n_hist))
+        first_good, last_good = good_window_for_groups(
+            group_idx,
+            t0_bins,
+            first_good_bins,
+            last_good_bins,
+            common_t0_bin=int(common_t0),
+            n_bins=n,
+        )
 
-        time_axis = (np.arange(n, dtype=np.float64) - float(common_t0)) * float(raw.bin_width_us)
+        # Bin centres from the run's exact t0 (D4). PSI headers carry an integer
+        # t0 only, so the residual is 0.0 and this is the integer-bin axis; the
+        # call keeps the loader axis and the reduction axis one formula.
+        bin_width_us = float(raw.bin_width_us)
+        t0_residual_us = (float(common_t0) + 0.5) * bin_width_us - common_t0_time_us(
+            histograms, None, int(common_t0)
+        )
+        time_axis = (
+            np.arange(n, dtype=np.float64) - float(common_t0)
+        ) * bin_width_us + t0_residual_us
         time_axis = time_axis[first_good : last_good + 1]
         asymmetry = asymmetry[first_good : last_good + 1]
         error = error[first_good : last_good + 1]
@@ -1153,6 +1168,11 @@ class PsiLoader(BaseLoader):
             "detector_t0_bins": [int(v) for v in t0_bins],
             "detector_first_good_bins": [int(v) for v in first_good_bins],
             "detector_last_good_bins": [int(v) for v in last_good_bins],
+            # PSI headers carry an integer t0 per histogram and nothing finer
+            # (musrfit ignores the float "real t0" at byte 792 too), so the exact
+            # t0 stays the bin centre. An all-zero table means the header never
+            # recorded one — D7 searches for it at resolve time.
+            "t0_source": "missing" if not any(int(v) for v in t0_bins) else "file",
             "histogram_labels": list(raw.histogram_labels),
             # Stamp the canonical registry identity (e.g. "HAL") so fingerprinting
             # and the stale-identity heal do not mistake the raw PSI "HIFI" string
@@ -1160,6 +1180,9 @@ class PsiLoader(BaseLoader):
             # raw string is kept in metadata["instrument"] for provenance.
             "instrument": canonical_instrument or raw.instrument,
         }
+        t0_time_us = run_t0_time_us(histograms, common_t0)
+        if t0_time_us is not None:
+            grouping["t0_time_us"] = float(t0_time_us)
         if preset_name is not None:
             # Record the applied preset so the grouping window shows it as the
             # live grouping (not merely the pre-selected default) and provenance

@@ -1272,6 +1272,32 @@
       "status": "implemented",
       "tests_path": "tests/core/test_helical.py",
       "updated": "2026-09-15"
+    },
+    {
+      "depends_on": [
+        "data-reduction-parity"
+      ],
+      "docs": {
+        "comparison": "docs/porting/t0-determination/comparison.md",
+        "implementation_options": "docs/porting/t0-determination/implementation-options.md",
+        "readme": "docs/porting/t0-determination/README.md",
+        "test_data": "docs/porting/t0-determination/test-data.md",
+        "verification_plan": "docs/porting/t0-determination/verification-plan.md"
+      },
+      "feature_name": "Time-zero (t0) determination: file default, always-visible detected value, divergence warning",
+      "notes": "Implemented on feat/t0-determination per docs/plans/t0-determination.md (six phases, one PR), landing decisions D1-D12: T0Policy.mode is an explicit stored field (from_file default), never inferred from a value comparison, fixing the fresh-draft Manual mislabelling; every per-detector alignment consumer (reduction, grouped Fourier, MaxEnt, count-domain fits, deadtime window, plot mask) routes through one effective_detector_t0_bins resolver, harness-enforced; the count-fit t0 promotion sign is corrected; Manual is a signed offset from each run's own file t0 (schema v21), with project-open healing of pre-v21 absolute values and mislabelled zero-offset policies; ISIS header bins (t0_bin, first_good_bin, last_good_bin) decode as 1-based deterministically per the corpus survey, and the exact time_zero / MusrRoot Time Zero Bin sets the time-axis stamp (bin centre minus t0) rather than the nearest integer bin, moving some existing TF fit phases by up to half a bin, correctly; a missing header t0 is recorded as such and resolved against the automatic search; the grouping window shows the file value beside the detected one in every mode with a verdict, using the survey-calibrated tolerances (2 bins continuous, 3 pulsed).",
+      "path": "docs/porting/t0-determination",
+      "references": [
+        "WiMDA",
+        "Mantid",
+        "musrfit",
+        "Literature"
+      ],
+      "slug": "t0-determination",
+      "src_path": "src/asymmetry/core/transform/t0.py",
+      "status": "implemented",
+      "tests_path": "tests/porting/t0-determination",
+      "updated": "2026-09-17"
     }
   ]
 }

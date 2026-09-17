@@ -28,11 +28,17 @@ class Histogram:
     bin_width : float
         Bin width in microseconds.
     t0_bin : int
-        Bin index of *t* = 0 (muon implantation).
+        Bin index of *t* = 0 (muon implantation) — the 0-based index of the bin
+        that *contains* t0.
     good_bin_start : int
-        First usable bin (offset from *t*\ :sub:`0`).
+        First usable bin (absolute bin index, not an offset from *t*\ :sub:`0`).
     good_bin_end : int
-        Last usable bin.
+        Last usable bin (absolute bin index, inclusive).
+    t0_time_us : float or None
+        Exact time of t0 in microseconds from the start of acquisition, on the
+        *raw* axis where bin *k* spans ``[k·w, (k+1)·w)`` — ISIS ``time_zero``,
+        MusrRoot ``(Time Zero Bin + 0.5)·w``. ``None`` when the file carries no
+        sub-bin t0; see :attr:`t0_time_us_effective`.
     """
 
     counts: NDArray[np.float64]
@@ -40,16 +46,36 @@ class Histogram:
     t0_bin: int = 0
     good_bin_start: int = 0
     good_bin_end: int = -1
+    t0_time_us: float | None = None
 
     @property
     def n_bins(self) -> int:
         return len(self.counts)
 
     @property
+    def t0_time_us_effective(self) -> float:
+        r"""Exact t0 in µs, falling back to the centre of :attr:`t0_bin`.
+
+        The fallback ``(t0_bin + 0.5)·w`` reproduces the integer-bin stamps
+        ``(k − t0_bin)·w`` exactly, so a file without an exact t0 keeps today's
+        time axis to the last bit.
+        """
+        if self.t0_time_us is None:
+            return (float(self.t0_bin) + 0.5) * float(self.bin_width)
+        return float(self.t0_time_us)
+
+    @property
     def time_axis(self) -> NDArray[np.float64]:
-        r"""Time axis in microseconds, centred on *t*\ :sub:`0`."""
+        r"""Time axis in microseconds, centred on *t*\ :sub:`0`.
+
+        Bin *k* is stamped at its centre, ``(k + 0.5)·w − t0``, using the exact
+        :attr:`t0_time_us_effective`. Written as the integer-bin axis plus the
+        sub-bin residual so a histogram without an exact t0 keeps the old
+        ``(k − t0_bin)·w`` values bit for bit.
+        """
         bins = np.arange(self.n_bins)
-        return (bins - self.t0_bin) * self.bin_width
+        residual = (float(self.t0_bin) + 0.5) * float(self.bin_width) - self.t0_time_us_effective
+        return (bins - self.t0_bin) * self.bin_width + residual
 
 
 @dataclass

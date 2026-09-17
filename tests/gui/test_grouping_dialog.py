@@ -12,14 +12,16 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
-from PySide6.QtCore import QEventLoop, Qt, QTimer
+from PySide6.QtCore import QEventLoop, QSize, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QHeaderView, QLabel
 
 import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.transform.t0 import T0Assessment
 from asymmetry.core.utils.constants import PeriodMode
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
@@ -112,6 +114,60 @@ def _dataset_with_histograms() -> MuonDataset:
         asymmetry=np.zeros_like(t),
         error=np.full_like(t, 0.01),
         metadata={"run_number": 4001},
+        run=run,
+    )
+
+
+def _fifteen_detector_dataset(
+    run_number: int = 4800, metadata_extra: dict | None = None
+) -> MuonDataset:
+    """A PSI GPS-shaped run: 15 detectors, four-digit bins, per-detector tables.
+
+    ``metadata_extra`` layers onto the run metadata — used to build a second,
+    calibration-shaped dataset with a long ``title`` (see
+    ``test_default_width_fits_the_t0_line_on_a_fifteen_detector_run``).
+    """
+    n_det, n_bins, t0 = 15, 2048, 1600
+    histograms = []
+    for i in range(n_det):
+        counts = np.full(n_bins, 20.0)
+        counts[t0 + (i % 4)] = 5000.0
+        histograms.append(
+            Histogram(
+                counts=counts,
+                bin_width=0.000098,
+                t0_bin=t0,
+                good_bin_start=t0 + 10,
+                good_bin_end=n_bins - 1,
+            )
+        )
+    metadata = {"run_number": run_number, "instrument": "GPS", "facility": "PSI"}
+    metadata.update(metadata_extra or {})
+    run = Run(
+        run_number=run_number,
+        histograms=histograms,
+        metadata=metadata,
+        grouping={
+            "groups": {1: list(range(1, 8)), 2: list(range(8, 16))},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": t0,
+            "t_good_offset": 10,
+            "first_good_bin": t0 + 10,
+            "last_good_bin": n_bins - 1,
+            "detector_t0_bins": [t0] * n_det,
+            "detector_first_good_bins": [t0 + 10] * n_det,
+            "detector_last_good_bins": [n_bins - 1] * n_det,
+            "bin_index_base": 0,
+        },
+    )
+    t = np.arange(100, dtype=float) * 0.01
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number},
         run=run,
     )
 
@@ -339,20 +395,24 @@ def test_right_pane_is_tabless_two_columns_with_preview_pinned(qapp: QApplicatio
 
 
 def test_both_columns_fit_without_scroll_at_default_size(qapp: QApplication) -> None:
-    """Both columns need no scrolling at the default 1220×680, deadtime off.
+    """Both columns need no scrolling at the preferred default size, deadtime off.
 
     The headline acceptance of the tabless two-column redesign: with deadtime off
     — the default — every grouping field and every correction section (deadtime,
     background, the α area and calibration) must be reachable without scrolling in
     either column. Pins the whole-column budget in both axes, so a new row
     elsewhere or an over-wide field re-introducing a scrollbar fails here.
+
+    The window itself opens at ``resize_to_available`` of the preferred size, so
+    on the 800×800 offscreen screen it is born narrower than the budget; the test
+    resizes to the preferred size, which is the one the budget is written for.
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.resize(*dialog.preferred_window_size())
     dialog.show()
     QApplication.processEvents()
 
-    assert dialog.size().width() == 1220
-    assert dialog.size().height() == 680
+    assert dialog.size() == QSize(*dialog.preferred_window_size())
     assert dialog._deadtime_section._current_mode() == "off"
 
     # The budget is asserted on *settled* geometry: scrollbar ranges fire
@@ -387,6 +447,122 @@ def test_both_columns_fit_without_scroll_at_default_size(qapp: QApplication) -> 
     assert not dialog._corrections_overflow.isVisible()
     assert not dialog._grouping_overflow.isVisible()
 
+    dialog.close()
+
+
+def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
+    qapp: QApplication,
+) -> None:
+    """Phase 7: the t0 row's single-line file/detected/Δ label must not scroll.
+
+    A 15-detector PSI run with four-digit bins is the shape that made the line
+    long. With the label no longer wrapping, the grouping column has to be wide
+    enough for it at the base UI scale — otherwise the whole column scrolls
+    sideways and the t0 controls go out of reach.
+
+    The dialog also carries a second, calibration-shaped run with a long title.
+    Once the α card is expanded with the calibration-run combo showing that
+    long label and a realistic Diamagnetic-method result line, both columns'
+    scrolls must stay scroll-free together — the corrections column was
+    reported clipping on this exact shape (long calibration-run label + method
+    + result), not just the grouping column's t0 line.
+    """
+    calibration_run = _fifteen_detector_dataset(
+        run_number=373,
+        metadata_extra={
+            "title": "Calibration sample, spin rotated, deliberately long title",
+            "temperature": 100.0,
+            "field": 200.0,
+        },
+    )
+    dialog = GroupingDialog([_fifteen_detector_dataset(), calibration_run])
+    dialog.resize(*dialog.preferred_window_size())
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+    QApplication.processEvents()
+
+    assert dialog._t0_detected_label.text().startswith("File: bin 1600 · Detected: bin ")
+    diagnostic = _column_budget_diagnostic(dialog)
+    assert not dialog._grouping_scroll.horizontalScrollBar().isVisible(), diagnostic
+    assert dialog._grouping_scroll.horizontalScrollBar().maximum() == 0, diagnostic
+    assert not dialog._corrections_scroll.horizontalScrollBar().isVisible(), diagnostic
+
+    # Populate the α card the way the long-run screenshot does: the calibration
+    # combo on the long-titled run, Diamagnetic method, and a realistic result
+    # line — then re-settle layout and check both scrolls again.
+    alpha = dialog._alpha_section
+    found = alpha._run_combo.findData(373)
+    assert found >= 0
+    alpha._run_combo.setCurrentIndex(found)
+    alpha._result_label.setText("α = 1.0123(15)  ·  Diamagnetic (TF)  ·  run 12")
+    dialog._alpha_card.set_expanded(True)
+    QApplication.processEvents()
+
+    diagnostic = _column_budget_diagnostic(dialog)
+    assert not dialog._grouping_scroll.horizontalScrollBar().isVisible(), diagnostic
+    assert dialog._grouping_scroll.horizontalScrollBar().maximum() == 0, diagnostic
+    assert not dialog._corrections_scroll.horizontalScrollBar().isVisible(), diagnostic
+    assert dialog._corrections_scroll.horizontalScrollBar().maximum() == 0, diagnostic
+
+    # At the default width the (short, real) t0 line is comfortably unelided.
+    t0_label = dialog._t0_detected_label
+    assert t0_label._elided_text() == t0_label.text()
+    dialog.close()
+
+    # Deliberately narrow the window (the dialog clamps to its real minimum
+    # when that is wider than the target, exactly like resize_to_available
+    # clamping the other way) and force the t0 line to a pulsed run's worst
+    # case (no header t0, "pulse-edge midpoint" — see _T0_LINE_WORST_CASE in
+    # dialog.py). The ElidedLabel must shrink and elide *that* line instead of
+    # forcing the grouping column into a horizontal scroll — and Corrections,
+    # sharing the reclaimed width, must still not need one either.
+    dialog = GroupingDialog([_fifteen_detector_dataset(), calibration_run])
+    preferred_w, preferred_h = dialog.preferred_window_size()
+    narrow_w = preferred_w - metrics.field_width_for(40)
+    dialog.resize(narrow_w, preferred_h)
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+    QApplication.processEvents()
+
+    alpha = dialog._alpha_section
+    alpha._run_combo.setCurrentIndex(alpha._run_combo.findData(373))
+    alpha._result_label.setText("α = 1.0123(15)  ·  Diamagnetic (TF)  ·  run 12")
+    dialog._alpha_card.set_expanded(True)
+
+    worst_case_line = (
+        "File: none (detected) · Detected: bin 1601 (pulse-edge midpoint, spread 12) · Δ +1601"
+    )
+    t0_label = dialog._t0_detected_label
+    t0_label.setText(worst_case_line)
+    t0_label.set_hover_text(worst_case_line)
+    QApplication.processEvents()
+
+    diagnostic = _column_budget_diagnostic(dialog)
+    assert t0_label._elided_text() != t0_label.text(), diagnostic
+    assert t0_label.toolTip() == worst_case_line
+    assert not dialog._grouping_scroll.horizontalScrollBar().isVisible(), diagnostic
+    assert dialog._grouping_scroll.horizontalScrollBar().maximum() == 0, diagnostic
+    assert not dialog._corrections_scroll.horizontalScrollBar().isVisible(), diagnostic
+    assert dialog._corrections_scroll.horizontalScrollBar().maximum() == 0, diagnostic
+    dialog.close()
+
+
+def test_the_window_never_opens_wider_than_the_available_screen(
+    qapp: QApplication,
+) -> None:
+    """The preferred size is a wish; the work area is the limit.
+
+    The one thing the clamp cannot undercut is the dialog's own layout
+    minimum (every pane at its measured content minimum): a window narrower
+    than that would have to scroll one of its columns, which the column
+    budget forbids. On the 800-px-wide offscreen screen that minimum is the
+    binding limit, so the bound is the larger of the two.
+    """
+    available = QApplication.primaryScreen().availableGeometry()
+    dialog = GroupingDialog([_dataset_with_histograms()])
+
+    assert dialog.size().width() <= max(available.width(), dialog.minimumSizeHint().width())
+    assert dialog.size().height() <= available.height()
     dialog.close()
 
 
@@ -2117,6 +2293,31 @@ def test_group_table_uses_scrollable_capped_height(qapp: QApplication) -> None:
     assert dialog._group_table.maximumHeight() > 0
 
 
+def test_group_table_detector_indices_column_fills_the_width(qapp: QApplication) -> None:
+    """The last column stretches so the table has no dead space to its right.
+
+    The other three columns (Group / Include / Name) stay content-sized —
+    ``resizeColumnsToContents`` in ``_populate_group_table`` must not undo the
+    stretch on the last one.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.resize(*dialog.preferred_window_size())
+    dialog.show()
+    QApplication.processEvents()
+
+    header = dialog._group_table.horizontalHeader()
+    last = dialog._group_table.columnCount() - 1
+    assert header.stretchLastSection()
+    for col in range(last):
+        assert header.sectionResizeMode(col) != QHeaderView.ResizeMode.Stretch
+
+    widths = [
+        dialog._group_table.columnWidth(col) for col in range(dialog._group_table.columnCount())
+    ]
+    assert sum(widths) == dialog._group_table.viewport().width()
+    dialog.close()
+
+
 # ---------------------------------------------------------------------------
 # Alpha estimation method picker + provenance (data-reduction-parity Phase 1)
 # ---------------------------------------------------------------------------
@@ -2334,8 +2535,9 @@ def test_find_t0_fills_spinner_without_applying(qapp: QApplication) -> None:
     dataset.run.grouping["last_good_bin"] = 199
     dialog = GroupingDialog([dataset])
     dialog._on_find_t0()
+    # Find fills the absolute bin; nothing is applied until Apply. The outcome
+    # is reported by the shared detected line, not a separate result label.
     assert dialog._t0_spin.value() == 37 + dialog._bin_index_base()
-    assert "t0" in dialog._alpha_result_label.text()
 
 
 def test_exclusion_field_round_trips_and_validates(qapp: QApplication, monkeypatch) -> None:
@@ -2724,7 +2926,7 @@ def test_t0_mode_defaults_to_from_file_with_readonly_spin(qapp: QApplication) ->
     assert dialog._find_t0_btn.isEnabled() is False
     # Read-only spin shows the preview run's file common t0 (max over groups = 3).
     assert dialog._t0_spin.value() == 3
-    assert "each run's file" in dialog._t0_mode_label.text()
+    assert dialog._t0_detected_label.text().startswith("File: bin 3 · ")
     assert dialog._draft.t0_policy.mode == "from_file"
 
 
@@ -2741,7 +2943,8 @@ def test_t0_manual_mode_enables_spin_and_dirties_draft(qapp: QApplication) -> No
     assert dialog._draft_dirty is True
     dialog._sync_draft_from_form()
     assert dialog._draft.t0_policy.mode == "manual"
-    assert dialog._draft.t0_policy.value == 5
+    # Manual stores an OFFSET from the run's own file t0 (= 3), not the bin.
+    assert dialog._draft.t0_policy.offset_bins == 5 - 3
 
 
 def test_t0_from_file_shows_file_value_not_stored_override(qapp: QApplication) -> None:
@@ -2780,7 +2983,9 @@ def test_t0_auto_detect_shows_detected_value_and_provenance(qapp: QApplication) 
     # PSI (continuous) → prompt-peak argmax. h1 peak at bin 2, h2 peak at bin 3.
     # median consensus rounds to 2 or 3; provenance text names the strategy.
     assert dialog._t0_spin.value() in (2, 3)
-    assert "prompt peak" in dialog._t0_mode_label.text()
+    # The auto-detect toggle scans once and caches it, so the shared line is
+    # already populated with the strategy it used.
+    assert "prompt peak" in dialog._t0_detected_label.text()
     dialog._sync_draft_from_form()
     assert dialog._draft.t0_policy.mode == "auto_detect"
 
@@ -2792,3 +2997,315 @@ def test_t0_find_button_fills_manual_spin(qapp: QApplication) -> None:
     dialog._on_find_t0()
     # Find fills the spin with the detected consensus (prompt peak).
     assert dialog._t0_spin.value() in (2, 3)
+
+
+# ---------------------------------------------------------------------------
+# The always-on file / detected / Δ line and its verdicts (plan phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _t0_line_dataset(
+    run_number: int = 4700,
+    t0_bins: tuple[int, ...] = (10, 10),
+    peaks: tuple[int, ...] = (10, 10),
+    n_bins: int = 40,
+    t_good_offset: int = 4,
+    **grouping_extra,
+) -> MuonDataset:
+    """A PSI (continuous) run whose file t0 and prompt peak are set per detector.
+
+    The good window opens ``t_good_offset`` bins after t0 by default, clear of
+    the prompt peak — a window opening *on* t0 is itself a verdict (phase 7), so
+    a fixture meant to be clean must not sit on one.
+    """
+    histograms = []
+    for t0_bin, peak in zip(t0_bins, peaks, strict=True):
+        counts = np.full(n_bins, 10.0)
+        counts[peak] = 500.0
+        histograms.append(Histogram(counts=counts, bin_width=0.016, t0_bin=t0_bin))
+    n_det = len(t0_bins)
+    half = max(1, n_det // 2)
+    run = Run(
+        run_number=run_number,
+        histograms=histograms,
+        metadata={"run_number": run_number, "facility": "PSI"},
+        grouping={
+            "groups": {1: list(range(1, half + 1)), 2: list(range(half + 1, n_det + 1))},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": max(t0_bins),
+            "t_good_offset": t_good_offset,
+            "first_good_bin": max(t0_bins) + t_good_offset,
+            "last_good_bin": n_bins - 1,
+            "detector_t0_bins": list(t0_bins),
+            **grouping_extra,
+        },
+    )
+    t = np.arange(n_bins, dtype=float) * 0.016
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "facility": "PSI"},
+        run=run,
+    )
+
+
+def _wait_for_t0_detection(dialog: GroupingDialog) -> None:
+    """Let the debounced off-thread t0 detection land and repaint the line."""
+    _wait_until(lambda: dialog._t0_search_cache.get(dialog._t0_cache_key()) is not None)
+
+
+def test_t0_line_is_identical_in_every_mode_on_the_same_run(qapp: QApplication) -> None:
+    """D11: the file/detected/Δ line says the same thing whatever the mode is."""
+    dialog = GroupingDialog([_t0_line_dataset()])
+    _wait_for_t0_detection(dialog)
+    baseline = dialog._t0_detected_label.text()
+    assert baseline == "File: bin 10 · Detected: bin 10 (prompt peak, spread 0) · Δ +0"
+
+    texts = {}
+    for mode in ("from_file", "manual", "auto_detect"):
+        dialog._set_t0_mode_combo(mode)
+        dialog._on_t0_mode_changed()
+        texts[mode] = dialog._t0_detected_label.text()
+
+    assert set(texts.values()) == {baseline}
+
+
+def _verdict_menu_entries(dialog: GroupingDialog) -> list[str]:
+    """What the ⚠ button's popup offers to read."""
+    return [action.text() for action in dialog._t0_verdict_menu.actions()]
+
+
+def test_t0_line_carries_no_verdict_messages(qapp: QApplication) -> None:
+    """Phase 7: the line is file/detected/Δ only; the messages live in the button."""
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2))])
+    _wait_for_t0_detection(dialog)
+
+    text = dialog._t0_detected_label.text()
+    assert text == "File: bin 10 · Detected: bin 2 (prompt peak, spread 0) · Δ -8"
+    assert not dialog._t0_detected_label.wordWrap()
+
+
+def test_t0_verdict_button_is_hidden_for_a_clean_run(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_t0_line_dataset()])
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+
+    assert dialog._current_t0_verdict().level == "ok"
+    assert not dialog._t0_verdict_button.isVisible()
+    assert _verdict_menu_entries(dialog) == []
+    dialog.close()
+
+
+def test_t0_verdict_button_carries_the_messages_as_tooltip_and_menu(
+    qapp: QApplication,
+) -> None:
+    # File t0 = 10, prompt peak at bin 2: Δ = −8, well past the 2-bin continuous
+    # tolerance, and the good window now opens before the detected t0.
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2))])
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+
+    assert dialog._t0_verdict_button.isVisible()
+    assert dialog._t0_verdict_button.text() == "⚠"
+    assert tokens.WARN in dialog._t0_verdict_button.styleSheet()
+    entries = _verdict_menu_entries(dialog)
+    assert (
+        "Detected t0 is bin 2, file t0 is bin 10 — further apart than the 2-bin tolerance"
+        in entries
+    )
+    assert dialog._t0_verdict_button.toolTip() == "\n".join(entries)
+    # Statements, not commands: every entry reads but does nothing.
+    assert all(not action.isEnabled() for action in dialog._t0_verdict_menu.actions())
+    dialog.close()
+
+
+def test_verdict_button_reserves_its_width_when_hidden(qapp: QApplication) -> None:
+    """The button's size policy bakes its width into the construction-time floor.
+
+    ``_grouping_scroll.setMinimumWidth`` is captured once at construction from
+    ``minimumSizeHint()`` while the verdict button starts hidden. Qt excludes a
+    hidden widget from a layout's minimum unless its size policy retains it, so
+    without ``retainSizeWhenHidden`` a later warn/error verdict showing the
+    button would grow the row's true minimum past that frozen floor.
+    """
+    dialog = GroupingDialog([_t0_line_dataset()])
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+
+    assert dialog._t0_verdict_button.sizePolicy().retainSizeWhenHidden()
+    assert not dialog._t0_verdict_button.isVisible()
+    hidden_width = dialog._grouping_scroll.widget().minimumSizeHint().width()
+
+    dialog._refresh_t0_verdict_button(
+        T0Assessment(level="warn", delta_bins=5, messages=("x",), outlier_detectors=())
+    )
+
+    assert dialog._t0_verdict_button.isVisible()
+    shown_width = dialog._grouping_scroll.widget().minimumSizeHint().width()
+    assert shown_width == hidden_width
+    dialog.close()
+
+
+def test_grouping_column_does_not_scroll_when_a_verdict_appears(qapp: QApplication) -> None:
+    """The reserved footprint holds even at the dialog's own tightest width.
+
+    Resizing to ``minimumSizeHint()`` is the width at which a construction-time
+    minimum that excluded the hidden verdict button would first show up as a
+    horizontal scrollbar once the button appears (see the retainSizeWhenHidden
+    fix on ``_t0_verdict_button`` above).
+    """
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2))])
+    dialog.resize(dialog.minimumSizeHint())
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+    QApplication.processEvents()
+
+    assert dialog._current_t0_verdict().level == "warn"
+    assert dialog._t0_verdict_button.isVisible()
+    assert dialog._grouping_scroll.horizontalScrollBar().maximum() == 0
+    dialog.close()
+
+
+def test_t0_verdict_button_is_tinted_by_severity(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_t0_line_dataset(t0_source="missing")])
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+
+    assert dialog._t0_detected_label.text().startswith("File: none (detected) · Detected: bin 10")
+    assert dialog._t0_verdict_button.isVisible()
+    assert tokens.ERROR in dialog._t0_verdict_button.styleSheet()
+    assert _verdict_menu_entries(dialog) == [
+        "No time zero in the file header; using the detected value"
+    ]
+    dialog.close()
+
+
+def test_t0_line_reports_a_header_conflict_as_a_warning(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_t0_line_dataset(t0_source="conflict")])
+    _wait_for_t0_detection(dialog)
+
+    assert _verdict_menu_entries(dialog) == ["Header time_zero disagrees with t0_bin; using t0_bin"]
+    assert dialog._t0_detected_label.pen_color().name() == tokens.WARN
+
+
+def test_t0_line_warns_when_the_detected_t0_is_beyond_tolerance(qapp: QApplication) -> None:
+    # File t0 = 10, prompt peak at bin 2: Δ = −8, well past the 2-bin continuous
+    # tolerance, and both detectors are their own outliers.
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2))])
+    _wait_for_t0_detection(dialog)
+
+    text = dialog._t0_detected_label.text()
+    assert "Detected: bin 2 (prompt peak, spread 0) · Δ -8" in text
+    entries = _verdict_menu_entries(dialog)
+    assert (
+        "Detected t0 is bin 2, file t0 is bin 10 — further apart than the 2-bin tolerance"
+        in entries
+    )
+    assert dialog._t0_detected_label.pen_color().name() == tokens.WARN
+
+
+def test_t0_line_names_only_the_detector_that_disagrees_with_the_others(
+    qapp: QApplication,
+) -> None:
+    # Detector 2's peak sits 8 bins from its own file t0 while 1 and 3 are clean,
+    # so only detector 2 disagrees with the run's shift.
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10, 10), peaks=(10, 2, 10))])
+    _wait_for_t0_detection(dialog)
+
+    assert (
+        "Detectors 2 disagree with the other detectors' t0 shift by more than 2 bins"
+        in _verdict_menu_entries(dialog)
+    )
+    assert dialog._current_t0_verdict().outlier_detectors == (2,)
+
+
+def test_t0_verdict_warns_when_the_good_window_opens_on_the_detected_t0(
+    qapp: QApplication,
+) -> None:
+    """Phase 7: an analysis window that starts on t0 includes the prompt peak."""
+    dialog = GroupingDialog([_t0_line_dataset(t_good_offset=0)])
+    _wait_for_t0_detection(dialog)
+
+    assert "First good bin 10 is at or before the detected t0 (bin 10)" in _verdict_menu_entries(
+        dialog
+    )
+
+
+def test_apply_records_the_t0_warning_and_still_succeeds(qapp: QApplication) -> None:
+    """D9: a divergent t0 is reported, never a block."""
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2))])
+    _wait_for_t0_detection(dialog)
+
+    dialog._on_apply()
+
+    assert dialog.result() == GroupingDialog.DialogCode.Accepted
+    assert any("further apart than the 2-bin tolerance" in m for m in dialog.t0_apply_warnings)
+
+
+def test_apply_records_no_t0_warning_for_a_clean_run(qapp: QApplication) -> None:
+    dialog = GroupingDialog([_t0_line_dataset()])
+    _wait_for_t0_detection(dialog)
+
+    dialog._on_apply()
+
+    assert dialog.t0_apply_warnings == []
+
+
+# -- Manual is an offset (D3) ----------------------------------------------
+
+
+def test_manual_t0_offset_follows_the_preview_run_file_t0(qapp: QApplication) -> None:
+    """D3: the stored value is an offset; the spin shows each run's absolute bin."""
+    ds_a = _t0_line_dataset(run_number=4701, t0_bins=(10, 10), peaks=(10, 10))
+    ds_b = _t0_line_dataset(run_number=4702, t0_bins=(4, 4), peaks=(4, 4))
+    dialog = GroupingDialog([ds_a, ds_b], selected_run_number=4701)
+    dialog._set_t0_mode_combo("manual")
+    dialog._on_t0_mode_changed()
+
+    dialog._t0_spin.setValue(13)  # run 4701's file t0 is 10 → offset +3
+    dialog._sync_draft_from_form()
+    assert dialog._draft.t0_policy.offset_bins == 3
+
+    dialog._scope_panel.set_current_run(4702)
+
+    # Same offset, re-resolved against run 4702's file t0 of 4.
+    assert dialog._draft.t0_policy.offset_bins == 3
+    assert dialog._t0_spin.value() == 7
+
+
+def test_find_t0_stores_the_offset_from_the_file_value(qapp: QApplication) -> None:
+    # File t0 = 10, prompt peak at bin 6 → Find fills bin 6, i.e. offset −4.
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(6, 6))])
+    dialog._set_t0_mode_combo("manual")
+    dialog._on_t0_mode_changed()
+
+    dialog._on_find_t0()
+
+    assert dialog._t0_spin.value() == 6
+    dialog._sync_draft_from_form()
+    assert dialog._draft.t0_policy.offset_bins == -4
+
+
+def test_t0_line_and_verdict_agree_on_the_index_base(qapp: QApplication) -> None:
+    """A 1-based run must not read ``File: bin 11 … file t0 is bin 10``.
+
+    The line's ``File:``/``Detected:`` parts are written in the run's display
+    base; the verdict messages come from core, so core has to use the same base
+    (it reads ``bin_index_base`` off the grouping). Before the fix the two
+    halves of one sentence disagreed by a bin on every ISIS run.
+    """
+    dialog = GroupingDialog([_t0_line_dataset(t0_bins=(10, 10), peaks=(2, 2), bin_index_base=1)])
+    _wait_for_t0_detection(dialog)
+
+    text = dialog._t0_detected_label.text()
+    assert dialog._bin_index_base() == 1
+    assert text.startswith("File: bin 11 · Detected: bin 3 (prompt peak, spread 0) · Δ -8")
+    assert (
+        "Detected t0 is bin 3, file t0 is bin 11 — further apart than the 2-bin tolerance"
+        in _verdict_menu_entries(dialog)
+    )
+    # The spin (also base-adjusted) shows the same file bin the sentence names.
+    assert dialog._t0_spin.value() == 11

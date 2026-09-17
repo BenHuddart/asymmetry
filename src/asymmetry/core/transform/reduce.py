@@ -49,9 +49,9 @@ from asymmetry.core.transform.deadtime import (
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
-    detector_t0_overrides,
 )
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.t0 import common_t0_time_us, effective_detector_t0_bins
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
     PERCENT_PER_FRACTION,
@@ -157,6 +157,12 @@ class CorrectedGroupedCounts:
     spectrum, and when no background was applied). They exist because the
     corrected arrays alone cannot tell a downstream estimator what was taken
     out of them — see :meth:`subtracted_background`.
+
+    ``t0_time_us`` is the run's exact common t0 in µs
+    (:func:`~asymmetry.core.transform.t0.common_t0_time_us` at ``common_t0``);
+    every stamp built from these counts is the bin centre ``(k + 0.5)·w`` minus
+    it, so a caller that re-derives an axis from ``common_t0`` alone drops the
+    sub-bin part.
     """
 
     forward: NDArray[np.float64]
@@ -165,6 +171,7 @@ class CorrectedGroupedCounts:
     backward_error: NDArray[np.float64] | None
     common_t0: int
     bin_width: float
+    t0_time_us: float
     deadtime_applied: bool
     background_state: dict[str, object] | None
     background_level: tuple[float, float] | None = None
@@ -244,7 +251,7 @@ def corrected_grouped_counts(
 
         # A *manual* T0Policy carries effective per-detector t0 bins in the grouping
         # so alignment shifts without the histograms' own t0_bin being rewritten.
-        detector_t0 = detector_t0_overrides(grouping, len(working_histograms))
+        detector_t0 = effective_detector_t0_bins(working_histograms, grouping)
         common_t0 = common_t0_for_groups(
             working_histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0
         )
@@ -287,13 +294,13 @@ def corrected_grouped_counts(
                         reference_prepared,
                         forward_idx,
                         common_t0_bin=common_t0,
-                        detector_t0_bins=detector_t0_overrides(grouping, len(reference_prepared)),
+                        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
                     )
                     reference_backward = apply_grouping_aligned(
                         reference_prepared,
                         backward_idx,
                         common_t0_bin=common_t0,
-                        detector_t0_bins=detector_t0_overrides(grouping, len(reference_prepared)),
+                        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
                     )
             try:
                 last_good = int(grouping.get("last_good_bin", n_grouped - 1))
@@ -330,6 +337,7 @@ def corrected_grouped_counts(
                     background_state["details"] = dict(bkg_result.details)
 
         bin_width = float(working_histograms[0].bin_width) if working_histograms else 1.0
+        t0_time_us = common_t0_time_us(working_histograms, grouping, common_t0)
         # Errors are only usable when background subtraction supplied both — the
         # asymmetry's error path treats them both-or-neither.
         forward_error = None
@@ -369,6 +377,7 @@ def corrected_grouped_counts(
             backward_error=backward_error,
             common_t0=int(common_t0),
             bin_width=float(bin_width),
+            t0_time_us=t0_time_us,
             deadtime_applied=dt_applied,
             background_state=background_state,
             background_level=background_level,
@@ -457,6 +466,7 @@ def reduce_grouped_asymmetry(
             grouping=grouping,
             common_t0=corrected.common_t0,
             bin_width_us=corrected.bin_width,
+            t0_time_us=corrected.t0_time_us,
             alpha=alpha,
             first_good_bin=first_good,
             last_good_bin=last_good,

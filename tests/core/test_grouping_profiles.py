@@ -25,16 +25,15 @@ from asymmetry.core.project.profiles import (
     default_profile_for_run,
     detect_instrument_for_run,
     effective_grouping_for_loaded_run,
+    heal_t0_policies,
     named_profile_for_run,
     profile_fingerprint_for_run,
     profile_from_payload,
     reconcile_instrument_for_payload,
     resolve_effective_grouping,
 )
-from asymmetry.core.transform.grouping import (
-    EFFECTIVE_DETECTOR_T0_KEY,
-    group_forward_backward,
-)
+from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 
 # --------------------------------------------------------------------------- #
 # Fixtures / builders
@@ -561,10 +560,31 @@ def _run_with_detector_t0(detector_t0: list[int]) -> Run:
 def test_t0_policy_round_trips_each_mode():
     for policy in (
         T0Policy(mode="from_file"),
-        T0Policy(mode="manual", value=7),
+        T0Policy(mode="manual", offset_bins=7),
+        T0Policy(mode="manual", offset_bins=-3),
         T0Policy(mode="auto_detect", strategy="prompt_peak", spread_bins=2, source_run=3),
     ):
         assert T0Policy.from_dict(policy.to_dict()).to_dict() == policy.to_dict()
+    assert T0Policy.from_dict({"mode": "manual", "offset_bins": -3}).offset_bins == -3
+
+
+def test_t0_policy_from_legacy_value_converts_an_absolute_bin_to_an_offset():
+    assert T0Policy.from_legacy_value(9, 6) == T0Policy(mode="manual", offset_bins=3)
+    assert T0Policy.from_legacy_value(4, 6) == T0Policy(mode="manual", offset_bins=-2)
+    # A "manual" that never differed from the file was mislabelled (D2).
+    assert T0Policy.from_legacy_value(6, 6) == T0Policy(mode="from_file")
+
+
+def test_t0_policy_keeps_a_legacy_value_until_it_is_converted():
+    """A pre-v21 absolute ``value`` survives round-tripping but never resolves."""
+    policy = T0Policy.from_dict({"mode": "manual", "legacy_value": 9})
+    assert policy.offset_bins is None
+    assert policy.legacy_value == 9
+    assert policy.to_dict() == {"mode": "manual", "value": 9}
+
+    run = _run_with_detector_t0([5, 5, 6, 6])
+    with pytest.raises(ValueError, match="Legacy EMU"):
+        resolve_effective_grouping(_base_profile(name="Legacy EMU", t0_policy=policy), run)
 
 
 def test_t0_policy_from_dict_rejects_unknown_mode():
@@ -579,10 +599,13 @@ def test_t0_policy_default_is_omitted_from_profile_dict():
 
 
 def test_t0_policy_manual_serializes_in_profile_dict():
-    profile = _base_profile(t0_policy=T0Policy(mode="manual", value=9))
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=3))
     data = profile.to_dict()
-    assert data["t0_policy"] == {"mode": "manual", "value": 9}
-    assert GroupingProfile.from_dict(data).t0_policy.to_dict() == {"mode": "manual", "value": 9}
+    assert data["t0_policy"] == {"mode": "manual", "offset_bins": 3}
+    assert GroupingProfile.from_dict(data).t0_policy.to_dict() == {
+        "mode": "manual",
+        "offset_bins": 3,
+    }
 
 
 def test_t0_from_file_is_bit_identical_to_default_resolution():
@@ -601,10 +624,10 @@ def test_t0_manual_shifts_common_t0_and_publishes_effective_bins_non_destructive
     """Manual t0 offsets each detector's file t0 in the payload only."""
     run = _run_with_detector_t0([5, 5, 6, 6])  # file common t0 (max over groups) = 6
     before = [int(h.t0_bin) for h in run.histograms]
-    profile = _base_profile(t0_policy=T0Policy(mode="manual", value=9))
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=3))
     resolved = resolve_effective_grouping(profile, run)
 
-    # delta = 9 - 6 = 3; each detector's file t0 is shifted by +3.
+    # offset = +3 from this run's own file common t0 of 6.
     assert resolved["t0_bin"] == 9
     assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [8, 8, 9, 9]
     # first_good_bin shifts with t0 so the good-window offset is preserved.
@@ -613,11 +636,34 @@ def test_t0_manual_shifts_common_t0_and_publishes_effective_bins_non_destructive
     assert [int(h.t0_bin) for h in run.histograms] == before == [5, 5, 6, 6]
 
 
+def test_t0_manual_offset_is_relative_to_each_run_own_file_t0():
+    """D3: one profile, two runs with different file t0 — both move by the offset."""
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=2))
+    early = _run_with_detector_t0([5, 5, 6, 6])  # file common t0 = 6
+    late = _run_with_detector_t0([20, 20, 21, 21])  # file common t0 = 21
+
+    early_resolved = resolve_effective_grouping(profile, early)
+    late_resolved = resolve_effective_grouping(profile, late)
+
+    assert early_resolved["t0_bin"] == 8
+    assert late_resolved["t0_bin"] == 23
+    assert early_resolved[EFFECTIVE_DETECTOR_T0_KEY] == [7, 7, 8, 8]
+    assert late_resolved[EFFECTIVE_DETECTOR_T0_KEY] == [22, 22, 23, 23]
+
+
+def test_t0_manual_negative_offset_moves_t0_earlier():
+    run = _run_with_detector_t0([5, 5, 6, 6])  # file common t0 = 6
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=-2))
+    resolved = resolve_effective_grouping(profile, run)
+    assert resolved["t0_bin"] == 4
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [3, 3, 4, 4]
+
+
 def test_t0_manual_effective_bins_drive_reduction_alignment():
     """The effective per-detector t0 override changes what reduction aligns to."""
     run = _run_with_detector_t0([5, 5, 5, 5])
     file_profile = _base_profile()
-    manual_profile = _base_profile(t0_policy=T0Policy(mode="manual", value=8))
+    manual_profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=3))
 
     file_grouped = group_forward_backward(
         run.histograms, resolve_effective_grouping(file_profile, run)
@@ -630,9 +676,9 @@ def test_t0_manual_effective_bins_drive_reduction_alignment():
     assert manual_grouped.common_t0 == 8
 
 
-def test_t0_manual_matching_file_value_is_a_no_op():
+def test_t0_manual_zero_offset_is_a_no_op():
     run = _run_with_detector_t0([5, 5, 6, 6])  # file common t0 = 6
-    profile = _base_profile(t0_policy=T0Policy(mode="manual", value=6))
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=0))
     resolved = resolve_effective_grouping(profile, run)
     assert resolved["t0_bin"] == 6
     assert EFFECTIVE_DETECTOR_T0_KEY not in resolved  # delta == 0, no override
@@ -667,43 +713,336 @@ def test_t0_auto_detect_runs_search_per_run():
     assert all(int(h.t0_bin) == 3 for h in run.histograms)
 
 
+def test_t0_auto_detect_records_provenance_even_when_the_delta_is_zero():
+    """A detection that agrees with the file still has a strategy and a spread."""
+    peak_bin = 7
+    counts = np.ones(20, dtype=float)
+    counts[peak_bin] = 100.0
+    histograms = [
+        Histogram(
+            counts=counts.copy(),
+            bin_width=0.016,
+            t0_bin=peak_bin,
+            good_bin_start=peak_bin + 1,
+            good_bin_end=19,
+        )
+        for _ in range(4)
+    ]
+    run = Run(
+        run_number=1,
+        histograms=histograms,
+        grouping={"instrument": "EMU", "t0_bin": peak_bin, "detector_t0_bins": [peak_bin] * 4},
+        metadata={"instrument": "EMU", "facility": "PSI"},
+    )
+    resolved = resolve_effective_grouping(
+        _base_profile(t0_policy=T0Policy(mode="auto_detect")), run
+    )
+    assert resolved["t0_search_strategy"] == "prompt_peak"
+    assert resolved["t0_search_spread_bins"] == 0
+    # Nothing else moves: delta is 0, so no override and no t0 rewrite.
+    assert resolved["t0_bin"] == peak_bin
+    assert EFFECTIVE_DETECTOR_T0_KEY not in resolved
+
+
+# --------------------------------------------------------------------------- #
+# Auto-detect is per detector (musrt0 -g), phase 7
+# --------------------------------------------------------------------------- #
+
+
+def _staggered_run(
+    detector_t0: list[int],
+    peaks: list[int],
+    *,
+    n_bins: int = 320,
+    t0_time_us: float | None = None,
+) -> Run:
+    """A PSI-style run whose detectors sit at genuinely different times.
+
+    Each histogram's prompt peak is a bin or two from its *own* header t0, and
+    one detector is far earlier than the rest — the 15-detector GPS shape that
+    exposed the median-vs-maximum bug.
+    """
+    histograms = []
+    for t0_bin, peak in zip(detector_t0, peaks, strict=True):
+        counts = np.ones(n_bins, dtype=float)
+        counts[peak] = 500.0
+        histograms.append(
+            Histogram(
+                counts=counts,
+                bin_width=0.016,
+                t0_bin=t0_bin,
+                good_bin_start=t0_bin + 10,
+                good_bin_end=n_bins - 1,
+            )
+        )
+    grouping = {
+        "instrument": "EMU",
+        "t0_bin": max(detector_t0),
+        "first_good_bin": max(detector_t0) + 10,
+        "last_good_bin": n_bins - 1,
+        "detector_t0_bins": list(detector_t0),
+        "detector_first_good_bins": [t0 + 10 for t0 in detector_t0],
+        "detector_last_good_bins": [n_bins - 1] * len(detector_t0),
+        "t0_source": "file",
+    }
+    if t0_time_us is not None:
+        grouping["t0_time_us"] = t0_time_us
+    return Run(
+        run_number=1,
+        histograms=histograms,
+        grouping=grouping,
+        metadata={"instrument": "EMU", "facility": "PSI"},
+    )
+
+
+def test_auto_detect_gives_every_detector_its_own_t0():
+    """Each detector aligns on its own prompt peak — musrfit's ``musrt0 -g`` model.
+
+    Detector 4 sits 170 bins before the rest and its header says so. The old
+    median-vs-maximum rule shifted every detector by −168 and dragged the good
+    window into the prompt peak; per detector, nothing moves but the +2 each
+    detector's own peak asks for.
+    """
+    run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222], t0_time_us=(220 + 0.5) * 0.016)
+    profile = _base_profile(t0_policy=T0Policy(mode="auto_detect"))
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [52, 48, 51, 222]
+    # The common t0 is the max over the profile's forward+backward detectors.
+    assert resolved["t0_bin"] == 222
+    # Good window and exact t0 move with it — by +2, not by −168.
+    assert resolved["first_good_bin"] == 232
+    assert resolved["t0_time_us"] == pytest.approx((220 + 0.5) * 0.016 + 2 * 0.016)
+    # The provenance spread is the spread of the SHIFTS (+2, +2, +1, +2 → 1),
+    # not of the raw estimates, which span 174 bins on this run.
+    assert resolved["t0_search_spread_bins"] == 1
+    assert resolved["t0_search_strategy"] == "prompt_peak"
+    assert [int(h.t0_bin) for h in run.histograms] == [50, 46, 50, 220]
+
+
+def test_auto_detect_heals_a_failed_detector_with_the_median_shift():
+    """A detector with no counts keeps its file t0 moved by what the others moved."""
+    run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222])
+    run.histograms[1] = Histogram(
+        counts=np.zeros(320),
+        bin_width=0.016,
+        t0_bin=46,
+        good_bin_start=56,
+        good_bin_end=319,
+    )
+    profile = _base_profile(t0_policy=T0Policy(mode="auto_detect"))
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    # Detectors 1, 3, 4 each moved +2; detector 2 takes 46 + 2.
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [52, 48, 51, 222]
+
+
+def test_auto_detect_on_a_missing_t0_gives_each_detector_its_estimate():
+    """With no header to shift from, every detector takes its own detected bin."""
+    run = _staggered_run([0, 0, 0, 0], [52, 48, 51, 222])
+    run.grouping["t0_source"] = "missing"
+    profile = _base_profile(t0_policy=T0Policy(mode="auto_detect"))
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [52, 48, 51, 222]
+    assert resolved["t0_bin"] == 222
+    assert resolved["t0_source"] == "detected"
+
+
+def test_a_manual_offset_on_a_missing_t0_rides_on_the_per_detector_base():
+    """D3 × D7: the offset applies to each detector's own detected bin."""
+    run = _staggered_run([0, 0, 0, 0], [52, 48, 51, 222])
+    run.grouping["t0_source"] = "missing"
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=3))
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [55, 51, 54, 225]
+    assert resolved["t0_bin"] == 225
+    assert resolved["t0_source"] == "detected"
+
+
+# --------------------------------------------------------------------------- #
+# The payload's t0 and good window follow the PROFILE's groups, phase 7
+# --------------------------------------------------------------------------- #
+
+
+def test_from_file_payload_t0_follows_the_profile_groups_not_the_loader_pair():
+    """The 1606-vs-1612 case: the payload must name the bin reduction aligns to.
+
+    The loader's default pair covers detectors 1–2 and reports their common t0;
+    a profile that analyses detectors 3–4 aligns on *their* max instead. Copying
+    the loader's ``t0_bin`` left the payload six bins away from the alignment.
+    """
+    run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222])
+    run.grouping["t0_bin"] = 50  # the loader's pair (detectors 1–2) max
+    run.grouping["first_good_bin"] = 60
+    profile = _base_profile(groups={1: [3], 2: [4]}, forward_group=1, backward_group=2)
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved["t0_bin"] == 220
+    assert EFFECTIVE_DETECTOR_T0_KEY not in resolved  # from_file: no override
+    # The window is re-derived for those detectors: both open 10 bins after
+    # their own t0, so the intersection opens 10 bins after the common one.
+    assert resolved["first_good_bin"] == 230
+    assert resolved["t_good_offset"] == 10
+    assert resolved["last_good_bin"] == 319
+
+
+def test_a_common_t0_file_keeps_the_loader_good_window():
+    """No per-detector tables, nothing to re-derive — the loader's values stand."""
+    facts = _per_run_facts()
+    del facts["detector_first_good_bins"]
+    del facts["detector_last_good_bins"]
+    facts["first_good_bin"] = 9
+    facts["last_good_bin"] = 17
+
+    resolved = resolve_effective_grouping(_base_profile(), _run(grouping=facts))
+
+    assert resolved["first_good_bin"] == 9
+    assert resolved["last_good_bin"] == 17
+
+
+# --------------------------------------------------------------------------- #
+# Missing file t0 (D7) and the exact t0 (D4)
+# --------------------------------------------------------------------------- #
+
+
+def _run_without_file_t0(peak_bin: int = 7) -> Run:
+    """A run whose loader reported no t0 at all: bin 0 and ``t0_source`` missing."""
+    counts = np.ones(20, dtype=float)
+    counts[peak_bin] = 100.0
+    histograms = [
+        Histogram(
+            counts=counts.copy(), bin_width=0.016, t0_bin=0, good_bin_start=1, good_bin_end=19
+        )
+        for _ in range(4)
+    ]
+    return Run(
+        run_number=1,
+        histograms=histograms,
+        grouping={
+            "instrument": "EMU",
+            "t0_bin": 0,
+            "first_good_bin": 1,
+            "last_good_bin": 19,
+            "detector_t0_bins": [0, 0, 0, 0],
+            "t0_source": "missing",
+        },
+        metadata={"instrument": "EMU", "facility": "PSI"},
+    )
+
+
+def test_t0_from_file_on_a_missing_t0_detects_and_records_provenance():
+    """D7: with nothing in the file to honour, From file resolves to the search."""
+    resolved = resolve_effective_grouping(_base_profile(), _run_without_file_t0())
+
+    assert resolved["t0_bin"] == 7
+    assert resolved["t0_source"] == "detected"
+    assert resolved["t0_search_strategy"] == "prompt_peak"
+    assert resolved["t0_search_spread_bins"] == 0
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [7, 7, 7, 7]
+    # The good window keeps its offset from t0.
+    assert resolved["first_good_bin"] == 8
+
+
+def test_t0_auto_detect_on_a_missing_t0_also_records_it_as_detected():
+    """Whatever the mode, a run whose t0 came from the search says so (D7)."""
+    profile = _base_profile(t0_policy=T0Policy(mode="auto_detect"))
+    resolved = resolve_effective_grouping(profile, _run_without_file_t0())
+
+    assert resolved["t0_bin"] == 7
+    assert resolved["t0_source"] == "detected"
+
+
+def test_t0_manual_offset_on_a_missing_t0_applies_to_the_detected_value():
+    """A manual offset is measured from the run's own base — here the detected one."""
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=2))
+    resolved = resolve_effective_grouping(profile, _run_without_file_t0())
+
+    assert resolved["t0_bin"] == 9  # detected 7 + 2, not 0 + 2
+    assert resolved["t0_source"] == "detected"
+    assert resolved[EFFECTIVE_DETECTOR_T0_KEY] == [9, 9, 9, 9]
+
+
+def test_t0_source_and_exact_t0_are_per_run_facts():
+    """Both new loader facts reach the resolved payload untouched by from_file."""
+    facts = _per_run_facts()
+    facts["t0_source"] = "file"
+    facts["t0_time_us"] = 0.088
+    resolved = resolve_effective_grouping(_base_profile(), _run(grouping=facts))
+    assert resolved["t0_source"] == "file"
+    assert resolved["t0_time_us"] == pytest.approx(0.088)
+
+
+def test_t0_manual_offset_shifts_the_exact_t0_by_whole_bins():
+    """D4: the sub-bin part of the exact t0 rides along with a manual shift."""
+    facts = _per_run_facts()
+    facts["t0_source"] = "file"
+    facts["t0_time_us"] = 0.088  # = (5 + 0.5) * 0.016
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=3))
+    resolved = resolve_effective_grouping(profile, _run(grouping=facts))
+
+    assert resolved["t0_bin"] == 8
+    assert resolved["t0_time_us"] == pytest.approx(0.088 + 3 * 0.016)
+
+
 # --------------------------------------------------------------------------- #
 # profile_from_payload / migration inference for t0
 # --------------------------------------------------------------------------- #
 
 
-def test_profile_from_payload_infers_from_file_when_t0_matches_file():
+def _t0_payload(**extra) -> dict:
+    """A loader-style payload: F/B groups over detectors 1-4 of a six-detector run."""
     payload = {
-        "groups": {1: [1], 2: [2]},
+        "groups": {1: [1, 2], 2: [3, 4]},
+        "forward_group": 1,
+        "backward_group": 2,
         "instrument": "EMU",
         "t0_bin": 6,
-        "detector_t0_bins": [5, 5, 6, 6],  # file common t0 = 6 == stored t0
+        "detector_t0_bins": [5, 5, 6, 6, 9, 9],  # detectors 5, 6 are out of group
     }
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 4))
+    payload.update(extra)
+    return payload
+
+
+def test_profile_from_payload_infers_from_file_when_t0_matches_the_group_max():
+    """The GPS bug: an out-of-group detector with a later t0 is not a manual shift."""
+    profile = profile_from_payload(_t0_payload(), "P", ProfileFingerprint("EMU", 6))
     assert profile.t0_policy.mode == "from_file"
 
 
-def test_profile_from_payload_infers_manual_when_t0_differs_from_file():
-    payload = {
-        "groups": {1: [1], 2: [2]},
-        "instrument": "EMU",
-        "t0_bin": 9,
-        "detector_t0_bins": [5, 5, 6, 6],  # file common t0 = 6 != stored 9
-    }
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 4))
-    assert profile.t0_policy.mode == "manual"
-    assert profile.t0_policy.value == 9
+def test_profile_from_payload_ignores_an_excluded_in_group_detector():
+    """Exclusion is applied before the max, exactly as the resolver does it."""
+    payload = _t0_payload(
+        # Detector 4 (an in-group detector) carries the later t0 and is excluded,
+        # so the file common t0 stays 5 and the stored t0_bin matches it.
+        t0_bin=5,
+        detector_t0_bins=[5, 5, 5, 9, 9, 9],
+        excluded_detectors=[4],
+    )
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 6))
+    assert profile.t0_policy.mode == "from_file"
 
 
-def test_profile_from_payload_infers_manual_from_effective_override():
-    payload = {
-        "groups": {1: [1], 2: [2]},
-        "instrument": "EMU",
-        "t0_bin": 8,
-        "effective_detector_t0_bins": [8, 8, 8, 8],
-    }
-    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 4))
+def test_profile_from_payload_infers_a_manual_offset_when_t0_differs_from_the_group_max():
+    profile = profile_from_payload(_t0_payload(t0_bin=9), "P", ProfileFingerprint("EMU", 6))
     assert profile.t0_policy.mode == "manual"
+    assert profile.t0_policy.offset_bins == 3  # 9 − in-group max 6
+
+
+def test_profile_from_payload_infers_the_offset_from_an_effective_override():
+    payload = _t0_payload(
+        t0_bin=8,
+        effective_detector_t0_bins=[7, 7, 8, 8, 11, 11],  # every entry is file + 2
+    )
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 6))
+    assert profile.t0_policy.mode == "manual"
+    assert profile.t0_policy.offset_bins == 2
 
 
 def test_profile_from_payload_no_detector_table_is_from_file():
@@ -911,3 +1250,84 @@ def test_profile_color_round_trips_and_defaults_none():
     colorless = _base_profile()
     assert "color" not in colorless.to_dict()
     assert GroupingProfile.from_dict(colorless.to_dict()).color is None
+
+
+# --------------------------------------------------------------------------- #
+# Project-open t0 repair (heal_t0_policies; decisions D2/D3)
+# --------------------------------------------------------------------------- #
+
+
+def test_heal_converts_a_legacy_absolute_t0_into_an_offset():
+    run = _run_with_detector_t0([4, 6])
+    profile = _base_profile(
+        fingerprint=ProfileFingerprint("EMU", 2),
+        groups={1: [1], 2: [2]},
+        t0_policy=T0Policy(mode="manual", legacy_value=9),
+    )
+
+    messages = heal_t0_policies([profile], {1: run})
+
+    # The run's file common t0 is max(4, 6) = 6, so bin 9 was a +3 offset.
+    assert profile.t0_policy == T0Policy(mode="manual", offset_bins=3)
+    assert messages == [
+        "Grouping profile 'Default (EMU)': converted the stored manual t0 bin 9 to "
+        "offset +3 bins against run 1's file t0 (bin 6)."
+    ]
+
+
+def test_heal_converts_a_legacy_value_equal_to_the_file_t0_to_from_file():
+    run = _run_with_detector_t0([4, 6])
+    profile = _base_profile(
+        fingerprint=ProfileFingerprint("EMU", 2),
+        groups={1: [1], 2: [2]},
+        t0_policy=T0Policy(mode="manual", legacy_value=6),
+    )
+
+    messages = heal_t0_policies([profile], {1: run})
+
+    assert profile.t0_policy == T0Policy(mode="from_file")
+    assert len(messages) == 1
+    assert messages[0].endswith("to mode from_file against run 1's file t0 (bin 6).")
+
+
+def test_heal_prefers_the_policys_source_run_as_the_reference():
+    typed_against = _run_with_detector_t0([4, 6])
+    typed_against.run_number = 7
+    other = _run_with_detector_t0([1, 1])
+    other.run_number = 3
+    profile = _base_profile(
+        fingerprint=ProfileFingerprint("EMU", 2),
+        groups={1: [1], 2: [2]},
+        t0_policy=T0Policy(mode="manual", legacy_value=9, source_run=7),
+    )
+
+    heal_t0_policies([profile], {3: other, 7: typed_against})
+
+    assert profile.t0_policy.offset_bins == 3  # 9 - 6, not 9 - 1
+
+
+def test_heal_leaves_a_legacy_value_alone_when_no_run_is_loaded():
+    """Nothing resolves such a profile, so the stored value survives untouched."""
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", legacy_value=9))
+
+    assert heal_t0_policies([profile], {}) == []
+    assert profile.t0_policy.legacy_value == 9
+
+
+def test_heal_rewrites_a_zero_offset_manual_policy_to_from_file():
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=0))
+
+    messages = heal_t0_policies([profile], {})
+
+    assert profile.t0_policy == T0Policy(mode="from_file")
+    assert messages == [
+        "Grouping profile 'Default (EMU)': manual t0 offset is 0 on every run in "
+        "scope, healed to mode from_file."
+    ]
+
+
+def test_heal_keeps_a_real_manual_offset():
+    profile = _base_profile(t0_policy=T0Policy(mode="manual", offset_bins=-2))
+
+    assert heal_t0_policies([profile], {}) == []
+    assert profile.t0_policy == T0Policy(mode="manual", offset_bins=-2)

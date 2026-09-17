@@ -26,6 +26,7 @@ source module alone would not intercept that path).
 from __future__ import annotations
 
 import os
+import threading
 
 import numpy as np
 import pytest
@@ -34,6 +35,7 @@ pytestmark = [pytest.mark.gui]
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
+from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtWidgets import QApplication
 
 import asymmetry.core.project.profiles as profiles_module
@@ -393,3 +395,88 @@ def test_toggle_to_auto_detect_scans_once_with_run_metadata(
     base = dialog._bin_index_base()
     expected = t0_scan_counter._original(dialog._run.histograms, dialog._run.metadata or {})
     assert dialog._t0_spin.value() == int(expected.consensus_t0_bin) + base
+
+
+def _wait_until(predicate, timeout_ms: int = 30_000) -> None:
+    """Pump a real nested event loop until *predicate* holds (queued signals)."""
+    if predicate():
+        return
+    loop = QEventLoop()
+    check = QTimer()
+    check.timeout.connect(lambda: loop.quit() if predicate() else None)
+    check.start(10)
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.timeout.connect(loop.quit)
+    guard.start(timeout_ms)
+    loop.exec()
+    check.stop()
+    guard.stop()
+    assert predicate(), "timed out waiting for the background worker"
+
+
+def _wait_for_t0_detection(dialog) -> None:
+    _wait_until(lambda: dialog._t0_search_cache.get(dialog._t0_cache_key()) is not None)
+
+
+def test_detected_line_scans_once_per_run_digest(
+    qapp: QApplication, t0_scan_counter: _T0ScanCounter
+) -> None:
+    """D11's always-on line costs exactly one detector scan per preview run.
+
+    The line is repainted on every form edit and in every t0 mode, so the scan
+    behind it must be cached on the run: mode toggles, a reseed and repeated
+    refreshes all read the same cached ``RunT0Search``.
+    """
+    dialog = GroupingDialog([_dataset_with_prompt_peak()])
+    _wait_for_t0_detection(dialog)
+    assert t0_scan_counter.count == 1
+
+    for mode in ("manual", "auto_detect", "from_file"):
+        dialog._set_t0_mode_combo(mode)
+        dialog._on_t0_mode_changed()
+    dialog._reload_controls_from_seed()
+    for _ in range(5):
+        dialog._refresh_t0_line()
+
+    assert t0_scan_counter.count == 1
+
+
+def test_detected_line_scans_once_more_for_a_second_preview_run(
+    qapp: QApplication, t0_scan_counter: _T0ScanCounter
+) -> None:
+    dialog = GroupingDialog(
+        [_dataset_with_prompt_peak(run_number=7001), _dataset_with_prompt_peak(run_number=7002)],
+        selected_run_number=7001,
+    )
+    _wait_for_t0_detection(dialog)
+    assert t0_scan_counter.count == 1
+
+    dialog._scope_panel.set_current_run(7002)
+    _wait_for_t0_detection(dialog)
+
+    assert t0_scan_counter.count == 2
+    # Switching back reuses the first run's cached scan.
+    dialog._scope_panel.set_current_run(7001)
+    dialog._refresh_t0_line()
+    assert t0_scan_counter.count == 2
+
+
+def test_detected_line_scan_runs_off_the_gui_thread(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scan behind the line must never block the GUI thread."""
+    gui_thread = threading.current_thread()
+    scan_threads: list[threading.Thread] = []
+    original = profiles_module.find_t0_for_run
+
+    def _record(histograms, metadata=None, *, pulsed=None):
+        scan_threads.append(threading.current_thread())
+        return original(histograms, metadata, pulsed=pulsed)
+
+    monkeypatch.setattr(grouping_dialog_dialog_module, "find_t0_for_run", _record, raising=True)
+
+    dialog = GroupingDialog([_dataset_with_prompt_peak()])
+    _wait_for_t0_detection(dialog)
+
+    assert scan_threads and all(thread is not gui_thread for thread in scan_threads)

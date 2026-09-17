@@ -328,6 +328,21 @@ class TestWiredCallSites:
         mainwindow._counts_first_rebunched_arrays(dataset, 2)
         assert calls["n"] == 2
 
+    def test_rebunch_recomputes_on_exact_t0_change(self, mainwindow: MainWindow) -> None:
+        """A T0Policy can move ``t0_time_us`` alone; the axis moves with it (D4)."""
+        calls = _count_reduces(mainwindow)
+        dataset = _multi_group_dataset()
+        run = dataset.run
+        run.grouping["t0_time_us"] = 0.0805
+        digest_before = fourier_grouping_digest(run)
+
+        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        run.grouping["t0_time_us"] = 0.0965
+        # Unlike the gaps above, this one *is* digested — the cache key moves.
+        assert fourier_grouping_digest(run) != digest_before
+        mainwindow._counts_first_rebunched_arrays(dataset, 2)
+        assert calls["n"] == 2
+
     def test_rebunch_recomputes_on_good_frames_change(self, mainwindow: MainWindow) -> None:
         calls = _count_reduces(mainwindow)
         dataset = _multi_group_dataset(grouping_extra={"good_frames": 1000.0})

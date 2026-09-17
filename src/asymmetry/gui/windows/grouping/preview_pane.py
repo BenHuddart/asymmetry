@@ -702,6 +702,9 @@ def _form_asymmetry(
         grouping=grouping,
         common_t0=corrected.common_t0,
         bin_width_us=corrected.bin_width,
+        # The run's exact common t0 (D4) — without it the preview axis sits up to
+        # half a bin away from the reduction's on ISIS/MusrRoot runs.
+        t0_time_us=corrected.t0_time_us,
         alpha=alpha,
         first_good_bin=first_good,
         last_good_bin=last_good,
