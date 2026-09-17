@@ -109,7 +109,7 @@ Decisions taken with Ben on 2026-09-17.
 | Loaders | `core/io/nexus.py` (`_t0_bin_values_from_attr`, `_infer_v2_bin_index_offset`, `_build_histograms`, payload 816-828), `core/io/hdf4.py` (v1 adapter), `core/io/psi.py:234-236,1019-1043,1077-1082,1146-1155`, `core/io/root.py:578-583,605-656`, `core/io/periods.py:403-476`, `core/io/nexus_writer.py` |
 | Consumers | `core/fourier/grouped.py:308-320`, `core/fourier/spectrum.py:449`, `core/maxent/engine.py:583-590`, `core/fitting/grouped_time_domain.py:292,346-349`, `core/transform/promote.py:77-124`, `gui/mainwindow.py:8302-8304`, `gui/panels/plot_panel.py:6268-6272` |
 | GUI | `gui/windows/grouping/dialog.py` (t0 row 547-592, 653-662, 874-882; `_seed_t0_*` 2336-2480; `_current_t0_policy` 2356; `_on_find_t0` 4285; validation 3028-3046), `gui/tasks.py::TaskRunner`, run-info surfaces |
-| Tests | `tests/core/test_grouping_profiles.py`, `tests/io/test_t0_search.py`, `tests/io/test_{psi,root,nexus,hdf4}_loader.py`, `tests/io/test_nexus_writer.py`, `tests/core/test_promote_calibrations.py`, `tests/core/test_count_domain_fits.py`, `tests/gui/test_grouping_dialog.py`, `tests/gui/test_grouping_dialog_perf.py`, `tests/project/test_grouping_profile_migration.py`, `tests/tools/test_structural.py`, `tests/porting/t0-determination/isis_t0_header_survey.py` |
+| Tests | `tests/core/test_grouping_profiles.py`, `tests/io/test_t0_search.py`, `tests/io/test_{psi,root,nexus,hdf4}_loader.py`, `tests/io/test_nexus_writer.py`, `tests/core/test_promote_calibrations.py`, `tests/core/test_count_domain_fits.py`, `tests/gui/test_grouping_dialog.py`, `tests/gui/test_grouping_dialog_perf.py`, `tests/project/test_grouping_profile_migration.py`, `tests/tools/test_harness.py`, `tests/porting/t0-determination/isis_t0_header_survey.py` |
 | Docs | `docs/reference/data_reduction/t0_search.rst`, `docs/reference/detector_grouping.rst:439-471,795-828`, `docs/reference/loading_data.rst:55-67,110-124`, `docs/reference/project_files.rst:318-323,410-413`, `docs/reference/count_domain_fitting.rst:146-148,224-229`, `docs/explanation/glossary.rst:100-106`, `docs/ARCHITECTURE.md:492-528`, `CHANGELOG.md` |
 
 ## Phases
@@ -164,7 +164,7 @@ Goal: D1, D2, D3, D10, D12 and the MaxEnt axis, in core only.
 - `core/transform/promote.py`: D12.
 - `core/maxent/engine.py:583-590`: axis from the resolver's common t0, not
   `grouping["t0_bin"]`.
-- `tools/harness.py structural` + `tests/tools/test_structural.py`: D10
+- `tools/harness.py structural` + `tests/tools/test_harness.py`: D10
   rule.
 - Tests (`tests/core/test_grouping_profiles.py`,
   `tests/core/test_promote_calibrations.py`,

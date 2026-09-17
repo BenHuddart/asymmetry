@@ -119,7 +119,15 @@ def main(list_path: str) -> None:
         t0b = int(d["t0_bin"])
         frac = q - math.floor(q)
         if 0.05 < frac < 0.95:
-            fit = "floor+1" if t0b == math.floor(q) + 1 else "floor" if t0b == math.floor(q) else "round" if t0b == round(q) else "other"
+            fit = (
+                "floor+1"
+                if t0b == math.floor(q) + 1
+                else "floor"
+                if t0b == math.floor(q)
+                else "round"
+                if t0b == round(q)
+                else "other"
+            )
             rule[(d["instrument"], fit)] += 1
         if d["last_good_bin"] is not None:
             lgb[(d["instrument"], int(d["last_good_bin"]) == d["n_bins"])] += 1
@@ -129,7 +137,9 @@ def main(list_path: str) -> None:
         if not math.isnan(mid):
             rise[(d["instrument"], d["version"], d["resolution_us"])].append((mid + 0.5) - q)
 
-    print("\nt0_bin rule on files with a clearly fractional time_zero/resolution (instrument, rule): n")
+    print(
+        "\nt0_bin rule on files with a clearly fractional time_zero/resolution (instrument, rule): n"
+    )
     for key, n in sorted(rule.items()):
         print(f"  {key}: {n}")
     print("\nlast_good_bin == n_bins (instrument, equal): n")
@@ -138,7 +148,9 @@ def main(list_path: str) -> None:
     print("\nfirst_good_bin - t0_bin per instrument:")
     for inst, counter in sorted(offsets.items()):
         print(f"  {inst}: {dict(sorted(counter.items()))}")
-    print("\nrise midpoint (edge units) - time_zero/resolution, bins: (instrument, version, res) n mean sd min max")
+    print(
+        "\nrise midpoint (edge units) - time_zero/resolution, bins: (instrument, version, res) n mean sd min max"
+    )
     for key, values in sorted(rise.items()):
         print(
             f"  {key}: {len(values)} {statistics.mean(values):+.2f} "

@@ -18,6 +18,8 @@ a legitimate calibration to persist.
 
 from __future__ import annotations
 
+from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
+
 
 def promote_alpha_to_grouping(
     grouping: dict,
@@ -89,9 +91,16 @@ def promote_t0_to_grouping(
     (``grouping["t0_bin"]``) is an integer bin index applied run-wide, so the
     promotion:
 
-    - converts the offset to bins via ``bin_width_us`` and rounds to the
-      nearest bin, **disclosing the sub-bin residual** (``residual_us`` in the
-      return) the integer t0_bin cannot represent;
+    - **subtracts** the offset in bins (decision D12). The count model
+      evaluates ``t_eval = time + t0`` (``core/fitting/count_domain.py``), so a
+      *positive* fitted ``t0`` means the data's stamps run early against the
+      physics — the stored zero sits too late — and the correction is
+      ``new_bin = current − round(t0_us / w)``;
+    - **discloses the sub-bin residual** (``residual_us`` in the return) the
+      integer t0_bin cannot represent;
+    - shifts ``first_good_bin`` and any ``effective_detector_t0_bins`` override
+      by the same applied delta, so the good window and the per-detector
+      alignment keep their offsets from t0 (the ``_apply_t0_policy`` rule);
     - applies the *fitted group's* value run-wide (``t0_bin`` is run-level, not
       per-group) — the caller's suggest dialog says so, and ``group_id`` is
       echoed back for that message.
@@ -104,18 +113,24 @@ def promote_t0_to_grouping(
         raise ValueError("bin width must be positive to convert a t0 offset to bins")
 
     current = _as_int(grouping.get("t0_bin"), 0)
-    delta_bins = int(round(float(t0_us) / bw))
-    new_bin = max(0, current + delta_bins)
+    new_bin = max(0, current - int(round(float(t0_us) / bw)))
     # The disclosed residual is the part of the offset the integer t0_bin cannot
     # represent. Compute it from the delta actually applied (after the ≥0 clamp),
     # not the rounded delta — otherwise a clamp would understate the lost shift.
     applied_bins = new_bin - current
-    residual_us = float(t0_us) - applied_bins * bw
+    residual_us = float(t0_us) + applied_bins * bw
 
     grouping["t0_bin"] = new_bin
     grouping["t0_method"] = "count_fit"
     if reference_run is not None:
         grouping["t0_reference_run"] = int(reference_run)
+    if "first_good_bin" in grouping:
+        grouping["first_good_bin"] = max(0, _as_int(grouping["first_good_bin"], 0) + applied_bins)
+    override = grouping.get(EFFECTIVE_DETECTOR_T0_KEY)
+    if isinstance(override, (list, tuple)):
+        grouping[EFFECTIVE_DETECTOR_T0_KEY] = [
+            max(0, _as_int(value, 0) + applied_bins) for value in override
+        ]
     return {
         "before": {"t0_bin": current},
         "after": {"t0_bin": new_bin},

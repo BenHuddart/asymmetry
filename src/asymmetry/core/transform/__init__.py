@@ -30,12 +30,10 @@ from asymmetry.core.transform.deadtime import (
     prepare_histograms_with_deadtime,
 )
 from asymmetry.core.transform.grouping import (
-    EFFECTIVE_DETECTOR_T0_KEY,
     GroupedForwardBackward,
     apply_grouping,
     apply_grouping_aligned,
     common_t0_for_groups,
-    detector_t0_overrides,
     effective_group_indices,
     effective_grouping,
     excluded_detector_indices,
@@ -84,8 +82,11 @@ from asymmetry.core.transform.rrf import (
     rrf_demodulate_values,
 )
 from asymmetry.core.transform.t0 import (
+    EFFECTIVE_DETECTOR_T0_KEY,
     RunT0Search,
     T0Estimate,
+    detector_t0_overrides,
+    effective_detector_t0_bins,
     find_t0,
     find_t0_for_run,
     source_is_pulsed,
@@ -129,6 +130,7 @@ __all__ = [
     "apply_grouping_aligned",
     "common_t0_for_groups",
     "detector_t0_overrides",
+    "effective_detector_t0_bins",
     "EFFECTIVE_DETECTOR_T0_KEY",
     "resolve_group_indices",
     "effective_group_indices",

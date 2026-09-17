@@ -30,6 +30,51 @@ from asymmetry.core.data.dataset import Histogram
 _PULSED_TOKENS = ("isis", "ral", "rutherford", "j-parc", "jparc", "kek", "riken")
 _CONTINUOUS_TOKENS = ("psi", "triumf", "lem")
 
+#: Grouping-dict key carrying the T0Policy-resolved effective per-detector t0
+#: bins (0-based, one per histogram). Distinct from the file-derived
+#: ``detector_t0_bins`` per-run fact so a *manual* policy can shift alignment
+#: without touching the file values. Absent for the ``from_file`` default.
+EFFECTIVE_DETECTOR_T0_KEY = "effective_detector_t0_bins"
+
+
+def detector_t0_overrides(grouping: dict | None, n_histograms: int) -> list[int] | None:
+    """Extract policy-resolved per-detector t0 overrides from a grouping dict.
+
+    Reads :data:`EFFECTIVE_DETECTOR_T0_KEY` (a *manual* T0Policy writes it) and
+    returns it as an int list when it lines up with the histogram count, else
+    ``None``. Callers that want the alignment values themselves should use
+    :func:`effective_detector_t0_bins`; this raw accessor exists for the cache
+    digests that must distinguish "no override" from "override equal to file".
+    """
+    grouping = grouping if isinstance(grouping, dict) else {}
+    raw = grouping.get(EFFECTIVE_DETECTOR_T0_KEY)
+    if not isinstance(raw, (list, tuple)) or len(raw) != n_histograms:
+        return None
+    try:
+        return [int(v) for v in raw]
+    except (TypeError, ValueError):
+        return None
+
+
+def effective_detector_t0_bins(histograms: list[Histogram], grouping: dict | None) -> list[int]:
+    """The per-detector t0 bins every alignment in the app must use (D10).
+
+    The single resolver: a policy-resolved override from the grouping
+    (:data:`EFFECTIVE_DETECTOR_T0_KEY`, written by a *manual* or *auto_detect*
+    :class:`~asymmetry.core.project.profiles.T0Policy`) when present and of
+    matching length, else each histogram's own file-derived ``t0_bin``. The
+    override is non-destructive — ``Histogram.t0_bin`` is never rewritten — so
+    every consumer that re-derives alignment from the histograms alone silently
+    ignores the user's t0 choice. Pass the result as ``detector_t0_bins=`` to
+    :func:`~asymmetry.core.transform.grouping.common_t0_for_groups` and
+    :func:`~asymmetry.core.transform.grouping.apply_grouping_aligned`; the
+    structural harness enforces that.
+    """
+    override = detector_t0_overrides(grouping, len(histograms))
+    if override is not None:
+        return override
+    return [int(hist.t0_bin) for hist in histograms]
+
 
 @dataclass(frozen=True)
 class T0Estimate:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -18,11 +20,14 @@ from asymmetry.core.maxent import (
     run_cycles,
     tropus,
 )
+from asymmetry.core.maxent.engine import _good_bin_time_axis
 from asymmetry.core.representation import (
     FrequencyMaxEnt,
     TimeMaxEntReconstruction,
     representation_from_dict,
 )
+from asymmetry.core.transform.grouping import group_forward_backward
+from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
 
 
 def _synthetic_run(*, frequency_mhz: float = 1.5) -> Run:
@@ -857,3 +862,27 @@ def test_maxent_config_new_flags_round_trip() -> None:
     # Old recipes without the keys default to the new behaviour.
     assert MaxEntConfig.from_dict({}).auto_steer is True
     assert MaxEntConfig.from_dict({}).auto_phase_seed is True
+
+
+def test_maxent_time_axis_follows_the_t0_resolver_like_reduction() -> None:
+    """The MaxEnt axis origin is the common t0 its counts are aligned on (D10).
+
+    ``build_group_signal_dataset`` aligns the grouped counts on the common t0
+    over the named groups; the axis must be measured from that same value, not
+    from the stored ``grouping["t0_bin"]``, or a Manual/Auto-detect t0 policy
+    moves the counts and leaves their time stamps behind.
+    """
+    run = _synthetic_run()
+    base_time, bin_width, _ = _good_bin_time_axis(run)
+    assert base_time[0] == pytest.approx(0.0)  # first_good_bin 0, file t0 0
+
+    grouping = dict(run.grouping)
+    # A manual +2-bin policy: every detector's effective t0 moves, the file
+    # values do not, and the stale stored bin must not win over the resolver.
+    grouping[EFFECTIVE_DETECTOR_T0_KEY] = [2] * len(run.histograms)
+    grouping["t0_bin"] = 0
+    shifted_run = replace(run, grouping=grouping)
+
+    shifted_time, _, _ = _good_bin_time_axis(shifted_run)
+    assert group_forward_backward(shifted_run.histograms, grouping).common_t0 == 2
+    np.testing.assert_allclose(shifted_time, base_time - 2.0 * bin_width)

@@ -43,10 +43,10 @@ from asymmetry.core.transform.background import resolve_background_mode
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
 from asymmetry.core.transform.grouping import (
     common_t0_for_groups,
-    detector_t0_overrides,
     group_names,
 )
 from asymmetry.core.transform.rebin import resolve_binning_mode
+from asymmetry.core.transform.t0 import detector_t0_overrides
 from asymmetry.core.utils.coerce import optional_float
 
 #: Minimum applied field (Gauss) for a diamagnetic fit to be attempted.

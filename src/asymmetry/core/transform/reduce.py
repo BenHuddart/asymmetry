@@ -49,9 +49,9 @@ from asymmetry.core.transform.deadtime import (
 from asymmetry.core.transform.grouping import (
     apply_grouping_aligned,
     common_t0_for_groups,
-    detector_t0_overrides,
 )
 from asymmetry.core.transform.rebin import binned_fb_asymmetry
+from asymmetry.core.transform.t0 import effective_detector_t0_bins
 from asymmetry.core.transform.units import (
     ASYMMETRY_PERCENT,
     PERCENT_PER_FRACTION,
@@ -244,7 +244,7 @@ def corrected_grouped_counts(
 
         # A *manual* T0Policy carries effective per-detector t0 bins in the grouping
         # so alignment shifts without the histograms' own t0_bin being rewritten.
-        detector_t0 = detector_t0_overrides(grouping, len(working_histograms))
+        detector_t0 = effective_detector_t0_bins(working_histograms, grouping)
         common_t0 = common_t0_for_groups(
             working_histograms, forward_idx, backward_idx, detector_t0_bins=detector_t0
         )
@@ -287,13 +287,13 @@ def corrected_grouped_counts(
                         reference_prepared,
                         forward_idx,
                         common_t0_bin=common_t0,
-                        detector_t0_bins=detector_t0_overrides(grouping, len(reference_prepared)),
+                        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
                     )
                     reference_backward = apply_grouping_aligned(
                         reference_prepared,
                         backward_idx,
                         common_t0_bin=common_t0,
-                        detector_t0_bins=detector_t0_overrides(grouping, len(reference_prepared)),
+                        detector_t0_bins=effective_detector_t0_bins(reference_prepared, grouping),
                     )
             try:
                 last_good = int(grouping.get("last_good_bin", n_grouped - 1))

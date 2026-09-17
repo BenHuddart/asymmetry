@@ -36,8 +36,13 @@ from asymmetry.core.maxent.backend import (
 from asymmetry.core.maxent.pulse import pulse_amplitude_phase
 from asymmetry.core.maxent.specbg import apply_maxent_specbg
 from asymmetry.core.transform.deadtime import prepare_histograms_with_deadtime
-from asymmetry.core.transform.grouping import group_names
+from asymmetry.core.transform.grouping import (
+    common_t0_for_groups,
+    group_names,
+    resolve_group_indices,
+)
 from asymmetry.core.transform.rebin import rebin_counts
+from asymmetry.core.transform.t0 import effective_detector_t0_bins
 from asymmetry.core.utils.coerce import optional_float
 from asymmetry.core.utils.constants import MUON_LIFETIME_US
 
@@ -580,11 +585,19 @@ def _good_bin_time_axis(run: Run) -> tuple[NDArray[np.float64], float, int] | No
         first_good = 0
         last_good = n_bins - 1
 
-    reference_t0 = grouping.get("t0_bin", histograms[0].t0_bin)
-    try:
-        reference_t0 = int(reference_t0)
-    except (TypeError, ValueError):
-        reference_t0 = int(histograms[0].t0_bin)
+    # The counts this axis labels are aligned by ``build_group_signal_dataset``
+    # on the common t0 over every named group, resolved through the one t0
+    # resolver (D10) so a manual/auto t0 policy moves the axis with them. The
+    # stored ``grouping["t0_bin"]`` is not that value when detectors stagger.
+    groups = grouping.get("groups") if isinstance(grouping.get("groups"), dict) else {}
+    all_group_indices = [
+        decoded for decoded in (resolve_group_indices(groups, gid) for gid in groups) if decoded
+    ]
+    reference_t0 = common_t0_for_groups(
+        histograms,
+        *all_group_indices,
+        detector_t0_bins=effective_detector_t0_bins(histograms, grouping),
+    )
     bin_width = float(histograms[0].bin_width)
     bins = np.arange(first_good, last_good + 1, dtype=np.float64)
     time_us = (bins - float(reference_t0)) * bin_width
