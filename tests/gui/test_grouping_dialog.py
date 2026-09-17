@@ -22,7 +22,6 @@ from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.transform.t0 import T0Assessment
 from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
-from asymmetry.gui.windows.grouping.dialog import preferred_window_size
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
 
@@ -409,11 +408,11 @@ def test_both_columns_fit_without_scroll_at_default_size(qapp: QApplication) -> 
     resizes to the preferred size, which is the one the budget is written for.
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog.resize(*preferred_window_size())
+    dialog.resize(*dialog.preferred_window_size())
     dialog.show()
     QApplication.processEvents()
 
-    assert dialog.size() == QSize(*preferred_window_size())
+    assert dialog.size() == QSize(*dialog.preferred_window_size())
     assert dialog._deadtime_section._current_mode() == "off"
 
     # The budget is asserted on *settled* geometry: scrollbar ranges fire
@@ -477,7 +476,7 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
         },
     )
     dialog = GroupingDialog([_fifteen_detector_dataset(), calibration_run])
-    dialog.resize(*preferred_window_size())
+    dialog.resize(*dialog.preferred_window_size())
     dialog.show()
     _wait_for_t0_detection(dialog)
     QApplication.processEvents()
@@ -518,7 +517,7 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
     # forcing the grouping column into a horizontal scroll — and Corrections,
     # sharing the reclaimed width, must still not need one either.
     dialog = GroupingDialog([_fifteen_detector_dataset(), calibration_run])
-    preferred_w, preferred_h = preferred_window_size()
+    preferred_w, preferred_h = dialog.preferred_window_size()
     narrow_w = preferred_w - metrics.field_width_for(40)
     dialog.resize(narrow_w, preferred_h)
     dialog.show()
@@ -2295,7 +2294,7 @@ def test_group_table_detector_indices_column_fills_the_width(qapp: QApplication)
     stretch on the last one.
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
-    dialog.resize(*preferred_window_size())
+    dialog.resize(*dialog.preferred_window_size())
     dialog.show()
     QApplication.processEvents()
 

@@ -116,14 +116,11 @@ class GroupingWindowT0RowScenario(Scenario):
     size = (620, 220)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
-        from asymmetry.gui.windows.grouping.dialog import (
-            GroupingDialog,
-            preferred_window_size,
-        )
+        from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 
         dataset = _make_prompt_peak_run()
         dialog = GroupingDialog([dataset], selected_run_number=int(dataset.run_number))
-        dialog.resize(*preferred_window_size())
+        dialog.resize(*dialog.preferred_window_size())
         dialog.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
         dialog.show()
         # The detected value comes from a debounced background scan keyed on

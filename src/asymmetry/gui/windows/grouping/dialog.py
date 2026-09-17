@@ -209,21 +209,13 @@ _T0_LINE_WORST_CASE = (
     "File: none (detected) · Detected: bin 99999 (pulse-edge midpoint, spread 999) · Δ +99999"
 )
 
-#: Width budget of the window's three panes, in pixels/characters. The
-#: corrections column's budget is a starting guess only — its own measured
-#: content sets a hard floor at construction (see the
-#: ``_corrections_scroll.setMinimumWidth`` call below), so a run whose
-#: α/background text is wider than this guess grows the window instead of
-#: clipping into a horizontal scroll. The grouping column has no char budget
-#: of its own: :func:`preferred_window_size` and the column's own maximum both
-#: take a pixel width measured from the live t0 line + verdict button (see
-#: ``_t0_line_column_width_px``), so a second hardcoded number — in the wrong
-#: units for a platform's real font metrics — can never drift from the row it
-#: actually bounds (see the Linux/DejaVu Sans CI failure this replaced: an
-#: average-character-width budget read narrower than the line's real digits
-#: and punctuation on that font).
-_SCOPE_PANE_CHARS = 44
-_CORRECTIONS_COLUMN_CHARS = 64
+#: The window has no per-pane character budgets: every pane advertises its
+#: measured content minimum at construction, the grouping column's cap is a
+#: pixel width measured from the live t0 line + verdict button
+#: (``_t0_line_column_width_px``), and ``GroupingDialog.preferred_window_size``
+#: derives the default width from those. A hardcoded number in average
+#: characters read narrower than the line's real digits and punctuation on the
+#: Linux runner's font and elided the t0 line at the default width.
 
 #: Spacing between the t0 label and the verdict button in their row
 #: (``t0_detected_row.setSpacing``) — folded into the grouping column's
@@ -231,49 +223,14 @@ _CORRECTIONS_COLUMN_CHARS = 64
 _T0_ROW_SPACING_PX = 4
 
 
-def _t0_line_column_width_px(
-    label: QLabel | None = None, verdict_button: QToolButton | None = None
-) -> int:
-    """Pixel width of the t0 line + verdict button, from real font metrics.
-
-    ``label``/``verdict_button`` default to freshly built throwaway widgets
-    (for callers without a live dialog, e.g. tests and doc-screenshot
-    scenarios calling :func:`preferred_window_size` standalone) — a fresh
-    widget reports the same font metrics as the dialog's real one, since
-    neither carries a custom font. :meth:`GroupingDialog.__init__` passes its
-    own ``_t0_detected_label``/``_t0_verdict_button`` once they exist, so the
-    same number also bounds ``grouping_column.setMaximumWidth`` there.
-    """
-    label = label if label is not None else QLabel()
-    verdict_button = verdict_button if verdict_button is not None else QToolButton()
+def _t0_line_column_width_px(label: QLabel, verdict_button: QToolButton) -> int:
+    """Pixel width of the t0 line + verdict button, from the label's own font metrics."""
     return (
         label.fontMetrics().horizontalAdvance(_T0_LINE_WORST_CASE)
         + verdict_button.sizeHint().width()
         + _T0_ROW_SPACING_PX
     )
 
-
-def preferred_window_size(grouping_column_width_px: int | None = None) -> tuple[int, int]:
-    """The grouping window's default size *before* the available-screen clamp.
-
-    Font-derived width (the three panes' budgets above) so the window tracks the
-    UI zoom; the height is the design floor that keeps both columns' default
-    (deadtime-off) state free of a vertical scrollbar. The dialog itself opens at
-    ``resize_to_available`` of this, which is smaller on a small display — the
-    tests that pin the column budget therefore resize to this value rather than
-    reading the window back. ``grouping_column_width_px`` lets
-    :class:`GroupingDialog` pass its own real, already-measured value; standalone
-    callers (tests, doc scenarios) get one measured fresh (see
-    ``_t0_line_column_width_px``) so both agree without a dialog instance.
-    """
-    if grouping_column_width_px is None:
-        grouping_column_width_px = _t0_line_column_width_px()
-    width = (
-        metrics.field_width_for(_SCOPE_PANE_CHARS)
-        + grouping_column_width_px
-        + metrics.field_width_for(_CORRECTIONS_COLUMN_CHARS)
-    )
-    return width, 680
 
 
 class GroupingDialog(QDialog):
@@ -400,7 +357,6 @@ class GroupingDialog(QDialog):
         # state needs no vertical scrolling either — then capped to the work area
         # of the screen this window lands on, so it never opens with its title
         # bar above a laptop's menu bar.
-        resize_to_available(self, *preferred_window_size())
 
         if not self._datasets:
             layout = QVBoxLayout(self)
@@ -756,7 +712,6 @@ class GroupingDialog(QDialog):
         self._t0_line_max_px = _t0_line_column_width_px(
             self._t0_detected_label, self._t0_verdict_button
         )
-        resize_to_available(self, *preferred_window_size(self._t0_line_max_px))
 
         self._t_good_offset_spin = NoScrollSpinBox()
         self._t_good_offset_spin.setRange(0, max_bin)
@@ -1261,8 +1216,8 @@ class GroupingDialog(QDialog):
         # Mirror that floor on the corrections side: it is the stretch-1 column
         # so it normally just absorbs whatever width the capped grouping column
         # doesn't need, but a run whose calibration-run label, method and
-        # provenance text add up to more than the _CORRECTIONS_COLUMN_CHARS
-        # guess above must still not clip into a horizontal scroll — advertise
+        # provenance text are wider than the column's share must still not clip
+        # into a horizontal scroll — advertise
         # the real minimum so the dialog's own layout grows to fit it instead
         # (the window is `resize()`d, not fixed, so a minimum raised past the
         # current size still enlarges it). Set once here for the same reason
@@ -1272,6 +1227,15 @@ class GroupingDialog(QDialog):
             self._corrections_scroll.widget().minimumSizeHint().width()
             + 2 * self._corrections_scroll.frameWidth()
         )
+
+        # Open at the size where every pane sits at its measured minimum and
+        # the grouping column has reached its t0-line cap, capped to the work
+        # area of the screen (see ``preferred_window_size``). Done here, after
+        # both scroll minimums above, so the numbers are the real ones for this
+        # platform's fonts — an average-character budget read too narrow on
+        # Linux and elided the t0 line at the default width.
+        self._preferred_window_size = self._measure_preferred_window_size()
+        resize_to_available(self, *self._preferred_window_size)
 
         # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
         # the configured corrections, directly above the preview so it works from
@@ -2642,6 +2606,34 @@ class GroupingDialog(QDialog):
         # must ignore any resolved override rather than route through the
         # resolver (D10's exception, spelled out).
         return self._common_t0_for_preview_run(None)
+
+    def preferred_window_size(self) -> tuple[int, int]:
+        """The window's default size *before* the available-screen clamp.
+
+        Measured once at the end of construction (``_measure_preferred_window_size``)
+        and cached: a shown window's minimum size hint settles a pixel or two
+        wider than the pre-show value, and callers that resize to this size
+        must read back exactly what they set.
+        """
+        return self._preferred_window_size
+
+    def _measure_preferred_window_size(self) -> tuple[int, int]:
+        """Derive the default size from the panes' measured minimums.
+
+        Width: the dialog's own minimum (every pane at its measured content
+        minimum, which is where the platform's fonts enter) plus the room the
+        grouping column needs to grow from that minimum to its t0-line cap.
+        The two right-hand columns share spare width equally, so the column
+        reaches the cap only when the same amount has also gone to
+        Corrections — hence twice the difference. Height: the design floor
+        that keeps both columns' default (deadtime-off) state free of a
+        vertical scrollbar. The window opens at ``resize_to_available`` of
+        this, which is smaller on a small display; tests that pin the budget
+        resize to this value rather than reading the window back.
+        """
+        self.layout().activate()
+        grouping_room = max(0, self._t0_line_max_px - self._grouping_scroll.minimumWidth())
+        return self.minimumSizeHint().width() + 2 * grouping_room, 680
 
     def _common_t0_for_preview_run(self, detector_t0_bins: list[int] | None) -> int:
         """The common t0 the live analysis groups align to on the given bins.
