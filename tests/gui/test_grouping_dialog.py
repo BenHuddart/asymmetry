@@ -14,13 +14,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QEventLoop, QSize, Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QHeaderView, QLabel
 
 import asymmetry.gui.windows.grouping.dialog as grouping_dialog_dialog_module
 import asymmetry.gui.windows.grouping_dialog as grouping_dialog_module
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
 from asymmetry.core.utils.constants import PeriodMode
-from asymmetry.gui.styles import tokens
+from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.windows.grouping.dialog import preferred_window_size
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
 
@@ -118,8 +118,15 @@ def _dataset_with_histograms() -> MuonDataset:
     )
 
 
-def _fifteen_detector_dataset(run_number: int = 4800) -> MuonDataset:
-    """A PSI GPS-shaped run: 15 detectors, four-digit bins, per-detector tables."""
+def _fifteen_detector_dataset(
+    run_number: int = 4800, metadata_extra: dict | None = None
+) -> MuonDataset:
+    """A PSI GPS-shaped run: 15 detectors, four-digit bins, per-detector tables.
+
+    ``metadata_extra`` layers onto the run metadata — used to build a second,
+    calibration-shaped dataset with a long ``title`` (see
+    ``test_default_width_fits_the_t0_line_on_a_fifteen_detector_run``).
+    """
     n_det, n_bins, t0 = 15, 2048, 1600
     histograms = []
     for i in range(n_det):
@@ -134,10 +141,12 @@ def _fifteen_detector_dataset(run_number: int = 4800) -> MuonDataset:
                 good_bin_end=n_bins - 1,
             )
         )
+    metadata = {"run_number": run_number, "instrument": "GPS", "facility": "PSI"}
+    metadata.update(metadata_extra or {})
     run = Run(
         run_number=run_number,
         histograms=histograms,
-        metadata={"run_number": run_number, "instrument": "GPS", "facility": "PSI"},
+        metadata=metadata,
         grouping={
             "groups": {1: list(range(1, 8)), 2: list(range(8, 16))},
             "forward_group": 1,
@@ -450,8 +459,23 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
     long. With the label no longer wrapping, the grouping column has to be wide
     enough for it at the base UI scale — otherwise the whole column scrolls
     sideways and the t0 controls go out of reach.
+
+    The dialog also carries a second, calibration-shaped run with a long title.
+    Once the α card is expanded with the calibration-run combo showing that
+    long label and a realistic Diamagnetic-method result line, both columns'
+    scrolls must stay scroll-free together — the corrections column was
+    reported clipping on this exact shape (long calibration-run label + method
+    + result), not just the grouping column's t0 line.
     """
-    dialog = GroupingDialog([_fifteen_detector_dataset()])
+    calibration_run = _fifteen_detector_dataset(
+        run_number=373,
+        metadata_extra={
+            "title": "pwdr, VETO on, ROTATE sample stage test long title",
+            "temperature": 100.0,
+            "field": 200.0,
+        },
+    )
+    dialog = GroupingDialog([_fifteen_detector_dataset(), calibration_run])
     dialog.resize(*preferred_window_size())
     dialog.show()
     _wait_for_t0_detection(dialog)
@@ -462,6 +486,64 @@ def test_default_width_fits_the_t0_line_on_a_fifteen_detector_run(
     assert not dialog._grouping_scroll.horizontalScrollBar().isVisible(), diagnostic
     assert dialog._grouping_scroll.horizontalScrollBar().maximum() == 0, diagnostic
     assert not dialog._corrections_scroll.horizontalScrollBar().isVisible(), diagnostic
+
+    # Populate the α card the way the long-run screenshot does: the calibration
+    # combo on the long-titled run, Diamagnetic method, and a realistic result
+    # line — then re-settle layout and check both scrolls again.
+    alpha = dialog._alpha_section
+    found = alpha._run_combo.findData(373)
+    assert found >= 0
+    alpha._run_combo.setCurrentIndex(found)
+    alpha._result_label.setText("α = 1.0349(15)  ·  Diamagnetic (TF)  ·  run 372")
+    dialog._alpha_card.set_expanded(True)
+    QApplication.processEvents()
+
+    diagnostic = _column_budget_diagnostic(dialog)
+    assert not dialog._grouping_scroll.horizontalScrollBar().isVisible(), diagnostic
+    assert dialog._grouping_scroll.horizontalScrollBar().maximum() == 0, diagnostic
+    assert not dialog._corrections_scroll.horizontalScrollBar().isVisible(), diagnostic
+    assert dialog._corrections_scroll.horizontalScrollBar().maximum() == 0, diagnostic
+
+    # At the default width the (short, real) t0 line is comfortably unelided.
+    t0_label = dialog._t0_detected_label
+    assert t0_label._elided_text() == t0_label.text()
+    dialog.close()
+
+    # Deliberately narrow the window (the dialog clamps to its real minimum
+    # when that is wider than the target, exactly like resize_to_available
+    # clamping the other way) and force the t0 line to its historical worst
+    # case (docstring of _T0_LINE_CHARS: a pulsed run with no header t0). The
+    # ElidedLabel must shrink and elide *that* line instead of forcing the
+    # grouping column into a horizontal scroll — and Corrections, sharing the
+    # reclaimed width, must still not need one either.
+    dialog = GroupingDialog([_fifteen_detector_dataset(), calibration_run])
+    preferred_w, preferred_h = preferred_window_size()
+    narrow_w = preferred_w - metrics.field_width_for(40)
+    dialog.resize(narrow_w, preferred_h)
+    dialog.show()
+    _wait_for_t0_detection(dialog)
+    QApplication.processEvents()
+
+    alpha = dialog._alpha_section
+    alpha._run_combo.setCurrentIndex(alpha._run_combo.findData(373))
+    alpha._result_label.setText("α = 1.0349(15)  ·  Diamagnetic (TF)  ·  run 372")
+    dialog._alpha_card.set_expanded(True)
+
+    worst_case_line = (
+        "File: none (detected) · Detected: bin 1601 (pulse-edge midpoint, spread 12) · Δ +1601"
+    )
+    t0_label = dialog._t0_detected_label
+    t0_label.setText(worst_case_line)
+    t0_label.set_hover_text(worst_case_line)
+    QApplication.processEvents()
+
+    diagnostic = _column_budget_diagnostic(dialog)
+    assert t0_label._elided_text() != t0_label.text(), diagnostic
+    assert t0_label.toolTip() == worst_case_line
+    assert not dialog._grouping_scroll.horizontalScrollBar().isVisible(), diagnostic
+    assert dialog._grouping_scroll.horizontalScrollBar().maximum() == 0, diagnostic
+    assert not dialog._corrections_scroll.horizontalScrollBar().isVisible(), diagnostic
+    assert dialog._corrections_scroll.horizontalScrollBar().maximum() == 0, diagnostic
     dialog.close()
 
 
@@ -2204,6 +2286,31 @@ def test_group_table_uses_scrollable_capped_height(qapp: QApplication) -> None:
     assert dialog._group_table.maximumHeight() > 0
 
 
+def test_group_table_detector_indices_column_fills_the_width(qapp: QApplication) -> None:
+    """The last column stretches so the table has no dead space to its right.
+
+    The other three columns (Group / Include / Name) stay content-sized —
+    ``resizeColumnsToContents`` in ``_populate_group_table`` must not undo the
+    stretch on the last one.
+    """
+    dialog = GroupingDialog([_dataset_with_histograms()])
+    dialog.resize(*preferred_window_size())
+    dialog.show()
+    QApplication.processEvents()
+
+    header = dialog._group_table.horizontalHeader()
+    last = dialog._group_table.columnCount() - 1
+    assert header.stretchLastSection()
+    for col in range(last):
+        assert header.sectionResizeMode(col) != QHeaderView.ResizeMode.Stretch
+
+    widths = [
+        dialog._group_table.columnWidth(col) for col in range(dialog._group_table.columnCount())
+    ]
+    assert sum(widths) == dialog._group_table.viewport().width()
+    dialog.close()
+
+
 # ---------------------------------------------------------------------------
 # Alpha estimation method picker + provenance (data-reduction-parity Phase 1)
 # ---------------------------------------------------------------------------
@@ -3027,7 +3134,7 @@ def test_t0_line_reports_a_header_conflict_as_a_warning(qapp: QApplication) -> N
     _wait_for_t0_detection(dialog)
 
     assert _verdict_menu_entries(dialog) == ["Header time_zero disagrees with t0_bin; using t0_bin"]
-    assert tokens.WARN in dialog._t0_detected_label.styleSheet()
+    assert dialog._t0_detected_label.pen_color().name() == tokens.WARN
 
 
 def test_t0_line_warns_when_the_detected_t0_is_beyond_tolerance(qapp: QApplication) -> None:
@@ -3043,7 +3150,7 @@ def test_t0_line_warns_when_the_detected_t0_is_beyond_tolerance(qapp: QApplicati
         "Detected t0 is bin 2, file t0 is bin 10 — further apart than the 2-bin tolerance"
         in entries
     )
-    assert tokens.WARN in dialog._t0_detected_label.styleSheet()
+    assert dialog._t0_detected_label.pen_color().name() == tokens.WARN
 
 
 def test_t0_line_names_only_the_detector_that_disagrees_with_the_others(

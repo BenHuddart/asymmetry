@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSizePolicy,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -104,6 +105,7 @@ from asymmetry.gui.utils.profile_colors import (
     soft_profile_background,
     used_profile_colors,
 )
+from asymmetry.gui.widgets.elided_label import ElidedLabel
 from asymmetry.gui.widgets.no_scroll_spin import (
     NoScrollComboBox,
     NoScrollDoubleSpinBox,
@@ -196,22 +198,34 @@ _T0_DETECT_DEBOUNCE_MS = 300
 _T0_STRATEGY_LABELS = {"prompt_peak": "prompt peak", "pulse_edge": "pulse-edge midpoint"}
 
 #: Width budget of the t0 row's ``File … · Detected … · Δ`` line, in characters
-#: of the UI font. The line is single-line by design, so it is both reserved
-#: (a minimum width, so the column claims the space before the first detection
-#: lands) and capped (elided, with the full text in the tooltip) at this budget:
-#: the column's width is then the same whatever a run's bins happen to read.
-#: Measured offscreen at base scale, the widest real line — a pulsed run with no
-#: header t0, ``File: none (detected) · Detected: bin 1601 (pulse-edge midpoint,
-#: spread 12) · Δ +1601`` — is 498 px against this budget's 504.
+#: of the UI font. The line itself (an :class:`~asymmetry.gui.widgets.elided_
+#: label.ElidedLabel`) no longer *demands* this width — it only carries a
+#: small readable-prefix floor (see ``_t0_detected_label.setMinimumWidth``
+#: below) and elides itself under real width pressure, with the full text in
+#: its tooltip. This budget instead feeds ``preferred_window_size()`` (and the
+#: grouping column's own maximum, alongside the verdict slack) so the
+#: *default* window still opens wide enough to show the whole line unelided
+#: for a typical run. Measured offscreen at base scale, the widest real line —
+#: a pulsed run with no header t0, ``File: none (detected) · Detected: bin
+#: 1601 (pulse-edge midpoint, spread 12) · Δ +1601`` — is 498 px against this
+#: budget's 504.
 _T0_LINE_CHARS = 72
 
-#: Width budget of the window's three panes, in characters of the UI font: the
-#: run-scope pane, the grouping-and-timing column and the corrections column.
+#: Width budget of the window's three panes, in characters of the UI font.
 #: Characters rather than pixels so the window opens at the right size under the
-#: font-driven UI zoom. The grouping column is bound by the t0 line above plus
-#: its verdict button; the corrections column by the α and background cards.
+#: font-driven UI zoom. The grouping column has no budget of its own: it is
+#: bound by the t0 line's own ``_T0_LINE_CHARS`` plus its verdict button (see
+#: ``_GROUPING_VERDICT_SLACK_CHARS`` below), read wherever the column's width
+#: is set, so a second hardcoded number can never drift from the row that
+#: actually bounds the column. The corrections column's budget is a starting
+#: guess only — its own measured content sets a hard floor at construction
+#: (see the ``_corrections_scroll.setMinimumWidth`` call below), so a run whose
+#: α/background text is wider than this guess grows the window instead of
+#: clipping into a horizontal scroll.
 _SCOPE_PANE_CHARS = 44
-_GROUPING_COLUMN_CHARS = 76
+#: The ⚠ verdict button + its spacing beside the t0 line, in characters —
+#: added to ``_T0_LINE_CHARS`` wherever the grouping column's width is bound.
+_GROUPING_VERDICT_SLACK_CHARS = 4
 _CORRECTIONS_COLUMN_CHARS = 64
 
 
@@ -227,7 +241,11 @@ def preferred_window_size() -> tuple[int, int]:
     """
     width = sum(
         metrics.field_width_for(chars)
-        for chars in (_SCOPE_PANE_CHARS, _GROUPING_COLUMN_CHARS, _CORRECTIONS_COLUMN_CHARS)
+        for chars in (
+            _SCOPE_PANE_CHARS,
+            _T0_LINE_CHARS + _GROUPING_VERDICT_SLACK_CHARS,
+            _CORRECTIONS_COLUMN_CHARS,
+        )
     )
     return width, 680
 
@@ -558,6 +576,11 @@ class GroupingDialog(QDialog):
         self._group_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._group_table.setMinimumHeight(0)
+        # The detector-indices column absorbs any width the scope pane doesn't
+        # need instead of leaving it empty to the right of the table; the other
+        # three stay content-sized (set once — resizeColumnsToContents in
+        # _populate_group_table only touches the non-stretch columns).
+        self._group_table.horizontalHeader().setStretchLastSection(True)
         left_layout.addWidget(self._group_table)
         self._populate_group_table()
 
@@ -651,14 +674,25 @@ class GroupingDialog(QDialog):
         # which is exactly the divergence D11 exists to show. Single-line: the
         # verdict messages live in the button beside it, not inline, so the line
         # keeps a fixed shape whatever the run says.
-        self._t0_detected_label = QLabel("")
+        # ElidedLabel (not a plain QLabel with a hardcoded width reservation):
+        # a fixed 72-char minimum here made the grouping column's content
+        # minimum ~504px even on a run whose actual line is much shorter,
+        # starving the corrections column of width it never used. Expanding
+        # lets the row's stretch give it room to show the whole line when
+        # there's space (see the grouping column's own maximum, capped at
+        # _T0_LINE_CHARS + the verdict slack); a small explicit floor keeps a
+        # readable prefix ("File: bin 1612 · Detected: bin 1614 (…") when
+        # squeezed, eliding the rest with the full text in the tooltip.
+        self._t0_detected_label = ElidedLabel("")
         self._t0_detected_label.setWordWrap(False)
-        # Reserve the line's budget now, before the first detection lands: the
-        # grouping column's minimum width is measured once at construction, so a
-        # label that grows later would push the column into a horizontal
-        # scrollbar instead of widening it.
-        self._t0_detected_label.setMinimumWidth(metrics.char_width(_T0_LINE_CHARS))
-        self._t0_detected_label.setStyleSheet(f"color: {tokens.TEXT_MUTED};")
+        self._t0_detected_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._t0_detected_label.setMinimumWidth(metrics.char_width(40))
+        # set_pen_color, not setStyleSheet: ElidedLabel's custom paintEvent
+        # bypasses QSS colour rules (see its docstring), so a stylesheet color
+        # here would silently never render.
+        self._t0_detected_label.set_pen_color(tokens.TEXT_MUTED)
 
         # The verdict, one click away: shown only when there is something to say
         # (D8 warn/error), with every message in the tooltip and in an
@@ -1046,13 +1080,18 @@ class GroupingDialog(QDialog):
         )
         self._grouping_scroll.setWidget(grouping_content)
         grouping_column = QWidget()
-        # Hold the narrow column near its natural width so it never grows to
-        # swallow the right pane (the AdjustToContents scroll over-reserves ~60px
-        # otherwise); the corrections column (stretch 1) takes the rest. Derived
-        # from the UI-font metrics so it tracks the zoom with the capped fields it
-        # bounds, keeping every row inside the width with no horizontal scroll —
-        # the same budget the window's default width reserves for this column.
-        grouping_column.setMaximumWidth(metrics.field_width_for(_GROUPING_COLUMN_CHARS))
+        # Cap the narrow column so it never grows to swallow the right pane
+        # (the AdjustToContents scroll over-reserves ~60px otherwise) or hog
+        # width the corrections column (equal stretch, below) needs. Capped at
+        # the t0 line's own budget plus its verdict button's slack — the widest
+        # row this column carries when shown unelided — so it tracks the
+        # UI-font zoom and never reserves more than that row needs (a
+        # separate, hand-tuned column budget would just drift from it). Below
+        # this cap the column is free to shrink to its real content minimum
+        # (the t0 line elides itself; see ElidedLabel above).
+        grouping_column.setMaximumWidth(
+            metrics.field_width_for(_T0_LINE_CHARS + _GROUPING_VERDICT_SLACK_CHARS)
+        )
         grouping_col_layout = QVBoxLayout(grouping_column)
         grouping_col_layout.setContentsMargins(0, 0, 0, 0)
         grouping_col_layout.setSpacing(2)
@@ -1122,7 +1161,14 @@ class GroupingDialog(QDialog):
         columns_row = QHBoxLayout()
         columns_row.setContentsMargins(0, 0, 0, 0)
         columns_row.setSpacing(8)
-        columns_row.addWidget(grouping_column, stretch=0)
+        # Equal stretch: with the t0 line's hard reservation gone, grouping's
+        # own content minimum is usually well under its maximum cap (below),
+        # so it needs an equal claim on spare width to actually reach that cap
+        # (and show the whole t0 line) at the default size — otherwise it would
+        # just sit at its smaller natural size and hand every pixel of slack to
+        # corrections, unelided-by-default no longer being the common case.
+        # The maximum cap still stops it from hogging space corrections needs.
+        columns_row.addWidget(grouping_column, stretch=1)
         columns_row.addWidget(corrections_column, stretch=1)
         right_layout.addLayout(columns_row, stretch=1)
 
@@ -1152,6 +1198,20 @@ class GroupingDialog(QDialog):
         self._grouping_scroll.setMinimumWidth(
             self._grouping_scroll.widget().minimumSizeHint().width()
             + 2 * self._grouping_scroll.frameWidth()
+        )
+        # Mirror that floor on the corrections side: it is the stretch-1 column
+        # so it normally just absorbs whatever width the capped grouping column
+        # doesn't need, but a run whose calibration-run label, method and
+        # provenance text add up to more than the _CORRECTIONS_COLUMN_CHARS
+        # guess above must still not clip into a horizontal scroll — advertise
+        # the real minimum so the dialog's own layout grows to fit it instead
+        # (the window is `resize()`d, not fixed, so a minimum raised past the
+        # current size still enlarges it). Set once here for the same reason
+        # as the grouping floor above: the row structure is fixed at
+        # construction.
+        self._corrections_scroll.setMinimumWidth(
+            self._corrections_scroll.widget().minimumSizeHint().width()
+            + 2 * self._corrections_scroll.frameWidth()
         )
 
         # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
@@ -2747,17 +2807,16 @@ class GroupingDialog(QDialog):
         if verdict.delta_bins is not None:
             parts.append(f"Δ {verdict.delta_bins:+d}")
         text = " · ".join(parts)
-        # Capped at the same budget the label reserves, so a run with unusually
-        # long bin numbers cannot widen the column; the tooltip keeps the whole
-        # line readable when that happens.
-        self._t0_detected_label.setText(
-            self._t0_detected_label.fontMetrics().elidedText(
-                text, Qt.TextElideMode.ElideRight, metrics.char_width(_T0_LINE_CHARS)
-            )
-        )
-        self._t0_detected_label.setToolTip(text)
+        # The label is an ElidedLabel: it elides itself to whatever width the
+        # row is actually given (down to its own readable-prefix floor), so a
+        # run with unusually long bin numbers no longer needs a manual elide
+        # here. set_hover_text (not the default elision-only tooltip) always
+        # shows the untruncated line on hover, even when the current width
+        # happens to fit it — matching the line's previous, always-on tooltip.
+        self._t0_detected_label.setText(text)
+        self._t0_detected_label.set_hover_text(text)
         color = {"error": tokens.ERROR, "warn": tokens.WARN}.get(verdict.level, tokens.TEXT_MUTED)
-        self._t0_detected_label.setStyleSheet(f"color: {color};")
+        self._t0_detected_label.set_pen_color(color)
         self._refresh_t0_verdict_button(verdict)
 
     def _refresh_t0_verdict_button(self, verdict: T0Assessment) -> None:
