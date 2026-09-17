@@ -1451,7 +1451,8 @@ class GlobalFitTab(FitTabBase):
         self._apply_recipe_fit_range(recipe["fit_range"])
         self.set_batch_seeding_mode(str(recipe["seeding"]))
         self._apply_coadd(recipe["coadd"])
-        self._refresh_inherited_single_fit_defaults()
+        # The recipe is the whole setup: the members' shared single-fit model
+        # (which a previous batch over the same runs wrote) must not replace it.
         self._update_mode_ui(preserve_result=True)
 
     def _apply_recipe_fit_range(self, fit_range: dict) -> None:
@@ -2298,6 +2299,10 @@ class GlobalFitTab(FitTabBase):
         self._inherited_seed_by_run = {}
         self._inherited_model_dict = None
 
+        # An open series' model and rows are its recipe (D1); only an ad-hoc
+        # draft adopts the members' shared single-fit model.
+        if self._open_series_id is not None:
+            return
         grouped = self._member_kind == "groups"
         datasets = self._member_datasets if grouped else self._datasets
         if len(datasets) < 2:

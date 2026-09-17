@@ -22,6 +22,7 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from asymmetry.core.data.dataset import Histogram, MuonDataset, Run
+from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitResult
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.core.project.schema import load_project, save_project
@@ -240,6 +241,33 @@ def test_opening_a_then_b_then_a_restores_a_exactly(mw):
     assert _member_runs(mw) == [10, 11]
     assert _tab(mw).bound_group_id() == mw._project_model.batch(first_id).group_id
     assert mw._project_model.active_series_id(_FB) == first_id
+
+
+def test_opening_a_series_with_another_model_switches_the_tab_model(mw):
+    """Series A and B share the runs but not the model: opening each shows its own."""
+    _group_over(mw, _RUNS, "Scan A")
+    _set_range(mw, 0.0, 8.0)
+    tab = _tab(mw)
+    tab._set_composite_model(
+        CompositeModel(["Exponential", "Constant"], operators=["+"]), seed_from_record=False
+    )
+    first_id = _run(mw, _RUNS)
+    first_model = mw._project_model.batch(first_id).canonical_model
+
+    tab._set_composite_model(
+        CompositeModel(["Gaussian", "Constant"], operators=["+"]), seed_from_record=False
+    )
+    second_id = _run(mw, _RUNS)
+    second_model = mw._project_model.batch(second_id).canonical_model
+    assert second_id != first_id
+    assert second_model != first_model
+
+    mw._open_series_in_batch_tab(first_id)
+    assert tab._composite_model.to_dict() == first_model
+    mw._open_series_in_batch_tab(second_id)
+    assert tab._composite_model.to_dict() == second_model
+    mw._open_series_in_batch_tab(first_id)
+    assert tab._composite_model.to_dict() == first_model
 
 
 def test_the_edited_tag_flips_on_a_row_edit_and_clears_on_reopen(mw):
