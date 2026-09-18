@@ -434,6 +434,21 @@ def suggest_shared_parameters(
             continue
         if not _units_agree([pname] * len(models)):
             continue
+        # A name is only as meaningful as the component that owns it: the
+        # composite disambiguates amplitudes by term index, so ``Gaussian +
+        # Constant`` and ``Exponential + Constant`` both spell their first
+        # amplitude ``A_1`` while meaning different things. Same name on
+        # different component types is a reasonable inference, not a certainty.
+        component_types = _component_types(models, pname)
+        if len(component_types) > 1:
+            _propose(
+                pname,
+                {index: pname for index in keys},
+                "candidate",
+                f"{pname} appears once in every model, but on different components "
+                f"({', '.join(sorted(component_types))}).",
+            )
+            continue
         _propose(
             pname,
             {index: pname for index in keys},
@@ -492,6 +507,22 @@ def _units_agree(names: Sequence[str]) -> bool:
     """True when every name carries the same unit (``None`` counts as a unit)."""
     units = {get_param_info(name).unit for name in names}
     return len(units) == 1
+
+
+def _component_types(models: Sequence[CompositeModel], pname: str) -> set[str]:
+    """The component types that own ``pname`` across ``models``.
+
+    Only a :class:`ComponentParameter` names a component; a group amplitude or a
+    fraction weight belongs to a term structure rather than a component type and
+    contributes nothing here, so a name owned by such identities everywhere
+    yields an empty set and stays in the exact tier.
+    """
+    types: set[str] = set()
+    for model in models:
+        identity = model.parameter_identities()[pname]
+        if isinstance(identity, ComponentParameter):
+            types.add(model.component_names[identity.component])
+    return types
 
 
 def _ordered_bases(models: Sequence[CompositeModel]) -> list[str]:

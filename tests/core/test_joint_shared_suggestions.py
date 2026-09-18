@@ -136,3 +136,23 @@ def test_a_role_map_is_required_for_every_model() -> None:
     model = CompositeModel.from_expression("Exponential + Constant")
     with pytest.raises(ValueError, match="one role map per model"):
         suggest_shared_parameters([model, model], [_all_global(model)])
+
+
+def test_the_same_name_on_different_component_types_is_only_a_candidate() -> None:
+    """``A_1`` is Gaussian's amplitude here and Exponential's there: not an exact match."""
+    ordered = CompositeModel.from_expression("Gaussian + Constant")
+    paramagnetic = CompositeModel.from_expression("Exponential + Constant")
+    assert "A_1" in ordered.param_names and "A_1" in paramagnetic.param_names
+
+    suggestions = _by_name(
+        suggest_shared_parameters(
+            [ordered, paramagnetic], [_all_global(ordered), _all_global(paramagnetic)]
+        )
+    )
+
+    assert suggestions["A_1"].tier == "candidate"
+    assert suggestions["A_1"].members == {0: "A_1", 1: "A_1"}
+    assert "Gaussian" in suggestions["A_1"].rationale
+    assert "Exponential" in suggestions["A_1"].rationale
+    # The background is owned by the same component type in both: still exact.
+    assert suggestions["A_bg"].tier == "exact"
