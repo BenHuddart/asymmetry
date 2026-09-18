@@ -11,10 +11,13 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation import (
     FitSeries,
     RepresentationType,
+    default_joint_fit_label,
     default_series_label,
     disambiguate_series_label,
+    joint_member_name,
     member_range,
 )
+from asymmetry.core.representation.group import DataGroup
 
 _FB = RepresentationType.TIME_FB_ASYMMETRY
 
@@ -123,3 +126,50 @@ def test_disambiguate_counts_up_past_every_taken_label():
 
 def test_disambiguate_skips_only_the_taken_suffixes():
     assert disambiguate_series_label("Exp", ["Exp", "Exp (3)"]) == "Exp (2)"
+
+
+# ── joint fit default label ─────────────────────────────────────────────────
+
+
+def test_default_joint_fit_label():
+    assert default_joint_fit_label(["Ordered", "Para"]) == "Joint: Ordered + Para"
+
+
+# ── joint fit member short name (Decision B, 2026-09-18) ────────────────────
+
+
+def test_joint_member_name_prefers_the_series_own_label():
+    series = _series()
+    series.label = "Ordered"
+    group = DataGroup("g", "low field")
+    assert joint_member_name(series, group) == "Ordered"
+    assert joint_member_name(series, None) == "Ordered"
+
+
+def test_joint_member_name_ignores_a_label_that_merely_spells_the_default():
+    """Some recording paths pin the fallback text as the label; that is no rename."""
+    series = _series()
+    group = DataGroup("g", "mid")
+    series.label = default_series_label(series, group_name="mid")
+    assert joint_member_name(series, group) == "mid"
+    series.label = default_series_label(series)
+    assert joint_member_name(series, group) == "mid"
+    # A disambiguated default ("… (2)") is meaningful and is kept.
+    series.label = default_series_label(series, group_name="mid") + " (2)"
+    assert joint_member_name(series, group) == series.label
+
+
+def test_joint_member_name_falls_back_to_the_data_group_name():
+    series = _series()
+    group = DataGroup("g", "low field")
+    assert joint_member_name(series, group) == "low field"
+
+
+def test_joint_member_name_falls_back_to_the_model_label_without_a_group():
+    series = _series()
+    assert joint_member_name(series, None) == "Exponential + Constant"
+
+
+def test_joint_member_name_falls_back_to_series_with_no_model_or_group():
+    scan = FitSeries("s", _FB, canonical_model=None)
+    assert joint_member_name(scan, None) == "Series"

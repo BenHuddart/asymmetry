@@ -20,6 +20,7 @@ from asymmetry.core.data.dataset import Run
 from asymmetry.core.representation.base import RepresentationType
 from asymmetry.core.representation.container import DatasetRepresentations
 from asymmetry.core.representation.group import DataGroup, PhaseSpec
+from asymmetry.core.representation.joint_fit import JointFit
 from asymmetry.core.representation.series import FitSeries
 
 
@@ -47,6 +48,7 @@ class ProjectModel:
         batches: dict[str, FitSeries] | None = None,
         data_groups: dict[str, DataGroup] | None = None,
         active_series: dict[str, str] | None = None,
+        joint_fits: dict[str, JointFit] | None = None,
     ) -> None:
         self.datasets: dict[int, DatasetRepresentations] = dict(datasets or {})
         self.batches: dict[str, FitSeries] = dict(batches or {})
@@ -63,6 +65,16 @@ class ProjectModel:
         self.active_series: dict[str, str] = {
             str(rep): str(batch_id) for rep, batch_id in (active_series or {}).items()
         }
+        #: Joint fit registry (docs/plans/joint-fit.md D13), keyed by
+        #: ``joint_id``. Additive/optional like ``data_groups``: a project
+        #: saved before schema v22 has no ``joint_fits`` block and loads with
+        #: an empty registry. Each member series carries its own back-pointer
+        #: (:attr:`FitSeries.joint_fit_id`) rather than this registry storing
+        #: forward references only, so :meth:`joint_fit_for_series` and the
+        #: staleness check in :meth:`JointFit.stale_reason` never have to
+        #: scan every record to answer "does this series belong to a joint
+        #: fit, and is it still the one it thinks it does".
+        self.joint_fits: dict[str, JointFit] = dict(joint_fits or {})
 
     # ── access ───────────────────────────────────────────────────────────────
 
@@ -119,6 +131,76 @@ class ProjectModel:
     def active_series_id(self, rep_type: RepresentationType | str) -> str | None:
         """Return the active series id for *rep_type*, or ``None``."""
         return self.active_series.get(self._rep_key(rep_type))
+
+    # ── joint fits (docs/plans/joint-fit.md D2/D9/D10) ──────────────────────
+
+    def joint_fit(self, joint_id: str) -> JointFit:
+        """Return the joint fit with *joint_id*.
+
+        Raises ``KeyError`` on an unknown id — a caller that has a
+        ``joint_id`` at all got it from this registry or from a series'
+        :attr:`~FitSeries.joint_fit_id`, so an unknown id is a bug to surface,
+        not a state to guard around.
+        """
+        return self.joint_fits[str(joint_id)]
+
+    def add_joint_fit(self, joint: JointFit) -> None:
+        """Register *joint* by its id."""
+        self.joint_fits[joint.joint_id] = joint
+
+    def joint_fit_for_series(self, batch_id: str) -> JointFit | None:
+        """Return the joint fit that *batch_id* is currently stamped a member of.
+
+        Reads the series' own :attr:`~FitSeries.joint_fit_id` rather than
+        scanning every record's ``member_batch_ids`` — the stamp is the
+        authoritative pointer (D9): a series detached by a solo re-run keeps
+        no path back to the joint fit it left, exactly as it should not.
+        Returns ``None`` for an unknown *batch_id* or an unstamped series.
+        """
+        series = self.batches.get(str(batch_id))
+        if series is None or series.joint_fit_id is None:
+            return None
+        return self.joint_fits.get(series.joint_fit_id)
+
+    def remove_joint_fit(self, joint_id: str) -> JointFit | None:
+        """Delete the joint fit *joint_id* and clear every member's stamp (D10).
+
+        Member results are left exactly as they were — only the constraint's
+        own record and the per-series pointers to it go. Returns the removed
+        record, or ``None`` when *joint_id* is unknown.
+        """
+        joint = self.joint_fits.pop(str(joint_id), None)
+        if joint is None:
+            return None
+        for batch_id in joint.member_batch_ids:
+            series = self.batches.get(batch_id)
+            if series is not None:
+                series.clear_joint_stamp()
+        return joint
+
+    def _drop_joint_member(self, joint_id: str, batch_id: str) -> None:
+        """Remove *batch_id* from the joint fit *joint_id* (D10's delete-a-member half).
+
+        Called from :meth:`remove_batch`, after *batch_id* is already gone
+        from :attr:`batches`. Drops it from ``member_batch_ids`` and from
+        every shared row's ``members``; a shared row left naming fewer than
+        two members shares nothing and is dropped with it. A joint fit left
+        with fewer than two members can no longer couple anything either, so
+        it is removed too via :meth:`remove_joint_fit` — which clears the
+        survivor's stamp, matching the "second delete" case of D10.
+        """
+        joint = self.joint_fits.get(joint_id)
+        if joint is None:
+            return
+        joint.member_batch_ids = [b for b in joint.member_batch_ids if b != batch_id]
+        kept_shared: list[dict] = []
+        for row in joint.shared:
+            members = {b: p for b, p in row["members"].items() if b != batch_id}
+            if len(members) >= 2:
+                kept_shared.append({**row, "members": members})
+        joint.shared = kept_shared
+        if len(joint.member_batch_ids) < 2:
+            self.remove_joint_fit(joint_id)
 
     # ── group mutation API (D1/D4/D7; plain methods, no Qt) ────────────────────
 
@@ -470,6 +552,11 @@ class ProjectModel:
         series to re-evaluate. An :attr:`active_series` entry pointing at the
         removed series is cleared — that representation simply has no active
         series until one is chosen.
+
+        The one exception is a series stamped into a joint fit
+        (docs/plans/joint-fit.md D10): deleting it also drops it from that
+        joint fit's membership and shared table via :meth:`_drop_joint_member`,
+        which removes the joint fit too once fewer than two members are left.
         """
         batch_id = str(batch_id)
         series = self.batches.pop(batch_id, None)
@@ -478,6 +565,8 @@ class ProjectModel:
         self.active_series = {
             rep: active for rep, active in self.active_series.items() if active != batch_id
         }
+        if series.joint_fit_id is not None:
+            self._drop_joint_member(series.joint_fit_id, batch_id)
         return series
 
     def set_trend_excluded(self, batch_id: str, run_number: int, excluded: bool) -> None:
@@ -546,6 +635,7 @@ class ProjectModel:
             "batches": [batch.to_dict() for batch in self.batches.values()],
             "data_groups": [group.to_dict() for group in self.data_groups.values()],
             "active_series": dict(self.active_series),
+            "joint_fits": [joint.to_dict() for joint in self.joint_fits.values()],
         }
 
     @classmethod
@@ -554,6 +644,7 @@ class ProjectModel:
         datasets: dict[int, DatasetRepresentations] = {}
         batches: dict[str, FitSeries] = {}
         data_groups: dict[str, DataGroup] = {}
+        joint_fits: dict[str, JointFit] = {}
         active_series: dict | None = None
         if isinstance(data, dict):
             raw_reps = data.get("representations_by_run")
@@ -573,8 +664,12 @@ class ProjectModel:
                 if isinstance(group_data, dict):
                     group = DataGroup.from_dict(group_data)
                     data_groups[group.group_id] = group
+            for joint_data in data.get("joint_fits", []) or []:
+                joint = JointFit.from_dict(joint_data)
+                if joint is not None:
+                    joint_fits[joint.joint_id] = joint
             active_series = data.get("active_series")
-        return cls(datasets, batches, data_groups, active_series)
+        return cls(datasets, batches, data_groups, active_series, joint_fits)
 
     # ── project-dict integration ───────────────────────────────────────────────
 
@@ -585,12 +680,15 @@ class ProjectModel:
         Reads ``datasets[i].representations``, the top-level ``batches``, the
         optional top-level ``data_groups`` block (Phase 7, additive — absent on
         a project saved before this phase, which loads with an empty registry
-        rather than failing) and the top-level ``active_series`` pointer map
-        (D5; absent before v20, which loads with no active series).
+        rather than failing), the top-level ``active_series`` pointer map
+        (D5; absent before v20, which loads with no active series), and the
+        top-level ``joint_fits`` list (schema v22, additive — absent before it,
+        which loads with an empty registry).
         """
         datasets: dict[int, DatasetRepresentations] = {}
         batches: dict[str, FitSeries] = {}
         data_groups: dict[str, DataGroup] = {}
+        joint_fits: dict[str, JointFit] = {}
         if not isinstance(project, dict):
             return cls()
 
@@ -615,15 +713,20 @@ class ProjectModel:
                 group = DataGroup.from_dict(group_data)
                 data_groups[group.group_id] = group
 
-        return cls(datasets, batches, data_groups, project.get("active_series"))
+        for joint_data in project.get("joint_fits", []) or []:
+            joint = JointFit.from_dict(joint_data)
+            if joint is not None:
+                joint_fits[joint.joint_id] = joint
+
+        return cls(datasets, batches, data_groups, project.get("active_series"), joint_fits)
 
     def write_to_project_state(self, project: dict) -> None:
         """Write representations onto each dataset entry, and the top-level blocks.
 
         ``project['datasets']`` entries are matched by ``run_number``; entries
         with no representations get an empty ``representations`` map. The
-        ``batches``, ``data_groups`` and ``active_series`` blocks are written at
-        the top level.
+        ``batches``, ``data_groups``, ``active_series`` and ``joint_fits``
+        blocks are written at the top level.
         """
         for entry in project.get("datasets", []) or []:
             if not isinstance(entry, dict):
@@ -635,3 +738,4 @@ class ProjectModel:
         project["batches"] = [batch.to_dict() for batch in self.batches.values()]
         project["data_groups"] = [group.to_dict() for group in self.data_groups.values()]
         project["active_series"] = dict(self.active_series)
+        project["joint_fits"] = [joint.to_dict() for joint in self.joint_fits.values()]

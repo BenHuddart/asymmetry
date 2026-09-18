@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Joint fits couple several already-recorded series — even ones fitted with
+  different models — by holding named parameters equal across them**, for a
+  sample that needs two fit functions across a phase transition (an
+  oscillating model in the ordered phase, a relaxing one above it) while some
+  quantities — the initial asymmetry, the background, alpha, a phase — are the
+  same physical thing in both. `Analysis ▸ New joint fit…` opens an undocked
+  window: tick two or more eligible series (a run may belong to only one
+  member; an overlapping, detector-group, or model-less series is disabled
+  with the reason on its tooltip), tick which of their **Global** parameters
+  are the same quantity — `Suggest` proposes an exact tier (same name, same
+  unit, occurring once per model) ticked and a candidate tier (same base name
+  or component type) unticked — and `Run joint fit`. Results write onto the
+  member series in place; the joint fit itself is a named, persisted record
+  (`Analysis ▸ Joint fits`) with runtime-computed staleness (a member re-run
+  solo, deleted, or itself stale) and a `Refit` action, and `Delete joint
+  fit…` removes the record while keeping every member's results. The
+  Parameters panel groups a joint fit's members into their own chip-rail
+  section (its tooltip lists every member's full name); a shared parameter
+  is still, in every member, a Global one — no chip, no card — and the
+  panel's existing "held constant" hint names which joint fit it is shared
+  across. The window's own default label is built from each member's short
+  name (its own label, else its data group's name, else its model label),
+  falling back to that member's full name on a collision, so it reads as
+  `Joint: Ordered + Paramagnetic` rather than each member's full
+  `<model> · <fit-range>` fallback. Scriptable via `fit_joint` and
+  `suggest_shared_parameters` (`asymmetry.core.fitting`). See
+  `docs/reference/joint_fit.rst`.
 - **The grouping window's t0 row always shows what Asymmetry's own search finds
   beside the file value, and warns when they disagree — in every mode, not just
   when actively searching.** A read-only line under the t0 row reads `File: bin
@@ -89,6 +116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Project schema bumped to v22: a top-level `joint_fits` list records each
+  joint fit's members, shared-parameter table, and last result.** Purely
+  additive — a pre-v22 project migrates with an empty list and every series
+  unstamped. Each `batches` entry gains two optional fields once a joint run
+  has recorded onto it: `joint_fit_id` (the owning record, or `null`) and
+  `shared_params` (`{this series' own parameter name: shared name}`), both
+  display state ignored by the series' own recipe identity. See
+  `docs/reference/project_files.rst` § "Joint fits (schema v22)".
 - **Manual t0 is now a signed offset from each run's own file t0, not a stored
   absolute bin.** One profile therefore shifts every run in scope by the same
   amount however their individual headers differ, and the spinbox shows the

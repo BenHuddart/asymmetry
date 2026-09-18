@@ -417,6 +417,29 @@ were computed in, so the shading and lines are withheld until you switch back
 bands on the exported plot; the plain TSV export is unaffected, since the
 decoration is a plot annotation rather than a data column.
 
+.. _trend-joint-fit-series:
+
+Joint-fit series
+-----------------
+
+A series stamped as a member of a :doc:`joint fit <joint_fit>` is pulled out
+of its data-group section in the chip rail and grouped instead under its own
+section, titled with the joint fit's label — a joint fit can compose series
+that carry different models or belong to different data groups, so it earns
+a section of its own rather than sitting under either member's group. The
+section header's tooltip lists every member's full name, one per line — the
+joint fit's own label is built from short member names (see
+:doc:`joint_fit`), so the full picture is one hover away.
+
+A parameter the joint fit shares across members is, in every contributing
+series, still a **Global** one: it gets no chip and no card, and is never
+plotted as a per-run trend, exactly like any other Global parameter. It is
+still named by the footer's "held constant" note, and for a shared parameter
+that note's entry gains a suffix naming the joint fit: "*<name>* — shared
+across joint fit "*<label>*"". Joining a joint fit does not change a
+parameter's Global-role behaviour; it only adds that one clause to the hint
+for the column the joint fit actually shares.
+
 Representation-aware trending
 ------------------------------
 

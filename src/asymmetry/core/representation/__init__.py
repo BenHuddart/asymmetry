@@ -30,12 +30,15 @@ from asymmetry.core.representation.global_fit_study import (
     study_from_legacy_cross_group_payload,
 )
 from asymmetry.core.representation.group import DataGroup, PhaseSpec
+from asymmetry.core.representation.joint_fit import JointFit
 from asymmetry.core.representation.naming import (
     composite_model_label,
+    default_joint_fit_label,
     default_series_label,
     disambiguate_series_label,
     fit_range_label,
     format_run_range,
+    joint_member_name,
     member_range,
 )
 from asymmetry.core.representation.series import (
@@ -68,6 +71,7 @@ __all__ = [
     "FrequencyFFT",
     "FrequencyMaxEnt",
     "GlobalFitStudy",
+    "JointFit",
     "PhaseSpec",
     "Representation",
     "RepresentationType",
@@ -78,11 +82,13 @@ __all__ = [
     "build_maxent_reconstruction_datasets",
     "composite_model_label",
     "compute_group_input_digest",
+    "default_joint_fit_label",
     "default_recipe",
     "default_series_label",
     "disambiguate_series_label",
     "fit_range_label",
     "format_run_range",
+    "joint_member_name",
     "make_representation",
     "member_range",
     "normalise_recipe",

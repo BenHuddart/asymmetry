@@ -175,6 +175,7 @@ from asymmetry.gui.widgets.series_dialogs import confirm_series_delete, prompt_s
 from asymmetry.gui.windows.fit_results_window import FitResults, FitResultsWindow
 from asymmetry.gui.windows.global_fit_wizard_window import GlobalFitWizardWindow
 
+from .recipe_inputs import build_recipe_engine_inputs
 from .seeding import (
     _seed_group_absolute_phases,
     _seed_group_background_and_n0,
@@ -3179,45 +3180,24 @@ class GlobalFitTab(FitTabBase):
             self._results_card.set_message(str(exc), tag="Error", tone="error")
             return
 
-        global_params = list(parsed["global"])
-        local_params = list(parsed["local"])
-        fixed_params = dict(parsed["fixed"])
-        param_values = dict(parsed["values"])
-        param_bounds = dict(parsed["bounds"])
-        file_params = list(parsed.get("file", []))
-
         # Per-run initial values: parameter table → inherited single-fit seeds →
-        # explicit Initial-values dialog entries (highest precedence).
+        # explicit Initial-values dialog entries (highest precedence). Live form
+        # state, not recipe — which is why it is passed *into* the shared
+        # resolver rather than living inside it (a joint run omits it, D6).
         effective_values = self._effective_initial_values_by_run(parsed)
 
-        # Build initial parameter sets for each dataset
-        initial_params = {}
-        for ds in self._datasets:
-            run_number = int(ds.run_number)
-            run_effective = effective_values.get(run_number, {})
-            params = ParameterSet()
-            for pname in model.param_names:
-                min_val, max_val = param_bounds[pname]
-                value = run_effective.get(pname, param_values[pname])
-
-                # File-type parameters are pinned to the dataset's file value.
-                if pname in file_params:
-                    base_name, _index = split_parameter_name(pname)
-                    file_value = _get_file_value_for_parameter(ds, base_name)
-                    if file_value is not None:
-                        value = file_value
-
-                fixed = pname in fixed_params or pname in file_params
-                params.add(
-                    Parameter(
-                        name=pname,
-                        value=value,
-                        min=min_val,
-                        max=max_val,
-                        fixed=fixed,
-                    )
-                )
-            initial_params[run_number] = params
+        # The recipe → engine-inputs step, shared with the joint-fit window so a
+        # series resolves identically whether it runs here or inside a joint fit.
+        # ``_parse_parameter_configuration`` above has already validated the very
+        # cells the recipe is read from, so the rows reaching it are sound.
+        engine_inputs = build_recipe_engine_inputs(
+            self.current_recipe(), model, self._datasets, values_by_run=effective_values
+        )
+        global_params = engine_inputs.global_params
+        local_params = engine_inputs.local_params
+        fixed_params = set(engine_inputs.fixed_params)
+        file_params = set(engine_inputs.file_params)
+        initial_params = engine_inputs.initial_params
 
         # Run the global fit on the shared TaskRunner; the GUI (and Stop
         # button) stay live.

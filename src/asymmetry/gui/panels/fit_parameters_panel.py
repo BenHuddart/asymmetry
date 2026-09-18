@@ -546,6 +546,24 @@ class _GroupFitData:
     #: and is not serialised. Empty means "no short form" and the full
     #: ``group_name`` stands in — see :meth:`__post_init__`.
     short_name: str = ""
+    #: The joint fit (``docs/plans/joint-fit.md``) this series is currently
+    #: stamped a member of, or ``None`` for a plain series — mirrors
+    #: :attr:`~asymmetry.core.representation.series.FitSeries.joint_fit_id`.
+    #: Derived display state, like ``phase``/``short_name``: supplied by
+    #: :meth:`load_representation_series`, not round-tripped through
+    #: ``_serialize_group_fit_results``/``_deserialize_group_fit_results``
+    #: (``MainWindow._refresh_trend_panel`` re-supplies it on every reload,
+    #: including after a project restore).
+    joint_fit_id: str | None = None
+    #: The joint fit's display name (``MainWindow._joint_fit_display_name``),
+    #: empty when :attr:`joint_fit_id` is ``None``. Not serialised, for the
+    #: same reason as ``joint_fit_id``.
+    joint_fit_label: str = ""
+    #: This series' own parameter name → the joint fit's shared column name,
+    #: mirroring :attr:`~asymmetry.core.representation.series.FitSeries.shared_params`.
+    #: Empty for a plain series. Not serialised, for the same reason as
+    #: ``joint_fit_id``.
+    shared_params: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.short_name:
@@ -709,11 +727,11 @@ class FitParametersPanel(QWidget):
         #: tooltip; cleared by re-running.
         self._stale_series_ids: set[str] = set()
         #: Chip-rail section layout: ``(title, swatch colour or None, [batch_id,
-        #: …])`` in display order, supplied by the host via
-        #: :meth:`load_representation_series`. ``None`` (no caller has ever
+        #: …], header tooltip or None)`` in display order, supplied by the host
+        #: via :meth:`load_representation_series`. ``None`` (no caller has ever
         #: supplied one, e.g. a bare panel under test) falls back to one
         #: alphabetised "Standalone" section — today's flat, header-less rail.
-        self._sections: list[tuple[str, str | None, list[str]]] | None = None
+        self._sections: list[tuple[str, str | None, list[str], str | None]] | None = None
 
         # Background machinery for the trend-overlay model evaluation, which runs
         # model.function (and optional components) per fit range over an 800-pt
@@ -1622,7 +1640,9 @@ class FitParametersPanel(QWidget):
         fraction_weights_by_id: dict[str, dict[str, float]] | None = None,
         stale_ids: set[str] | None = None,
         phase_by_id: dict[str, PhaseDecoration] | None = None,
-        sections: list[tuple[str, str | None, list[str]]] | None = None,
+        sections: list[tuple[str, str | None, list[str], str | None]] | None = None,
+        joint_fit_by_id: dict[str, tuple[str, str]] | None = None,
+        shared_params_by_id: dict[str, dict[str, str]] | None = None,
     ) -> None:
         """Reload the panel to show all series for one representation.
 
@@ -1658,11 +1678,23 @@ class FitParametersPanel(QWidget):
             from the map gets ``phase=None`` (plain series).
         sections:
             Optional chip-rail section layout: ``(title, swatch colour or
-            ``None``, [batch_id, …])`` tuples in display order, built by the
-            host from :meth:`MainWindow._batch_series_catalogue`. ``None``
-            (the default, and every caller that has not migrated) falls back
-            to one alphabetised "Standalone" section — a header-less rail,
-            exactly today's layout.
+            ``None``, [batch_id, …], header tooltip or ``None``)`` tuples in
+            display order, built by the host from
+            :meth:`MainWindow._trend_panel_sections`. ``None`` (the default,
+            and every caller that has not migrated) falls back to one
+            alphabetised "Standalone" section — a header-less rail, exactly
+            today's layout.
+        joint_fit_by_id:
+            Optional ``batch_id → (joint_fit_id, joint_fit_label)`` map for a
+            series currently stamped a member of a joint fit
+            (``docs/plans/joint-fit.md`` D5/D8). A series absent from the map
+            gets ``joint_fit_id=None`` (plain series) — mirrors ``phase_by_id``.
+        shared_params_by_id:
+            Optional ``batch_id → {this series' parameter name: shared column
+            name}`` map, mirroring
+            :attr:`~asymmetry.core.representation.series.FitSeries.shared_params`.
+            A series absent from the map, or present with an empty dict, has
+            no shared parameters.
         """
         # This is the host's pull entry point after a series is recorded, updated
         # or deleted, after a representation change, and after a membership toggle
@@ -1671,7 +1703,9 @@ class FitParametersPanel(QWidget):
         self._bump_data_revision()
         self._sync_active_group_state()
         self._sections = (
-            [(str(t), c, list(ids)) for t, c, ids in sections] if sections is not None else None
+            [(str(t), c, list(ids), tt) for t, c, ids, tt in sections]
+            if sections is not None
+            else None
         )
 
         # Preserve any model-fit / composite-param / annotation state for
@@ -1735,6 +1769,7 @@ class FitParametersPanel(QWidget):
             # the active series).
             self._knight_observables = observables
             self._apply_composite_parameters_to_rows(rows, composite_params, global_uncert)
+            joint_fit_id, joint_fit_label = (joint_fit_by_id or {}).get(batch_id, (None, ""))
 
             self._group_fit_results[batch_id] = _GroupFitData(
                 group_id=batch_id,
@@ -1750,6 +1785,9 @@ class FitParametersPanel(QWidget):
                 knight_observables=observables,
                 phase=(phase_by_id or {}).get(batch_id),
                 short_name=(short_names_by_id or {}).get(batch_id, ""),
+                joint_fit_id=joint_fit_id,
+                joint_fit_label=joint_fit_label,
+                shared_params=dict((shared_params_by_id or {}).get(batch_id, {})),
             )
 
         # Update per-series run-number map for browser highlighting.
@@ -1869,7 +1907,7 @@ class FitParametersPanel(QWidget):
         self._set_selected_group_ids(valid, emit=False)
         self._apply_group_selection_to_view()
 
-    def _resolved_sections(self) -> list[tuple[str, str | None, list[str]]]:
+    def _resolved_sections(self) -> list[tuple[str, str | None, list[str], str | None]]:
         """The chip-rail section layout to render right now.
 
         A host that has migrated to :meth:`load_representation_series`'s
@@ -1882,10 +1920,15 @@ class FitParametersPanel(QWidget):
         ids = sorted(
             self._group_fit_results, key=lambda gid: self._group_fit_results[gid].group_name.lower()
         )
-        return [("Standalone", None, ids)] if ids else []
+        return [("Standalone", None, ids, None)] if ids else []
 
-    def _build_section_header(self, title: str, colour: str | None) -> QWidget:
-        """A muted uppercase section label, preceded by a 10 px kind swatch."""
+    def _build_section_header(self, title: str, colour: str | None, tooltip: str | None) -> QWidget:
+        """A muted uppercase section label, preceded by a 10 px kind swatch.
+
+        *tooltip* is the joint-fit section's full member list (one line per
+        member, ``MainWindow._trend_panel_sections``) — ``None`` for a plain
+        data-group section, whose title already names the group.
+        """
         row = QWidget()
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 4, 0, 0)
@@ -1895,8 +1938,12 @@ class FitParametersPanel(QWidget):
             swatch.setFixedSize(10, 10)
             swatch.setStyleSheet(f"background-color: {colour}; border-radius: 2px;")
             row_layout.addWidget(swatch)
-        row_layout.addWidget(make_section_header(title))
+        header_label = make_section_header(title)
+        row_layout.addWidget(header_label)
         row_layout.addStretch(1)
+        if tooltip:
+            row.setToolTip(tooltip)
+            header_label.setToolTip(tooltip)
         return row
 
     def _build_group_chip(self, group: _GroupFitData, strip_metrics) -> QPushButton:
@@ -1949,14 +1996,16 @@ class FitParametersPanel(QWidget):
         sections = self._resolved_sections()
         # A lone group-less section is today's flat rail; a lone *group*
         # section still earns its swatch-and-name header.
-        single_section = len(sections) <= 1 and all(colour is None for _, colour, _ in sections)
+        single_section = len(sections) <= 1 and all(colour is None for _, colour, _, _ in sections)
         strip_metrics = self._group_tabs_widget.fontMetrics()
-        for title, colour, batch_ids in sections:
+        for title, colour, batch_ids, tooltip in sections:
             chip_ids = [gid for gid in batch_ids if gid in self._group_fit_results]
             if not chip_ids:
                 continue
             if not single_section:
-                self._group_tabs_layout.addWidget(self._build_section_header(title, colour))
+                self._group_tabs_layout.addWidget(
+                    self._build_section_header(title, colour, tooltip)
+                )
             row = QWidget()
             row_layout = FlowLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -3869,14 +3918,23 @@ class FitParametersPanel(QWidget):
         return key, self._custom_x_labels().get(key, key)
 
     def _shared_held_constant_params(self) -> list[str]:
-        """Names of Global-classified (shared) params held constant, hence flat.
+        """Names of Global-role params held constant, hence dropped from the y rail.
 
         A batch fit shares one value across every run for each ``global``-role
         parameter, so it never varies and is dropped from the trendable Y list.
         These are exactly the names worth flagging: the user who explicitly
         classified a parameter as Global (an opt-in choice — Local is the
         Batch-tab default) and then tries to trend it would otherwise find it
-        silently absent.
+        silently absent. This applies whether or not the series belongs to a
+        joint fit, and whether or not the joint fit *shares* the parameter
+        across members: a series-Global parameter has no chip, no card and no
+        flat line regardless (Decision A, corrected 2026-09-18 — the first
+        Phase 4 draft drew a shared parameter's card and a flat trend line
+        across its members; that was withdrawn because "Global" means one
+        value per series everywhere in the app, and a shared parameter is
+        still, in each contributing series, a Global one). A shared
+        parameter's entry in the rendered hint additionally names the joint
+        fit it is shared across (:meth:`_held_constant_param_label`).
         """
         if self._global_params is None:
             return []
@@ -3891,6 +3949,21 @@ class FitParametersPanel(QWidget):
             names.append(name)
         return names
 
+    def _held_constant_param_label(self, name: str) -> str:
+        """Display text for *name* within the "held constant" hint.
+
+        The plain parameter label (:func:`format_param_label`), plus a
+        suffix naming the joint fit when the active series shares *name*
+        across one (Decision A: a shared parameter gets no chip, no card and
+        no flat line — this hint is the only place in the panel that says
+        so).
+        """
+        label = format_param_label(name)
+        group = self._group_fit_results.get(self._active_group_id)
+        if group is None or name not in group.shared_params:
+            return label
+        return f'{label} — shared across joint fit "{group.joint_fit_label}"'
+
     def _update_global_param_hint(self) -> None:
         """Show/hide the footer note pointing at Global params that won't trend."""
         names = self._shared_held_constant_params()
@@ -3898,7 +3971,7 @@ class FitParametersPanel(QWidget):
             self._global_param_hint.setText("")
             self._global_param_hint.setVisible(False)
             return
-        labels = ", ".join(format_param_label(name) for name in names)
+        labels = ", ".join(self._held_constant_param_label(name) for name in names)
         subject = "it is" if len(names) == 1 else "they are"
         self._global_param_hint.setText(f"{labels} Global — held constant")
         self._global_param_hint.setToolTip(
@@ -6259,8 +6332,8 @@ class FitParametersPanel(QWidget):
             # *parameters*, so only the single-parameter case takes the
             # phase colour.
             for idx, y_name in enumerate(y_params):
-                y_vals, y_err = self._series_y_arrays(rows, y_name)
                 color = self._single_series_color() if len(y_params) == 1 else f"C{idx % 10}"
+                y_vals, y_err = self._series_y_arrays(rows, y_name)
                 label = self._legend_param_label(y_name) if len(y_params) > 1 else None
 
                 self._draw_model_overlay_mpl(ax, y_name, color=color)
