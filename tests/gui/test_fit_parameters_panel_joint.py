@@ -1,14 +1,16 @@
 """Parameters panel joint-fit surfacing (``docs/plans/joint-fit.md`` phase 4).
 
-Covers the three phase-4 additions: ``_GroupFitData``'s derived
-``joint_fit_id``/``joint_fit_label``/``shared_params`` fields (supplied by
-``load_representation_series``, never serialised — mirrors ``phase``/
-``short_name``), a shared parameter's "Shared" badge on its card, and the flat
-trend line drawn across the union of x extents when several loaded joint-fit
-members share a parameter. "Global" means one value per series everywhere in
-the app, so an ordinary (unshared) Global-role parameter of a joint-fit
-member keeps today's "held constant" exclusion — only a *shared* column gets
-the new flat line. The chip-rail section itself is built in
+Covers the two phase-4 additions that survived the 2026-09-18 review:
+``_GroupFitData``'s derived ``joint_fit_id``/``joint_fit_label``/
+``shared_params`` fields (supplied by ``load_representation_series``, never
+serialised — mirrors ``phase``/``short_name``), and the "held constant"
+footer hint naming which joint fit a shared parameter is shared across
+(Decision A). The first draft of this phase also gave a shared parameter a
+card, a "Shared" badge and a flat trend line; Ben withdrew that after
+reviewing the feature on a real project, because "Global" means one value
+per series everywhere in the app, and a shared parameter is still, in every
+contributing series, a Global one — so it gets no chip and no card, exactly
+like any other Global parameter. The chip-rail section itself is built in
 ``MainWindow._trend_panel_sections`` — see
 ``test_trend_panel_sections_group_joint_fit_members_ahead_of_data_groups`` in
 ``tests/gui/test_series_workflow.py``.
@@ -25,7 +27,8 @@ from PySide6.QtWidgets import QApplication  # type: ignore
 
 from asymmetry.core.fitting.parameters import Parameter, ParameterSet
 from asymmetry.gui.panels.fit_parameters_panel import FitParametersPanel, _FitRow, _GroupFitData
-from tests.gui._trend_panel import axes_for, card, select_params
+from asymmetry.gui.utils.formatting import format_param_label
+from tests.gui._trend_panel import select_params
 
 
 @pytest.fixture(scope="module")
@@ -77,8 +80,7 @@ def _panel_with_joint_members(qapp: QApplication) -> FitParametersPanel:
     """Two joint-fit members: A shares ``A_bg``/``Bg`` → ``A_bg_shared``; A also
     carries ``phase`` (an ordinary, unshared Global-role parameter of its own)
     and ``Lambda`` (an everyday per-run varying parameter, for contrast with
-    the "Shared" badge, which is not a generic "this card is on a jointed
-    series" flag).
+    the "held constant" set, which only ever names Global-role parameters).
     """
     panel = FitParametersPanel()
     rows_a = [
@@ -101,10 +103,6 @@ def _panel_with_joint_members(qapp: QApplication) -> FitParametersPanel:
     panel._rebuild_group_buttons()
     panel._set_selected_group_ids(["a"], emit=False)
     panel._apply_group_selection_to_view(sync_active=False)
-    # The flat line's "one line, one legend entry" shape is an Overlay-canvas
-    # concept (Subplots draws one figure per card with no cross-series union);
-    # the panel defaults to Subplots, so the flat-line tests below switch.
-    panel._overlay_button.setChecked(True)
     return panel
 
 
@@ -179,33 +177,69 @@ def test_serialize_group_fit_results_excludes_joint_fields(qapp: QApplication) -
     assert "shared_params" not in payload["a"]
 
 
-# ── "Shared" badge ───────────────────────────────────────────────────────────
+# ── Decision A: a shared parameter is still a Global one ───────────────────
 
 
-def test_shared_parameter_card_shows_badge_and_an_ordinary_card_does_not(
+def test_shared_parameter_gets_no_chip_or_card(qapp: QApplication) -> None:
+    """A shared parameter is, in every contributing series, still a Global
+    parameter — it gets no chip and no card, exactly like an unshared one."""
+    panel = _panel_with_joint_members(qapp)
+
+    assert "A_bg" not in panel._display_y_parameters()
+    assert "A_bg" not in panel._y_chips
+
+    # An attempt to select it (e.g. a stale preference from before a project
+    # restore) is simply a no-op — there is no chip to check.
+    select_params(panel, ["A_bg", "Lambda"])
+    assert "A_bg" not in {c.name for c in panel._card_stack.cards()}
+    assert "Lambda" in {c.name for c in panel._card_stack.cards()}
+
+
+def test_shared_parameter_draws_no_flat_line_when_two_members_are_overlaid(
     qapp: QApplication,
 ) -> None:
+    """The withdrawn first draft drew one flat line across a shared column's
+    members on the Overlay canvas; there is nothing left to draw, because the
+    parameter never reaches the y rail in the first place."""
     panel = _panel_with_joint_members(qapp)
-    select_params(panel, ["A_bg", "Lambda"])
+    panel._overlay_button.setChecked(True)
+    panel._set_selected_group_ids(["a", "b"], emit=False)
+    panel._apply_group_selection_to_view(sync_active=False)
 
-    shared_card = card(panel, "A_bg")
-    assert shared_card.shared_chip is not None
-    assert "Shared" in shared_card.shared_chip.text()
-    tooltip = shared_card.shared_chip.toolTip()
-    assert 'joint fit "High-field joint fit"' in tooltip
-    assert "Series B" in tooltip
+    assert "A_bg" not in panel._display_y_parameters()
+    select_params(panel, ["A_bg"])
+    assert panel._card_stack.cards() == []
 
-    # The badge names a *shared* column — it is not a generic "this series is
-    # jointed" flag, so an everyday varying parameter of the same (jointed)
-    # series carries no badge.
-    ordinary_card = card(panel, "Lambda")
-    assert ordinary_card.shared_chip is None
+
+def test_shared_and_unshared_global_parameters_both_held_constant_with_hint(
+    qapp: QApplication,
+) -> None:
+    """ "Global" means one value per series everywhere in the app, whether or
+    not the joint fit shares the column: both "A_bg" (shared) and "phase"
+    (an ordinary Global-role parameter of series A alone) stay off the y rail
+    and are named by the footer's "held constant" hint. Only "A_bg"'s entry
+    in that hint gains the joint-fit suffix."""
+    panel = _panel_with_joint_members(qapp)
+
+    assert "phase" not in panel._display_y_parameters()
+    assert "A_bg" not in panel._display_y_parameters()
+    assert panel._shared_held_constant_params() == ["A_bg", "phase"]
+
+    panel._update_global_param_hint()
+    assert not panel._global_param_hint.isHidden()
+    text = panel._global_param_hint.text()
+    shared_label = format_param_label("A_bg")
+    plain_label = format_param_label("phase")
+    assert f'{shared_label} — shared across joint fit "High-field joint fit"' in text
+    assert plain_label in text
+    assert f"{plain_label} — shared" not in text
+    assert text.endswith("Global — held constant")
 
 
 def test_unstamped_series_never_offers_a_global_parameter_as_y(qapp: QApplication) -> None:
     """A plain (non-jointed) series' Global-role parameter stays excluded —
     the panel's long-standing "held constant" rule (:meth:`_shared_held_constant_params`),
-    untouched by the new joint-fit flat-line mechanism."""
+    untouched by the joint-fit hint suffix (there is no joint fit to name)."""
     panel = FitParametersPanel()
     rows = [_row(1, 100.0, A_bg=0.2, Lambda=0.1), _row(2, 200.0, A_bg=0.2, Lambda=0.2)]
     panel._group_fit_results = {
@@ -229,51 +263,7 @@ def test_unstamped_series_never_offers_a_global_parameter_as_y(qapp: QApplicatio
     assert "A_bg" not in panel._y_chips
     assert panel._shared_held_constant_params() == ["A_bg"]
 
-
-# ── Flat trend line ─────────────────────────────────────────────────────────
-
-
-def _named_lines(ax):
-    return [
-        line for line in ax.get_lines() if line.get_label() and not line.get_label().startswith("_")
-    ]
-
-
-def test_unshared_global_parameter_on_jointed_series_stays_excluded_with_hint(
-    qapp: QApplication,
-) -> None:
-    """ "Global" means one value per series everywhere in the app; joining a
-    joint fit does not change that for a parameter the joint fit does not
-    share. Only "A_bg" is shared here — "phase" is an ordinary Global-role
-    parameter of series A alone, so it keeps the existing "held constant"
-    exclusion and footer hint rather than gaining a flat line."""
-    panel = _panel_with_joint_members(qapp)
-
-    assert "phase" not in panel._display_y_parameters()
-    assert "phase" not in panel._y_chips
-    assert panel._shared_held_constant_params() == ["phase"]
-
     panel._update_global_param_hint()
     assert not panel._global_param_hint.isHidden()
-    assert "Global — held constant" in panel._global_param_hint.text()
-
-
-def test_shared_parameter_draws_one_flat_line_across_union_of_x_extents(
-    qapp: QApplication,
-) -> None:
-    panel = _panel_with_joint_members(qapp)
-    panel._set_selected_group_ids(["a", "b"], emit=False)
-    panel._apply_group_selection_to_view(sync_active=False)
-    select_params(panel, ["A_bg"])
-
-    ax = axes_for(panel, "A_bg")
-    lines = _named_lines(ax)
-    assert len(lines) == 1
-    xs = lines[0].get_xdata()
-    assert min(xs) == pytest.approx(100.0)
-    assert max(xs) == pytest.approx(400.0)
-    assert lines[0].get_ydata()[0] == pytest.approx(0.05)
-    assert "Shared" in lines[0].get_label()
-
-    _handles, labels = ax.get_legend_handles_labels()
-    assert sum(1 for label in labels if "Shared" in label) == 1
+    text = panel._global_param_hint.text()
+    assert "shared across joint fit" not in text

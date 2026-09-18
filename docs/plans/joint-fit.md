@@ -113,7 +113,15 @@ is deleted with it. Both cascade in `ProjectModel`, not in the GUI.
 fits (mirroring "Global parameter fits"), opening one loads it into the
 window. No new dock or tab in the main GUI. The window has one instance,
 owned by `MainWindow`, and runs the fit on `TaskRunner` with the standard
-cancel path.
+cancel path. (*Added 2026-09-18, after reviewing the feature on a real
+project: the default label built from each member's full fallback name
+(`"<model> · <fit-range>[ · <group>]"`) was unreadable for models with long
+names — `naming.default_joint_fit_label` now composes each member's *short*
+name (`naming.joint_member_name`: its own label, else its data group's
+name, else its model label), falling back to the member's full fallback
+name only when two members' short names collide. The full member list moves
+to the chip-rail joint section header's tooltip and the window's label
+field tooltip, one line per member.*)
 
 **D12 — Engine (*lead*).** `_build_coupled_global_problem` is generalised to
 several *blocks* (one per series: datasets, model function, global/local
@@ -385,6 +393,14 @@ call site in `mainwindow.py` `_refresh_trend_panel`, tests in
   the member series' x extents, listed once in the legend under the joint
   fit's label (*corrected 2026-09-18 in Phase 4 review; the first draft
   assumed Global parameters already drew flat lines*).
+  (*Withdrawn 2026-09-18, Decision A, after reviewing the feature on a real
+  project: the exception above was itself a wrong premise. The panel's rule
+  is that a series-Global parameter — shared or not — has no chip and no
+  card; a shared parameter stays a Global parameter in every contributing
+  series, so it gets no badge, no card, and no flat line either. The
+  "held constant" footer hint is instead extended: a shared parameter's
+  entry in it gains a suffix naming the joint fit, `A_1 — shared across
+  joint fit "<label>"`. The chip-rail section grouping stays as built.*)
 - `_GroupFitData` gains `joint_fit_id`/`shared_params` as derived display
   state, supplied by `load_representation_series` like `phase`, not
   serialised.
@@ -392,7 +408,9 @@ call site in `mainwindow.py` `_refresh_trend_panel`, tests in
 Checklist (tests): two stamped series render one section with two chips; a
 shared parameter card shows the badge and one flat line spanning both
 series; an unstamped series renders exactly as before (existing panel tests
-unchanged).
+unchanged). (*Superseded 2026-09-18 by the Decision A withdrawal above: the
+badge/flat-line checks were replaced by "held constant" hint tests naming
+the shared parameter's joint fit; the section-grouping check stands.*)
 
 ### Phase 5 — Docs, screenshots, changelog (agent: Sonnet)
 

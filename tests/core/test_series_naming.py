@@ -14,8 +14,10 @@ from asymmetry.core.representation import (
     default_joint_fit_label,
     default_series_label,
     disambiguate_series_label,
+    joint_member_name,
     member_range,
 )
+from asymmetry.core.representation.group import DataGroup
 
 _FB = RepresentationType.TIME_FB_ASYMMETRY
 
@@ -131,3 +133,30 @@ def test_disambiguate_skips_only_the_taken_suffixes():
 
 def test_default_joint_fit_label():
     assert default_joint_fit_label(["Ordered", "Para"]) == "Joint: Ordered + Para"
+
+
+# ── joint fit member short name (Decision B, 2026-09-18) ────────────────────
+
+
+def test_joint_member_name_prefers_the_series_own_label():
+    series = _series()
+    series.label = "Ordered"
+    group = DataGroup("g", "low field")
+    assert joint_member_name(series, group) == "Ordered"
+    assert joint_member_name(series, None) == "Ordered"
+
+
+def test_joint_member_name_falls_back_to_the_data_group_name():
+    series = _series()
+    group = DataGroup("g", "low field")
+    assert joint_member_name(series, group) == "low field"
+
+
+def test_joint_member_name_falls_back_to_the_model_label_without_a_group():
+    series = _series()
+    assert joint_member_name(series, None) == "Exponential + Constant"
+
+
+def test_joint_member_name_falls_back_to_series_with_no_model_or_group():
+    scan = FitSeries("s", _FB, canonical_model=None)
+    assert joint_member_name(scan, None) == "Series"

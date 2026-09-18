@@ -28,8 +28,12 @@ at record time so the chips stay distinguishable.
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
 
 from asymmetry.core.representation.series import FitSeries
+
+if TYPE_CHECKING:
+    from asymmetry.core.representation.group import DataGroup
 
 #: Axis unit rendered in a default label, per representation domain.
 _DOMAIN_UNITS = {"time": "µs", "frequency": "MHz"}
@@ -118,6 +122,29 @@ def default_series_label(series: FitSeries, *, group_name: str | None = None) ->
     base = " · ".join(parts) if parts else "Series"
     suffix = (group_name or "").strip()
     return f"{base} · {suffix}" if suffix else base
+
+
+def joint_member_name(series: FitSeries, group: DataGroup | None) -> str:
+    """Return the short display name a joint fit's default label uses for *series*.
+
+    A joint fit's default label (:func:`default_joint_fit_label`) reads badly
+    when it is built from each member's full fallback name (D10's
+    ``"<model> · <fit-range>[ · <group>]"``) — that is what made
+    ``"Joint: OverhauserPowderCutoff · 0.002–0.1 µs · low + Exponential ·
+    0.002–0.1 µs · high"`` unreadable. This picks the shortest thing that
+    still identifies *series* on its own: its own user label, else its data
+    group's name (*group* is the :class:`~asymmetry.core.representation.
+    group.DataGroup` named by ``series.group_id``, or ``None`` when it has
+    none), else its model's expression. It does not resolve a collision
+    between two members that land on the same short name — the caller sees
+    the whole member set and falls back to the member's full name
+    (``MainWindow._series_fallback_name``) for those.
+    """
+    if series.label:
+        return series.label
+    if group is not None and group.name:
+        return group.name
+    return composite_model_label(series.canonical_model) or "Series"
 
 
 def default_joint_fit_label(series_labels: Sequence[str]) -> str:

@@ -38,6 +38,7 @@ from asymmetry.core.representation.naming import (
     disambiguate_series_label,
     fit_range_label,
     format_run_range,
+    joint_member_name,
     member_range,
 )
 from asymmetry.core.representation.series import (
@@ -87,6 +88,7 @@ __all__ = [
     "disambiguate_series_label",
     "fit_range_label",
     "format_run_range",
+    "joint_member_name",
     "make_representation",
     "member_range",
     "normalise_recipe",

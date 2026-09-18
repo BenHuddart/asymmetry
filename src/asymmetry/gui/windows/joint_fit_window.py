@@ -26,6 +26,7 @@ run of that series would — through
 from __future__ import annotations
 
 import math
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -109,10 +110,33 @@ class JointSeriesEntry:
     roles: Mapping[str, str]
     #: This series' :attr:`FitSeries.recipe` (seeds, bounds, window) — D6.
     recipe: Mapping[str, Any]
+    #: The short name ``naming.joint_member_name`` resolves for this series
+    #: (its own label, else its data group's name, else its model label) —
+    #: what the joint fit's default label is built from, instead of
+    #: *label*'s full ``"<model> · <fit-range>[ · <group>]"`` form (D11). Not
+    #: collision-resolved on its own: :func:`_member_default_labels` falls
+    #: back to *label* for any two ticked entries that share a short_label.
+    short_label: str
 
     def global_params(self) -> list[str]:
         """The parameters this series may contribute to a shared row (D4)."""
         return [name for name, role in self.roles.items() if role == "global"]
+
+
+def _member_default_labels(entries: Sequence[JointSeriesEntry]) -> list[str]:
+    """Each of *entries*' ``short_label``, falling back to its full *label*.
+
+    ``naming.joint_member_name`` does not know about any other member, so two
+    ticked entries can resolve to the same short name (the same model, no
+    group, no per-series label of their own) — that collision is only
+    visible here, across the whole ticked set, and is resolved by using that
+    member's full fallback name instead so the joint fit's default label
+    (``naming.default_joint_fit_label``) stays unambiguous.
+    """
+    counts = Counter(entry.short_label for entry in entries)
+    return [
+        entry.short_label if counts[entry.short_label] == 1 else entry.label for entry in entries
+    ]
 
 
 @dataclass(frozen=True)
@@ -572,9 +596,15 @@ class JointFitWindow(QMainWindow):
         self._label_edited = True
 
     def _refresh_label_default(self) -> None:
+        entries = self.checked_series()
+        # The full member list stays readable on the tooltip regardless of
+        # whether the field text itself is the default or a user rename —
+        # the short default label is not always enough to tell two similarly
+        # named members apart.
+        self._label_edit.setToolTip("\n".join(entry.label for entry in entries))
         if self._label_edited:
             return
-        labels = [entry.label for entry in self.checked_series()]
+        labels = _member_default_labels(entries)
         self._label_edit.setText(default_joint_fit_label(labels) if labels else "")
 
     def current_label(self) -> str:

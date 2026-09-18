@@ -26,10 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   solo, deleted, or itself stale) and a `Refit` action, and `Delete joint
   fit…` removes the record while keeping every member's results. The
   Parameters panel groups a joint fit's members into their own chip-rail
-  section, draws a shared parameter as one flat line across its members with
-  a `⋈ Shared` badge, and still holds an unshared Global parameter constant
-  as before. Scriptable via `fit_joint` and `suggest_shared_parameters`
-  (`asymmetry.core.fitting`). See `docs/reference/joint_fit.rst`.
+  section (its tooltip lists every member's full name); a shared parameter
+  is still, in every member, a Global one — no chip, no card — and the
+  panel's existing "held constant" hint names which joint fit it is shared
+  across. The window's own default label is built from each member's short
+  name (its own label, else its data group's name, else its model label),
+  falling back to that member's full name on a collision, so it reads as
+  `Joint: Ordered + Paramagnetic` rather than each member's full
+  `<model> · <fit-range>` fallback. Scriptable via `fit_joint` and
+  `suggest_shared_parameters` (`asymmetry.core.fitting`). See
+  `docs/reference/joint_fit.rst`.
 - **The grouping window's t0 row always shows what Asymmetry's own search finds
   beside the file value, and warns when they disagree — in every mode, not just
   when actively searching.** A read-only line under the t0 row reads `File: bin

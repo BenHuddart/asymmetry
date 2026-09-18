@@ -706,11 +706,15 @@ fields, and records or updates the `JointFit`; `_record_fit_series` clears a
 series' stamps on every *solo* re-run, which is what makes a joint fit stale
 the moment one member is re-run on its own. The Fit Parameters panel
 (`fit_parameters_panel.py`) groups a joint fit's members into their own
-chip-rail section ahead of the data-group sections, draws a shared parameter
-as one flat line across the union of its members' x-extents with a **⋈
-Shared** badge (`parameter_card.py`, distinct from the **⇄** link and **ƒ**
-tie badges), and leaves an unshared Global parameter under the existing "held
-constant" hint.
+chip-rail section ahead of the data-group sections (its header tooltip lists
+every member's full name); a parameter the joint fit shares is, in every
+member, still a Global one — no chip, no card, no flat line — and the
+existing "held constant" hint's per-parameter entry gains a suffix naming
+the joint fit it is shared across. The window's own default label
+(`naming.joint_member_name`, `naming.default_joint_fit_label`) is built from
+each member's short name (its own label, else its data group's name, else
+its model label), falling back to that member's full fallback name on a
+collision, so it stays short even for a joint fit of several members.
 
 ---
 

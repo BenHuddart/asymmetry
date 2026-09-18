@@ -169,6 +169,7 @@ def _entry(batch_id: str, label: str, members: tuple[int, ...], **kwargs) -> Joi
         model=kwargs.get("model"),
         roles=kwargs.get("roles", {}),
         recipe=kwargs.get("recipe", {"parameters": [], "fit_range": {"min": None, "max": None}}),
+        short_label=kwargs.get("short_label", label),
     )
 
 
@@ -311,6 +312,131 @@ def test_a_shared_row_with_one_contributor_cannot_be_ticked(app) -> None:
     assert not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable)
     assert "at least two series" in item.toolTip()
     assert window._shared_rows[0].ticked is False
+
+
+# ── D11: short default label (Decision B, 2026-09-18) ───────────────────────
+
+
+def test_label_default_uses_short_label_not_the_full_fallback_name(app) -> None:
+    """The default label reads each ticked entry's ``short_label`` (its data
+    group's name here), not its full ``label`` (the
+    ``"<model> · <fit-range>[ · <group>]"`` fallback) — the full form is what
+    made an early build's default read as "Joint: OverhauserPowderCutoff ·
+    0.002–0.1 µs · low + Exponential · 0.002–0.1 µs · high"."""
+    window = JointFitWindow()
+    entries = [
+        _entry(
+            "batch-a",
+            "OverhauserPowderCutoff · 0.002-0.1 µs · low",
+            (1001,),
+            roles=_ROLES_A,
+            short_label="low",
+        ),
+        _entry(
+            "batch-b",
+            "Exponential · 0.002-0.1 µs · high",
+            (1003,),
+            roles=_ROLES_B,
+            short_label="high",
+        ),
+    ]
+    window.set_providers(lambda: entries, lambda _bid: [])
+    window.start_new(_FB)
+    _tick(window, "batch-a")
+    _tick(window, "batch-b")
+
+    assert window.current_label() == "Joint: low + high"
+
+
+def test_label_default_falls_back_to_the_full_name_on_a_short_label_collision(app) -> None:
+    """Two ticked entries that resolve to the same short name (no group, no
+    label of their own — just the same model) fall back to their full
+    fallback name instead, so the default label stays unambiguous."""
+    window = JointFitWindow()
+    entries = [
+        _entry(
+            "batch-a",
+            "Exponential · 0.05–4 µs",
+            (1001,),
+            roles=_ROLES_A,
+            short_label="Exponential + Constant",
+        ),
+        _entry(
+            "batch-b",
+            "Exponential · 0.05–8 µs",
+            (1003,),
+            roles=_ROLES_B,
+            short_label="Exponential + Constant",
+        ),
+    ]
+    window.set_providers(lambda: entries, lambda _bid: [])
+    window.start_new(_FB)
+    _tick(window, "batch-a")
+    _tick(window, "batch-b")
+
+    assert window.current_label() == "Joint: Exponential · 0.05–4 µs + Exponential · 0.05–8 µs"
+
+
+def test_label_field_tooltip_lists_every_ticked_member_in_full(app) -> None:
+    """The full member list stays one hover away even when the label text
+    itself is the short default."""
+    window = JointFitWindow()
+    entries = [
+        _entry("batch-a", "Ordered", (1001,), roles=_ROLES_A, short_label="low"),
+        _entry("batch-b", "Para", (1003,), roles=_ROLES_B, short_label="high"),
+    ]
+    window.set_providers(lambda: entries, lambda _bid: [])
+    window.start_new(_FB)
+    _tick(window, "batch-a")
+    _tick(window, "batch-b")
+
+    assert window._label_edit.toolTip() == "Ordered\nPara"
+
+
+def test_joint_series_entries_short_label_prefers_group_name_over_full_fallback(mw) -> None:
+    """``MainWindow._joint_series_entries`` fills ``short_label`` via
+    ``naming.joint_member_name`` — an unlabelled series' data group name,
+    not its full ``"<model> · <fit-range>[ · <group>]"`` fallback."""
+    from asymmetry.core.representation.group import DataGroup
+
+    _load_project(mw)
+    mw._project_model.add_data_group(DataGroup("low-field", "low"))
+    series = _series("batch-low", [1001, 1002], _MODEL_A, _ROWS_A, _ROLES_A)
+    series.group_id = "low-field"
+    mw._project_model.add_batch(series)
+
+    entry = next(e for e in mw._joint_series_entries() if e.batch_id == "batch-low")
+    assert entry.short_label == "low"
+    assert entry.label != entry.short_label
+
+
+def test_joint_series_entries_short_label_falls_back_to_model_label(mw) -> None:
+    """No label, no group: the short label is the model's own expression."""
+    _load_project(mw)
+    series = _series("batch-plain", [1001, 1002], _MODEL_A, _ROWS_A, _ROLES_A)
+    mw._project_model.add_batch(series)
+
+    entry = next(e for e in mw._joint_series_entries() if e.batch_id == "batch-plain")
+    assert entry.short_label == "Exponential + Constant"
+
+
+def test_joint_default_label_falls_back_to_full_name_on_collision(mw) -> None:
+    """``MainWindow._joint_default_label`` applies the same collision rule
+    the window's own default does (Decision B), directly against recorded
+    series: two unlabelled, group-less series of one model resolve to the
+    same short name, so both fall back to their full fallback name."""
+    _load_project(mw)
+    series_a = _series("batch-a", [1001, 1002], _MODEL_A, _ROWS_A, _ROLES_A)
+    series_b = _series("batch-b", [1003, 1004], _MODEL_A, _ROWS_A, _ROLES_A)
+    series_b.recipe["fit_range"] = {"min": 0.05, "max": 8.0}
+    mw._project_model.add_batch(series_a)
+    mw._project_model.add_batch(series_b)
+
+    full_a = mw._series_fallback_name(series_a)
+    full_b = mw._series_fallback_name(series_b)
+    assert full_a != full_b
+
+    assert mw._joint_default_label(["batch-a", "batch-b"]) == f"Joint: {full_a} + {full_b}"
 
 
 # ── D8: a run records into the member series and the JointFit record ────────

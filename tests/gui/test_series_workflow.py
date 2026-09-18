@@ -353,8 +353,8 @@ def test_trend_panel_sections_nest_phase_series_under_their_parent(mw):
     sections = mw._trend_panel_sections(named_series)
 
     assert sections == [
-        ("T scan — EuO", mw._group_kind_colour(parent), ["b-direct", "b-phase"]),
-        ("Standalone", mw._group_kind_colour(None), ["b-standalone"]),
+        ("T scan — EuO", mw._group_kind_colour(parent), ["b-direct", "b-phase"], None),
+        ("Standalone", mw._group_kind_colour(None), ["b-standalone"], None),
     ]
 
 
@@ -404,8 +404,11 @@ def test_trend_panel_sections_group_joint_fit_members_ahead_of_data_groups(mw):
     ]
     sections = mw._trend_panel_sections(named_series)
 
-    assert sections[0] == ("High-field joint fit", None, ["j-a", "j-b"])
-    assert sections[1:] == [("Standalone", mw._group_kind_colour(None), ["plain-c"])]
+    # The header's own tooltip carries the full member list, one per line —
+    # Decision B (2026-09-18) shortened the joint fit's default *label* to
+    # short member names, so the full names live here instead.
+    assert sections[0] == ("High-field joint fit", None, ["j-a", "j-b"], "Series A\nSeries B")
+    assert sections[1:] == [("Standalone", mw._group_kind_colour(None), ["plain-c"], None)]
 
 
 def test_chip_menu_open_and_duplicate_route_through_mainwindow(mw, monkeypatch):

@@ -231,6 +231,7 @@ from asymmetry.core.representation import (
     disambiguate_series_label,
     fit_range_label,
     format_run_range,
+    joint_member_name,
     member_range,
 )
 from asymmetry.core.representation.global_fit_study import (
@@ -11173,7 +11174,7 @@ class MainWindow(QMainWindow):
 
     def _trend_panel_sections(
         self, named_series: list[tuple[str, FitSeries, str]]
-    ) -> list[tuple[str, str | None, list[str]]]:
+    ) -> list[tuple[str, str | None, list[str], str | None]]:
         """Group a representation's series into the chip rail's sections.
 
         A series currently stamped a member of a joint fit
@@ -11184,7 +11185,10 @@ class MainWindow(QMainWindow):
         section (colour-less: no single data group owns it) is what tells the
         rail "these belong to one coupled fit" rather than leaving the user to
         infer it from a badge alone. Joint sections come first, in the order
-        their first loaded member appears in ``named_series``.
+        their first loaded member appears in ``named_series``. Its header
+        carries a tooltip listing every member's full name, one per line —
+        Decision B (2026-09-18) shortened the joint fit's own default label
+        to short member names, so the full list belongs on the header instead.
 
         A series with no joint-fit stamp keeps today's rule: its section is
         the data group that owns it, or that group's *parent* when the owning
@@ -11193,9 +11197,12 @@ class MainWindow(QMainWindow):
         under a throwaway bucket of their own. Group-less series share one
         "Standalone" section. Sections, and the series within them, keep
         recording order (``named_series`` is already sorted by batch id); a
-        section's phase-owned series come after its own direct members.
+        section's phase-owned series come after its own direct members. A
+        data-group section has no header tooltip of its own (``None``): its
+        title already names the group, and each chip's own tooltip already
+        carries its full name.
         """
-        joint_buckets: dict[str, tuple[str, list[str]]] = {}
+        joint_buckets: dict[str, tuple[str, list[str], list[str]]] = {}
         joint_order: list[str] = []
         plain_named: list[tuple[str, FitSeries, str]] = []
         for batch_id, series, name in named_series:
@@ -11204,12 +11211,16 @@ class MainWindow(QMainWindow):
                 plain_named.append((batch_id, series, name))
                 continue
             if joint.joint_id not in joint_buckets:
-                joint_buckets[joint.joint_id] = (self._joint_fit_display_name(joint), [])
+                joint_buckets[joint.joint_id] = (self._joint_fit_display_name(joint), [], [])
                 joint_order.append(joint.joint_id)
-            joint_buckets[joint.joint_id][1].append(batch_id)
+            _title, batch_ids, full_names = joint_buckets[joint.joint_id]
+            batch_ids.append(batch_id)
+            full_names.append(name)
         joint_sections = [
-            (title, None, batch_ids)
-            for title, batch_ids in (joint_buckets[joint_id] for joint_id in joint_order)
+            (title, None, batch_ids, "\n".join(full_names))
+            for title, batch_ids, full_names in (
+                joint_buckets[joint_id] for joint_id in joint_order
+            )
         ]
 
         buckets: dict[str | None, tuple[str, str | None, list[str], list[str]]] = {}
@@ -11236,7 +11247,7 @@ class MainWindow(QMainWindow):
             _, _, direct, phased = buckets[key]
             (phased if is_phase_member else direct).append(batch_id)
         data_group_sections = [
-            (title, colour, direct + phased)
+            (title, colour, direct + phased, None)
             for title, colour, direct, phased in (buckets[key] for key in order)
         ]
         return joint_sections + data_group_sections
@@ -14552,6 +14563,7 @@ class MainWindow(QMainWindow):
                     model=model,
                     roles=dict(series.param_roles),
                     recipe=series.recipe,
+                    short_label=joint_member_name(series, group),
                 )
             )
         return entries
@@ -14570,17 +14582,43 @@ class MainWindow(QMainWindow):
             series.rep_type,
         )
 
+    def _joint_default_label(self, member_batch_ids: Sequence[str]) -> str:
+        """The default joint-fit label (D11) for *member_batch_ids*, in order.
+
+        Each member contributes ``naming.joint_member_name`` — its own
+        label, else its data group's name, else its model label — which is
+        short enough to read as one unit in ``"Joint: <A> + <B>"``; the old
+        default built from each member's full fallback name
+        (``"<model> · <fit-range>[ · <group>]"``) is what made
+        ``"Joint: OverhauserPowderCutoff · 0.002–0.1 µs · low + Exponential ·
+        0.002–0.1 µs · high"`` unreadable. Two members that still resolve to
+        the same short name (no label, no group, same model) fall back to
+        that member's full fallback name so the label stays unambiguous —
+        the same rule ``JointFitWindow._refresh_label_default`` applies via
+        ``_member_default_labels`` on its own ``JointSeriesEntry`` list, so a
+        stored ``JointFit.label`` that reads as the default here always
+        matches what the window showed when the fit was run.
+        """
+        short_names: list[str] = []
+        full_names: list[str] = []
+        for batch_id in member_batch_ids:
+            series = self._project_model.batch(batch_id)
+            if series is None:
+                short_names.append(batch_id)
+                full_names.append(batch_id)
+                continue
+            group = self._project_model.data_group(series.group_id) if series.group_id else None
+            short_names.append(joint_member_name(series, group))
+            full_names.append(series.label or self._series_fallback_name(series))
+        counts = Counter(short_names)
+        resolved = [
+            short if counts[short] == 1 else full for short, full in zip(short_names, full_names)
+        ]
+        return default_joint_fit_label(resolved)
+
     def _joint_fit_display_name(self, joint: JointFit) -> str:
         """A joint fit's name: the user's label, else the members' default (D11)."""
-        labels: list[str] = []
-        for batch_id in joint.member_batch_ids:
-            series = self._project_model.batch(batch_id)
-            labels.append(
-                series.label or self._series_fallback_name(series)
-                if series is not None
-                else batch_id
-            )
-        return joint.display_name(default_joint_fit_label(labels))
+        return joint.display_name(self._joint_default_label(joint.member_batch_ids))
 
     def _rebuild_joint_fits_menu(self) -> None:
         """Rebuild Analysis ▸ Joint fits from the project model (D11).
@@ -14694,16 +14732,11 @@ class MainWindow(QMainWindow):
             series.shared_params = shared_by_series[batch_id]
 
         joint = self._project_model.joint_fits.get(joint_id)
-        # The label field defaults to the members' own default name, so a text
-        # that still reads as the default is no rename and is stored as "none".
-        default_label = default_joint_fit_label(
-            [
-                entry_label
-                for entry_label in (
-                    self._series_label_for(batch_id) for batch_id in launch.member_batch_ids
-                )
-            ]
-        )
+        # The label field defaults to the members' own default name (D11), so
+        # a text that still reads as that default is no rename and is stored
+        # as "none" — ``_joint_default_label`` is the same helper
+        # ``_joint_fit_display_name`` reads back later.
+        default_label = self._joint_default_label(launch.member_batch_ids)
         label = launch.label or None
         if label == default_label:
             label = None

@@ -135,9 +135,18 @@ parameter expresses, and v1 does not offer it. This is why the suggestion
 above proposes ``A_1`` only as a candidate: the same name can be the sole
 amplitude of one model and one term among several in another.
 
-The **Label** field defaults to "Joint: *<series>* + *<series>*" from the
-ticked series' own names; type in it to set your own, which then survives
-further re-runs and re-suggestions.
+The **Label** field defaults to "Joint: *<series>* + *<series>*", built from
+each ticked series' *short* name — its own label, else its data group's
+name, else its model's expression — rather than that series' full
+``<model> · <fit-range>[ · <group>]`` fallback name, which is what made an
+early build's default read as "Joint: OverhauserPowderCutoff ·
+0.002–0.1 µs · low + Exponential · 0.002–0.1 µs · high". Two ticked series
+that still resolve to the same short name (no label, no group, the same
+model) fall back to that series' full name so the label stays unambiguous.
+The field's tooltip always lists every ticked series' full name, one per
+line, so the full picture is one hover away even when the label itself is
+short. Type in the field to set your own label, which then survives further
+re-runs and re-suggestions.
 
 Click **Run joint fit** to fit. **Stop** cancels a running fit and leaves
 every member's previous results exactly as they were — nothing is recorded
@@ -164,22 +173,19 @@ chip-rail section, titled with the joint fit's label, ahead of the ordinary
 data-group sections — a joint fit can span series that belong to different
 groups or carry different models, so its own section is what shows "these
 belong to one coupled fit" without you having to infer it from a badge alone.
-A shared parameter's card and legend entry carry a **⋈ Shared** badge (a
-distinct glyph from the link **⇄** badge and the tie **ƒ** badge), whose
-tooltip names the joint fit and the other member(s) honouring the same
-column. Because a shared value is one fitted quantity across the whole union
-of the members' runs rather than a per-run point, it is drawn as a single
-dashed flat line spanning the x-extent of every loaded member, listed once
-in the legend under the joint fit's label.
+The section header's tooltip lists every member's full name, one per line.
 
-An **unshared** Global parameter of a jointed series is unaffected by any of
-this: it still is not plotted as a per-run trend, and the footer's existing
-note ("*<name>* Global — held constant") still names it, with the same
-"set it to Local and re-fit" hint on its tooltip. Joining a joint fit only
-changes how a *shared* column is shown; every other parameter's behaviour is
-exactly what it always was. See :ref:`trend-joint-fit-series` in
-:doc:`parameter_trending` for the full anatomy of the chip-rail section, the
-badge, and the flat line.
+A shared parameter is, in every contributing series, still a **Global**
+one, and "Global" means one value per series everywhere in the app: it gets
+no chip, no card, and is never plotted as a per-run trend, exactly like any
+other Global parameter. The footer's existing note ("*<name>* Global — held
+constant") names it too, and for a shared parameter that note's entry gains
+a suffix naming the joint fit it is shared across: "*<name>* — shared
+across joint fit "*<label>*"". Joining a joint fit does not change a
+parameter's Global-role behaviour; it only adds that one extra clause to the
+hint for the column the joint fit actually shares. See
+:ref:`trend-joint-fit-series` in :doc:`parameter_trending` for the full
+anatomy of the chip-rail section and the hint.
 
 .. _joint-fit-staleness-and-detaching:
 

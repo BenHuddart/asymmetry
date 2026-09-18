@@ -74,12 +74,6 @@ _FOCUS_GLYPH = "⤢"
 _UNFOCUS_GLYPH = "⤡"
 #: Transform button's resting label — the identity lens has no formula to show.
 _IDENTITY_TRANSFORM_LABEL = "ƒ"
-#: The "Shared" badge glyph (a joint fit's shared parameter, ``docs/plans/
-#: joint-fit.md`` D5) — distinct from the Batch/Single tab's ``⇄`` link badge
-#: and ``ƒ`` tie badge (``gui/panels/fit/tab_base.py``), and from this card's
-#: own ``ƒ`` transform button, so none of the three is ever mistaken for
-#: another at a glance.
-_SHARED_BADGE_GLYPH = "⋈"
 
 #: Collapsed-card sparkline width, in average characters of the live application
 #: font (its height is one table row), so the glyph tracks the UI zoom.
@@ -217,16 +211,12 @@ class ParameterCard(QFrame):
         label: str,
         *,
         derived: bool = False,
-        shared_tooltip: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._name = name
         self._expanded = True
         self._focused = False
-        #: The "Shared" badge chip, or ``None`` when this parameter is not a
-        #: joint fit's shared column — see *shared_tooltip*.
-        self.shared_chip: QLabel | None = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -290,11 +280,6 @@ class ParameterCard(QFrame):
 
         if derived:
             header_layout.addWidget(make_context_chip("derived"))
-
-        if shared_tooltip is not None:
-            self.shared_chip = make_context_chip(f"{_SHARED_BADGE_GLYPH} Shared")
-            self.shared_chip.setToolTip(shared_tooltip)
-            header_layout.addWidget(self.shared_chip)
 
         header_layout.addStretch(1)
 

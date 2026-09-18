@@ -73,6 +73,7 @@ def _build_entries():
                 {"name": "A_bg", "value": 0.0, "bounds": "-inf,inf"},
             ],
         },
+        short_label="Ordered phase",
     )
     paramagnetic = JointSeriesEntry(
         batch_id="series-paramagnetic",
@@ -91,6 +92,7 @@ def _build_entries():
                 {"name": "A_bg", "value": 0.0, "bounds": "-inf,inf"},
             ],
         },
+        short_label="Paramagnetic phase",
     )
     return [ordered, paramagnetic]
 
