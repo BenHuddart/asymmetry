@@ -73,6 +73,9 @@ graphical interface where the feature lives.
    * - Fit one model across a run series
      - :doc:`global_fit_wizard`, :doc:`asymmetry_domain_global_fit`
      - Fit dock → Batch tab → Wizard…
+   * - Share a parameter across series with different models
+     - :doc:`joint_fit`
+     - Analysis → New joint fit…
    * - Judge whether a fit can be trusted
      - :doc:`assessing_a_fit`
      - Fit results
@@ -208,6 +211,7 @@ enough.
    composite_models
    grouped_time_domain_fitting
    asymmetry_domain_global_fit
+   joint_fit
    count_domain_fitting
    user_functions
 

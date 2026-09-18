@@ -56,6 +56,7 @@ asymmetry/
 │   │   ├── fit_wizard.py     # Single-spectrum fit fingerprinting and model comparison
 │   │   ├── cross_group_roles.py    # AIC/AICc/BIC Global-vs-Local role suggestion for cross-group fits
 │   │   ├── grouped_time_domain.py  # Grouped-series fit engine
+│   │   ├── joint.py          # fit_joint / suggest_shared_parameters — several series, different models, shared columns
 │   │   ├── result_summary.py # Shared JSON-serialisable fit-result summary
 │   │   ├── models.py         # Built-in μSR fit functions
 │   │   ├── parameters.py     # Parameter objects with bounds & linking
@@ -77,6 +78,7 @@ asymmetry/
 │   │   ├── series.py         # FitSeries — ordered member series, its recipe + identity
 │   │   ├── trend_state.py    # TrendState dataclass for Fit Parameters panel state
 │   │   ├── global_fit_study.py # GlobalFitStudy — persisted named cross-group fit + staleness digest
+│   │   ├── joint_fit.py      # JointFit — persisted joint-fit record (members, shared table, last result); runtime-only staleness
 │   │   └── project_model.py  # ProjectModel — in-memory owner of representations + batches
 │   ├── project/        # Project persistence
 │   │   ├── __init__.py
@@ -104,6 +106,7 @@ asymmetry/
 │   │   │   ├── tab_base.py    # FitParameterTable, FitTabBase, tie dialog, shared delegates/helpers
 │   │   │   ├── single_tab.py  # SingleFitTab
 │   │   │   ├── global_tab.py  # GlobalFitTab + batch-seeding constants
+│   │   │   ├── recipe_inputs.py # build_recipe_engine_inputs() — one series' recipe -> engine inputs, shared by the Batch tab and the joint-fit window
 │   │   │   └── panel.py       # FitPanel container (hosts the two tabs)
 │   │   ├── fit_parameters_panel.py  # Parameter trending panel (pull-based, representation-aware)
 │   │   ├── cross_group_fit_dialog.py     # Cross-group Global/Local/Fixed role dialog (+ Suggest roles)
@@ -131,6 +134,7 @@ asymmetry/
 │   │   ├── global_parameter_fit_window.py # Cross-group parameter-vs-x fit window (studies sidebar, grid, exports)
 │   │   ├── global_fit_window_helpers.py   # Widget-free value/table-export builders + CorrelationMatrixDialog for the fit window
 │   │   ├── global_fit_compare_dialog.py   # Read-only side-by-side comparison of two studies (Δχ²ᵣ/ΔAIC)
+│   │   ├── joint_fit_window.py        # JointFitWindow — compose recorded series into one coupled fit with shared parameters
 │   │   ├── grouping_dialog.py         # Shared detector-grouping editor
 │   │   └── ...                        # detector_layout_dialog.py, run_info_dialog.py, simulate_dialog.py, etc.
 │   └── styles/                # BENCH design tokens, palette, and stylesheet (see below)
@@ -650,6 +654,67 @@ comparison of two same-parameter studies (overlaid curves, Δχ²ᵣ/ΔAIC/AICc/
 The `_record_model_fit_results_series` bridge (each study result recorded as a
 trendable results series) and the `modelfit-<digest>` decoration keying are
 preserved.
+
+### 3.8 Joint Fits
+
+A **joint fit** (`docs/plans/joint-fit.md`) generalises a global fit from "one
+model over several runs" to "several models over several series, coupled by
+named shared columns". It introduces a third scope on top of the existing
+Local (per run) / Global (per series) roles: **Shared**, held equal across two
+or more series. "Linked" (equality link groups) and "Global Parameter Fit"
+(§3.7) keep their existing, unrelated meanings.
+
+**Core.** `core/fitting/engine.py`'s `_build_coupled_global_problem` is
+generalised to several *blocks* (one per series: datasets, model function,
+global/local names, initial parameter sets, fit range, local group key) plus a
+shared column map; `global_fit` is now the one-block, no-shared caller through
+the same builder, byte-for-byte unchanged in fitted values, χ² and result
+packing. `core/fitting/joint.py` is the Qt-free, user-facing seam:
+`JointSeriesProblem` (one series' contribution), `SharedParameter` (a shared
+column's members, seed and bounds), `JointFitResult`, `fit_joint` (raises
+rather than guards on overlap, a non-Global member, a tie, or
+`strategy="profiled"`), and `suggest_shared_parameters` — two-tier
+autodetection (`"exact"`: same full name, same unit, occurring once per model,
+Global everywhere; `"candidate"`: same base name or component type, one
+instance per model) built on `CompositeModel.parameter_identities`.
+`core/representation/joint_fit.py::JointFit` is the persisted record (member
+`batch_id`s in tick order, the shared table, the last result summary),
+mirroring `GlobalFitStudy`'s tolerant `to_dict`/`from_dict` and runtime-only
+(never stored) `stale_reason`. `FitSeries` gains optional `joint_fit_id` and
+`shared_params` stamps, ignored by `recipe_identity()`; `ProjectModel` owns
+`joint_fits`, cascading a member's removal (drop it; delete a joint fit left
+with fewer than two members) and clearing stamps on `remove_joint_fit`.
+Project schema **v22** adds the top-level `joint_fits` list, purely additive
+(`_migrate_v21_to_v22`).
+
+**GUI workflow.** `gui/panels/fit/recipe_inputs.py::build_recipe_engine_inputs`
+extracts the recipe→engine-inputs step `GlobalFitTab._run_global_fit` already
+did, so a joint run resolves a member's seeds, bounds and fit range exactly as
+a solo Batch-tab run of that series would — the joint-fit window edits no
+recipe. Analysis ▸ *New joint fit…* (and the *Joint fits* registry submenu,
+mirroring *Global parameter fits*) opens `gui/windows/joint_fit_window.py::JointFitWindow`:
+a **Series** picker (every eligible series of the active representation, an
+overlapping or ineligible row disabled with its reason on the tooltip), a
+**Shared parameters** table (`apply_param_table_style`, *Suggest*, *Add shared
+parameter…*, *Remove*), and a footer (`FitRunControls`, a results card, a
+stale banner with *Refit*, *Delete joint fit…*). The fit runs on `TaskRunner`;
+a member's fitted curve is evaluated in the same worker call (never the GUI
+thread) and carried back on the result. `MainWindow._on_joint_fit_completed`
+writes each member's `results_by_run` in place under its existing `batch_id`
+(no new series — the recipe did not change, only the constraint), stamps both
+fields, and records or updates the `JointFit`; `_record_fit_series` clears a
+series' stamps on every *solo* re-run, which is what makes a joint fit stale
+the moment one member is re-run on its own. The Fit Parameters panel
+(`fit_parameters_panel.py`) groups a joint fit's members into their own
+chip-rail section ahead of the data-group sections (its header tooltip lists
+every member's full name); a parameter the joint fit shares is, in every
+member, still a Global one — no chip, no card, no flat line — and the
+existing "held constant" hint's per-parameter entry gains a suffix naming
+the joint fit it is shared across. The window's own default label
+(`naming.joint_member_name`, `naming.default_joint_fit_label`) is built from
+each member's short name (its own label, else its data group's name, else
+its model label), falling back to that member's full fallback name on a
+collision, so it stays short even for a joint fit of several members.
 
 ---
 

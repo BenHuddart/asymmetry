@@ -375,6 +375,8 @@ Affine ties are honoured by the single-run engine (``FitEngine.fit``). Global,
 count-domain, and grouped/series fits raise ``NotImplementedError`` when a tie is
 present rather than silently ignoring it — fit each run individually.
 
+.. _global-fitting:
+
 Global fitting
 --------------
 
@@ -437,6 +439,13 @@ in :doc:`frequency_domain_fitting`.
 The :doc:`global_fit_wizard` automates model selection on ordered field or
 temperature series; use that wizard before constructing a hand-built
 global fit if you do not yet know which composite model the data prefer.
+
+A Global parameter is still scoped to *this* series — one model, one run of
+fits. When two series with **different** models need to share a quantity
+(an initial asymmetry, a background, an instrumental phase) across a phase
+transition or similar boundary, see :doc:`joint_fit`, which composes several
+already-recorded series into one coupled fit with its own **Shared** scope
+on top of Global and Local.
 
 .. _monte-carlo-errors:
 

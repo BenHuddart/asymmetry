@@ -2756,8 +2756,8 @@ def test_sections_group_chips_under_a_swatched_header(panel: FitParametersPanel)
             ("batch-3", "Series 3", _row_dicts_for(3)),
         ],
         sections=[
-            ("T scan — EuO", tokens.GROUP_HEADER_BG, ["batch-1", "batch-2"]),
-            ("Standalone", None, ["batch-3"]),
+            ("T scan — EuO", tokens.GROUP_HEADER_BG, ["batch-1", "batch-2"], None),
+            ("Standalone", None, ["batch-3"], None),
         ],
     )
     # header, chip row, header, chip row: two sections, each with its own.
@@ -2785,7 +2785,7 @@ def test_sections_header_hidden_for_a_group_less_project(panel: FitParametersPan
     """A single "Standalone" section (no groups at all) shows no header (item 1)."""
     panel.load_representation_series(
         [("batch-1", "Series 1", _row_dicts_for(1))],
-        sections=[("Standalone", None, ["batch-1"])],
+        sections=[("Standalone", None, ["batch-1"], None)],
     )
     # Just the one chip row — no header widget precedes it.
     assert panel._group_tabs_layout.count() == 1

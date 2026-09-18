@@ -353,9 +353,62 @@ def test_trend_panel_sections_nest_phase_series_under_their_parent(mw):
     sections = mw._trend_panel_sections(named_series)
 
     assert sections == [
-        ("T scan — EuO", mw._group_kind_colour(parent), ["b-direct", "b-phase"]),
-        ("Standalone", mw._group_kind_colour(None), ["b-standalone"]),
+        ("T scan — EuO", mw._group_kind_colour(parent), ["b-direct", "b-phase"], None),
+        ("Standalone", mw._group_kind_colour(None), ["b-standalone"], None),
     ]
+
+
+def test_trend_panel_sections_group_joint_fit_members_ahead_of_data_groups(mw):
+    """Joint-fit members share one, colour-less section ahead the data groups.
+
+    docs/plans/joint-fit.md D5/D8/D11: a joint fit composes series that may
+    carry different models — or, as here, belong to no data group at all — so
+    it earns its own section rather than being read off any one member's data
+    group, and it comes first so the coupling reads as one unit before the
+    ordinary per-group rail.
+    """
+    from asymmetry.core.representation.joint_fit import JointFit
+    from asymmetry.core.representation.series import FitSeries
+
+    member_a = FitSeries("j-a", _FB, member_run_numbers=[10], joint_fit_id="joint-1")
+    member_a.shared_params = {"A_bg": "A_bg_shared"}
+    member_b = FitSeries("j-b", _FB, member_run_numbers=[11], joint_fit_id="joint-1")
+    member_b.shared_params = {"Bg": "A_bg_shared"}
+    plain = FitSeries("plain-c", _FB, member_run_numbers=[12])
+
+    mw._project_model.add_batch(member_a)
+    mw._project_model.add_batch(member_b)
+    mw._project_model.add_batch(plain)
+    mw._project_model.add_joint_fit(
+        JointFit(
+            "joint-1",
+            label="High-field joint fit",
+            rep_type=_FB,
+            member_batch_ids=["j-a", "j-b"],
+            shared=[
+                {
+                    "name": "A_bg_shared",
+                    "members": {"j-a": "A_bg", "j-b": "Bg"},
+                    "value": 0.1,
+                    "min": None,
+                    "max": None,
+                }
+            ],
+        )
+    )
+
+    named_series = [
+        ("j-a", member_a, "Series A"),
+        ("j-b", member_b, "Series B"),
+        ("plain-c", plain, "Series C"),
+    ]
+    sections = mw._trend_panel_sections(named_series)
+
+    # The header's own tooltip carries the full member list, one per line —
+    # Decision B (2026-09-18) shortened the joint fit's default *label* to
+    # short member names, so the full names live here instead.
+    assert sections[0] == ("High-field joint fit", None, ["j-a", "j-b"], "Series A\nSeries B")
+    assert sections[1:] == [("Standalone", mw._group_kind_colour(None), ["plain-c"], None)]
 
 
 def test_chip_menu_open_and_duplicate_route_through_mainwindow(mw, monkeypatch):

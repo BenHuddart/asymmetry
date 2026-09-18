@@ -93,6 +93,14 @@ from asymmetry.core.fitting.grouped_time_domain import (
     grouped_time_domain_available,
     recommend_grouped_series_seeding,
 )
+from asymmetry.core.fitting.joint import (
+    JointFitResult,
+    JointSeriesProblem,
+    SharedParameter,
+    SharedSuggestion,
+    fit_joint,
+    suggest_shared_parameters,
+)
 from asymmetry.core.fitting.member_quality import (
     MEMBER_QUALITY_FLAGS,
     MemberQuality,
@@ -224,6 +232,12 @@ __all__ = [
     "fit_grouped_series",
     "GlobalFitResult",
     "fit_global",
+    "JointFitResult",
+    "JointSeriesProblem",
+    "SharedParameter",
+    "SharedSuggestion",
+    "fit_joint",
+    "suggest_shared_parameters",
     "BETA_ESTIMATION_METHODS",
     "BetaEstimate",
     "estimate_beta_detailed",

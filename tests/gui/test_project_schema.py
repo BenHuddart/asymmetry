@@ -236,7 +236,7 @@ class TestSchemaMigration:
         validate(state)  # must not raise
 
     def test_current_schema_version_constant(self):
-        assert CURRENT_SCHEMA_VERSION == 21
+        assert CURRENT_SCHEMA_VERSION == 22
 
     def test_v15_migrates_to_v16_frequency_axis_mode(self):
         # v16 replaces the frequency relative-axis boolean with a real axis mode

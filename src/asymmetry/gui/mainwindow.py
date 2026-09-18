@@ -221,14 +221,17 @@ from asymmetry.core.project.profiles import (
 from asymmetry.core.representation import (
     FitSeries,
     FitSlot,
+    JointFit,
     RepresentationType,
     build_maxent_reconstruction_datasets,
     composite_model_label,
+    default_joint_fit_label,
     default_recipe,
     default_series_label,
     disambiguate_series_label,
     fit_range_label,
     format_run_range,
+    joint_member_name,
     member_range,
 )
 from asymmetry.core.representation.global_fit_study import (
@@ -331,6 +334,10 @@ from asymmetry.gui.windows.global_parameter_fit_window import (
     StudySidebarEntry,
 )
 from asymmetry.gui.windows.grouping_dialog import GroupingDialog
+from asymmetry.gui.windows.joint_fit_window import (
+    JointFitWindow,
+    JointSeriesEntry,
+)
 from asymmetry.gui.windows.knight_shift_window import KnightShiftWindow
 from asymmetry.gui.windows.multi_group_fit_window import MultiGroupFitWindow
 from asymmetry.gui.windows.run_info_dialog import RunInfoDialog
@@ -967,6 +974,12 @@ class MainWindow(QMainWindow):
         # stores its panel state before each re-sync, so it needs no such guard.)
         self._fourier_included_seeded: set[int] = set()
         self._global_parameter_fit_window: GlobalParameterFitWindow | None = None
+        #: The single joint-fit window (lazy, D11), and the counter that mints
+        #: ``joint-N`` record ids — reseeded past a loaded project's ids exactly
+        #: as ``_next_batch_index`` is, so a joint fit recorded this session can
+        #: never overwrite a restored one.
+        self._joint_fit_window: JointFitWindow | None = None
+        self._next_joint_index = 1
         #: Knight shift analysis window (lazy) and its persisted state. The
         #: cached dict carries a loaded project's state until (unless) the
         #: window is opened; save prefers the live window's state.
@@ -1223,6 +1236,12 @@ class MainWindow(QMainWindow):
         # Phase 3 sidebar, not here.
         self._global_fit_studies_menu = analysis_menu.addMenu("Global parameter fits")
         self._rebuild_global_fit_studies_menu()
+
+        # Joint fits (docs/plans/joint-fit.md D11): a menu-launched, undocked
+        # window plus a registry submenu that mirrors the studies one above.
+        analysis_menu.addAction("New joint fit…", self._on_new_joint_fit)
+        self._joint_fits_menu = analysis_menu.addMenu("Joint fits")
+        self._rebuild_joint_fits_menu()
 
         # Batch-series seeding mode (chain-from-previous for scans). "Auto" picks
         # per the order key; the others force a mode. All reach fit_grouped_series.
@@ -2317,6 +2336,19 @@ class MainWindow(QMainWindow):
         if token in {"pz", "z"}:
             return "P_z"
         return raw
+
+    def _fit_overlay_axis_key(self, dataset) -> str | None:
+        """The vector-axis key a fit overlay on *dataset* belongs to.
+
+        ``None`` for an ungrouped or aggregate (``ALL``) dataset — the scalar
+        axis every non-vector fit draws on. Shared by the batch and joint fit
+        completions so a member's curves land on the same axis either way.
+        """
+        grouping = getattr(getattr(dataset, "run", None), "grouping", None)
+        if not isinstance(grouping, dict):
+            return None
+        axis_key = self._normalize_vector_axis(grouping.get("vector_axis"))
+        return None if axis_key == "ALL" else axis_key
 
     def _vector_alpha_key(self, axis: str | None) -> str | None:
         """Return grouping alpha key for a canonical vector axis."""
@@ -10994,6 +11026,12 @@ class MainWindow(QMainWindow):
         # simply absent from the map, which the panel reads as "plain series"
         # (``phase=None``); there is no separate "not a phase" sentinel to guard.
         phase_by_id: dict[str, PhaseDecoration] = {}
+        # Series currently stamped a member of a joint fit (D5/D8): the id and
+        # display name feed the trend panel's "Shared" badge/tooltip and its
+        # per-series shared-parameter map. A series absent from the map is a
+        # plain series — there is no separate "not jointed" sentinel to guard.
+        joint_fit_by_id: dict[str, tuple[str, str]] = {}
+        shared_params_by_id: dict[str, dict[str, str]] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
@@ -11033,6 +11071,10 @@ class MainWindow(QMainWindow):
             weights = self._fraction_weights_for_series(series, composite)
             if weights:
                 fraction_weights_by_id[batch_id] = weights
+            joint = self._project_model.joint_fit_for_series(batch_id)
+            if joint is not None:
+                joint_fit_by_id[batch_id] = (joint.joint_id, self._joint_fit_display_name(joint))
+                shared_params_by_id[batch_id] = dict(series.shared_params)
             # Runs to highlight: source runs for group series, member keys for run series.
             if series.member_kind == "groups":
                 highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
@@ -11106,6 +11148,8 @@ class MainWindow(QMainWindow):
                 stale_ids=stale_ids,
                 phase_by_id=phase_by_id,
                 sections=sections,
+                joint_fit_by_id=joint_fit_by_id,
+                shared_params_by_id=shared_params_by_id,
             )
             refreshed = True
 
@@ -11130,21 +11174,58 @@ class MainWindow(QMainWindow):
 
     def _trend_panel_sections(
         self, named_series: list[tuple[str, FitSeries, str]]
-    ) -> list[tuple[str, str | None, list[str]]]:
+    ) -> list[tuple[str, str | None, list[str], str | None]]:
         """Group a representation's series into the chip rail's sections.
 
-        A series' section is the data group that owns it, or that group's
-        *parent* when the owning group is a phase (a Global Fit Wizard
-        sub-group, D1/D4) — so a phase's chips sit under the campaign they
-        were partitioned from rather than under a throwaway bucket of their
-        own. Group-less series share one "Standalone" section. Sections, and
-        the series within them, keep recording order (``named_series`` is
-        already sorted by batch id); a section's phase-owned series come
-        after its own direct members.
+        A series currently stamped a member of a joint fit
+        (``docs/plans/joint-fit.md`` D5/D8/D11) is pulled out of its data-group
+        section entirely and grouped instead under one section titled with the
+        joint fit's display name — a joint fit composes series that may carry
+        different models, or even belong to different data groups, so its own
+        section (colour-less: no single data group owns it) is what tells the
+        rail "these belong to one coupled fit" rather than leaving the user to
+        infer it from a badge alone. Joint sections come first, in the order
+        their first loaded member appears in ``named_series``. Its header
+        carries a tooltip listing every member's full name, one per line —
+        Decision B (2026-09-18) shortened the joint fit's own default label
+        to short member names, so the full list belongs on the header instead.
+
+        A series with no joint-fit stamp keeps today's rule: its section is
+        the data group that owns it, or that group's *parent* when the owning
+        group is a phase (a Global Fit Wizard sub-group, D1/D4) — so a phase's
+        chips sit under the campaign they were partitioned from rather than
+        under a throwaway bucket of their own. Group-less series share one
+        "Standalone" section. Sections, and the series within them, keep
+        recording order (``named_series`` is already sorted by batch id); a
+        section's phase-owned series come after its own direct members. A
+        data-group section has no header tooltip of its own (``None``): its
+        title already names the group, and each chip's own tooltip already
+        carries its full name.
         """
+        joint_buckets: dict[str, tuple[str, list[str], list[str]]] = {}
+        joint_order: list[str] = []
+        plain_named: list[tuple[str, FitSeries, str]] = []
+        for batch_id, series, name in named_series:
+            joint = self._project_model.joint_fit_for_series(batch_id)
+            if joint is None:
+                plain_named.append((batch_id, series, name))
+                continue
+            if joint.joint_id not in joint_buckets:
+                joint_buckets[joint.joint_id] = (self._joint_fit_display_name(joint), [], [])
+                joint_order.append(joint.joint_id)
+            _title, batch_ids, full_names = joint_buckets[joint.joint_id]
+            batch_ids.append(batch_id)
+            full_names.append(name)
+        joint_sections = [
+            (title, None, batch_ids, "\n".join(full_names))
+            for title, batch_ids, full_names in (
+                joint_buckets[joint_id] for joint_id in joint_order
+            )
+        ]
+
         buckets: dict[str | None, tuple[str, str | None, list[str], list[str]]] = {}
         order: list[str | None] = []
-        for batch_id, series, _name in named_series:
+        for batch_id, series, _name in plain_named:
             group = (
                 self._project_model.data_group(series.group_id)
                 if series.group_id is not None
@@ -11165,10 +11246,11 @@ class MainWindow(QMainWindow):
                 order.append(key)
             _, _, direct, phased = buckets[key]
             (phased if is_phase_member else direct).append(batch_id)
-        return [
-            (title, colour, direct + phased)
+        data_group_sections = [
+            (title, colour, direct + phased, None)
             for title, colour, direct, phased in (buckets[key] for key in order)
         ]
+        return joint_sections + data_group_sections
 
     def _remember_trends_batch(self, surface: str, batch_id: str | None, panel) -> None:
         """Record the batch *surface* just produced and arm its ``Trends →``.
@@ -11395,6 +11477,9 @@ class MainWindow(QMainWindow):
                 group_id=self._fit_panel.bound_group_id(),
                 group_name=self._data_group_name(self._fit_panel.bound_group_id() or ""),
             )
+        # ``remove_batch`` has already cascaded the deletion through any joint
+        # fit this series belonged to (D10); the surfaces follow it here.
+        self._refresh_joint_fit_window_state()
         self._refresh_trend_panel()
 
     def _clear_series_overlays(self, batch_id: str) -> None:
@@ -11838,6 +11923,12 @@ class MainWindow(QMainWindow):
         No member ``FitSlot`` is written: per-run state is the Single tab's fit
         alone (D4), and the results already live on the series.
 
+        Every path through here is a *solo* run of the series — a joint fit
+        writes its members' results in place and never comes this way — so the
+        recorded series' joint stamp is cleared: its new results were obtained
+        without the shared constraint, which detaches it and makes the owning
+        joint fit stale (joint-fit D9). The Batch tab is never blocked by this.
+
         Returns the recorded series' ``batch_id``.
         """
         series.sort_members(self._runs_by_number_for(source_runs))
@@ -11848,7 +11939,9 @@ class MainWindow(QMainWindow):
             series.label = self._distinct_series_label(series)
             self._project_model.add_batch(series)
             recorded = series
+        recorded.clear_joint_stamp()
         self._project_model.set_active_series(recorded.rep_type, recorded.batch_id)
+        self._refresh_joint_fit_window_state()
         return recorded.batch_id
 
     def _open_series_for(self, candidate: FitSeries) -> FitSeries | None:
@@ -13495,12 +13588,7 @@ class MainWindow(QMainWindow):
                 else self._data_browser.get_dataset(run_number)
             )
             if dataset is not None:
-                run = getattr(dataset, "run", None)
-                grouping = getattr(run, "grouping", None)
-                if isinstance(grouping, dict):
-                    axis_key = self._normalize_vector_axis(grouping.get("vector_axis"))
-                    if axis_key == "ALL":
-                        axis_key = None
+                axis_key = self._fit_overlay_axis_key(dataset)
             fit_curves[run_number] = (
                 t_fit,
                 y_fit,
@@ -14418,6 +14506,384 @@ class MainWindow(QMainWindow):
                 action.setFont(font)
         menu.addSeparator()
         menu.addAction("Show window", self._on_global_parameter_fit)
+
+    # ── Joint fits (docs/plans/joint-fit.md) ─────────────────────────────────
+
+    def _ensure_joint_fit_window(self) -> JointFitWindow:
+        """The one joint-fit window, built and wired on first use (D11)."""
+        if self._joint_fit_window is None:
+            window = JointFitWindow(self)
+            window.set_providers(self._joint_series_entries, self._joint_series_datasets)
+            window.joint_fit_completed.connect(self._on_joint_fit_completed)
+            window.open_series_requested.connect(self._on_series_open_requested)
+            window.joint_fit_delete_requested.connect(self._on_joint_fit_delete_requested)
+            self._joint_fit_window = window
+        return self._joint_fit_window
+
+    def _joint_series_entries(self) -> list[JointSeriesEntry]:
+        """The active representation's series, as the joint-fit window lists them.
+
+        Every series of the representation is offered, including the ones that
+        cannot be a member: a detector-group series and a computed (model-less)
+        one are listed disabled with the reason, so the window explains an
+        absence rather than silently hiding it (D3). Other representation types
+        are not listed at all — their datasets are on another asymmetry scale,
+        and one cost function cannot span both.
+
+        A **frequency** representation lists nothing at all in v1: the Batch tab
+        passes a zero-padded spectrum's ``error_oversampling`` through to
+        ``global_fit``, and ``fit_joint`` has no such parameter, so a frequency
+        joint fit would converge on plausible values and report uncertainties
+        that are simply wrong. The window says so (``FREQUENCY_NOTICE``).
+        """
+        rep_type = self._active_representation_type()
+        if rep_type is None or rep_type.domain == "frequency":
+            return []
+        entries: list[JointSeriesEntry] = []
+        for series in self._project_model.batches.values():
+            if series.rep_type != rep_type:
+                continue
+            group = self._project_model.data_group(series.group_id) if series.group_id else None
+            model = self._composite_model_for_series(series)
+            if series.member_kind == "groups":
+                blocked = "Detector-group series"
+            elif model is None:
+                blocked = "No fit model"
+            else:
+                blocked = ""
+            entries.append(
+                JointSeriesEntry(
+                    batch_id=series.batch_id,
+                    label=series.label or self._series_fallback_name(series),
+                    rep_type=series.rep_type,
+                    model_text=composite_model_label(series.canonical_model) or "",
+                    members=tuple(series.effective_members(group)),
+                    status=self._series_run_status(series),
+                    blocked_reason=blocked,
+                    model=model,
+                    roles=dict(series.param_roles),
+                    recipe=series.recipe,
+                    short_label=joint_member_name(series, group),
+                )
+            )
+        return entries
+
+    def _joint_series_datasets(self, batch_id: str) -> list[MuonDataset]:
+        """One member series' datasets, cropped to *that series'* recipe window.
+
+        The same crop a solo run of the series would use (D6/D8), so a member
+        contributes exactly the data it would contribute on its own.
+        """
+        series = self._project_model.batch(str(batch_id))
+        group = self._project_model.data_group(series.group_id) if series.group_id else None
+        return self._batch_datasets_for_runs(
+            series.effective_members(group),
+            self._recipe_window(series.recipe),
+            series.rep_type,
+        )
+
+    def _joint_default_label(self, member_batch_ids: Sequence[str]) -> str:
+        """The default joint-fit label (D11) for *member_batch_ids*, in order.
+
+        Each member contributes ``naming.joint_member_name`` — its own
+        label, else its data group's name, else its model label — which is
+        short enough to read as one unit in ``"Joint: <A> + <B>"``; the old
+        default built from each member's full fallback name
+        (``"<model> · <fit-range>[ · <group>]"``) is what made
+        ``"Joint: OverhauserPowderCutoff · 0.002–0.1 µs · low + Exponential ·
+        0.002–0.1 µs · high"`` unreadable. Two members that still resolve to
+        the same short name (no label, no group, same model) fall back to
+        that member's full fallback name so the label stays unambiguous —
+        the same rule ``JointFitWindow._refresh_label_default`` applies via
+        ``_member_default_labels`` on its own ``JointSeriesEntry`` list, so a
+        stored ``JointFit.label`` that reads as the default here always
+        matches what the window showed when the fit was run.
+        """
+        short_names: list[str] = []
+        full_names: list[str] = []
+        for batch_id in member_batch_ids:
+            series = self._project_model.batch(batch_id)
+            if series is None:
+                short_names.append(batch_id)
+                full_names.append(batch_id)
+                continue
+            group = self._project_model.data_group(series.group_id) if series.group_id else None
+            short_names.append(joint_member_name(series, group))
+            full_names.append(series.label or self._series_fallback_name(series))
+        counts = Counter(short_names)
+        resolved = [
+            short if counts[short] == 1 else full for short, full in zip(short_names, full_names)
+        ]
+        return default_joint_fit_label(resolved)
+
+    def _joint_fit_display_name(self, joint: JointFit) -> str:
+        """A joint fit's name: the user's label, else the members' default (D11)."""
+        return joint.display_name(self._joint_default_label(joint.member_batch_ids))
+
+    def _rebuild_joint_fits_menu(self) -> None:
+        """Rebuild Analysis ▸ Joint fits from the project model (D11).
+
+        Mirrors :meth:`_rebuild_global_fit_studies_menu`: one action per record,
+        the one on show checked and bold, a " (stale)" suffix when D9 says its
+        members no longer honour the constraint.
+        """
+        menu = getattr(self, "_joint_fits_menu", None)
+        if menu is None:
+            return
+        menu.clear()
+        window = self._joint_fit_window
+        shown_id = window.open_joint_id() if window is not None else None
+        if not self._project_model.joint_fits:
+            action = menu.addAction("(no joint fits yet)")
+            action.setEnabled(False)
+            return
+        for joint in self._project_model.joint_fits.values():
+            stale = joint.is_stale(self._project_model)
+            label = self._joint_fit_display_name(joint) + (" (stale)" if stale else "")
+            action = menu.addAction(label, lambda jid=joint.joint_id: self._display_joint_fit(jid))
+            action.setCheckable(True)
+            action.setChecked(joint.joint_id == shown_id)
+            if joint.joint_id == shown_id:
+                font = action.font()
+                font.setBold(True)
+                action.setFont(font)
+
+    def _on_new_joint_fit(self) -> None:
+        """Analysis ▸ New joint fit…: an empty window on the active representation."""
+        window = self._ensure_joint_fit_window()
+        window.start_new(self._active_representation_type())
+        self._show_joint_fit_window()
+        self._rebuild_joint_fits_menu()
+
+    def _display_joint_fit(self, joint_id: str) -> None:
+        """Open a recorded joint fit in the window, members ticked (D11)."""
+        joint = self._project_model.joint_fit(str(joint_id))
+        window = self._ensure_joint_fit_window()
+        window.load_joint_fit(joint, stale_reason=joint.stale_reason(self._project_model))
+        self._show_joint_fit_window()
+        self._rebuild_joint_fits_menu()
+
+    def _show_joint_fit_window(self) -> None:
+        window = self._ensure_joint_fit_window()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _next_joint_id(self) -> str:
+        """Allocate the next ``joint-N`` record id and advance the counter."""
+        joint_id = f"joint-{self._next_joint_index}"
+        self._next_joint_index += 1
+        return joint_id
+
+    def _reseed_joint_index(self) -> None:
+        """Advance the joint-id counter past every loaded ``joint-N`` id."""
+        highest = 0
+        for joint_id in self._project_model.joint_fits:
+            prefix, sep, suffix = str(joint_id).partition("-")
+            if prefix == "joint" and sep and suffix.isdigit():
+                highest = max(highest, int(suffix))
+        self._next_joint_index = max(self._next_joint_index, highest + 1)
+
+    def _on_joint_fit_completed(self, launch, result, curves) -> None:
+        """Record a converged joint fit: member results in place, then the record (D8).
+
+        A joint run does not create series — the recipes did not change, only
+        the constraint did — so each member's ``results_by_run`` is rewritten
+        under its existing ``batch_id`` in exactly the shape a Batch-tab run
+        produces (:meth:`_fit_result_summary` plus the per-run trend coords),
+        and each member is stamped with the joint fit it now honours (D5). The
+        ``JointFit`` record is created or updated last, so the stamps it is
+        checked against (D9) are already in place.
+        """
+        timestamp = self._fit_record_timestamp()
+        shared_by_series: dict[str, dict[str, str]] = {
+            batch_id: {} for batch_id in launch.member_batch_ids
+        }
+        for row in launch.shared_rows:
+            for batch_id, pname in row["members"].items():
+                shared_by_series[batch_id][pname] = row["name"]
+
+        joint_id = launch.joint_id or self._next_joint_id()
+        for batch_id in launch.member_batch_ids:
+            # ``batch`` answers ``None`` for a member deleted while the fit ran:
+            # the joint window freezes its own picker for the duration, but the
+            # trend panel's chip menu can still delete a series underneath it.
+            # Its results were computed under the constraint and have nowhere to
+            # go; the remaining members still record what they fitted.
+            series = self._project_model.batch(batch_id)
+            if series is None:
+                continue
+            model_label = self._composite_model_label(series.canonical_model)
+            fit_range = fit_range_label(series)
+            results_by_run: dict[int, dict] = {}
+            for run, fit_result in result.series_results[batch_id].items():
+                summary = self._fit_result_summary(
+                    fit_result,
+                    provenance="joint",
+                    model_name=model_label,
+                    fit_range=fit_range,
+                    timestamp=timestamp,
+                )
+                summary.update(self._dataset_trend_coords(int(run)))
+                results_by_run[int(run)] = summary
+            series.results_by_run = results_by_run
+            series.last_fitted_members = sorted(results_by_run)
+            series.joint_fit_id = joint_id
+            series.shared_params = shared_by_series[batch_id]
+
+        joint = self._project_model.joint_fits.get(joint_id)
+        # The label field defaults to the members' own default name (D11), so
+        # a text that still reads as that default is no rename and is stored
+        # as "none" — ``_joint_default_label`` is the same helper
+        # ``_joint_fit_display_name`` reads back later.
+        default_label = self._joint_default_label(launch.member_batch_ids)
+        label = launch.label or None
+        if label == default_label:
+            label = None
+        if joint is None:
+            joint = JointFit(
+                joint_id=joint_id,
+                label=label,
+                rep_type=launch.rep_type,
+                member_batch_ids=list(launch.member_batch_ids),
+                shared=[dict(row) for row in launch.shared_rows],
+            )
+            self._project_model.add_joint_fit(joint)
+        else:
+            joint.label = label
+            joint.member_batch_ids = list(launch.member_batch_ids)
+            joint.shared = [dict(row) for row in launch.shared_rows]
+        joint.result = {
+            "shared_values": {
+                name: float(result.shared_parameters[name].value)
+                for name in result.shared_parameters.names
+            },
+            "shared_uncertainties": {
+                str(name): float(value) for name, value in result.shared_uncertainties.items()
+            },
+            "shared_covariance": (
+                [[float(v) for v in row] for row in result.shared_covariance]
+                if result.shared_covariance is not None
+                else None
+            ),
+            "chi_squared": float(result.chi_squared),
+            "dof": int(result.dof),
+            "reduced_chi_squared": float(result.reduced_chi_squared),
+            "series_reduced_chi_squared": {
+                str(key): float(value) for key, value in result.series_reduced_chi_squared.items()
+            },
+            "fitted_at": timestamp,
+        }
+
+        self._draw_joint_fit_overlays(launch, result, curves)
+        self._refresh_trend_panel(select_batch_id=launch.member_batch_ids[0])
+        window = self._joint_fit_window
+        if window is not None:
+            window.note_recorded(joint_id)
+        self._rebuild_joint_fits_menu()
+        self._log_panel.log(
+            f"Joint fit completed: {len(launch.member_batch_ids)} series, "
+            f"χ²ᵣ = {result.reduced_chi_squared:.3f}",
+            tag="fit",
+        )
+
+    def _series_label_for(self, batch_id: str) -> str:
+        """A series' display name by id, falling back to the id itself."""
+        series = self._project_model.batch(str(batch_id))
+        return (
+            series.label or self._series_fallback_name(series) if series is not None else batch_id
+        )
+
+    def _draw_joint_fit_overlays(self, launch, result, curves) -> None:
+        """Draw each member series' fitted curves — draw only, never evaluate.
+
+        *curves* is ``{batch_id: {run: (t, y)}}``, already evaluated in the
+        joint-fit worker (:class:`JointFitRun`): a fitted curve is a model call
+        per run, and an expensive component would cost seconds of the GUI
+        thread over a wide series. Each member's curves are keyed under its own
+        ``batch_id``, so a joint member's overlay reads and clears exactly like
+        a solo series'. Only the vector-axis key is resolved here, from the
+        browser's own dataset — it is a view fact the worker cannot know.
+
+        v1 joint fits are time-domain only (see :meth:`_joint_series_entries`),
+        so the time plot panel is the only destination.
+        """
+        for batch_id in launch.member_batch_ids:
+            name = self._series_label_for(batch_id)
+            fit_curves: dict[int, tuple] = {}
+            for run_number, (t_fit, y_fit) in curves.get(batch_id, {}).items():
+                dataset = self._data_browser.get_dataset(int(run_number))
+                fit_curves[int(run_number)] = (
+                    t_fit,
+                    y_fit,
+                    name,
+                    [],
+                    result.series_results[batch_id][int(run_number)],
+                    None,
+                    self._fit_overlay_axis_key(dataset) if dataset is not None else None,
+                )
+            if fit_curves:
+                self._plot_panel.set_global_fits(
+                    fit_curves, fit_id=batch_id, fit_labels={batch_id: name}
+                )
+
+    def _on_joint_fit_delete_requested(self, joint_id: str) -> None:
+        """Delete a joint fit the window has confirmed dropping (D10).
+
+        ``remove_joint_fit`` clears the members' stamps and leaves their results
+        untouched — the constraint goes, the fit that honoured it stays. The
+        stamps are display state in the trend panel (a shared parameter reads
+        differently from a per-series Global one), so it is reloaded after.
+        """
+        self._project_model.remove_joint_fit(str(joint_id))
+        self._rebuild_joint_fits_menu()
+        window = self._joint_fit_window
+        if window is not None:
+            window.forget_joint_fit()
+        self._refresh_trend_panel()
+
+    def _refresh_joint_fit_window_state(self) -> None:
+        """Re-sync the joint-fit menu and the window after the model changed.
+
+        Called wherever a series (and so, via the ``ProjectModel`` cascade, a
+        joint fit's membership) can have gone: the submenu is rebuilt, and a
+        window showing an affected record re-reads its stale reason — or, when
+        the record itself has been cascaded away, detaches from it and keeps
+        the composition on screen as an unrecorded one.
+        """
+        self._rebuild_joint_fits_menu()
+        window = self._joint_fit_window
+        if window is None:
+            return
+        joint_id = window.open_joint_id()
+        if joint_id is None:
+            window.refresh_series()
+            return
+        joint = self._project_model.joint_fits.get(joint_id)
+        if joint is None:
+            window.forget_joint_fit()
+            return
+        reason = joint.stale_reason(self._project_model)
+        window.refresh_series()
+        window.set_stale(bool(reason), reason)
+
+    def _restore_joint_fits(self, state: dict) -> None:
+        """Re-arm the joint-fit surfaces after the project model is restored.
+
+        The records themselves ride in ``ProjectModel.from_project_state``; what
+        is left is the id counter, the submenu, and reopening the window on the
+        joint fit that was on show when the project was saved.
+        """
+        self._reseed_joint_index()
+        self._rebuild_joint_fits_menu()
+        window_state = state.get("joint_fit_window_state")
+        if not isinstance(window_state, dict):
+            return
+        window = self._ensure_joint_fit_window()
+        window.restore_state(window_state)
+        joint_id = window.open_joint_id()
+        if joint_id and joint_id in self._project_model.joint_fits:
+            self._display_joint_fit(joint_id)
 
     def _restore_global_fit_studies(self, state: dict, fit_parameters_state: object) -> None:
         """Rebuild the studies registry on project load and show the latest one.
@@ -16220,6 +16686,11 @@ class MainWindow(QMainWindow):
                 if self._global_parameter_fit_window is not None
                 else None
             ),
+            # Only which joint fit is on show: the record itself (members,
+            # shared table, last result) rides in ``ProjectModel.joint_fits``.
+            "joint_fit_window_state": (
+                self._joint_fit_window.get_state() if self._joint_fit_window is not None else None
+            ),
             "fourier_state": {
                 **self._fourier_panel.get_state(),
                 "group_phase_state_by_run": {
@@ -16913,6 +17384,9 @@ class MainWindow(QMainWindow):
             self._fit_parameters_panel.refresh_display()
 
         self._restore_global_fit_studies(state, fit_parameters_state)
+        # Joint fits: the records came back with the project model; re-arm the
+        # id counter, the submenu, and the window's open record (D11).
+        self._restore_joint_fits(state)
 
         # Knight shift analysis window: cache the saved state (applied when the
         # window opens). Projects saved before the window existed migrate their
@@ -17067,6 +17541,11 @@ class MainWindow(QMainWindow):
         self._global_fit_studies = {}
         self._update_global_parameter_fit_menu_style(False)
         self._rebuild_global_fit_studies_menu()
+        if self._joint_fit_window is not None:
+            self._joint_fit_window.close()
+            self._joint_fit_window = None
+        self._next_joint_index = 1
+        self._rebuild_joint_fits_menu()
         self._sync_temperature_log_option_action()
         self._sync_field_log_option_action()
 
@@ -17224,6 +17703,11 @@ class MainWindow(QMainWindow):
             panel = getattr(self, attr, None)
             if panel is not None and hasattr(panel, "shutdown_workers"):
                 panel.shutdown_workers()
+        # The joint-fit window runs its coupled fit on its own TaskRunner and is
+        # parented here, so closing the main window never delivers it a
+        # closeEvent of its own; close it explicitly so that runner is joined.
+        if getattr(self, "_joint_fit_window", None) is not None:
+            self._joint_fit_window.close()
         self._settings.sync()
 
     def closeEvent(self, event) -> None:

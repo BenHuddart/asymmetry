@@ -235,6 +235,50 @@ highlights, and the plot draws by default on every run the series covers.
 Deleting a series clears any ``active_series`` entry that pointed at it,
 leaving that representation with none until another is opened or recorded.
 
+Joint fits (schema v22)
+------------------------
+
+The top-level ``joint_fits`` list holds one entry per recorded
+:doc:`joint fit <joint_fit>`, serialised from
+:class:`~asymmetry.core.representation.joint_fit.JointFit`:
+
+``joint_id``, ``label``, ``rep_type``
+    The record's id, its user-assigned label (``null`` when it still tracks
+    the members' own default name), and the representation type its members
+    belong to.
+
+``member_batch_ids``
+    The member series' ``batch_id`` values, in tick order — also the order
+    a shared row's seed is taken from (its *first* contributing member).
+
+``shared``
+    One entry per shared-table row: ``name``, ``members`` (``{batch_id:
+    that series' own parameter name}``), ``value``, and ``min``/``max``
+    (``null`` for an unbounded side).
+
+``result``
+    The last run's summary only — shared values, uncertainties, the shared
+    covariance rows, combined and per-series χ², and a timestamp — never
+    curves; the curves are each member's own ``results_by_run``, already
+    persisted there under its own ``batch_id``.
+
+A pre-v22 project has no joint fits: ``_migrate_v21_to_v22`` is purely
+additive (version bump plus an empty ``joint_fits`` list). A malformed
+``shared`` row is dropped individually on load rather than failing the whole
+record, and a record naming fewer than two members is dropped entirely — a
+joint fit of one series composes nothing.
+
+Every entry in ``batches`` gains two optional, additive fields once a joint
+run has recorded onto it: ``joint_fit_id`` (the owning record's id, or
+``null`` for an unstamped series) and ``shared_params`` (``{this series' own
+parameter name: shared name}``, empty when unstamped). Both are display
+state read by the Parameters panel and the joint-fit window, never part of
+what the series *is* — ``FitSeries.recipe_identity()`` ignores them, so
+re-running a series' recipe unchanged still replaces the same entry in
+place. A solo Batch-tab run of a stamped series always clears both fields,
+which is what makes staleness (see :ref:`joint-fit-staleness-and-detaching`
+in :doc:`joint_fit`) computable from live project state rather than stored.
+
 .. _fit-slot-fields-v20:
 
 Per-run fit slot fields (schema v20)
