@@ -395,11 +395,22 @@ _GLOBAL_FIT_BASELINE = {
 }
 
 
+#: How closely a fresh fit must match the captured baseline, per strategy. The
+#: literals were captured on one machine; the Minuit path reproduces them to
+#: rounding everywhere, but the trust-region least-squares solver stops inside
+#: its own convergence tolerance, which lands ~1e-6 relative apart between
+#: BLAS builds (macOS Accelerate vs. the Linux CI runner). A column-order or
+#: packing regression in the block builder shows up as a gross difference, not
+#: a sixth-decimal one, so the looser bound still guards what the test is for.
+_BASELINE_TOLERANCE = {"joint": 1e-9, "least_squares": 1e-5}
+
+
 @pytest.mark.parametrize("strategy", ["joint", "least_squares"])
 def test_global_fit_still_lands_on_the_pre_joint_minimum(strategy: str) -> None:
     """``global_fit`` through the block builder reproduces its pre-change numbers."""
     datasets, inits = _regression_series()
     expected = _GLOBAL_FIT_BASELINE[strategy]
+    tol = _BASELINE_TOLERANCE[strategy]
 
     results, fitted = FitEngine().global_fit(
         datasets,
@@ -410,11 +421,11 @@ def test_global_fit_still_lands_on_the_pre_joint_minimum(strategy: str) -> None:
         strategy=strategy,
     )
 
-    assert fitted["A0"].value == pytest.approx(expected["A0"], rel=1e-9)
-    assert fitted["baseline"].value == pytest.approx(expected["baseline"], rel=1e-9)
+    assert fitted["A0"].value == pytest.approx(expected["A0"], rel=tol)
+    assert fitted["baseline"].value == pytest.approx(expected["baseline"], rel=tol)
     for run in (0, 1, 2):
         result = results[run]
-        assert result.parameters["Lambda"].value == pytest.approx(expected["lambda"][run], rel=1e-9)
-        assert result.chi_squared == pytest.approx(expected["chi2"][run], rel=1e-9)
-        assert result.uncertainties["A0"] == pytest.approx(expected["sigma_A0"], rel=1e-9)
+        assert result.parameters["Lambda"].value == pytest.approx(expected["lambda"][run], rel=tol)
+        assert result.chi_squared == pytest.approx(expected["chi2"][run], rel=tol)
+        assert result.uncertainties["A0"] == pytest.approx(expected["sigma_A0"], rel=tol)
         assert result.dof == 117
