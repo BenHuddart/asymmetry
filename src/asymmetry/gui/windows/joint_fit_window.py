@@ -26,7 +26,7 @@ run of that series would — through
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -67,13 +68,19 @@ from asymmetry.gui.widgets.fit_results_card import FitCardSummary, FitResultsCar
 from asymmetry.gui.widgets.fit_run_controls import FitRunControls
 from asymmetry.gui.widgets.panel_section import PanelSection
 
-__all__ = ["JointFitLaunch", "JointFitWindow", "JointSeriesEntry"]
+__all__ = ["JointFitLaunch", "JointFitRun", "JointFitWindow", "JointSeriesEntry"]
 
 #: The "no parameter from this series" entry of a shared row's per-series combo.
 NO_MEMBER = "—"
 
 #: Fixed columns of the shared table, before the one-per-ticked-series columns.
 _SHARED_COLUMNS = ("Shared", "Value", "Min", "Max")
+
+#: Shown in the Series section when the active representation is a frequency
+#: one. ``fit_joint`` takes no ``error_oversampling``, and a zero-padded FFT
+#: spectrum's samples are correlated — a frequency joint fit would report
+#: uncertainties that are simply wrong, so v1 does not offer one.
+FREQUENCY_NOTICE = "Joint fits are available for time-domain series only."
 
 
 @dataclass(frozen=True)
@@ -131,6 +138,52 @@ class JointFitLaunch:
     global_params: Mapping[str, tuple[str, ...]]
 
 
+@dataclass(frozen=True)
+class JointFitRun:
+    """What the joint-fit worker hands back: the result *and* its drawn curves.
+
+    ``fit_joint`` reports parameters, not curves, but a fitted curve is one
+    model evaluation per run — and for a helical, Overhauser or dipolar
+    component that is seconds over a wide series, which the GUI thread may not
+    spend (see AGENTS.md, "Never run long work on the GUI thread"). So the
+    worker evaluates them here, on the same cropped axes the fit used, and the
+    completion handler only draws.
+    """
+
+    result: Any
+    #: ``{series key: {run number: (t, y)}}`` — empty when the fit failed.
+    curves: dict[str, dict[int, tuple[Any, Any]]]
+
+
+def run_joint_fit_with_curves(
+    problems: Sequence[JointSeriesProblem],
+    shared: Sequence[SharedParameter],
+    *,
+    cancel_callback: Callable[[], bool],
+) -> JointFitRun:
+    """Fit, then evaluate each member run's fitted curve — all off the GUI thread.
+
+    The whole body of the window's worker task. Kept module-level (rather than
+    as a closure) so it is callable and testable on its own, and so the
+    ``fit_joint`` it calls is the module global a test can substitute.
+    """
+    result = fit_joint(problems, shared, strategy="least_squares", cancel_callback=cancel_callback)
+    curves: dict[str, dict[int, tuple[Any, Any]]] = {}
+    if not result.success:
+        # A failed fit records and draws nothing, so its parameters are not
+        # worth evaluating — and may not even be finite.
+        return JointFitRun(result=result, curves=curves)
+    for problem in problems:
+        per_run: dict[int, tuple[Any, Any]] = {}
+        for dataset in problem.datasets:
+            run_number = int(dataset.run_number)
+            fit_result = result.series_results[problem.key][run_number]
+            values = {p.name: p.value for p in fit_result.parameters}
+            per_run[run_number] = (dataset.time, problem.model_fn(dataset.time, **values))
+        curves[str(problem.key)] = per_run
+    return JointFitRun(result=result, curves=curves)
+
+
 @dataclass
 class _SharedRow:
     """One row of the shared-parameter table, as the window holds it."""
@@ -180,11 +233,15 @@ def _parse_bound(text: str, unbounded: float) -> float:
 class JointFitWindow(QMainWindow):
     """Compose recorded series into one coupled fit with shared parameters."""
 
-    #: Emitted ``(JointFitLaunch, JointFitResult)`` when a joint fit converges.
-    #: The host records it (D8); a failed fit is shown here and emits nothing.
-    joint_fit_completed = Signal(object, object)
+    #: Emitted ``(JointFitLaunch, JointFitResult, curves)`` when a joint fit
+    #: converges, where ``curves`` is ``{batch_id: {run: (t, y)}}`` already
+    #: evaluated in the worker. The host records and draws it (D8) without
+    #: touching a model; a failed fit is shown here and emits nothing.
+    joint_fit_completed = Signal(object, object, object)
     #: Emitted (batch_id) from a per-series "Open in Batch tab" button.
     open_series_requested = Signal(str)
+    #: Emitted (joint_id) once the user has confirmed "Delete joint fit…".
+    joint_fit_delete_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -205,12 +262,16 @@ class JointFitWindow(QMainWindow):
         self._label_edited = False
         self._launch: JointFitLaunch | None = None
         self._result = None
+        #: Why the Series section is empty, when the reason is not "no series".
+        #: Owned here (the section renders it) so it can be read back.
+        self._series_notice = ""
         #: Set while the tables are repopulated, so the per-cell ``itemChanged``
         #: and combo signals fired by rebuilding are not read as user edits.
         self._populating = False
 
         self._tasks = TaskRunner(self)
         self._worker = None
+        self._busy = False
 
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -244,7 +305,8 @@ class JointFitWindow(QMainWindow):
         layout.addLayout(label_row)
 
         # ── Series ──────────────────────────────────────────────────────────
-        series_section = PanelSection("Series")
+        self._series_section = PanelSection("Series")
+        series_section = self._series_section
         self._series_table = QTableWidget(0, 4)
         self._series_table.setHorizontalHeaderLabels(["Series", "Model", "Members", "Status"])
         self._series_table.verticalHeader().setVisible(False)
@@ -295,6 +357,15 @@ class JointFitWindow(QMainWindow):
         )
         run_row.addWidget(self._run_controls.button)
         run_row.addStretch()
+        # Delete sits in the footer rather than beside Refit in the stale
+        # banner: that banner is hidden while a joint fit is fresh, and a
+        # perfectly good record must still be deletable.
+        self._delete_btn = QPushButton("Delete joint fit…")
+        self._delete_btn.setToolTip(
+            "Remove this joint fit. Its member series and their results are kept."
+        )
+        self._delete_btn.clicked.connect(self._on_delete_clicked)
+        run_row.addWidget(self._delete_btn)
         layout.addLayout(run_row)
 
         self._results_card = FitResultsCard(actions=())
@@ -305,6 +376,8 @@ class JointFitWindow(QMainWindow):
         self._series_results_layout = QVBoxLayout(self._series_results)
         self._series_results_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._series_results)
+
+        self._update_delete_enabled()
 
     # ── Host wiring ─────────────────────────────────────────────────────────
 
@@ -375,6 +448,7 @@ class JointFitWindow(QMainWindow):
         """
         self._joint_id = str(joint_id)
         self.set_stale(False)
+        self._update_delete_enabled()
 
     def forget_joint_fit(self) -> None:
         """Detach from a record that no longer exists; the table stays editable.
@@ -400,9 +474,21 @@ class JointFitWindow(QMainWindow):
         self._entries = list(self._series_provider())
         known = {entry.batch_id for entry in self._entries if not entry.blocked_reason}
         self._checked = [batch_id for batch_id in self._checked if batch_id in known]
+        self._refresh_series_notice()
         self._populate_series_table()
         self._refresh_label_default()
         self._populate_shared_table()
+        self._update_delete_enabled()
+
+    def _refresh_series_notice(self) -> None:
+        """Say why the picker is empty when "no series" is not the reason (v1)."""
+        frequency = self._rep_type is not None and self._rep_type.domain == "frequency"
+        self._series_notice = FREQUENCY_NOTICE if frequency else ""
+        self._series_section.set_hint(self._series_notice or None)
+
+    def series_notice(self) -> str:
+        """The line shown under the Series header, or ``""`` when there is none."""
+        return self._series_notice
 
     def _entry(self, batch_id: str) -> JointSeriesEntry | None:
         for entry in self._entries:
@@ -704,6 +790,12 @@ class JointFitWindow(QMainWindow):
             self._label_edit,
         ):
             widget.setEnabled(not busy)
+        self._busy = busy
+        self._update_delete_enabled()
+
+    def _update_delete_enabled(self) -> None:
+        """Delete is offered only for a recorded joint fit, and never mid-run."""
+        self._delete_btn.setEnabled(self._joint_id is not None and not self._busy)
 
     def _on_run_clicked(self) -> None:
         entries = [entry for entry in self.checked_series() if entry.model is not None]
@@ -779,8 +871,8 @@ class JointFitWindow(QMainWindow):
         self._results_card.set_message("Fitting… coupled over the ticked series.", tag="Fitting")
         self._set_busy(True)
         self._worker = self._tasks.start(
-            lambda worker: fit_joint(
-                problems, shared, strategy="least_squares", cancel_callback=worker.is_cancelled
+            lambda worker: run_joint_fit_with_curves(
+                problems, shared, cancel_callback=worker.is_cancelled
             ),
             on_finished=self._on_fit_finished,
             on_error=self._on_fit_error,
@@ -797,9 +889,31 @@ class JointFitWindow(QMainWindow):
         self.refresh_series()
         self._on_run_clicked()
 
-    def _on_fit_finished(self, result) -> None:
+    def _on_delete_clicked(self) -> None:
+        """Confirm, then ask the host to drop this joint fit (D10).
+
+        The confirmation says what deleting does *not* do, because that is the
+        part a user cannot see: the members and every result they carry stay
+        exactly where they are — only the record and its stamps go.
+        """
+        if self._joint_id is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete joint fit",
+            f'Delete the joint fit "{self.current_label()}"?\n\n'
+            "Its member series and their results are kept; only the joint fit "
+            "and its shared-parameter table are removed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.joint_fit_delete_requested.emit(self._joint_id)
+
+    def _on_fit_finished(self, run: JointFitRun) -> None:
         self._set_busy(False)
         self._worker = None
+        result = run.result
         if not result.success:
             # Nothing is recorded: a failed joint fit must not overwrite the
             # members' previous results with an unconverged answer (D8).
@@ -810,7 +924,9 @@ class JointFitWindow(QMainWindow):
             return
         self._result = result
         self._render_result(self._launch, result)
-        self.joint_fit_completed.emit(self._launch, result)
+        # The curves travelled back with the result, so the host draws without
+        # evaluating a model on the GUI thread.
+        self.joint_fit_completed.emit(self._launch, result, run.curves)
 
     def _on_fit_error(self, message: str) -> None:
         self._set_busy(False)

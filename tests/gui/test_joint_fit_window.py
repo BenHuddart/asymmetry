@@ -9,6 +9,7 @@ joint fit says so (D9), and the record round-trips through a project file.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import time
 
@@ -315,12 +316,18 @@ def test_a_shared_row_with_one_contributor_cannot_be_ticked(app) -> None:
 # ── D8: a run records into the member series and the JointFit record ────────
 
 
-def _run_joint_fit(mw: MainWindow, app) -> JointFitWindow:
+def _prepare_joint_fit(mw: MainWindow) -> JointFitWindow:
+    """Open the window on both series with the suggested shared table, unrun."""
     mw._on_new_joint_fit()
     window = mw._joint_fit_window
     _tick(window, "batch-a")
     _tick(window, "batch-b")
     window._on_suggest_clicked()
+    return window
+
+
+def _run_joint_fit(mw: MainWindow, app) -> JointFitWindow:
+    window = _prepare_joint_fit(mw)
     window._on_run_clicked()
     wait_for(lambda: window._worker is None, app, timeout_s=30.0)
     return window
@@ -373,6 +380,62 @@ def test_a_failed_joint_fit_records_nothing(mw, app, monkeypatch) -> None:
     assert series_a.results_by_run == previous
     assert series_a.joint_fit_id is None
     assert "gave up" in window._results_card.content_html()
+
+
+class _ExplodingModel:
+    """A model whose evaluation is a test failure — proves the draw path is dry."""
+
+    def function(self, *_args, **_kwargs):
+        raise AssertionError("the overlay path evaluated a model on the GUI thread")
+
+
+def test_the_completion_payload_carries_worker_evaluated_curves(mw, app) -> None:
+    """The fitted curves arrive with the result, so drawing evaluates nothing."""
+    _load_project(mw)
+    _record_two_series(mw)
+
+    captured: list[tuple] = []
+    window = _prepare_joint_fit(mw)
+    window.joint_fit_completed.connect(
+        lambda launch, result, curves: captured.append((launch, result, curves))
+    )
+    window._on_run_clicked()
+    wait_for(lambda: window._worker is None, app, timeout_s=30.0)
+
+    assert len(captured) == 1
+    launch, result, curves = captured[0]
+    assert set(curves) == {"batch-a", "batch-b"}
+    assert sorted(curves["batch-a"]) == [1001, 1002]
+    times, values = curves["batch-a"][1001]
+    assert len(times) == len(values) > 0
+    assert np.all(np.isfinite(values))
+
+    # Re-drawing with every model replaced by one that raises on evaluation:
+    # the overlay path must be satisfied by the curves it was handed.
+    dry_launch = dataclasses.replace(
+        launch, models={batch_id: _ExplodingModel() for batch_id in launch.member_batch_ids}
+    )
+    mw._draw_joint_fit_overlays(dry_launch, result, curves)
+
+
+# ── v1 is time-domain only ──────────────────────────────────────────────────
+
+
+def test_a_frequency_representation_offers_no_joint_fit(mw, app) -> None:
+    _load_project(mw)
+    _record_two_series(mw)
+
+    mw._plot_workspace.set_active_view("frequency")
+    mw._on_new_joint_fit()
+    window = mw._joint_fit_window
+    assert window._series_table.rowCount() == 0
+    assert window.series_notice() == "Joint fits are available for time-domain series only."
+
+    # Back on a time representation the same series are offered again.
+    mw._plot_workspace.set_active_view("fb_asymmetry")
+    mw._on_new_joint_fit()
+    assert window._series_table.rowCount() == 2
+    assert window.series_notice() == ""
 
 
 # ── D9: a solo re-run detaches a member ─────────────────────────────────────
@@ -477,6 +540,58 @@ def test_stop_cancels_the_run_and_leaves_the_members_untouched(mw, app, monkeypa
 
 
 # ── D10: deleting a member cascades into the record and the window ──────────
+
+
+def test_delete_button_drops_the_record_but_keeps_the_members_and_their_results(
+    mw, app, monkeypatch
+) -> None:
+    _load_project(mw)
+    series_a, series_b = _record_two_series(mw)
+
+    window = _prepare_joint_fit(mw)
+    # Nothing recorded yet: there is no joint fit to delete.
+    assert not window._delete_btn.isEnabled()
+    window._on_run_clicked()
+    wait_for(lambda: window._worker is None, app, timeout_s=30.0)
+    assert window._delete_btn.isEnabled()
+
+    before = {
+        series_a.batch_id: dict(series_a.results_by_run),
+        series_b.batch_id: dict(series_b.results_by_run),
+    }
+    monkeypatch.setattr(
+        joint_window_module.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: joint_window_module.QMessageBox.StandardButton.Yes),
+    )
+    window._on_delete_clicked()
+
+    assert mw._project_model.joint_fits == {}
+    for series, batch_id in ((series_a, "batch-a"), (series_b, "batch-b")):
+        assert series.joint_fit_id is None
+        assert series.shared_params == {}
+        # The constraint goes; the fit that honoured it stays (D10).
+        assert series.results_by_run == before[batch_id]
+    assert [action.text() for action in mw._joint_fits_menu.actions()] == ["(no joint fits yet)"]
+    assert window.open_joint_id() is None
+    assert not window._delete_btn.isEnabled()
+
+
+def test_declining_the_delete_confirmation_keeps_the_joint_fit(mw, app, monkeypatch) -> None:
+    _load_project(mw)
+    _record_two_series(mw)
+    window = _run_joint_fit(mw, app)
+    joint_id = window.open_joint_id()
+
+    monkeypatch.setattr(
+        joint_window_module.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: joint_window_module.QMessageBox.StandardButton.No),
+    )
+    window._on_delete_clicked()
+
+    assert list(mw._project_model.joint_fits) == [joint_id]
+    assert mw._project_model.batch("batch-a").joint_fit_id == joint_id
 
 
 def test_deleting_a_member_series_drops_the_joint_fit_and_clears_the_window(mw, app) -> None:

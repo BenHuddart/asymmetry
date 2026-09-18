@@ -14465,6 +14465,7 @@ class MainWindow(QMainWindow):
             window.set_providers(self._joint_series_entries, self._joint_series_datasets)
             window.joint_fit_completed.connect(self._on_joint_fit_completed)
             window.open_series_requested.connect(self._on_series_open_requested)
+            window.joint_fit_delete_requested.connect(self._on_joint_fit_delete_requested)
             self._joint_fit_window = window
         return self._joint_fit_window
 
@@ -14477,9 +14478,15 @@ class MainWindow(QMainWindow):
         absence rather than silently hiding it (D3). Other representation types
         are not listed at all — their datasets are on another asymmetry scale,
         and one cost function cannot span both.
+
+        A **frequency** representation lists nothing at all in v1: the Batch tab
+        passes a zero-padded spectrum's ``error_oversampling`` through to
+        ``global_fit``, and ``fit_joint`` has no such parameter, so a frequency
+        joint fit would converge on plausible values and report uncertainties
+        that are simply wrong. The window says so (``FREQUENCY_NOTICE``).
         """
         rep_type = self._active_representation_type()
-        if rep_type is None:
+        if rep_type is None or rep_type.domain == "frequency":
             return []
         entries: list[JointSeriesEntry] = []
         for series in self._project_model.batches.values():
@@ -14599,7 +14606,7 @@ class MainWindow(QMainWindow):
                 highest = max(highest, int(suffix))
         self._next_joint_index = max(self._next_joint_index, highest + 1)
 
-    def _on_joint_fit_completed(self, launch, result) -> None:
+    def _on_joint_fit_completed(self, launch, result, curves) -> None:
         """Record a converged joint fit: member results in place, then the record (D8).
 
         A joint run does not create series — the recipes did not change, only
@@ -14695,7 +14702,7 @@ class MainWindow(QMainWindow):
             "fitted_at": timestamp,
         }
 
-        self._draw_joint_fit_overlays(launch, result)
+        self._draw_joint_fit_overlays(launch, result, curves)
         self._refresh_trend_panel(select_batch_id=launch.member_batch_ids[0])
         window = self._joint_fit_window
         if window is not None:
@@ -14714,43 +14721,53 @@ class MainWindow(QMainWindow):
             series.label or self._series_fallback_name(series) if series is not None else batch_id
         )
 
-    def _draw_joint_fit_overlays(self, launch, result) -> None:
-        """Draw each member series' fitted curves, as a Batch-tab completion does.
+    def _draw_joint_fit_overlays(self, launch, result, curves) -> None:
+        """Draw each member series' fitted curves — draw only, never evaluate.
 
-        ``fit_joint`` reports parameters, not curves, so the model is evaluated
-        here — one call per member run over that run's own (already cropped and
-        memoised) time axis, which is the same evaluation the plot would do to
-        draw them. Curves are keyed under each member's own ``batch_id`` so a
-        joint member's overlay reads and clears exactly like a solo series'.
+        *curves* is ``{batch_id: {run: (t, y)}}``, already evaluated in the
+        joint-fit worker (:class:`JointFitRun`): a fitted curve is a model call
+        per run, and an expensive component would cost seconds of the GUI
+        thread over a wide series. Each member's curves are keyed under its own
+        ``batch_id``, so a joint member's overlay reads and clears exactly like
+        a solo series'. Only the vector-axis key is resolved here, from the
+        browser's own dataset — it is a view fact the worker cannot know.
+
+        v1 joint fits are time-domain only (see :meth:`_joint_series_entries`),
+        so the time plot panel is the only destination.
         """
-        # Every member shares the launch's representation type (D3), so one
-        # panel choice covers the whole joint fit.
-        panel = (
-            self._frequency_plot_panel
-            if launch.rep_type.domain == "frequency"
-            else self._plot_panel
-        )
         for batch_id in launch.member_batch_ids:
-            model = launch.models[batch_id]
             name = self._series_label_for(batch_id)
-            curves: dict[int, tuple] = {}
-            for dataset in self._joint_series_datasets(batch_id):
-                run_number = int(dataset.run_number)
-                fit_result = result.series_results[batch_id].get(run_number)
-                if fit_result is None:
-                    continue
-                values = {p.name: p.value for p in fit_result.parameters}
-                curves[run_number] = (
-                    dataset.time,
-                    model.function(dataset.time, **values),
+            fit_curves: dict[int, tuple] = {}
+            for run_number, (t_fit, y_fit) in curves.get(batch_id, {}).items():
+                dataset = self._data_browser.get_dataset(int(run_number))
+                fit_curves[int(run_number)] = (
+                    t_fit,
+                    y_fit,
                     name,
                     [],
-                    fit_result,
+                    result.series_results[batch_id][int(run_number)],
                     None,
-                    self._fit_overlay_axis_key(dataset),
+                    self._fit_overlay_axis_key(dataset) if dataset is not None else None,
                 )
-            if curves:
-                panel.set_global_fits(curves, fit_id=batch_id, fit_labels={batch_id: name})
+            if fit_curves:
+                self._plot_panel.set_global_fits(
+                    fit_curves, fit_id=batch_id, fit_labels={batch_id: name}
+                )
+
+    def _on_joint_fit_delete_requested(self, joint_id: str) -> None:
+        """Delete a joint fit the window has confirmed dropping (D10).
+
+        ``remove_joint_fit`` clears the members' stamps and leaves their results
+        untouched — the constraint goes, the fit that honoured it stays. The
+        stamps are display state in the trend panel (a shared parameter reads
+        differently from a per-series Global one), so it is reloaded after.
+        """
+        self._project_model.remove_joint_fit(str(joint_id))
+        self._rebuild_joint_fits_menu()
+        window = self._joint_fit_window
+        if window is not None:
+            window.forget_joint_fit()
+        self._refresh_trend_panel()
 
     def _refresh_joint_fit_window_state(self) -> None:
         """Re-sync the joint-fit menu and the window after the model changed.
