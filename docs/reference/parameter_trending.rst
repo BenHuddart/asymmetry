@@ -417,6 +417,28 @@ were computed in, so the shading and lines are withheld until you switch back
 bands on the exported plot; the plain TSV export is unaffected, since the
 decoration is a plot annotation rather than a data column.
 
+.. _trend-joint-fit-series:
+
+Joint-fit series
+-----------------
+
+A series stamped as a member of a :doc:`joint fit <joint_fit>` is pulled out
+of its data-group section in the chip rail and grouped instead under its own
+section, titled with the joint fit's label — a joint fit can compose series
+that carry different models or belong to different data groups, so it earns
+a section of its own rather than sitting under either member's group.
+
+A parameter the joint fit actually shares carries a **⋈ Shared** badge on its
+card and legend entry (distinct from the link **⇄** badge and the tie **ƒ**
+badge), whose tooltip names the joint fit and the other member series
+honouring the same column. Because the shared value is one fitted quantity
+across every member's runs rather than a per-run point, it is drawn as a
+single dashed flat line spanning the x-extent of every loaded member, listed
+once in the legend under the joint fit's label — the one thing a joint fit
+adds to the plot. An ordinary (unshared) **Global** parameter of a jointed
+series is unaffected: it is still absent from the y rail and still named by
+the footer's "held constant" note, exactly as for any other series.
+
 Representation-aware trending
 ------------------------------
 

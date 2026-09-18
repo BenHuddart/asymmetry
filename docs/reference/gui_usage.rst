@@ -1278,6 +1278,17 @@ Plot labels and annotations
 All label positions and text are saved in the project file and restored when the
 project is reopened.
 
+Joint fits
+----------
+
+**Analysis ▸ New joint fit…** opens an undocked window that couples several
+already-recorded series — potentially carrying different models — by holding
+named parameters equal across them. **Analysis ▸ Joint fits** is a submenu
+listing every recorded joint fit (a stale one suffixed " (stale)"); picking
+one reopens it in the same window. See :doc:`joint_fit` for the full
+walk-through — setting up the shared table, reading the results, staleness,
+and deleting.
+
 Fit Parameters panel
 --------------------
 

@@ -328,6 +328,7 @@ def _import_scenarios() -> None:
         grouping_window_profile_editor,
         grouping_window_t0_row,
         hifi_transverse_layout,
+        joint_fit_window,
         knight_shift_window,
         lf_kt_global_results,
         lf_kt_series_plot,
