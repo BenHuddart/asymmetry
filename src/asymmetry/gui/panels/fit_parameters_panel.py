@@ -3916,9 +3916,13 @@ class FitParametersPanel(QWidget):
         These are exactly the names worth flagging: the user who explicitly
         classified a parameter as Global (an opt-in choice — Local is the
         Batch-tab default) and then tries to trend it would otherwise find it
-        silently absent. A name the joint-fit flat-line mechanism already
-        offers (:meth:`_global_flat_line_parameters`) is excluded here — it is
-        shown, just not as a per-run trend, so flagging it too would
+        silently absent. This applies whether or not the series belongs to a
+        joint fit: "Global" means one value per series everywhere in the app,
+        and joining a joint fit does not change that for a parameter the
+        joint fit does not share. Only a name the joint-fit flat-line
+        mechanism offers (:meth:`_global_flat_line_parameters` — the series'
+        *shared* columns, never an ordinary Global one) is excluded here — it
+        is shown, just not as a per-run trend, so flagging it too would
         contradict the flat line sitting right there on the plot.
         """
         if self._global_params is None:
@@ -3938,34 +3942,30 @@ class FitParametersPanel(QWidget):
         return names
 
     def _global_flat_line_parameters(self, group: _GroupFitData | None) -> list[str]:
-        """*group*'s Global-role parameter names worth a flat trend line.
+        """*group*'s shared-parameter names — the only names worth a flat trend line.
 
-        Gated on :attr:`_GroupFitData.joint_fit_id` (``docs/plans/joint-fit.md``
-        D5/D8): an ordinary (non-member) series' Global-role parameters stay
-        excluded from trending exactly as before
-        (:meth:`_shared_held_constant_params`) — one value across every run in
-        *that* series is not a trend. A joint-fit member's Global-role
-        parameters are different: the shared ones are what the joint fit
-        coupled across several models, and a member may also carry an
-        ordinary (unshared) Global-role parameter beside them, which is just
-        as flat and just as worth plotting once the series sits in the joint
-        section. Both draw via :meth:`_global_flat_line_segments`; only a
-        parameter present in :attr:`_GroupFitData.shared_params` also earns
-        the "Shared" badge (:meth:`_shared_parameter_tooltip`).
+        "Global" means one value per series everywhere in the app, and that
+        does not change just because the series joined a joint fit: an
+        ordinary (unshared) Global-role parameter of a joint-fit member stays
+        excluded from trending exactly as on any other series
+        (:meth:`_shared_held_constant_params`'s "held constant" hint still
+        applies to it). "Shared" is the one thing a joint fit adds — the flat
+        line across its members' x extents (:meth:`_global_flat_line_segment`)
+        is what shows the constraint, so only a name present in
+        :attr:`_GroupFitData.shared_params` is offered here; that same name
+        also earns the "Shared" badge (:meth:`_shared_parameter_tooltip`).
         """
-        if group is None or group.joint_fit_id is None or group.global_params is None:
+        if group is None:
             return []
-        return [str(p.name) for p in group.global_params if not getattr(p, "fixed", False)]
+        return list(group.shared_params)
 
     def _shared_parameter_tooltip(self, group: _GroupFitData, name: str) -> str | None:
         """Tooltip for *name*'s "Shared" badge on *group*'s card, or ``None``.
 
-        ``None`` means *name* is not one of *group*'s shared columns (it may
-        still be an ordinary, unshared Global-role parameter of a joint-fit
-        member — that gets a flat line but no badge). Otherwise names the
-        joint fit and the other *loaded* series honouring the same shared
-        column (a member that has not been opened in this panel contributes
-        nothing — same rule as the flat line itself).
+        ``None`` means *name* is not one of *group*'s shared columns.
+        Otherwise names the joint fit and the other *loaded* series honouring
+        the same shared column (a member that has not been opened in this
+        panel contributes nothing — same rule as the flat line itself).
         """
         shared_name = group.shared_params.get(name)
         if shared_name is None:
@@ -3980,34 +3980,29 @@ class FitParametersPanel(QWidget):
         members = ", ".join(others) if others else "its other member series"
         return f'Shared across joint fit "{group.joint_fit_label}" with {members}.'
 
-    def _global_flat_line_segments(
+    def _global_flat_line_segment(
         self, group: _GroupFitData, name: str, x_key: str
-    ) -> list[tuple[str, float, float, float, bool]]:
-        """``(label, x_min, x_max, value, is_shared)`` segments for *name*.
+    ) -> tuple[str, float, float, float] | None:
+        """``(label, x_min, x_max, value)`` for *name*'s one flat trend line.
 
-        *name* not in :attr:`_GroupFitData.shared_params` draws exactly one
-        segment, over *group*'s own x extent. *name* that *is* shared draws
-        exactly one segment too, but over the union of every *loaded*
-        joint-fit member honouring the same shared column — the value is
-        identical in each member's own results by construction (D8), so any
-        one contributor supplies it. A member's own parameter name for the
-        shared column can differ from *group*'s (D5: ``shared_params`` maps
-        each series' *own* name to the shared one), so each contributor is
-        matched by shared name, not by *name* itself.
+        *name* is one of *group*'s shared columns (the only names
+        :meth:`_global_flat_line_parameters` offers), so this always unions
+        every *loaded* joint-fit member honouring the same shared column —
+        the value is identical in each member's own results by construction
+        (D8), so any one contributor supplies it. A member's own parameter
+        name for the shared column can differ from *group*'s (D5:
+        ``shared_params`` maps each series' *own* name to the shared one), so
+        each contributor is matched by shared name, not by *name* itself.
+        Returns ``None`` when no loaded member contributes a finite value.
         """
-        shared_name = group.shared_params.get(name)
-        if shared_name is None:
-            contributors = [(group, name)]
-        else:
-            contributors = []
-            for other in self._group_fit_results.values():
-                if other.joint_fit_id != group.joint_fit_id:
-                    continue
-                local_name = next(
-                    (n for n, s in other.shared_params.items() if s == shared_name), None
-                )
-                if local_name is not None:
-                    contributors.append((other, local_name))
+        shared_name = group.shared_params[name]
+        contributors: list[tuple[_GroupFitData, str]] = []
+        for other in self._group_fit_results.values():
+            if other.joint_fit_id != group.joint_fit_id:
+                continue
+            local_name = next((n for n, s in other.shared_params.items() if s == shared_name), None)
+            if local_name is not None:
+                contributors.append((other, local_name))
 
         xs: list[float] = []
         value: float | None = None
@@ -4021,38 +4016,35 @@ class FitParametersPanel(QWidget):
                     value = float(finite[0])
             labels.append(other.short_name or other.group_name)
         if not xs or value is None:
-            return []
-        is_shared = shared_name is not None
-        label = (group.joint_fit_label if is_shared else labels[0]) or " + ".join(labels)
-        return [(label, min(xs), max(xs), value, is_shared)]
+            return None
+        label = group.joint_fit_label or " + ".join(labels)
+        return (label, min(xs), max(xs), value)
 
     def _draw_global_flat_lines(
         self, ax, group: _GroupFitData, name: str, x_key: str, *, color: str
     ) -> bool:
-        """Draw *name*'s flat trend line(s) on *ax*; returns whether anything drew.
+        """Draw *name*'s one flat trend line on *ax*; returns whether it drew.
 
-        A fact about the fitted model (one value shared or held constant
-        across a series), not a per-run data point, so it draws once as a
-        dashed segment across its x extent rather than as scattered dots at
-        every row.
+        A fact about the fitted model (one value shared across the joint
+        fit's members), not a per-run data point, so it draws once as a
+        dashed segment across the union of x extents rather than as
+        scattered dots at every row.
         """
-        drawn = False
-        for label, x_min, x_max, value, shared in self._global_flat_line_segments(
-            group, name, x_key
-        ):
-            x_vals, _ = self._apply_x_transform(np.array([x_min, x_max], dtype=float), None)
-            legend_label = f"{label} ⋈ Shared" if shared else label
-            ax.plot(
-                x_vals,
-                [value, value],
-                linestyle="--",
-                linewidth=1.6,
-                color=color,
-                zorder=4,
-                label=legend_label,
-            )
-            drawn = True
-        return drawn
+        segment = self._global_flat_line_segment(group, name, x_key)
+        if segment is None:
+            return False
+        label, x_min, x_max, value = segment
+        x_vals, _ = self._apply_x_transform(np.array([x_min, x_max], dtype=float), None)
+        ax.plot(
+            x_vals,
+            [value, value],
+            linestyle="--",
+            linewidth=1.6,
+            color=color,
+            zorder=4,
+            label=f"{label} ⋈ Shared",
+        )
+        return True
 
     def _update_global_param_hint(self) -> None:
         """Show/hide the footer note pointing at Global params that won't trend."""
@@ -6433,9 +6425,9 @@ class FitParametersPanel(QWidget):
             for idx, y_name in enumerate(y_params):
                 color = self._single_series_color() if len(y_params) == 1 else f"C{idx % 10}"
                 if y_name in flat_names and active_group is not None:
-                    # A Global-role value is one fact for the whole series (or,
-                    # shared, for several), not a per-run point — drawn once as
-                    # a flat segment rather than scattered at every row.
+                    # A shared value is one fact for the joint fit's members,
+                    # not a per-run point — drawn once as a flat segment across
+                    # their union rather than scattered at every row.
                     flat_drawn = (
                         self._draw_global_flat_lines(ax, active_group, y_name, x_key, color=color)
                         or flat_drawn
@@ -6522,9 +6514,10 @@ class FitParametersPanel(QWidget):
         for pj, y_name in enumerate(y_params):
             marker = markers[pj % len(markers)] if multi_param else "o"
             if y_name in flat_names and active_group is not None:
-                # One fact about the fitted model, not a per-series data series —
-                # drawn once (per :meth:`_global_flat_line_segments`) rather than
-                # once per overlaid series.
+                # A shared value is one fact for the joint fit's members, not a
+                # per-series data series — drawn once (per
+                # :meth:`_global_flat_line_segment`) rather than once per
+                # overlaid series.
                 self._draw_global_flat_lines(ax, active_group, y_name, x_key, color=tokens.ACCENT)
                 continue
             for s in series:

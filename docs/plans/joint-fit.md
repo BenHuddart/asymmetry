@@ -378,9 +378,13 @@ call site in `mainwindow.py` `_refresh_trend_panel`, tests in
   (~711, `_rebuild_group_buttons`), ahead of the data-group sections.
 - A shared parameter's card and legend entry carry a "Shared" badge (a
   distinct glyph from the ⇄ link badge and the ƒ tie badge; tooltip names
-  the joint fit and the other series). The flat Global trend line is drawn
-  once across the union of the member series' x extents for a shared
-  parameter, rather than once per series.
+  the joint fit and the other series). A series-Global parameter is not
+  plotted today: the trend view hides it behind the "held constant" footer
+  hint, and that stays so on a jointed series. A **shared** parameter is
+  the one addition: it is drawn as a single flat line across the union of
+  the member series' x extents, listed once in the legend under the joint
+  fit's label (*corrected 2026-09-18 in Phase 4 review; the first draft
+  assumed Global parameters already drew flat lines*).
 - `_GroupFitData` gains `joint_fit_id`/`shared_params` as derived display
   state, supplied by `load_representation_series` like `phase`, not
   serialised.
