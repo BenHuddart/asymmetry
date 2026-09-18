@@ -707,20 +707,79 @@ class FitResult:
 
 
 @dataclass(frozen=True)
-class _CoupledGlobalProblem:
-    """The one parameter vector, data vector and model wrapper of a coupled global fit.
+class CoupledBlock:
+    """One series' contribution to a coupled problem: its data *and* its model.
 
-    Both coupled solvers — the joint Minuit path and the sparse least-squares
-    path — optimise *the same* problem: the free globals first, then one column
-    per free local parameter per sharing group. Building it once, here, is what
-    keeps the two paths' fitted values, χ² and result packing comparable rather
-    than two hand-kept-in-sync constructions.
+    A block is what separates a **joint** fit from a global fit. A global fit is
+    one block: every dataset is described by the same ``model_fn`` under one
+    global/local partition. A joint fit is several — a sample measured across a
+    phase transition needs an oscillating function below T_c and a relaxing one
+    above it, and the two only meet through the shared columns. Giving each
+    block its own ``model_fn``, partition and fit window is what lets the one
+    cost function span both.
+
+    ``free_global_params`` is supplied by the caller rather than derived here
+    because the caller needs it anyway (to decide whether the problem is
+    block-separable at all) and because "free" means *free on at least one
+    dataset*: a longitudinal field pinned at 0 on a zero-field run is still the
+    series' free Global parameter, and re-deriving that rule in two places is
+    how the two copies drift apart.
     """
 
+    key: Hashable
+    datasets: list[MuonDataset]
+    model_fn: Callable[..., NDArray]
+    global_params: list[str]
+    local_params: list[str]
+    initial_params: dict[int, ParameterSet]
+    free_global_params: list[str]
+    local_group_key: Callable[[str, int], Hashable]
+    t_min: float | None = None
+    t_max: float | None = None
+
+
+@dataclass(frozen=True)
+class SharedColumn:
+    """One fitted column held equal across two or more blocks.
+
+    ``members`` maps a block key to the parameter name *that block* spells the
+    quantity with, because the whole point of sharing across series is that two
+    models may call the same physics different things (``A_bg`` in one,
+    ``baseline`` in the other). The column carries its own seed and bounds: the
+    shared value is a new fitted quantity, not either series' row.
+    """
+
+    name: str
+    members: dict[Hashable, str]
+    value: float
+    min: float = -float("inf")
+    max: float = float("inf")
+
+
+@dataclass(frozen=True)
+class _CoupledGlobalProblem:
+    """The one parameter vector, data vector and model wrapper of a coupled fit.
+
+    Both coupled solvers — the joint Minuit path and the sparse least-squares
+    path — optimise *the same* problem: the shared columns first, then each
+    block's free non-shared globals in block order, then one column per free
+    local parameter per sharing group. Building it once, here, is what keeps the
+    two paths' fitted values, χ² and result packing comparable rather than two
+    hand-kept-in-sync constructions.
+    """
+
+    #: The blocks this problem spans, in column/concatenation order.
+    blocks: tuple[CoupledBlock, ...]
+    #: Cross-block shared columns, occupying columns ``0..len(shared_columns)-1``.
+    shared_columns: tuple[SharedColumn, ...]
     #: Datasets in concatenation order, already clipped to ``t_min``/``t_max``.
     fitted_datasets: list[MuonDataset]
-    #: Global names free on at least one dataset, in column order (columns 0..n-1).
-    free_global_params: list[str]
+    #: ``{block key: that block's clipped datasets}``, in the block's own order.
+    block_fitted_datasets: dict[Hashable, list[MuonDataset]]
+    #: ``{block key: {free global name: column index}}``. A shared member points
+    #: at the shared column; every other free global at the block's own column.
+    #: A global fixed on *every* dataset of the block is absent — it has no column.
+    block_global_columns: dict[Hashable, dict[str, int]]
     param_names: list[str]
     param_bounds: list[tuple[float, float]]
     initial_values: list[float]
@@ -740,78 +799,117 @@ class _CoupledGlobalProblem:
     dataset_columns: tuple[tuple[int, ...], ...]
 
 
-def _build_coupled_global_problem(
+#: Block key of the single block a plain global fit builds. Never user-visible:
+#: a one-block problem's column names are unqualified, exactly as they were
+#: before joint fitting existed.
+_SINGLE_BLOCK = object()
+
+
+def _build_coupled_problem(
     *,
-    datasets: list[MuonDataset],
-    model_fn: Callable[..., NDArray],
-    global_params: list[str],
-    local_params: list[str],
-    initial_params: dict[int, ParameterSet],
-    free_global_params: list[str],
-    local_group_key: Callable[[str, int], Hashable],
-    t_min: float | None,
-    t_max: float | None,
+    blocks: Sequence[CoupledBlock],
+    shared_columns: Sequence[SharedColumn],
     cancel_callback: Callable[[], bool] | None,
 ) -> _CoupledGlobalProblem:
-    """Assemble the shared coupled problem (see :class:`_CoupledGlobalProblem`)."""
+    """Assemble the coupled problem over several blocks (see :class:`_CoupledGlobalProblem`).
 
-    # Apply time range to all datasets
-    fitted_datasets = []
-    for ds in datasets:
-        if t_min or t_max:
-            fitted_datasets.append(ds.time_range(t_min, t_max))
-        else:
-            fitted_datasets.append(ds)
+    Column order is shared columns, then each block's free non-shared globals in
+    block order, then the locals. A one-block problem with no shared columns is
+    therefore laid out exactly as a global fit has always been laid out, which
+    is what lets :meth:`FitEngine.global_fit` go through here without moving a
+    single fitted value.
 
-    # Build parameter name mapping
-    # Format: global params come first, then local params for each dataset
+    With more than one block the column *names* are qualified with the block's
+    index, because Minuit requires unique parameter names and two series may
+    perfectly well both carry a free ``A0`` of their own. The one-block case
+    keeps the bare names the existing results, MINOS keys and tests pin.
+    """
+
+    blocks = tuple(blocks)
+    shared_columns = tuple(shared_columns)
+    qualified = len(blocks) > 1
+
     param_names: list[str] = []
     param_bounds: list[tuple[float, float]] = []
     initial_values: list[float] = []
 
-    # Add global parameters. The starting value/bounds come from the first
-    # dataset that actually leaves this name free -- not from ``first_params``,
-    # which may be the one dataset that pins it (see the ``free_global_params``
-    # computation in ``global_fit``), and whose fixed value is a poor seed for
-    # the shared value the *other* datasets are about to fit.
-    for pname in free_global_params:
-        p = next(
-            initial_params[ds.run_number][pname]
-            for ds in datasets
-            if not initial_params[ds.run_number][pname].fixed
-        )
-        param_names.append(pname)
-        param_bounds.append((p.min, p.max))
-        initial_values.append(p.value)
+    # Shared columns first: a column of its own, seeded and bounded by the
+    # caller rather than by either contributing series' row.
+    shared_column_index: dict[str, int] = {}
+    shared_by_block: dict[Hashable, dict[str, str]] = {block.key: {} for block in blocks}
+    for column in shared_columns:
+        shared_column_index[column.name] = len(param_names)
+        param_names.append(column.name)
+        param_bounds.append((column.min, column.max))
+        initial_values.append(column.value)
+        for block_key, member in column.members.items():
+            shared_by_block[block_key][member] = column.name
 
-    # Add local parameters for each dataset. A grouped local param reuses one
-    # parameter column (and index) for every dataset that shares its group key,
-    # so those datasets are fitted with a single shared value.
-    dataset_param_indices: dict[int, dict[str, int]] = {}
-    group_param_indices: dict[tuple[str, Hashable], int] = {}
-    for ds in datasets:
-        params = initial_params[ds.run_number]
-        dataset_param_indices[ds.run_number] = {}
-        for pname in local_params:
-            p = params[pname]
-            if p.fixed:
+    # Clip every block's datasets to that block's own window. Each series brings
+    # its own fit range: the ordered phase may need a later t_min than the
+    # paramagnetic one, and one window over the concatenation would be wrong.
+    block_fitted_datasets: dict[Hashable, list[MuonDataset]] = {}
+    fitted_datasets: list[MuonDataset] = []
+    for block in blocks:
+        if block.t_min or block.t_max:
+            clipped = [ds.time_range(block.t_min, block.t_max) for ds in block.datasets]
+        else:
+            clipped = list(block.datasets)
+        block_fitted_datasets[block.key] = clipped
+        fitted_datasets.extend(clipped)
+
+    # Then each block's free non-shared globals. The starting value/bounds come
+    # from the first dataset that actually leaves the name free -- not from the
+    # block's first dataset, which may be the one that pins it (see
+    # ``free_global_params``), and whose fixed value is a poor seed for the
+    # shared value the *other* datasets are about to fit.
+    block_global_columns: dict[Hashable, dict[str, int]] = {}
+    for index, block in enumerate(blocks):
+        suffix = f"#{index}" if qualified else ""
+        columns: dict[str, int] = {}
+        for pname in block.free_global_params:
+            shared_name = shared_by_block[block.key].get(pname)
+            if shared_name is not None:
+                columns[pname] = shared_column_index[shared_name]
                 continue
-            group_key = local_group_key(pname, ds.run_number)
-            cache_key = (pname, group_key)
-            idx = group_param_indices.get(cache_key)
-            if idx is None:
-                idx = len(param_names)
-                param_names.append(f"{pname}_{group_key}")
-                param_bounds.append((p.min, p.max))
-                initial_values.append(p.value)
-                group_param_indices[cache_key] = idx
-            dataset_param_indices[ds.run_number][pname] = idx
+            p = next(
+                block.initial_params[ds.run_number][pname]
+                for ds in block.datasets
+                if not block.initial_params[ds.run_number][pname].fixed
+            )
+            columns[pname] = len(param_names)
+            param_names.append(f"{pname}{suffix}")
+            param_bounds.append((p.min, p.max))
+            initial_values.append(p.value)
+        block_global_columns[block.key] = columns
 
-    # Build fixed parameter dictionaries for each dataset
+    # Finally the local parameters, block by block and dataset by dataset. A
+    # grouped local param reuses one parameter column (and index) for every
+    # dataset that shares its group key, so those datasets are fitted with a
+    # single shared value.
+    dataset_param_indices: dict[int, dict[str, int]] = {}
     fixed_params: dict[int, dict[str, float]] = {}
-    for ds in datasets:
-        params = initial_params[ds.run_number]
-        fixed_params[ds.run_number] = {p.name: p.value for p in params if p.fixed}
+    for index, block in enumerate(blocks):
+        suffix = f"#{index}" if qualified else ""
+        group_param_indices: dict[tuple[str, Hashable], int] = {}
+        for ds in block.datasets:
+            params = block.initial_params[ds.run_number]
+            dataset_param_indices[ds.run_number] = {}
+            for pname in block.local_params:
+                p = params[pname]
+                if p.fixed:
+                    continue
+                group_key = block.local_group_key(pname, ds.run_number)
+                cache_key = (pname, group_key)
+                idx = group_param_indices.get(cache_key)
+                if idx is None:
+                    idx = len(param_names)
+                    param_names.append(f"{pname}_{group_key}{suffix}")
+                    param_bounds.append((p.min, p.max))
+                    initial_values.append(p.value)
+                    group_param_indices[cache_key] = idx
+                dataset_param_indices[ds.run_number][pname] = idx
+            fixed_params[ds.run_number] = {p.name: p.value for p in params if p.fixed}
 
     # Concatenate all data
     all_times = np.concatenate([ds.time for ds in fitted_datasets])
@@ -825,7 +923,6 @@ def _build_coupled_global_problem(
     )
 
     cancel_guard = _make_cancel_guard(cancel_callback)
-    global_arg_index = {pname: idx for idx, pname in enumerate(free_global_params)}
 
     def model_wrapper(t_all, *args):
         """Model wrapper that applies appropriate parameters to each dataset section."""
@@ -833,43 +930,46 @@ def _build_coupled_global_problem(
         result = np.zeros_like(t_all)
         offset = 0
 
-        for ds in fitted_datasets:
-            n_points = len(ds.time)
-            params = initial_params[ds.run_number]
+        for block in blocks:
+            global_columns = block_global_columns[block.key]
+            for ds in block_fitted_datasets[block.key]:
+                n_points = len(ds.time)
+                params = block.initial_params[ds.run_number]
 
-            # Build parameter dict. Each dataset resolves every global name
-            # from its *own* ParameterSet copy: a name in
-            # ``free_global_params`` (free on at least one dataset) can
-            # still be fixed on this particular dataset -- e.g. a
-            # longitudinal field pinned at 0 on a zero-field run within an
-            # otherwise-free series -- and that dataset's own pinned value
-            # must win over the shared fitted arg, not the other way
-            # round.
-            param_dict = {}
-            for pname in global_params:
-                p = params[pname]
-                if p.fixed:
-                    param_dict[pname] = p.value
-                else:
-                    param_dict[pname] = args[global_arg_index[pname]]
-            param_dict.update(fixed_params[ds.run_number])
+                # Build parameter dict. Each dataset resolves every global name
+                # from its *own* ParameterSet copy: a name with a column (free
+                # on at least one dataset, or shared across blocks) can still be
+                # fixed on this particular dataset -- e.g. a longitudinal field
+                # pinned at 0 on a zero-field run within an otherwise-free
+                # series, or a background the user pinned in one of two jointly
+                # fitted series -- and that dataset's own pinned value must win
+                # over the shared fitted arg, not the other way round.
+                param_dict = {}
+                for pname in block.global_params:
+                    p = params[pname]
+                    if p.fixed:
+                        param_dict[pname] = p.value
+                    else:
+                        param_dict[pname] = args[global_columns[pname]]
+                param_dict.update(fixed_params[ds.run_number])
 
-            for pname in local_params:
-                p = params[pname]
-                if p.fixed:
-                    param_dict[pname] = p.value
-                else:
-                    idx = dataset_param_indices[ds.run_number][pname]
-                    param_dict[pname] = args[idx]
+                for pname in block.local_params:
+                    p = params[pname]
+                    if p.fixed:
+                        param_dict[pname] = p.value
+                    else:
+                        idx = dataset_param_indices[ds.run_number][pname]
+                        param_dict[pname] = args[idx]
 
-            # Evaluate model for this dataset. Non-finite model outputs can
-            # happen for extreme trial parameters; convert to a large finite
-            # penalty so the minimizer can recover instead of diverging.
-            model_vals = model_fn(ds.time, **param_dict)
-            if not np.all(np.isfinite(model_vals)):
-                model_vals = np.full_like(ds.time, 1e30, dtype=float)
-            result[offset : offset + n_points] = model_vals
-            offset += n_points
+                # Evaluate this block's model for this dataset. Non-finite model
+                # outputs can happen for extreme trial parameters; convert to a
+                # large finite penalty so the minimizer can recover instead of
+                # diverging.
+                model_vals = block.model_fn(ds.time, **param_dict)
+                if not np.all(np.isfinite(model_vals)):
+                    model_vals = np.full_like(ds.time, 1e30, dtype=float)
+                result[offset : offset + n_points] = model_vals
+                offset += n_points
 
         return result
 
@@ -878,21 +978,30 @@ def _build_coupled_global_problem(
         if not np.isfinite(val):
             raise ValueError(f"Parameter {param_names[i]} has non-finite initial value: {val}")
 
-    # Which columns each dataset's residual block actually moves with: the free
-    # globals it does not pin itself, plus its own (possibly group-shared) local
-    # columns. This is the arrow structure the sparse solver exploits.
+    # Which columns each dataset's residual block actually moves with: the
+    # columns of the globals it does not pin itself (shared columns included,
+    # which is what couples two blocks at all), plus its own (possibly
+    # group-shared) local columns. This is the arrow structure the sparse solver
+    # exploits.
     dataset_columns: list[tuple[int, ...]] = []
-    for ds in fitted_datasets:
-        params = initial_params[ds.run_number]
-        columns = {
-            global_arg_index[pname] for pname in free_global_params if not params[pname].fixed
-        }
-        columns.update(dataset_param_indices[ds.run_number].values())
-        dataset_columns.append(tuple(sorted(columns)))
+    for block in blocks:
+        global_columns = block_global_columns[block.key]
+        for ds in block.datasets:
+            params = block.initial_params[ds.run_number]
+            columns = {
+                global_columns[pname]
+                for pname in block.free_global_params
+                if not params[pname].fixed
+            }
+            columns.update(dataset_param_indices[ds.run_number].values())
+            dataset_columns.append(tuple(sorted(columns)))
 
     return _CoupledGlobalProblem(
+        blocks=blocks,
+        shared_columns=shared_columns,
         fitted_datasets=fitted_datasets,
-        free_global_params=list(free_global_params),
+        block_fitted_datasets=block_fitted_datasets,
+        block_global_columns=block_global_columns,
         param_names=param_names,
         param_bounds=param_bounds,
         initial_values=initial_values,
@@ -904,6 +1013,48 @@ def _build_coupled_global_problem(
         model_wrapper=model_wrapper,
         dataset_point_counts=tuple(len(ds.time) for ds in fitted_datasets),
         dataset_columns=tuple(dataset_columns),
+    )
+
+
+def _build_coupled_global_problem(
+    *,
+    datasets: list[MuonDataset],
+    model_fn: Callable[..., NDArray],
+    global_params: list[str],
+    local_params: list[str],
+    initial_params: dict[int, ParameterSet],
+    free_global_params: list[str],
+    local_group_key: Callable[[str, int], Hashable],
+    t_min: float | None,
+    t_max: float | None,
+    cancel_callback: Callable[[], bool] | None,
+) -> _CoupledGlobalProblem:
+    """Assemble the one-block coupled problem a global fit optimises.
+
+    A global fit is the degenerate joint fit: one model, one partition, nothing
+    shared across blocks. Routing it through :func:`_build_coupled_problem`
+    keeps exactly one construction of the parameter vector, so a joint fit can
+    never drift away from the layout every existing global-fit result was packed
+    against.
+    """
+
+    return _build_coupled_problem(
+        blocks=[
+            CoupledBlock(
+                key=_SINGLE_BLOCK,
+                datasets=datasets,
+                model_fn=model_fn,
+                global_params=global_params,
+                local_params=local_params,
+                initial_params=initial_params,
+                free_global_params=free_global_params,
+                local_group_key=local_group_key,
+                t_min=t_min,
+                t_max=t_max,
+            )
+        ],
+        shared_columns=(),
+        cancel_callback=cancel_callback,
     )
 
 
@@ -1007,6 +1158,473 @@ def _gauss_newton_covariance(
 _LEAST_SQUARES_FTOL = 1e-7
 _LEAST_SQUARES_XTOL = 1e-8
 _LEAST_SQUARES_GTOL = 1e-8
+
+
+class _CoupledMinimizationError(RuntimeError):
+    """The coupled minimiser itself raised; the caller turns this into failed results.
+
+    Kept distinct from :class:`FitCancelledError` (which must propagate untouched,
+    so a cancelled run records nothing) and from a programming error in problem
+    construction (which should surface as itself).
+    """
+
+
+@dataclass(frozen=True)
+class _CoupledSolution:
+    """What a coupled minimiser returned, in the one shape the packer reads.
+
+    The joint Minuit path and the sparse trust-region path disagree on almost
+    everything about *how* they search and on what a "1σ" is (HESSE versus the
+    Gauss–Newton ``(JᵀJ)⁻¹``), but they agree on what they produce: a value per
+    column, a σ per column, a covariance over the columns, and some status. Packing
+    reads only this, which is why one packer can serve both — and now a third
+    caller, the joint fit, without a third copy of the 150-line result build.
+    """
+
+    values: NDArray[np.float64]
+    #: 1σ for a column, or ``None`` where the data constrain nothing.
+    uncertainty: Callable[[int], float | None]
+    #: Covariance over *all* columns, or ``None`` when the fit produced none.
+    covariance: NDArray[np.float64] | None
+    success: bool
+    message: str
+    #: MINOS offsets keyed by the problem's own column names (Minuit path only).
+    minos_errors: dict[str, tuple[float, float]] | None = None
+    function_calls: int = 0
+    gradient_calls: int = 0
+    hessian_calls: int = 0
+    edm: float | None = None
+    covariance_accurate: bool = False
+
+
+def _solve_coupled_minuit(
+    problem: _CoupledGlobalProblem,
+    *,
+    method: str,
+    max_calls: int,
+    migrad_iterations: int,
+    use_simplex_rescue: bool,
+    minuit_strategy: int | None,
+    minuit_tol: float | None,
+    initial_step_sizes: dict[str, float] | None,
+    minos: bool,
+    screening: bool,
+    cost_factory: CostFactory | None,
+) -> _CoupledSolution:
+    """Minimise the coupled problem with one Minuit over the whole parameter vector."""
+
+    from iminuit import Minuit
+    from iminuit.cost import LeastSquares
+
+    param_names = problem.param_names
+    param_bounds = problem.param_bounds
+
+    # Create cost function and Minuit object. The default (no factory) keeps
+    # the historical √-weighted least squares byte-for-byte; a factory swaps
+    # in the selectable objective (Poisson Cash on the concatenated raw
+    # counts) — Cash is a bin-wise sum, so the dataset concatenation is
+    # transparent to it.
+    try:
+        if cost_factory is None:
+            cost = LeastSquares(
+                problem.all_times, problem.all_asymm, problem.all_errors, problem.model_wrapper
+            )
+        else:
+            cost = cost_factory.build(
+                problem.all_times, problem.all_asymm, problem.all_errors, problem.model_wrapper
+            )
+        m = Minuit(cost, *problem.initial_values, name=param_names)
+    except Exception as e:
+        raise RuntimeError(f"Failed to create Minuit cost function: {str(e)}")
+
+    # Screening mode (wizard IC pre-selection): IC ranking needs only χ², not
+    # accurate parameter errors, so drop to Minuit strategy 0 — no accurate
+    # post-fit Hessian refinement. The migrad EDM convergence criterion is
+    # unchanged (it is governed by ``m.tol``, not the strategy), so the fitted
+    # values and χ² are the same; only the covariance quality (``m.accurate``)
+    # is relaxed. m.errors are still populated for warm-start step hints. An
+    # explicit minuit_strategy (the difficult-assignment path) always wins.
+    if minuit_strategy is not None:
+        m.strategy = int(minuit_strategy)
+    elif screening:
+        m.strategy = 0
+    if minuit_tol is not None:
+        m.tol = float(minuit_tol)
+
+    # Set parameter limits
+    for i, (min_val, max_val) in enumerate(param_bounds):
+        if min_val != -float("inf"):
+            m.limits[i] = (min_val, m.limits[i][1])
+        if max_val != float("inf"):
+            m.limits[i] = (m.limits[i][0], max_val)
+
+    if initial_step_sizes:
+        for i, name in enumerate(param_names):
+            hint = initial_step_sizes.get(name)
+            if hint is None:
+                continue
+            step_size = _clamp_minuit_step_size(hint, *param_bounds[i])
+            if step_size > 0.0:
+                m.errors[i] = step_size
+
+    # Run minimization with error handling, through the shared drive seam so the
+    # coupled fit gains explicit HESSE + opt-in MINOS on the same footing as the
+    # single-fit path.
+    if method == "simplex":
+        migrad_kwargs = {"ncall": max_calls}
+    else:
+        migrad_kwargs = {
+            "ncall": max_calls,
+            "iterate": max(1, int(migrad_iterations)),
+            "use_simplex": bool(use_simplex_rescue),
+        }
+    try:
+        minos_errors_raw = drive_minuit(m, method=method, migrad_kwargs=migrad_kwargs, minos=minos)
+    except FitCancelledError:
+        # A cancelled fit records nothing — let it propagate past the generic
+        # failure handler so no partial result is built.
+        raise
+    except Exception as e:
+        raise _CoupledMinimizationError(f"Minimization failed: {str(e)}") from e
+
+    fmin = getattr(m, "fmin", None)
+    edm = getattr(fmin, "edm", None)
+    covariance_matrix = None
+    if m.valid and getattr(m, "covariance", None) is not None:
+        try:
+            covariance_matrix = np.asarray(m.covariance, dtype=float)
+        except Exception:
+            covariance_matrix = None
+
+    errors = m.errors
+
+    def uncertainty(index: int) -> float | None:
+        error = errors[index]
+        return None if error is None else float(error)
+
+    return _CoupledSolution(
+        values=np.asarray(m.values, dtype=float),
+        uncertainty=uncertainty,
+        covariance=covariance_matrix,
+        success=bool(m.valid),
+        message=_minuit_status_message(
+            m,
+            success_message="Global fit successful",
+            failure_prefix="Global fit failed",
+        ),
+        minos_errors=minos_errors_raw,
+        function_calls=int(getattr(m, "nfcn", 0) or 0),
+        gradient_calls=int(getattr(m, "ngrad", 0) or 0),
+        hessian_calls=int(getattr(m, "nhessian", 0) or 0),
+        edm=float(edm) if edm is not None and np.isfinite(edm) else None,
+        covariance_accurate=bool(getattr(m, "accurate", False)),
+    )
+
+
+def _solve_coupled_least_squares(
+    problem: _CoupledGlobalProblem,
+    *,
+    max_calls: int,
+) -> _CoupledSolution:
+    """Minimise the coupled problem with a bounded sparse trust-region solve."""
+
+    from scipy.optimize import least_squares
+
+    lower = np.array([bounds[0] for bounds in problem.param_bounds], dtype=float)
+    upper = np.array([bounds[1] for bounds in problem.param_bounds], dtype=float)
+    start = np.array(problem.initial_values, dtype=float)
+    # TRF works strictly inside the box: its interior scaling divides by the
+    # distance to the nearer bound, so a start sitting exactly *on* a bound
+    # has zero step scale there and the trust region cannot move it. Nudge
+    # such a start to the next representable float inside the box — the
+    # smallest change that restores feasibility, so a seed placed at a
+    # physical limit (an amplitude seeded at its 0 floor) still starts where
+    # the caller put it to every printable digit.
+    start = np.where(start <= lower, np.nextafter(lower, upper), start)
+    start = np.where(start >= upper, np.nextafter(upper, lower), start)
+
+    times = problem.all_times
+    observed = problem.all_asymm
+    sigma = problem.all_errors
+    model_wrapper = problem.model_wrapper
+
+    def residuals(x: NDArray[np.float64]) -> NDArray[np.float64]:
+        return (observed - model_wrapper(times, *x)) / sigma
+
+    solution = least_squares(
+        residuals,
+        start,
+        method="trf",
+        bounds=(lower, upper),
+        jac_sparsity=_coupled_jacobian_sparsity(problem),
+        tr_solver="lsmr",
+        x_scale="jac",
+        ftol=_LEAST_SQUARES_FTOL,
+        xtol=_LEAST_SQUARES_XTOL,
+        gtol=_LEAST_SQUARES_GTOL,
+        max_nfev=int(max_calls),
+    )
+
+    values = np.asarray(solution.x, dtype=float)
+    # ``status > 0`` is one of scipy's convergence criteria (gtol/ftol/xtol);
+    # 0 means the evaluation budget ran out and −1 an improper input.
+    success = bool(solution.status > 0) and bool(np.all(np.isfinite(values)))
+    covariance_matrix, unconstrained = _gauss_newton_covariance(solution.jac)
+
+    def uncertainty(index: int) -> float | None:
+        """1σ for a parameter column, or ``None`` where the data fix nothing."""
+        if index in unconstrained:
+            return None
+        variance = float(covariance_matrix[index, index])
+        if not np.isfinite(variance) or variance < 0.0:
+            return None
+        return math.sqrt(variance)
+
+    return _CoupledSolution(
+        values=values,
+        uncertainty=uncertainty,
+        covariance=covariance_matrix,
+        success=success,
+        message=(
+            f"Global fit successful (least squares): {solution.message}"
+            if success
+            else f"Global fit failed (least squares): {solution.message}"
+        ),
+        function_calls=int(solution.nfev),
+        gradient_calls=int(solution.njev or 0),
+        covariance_accurate=success and not unconstrained,
+    )
+
+
+def _pack_coupled_block(
+    *,
+    problem: _CoupledGlobalProblem,
+    block: CoupledBlock,
+    solution: _CoupledSolution,
+    cost_factory: CostFactory | None = None,
+    error_oversampling: float = 1.0,
+) -> tuple[dict[int, FitResult], ParameterSet, dict[str, float]]:
+    """Turn one block's columns of a solved coupled problem into per-run results.
+
+    Returns ``(results by run number, that block's fitted globals, their 1σ)``.
+    Every index goes through :attr:`_CoupledGlobalProblem.block_global_columns`
+    rather than through a name lookup, because a joint problem qualifies its
+    column names per block while a global fit leaves them bare — the indices are
+    the one spelling both agree on.
+    """
+
+    values = solution.values
+    initial_params = block.initial_params
+    global_columns = problem.block_global_columns[block.key]
+    first_params = initial_params[block.datasets[0].run_number]
+    minos_raw = solution.minos_errors
+
+    def _minos_for(column: int) -> tuple[float, float] | None:
+        if not minos_raw:
+            return None
+        return minos_raw.get(problem.param_names[column])
+
+    # Extract this block's fitted globals. A name with no column is fixed on
+    # every dataset of the block; its value can only come from the block's own
+    # first set.
+    fitted_global = ParameterSet()
+    global_uncertainties: dict[str, float] = {}
+    for pname in block.global_params:
+        column = global_columns.get(pname)
+        if column is None:
+            p = first_params[pname]
+            fitted_global.add(
+                Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+            )
+            continue
+        # Bounds are representative from whichever dataset leaves the name free;
+        # ``first_params`` may be the one dataset that pins it.
+        p = next(
+            initial_params[ds.run_number][pname]
+            for ds in block.datasets
+            if not initial_params[ds.run_number][pname].fixed
+        )
+        fitted_global.add(Parameter(name=pname, value=float(values[column]), min=p.min, max=p.max))
+        sigma = solution.uncertainty(column)
+        if sigma is not None:
+            global_uncertainties[pname] = sigma
+
+    results: dict[int, FitResult] = {}
+    for ds in problem.block_fitted_datasets[block.key]:
+        params = initial_params[ds.run_number]
+
+        result_params = ParameterSet()
+        uncertainties: dict[str, float] = {}
+        # MINOS intervals are keyed in the coupled problem by column name; map
+        # them back to the plain per-dataset parameter name.
+        minos_errors: dict[str, tuple[float, float]] = {}
+
+        # Add global parameters. This dataset's own copy wins when it pins
+        # the name itself (e.g. a longitudinal field pinned at 0 on a
+        # zero-field run within an otherwise-free series) -- reporting the
+        # series-shared fitted value there would misstate a measured
+        # quantity as a fit result. Every other dataset reports the one
+        # shared value the minimiser actually fit.
+        for pname in block.global_params:
+            own = params[pname]
+            if own.fixed:
+                result_params.add(
+                    Parameter(name=pname, value=own.value, min=own.min, max=own.max, fixed=True)
+                )
+                continue
+            p = fitted_global[pname]
+            result_params.add(
+                Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=p.fixed)
+            )
+            if pname in global_uncertainties:
+                uncertainties[pname] = global_uncertainties[pname]
+            interval = _minos_for(global_columns[pname])
+            if interval is not None:
+                minos_errors[pname] = interval
+
+        # Add local parameters
+        for pname in block.local_params:
+            p = params[pname]
+            if p.fixed:
+                result_params.add(
+                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
+                )
+                continue
+            idx = problem.dataset_param_indices[ds.run_number][pname]
+            result_params.add(Parameter(name=pname, value=float(values[idx]), min=p.min, max=p.max))
+            sigma = solution.uncertainty(idx)
+            if sigma is not None:
+                uncertainties[pname] = sigma
+            interval = _minos_for(idx)
+            if interval is not None:
+                minos_errors[pname] = interval
+
+        # Add fixed parameters to result
+        for pname, value in problem.fixed_params[ds.run_number].items():
+            if pname not in result_params:
+                result_params.add(Parameter(name=pname, value=value, fixed=True))
+
+        # Compute the per-dataset cost. The Gaussian default keeps the
+        # √-weighted χ²; a factory reports its own statistic (Poisson Cash),
+        # so the per-group reduced value stays on the same footing as the
+        # joint objective the minimiser actually drove.
+        param_dict = {p.name: p.value for p in result_params}
+        model_vals = block.model_fn(ds.time, **param_dict)
+        residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(model_vals, dtype=float)
+        if cost_factory is None:
+            dataset_chi2 = float(np.sum(((ds.asymmetry - model_vals) / ds.error) ** 2))
+        else:
+            dataset_chi2 = cost_factory.pointwise(
+                np.asarray(ds.asymmetry, dtype=float),
+                np.asarray(model_vals, dtype=float),
+                np.asarray(ds.error, dtype=float),
+            )
+
+        covariance_subset = None
+        covariance_order: list[str] = []
+        covariance_matrix = solution.covariance
+        if covariance_matrix is not None and covariance_matrix.ndim == 2:
+            cov_indices: list[int] = []
+            for pname in block.global_params:
+                if pname in global_uncertainties:
+                    cov_indices.append(global_columns[pname])
+                    covariance_order.append(pname)
+            for pname in block.local_params:
+                if pname in uncertainties:
+                    cov_indices.append(problem.dataset_param_indices[ds.run_number][pname])
+                    covariance_order.append(pname)
+            if cov_indices:
+                covariance_subset = covariance_matrix[np.ix_(cov_indices, cov_indices)]
+
+        ndata = len(ds.time)
+        # Count free parameters: global (shared) + local for this dataset
+        nfree_global = sum(1 for p in block.global_params if not first_params[p].fixed)
+        nfree_local = sum(1 for p in block.local_params if not params[p].fixed)
+        nfree = nfree_global + nfree_local
+
+        dataset_dof = ndata - nfree
+        red_chi2 = dataset_chi2 / max(dataset_dof, 1)
+        minos_errors_result = minos_errors or None
+        dataset_warnings: list[str] = []
+        if error_oversampling > 1.0:
+            (
+                dataset_chi2,
+                red_chi2,
+                dataset_dof,
+                uncertainties,
+                covariance_subset,
+                minos_errors_result,
+                oversampling_message,
+            ) = _oversampling_correction(
+                chi_squared=dataset_chi2,
+                ndata=ndata,
+                nfree=nfree,
+                reduced_chi_squared=red_chi2,
+                dof=dataset_dof,
+                uncertainties=uncertainties,
+                covariance=covariance_subset,
+                minos_errors=minos_errors_result,
+                error_oversampling=error_oversampling,
+            )
+            if oversampling_message:
+                dataset_warnings.append(oversampling_message)
+
+        results[ds.run_number] = FitResult(
+            success=solution.success,
+            chi_squared=dataset_chi2,
+            reduced_chi_squared=red_chi2,
+            parameters=result_params,
+            uncertainties=uncertainties,
+            covariance=covariance_subset,
+            covariance_parameters=covariance_order,
+            residuals=residuals,
+            message=solution.message,
+            function_calls=solution.function_calls,
+            gradient_calls=solution.gradient_calls,
+            hessian_calls=solution.hessian_calls,
+            edm=solution.edm,
+            covariance_accurate=solution.covariance_accurate,
+            dof=dataset_dof,
+            minos_errors=minos_errors_result,
+            warnings=dataset_warnings,
+        )
+
+    return results, fitted_global, global_uncertainties
+
+
+@dataclass(frozen=True)
+class CoupledFitSolution:
+    """Numbers a coupled multi-block fit produced, keyed by block.
+
+    The engine-level counterpart of a global fit's ``(results, fitted_global)``
+    pair. It stops at the numbers: turning them into a domain result bundle
+    (reduced χ², the shared table the user typed) belongs to
+    :mod:`asymmetry.core.fitting.joint`, the way
+    :class:`~asymmetry.core.fitting.asymmetry_global.GlobalFitResult` sits above
+    :meth:`FitEngine.global_fit`.
+    """
+
+    success: bool
+    message: str
+    #: ``{block key: {run number: FitResult}}``. Each result already carries the
+    #: shared value and σ under *that block's* own parameter name.
+    series_results: dict[Hashable, dict[int, FitResult]]
+    #: ``{block key: that block's fitted globals}``, shared members included.
+    series_global_parameters: dict[Hashable, ParameterSet]
+    #: The shared columns' fitted values, under the shared names.
+    shared_parameters: ParameterSet
+    shared_uncertainties: dict[str, float]
+    #: The shared columns' block of the full covariance, in shared-column order.
+    shared_covariance: NDArray[np.float64] | None
+    #: Σ χ² over every dataset of every block.
+    chi_squared: float
+    #: ΣN − (number of fitted columns), counting each shared column once.
+    dof: int
+    series_chi_squared: dict[Hashable, float]
+    #: Per-block ``N_block − columns the block uses``. A shared column counts in
+    #: every block that contributes to it, so these do not sum to :attr:`dof`:
+    #: each is "what this series' reduced χ² would mean on its own".
+    series_dof: dict[Hashable, int]
 
 
 class FitEngine:
@@ -1878,48 +2496,11 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
                 cost_factory=cost_factory,
                 error_oversampling=error_oversampling,
             )
-        # Sparse least-squares strategy. Same parameter vector, limits, ties and
-        # model wrapper as the joint path — only the minimiser differs, so the
-        # two are directly comparable and the wizard can choose per node.
-        if strategy == "least_squares":
-            return self._global_fit_least_squares(
-                datasets=datasets,
-                model_fn=model_fn,
-                global_params=global_params,
-                local_params=local_params,
-                initial_params=initial_params,
-                free_global_params=free_global_params,
-                first_params=first_params,
-                problem=_build_coupled_global_problem(
-                    datasets=datasets,
-                    model_fn=model_fn,
-                    global_params=global_params,
-                    local_params=local_params,
-                    initial_params=initial_params,
-                    free_global_params=free_global_params,
-                    local_group_key=_local_group_key,
-                    t_min=t_min,
-                    t_max=t_max,
-                    cancel_callback=cancel_callback,
-                ),
-                max_calls=max_calls,
-                error_oversampling=error_oversampling,
-            )
-
-        # ``use_varpro`` is applied by wrapping ``model_fn`` before the joint
-        # objective is built (below); the profiled path handles it internally.
-
-        try:
-            from iminuit import Minuit
-        except ImportError as e:
-            error_msg = str(e)
-            # Return error results for all datasets
-            error_result = FitResult(
-                success=False,
-                message=f"iminuit import error: {error_msg}",
-            )
-            return {ds.run_number: error_result for ds in datasets}, ParameterSet()
-
+        # Both remaining strategies optimise the *same* coupled problem — one
+        # block, one model, nothing shared across blocks — so it is assembled
+        # once here and the minimiser is the only thing that differs. The
+        # builder is the joint fit's builder too, which is what keeps a global
+        # fit's column layout and a joint fit's from ever drifting apart.
         problem = _build_coupled_global_problem(
             datasets=datasets,
             model_fn=model_fn,
@@ -1932,291 +2513,59 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
             t_max=t_max,
             cancel_callback=cancel_callback,
         )
-        fitted_datasets = problem.fitted_datasets
-        param_names = problem.param_names
-        param_bounds = problem.param_bounds
-        initial_values = problem.initial_values
-        dataset_param_indices = problem.dataset_param_indices
-        fixed_params = problem.fixed_params
-        all_times = problem.all_times
-        all_asymm = problem.all_asymm
-        all_errors = problem.all_errors
-        model_wrapper = problem.model_wrapper
 
-        from iminuit.cost import LeastSquares
-
-        # Create cost function and Minuit object. The default (no factory) keeps
-        # the historical √-weighted least squares byte-for-byte; a factory swaps
-        # in the selectable objective (Poisson Cash on the concatenated raw
-        # counts) — Cash is a bin-wise sum, so the dataset concatenation is
-        # transparent to it.
-        try:
-            if cost_factory is None:
-                cost = LeastSquares(all_times, all_asymm, all_errors, model_wrapper)
-            else:
-                cost = cost_factory.build(all_times, all_asymm, all_errors, model_wrapper)
-            m = Minuit(cost, *initial_values, name=param_names)
-        except Exception as e:
-            raise RuntimeError(f"Failed to create Minuit cost function: {str(e)}")
-
-        # Screening mode (wizard IC pre-selection): IC ranking needs only χ², not
-        # accurate parameter errors, so drop to Minuit strategy 0 — no accurate
-        # post-fit Hessian refinement. The migrad EDM convergence criterion is
-        # unchanged (it is governed by ``m.tol``, not the strategy), so the fitted
-        # values and χ² are the same; only the covariance quality (``m.accurate``)
-        # is relaxed. m.errors are still populated for warm-start step hints. An
-        # explicit minuit_strategy (the difficult-assignment path) always wins.
-        if minuit_strategy is not None:
-            m.strategy = int(minuit_strategy)
-        elif screening:
-            m.strategy = 0
-        if minuit_tol is not None:
-            m.tol = float(minuit_tol)
-
-        # Set parameter limits
-        for i, (min_val, max_val) in enumerate(param_bounds):
-            if min_val != -float("inf"):
-                m.limits[i] = (min_val, m.limits[i][1])
-            if max_val != float("inf"):
-                m.limits[i] = (m.limits[i][0], max_val)
-
-        if initial_step_sizes:
-            for i, name in enumerate(param_names):
-                hint = initial_step_sizes.get(name)
-                if hint is None:
-                    continue
-                step_size = _clamp_minuit_step_size(hint, *param_bounds[i])
-                if step_size > 0.0:
-                    m.errors[i] = step_size
-
-        # Run minimization with error handling, through the shared drive seam so the
-        # joint fit gains explicit HESSE + opt-in MINOS on the same footing as the
-        # single-fit path.
-        if method == "simplex":
-            migrad_kwargs = {"ncall": max_calls}
-        else:
-            migrad_kwargs = {
-                "ncall": max_calls,
-                "iterate": max(1, int(migrad_iterations)),
-                "use_simplex": bool(use_simplex_rescue),
-            }
-        try:
-            minos_errors_raw = drive_minuit(
-                m, method=method, migrad_kwargs=migrad_kwargs, minos=minos
+        # Sparse least-squares strategy. Same parameter vector, limits, ties and
+        # model wrapper as the joint path — only the minimiser differs, so the
+        # two are directly comparable and the wizard can choose per node.
+        if strategy == "least_squares":
+            return self._global_fit_least_squares(
+                problem=problem,
+                max_calls=max_calls,
+                error_oversampling=error_oversampling,
             )
-        except FitCancelledError:
-            # A cancelled fit records nothing — let it propagate past the generic
-            # failure handler so no partial result is built.
-            raise
-        except Exception as e:
+
+        try:
+            solution = _solve_coupled_minuit(
+                problem,
+                method=method,
+                max_calls=max_calls,
+                migrad_iterations=migrad_iterations,
+                use_simplex_rescue=use_simplex_rescue,
+                minuit_strategy=minuit_strategy,
+                minuit_tol=minuit_tol,
+                initial_step_sizes=initial_step_sizes,
+                minos=minos,
+                screening=screening,
+                cost_factory=cost_factory,
+            )
+        except ImportError as e:
+            # No iminuit: report the failure on every dataset rather than raising,
+            # so a caller fitting a series gets one failed result per run.
+            error_result = FitResult(
+                success=False,
+                message=f"iminuit import error: {str(e)}",
+            )
+            return {ds.run_number: error_result for ds in datasets}, ParameterSet()
+        except _CoupledMinimizationError as e:
             # If fitting fails, return error results
             error_result = FitResult(
                 success=False,
-                message=f"Minimization failed: {str(e)}",
+                message=str(e),
             )
             return {ds.run_number: error_result for ds in datasets}, ParameterSet()
 
-        # Extract fitted global parameters
-        fitted_global = ParameterSet()
-        global_uncertainties = {}
-        fmin = getattr(m, "fmin", None)
-        function_calls = int(getattr(m, "nfcn", 0) or 0)
-        gradient_calls = int(getattr(m, "ngrad", 0) or 0)
-        hessian_calls = int(getattr(m, "nhessian", 0) or 0)
-        edm = getattr(fmin, "edm", None)
-        edm_value = float(edm) if edm is not None and np.isfinite(edm) else None
-        covariance_accurate = bool(getattr(m, "accurate", False))
-        covariance_matrix = None
-        if m.valid and getattr(m, "covariance", None) is not None:
-            try:
-                covariance_matrix = np.asarray(m.covariance, dtype=float)
-            except Exception:
-                covariance_matrix = None
-        global_idx = 0
-        for pname in global_params:
-            if pname in free_global_params:
-                # Bounds are representative from whichever dataset leaves the
-                # name free; ``first_params`` may be the one dataset that pins
-                # it (see the ``free_global_params`` computation above).
-                p = next(
-                    initial_params[ds.run_number][pname]
-                    for ds in datasets
-                    if not initial_params[ds.run_number][pname].fixed
-                )
-                value = m.values[global_idx]
-                fitted_global.add(Parameter(name=pname, value=value, min=p.min, max=p.max))
-                if m.errors[global_idx] is not None:
-                    global_uncertainties[pname] = m.errors[global_idx]
-                global_idx += 1
-            else:
-                p = first_params[pname]
-                fitted_global.add(
-                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
-                )
-
-        # Build per-dataset results
-        results = {}
-
-        for ds in fitted_datasets:
-            params = initial_params[ds.run_number]
-
-            # Build result parameter set for this dataset
-            result_params = ParameterSet()
-            uncertainties = {}
-            # MINOS intervals are keyed in the joint problem by the global name and
-            # the per-dataset local name ``f"{pname}_{run}"``; map both back to the
-            # plain per-dataset parameter name.
-            minos_errors: dict[str, tuple[float, float]] = {}
-
-            # Add global parameters. This dataset's own copy wins when it pins
-            # the name itself (e.g. a longitudinal field pinned at 0 on a
-            # zero-field run within an otherwise-free series) -- reporting the
-            # series-shared fitted value there would misstate a measured
-            # quantity as a fit result. Every other dataset reports the one
-            # shared value Minuit actually fit.
-            for pname in global_params:
-                own = params[pname]
-                if own.fixed:
-                    result_params.add(
-                        Parameter(name=pname, value=own.value, min=own.min, max=own.max, fixed=True)
-                    )
-                    continue
-                p = fitted_global[pname]
-                result_params.add(
-                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=p.fixed)
-                )
-                if pname in global_uncertainties:
-                    uncertainties[pname] = global_uncertainties[pname]
-                if minos_errors_raw and pname in minos_errors_raw:
-                    minos_errors[pname] = minos_errors_raw[pname]
-
-            # Add local parameters
-            for pname in local_params:
-                p = params[pname]
-                if p.fixed:
-                    result_params.add(
-                        Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
-                    )
-                else:
-                    idx = dataset_param_indices[ds.run_number][pname]
-                    value = m.values[idx]
-                    result_params.add(Parameter(name=pname, value=value, min=p.min, max=p.max))
-                    if m.errors[idx] is not None:
-                        uncertainties[pname] = m.errors[idx]
-                    joint_name = f"{pname}_{_local_group_key(pname, ds.run_number)}"
-                    if minos_errors_raw and joint_name in minos_errors_raw:
-                        minos_errors[pname] = minos_errors_raw[joint_name]
-
-            # Add fixed parameters to result
-            for pname, value in fixed_params[ds.run_number].items():
-                if pname not in result_params:
-                    result_params.add(Parameter(name=pname, value=value, fixed=True))
-
-            # Compute the per-dataset cost. The Gaussian default keeps the
-            # √-weighted χ²; a factory reports its own statistic (Poisson Cash),
-            # so the per-group reduced value stays on the same footing as the
-            # joint objective the minimiser actually drove.
-            param_dict = {p.name: p.value for p in result_params}
-            model_vals = model_fn(ds.time, **param_dict)
-            residuals = np.asarray(ds.asymmetry, dtype=float) - np.asarray(model_vals, dtype=float)
-            if cost_factory is None:
-                dataset_chi2 = np.sum(((ds.asymmetry - model_vals) / ds.error) ** 2)
-            else:
-                dataset_chi2 = cost_factory.pointwise(
-                    np.asarray(ds.asymmetry, dtype=float),
-                    np.asarray(model_vals, dtype=float),
-                    np.asarray(ds.error, dtype=float),
-                )
-
-            covariance_subset = None
-            covariance_order: list[str] = []
-            if covariance_matrix is not None and covariance_matrix.ndim == 2:
-                cov_indices: list[int] = []
-
-                for pname in global_params:
-                    if pname in global_uncertainties:
-                        idx = param_names.index(pname)
-                        cov_indices.append(idx)
-                        covariance_order.append(pname)
-
-                for pname in local_params:
-                    if pname in uncertainties:
-                        idx = dataset_param_indices[ds.run_number][pname]
-                        cov_indices.append(idx)
-                        covariance_order.append(pname)
-
-                if cov_indices:
-                    covariance_subset = covariance_matrix[np.ix_(cov_indices, cov_indices)]
-
-            ndata = len(ds.time)
-            # Count free parameters: global (shared) + local for this dataset
-            nfree_global = sum(1 for p in global_params if not first_params[p].fixed)
-            nfree_local = sum(1 for p in local_params if not params[p].fixed)
-            nfree = nfree_global + nfree_local
-
-            red_chi2 = dataset_chi2 / max(ndata - nfree, 1)
-            dataset_dof = ndata - nfree
-            minos_errors_result = minos_errors or None
-            dataset_warnings: list[str] = []
-            if error_oversampling > 1.0:
-                (
-                    dataset_chi2,
-                    red_chi2,
-                    dataset_dof,
-                    uncertainties,
-                    covariance_subset,
-                    minos_errors_result,
-                    oversampling_message,
-                ) = _oversampling_correction(
-                    chi_squared=dataset_chi2,
-                    ndata=ndata,
-                    nfree=nfree,
-                    reduced_chi_squared=red_chi2,
-                    dof=dataset_dof,
-                    uncertainties=uncertainties,
-                    covariance=covariance_subset,
-                    minos_errors=minos_errors_result,
-                    error_oversampling=error_oversampling,
-                )
-                if oversampling_message:
-                    dataset_warnings.append(oversampling_message)
-
-            results[ds.run_number] = FitResult(
-                success=m.valid,
-                chi_squared=dataset_chi2,
-                reduced_chi_squared=red_chi2,
-                parameters=result_params,
-                uncertainties=uncertainties,
-                covariance=covariance_subset,
-                covariance_parameters=covariance_order,
-                residuals=residuals,
-                message=_minuit_status_message(
-                    m,
-                    success_message="Global fit successful",
-                    failure_prefix="Global fit failed",
-                ),
-                function_calls=function_calls,
-                gradient_calls=gradient_calls,
-                hessian_calls=hessian_calls,
-                edm=edm_value,
-                covariance_accurate=covariance_accurate,
-                dof=dataset_dof,
-                minos_errors=minos_errors_result,
-                warnings=dataset_warnings,
-            )
-
+        results, fitted_global, _ = _pack_coupled_block(
+            problem=problem,
+            block=problem.blocks[0],
+            solution=solution,
+            cost_factory=cost_factory,
+            error_oversampling=error_oversampling,
+        )
         return results, fitted_global
 
     def _global_fit_least_squares(
         self,
         *,
-        datasets: list[MuonDataset],
-        model_fn: Callable[..., NDArray],
-        global_params: list[str],
-        local_params: list[str],
-        initial_params: dict[int, ParameterSet],
-        free_global_params: list[str],
-        first_params: ParameterSet,
         problem: _CoupledGlobalProblem,
         max_calls: int,
         error_oversampling: float = 1.0,
@@ -2228,213 +2577,166 @@ frequency_offsets, cost_factory, migrad_kwargs, error_oversampling
         per-dataset pinning as the joint Minuit path — but over the concatenated
         residual vector ``(y − model)/σ`` with the arrow-shaped Jacobian pattern
         declared (:func:`_coupled_jacobian_sparsity`). Results are packed per run
-        exactly as the joint path packs them, so the two are interchangeable to
+        by the same packer the joint path uses, so the two are interchangeable to
         every caller. See :meth:`global_fit`'s ``strategy`` section for what the
         Minuit-only controls mean here.
         """
 
-        from scipy.optimize import least_squares
-
-        param_names = problem.param_names
-        lower = np.array([bounds[0] for bounds in problem.param_bounds], dtype=float)
-        upper = np.array([bounds[1] for bounds in problem.param_bounds], dtype=float)
-        start = np.array(problem.initial_values, dtype=float)
-        # TRF works strictly inside the box: its interior scaling divides by the
-        # distance to the nearer bound, so a start sitting exactly *on* a bound
-        # has zero step scale there and the trust region cannot move it. Nudge
-        # such a start to the next representable float inside the box — the
-        # smallest change that restores feasibility, so a seed placed at a
-        # physical limit (an amplitude seeded at its 0 floor) still starts where
-        # the caller put it to every printable digit.
-        start = np.where(start <= lower, np.nextafter(lower, upper), start)
-        start = np.where(start >= upper, np.nextafter(upper, lower), start)
-
-        times = problem.all_times
-        observed = problem.all_asymm
-        sigma = problem.all_errors
-        model_wrapper = problem.model_wrapper
-
-        def residuals(x: NDArray[np.float64]) -> NDArray[np.float64]:
-            return (observed - model_wrapper(times, *x)) / sigma
-
-        solution = least_squares(
-            residuals,
-            start,
-            method="trf",
-            bounds=(lower, upper),
-            jac_sparsity=_coupled_jacobian_sparsity(problem),
-            tr_solver="lsmr",
-            x_scale="jac",
-            ftol=_LEAST_SQUARES_FTOL,
-            xtol=_LEAST_SQUARES_XTOL,
-            gtol=_LEAST_SQUARES_GTOL,
-            max_nfev=int(max_calls),
+        solution = _solve_coupled_least_squares(problem, max_calls=max_calls)
+        results, fitted_global, _ = _pack_coupled_block(
+            problem=problem,
+            block=problem.blocks[0],
+            solution=solution,
+            error_oversampling=error_oversampling,
         )
-
-        values = np.asarray(solution.x, dtype=float)
-        # ``status > 0`` is one of scipy's convergence criteria (gtol/ftol/xtol);
-        # 0 means the evaluation budget ran out and −1 an improper input.
-        success = bool(solution.status > 0) and bool(np.all(np.isfinite(values)))
-        message = (
-            f"Global fit successful (least squares): {solution.message}"
-            if success
-            else f"Global fit failed (least squares): {solution.message}"
-        )
-        function_calls = int(solution.nfev)
-        gradient_calls = int(solution.njev or 0)
-
-        covariance_matrix, unconstrained = _gauss_newton_covariance(solution.jac)
-        covariance_accurate = success and not unconstrained
-
-        def _uncertainty(index: int) -> float | None:
-            """1σ for a parameter column, or ``None`` where the data fix nothing."""
-            if index in unconstrained:
-                return None
-            variance = float(covariance_matrix[index, index])
-            if not np.isfinite(variance) or variance < 0.0:
-                return None
-            return math.sqrt(variance)
-
-        # Extract fitted global parameters
-        fitted_global = ParameterSet()
-        global_uncertainties: dict[str, float] = {}
-        global_idx = 0
-        for pname in global_params:
-            if pname in free_global_params:
-                # Bounds are representative from whichever dataset leaves the
-                # name free; ``first_params`` may be the one dataset that pins it.
-                p = next(
-                    initial_params[ds.run_number][pname]
-                    for ds in datasets
-                    if not initial_params[ds.run_number][pname].fixed
-                )
-                fitted_global.add(
-                    Parameter(name=pname, value=float(values[global_idx]), min=p.min, max=p.max)
-                )
-                sigma_global = _uncertainty(global_idx)
-                if sigma_global is not None:
-                    global_uncertainties[pname] = sigma_global
-                global_idx += 1
-            else:
-                p = first_params[pname]
-                fitted_global.add(
-                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
-                )
-
-        results: dict[int, FitResult] = {}
-        for ds in problem.fitted_datasets:
-            params = initial_params[ds.run_number]
-
-            result_params = ParameterSet()
-            uncertainties: dict[str, float] = {}
-
-            # Add global parameters. This dataset's own copy wins when it pins
-            # the name itself — reporting the series-shared fitted value there
-            # would misstate a measured quantity as a fit result.
-            for pname in global_params:
-                own = params[pname]
-                if own.fixed:
-                    result_params.add(
-                        Parameter(name=pname, value=own.value, min=own.min, max=own.max, fixed=True)
-                    )
-                    continue
-                p = fitted_global[pname]
-                result_params.add(
-                    Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=p.fixed)
-                )
-                if pname in global_uncertainties:
-                    uncertainties[pname] = global_uncertainties[pname]
-
-            # Add local parameters
-            for pname in local_params:
-                p = params[pname]
-                if p.fixed:
-                    result_params.add(
-                        Parameter(name=pname, value=p.value, min=p.min, max=p.max, fixed=True)
-                    )
-                    continue
-                idx = problem.dataset_param_indices[ds.run_number][pname]
-                result_params.add(
-                    Parameter(name=pname, value=float(values[idx]), min=p.min, max=p.max)
-                )
-                sigma_local = _uncertainty(idx)
-                if sigma_local is not None:
-                    uncertainties[pname] = sigma_local
-
-            # Add fixed parameters to result
-            for pname, value in problem.fixed_params[ds.run_number].items():
-                if pname not in result_params:
-                    result_params.add(Parameter(name=pname, value=value, fixed=True))
-
-            param_dict = {p.name: p.value for p in result_params}
-            model_vals = model_fn(ds.time, **param_dict)
-            residual_values = np.asarray(ds.asymmetry, dtype=float) - np.asarray(
-                model_vals, dtype=float
-            )
-            dataset_chi2 = float(np.sum(((ds.asymmetry - model_vals) / ds.error) ** 2))
-
-            covariance_subset = None
-            covariance_order: list[str] = []
-            cov_indices: list[int] = []
-            for pname in global_params:
-                if pname in global_uncertainties:
-                    cov_indices.append(param_names.index(pname))
-                    covariance_order.append(pname)
-            for pname in local_params:
-                if pname in uncertainties:
-                    cov_indices.append(problem.dataset_param_indices[ds.run_number][pname])
-                    covariance_order.append(pname)
-            if cov_indices:
-                covariance_subset = covariance_matrix[np.ix_(cov_indices, cov_indices)]
-
-            ndata = len(ds.time)
-            nfree_global = sum(1 for p in global_params if not first_params[p].fixed)
-            nfree_local = sum(1 for p in local_params if not params[p].fixed)
-            nfree = nfree_global + nfree_local
-            dataset_dof = ndata - nfree
-            red_chi2 = dataset_chi2 / max(dataset_dof, 1)
-            dataset_warnings: list[str] = []
-            if error_oversampling > 1.0:
-                (
-                    dataset_chi2,
-                    red_chi2,
-                    dataset_dof,
-                    uncertainties,
-                    covariance_subset,
-                    _minos_errors,
-                    oversampling_message,
-                ) = _oversampling_correction(
-                    chi_squared=dataset_chi2,
-                    ndata=ndata,
-                    nfree=nfree,
-                    reduced_chi_squared=red_chi2,
-                    dof=dataset_dof,
-                    uncertainties=uncertainties,
-                    covariance=covariance_subset,
-                    minos_errors=None,
-                    error_oversampling=error_oversampling,
-                )
-                if oversampling_message:
-                    dataset_warnings.append(oversampling_message)
-
-            results[ds.run_number] = FitResult(
-                success=success,
-                chi_squared=dataset_chi2,
-                reduced_chi_squared=red_chi2,
-                parameters=result_params,
-                uncertainties=uncertainties,
-                covariance=covariance_subset,
-                covariance_parameters=covariance_order,
-                residuals=residual_values,
-                message=message,
-                function_calls=function_calls,
-                gradient_calls=gradient_calls,
-                covariance_accurate=covariance_accurate,
-                dof=dataset_dof,
-                warnings=dataset_warnings,
-            )
-
         return results, fitted_global
+
+    def joint_fit(
+        self,
+        blocks: Sequence[CoupledBlock],
+        shared_columns: Sequence[SharedColumn],
+        *,
+        strategy: str = "least_squares",
+        method: str = "migrad",
+        max_calls: int = 10000,
+        minos: bool = False,
+        cancel_callback: Callable[[], bool] | None = None,
+    ) -> CoupledFitSolution:
+        """Fit several blocks at once, holding the shared columns equal across them.
+
+        The generalisation of :meth:`global_fit`: where a global fit shares
+        parameters across the *runs* of one series under one model, a joint fit
+        also shares columns across *series* that carry different models. A sample
+        measured through a magnetic transition needs an oscillating function
+        below T_c and a relaxing one above it; the background, alpha or initial
+        asymmetry is the same physical quantity in both, and only a fit that says
+        so propagates the constraint into every uncertainty.
+
+        Each block brings its own model, global/local partition, fit window and
+        seeds; :class:`SharedColumn` names the one fitted column two or more of
+        them resolve a parameter from. A block that *pins* a shared member on a
+        given dataset uses its own pinned value there, exactly as a global fit
+        does for a metadata-pinned global — the constraint never overrides a
+        measured quantity.
+
+        ``strategy`` is ``"least_squares"`` (bounded sparse trust region, the
+        default: a joint problem is wider than a single series' and the arrow
+        structure is what makes it affordable) or ``"joint"`` (one Minuit over
+        the whole vector). ``"profiled"`` has no joint counterpart — it profiles
+        *the* set of globals over datasets that all share one model — and raises.
+
+        Raises :class:`FitCancelledError` through ``cancel_callback`` exactly as
+        :meth:`global_fit` does, so a cancelled joint run records nothing.
+        """
+
+        blocks = tuple(blocks)
+        shared_columns = tuple(shared_columns)
+
+        if strategy == "profiled":
+            raise NotImplementedError(
+                "The 'profiled' strategy is not available for joint fits: it profiles one "
+                "set of globals over datasets that share a model, which a joint fit does "
+                "not have. Use 'least_squares' or 'joint'."
+            )
+        if strategy not in ("joint", "least_squares"):
+            raise ValueError(
+                f"Unknown joint-fit strategy {strategy!r}; expected 'least_squares' or 'joint'"
+            )
+        _reject_affine_ties(
+            [ps for block in blocks for ps in block.initial_params.values()], "Joint fitting"
+        )
+
+        problem = _build_coupled_problem(
+            blocks=blocks,
+            shared_columns=shared_columns,
+            cancel_callback=cancel_callback,
+        )
+
+        try:
+            if strategy == "least_squares":
+                solution = _solve_coupled_least_squares(problem, max_calls=max_calls)
+            else:
+                solution = _solve_coupled_minuit(
+                    problem,
+                    method=method,
+                    max_calls=max_calls,
+                    migrad_iterations=5,
+                    use_simplex_rescue=True,
+                    minuit_strategy=None,
+                    minuit_tol=None,
+                    initial_step_sizes=None,
+                    minos=minos,
+                    screening=False,
+                    cost_factory=None,
+                )
+        except _CoupledMinimizationError as e:
+            return CoupledFitSolution(
+                success=False,
+                message=str(e),
+                series_results={},
+                series_global_parameters={},
+                shared_parameters=ParameterSet(),
+                shared_uncertainties={},
+                shared_covariance=None,
+                chi_squared=0.0,
+                dof=0,
+                series_chi_squared={},
+                series_dof={},
+            )
+
+        series_results: dict[Hashable, dict[int, FitResult]] = {}
+        series_global_parameters: dict[Hashable, ParameterSet] = {}
+        series_chi_squared: dict[Hashable, float] = {}
+        series_dof: dict[Hashable, int] = {}
+        for block in blocks:
+            results, fitted_global, _ = _pack_coupled_block(
+                problem=problem, block=block, solution=solution
+            )
+            series_results[block.key] = results
+            series_global_parameters[block.key] = fitted_global
+            series_chi_squared[block.key] = float(
+                sum(result.chi_squared for result in results.values())
+            )
+            n_points = sum(len(ds.time) for ds in problem.block_fitted_datasets[block.key])
+            block_columns = set(problem.block_global_columns[block.key].values())
+            for ds in block.datasets:
+                block_columns.update(problem.dataset_param_indices[ds.run_number].values())
+            series_dof[block.key] = n_points - len(block_columns)
+
+        shared_parameters = ParameterSet()
+        shared_uncertainties: dict[str, float] = {}
+        for column_index, column in enumerate(shared_columns):
+            shared_parameters.add(
+                Parameter(
+                    name=column.name,
+                    value=float(solution.values[column_index]),
+                    min=column.min,
+                    max=column.max,
+                )
+            )
+            sigma = solution.uncertainty(column_index)
+            if sigma is not None:
+                shared_uncertainties[column.name] = sigma
+
+        shared_covariance = None
+        if shared_columns and solution.covariance is not None:
+            n_shared = len(shared_columns)
+            shared_covariance = np.asarray(solution.covariance, dtype=float)[:n_shared, :n_shared]
+
+        total_points = int(sum(problem.dataset_point_counts))
+        return CoupledFitSolution(
+            success=solution.success,
+            message=solution.message,
+            series_results=series_results,
+            series_global_parameters=series_global_parameters,
+            shared_parameters=shared_parameters,
+            shared_uncertainties=shared_uncertainties,
+            shared_covariance=shared_covariance,
+            chi_squared=float(sum(series_chi_squared.values())),
+            dof=total_points - len(problem.param_names),
+            series_chi_squared=series_chi_squared,
+            series_dof=series_dof,
+        )
 
     def _global_fit_profiled(
         self,
