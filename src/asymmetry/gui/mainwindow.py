@@ -11025,6 +11025,12 @@ class MainWindow(QMainWindow):
         # simply absent from the map, which the panel reads as "plain series"
         # (``phase=None``); there is no separate "not a phase" sentinel to guard.
         phase_by_id: dict[str, PhaseDecoration] = {}
+        # Series currently stamped a member of a joint fit (D5/D8): the id and
+        # display name feed the trend panel's "Shared" badge/tooltip and its
+        # per-series shared-parameter map. A series absent from the map is a
+        # plain series — there is no separate "not jointed" sentinel to guard.
+        joint_fit_by_id: dict[str, tuple[str, str]] = {}
+        shared_params_by_id: dict[str, dict[str, str]] = {}
         for idx, series in enumerate(series_for_rep, start=1):
             row_dicts = self._build_series_rows(series)
             if not row_dicts:
@@ -11064,6 +11070,10 @@ class MainWindow(QMainWindow):
             weights = self._fraction_weights_for_series(series, composite)
             if weights:
                 fraction_weights_by_id[batch_id] = weights
+            joint = self._project_model.joint_fit_for_series(batch_id)
+            if joint is not None:
+                joint_fit_by_id[batch_id] = (joint.joint_id, self._joint_fit_display_name(joint))
+                shared_params_by_id[batch_id] = dict(series.shared_params)
             # Runs to highlight: source runs for group series, member keys for run series.
             if series.member_kind == "groups":
                 highlight_map[batch_id] = sorted(set(series.member_source_run.values()))
@@ -11137,6 +11147,8 @@ class MainWindow(QMainWindow):
                 stale_ids=stale_ids,
                 phase_by_id=phase_by_id,
                 sections=sections,
+                joint_fit_by_id=joint_fit_by_id,
+                shared_params_by_id=shared_params_by_id,
             )
             refreshed = True
 
@@ -11164,18 +11176,45 @@ class MainWindow(QMainWindow):
     ) -> list[tuple[str, str | None, list[str]]]:
         """Group a representation's series into the chip rail's sections.
 
-        A series' section is the data group that owns it, or that group's
-        *parent* when the owning group is a phase (a Global Fit Wizard
-        sub-group, D1/D4) — so a phase's chips sit under the campaign they
-        were partitioned from rather than under a throwaway bucket of their
-        own. Group-less series share one "Standalone" section. Sections, and
-        the series within them, keep recording order (``named_series`` is
-        already sorted by batch id); a section's phase-owned series come
-        after its own direct members.
+        A series currently stamped a member of a joint fit
+        (``docs/plans/joint-fit.md`` D5/D8/D11) is pulled out of its data-group
+        section entirely and grouped instead under one section titled with the
+        joint fit's display name — a joint fit composes series that may carry
+        different models, or even belong to different data groups, so its own
+        section (colour-less: no single data group owns it) is what tells the
+        rail "these belong to one coupled fit" rather than leaving the user to
+        infer it from a badge alone. Joint sections come first, in the order
+        their first loaded member appears in ``named_series``.
+
+        A series with no joint-fit stamp keeps today's rule: its section is
+        the data group that owns it, or that group's *parent* when the owning
+        group is a phase (a Global Fit Wizard sub-group, D1/D4) — so a phase's
+        chips sit under the campaign they were partitioned from rather than
+        under a throwaway bucket of their own. Group-less series share one
+        "Standalone" section. Sections, and the series within them, keep
+        recording order (``named_series`` is already sorted by batch id); a
+        section's phase-owned series come after its own direct members.
         """
+        joint_buckets: dict[str, tuple[str, list[str]]] = {}
+        joint_order: list[str] = []
+        plain_named: list[tuple[str, FitSeries, str]] = []
+        for batch_id, series, name in named_series:
+            joint = self._project_model.joint_fit_for_series(batch_id)
+            if joint is None:
+                plain_named.append((batch_id, series, name))
+                continue
+            if joint.joint_id not in joint_buckets:
+                joint_buckets[joint.joint_id] = (self._joint_fit_display_name(joint), [])
+                joint_order.append(joint.joint_id)
+            joint_buckets[joint.joint_id][1].append(batch_id)
+        joint_sections = [
+            (title, None, batch_ids)
+            for title, batch_ids in (joint_buckets[joint_id] for joint_id in joint_order)
+        ]
+
         buckets: dict[str | None, tuple[str, str | None, list[str], list[str]]] = {}
         order: list[str | None] = []
-        for batch_id, series, _name in named_series:
+        for batch_id, series, _name in plain_named:
             group = (
                 self._project_model.data_group(series.group_id)
                 if series.group_id is not None
@@ -11196,10 +11235,11 @@ class MainWindow(QMainWindow):
                 order.append(key)
             _, _, direct, phased = buckets[key]
             (phased if is_phase_member else direct).append(batch_id)
-        return [
+        data_group_sections = [
             (title, colour, direct + phased)
             for title, colour, direct, phased in (buckets[key] for key in order)
         ]
+        return joint_sections + data_group_sections
 
     def _remember_trends_batch(self, surface: str, batch_id: str | None, panel) -> None:
         """Record the batch *surface* just produced and arm its ``Trends →``.

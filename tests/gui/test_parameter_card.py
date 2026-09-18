@@ -171,6 +171,24 @@ def test_card_labels_and_focus_chrome(qapp: QApplication) -> None:
     card.deleteLater()
 
 
+def test_shared_tooltip_adds_a_badge_distinct_from_derived(qapp: QApplication) -> None:
+    """The "Shared" badge (``docs/plans/joint-fit.md`` D5) is a sibling of the
+    "derived" chip, not a replacement — a card can carry either, both, or
+    neither."""
+    plain = ParameterCard("A_1", "A₁")
+    assert plain.shared_chip is None
+
+    shared = ParameterCard(
+        "A_bg", "A_bg", derived=True, shared_tooltip='Shared across joint fit "J1" with Series B.'
+    )
+    assert shared.shared_chip is not None
+    assert "Shared" in shared.shared_chip.text()
+    assert shared.shared_chip.toolTip() == 'Shared across joint fit "J1" with Series B.'
+
+    plain.deleteLater()
+    shared.deleteLater()
+
+
 # ── Sparkline ────────────────────────────────────────────────────────────────
 
 
