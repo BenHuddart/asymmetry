@@ -134,6 +134,8 @@ class FitSeries:
         last_fitted_members: list[int] | None = None,
         recipe: dict | None = None,
         trend_excluded_runs: list[int] | None = None,
+        joint_fit_id: str | None = None,
+        shared_params: dict[str, str] | None = None,
     ) -> None:
         self.batch_id = str(batch_id)
         self.label: str | None = str(label).strip() or None if label else None
@@ -203,6 +205,36 @@ class FitSeries:
         #: freshly-created series that has not been fit yet; the v14→v15 migration
         #: seeds it from ``member_run_numbers`` so a loaded series is not stale.
         self.last_fitted_members: list[int] = [int(r) for r in (last_fitted_members or [])]
+        #: Joint-fit stamps (docs/plans/joint-fit.md D5/D8): written by a joint
+        #: run to say this series currently honours a shared-parameter
+        #: constraint, and cleared by a solo run of this series (which detaches
+        #: it — the joint fit's own record goes stale, per D9) or by deleting
+        #: the joint fit (D10). Never edited directly by a caller — go through
+        #: :meth:`clear_joint_stamp`, so the two fields can never fall out of
+        #: sync with each other. ``joint_fit_id`` names the owning
+        #: :class:`~asymmetry.core.representation.joint_fit.JointFit`;
+        #: ``shared_params`` maps this series' *own* parameter name to the
+        #: shared column's name, for a reader rendering one series at a time
+        #: (chips, cards, results windows) that has no reason to load the
+        #: joint fit record just to label a parameter "Shared".
+        self.joint_fit_id: str | None = str(joint_fit_id) if joint_fit_id else None
+        self.shared_params: dict[str, str] = {
+            str(name): str(shared_name) for name, shared_name in (shared_params or {}).items()
+        }
+
+    # ── joint fit stamp (D5/D8/D9/D10) ──────────────────────────────────────
+
+    def clear_joint_stamp(self) -> None:
+        """Clear this series' joint-fit stamp.
+
+        The only sanctioned way to un-stamp a series (a solo re-run detaching
+        it, or the owning joint fit being deleted) — going through one method
+        means ``joint_fit_id`` and ``shared_params`` can never be cleared one
+        without the other, which a direct assignment at each call site would
+        risk.
+        """
+        self.joint_fit_id = None
+        self.shared_params = {}
 
     # ── label ──────────────────────────────────────────────────────────────
 
@@ -398,8 +430,11 @@ class FitSeries:
         the whole :attr:`recipe` (parameter rows, fit range, seeding, co-add).
 
         Excluded: :attr:`label` (renaming never changes identity),
-        :attr:`batch_id`, :attr:`group_id` and every recorded result — they say
-        which series this is or how it went, not what analysis it describes.
+        :attr:`batch_id`, :attr:`group_id`, every recorded result, and the
+        joint-fit stamp (:attr:`joint_fit_id`/:attr:`shared_params`) — they say
+        which series this is, how it went, or which constraint it currently
+        honours, not what analysis it describes. A series stamped, detached,
+        and stamped again by a different joint fit is still the same analysis.
         """
         model = self.canonical_model
         if model is not None:
@@ -456,6 +491,8 @@ class FitSeries:
             "last_fitted_members": list(self.last_fitted_members),
             "recipe": normalise_recipe(self.recipe),
             "trend_excluded_runs": list(self.trend_excluded_runs),
+            "joint_fit_id": self.joint_fit_id,
+            "shared_params": dict(self.shared_params),
         }
 
     @classmethod
@@ -498,4 +535,9 @@ class FitSeries:
             # seed) becomes the empty default rather than a missing key.
             recipe=data.get("recipe"),
             trend_excluded_runs=data.get("trend_excluded_runs"),
+            # Absent on every pre-v22 save (the joint fit feature did not
+            # exist yet): a series with no stamp is simply not a joint fit
+            # member, which is exactly what the defaults say.
+            joint_fit_id=data.get("joint_fit_id"),
+            shared_params=data.get("shared_params"),
         )

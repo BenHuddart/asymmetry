@@ -11,6 +11,7 @@ from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.representation import (
     FitSeries,
     RepresentationType,
+    default_joint_fit_label,
     default_series_label,
     disambiguate_series_label,
     member_range,
@@ -123,3 +124,10 @@ def test_disambiguate_counts_up_past_every_taken_label():
 
 def test_disambiguate_skips_only_the_taken_suffixes():
     assert disambiguate_series_label("Exp", ["Exp", "Exp (3)"]) == "Exp (2)"
+
+
+# ── joint fit default label ─────────────────────────────────────────────────
+
+
+def test_default_joint_fit_label():
+    assert default_joint_fit_label(["Ordered", "Para"]) == "Joint: Ordered + Para"

@@ -27,7 +27,7 @@ at record time so the chips stay distinguishable.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from asymmetry.core.representation.series import FitSeries
 
@@ -118,6 +118,18 @@ def default_series_label(series: FitSeries, *, group_name: str | None = None) ->
     base = " · ".join(parts) if parts else "Series"
     suffix = (group_name or "").strip()
     return f"{base} · {suffix}" if suffix else base
+
+
+def default_joint_fit_label(series_labels: Sequence[str]) -> str:
+    """Return the default label for a joint fit: ``"Joint: <A> + <B>"``.
+
+    Same "fallback, user rename wins" contract as :func:`default_series_label`
+    — :meth:`JointFit.display_name` only reaches this when no label has been
+    set. *series_labels* is the member series' own display names, in the
+    joint fit's member order, so relabeling one member does not reshuffle a
+    joint fit's default label out from under a user who has not renamed it.
+    """
+    return "Joint: " + " + ".join(str(label) for label in series_labels)
 
 
 def disambiguate_series_label(label: str, existing_labels: Iterable[str]) -> str:

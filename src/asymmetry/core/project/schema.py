@@ -11,8 +11,19 @@ Compatibility policy
 * Migration functions are one-per-step and retained for at least one major schema revision.
 * Unknown top-level fields in a valid schema are preserved on load/save cycles.
 
-Current schema (version 21)
+Current schema (version 22)
 ---------------------------
+
+Version 22 adds a top-level ``joint_fits`` list (docs/plans/joint-fit.md D13):
+each entry is a serialized
+:class:`~asymmetry.core.representation.joint_fit.JointFit` — a joint fit's
+member series, its shared-parameter table, and its last run's summary result.
+A joint run stamps ``joint_fit_id``/``shared_params`` onto each member entry
+in ``batches``; both are additive and default to unstamped (``null``/``{}``)
+on a series that carries neither. Purely additive like the v12->v13
+``global_fit_studies`` list: a pre-v22 project has no joint fits, so it
+migrates with an empty registry and every series unstamped. See
+:func:`_migrate_v21_to_v22`.
 
 Version 21 renames a grouping profile's manual ``t0_policy.value`` (an absolute
 bin index) to ``legacy_value``. Manual t0 is now an *offset* from each run's own
@@ -240,10 +251,10 @@ from pathlib import Path
 
 from asymmetry.core.representation.base import RepresentationType
 
-CURRENT_SCHEMA_VERSION: int = 21
+CURRENT_SCHEMA_VERSION: int = 22
 
 _SUPPORTED_VERSIONS: frozenset[int] = frozenset(
-    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21}
+    {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22}
 )
 
 #: Fourier-state keys that describe the FFT generation recipe (recipe-only
@@ -369,6 +380,9 @@ def migrate_to_current(data: dict) -> dict:
         version = 20
     if version == 20:
         migrated = _migrate_v20_to_v21(migrated)
+        version = 21
+    if version == 21:
+        migrated = _migrate_v21_to_v22(migrated)
     return migrated
 
 
@@ -1339,6 +1353,23 @@ def _v20_trend_excluded(series: dict, slots: dict[tuple[int, str], dict]) -> lis
         if slot.get("include_in_trend") is False:
             excluded.add(member_key)
     return sorted(excluded)
+
+
+def _migrate_v21_to_v22(data: dict) -> dict:
+    """Migrate schema v21 project state to v22.
+
+    v22 adds a top-level ``joint_fits`` list (docs/plans/joint-fit.md D13).
+    Purely additive, exactly like the v12->v13 ``global_fit_studies`` step:
+    a pre-v22 project never had joint fits, so the only change is the version
+    bump plus an empty default for the new list. Series stamps
+    (``joint_fit_id``/``shared_params``) need no migration here — they are
+    read with tolerant defaults by :meth:`FitSeries.from_dict` itself, so an
+    absent key on an old ``batches`` entry already loads as "unstamped".
+    """
+    migrated = dict(data)
+    migrated["schema_version"] = 22
+    migrated.setdefault("joint_fits", [])
+    return migrated
 
 
 def _migrate_v20_to_v21(data: dict) -> dict:
