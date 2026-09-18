@@ -146,6 +146,19 @@ def test_joint_member_name_prefers_the_series_own_label():
     assert joint_member_name(series, None) == "Ordered"
 
 
+def test_joint_member_name_ignores_a_label_that_merely_spells_the_default():
+    """Some recording paths pin the fallback text as the label; that is no rename."""
+    series = _series()
+    group = DataGroup("g", "mid")
+    series.label = default_series_label(series, group_name="mid")
+    assert joint_member_name(series, group) == "mid"
+    series.label = default_series_label(series)
+    assert joint_member_name(series, group) == "mid"
+    # A disambiguated default ("… (2)") is meaningful and is kept.
+    series.label = default_series_label(series, group_name="mid") + " (2)"
+    assert joint_member_name(series, group) == series.label
+
+
 def test_joint_member_name_falls_back_to_the_data_group_name():
     series = _series()
     group = DataGroup("g", "low field")

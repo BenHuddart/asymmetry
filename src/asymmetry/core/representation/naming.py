@@ -140,10 +140,18 @@ def joint_member_name(series: FitSeries, group: DataGroup | None) -> str:
     the whole member set and falls back to the member's full name
     (``MainWindow._series_fallback_name``) for those.
     """
-    if series.label:
+    group_name = group.name if group is not None and group.name else None
+    # A stored label that merely spells out the default (some recording paths
+    # pin the fallback text rather than leaving ``label`` unset) is no rename:
+    # it would drag the whole ``model · range · group`` string back into the
+    # joint label this helper exists to shorten.
+    if series.label and series.label not in (
+        default_series_label(series, group_name=group_name),
+        default_series_label(series),
+    ):
         return series.label
-    if group is not None and group.name:
-        return group.name
+    if group_name is not None:
+        return group_name
     return composite_model_label(series.canonical_model) or "Series"
 
 
