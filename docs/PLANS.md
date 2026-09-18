@@ -6,6 +6,25 @@ subsystems or days.
 
 ## Active
 
+### Joint fit: several series, different models, shared parameters
+
+Status: planned 2026-09-18 on `feat/joint-fit`; implementation to land as
+one PR in six phased subagent steps (engine and core API, project model and
+schema v22, window and menu, parameters panel, docs, lead validation) with a
+lead review gate. Full decision log (D1–D14), verified code map, core API
+contract and per-phase briefs in [plans/joint-fit.md](plans/joint-fit.md).
+
+A joint fit composes two or more recorded series (each keeping its own
+model, members and recipe from the Batch tab) into one coupled fit whose
+**shared** parameters are held equal across series — the initial asymmetry
+or background across an ordered and a paramagnetic phase, say. Sharing is
+restricted to series-Global parameters, equality only, with a core
+autodetection that proposes the default shared table. Results are written in
+place on the member series and marked shared; the joint fit is a persisted,
+menu-launched record with runtime staleness. The engine's coupled problem
+builder is generalised to per-series models with `global_fit` as its
+one-series caller.
+
 ### t0 determination: file default, always-visible detected value, divergence warning
 
 Status: planned 2026-09-17 on `study/t0-determination`; implementation to
