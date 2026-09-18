@@ -8,7 +8,7 @@ subsystems or days.
 
 ### Joint fit: several series, different models, shared parameters
 
-Status: planned 2026-09-18 on `feat/joint-fit`; implementation to land as
+Status: implemented 2026-09-18 on `feat/joint-fit`, PR open; landed as
 one PR in six phased subagent steps (engine and core API, project model and
 schema v22, window and menu, parameters panel, docs, lead validation) with a
 lead review gate. Full decision log (D1–D14), verified code map, core API

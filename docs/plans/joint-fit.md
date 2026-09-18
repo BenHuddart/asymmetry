@@ -1,6 +1,6 @@
 # Joint fit: several series, different models, shared parameters
 
-Status: planned 2026-09-18, branch `feat/joint-fit`, not yet implemented.
+Status: implemented 2026-09-18 on `feat/joint-fit` (Phases 1–5 as agent commits with lead fix-ups; Phase 6 gate green: validate, gui-smoke, docs, structural, lint), PR open.
 
 ## Problem
 
