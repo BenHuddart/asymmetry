@@ -111,6 +111,46 @@ repo-local docs and use this file as the map.
   maps to a registered scenario and vice versa, within the per-image size
   budget).
 
+## Lean Code Rules
+
+The codebase must stay small enough to read. These rules bind every new or
+changed line; existing code is brought into line where it is touched, not
+rewritten wholesale. Briefs for subagents carry this section verbatim.
+
+- **Prevent bad states by construction; never guard against them.** No
+  `hasattr`/`getattr(..., None)` on our own attributes, no `try/except` around
+  our own code, no "in progress" flags or latches, no `if x is None: return`
+  where the design can make `None` impossible. Validation lives only at the
+  three boundaries — file, project, user input — and its job is to produce a
+  typed value that nothing downstream re-checks. Where a bad state genuinely
+  cannot be made impossible, raise an exception naming the violated invariant;
+  a silent fallback hides the bug.
+- **One source of truth per fact.** Do not store a derived value beside its
+  source; compute one from the other, and let one function own writing it.
+- **Aliases live in schema migrations, not runtime code.** A key is renamed
+  once, in `core/project/schema.py`; runtime code reads one name.
+- **A private helper needs two callers or a domain name.** A method with one
+  call site whose name describes a step rather than a concept is inlined at
+  that site. No two-line slot wrappers: connect the target directly, or share
+  one slot.
+- **Do not mirror a scaffold; generalise it.** When a feature would copy a
+  family of methods and rename a prefix, extract the shared shape instead.
+  Prefer a table of cases walked by one function over parallel near-identical
+  bodies.
+- **Comments state the invariant; docs hold the history.** A comment longer
+  than three lines must carry a physics, units or coordinate argument, not a
+  narrative — the narrative goes in `docs/plans/` or `docs/investigations/`
+  with a one-line link from the code. Docstring length tracks surprise, not
+  size: one line for the obvious helper, a paragraph only for a non-obvious
+  contract.
+- **Delete, don't deprecate.** Rewrite tests that pin old behaviour rather
+  than skip them; remove code paths rather than leave them behind a flag.
+- **Ratchet, don't rewrite.** When one of these rules draws a repeated review
+  comment, encode it in `tools/harness.py structural` as a ratchet: freeze the
+  current count (guards per file, single-caller private methods) as the
+  baseline and fail when it rises, so new code meets the rule without a
+  rewrite of what exists.
+
 ## Validation Ladder
 
 Agent-skill evaluations use Claude Sonnet when driven through Claude Code and
