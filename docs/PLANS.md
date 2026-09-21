@@ -6,6 +6,26 @@ subsystems or days.
 
 ## Active
 
+### Grouping preview: legible compares and a Counts view
+
+Status: planned 2026-09-21, no branch yet; one PR in three phased subagent
+steps (pane rendering and removal of the "vs raw" compare, Counts view, docs)
+with a lead review gate after each. Decision log (D1–D10), verified code map
+and per-phase briefs in [plans/grouping-preview.md](plans/grouping-preview.md);
+Ben-reviewed mockup at <https://claude.ai/artifact/1Xcbr5vT3qfSpn1vhiWtQ5>.
+
+The grouping window's live preview becomes legible: the solid curve is a
+line with a ±σ band instead of a dot cloud, the compare ghost is drawn on
+top in the stage's identity colour with a fixed corner caption naming both
+curves, ⟨A⟩ is drawn as a line, and the status strip leads with a `PREVIEW`
+label naming the selected run and the F/B groups. A new `Counts` view draws
+the corrected F and B group histograms with t0, the good-window edges, the
+pre-t0 region and the subtracted background level marked, so the
+count-domain settings finally have a picture. The compound "Compare vs raw
+(uncorrected)" checkbox and pager stop are removed. Rejected on review: a Δ
+strip and an effect-size readout (space, minimal captions) and a separate
+preview-run picker (the preview follows the scope selection).
+
 ### Good window as a profile policy: t_good offset and last good bin that persist
 
 Status: implemented 2026-09-21 on `feat/good-window-policy`, PR to follow;
