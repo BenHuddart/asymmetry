@@ -657,7 +657,7 @@ def test_overflow_pill_settles_hidden_after_inline_alpha_estimate(qapp: QApplica
     # A window tall enough that the α result + provenance rows still fit after the
     # estimate — the point is the settle pass (the pill must not linger stale
     # mid-relayout), not the default-size budget.
-    dialog.resize(1220, 760)
+    dialog.resize(1220, 860)
     dialog.show()
     QApplication.processEvents()
 
@@ -701,7 +701,7 @@ def test_corrections_overflow_pill_names_hidden_sections(qapp: QApplication) -> 
 
     # Default size with deadtime off: the two-column layout makes this state fit,
     # so no pill.
-    dialog.resize(1220, 680)
+    dialog.resize(1220, 780)
     dialog._deadtime_section._set_mode("off")
     dialog._deadtime_section._on_mode_or_state_changed()
     QApplication.processEvents()
@@ -1421,21 +1421,22 @@ def test_estimate_all_alpha_calibrates_every_axis(
     assert "alpha_z_reference_run" in payload
 
 
-def test_compare_toggles_never_touch_the_persisted_payload(qapp: QApplication) -> None:
-    """The preview-only compare toggles never leak into the reduction payload.
+def test_compare_focus_never_touches_the_persisted_payload(qapp: QApplication) -> None:
+    """The preview-only compare focus never leaks into the reduction payload.
 
     This is the trap PR 1 fixed: a preview control that silently changed the real
     reduction. Focusing any compare stage must leave ``_current_grouping_payload``
-    (and ``get_grouping_result``) byte-identical — the toggles feed the preview
+    (and ``get_grouping_result``) byte-identical — the focus feeds the preview
     request only.
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
-    _estimate_single_alpha(dialog)  # α ≠ 1 → the α and raw compares become available
+    _estimate_single_alpha(dialog)  # α ≠ 1 → the α compare becomes available
+    dialog._background_mode = "range"  # a second available stage to focus
     before_payload = dialog._current_grouping_payload()
     before_result = dialog.get_grouping_result()
 
-    dialog._set_compare_stage("raw")
-    assert dialog._compare_stage == "raw"
+    dialog._set_compare_stage("background")
+    assert dialog._compare_stage == "background"
     assert dialog._current_grouping_payload() == before_payload
     assert dialog.get_grouping_result() == before_result
 
@@ -1447,39 +1448,35 @@ def test_compare_toggles_never_touch_the_persisted_payload(qapp: QApplication) -
 def test_compare_focus_is_exclusive_and_alpha_auto_focuses(qapp: QApplication) -> None:
     """Compare focus is exclusive; a fresh α calibration auto-focuses α.
 
-    The per-section checkboxes are gone: focus is *controlled* by the pipeline
-    chips + pager (plus the pager-row "raw" checkbox, the only survivor in
-    ``_compare_toggles``) and *displayed* on the focused card's indicator.
+    The compare checkboxes are gone: focus is *controlled* by the pipeline chips
+    + pager and *displayed* on the focused card's indicator.
     """
     dialog = GroupingDialog([_dataset_with_histograms()])
     _estimate_single_alpha(dialog)
-
-    # Only the "raw" checkbox remains; the per-stage checkboxes are retired.
-    assert set(dialog._compare_toggles) == {"raw"}
 
     # Calibrating α auto-focuses the α compare (preserving the old auto-overlay);
     # the chip checks and the α card shows the comparing indicator.
     assert dialog._compare_stage == "alpha"
     assert dialog._pipeline_chips["alpha"].isChecked()
-    assert dialog._alpha_card.comparing_text() == "comparing: α = 1 ghost"
+    assert dialog._alpha_card.comparing_text() == "comparing: α = 1"
 
     # Focusing another stage is exclusive — α loses its chip check + indicator.
-    dialog._set_compare_stage("raw")
-    assert dialog._compare_stage == "raw"
-    assert dialog._compare_toggles["raw"].isChecked()
+    dialog._background_mode = "range"
+    dialog._set_compare_stage("background")
+    assert dialog._compare_stage == "background"
+    assert dialog._pipeline_chips["background"].isChecked()
     assert not dialog._pipeline_chips["alpha"].isChecked()
     assert dialog._alpha_card.comparing_text() is None
-    # "raw" is not one stage's card, so no card carries an indicator for it.
-    assert all(card.comparing_text() is None for card in dialog._correction_cards.values())
+    assert dialog._background_card.comparing_text() == "comparing: without background"
 
     # Clearing focus unchecks everything.
     dialog._set_compare_stage(None)
     assert dialog._compare_stage is None
-    assert not dialog._compare_toggles["raw"].isChecked()
+    assert all(card.comparing_text() is None for card in dialog._correction_cards.values())
     assert not any(chip.isChecked() for chip in dialog._pipeline_chips.values())
 
 
-def test_compare_toggle_reaches_the_preview_request(qapp: QApplication) -> None:
+def test_compare_focus_reaches_the_preview_request(qapp: QApplication) -> None:
     """The focused stage forwards into the preview request's ``compare_stage``.
 
     Pins the seam the user drives: ``_refresh_preview`` must carry
@@ -1493,8 +1490,9 @@ def test_compare_toggle_reaches_the_preview_request(qapp: QApplication) -> None:
     assert dialog._preview_pane._pending is not None
     assert dialog._preview_pane._pending.compare_stage == "alpha"
 
-    dialog._set_compare_stage("raw")
-    assert dialog._preview_pane._pending.compare_stage == "raw"
+    dialog._background_mode = "range"
+    dialog._set_compare_stage("background")
+    assert dialog._preview_pane._pending.compare_stage == "background"
 
     dialog._set_compare_stage(None)
     assert dialog._preview_pane._pending.compare_stage is None
@@ -1582,14 +1580,14 @@ def test_alpha_calibration_expands_and_accents_the_alpha_card(qapp: QApplication
 
     _estimate_single_alpha(dialog)
     assert dialog._alpha_card.is_expanded()
-    assert dialog._alpha_card.comparing_text() == "comparing: α = 1 ghost"
+    assert dialog._alpha_card.comparing_text() == "comparing: α = 1"
 
 
 def test_pipeline_chip_click_expands_its_card(qapp: QApplication) -> None:
     """Clicking a stage's chip focuses its compare AND expands its card."""
     dialog = GroupingDialog([_dataset_with_histograms()])
     dialog._background_mode = "range"
-    dialog._sync_compare_toggles()
+    dialog._sync_compare_surfaces()
     assert not dialog._background_card.is_expanded()
 
     dialog._on_pipeline_chip_clicked("background")

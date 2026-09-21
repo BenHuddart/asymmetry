@@ -325,6 +325,7 @@ def _import_scenarios() -> None:
         global_fit_wizard_setup,
         global_fit_wizard_transitions,
         grouped_fit_ybco_knight,
+        grouping_window_counts_view,
         grouping_window_good_window_row,
         grouping_window_profile_editor,
         grouping_window_t0_row,

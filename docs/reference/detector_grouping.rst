@@ -266,12 +266,23 @@ draft is what gets applied to every run following the profile.
   This comparison is re-made every time the draft changes rather than cached,
   so the chip never keeps showing a preset name the settings have since
   drifted away from.
-* **Live asymmetry preview** — a debounced plot of the forward/backward
-  asymmetry the current draft would produce on the selected run, recomputed
-  automatically as groups, :math:`\alpha`, binning, deadtime, or background
-  settings change. The recompute runs on a worker thread (never the GUI
-  thread), so editing stays responsive even while a reduction is in flight;
-  a superseded recompute is discarded in favour of the latest edit.
+* **Live preview** — a debounced plot of what the current draft would produce
+  on the selected run, recomputed automatically as groups, :math:`\alpha`,
+  binning, deadtime, or background settings change. The recompute runs on a
+  worker thread (never the GUI thread), so editing stays responsive even
+  while a reduction is in flight; a superseded recompute is discarded in
+  favour of the latest edit. An **Asymmetry | Counts** segmented control
+  above the plot switches between the reduced asymmetry (the default) and a
+  count-domain view of the corrected forward/backward spectra (see `Counts
+  view`_ below); switching views redraws the same result and never
+  recomputes. A status strip below the plot leads with **PREVIEW** and the
+  selected run in bold — "7101 (selected run)" — followed, muted, by the
+  forward/backward group names, the binning, the reduced time window, and the
+  active deadtime/background corrections, e.g. "· F = Det 1 (0°) · B = Det 2
+  (90°) · bin 5 · 0.2 – 9.5 µs · Background: tail fit (late-time)"; in vector
+  mode it appends the previewed projection, e.g. "· P_z pair" — so the plot
+  can never be mistaken for a different run, pair, or binning than the one it
+  draws.
 * **Two-column settings** — the right pane is a full-width **pipeline strip**
   over two side-by-side columns, with the compare controls and the live preview
   pinned below both. The **Grouping and timing** column (left) holds the groups,
@@ -816,54 +827,126 @@ with that stage's soft tint.
 Comparing is driven from the **pipeline chips** and the **compare pager** —
 there are no per-section checkboxes. Clicking a stage's chip focuses that
 stage's compare, expands its correction card, and scrolls the card into view;
-clicking the focused chip again clears the focus. A compound
-**Compare vs raw (uncorrected)** checkbox sits in the pager row just above the
-pinned preview (so it is reachable from either column). One stage is focused at
-a time — that keeps the two-curve plot legible — and each stage can be focused
+clicking the focused chip again clears the focus. One stage is focused at a
+time — that keeps the two-curve plot legible — and each stage can be focused
 only while it has a before/after to show.
 
 While a stage's compare is focused, its correction card is accent-highlighted —
 soft accent header with an accent left edge — and the header's right side shows
 what the ghost is: "comparing: without deadtime", "comparing: without
-background", "comparing: α = 1 ghost", or "comparing: β = 1 ghost". (The
-compound raw compare belongs to
-no single card, so it lights no card; the pager label names it.)
+background", "comparing: α = 1", or "comparing: β = 1".
 
-In the preview itself the solid curve is always the full reduction, and a
-dimmer ghosted curve shows the asymmetry with the focused stage removed. The
-ghost is named by a small inline label at its rightmost visible sample —
-"without deadtime", "without background", "α = 1", "β = 1", or
-"raw (uncorrected)" for
-the compound view (no deadtime, no background, :math:`\alpha = 1`,
-:math:`\beta = 1`) — there is
-no legend, since the pager label and the highlighted card already name the
-comparison. The y-axis always follows the **as-reduced (solid) curve** alone:
-a ghost that sits far off-scale (an uncorrected FLAME run's ghost can reach
-:math:`\sim 10^7` %) never stretches the axis and never crushes the solid
-curve flat; the off-scale ghost's inline label is clamped just inside the axis
-edge on the side it exited, so the ghost is still named. The pager label's
-tooltip states the contract — "Comparing overlays one stage's before/after — the
-reduction always applies every stage": comparing never changes what Apply writes, and
-because the **solid curve is never degraded**, the residual baseline
-:math:`\langle A \rangle` readout (shown for the :math:`\alpha` compare) is always
-read off the fully-corrected reduction. Calibrating :math:`\alpha` auto-focuses
-its compare, so a fresh calibration shows the balancing effect immediately; the
-:math:`\alpha` and :math:`\beta` compares are not offered in vector mode, where
-the per-projection
-:math:`\alpha` table in the **Corrections** column owns the balance (and the
-scalar :math:`\beta` card is hidden entirely).
+In the preview itself the solid curve is always the full reduction — a line
+with a :math:`\pm\sigma` band above 400 drawn points, markers with error bars
+at or below it — and the ghost is drawn just beneath it, above the band, so
+where a correction's effect is small the two curves sit nearly coincident with
+the as-reduced curve on top.
 
-The **compare pager** — ``◀``/``▶`` arrow buttons flanking a muted label — sits
-directly above the pinned preview, below both columns, so it works regardless of
-which column is focused. It drives the same shared focus
-as the pipeline chips: each arrow steps through the
-configured corrections in pipeline order (deadtime, background, :math:`\alpha`,
-:math:`\beta`, raw), skipping any stage without a before/after to show. The label reads
-"Comparing: off" when nothing is focused, and otherwise names the stage and its
-position among the currently available stages, e.g. "Comparing: without
-background (1/3)" or "Comparing: vs raw (3/3)". Both arrows disable together
-when no correction is configured yet. The **Compare vs raw (uncorrected)**
-checkbox rides at the right end of the same row.
+One rule carries the colour, in both views: **colour is the correction, grey is
+without it.** While a stage is focused, the as-reduced curve and its
+:math:`\pm\sigma` band take that stage's identity colour — the same colour its
+chip and its card are wearing at that moment — and the ghost is drawn in grey;
+with nothing focused, the as-reduced curve is the plain accent blue.
+
+There is no legend: a fixed caption in the axes' top-left
+corner names both curves, one row each with a colour swatch in its curve's
+colour — "as reduced · α = 1.080" over, depending on the focused stage,
+"α = 1", "without deadtime", "without background", or "β = 1" — at a
+placement independent of the data, so an off-scale ghost is still named. For
+the :math:`\alpha` compare, the residual baseline is drawn rather than only
+quoted: a dashed line across the curve at :math:`\langle A \rangle`, in the
+same colour as the curve it describes, labelled
+"⟨A⟩ = −0.083 ± 0.006 % (residual baseline)". The y-axis always follows the
+**as-reduced (solid) curve** alone: a ghost that sits far off-scale (an
+uncorrected FLAME run's ghost can reach :math:`\sim 10^7` %) never stretches
+the axis and never crushes the solid curve flat. The pager label's tooltip
+states the contract — "Comparing overlays one stage's before/after — the
+reduction always applies every stage": comparing never changes what Apply
+writes, and because the **solid curve is never degraded**, :math:`\langle A
+\rangle` is always read off the fully-corrected reduction. Calibrating
+:math:`\alpha` auto-focuses its compare, so a fresh calibration shows the
+balancing effect immediately; the :math:`\alpha` and :math:`\beta` compares
+are not offered in vector mode, where the per-projection :math:`\alpha` table
+in the **Corrections** column owns the balance (and the scalar :math:`\beta`
+card is hidden entirely).
+
+The **compare pager** — ``◀``/``▶`` arrow buttons flanking a muted label —
+sits directly above the pinned preview, below both columns, beside the
+**Asymmetry | Counts** view toggle (see `Counts view`_ below), so it works
+regardless of which column is focused. It drives the same shared focus as the
+pipeline chips: each arrow steps through the configured corrections in
+pipeline order (deadtime, background, :math:`\alpha`, :math:`\beta`),
+skipping any stage without a before/after to show. The label reads
+"Comparing: off" when nothing is focused, and otherwise names the stage and
+its position among the currently available stages, e.g. "Comparing: without
+background (1/3)". Both arrows disable together when no correction is
+configured yet.
+
+Counts view
+-----------
+
+.. figure:: /_generated/screenshots/grouping_window_counts_view.png
+   :width: 80%
+   :align: center
+   :alt: The grouping window's Counts view, with the background compare
+      focused — the corrected forward/backward spectra in the background
+      stage's colour, the grey without-background ghost on top, and t0, the
+      good window and the subtracted background level marked.
+
+   The Counts view with the background compare focused: the corrected F/B
+   spectra (F solid, B lighter and dashed) in the background stage's colour, the grey
+   without-background ghost on top, and t0, the good window's edges, and the
+   subtracted background level ruled.
+
+The asymmetry view only ever shows the good window, which is where the count-domain
+settings' effects disappear rather than where they are visible: t0 is a
+sub-pixel shift of the curve's origin, a :math:`t_\mathrm{good}` offset is
+invisible once it is baked into where the curve starts, and the pre-t0 range a
+``range`` background reads is never drawn at all. The **Asymmetry | Counts**
+segmented control at the left of the pager row switches the pane to the count
+domain, where every one of those settings acts and can be seen directly — a
+redraw of the same reduction, never a recompute, so switching views is
+instant.
+
+Counts plots the *corrected* forward and backward group spectra — deadtime-corrected,
+grouped, background-subtracted, exactly as the reduction forms them — over the
+**full** histogram from bin 0, not just the good window, on a log₁₀ y-axis
+(a background-subtracted bin at or below zero has no logarithm and is
+drawn on the floor at 1 count). Colour follows the same rule as the Asymmetry
+view — colour is the correction, grey is without it — so here the line style
+names the group instead: the as-reduced F is a solid line and the as-reduced
+B a lighter, dashed line of the same colour — the accent colour, or the
+focused stage's colour while a compare is focused. A fixed caption in the
+top-left corner names both with matching swatches, e.g. "F: Det 1 (0°) · as
+reduced" over "B: Det 2 (90°) · as reduced".
+
+Four markers show what the asymmetry never does:
+
+* The pre-t0 region and the bins outside the good window are shaded — the
+  pre-t0 shading solid, the outside-window shading lighter — so the two
+  exclusions read apart where they overlap.
+* A dashed rule at t0 is labelled "t0 · bin 100 (from file)", or "(manual)" /
+  "(detected)" for the other two t0 modes.
+* A solid rule at the good window's first bin is labelled "good window:
+  t_good offset N bins".
+* A solid rule at the good window's last bin is labelled "last good bin N".
+
+For the three constant-level background modes — Fixed, Range, Tail fit — a
+dashed rule at the subtracted level is labelled "background level · F 7119.0
+/ B 7168.3 counts per bin (tail fit)" (or "(fixed)" / "(pre-t0 range)"); a
+reference-run background subtracts a spectrum rather than a level and draws
+no rule.
+
+The deadtime and background compares ghost their stage-removed spectra beneath the as-reduced pair
+in grey, from the same second corrected pass the
+Asymmetry view's ghost uses — the same F solid / B lighter-and-dashed pair,
+in grey, captioned "without deadtime" (or "without background"). :math:`\alpha` and :math:`\beta` act when the asymmetry is *formed*,
+not on the counts, so their compares draw no ghost here; the caption instead
+reads "α acts when the asymmetry is formed — see the Asymmetry view" (or the
+same for β), in the stage's colour — the colour the F/B spectra above it are
+wearing, so the row reads as a note about the curve :math:`\alpha` affects.
+The background level's rule and label stay in the background stage's colour
+whichever compare is focused, because they name that stage's own subtraction.
 
 PSI Grouping
 ------------
