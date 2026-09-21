@@ -19,10 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   7168.3 counts per bin (tail fit)`) — the count-domain settings finally have a
   picture, and switching views is a redraw, never a recompute. In both views the
   solid curve is now a line with a ±σ band above 400 drawn points (markers with
-  error bars below), and a stage's compare ghost is drawn *on top* of it in the
-  stage's identity colour and named by a fixed corner caption (`as reduced ·
-  α = 1.080` over `α = 1 (ghost)`), rather than hidden behind the solid curve
-  and named by a label that could overlap the data. The residual baseline for
+  error bars below), and a stage's compare ghost is drawn *on top* of it and
+  named by a fixed corner caption (`as reduced · α = 1.080` over
+  `α = 1 (ghost)`), rather than hidden behind the solid curve and named by a
+  label that could overlap the data. Colour says which curve has the
+  correction: while a stage's compare is focused, the as-reduced curve takes
+  that stage's identity colour — the one its pipeline chip and correction card
+  wear — and the ghost is grey. The residual baseline for
   the α compare, `⟨A⟩`, is now drawn as a dashed line on the plot rather than
   only quoted in the status strip, which itself leads with `PREVIEW` and the
   selected run, then the forward/backward groups, binning, window and active

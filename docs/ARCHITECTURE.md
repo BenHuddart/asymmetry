@@ -587,8 +587,11 @@ checkbox are both retired — `preview_pane.py` module docstring, D6 of
 `docs/plans/grouping-preview.md`); focusing drives `_PreviewRequest.compare_stage`
 (`"deadtime"`/`"background"`/`"alpha"`/`"beta"`), which `preview_pane._run_reduction`
 renders as a **ghost** of that stage removed, drawn *on top* of the solid
-full-pipeline curve in the stage's identity colour (`preview_pane._GHOST_COLORS`) —
-the solid is never degraded, so the α compare's residual-⟨A⟩ acceptance number is
+full-pipeline curve. Colour encodes "with this correction": while a stage is
+focused the *solid* wears its identity colour (`preview_pane._STAGE_COLORS`, via
+the one `_solid_color` seam) and the ghost is always grey
+(`preview_pane._GHOST_COLOR`) — D11 of `docs/plans/grouping-preview.md`.
+The solid is never degraded, so the α compare's residual-⟨A⟩ acceptance number is
 always read off the fully-corrected reduction, and the preview's y-axis follows
 the solid alone (a fixed top-left caption names both curves, so an off-scale
 ghost is still named without a legend). One reduction now feeds two views —

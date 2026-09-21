@@ -27,9 +27,11 @@ canonical EMU that is the P_z axis).
 
 Drawing contract (see :meth:`GroupingPreviewPane._draw`): the solid curve is
 always the full configured reduction and alone sets the y-limits; a compare
-ghost is drawn *on top* in the focused stage's identity colour, and a fixed
-caption in the axes' top-left names both curves (no legend — the pager label
-and the focused correction card name the same comparison).
+ghost is drawn *on top* of it, and a fixed caption in the axes' top-left names
+both curves (no legend — the pager label and the focused correction card name
+the same comparison). Colour means "with this correction": while a stage is
+focused the *solid* wears that stage's identity colour and the ghost is grey
+(D11 of ``docs/plans/grouping-preview.md``).
 
 One reduction serves two views (D7/D8 of ``docs/plans/grouping-preview.md``):
 the asymmetry over the good window, and the count-domain view of the corrected
@@ -91,15 +93,30 @@ _LINE_MODE_POINTS = 400
 #: Fixed height of the preview section so it never fights the form for space.
 _PANE_HEIGHT = 300
 
-#: Ghost identity colour per compare stage — the same colour the stage's
-#: pipeline chip outline and correction-card stripe wear, so chip, card and
-#: ghost read as one thing.
-_GHOST_COLORS: dict[str, str] = {
+#: Identity colour per compare stage — the same colour the stage's pipeline chip
+#: outline and correction-card stripe wear. It names what the stage *produced*,
+#: so while a stage is focused the as-reduced curve wears it and chip, card and
+#: curve read as one thing.
+_STAGE_COLORS: dict[str, str] = {
     "deadtime": tokens.STAGE_DEADTIME,
     "background": tokens.STAGE_BACKGROUND,
     "alpha": tokens.STAGE_ALPHA,
     "beta": tokens.STAGE_BETA,
 }
+
+#: The ghost — the curve *without* the focused correction — is always grey, in
+#: both views. Colour is the correction, grey is its absence.
+_GHOST_COLOR = tokens.TEXT_MUTED
+
+#: Counts view: colour is already spent on with/without the correction, so the
+#: backward group is told from the forward one by its dash, in both pairs.
+_BACKWARD_DASH = (0, (5, 2))
+
+
+def _solid_color(compare_stage: str | None) -> str:
+    """Colour of the as-reduced curve: the focused stage's, or plain accent."""
+    return tokens.ACCENT if compare_stage is None else _STAGE_COLORS[compare_stage]
+
 
 #: What each compare's ghost removes. The plot caption, the pager label and the
 #: focused card's indicator all word the same comparison, so it is named once
@@ -626,29 +643,30 @@ class GroupingPreviewPane(QWidget):
                 color=tokens.TEXT_MUTED,
             )
         else:
-            self._draw_solid(result)
+            solid_color = _solid_color(result.compare_stage)
+            self._draw_solid(result, solid_color)
             self._axes.axhline(0.0, color=tokens.TEXT_MUTED, linewidth=0.5, alpha=0.5)
-            # The ghost sits ON TOP of the solid (zorder 4 over 3) in its stage's
-            # identity colour: a correction whose effect is small leaves the two
-            # curves nearly coincident, and underneath it would be invisible.
+            # The ghost sits ON TOP of the solid (zorder 4 over 3): a correction
+            # whose effect is small leaves the two curves nearly coincident, and
+            # underneath it would be invisible.
             if result.baseline is not None:
                 self._axes.plot(
                     result.time,
                     result.baseline,
-                    color=_GHOST_COLORS[result.compare_stage],
+                    color=_GHOST_COLOR,
                     linewidth=1.4,
                     alpha=0.9,
                     zorder=4,
                 )
             if result.compare_stage == "alpha" and result.centre is not None:
-                self._draw_residual_baseline(*result.centre)
+                self._draw_residual_baseline(*result.centre, color=solid_color)
             reduced = f"as reduced · α = {result.alpha:.3f}"
             if abs(result.beta - 1.0) > 1e-12:
                 reduced += f" · β = {result.beta:.3f}"
-            rows = [(tokens.ACCENT, reduced)]
+            rows = [(solid_color, reduced)]
             if result.baseline is not None:
                 stage = result.compare_stage
-                rows.append((_GHOST_COLORS[stage], f"{COMPARE_STAGE_LABELS[stage]} (ghost)"))
+                rows.append((_GHOST_COLOR, f"{COMPARE_STAGE_LABELS[stage]} (ghost)"))
             caption_rows = self._draw_caption(rows)
             # Solid-only autoscale, set explicitly AFTER plotting so neither the
             # ghost nor matplotlib's own autoscale can widen the range — unless
@@ -680,6 +698,10 @@ class GroupingPreviewPane(QWidget):
         off both spectra. The spectra span decades, so the axis is log₁₀; a
         background-subtracted bin at or below zero has no logarithm and is drawn
         on the floor at 1.
+
+        Colour encodes *with* the focused correction and grey its absence (D11);
+        line style encodes the group — F solid, B dashed — so both codings are
+        readable at once.
         """
         counts = result.counts
         if counts.forward.size == 0:
@@ -698,22 +720,23 @@ class GroupingPreviewPane(QWidget):
         forward = np.maximum(counts.forward, 1.0)
         backward = np.maximum(counts.backward, 1.0)
 
-        rows = [
-            (tokens.ACCENT, f"F: {result.facts.forward_name} · as reduced"),
-            (tokens.PLOT_AXIS, f"B: {result.facts.backward_name} · as reduced"),
-        ]
         stage = result.compare_stage
+        solid_color = _solid_color(stage)
+        rows = [
+            (solid_color, f"F: {result.facts.forward_name} · as reduced"),
+            (solid_color, f"B: {result.facts.backward_name} · as reduced (dashed)"),
+        ]
         if counts.ghost_forward is not None:
             rows.append(
                 (
-                    _GHOST_COLORS[stage],
+                    _GHOST_COLOR,
                     f"{COMPARE_STAGE_LABELS[stage]} (ghost) · F solid, B dashed",
                 )
             )
         elif stage in _ASYMMETRY_STAGE_SYMBOLS:
             rows.append(
                 (
-                    _GHOST_COLORS[stage],
+                    solid_color,
                     f"{_ASYMMETRY_STAGE_SYMBOLS[stage]} acts when the asymmetry is "
                     "formed — see the Asymmetry view",
                 )
@@ -742,14 +765,15 @@ class GroupingPreviewPane(QWidget):
             ylimits = (10.0 ** decades[0], 10.0 ** decades[1])
 
         self._draw_counts_regions(counts, result.facts.t0_mode_label, xlimits)
-        self._axes.plot(time, forward, color=tokens.ACCENT, linewidth=1.2, zorder=3)
-        self._axes.plot(time, backward, color=tokens.PLOT_AXIS, linewidth=1.2, alpha=0.75, zorder=3)
+        self._axes.plot(time, forward, color=solid_color, linewidth=1.2, zorder=3)
+        self._axes.plot(
+            time, backward, color=solid_color, linewidth=1.2, linestyle=_BACKWARD_DASH, zorder=3
+        )
         if counts.ghost_forward is not None:
-            ghost_color = _GHOST_COLORS[stage]
             self._axes.plot(
                 time,
                 np.maximum(counts.ghost_forward, 1.0),
-                color=ghost_color,
+                color=_GHOST_COLOR,
                 linewidth=1.3,
                 alpha=0.9,
                 zorder=4,
@@ -757,10 +781,10 @@ class GroupingPreviewPane(QWidget):
             self._axes.plot(
                 time,
                 np.maximum(counts.ghost_backward, 1.0),
-                color=ghost_color,
+                color=_GHOST_COLOR,
                 linewidth=1.3,
                 alpha=0.9,
-                linestyle=(0, (5, 2)),
+                linestyle=_BACKWARD_DASH,
                 zorder=4,
             )
         level = counts.background_level
@@ -875,17 +899,15 @@ class GroupingPreviewPane(QWidget):
             bbox=dict(_TEXT_BBOX),
         )
 
-    def _draw_solid(self, result: _PreviewResult) -> None:
+    def _draw_solid(self, result: _PreviewResult, color: str) -> None:
         """The "as reduced" curve: a line with a ±σ band, or markers when sparse."""
         if result.time.size > _LINE_MODE_POINTS:
-            self._axes.plot(
-                result.time, result.asymmetry, color=tokens.ACCENT, linewidth=1.2, zorder=3
-            )
+            self._axes.plot(result.time, result.asymmetry, color=color, linewidth=1.2, zorder=3)
             self._axes.fill_between(
                 result.time,
                 result.asymmetry - result.error,
                 result.asymmetry + result.error,
-                color=tokens.ACCENT,
+                color=color,
                 alpha=0.18,
                 linewidth=0,
                 zorder=2,
@@ -900,16 +922,14 @@ class GroupingPreviewPane(QWidget):
             linewidth=0.0,
             elinewidth=0.5,
             capsize=0.0,
-            color=tokens.ACCENT,
+            color=color,
             ecolor=tokens.TEXT_MUTED,
             zorder=3,
         )
 
-    def _draw_residual_baseline(self, mean: float, err: float) -> None:
+    def _draw_residual_baseline(self, mean: float, err: float, *, color: str) -> None:
         """⟨A⟩ drawn where it lives: a dashed line across the curve it describes."""
-        self._axes.axhline(
-            mean, color=tokens.STAGE_ALPHA, linewidth=1.0, linestyle=(0, (4, 3)), zorder=4
-        )
+        self._axes.axhline(mean, color=color, linewidth=1.0, linestyle=(0, (4, 3)), zorder=4)
         self._axes.text(
             0.99,
             mean,
@@ -918,7 +938,7 @@ class GroupingPreviewPane(QWidget):
             ha="right",
             va="bottom",
             fontsize=7,
-            color=tokens.STAGE_ALPHA,
+            color=color,
             # Above the ghost (zorder 4), or the ghost paints over the backing.
             zorder=5,
             bbox=dict(_TEXT_BBOX),

@@ -65,7 +65,9 @@ Decisions taken with Ben on 2026-09-21 over the mockup rounds.
 - **D3 — the ghost is drawn on top, in the stage's identity colour.** 1.4 px,
   90 % opacity, `tokens.STAGE_DEADTIME / STAGE_BACKGROUND / STAGE_ALPHA /
   STAGE_BETA` — the same colour the stage's chip outline and card stripe
-  already wear, so chip, card and ghost read as one thing. A fixed caption in
+  already wear, so chip, card and ghost read as one thing. (**Superseded in
+  part by D11**: the stage colour moved to the *solid* curve and the ghost is
+  now grey. Everything else here stands.) A fixed caption in
   the axes' top-left corner names the curves, one row each with a colour
   swatch: `as reduced · α = 1.080` and `α = 1 (ghost)` (or `without deadtime
   (ghost)`, `without background (ghost)`, `β = 1 (ghost)`). The inline
@@ -126,6 +128,27 @@ Decisions taken with Ben on 2026-09-21 over the mockup rounds.
   controls to the chips alone (the pager row stays as it is, minus the
   checkbox); a cross-request reduction cache keyed on the grouping digest so
   paging through compares is instant; a converging build-up stepper.
+- **D11 — the as-reduced curve carries the stage colour; the ghost is always
+  grey.** (Ben, 2026-09-21, after the PR #332 review.) D3's ghost colours did
+  not contrast with the accent-blue solid — `STAGE_BETA`'s steel blue is nearly
+  the accent, `STAGE_BACKGROUND`'s violet is close — so the pair read as one
+  curve. The rule is now **colour is the correction, grey is without it**: with
+  a stage focused, the solid curve, its ±σ band, the α compare's ⟨A⟩ line and
+  its text, and the "as reduced" caption row all take
+  `_STAGE_COLORS[stage]`; unfocused they are `ACCENT`; the ghost is always
+  `TEXT_MUTED` (`_GHOST_COLOR`), still drawn on top at the same width and
+  opacity. One function, `_solid_color(compare_stage)`, makes every such
+  decision, and a focused stage with nothing to remove still colours the solid
+  (the chip and card are tinted then too). In Counts, colour is spent on
+  with/without, so the *group* is the line style: F solid, B dashed for both
+  the as-reduced pair and the ghost pair, captioned `F: {name} · as reduced`
+  and `B: {name} · as reduced (dashed)`. The background level's rule stays
+  `STAGE_BACKGROUND` — it names that stage regardless of focus — and the
+  t0/window rules are unchanged. Rejected: a single orange ghost token (a
+  fifth colour with no meaning in the pipeline strip), re-tinting the stage
+  tokens for contrast (they are shared with the chips and cards), and a grey
+  solid with a coloured ghost (it makes the reduction the user is configuring
+  the unimportant curve).
 
 ## Code map (verified 2026-09-21)
 

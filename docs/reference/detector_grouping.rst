@@ -838,16 +838,25 @@ background", "comparing: α = 1", or "comparing: β = 1".
 
 In the preview itself the solid curve is always the full reduction — a line
 with a :math:`\pm\sigma` band above 400 drawn points, markers with error bars
-at or below it — and a brighter ghost is drawn *on top* of it, in the focused
-stage's identity colour, so a correction whose effect is small still shows as
-a second curve nearly coincident with the first rather than disappearing
-underneath it. There is no legend: a fixed caption in the axes' top-left
-corner names both curves, one row each with a colour swatch — "as reduced ·
-α = 1.080" over, depending on the focused stage, "α = 1 (ghost)", "without
-deadtime (ghost)", "without background (ghost)", or "β = 1 (ghost)" — at a
+at or below it — and the ghost is drawn *on top* of it, so a correction whose
+effect is small still shows as a second curve nearly coincident with the first
+rather than disappearing underneath it.
+
+One rule carries the colour, in both views: **colour is the correction, grey is
+without it.** While a stage is focused, the as-reduced curve and its
+:math:`\pm\sigma` band take that stage's identity colour — the same colour its
+chip and its card are wearing at that moment — and the ghost is drawn in grey;
+with nothing focused, the as-reduced curve is the plain accent blue.
+
+There is no legend: a fixed caption in the axes' top-left
+corner names both curves, one row each with a colour swatch in its curve's
+colour — "as reduced · α = 1.080" over, depending on the focused stage,
+"α = 1 (ghost)", "without deadtime (ghost)", "without background (ghost)", or
+"β = 1 (ghost)" — at a
 placement independent of the data, so an off-scale ghost is still named. For
 the :math:`\alpha` compare, the residual baseline is drawn rather than only
-quoted: a dashed line across the curve at :math:`\langle A \rangle`, labelled
+quoted: a dashed line across the curve at :math:`\langle A \rangle`, in the
+same colour as the curve it describes, labelled
 "⟨A⟩ = −0.083 ± 0.006 % (residual baseline)". The y-axis always follows the
 **as-reduced (solid) curve** alone: a ghost that sits far off-scale (an
 uncorrected FLAME run's ghost can reach :math:`\sim 10^7` %) never stretches
@@ -881,14 +890,14 @@ Counts view
    :width: 80%
    :align: center
    :alt: The grouping window's Counts view, with the background compare
-      focused — the corrected forward/backward spectra, the without-background
-      ghost on top, and t0, the good window and the subtracted background
-      level marked.
+      focused — the corrected forward/backward spectra in the background
+      stage's colour, the grey without-background ghost on top, and t0, the
+      good window and the subtracted background level marked.
 
    The Counts view with the background compare focused: the corrected F/B
-   spectra (solid) and the without-background ghost (F solid, B dashed) on
-   top, with t0, the good window's edges, and the subtracted background level
-   ruled.
+   spectra (F solid, B dashed) in the background stage's colour, the grey
+   without-background ghost on top, and t0, the good window's edges, and the
+   subtracted background level ruled.
 
 The asymmetry view only ever shows the good window, which is where the count-domain
 settings' effects disappear rather than where they are visible: t0 is a
@@ -904,9 +913,13 @@ Counts plots the *corrected* forward and backward group spectra — deadtime-cor
 grouped, background-subtracted, exactly as the reduction forms them — over the
 **full** histogram from bin 0, not just the good window, on a log₁₀ y-axis
 (a background-subtracted bin at or below zero has no logarithm and is
-drawn on the floor at 1 count). F is drawn in the accent colour, B in the axis
-colour at reduced opacity, and a fixed caption in the top-left corner names
-both, e.g. "F: Det 1 (0°) · as reduced" over "B: Det 2 (90°) · as reduced".
+drawn on the floor at 1 count). Colour follows the same rule as the Asymmetry
+view — colour is the correction, grey is without it — so here the line style
+names the group instead: the as-reduced F is **solid** and the as-reduced B
+**dashed**, both in the accent colour, or both in the focused stage's colour
+while a compare is focused. A fixed caption in the top-left corner names
+both, e.g. "F: Det 1 (0°) · as reduced" over "B: Det 2 (90°) · as reduced
+(dashed)".
 
 Four markers show what the asymmetry never does:
 
@@ -925,14 +938,17 @@ dashed rule at the subtracted level is labelled "background level · F 7119.0
 reference-run background subtracts a spectrum rather than a level and draws
 no rule.
 
-The deadtime and background compares ghost their stage-removed spectra on top,
-in the stage's identity colour, from the same second corrected pass the
+The deadtime and background compares ghost their stage-removed spectra on top
+in grey, from the same second corrected pass the
 Asymmetry view's ghost uses — F solid, B dashed, captioned "without deadtime
 (ghost) · F solid, B dashed" (or "without background (ghost) · F solid, B
 dashed"). :math:`\alpha` and :math:`\beta` act when the asymmetry is *formed*,
 not on the counts, so their compares draw no ghost here; the caption instead
 reads "α acts when the asymmetry is formed — see the Asymmetry view" (or the
-same for β).
+same for β), in the stage's colour — the colour the F/B spectra above it are
+wearing, so the row reads as a note about the curve :math:`\alpha` affects.
+The background level's rule and label stay in the background stage's colour
+whichever compare is focused, because they name that stage's own subtraction.
 
 PSI Grouping
 ------------

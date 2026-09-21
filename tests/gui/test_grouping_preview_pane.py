@@ -139,6 +139,16 @@ def _facts(**overrides) -> PreviewFacts:
     return PreviewFacts(**fields)
 
 
+#: The identity colour each compare stage's chip and card wear — spelled out
+#: here rather than imported, so a token swap in the pane has to be deliberate.
+_STAGE_TOKENS = {
+    "deadtime": tokens.STAGE_DEADTIME,
+    "background": tokens.STAGE_BACKGROUND,
+    "alpha": tokens.STAGE_ALPHA,
+    "beta": tokens.STAGE_BETA,
+}
+
+
 # --------------------------------------------------------------------------- #
 # Standalone pane behaviour
 # --------------------------------------------------------------------------- #
@@ -153,14 +163,18 @@ def _last_curve(pane: GroupingPreviewPane) -> np.ndarray:
     return np.asarray(lines[0].get_ydata(), dtype=float)
 
 
-def _ghost_line(pane: GroupingPreviewPane):
-    """The compare ghost: the long curve in a stage colour (not a caption swatch)."""
-    stage_colors = set(preview_pane_module._GHOST_COLORS.values())
-    ghosts = [
+def _grey_curves(pane: GroupingPreviewPane) -> list:
+    """The long grey curves: compare ghosts (never a caption swatch or a rule)."""
+    return [
         line
         for line in pane._axes.get_lines()
-        if line.get_color() in stage_colors and len(line.get_xdata()) > 2
+        if line.get_color() == preview_pane_module._GHOST_COLOR and len(line.get_xdata()) > 2
     ]
+
+
+def _ghost_line(pane: GroupingPreviewPane):
+    """The compare ghost: the one long grey curve — colour is the correction."""
+    ghosts = _grey_curves(pane)
     assert len(ghosts) == 1, f"expected exactly one ghost curve, saw {len(ghosts)}"
     return ghosts[0]
 
@@ -845,6 +859,13 @@ def _caption_headroom(rows: int) -> float:
     return preview_pane_module._CAPTION_ROW_DY * rows + preview_pane_module._CAPTION_HEADROOM_PAD
 
 
+def _bands(pane: GroupingPreviewPane) -> list:
+    """The ±σ fill_between bands currently on the axes."""
+    from matplotlib.collections import PolyCollection
+
+    return [c for c in pane._axes.collections if isinstance(c, PolyCollection)]
+
+
 def test_ghost_never_influences_y_autoscale(qapp: QApplication) -> None:
     """A wildly off-scale ghost must not expand the y-limits.
 
@@ -916,28 +937,81 @@ def test_ghost_is_drawn_above_the_solid(qapp: QApplication) -> None:
         ("beta", "β = 1"),
     ],
 )
-def test_ghost_and_caption_wear_the_stage_identity_colour(
+def test_focused_stage_colours_the_solid_and_greys_the_ghost(
     qapp: QApplication, stage: str, label: str
 ) -> None:
-    """Ghost + caption row carry the stage token the chip and card already wear."""
-    expected = {
-        "deadtime": tokens.STAGE_DEADTIME,
-        "background": tokens.STAGE_BACKGROUND,
-        "alpha": tokens.STAGE_ALPHA,
-        "beta": tokens.STAGE_BETA,
-    }[stage]
-    pane = GroupingPreviewPane()
-    _draw_result(pane, baseline=np.full(50, 0.5), compare_stage=stage, alpha=1.08)
+    """D11: colour is the correction, grey is its absence.
 
-    assert _ghost_line(pane).get_color() == expected
+    While a stage is focused the *as-reduced* curve (and its ±σ band, and the
+    caption row naming it) wears the stage token its chip and card already wear;
+    the ghost — the curve without that correction — is always ``TEXT_MUTED``.
+    """
+    from matplotlib.colors import to_hex
+
+    expected = _STAGE_TOKENS[stage]
+    pane = GroupingPreviewPane()
+    n = preview_pane_module._LINE_MODE_POINTS + 1  # line + ±σ band mode
+    t = np.linspace(0.0, 1.0, n)
+    _draw_result(
+        pane,
+        time=t,
+        asymmetry=np.sin(t),
+        error=np.full(n, 0.1),
+        baseline=np.full(n, 0.5),
+        compare_stage=stage,
+        alpha=1.08,
+    )
+
+    assert pane._axes.get_lines()[0].get_color() == expected
+    bands = _bands(pane)
+    assert len(bands) == 1
+    assert to_hex(bands[0].get_facecolor()[0]) == expected
+    assert _ghost_line(pane).get_color() == preview_pane_module._GHOST_COLOR
+
     texts = {str(text.get_text()): text for text in pane._axes.texts}
     assert "as reduced · α = 1.080" in texts
-    assert texts["as reduced · α = 1.080"].get_color() == tokens.ACCENT
+    assert texts["as reduced · α = 1.080"].get_color() == expected
     assert f"{label} (ghost)" in texts
-    assert texts[f"{label} (ghost)"].get_color() == expected
+    assert texts[f"{label} (ghost)"].get_color() == preview_pane_module._GHOST_COLOR
     # Backed so the rows stay readable over whatever the curve does behind them.
     assert texts["as reduced · α = 1.080"].get_bbox_patch() is not None
     assert texts[f"{label} (ghost)"].get_bbox_patch() is not None
+    pane.shutdown()
+
+
+def test_unfocused_solid_is_the_plain_accent(qapp: QApplication) -> None:
+    """With no compare focused there is no correction to name — the solid is ACCENT."""
+    from matplotlib.colors import to_hex
+
+    pane = GroupingPreviewPane()
+    n = preview_pane_module._LINE_MODE_POINTS + 1
+    t = np.linspace(0.0, 1.0, n)
+    _draw_result(pane, time=t, asymmetry=np.sin(t), error=np.full(n, 0.1), alpha=1.08)
+
+    assert pane._axes.get_lines()[0].get_color() == tokens.ACCENT
+    assert to_hex(_bands(pane)[0].get_facecolor()[0]) == tokens.ACCENT
+    texts = {str(text.get_text()): text for text in pane._axes.texts}
+    assert texts["as reduced · α = 1.080"].get_color() == tokens.ACCENT
+    assert _grey_curves(pane) == []
+    pane.shutdown()
+
+
+def test_focused_stage_with_nothing_to_remove_still_colours_the_solid(
+    qapp: QApplication,
+) -> None:
+    """α = 1 exactly draws no ghost, but the chip and card are tinted — so is the solid."""
+    pane = GroupingPreviewPane()
+    n = preview_pane_module._LINE_MODE_POINTS + 1
+    t = np.linspace(0.0, 1.0, n)
+    _draw_result(
+        pane,
+        time=t,
+        asymmetry=np.sin(t),
+        error=np.full(n, 0.1),
+        compare_stage="alpha",  # baseline stays None: nothing to remove
+    )
+    assert pane._axes.get_lines()[0].get_color() == tokens.STAGE_ALPHA
+    assert _grey_curves(pane) == []
     pane.shutdown()
 
 
@@ -966,6 +1040,9 @@ def test_residual_baseline_is_a_line_on_the_alpha_compare_only(qapp: QApplicatio
     label = "⟨A⟩ = -0.610 ± 0.020 % (residual baseline)"
     texts = {str(text.get_text()): text for text in pane._axes.texts}
     assert label in texts
+    # The α compare's line and text carry the same colour as the solid they
+    # describe — the focused stage's (D11).
+    assert texts[label].get_color() == tokens.STAGE_ALPHA
     assert texts[label].get_bbox_patch() is not None
 
     _draw_result(pane, baseline=np.full(50, 0.5), compare_stage="background", centre=(-0.61, 0.02))
@@ -1078,14 +1155,15 @@ def _horizontal_rules(pane: GroupingPreviewPane) -> list[float]:
     ]
 
 
-def _counts_curve(pane: GroupingPreviewPane, color: str) -> np.ndarray:
-    """The y-data of the counts curve drawn in *color* (the group spectra)."""
+def _counts_curve(pane: GroupingPreviewPane, color: str, *, dashed: bool = False) -> np.ndarray:
+    """The y-data of one group spectrum: *color* picks with/without, the dash picks F or B."""
+    style = "--" if dashed else "-"
     curves = [
         line
         for line in pane._axes.get_lines()
-        if line.get_color() == color and len(line.get_xdata()) > 2
+        if line.get_color() == color and len(line.get_xdata()) > 2 and line.get_linestyle() == style
     ]
-    assert len(curves) == 1, f"expected one {color} curve, saw {len(curves)}"
+    assert len(curves) == 1, f"expected one {style} {color} curve, saw {len(curves)}"
     return np.asarray(curves[0].get_ydata(), dtype=float)
 
 
@@ -1283,13 +1361,90 @@ def test_counts_caption_names_the_groups_and_the_compare(qapp: QApplication) -> 
         )
         texts = _axes_texts(pane)
         assert "F: Det 1 · as reduced" in texts
-        assert "B: Det 2 · as reduced" in texts
+        assert "B: Det 2 · as reduced (dashed)" in texts
         assert "without background (ghost) · F solid, B dashed" in texts
 
         _draw_result(pane, compare_stage="alpha", centre=(-0.61, 0.02))
         texts = _axes_texts(pane)
         assert "α acts when the asymmetry is formed — see the Asymmetry view" in texts
         assert not any("(ghost)" in text for text in texts)
+    finally:
+        pane.shutdown()
+
+
+@pytest.mark.parametrize("stage", [None, "deadtime", "background"])
+def test_counts_colour_is_the_correction_and_the_dash_is_the_group(
+    qapp: QApplication, stage: str | None
+) -> None:
+    """D11 in the count domain: colour = with/without, line style = F or B.
+
+    Both as-reduced spectra share one colour — ACCENT unfocused, the focused
+    stage's token otherwise — and are told apart by F solid / B dashed; the
+    ghost pair is grey in the same two styles.
+    """
+    pane = GroupingPreviewPane()
+    try:
+        pane.set_view("counts")
+        ghosts = (
+            {}
+            if stage is None
+            else {
+                "ghost_forward": np.linspace(1100.0, 110.0, 10),
+                "ghost_backward": np.linspace(900.0, 90.0, 10),
+            }
+        )
+        counts = _counts(**ghosts)
+        expected = tokens.ACCENT if stage is None else _STAGE_TOKENS[stage]
+        _draw_result(pane, counts=counts, compare_stage=stage)
+
+        np.testing.assert_allclose(_counts_curve(pane, expected), counts.forward)
+        np.testing.assert_allclose(_counts_curve(pane, expected, dashed=True), counts.backward)
+        grey = preview_pane_module._GHOST_COLOR
+        if stage is None:
+            assert _grey_curves(pane) == []  # no compare: nothing to ghost
+        else:
+            np.testing.assert_allclose(_counts_curve(pane, grey), counts.ghost_forward)
+            np.testing.assert_allclose(
+                _counts_curve(pane, grey, dashed=True), counts.ghost_backward
+            )
+
+        texts = {str(text.get_text()): text for text in pane._axes.texts}
+        assert texts["F: Det 1 · as reduced"].get_color() == expected
+        assert texts["B: Det 2 · as reduced (dashed)"].get_color() == expected
+        if stage is not None:
+            row = f"{preview_pane_module.COMPARE_STAGE_LABELS[stage]} (ghost) · F solid, B dashed"
+            assert texts[row].get_color() == grey
+    finally:
+        pane.shutdown()
+
+
+def test_counts_asymmetry_stage_row_wears_the_stage_colour(qapp: QApplication) -> None:
+    """α/β leave the spectra alone, so their row names the curve α *does* affect."""
+    pane = GroupingPreviewPane()
+    try:
+        pane.set_view("counts")
+        _draw_result(pane, compare_stage="alpha", centre=(-0.61, 0.02))
+        texts = {str(text.get_text()): text for text in pane._axes.texts}
+        row = "α acts when the asymmetry is formed — see the Asymmetry view"
+        assert texts[row].get_color() == tokens.STAGE_ALPHA
+        assert texts["F: Det 1 · as reduced"].get_color() == tokens.STAGE_ALPHA
+    finally:
+        pane.shutdown()
+
+
+def test_counts_background_level_rule_names_the_background_stage(qapp: QApplication) -> None:
+    """The level rule is the background stage's, whatever compare is focused."""
+    pane = GroupingPreviewPane()
+    try:
+        pane.set_view("counts")
+        _draw_result(
+            pane,
+            counts=_counts(background_level=(30.0, 25.0), background_mode="tail_fit"),
+            compare_stage="deadtime",
+        )
+        label = "background level · F 30.0 / B 25.0 counts per bin (tail fit)"
+        texts = {str(text.get_text()): text for text in pane._axes.texts}
+        assert texts[label].get_color() == tokens.STAGE_BACKGROUND
     finally:
         pane.shutdown()
 
