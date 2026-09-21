@@ -6,6 +6,28 @@ subsystems or days.
 
 ## Active
 
+### Good window as a profile policy: t_good offset and last good bin that persist
+
+Status: implemented 2026-09-21 on `feat/good-window-policy`, PR to follow;
+landed in three phased subagent steps (core policy and resolver, GUI
+selector and per-run apply, docs) with a lead review gate after each. Full
+decision log (D1–D9), verified code map and per-phase briefs in
+[plans/good-window-policy.md](plans/good-window-policy.md). Follow-up to
+[t0-determination](plans/t0-determination.md), whose deferred note is the
+origin of this work.
+
+The good window (`t_good Offset` and `Last Good Bin`) becomes a profile
+policy — `GoodWindowPolicy(mode, first_offset_bins, last_offset_bins)`
+beside `T0Policy` — instead of a per-run fact the resolver silently
+recomputed from each run's good-bin tables on every resolve, which is why a
+typed offset reverted on profile reassignment, reopening the grouping
+window, or a project reopen. A `From file`/`Manual` selector on the t_good
+row (mirroring the t0 row) gates both spins; Manual stores both ends as
+signed bin offsets from each run's own effective t0, so one profile gives
+every run the same window relative to its own t0 and the window rides a
+Manual or Auto-detect t0 shift with it. The default mode emits nothing and
+resolves bit-identically to before, so no schema bump is needed.
+
 ### Joint fit: several series, different models, shared parameters
 
 Status: implemented 2026-09-18 on `feat/joint-fit`, PR open; landed as
