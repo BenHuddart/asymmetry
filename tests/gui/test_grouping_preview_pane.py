@@ -45,6 +45,7 @@ from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 from asymmetry.gui.windows.grouping.preview_pane import (
     _MAX_PREVIEW_POINTS,
     GroupingPreviewPane,
+    PreviewFacts,
     _decimate_for_preview,
 )
 
@@ -122,18 +123,42 @@ def _histogram_dataset(
     )
 
 
+def _facts(**overrides) -> PreviewFacts:
+    """Status-strip facts for a request (the dialog builds the real ones)."""
+    fields: dict = {
+        "run_label": "5001",
+        "forward_name": "Det 1",
+        "backward_name": "Det 2",
+        "bunch": 1,
+    }
+    fields.update(overrides)
+    return PreviewFacts(**fields)
+
+
 # --------------------------------------------------------------------------- #
 # Standalone pane behaviour
 # --------------------------------------------------------------------------- #
 
 
 def _last_curve(pane: GroupingPreviewPane) -> np.ndarray:
-    """Return the y-data of the errorbar the pane last drew."""
+    """Return the y-data of the solid curve the pane last drew."""
     axes = pane._axes
     assert axes is not None
     lines = axes.get_lines()
     assert lines, "expected a plotted curve"
     return np.asarray(lines[0].get_ydata(), dtype=float)
+
+
+def _ghost_line(pane: GroupingPreviewPane):
+    """The compare ghost: the long curve in a stage colour (not a caption swatch)."""
+    stage_colors = set(preview_pane_module._GHOST_COLORS.values())
+    ghosts = [
+        line
+        for line in pane._axes.get_lines()
+        if line.get_color() in stage_colors and len(line.get_xdata()) > 2
+    ]
+    assert len(ghosts) == 1, f"expected exactly one ghost curve, saw {len(ghosts)}"
+    return ghosts[0]
 
 
 def test_pane_populates_for_synthetic_run(qapp: QApplication) -> None:
@@ -142,12 +167,13 @@ def test_pane_populates_for_synthetic_run(qapp: QApplication) -> None:
     pane.request_preview(
         histograms=dataset.run.histograms,
         grouping=dataset.run.grouping,
-        run_number=int(dataset.run_number),
+        facts=_facts(),
     )
     pane.flush()
     _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
     assert pane.isVisible()
-    assert "Preview: run 5001" in pane._status.text()
+    assert "PREVIEW" in pane._status.text()
+    assert "5001 (selected run)" in pane._status.text()
     curve = _last_curve(pane)
     assert curve.size > 0 and np.all(np.isfinite(curve))
     pane.shutdown()
@@ -159,14 +185,14 @@ def test_alpha_change_visibly_changes_curve(qapp: QApplication) -> None:
 
     grouping_a = dict(dataset.run.grouping)
     grouping_a["alpha"] = 1.0
-    pane.request_preview(histograms=dataset.run.histograms, grouping=grouping_a, run_number=5001)
+    pane.request_preview(histograms=dataset.run.histograms, grouping=grouping_a, facts=_facts())
     pane.flush()
     _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
     curve_alpha_1 = _last_curve(pane).copy()
 
     grouping_b = dict(dataset.run.grouping)
     grouping_b["alpha"] = 2.5
-    pane.request_preview(histograms=dataset.run.histograms, grouping=grouping_b, run_number=5001)
+    pane.request_preview(histograms=dataset.run.histograms, grouping=grouping_b, facts=_facts())
     pane.flush()
     _wait_until(
         lambda: pane._tasks.active_count == 0 and not np.allclose(_last_curve(pane), curve_alpha_1)
@@ -181,11 +207,12 @@ def _axes_texts(pane: GroupingPreviewPane) -> set[str]:
     return {str(text.get_text()) for text in pane._axes.texts}
 
 
-def test_overlay_draws_alpha1_ghost_and_reports_residual_baseline(qapp: QApplication) -> None:
-    """The calibrate overlay draws the α=1 curve and reports ⟨A⟩ over the window.
+def test_alpha_compare_draws_the_ghost_and_the_residual_baseline(qapp: QApplication) -> None:
+    """The α compare draws the α=1 curve and ⟨A⟩ as a line on the plot.
 
-    The ghost is named by a small inline text (there is no legend any more —
-    the pager label and the focused correction card name the comparison).
+    The caption names both curves (there is no legend — the pager label and the
+    focused correction card name the same comparison), and the residual baseline
+    is drawn where it applies rather than quoted in the status strip.
     """
     dataset = _histogram_dataset()
     pane = GroupingPreviewPane()
@@ -195,32 +222,29 @@ def test_overlay_draws_alpha1_ghost_and_reports_residual_baseline(qapp: QApplica
     pane.request_preview(
         histograms=dataset.run.histograms,
         grouping=grouping,
-        run_number=5001,
-        overlay=True,
+        facts=_facts(),
+        compare_stage="alpha",
     )
     pane.flush()
-    _wait_until(
-        lambda: pane._tasks.active_count == 0 and "residual baseline" in pane._status.text()
-    )
-    assert "residual baseline" in pane._status.text()
-    # Both curves are drawn: the α=1 ghost line plus the α̂ errorbar, and the
-    # ghost is named inline.
-    assert len(pane._axes.get_lines()) >= 2
-    assert "α = 1" in _axes_texts(pane)
+    _wait_until(lambda: pane._tasks.active_count == 0 and "α = 1 (ghost)" in _axes_texts(pane))
+    assert "as reduced · α = 1.300" in _axes_texts(pane)
+    assert any("residual baseline" in text for text in _axes_texts(pane))
+    assert "residual baseline" not in pane._status.text()
     pane.shutdown()
 
 
-def test_overlay_off_by_default_draws_single_curve(qapp: QApplication) -> None:
-    """Without overlay the pane draws one curve and shows no baseline readout."""
+def test_no_compare_draws_a_single_curve(qapp: QApplication) -> None:
+    """With no compare focused the pane draws one curve and names only it."""
     dataset = _histogram_dataset()
     pane = GroupingPreviewPane()
     pane.request_preview(
-        histograms=dataset.run.histograms, grouping=dataset.run.grouping, run_number=5001
+        histograms=dataset.run.histograms, grouping=dataset.run.grouping, facts=_facts()
     )
     pane.flush()
     _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
-    assert "residual baseline" not in pane._status.text()
-    assert "α = 1" not in _axes_texts(pane)
+    assert "as reduced · α = 1.000" in _axes_texts(pane)
+    assert not any("(ghost)" in text for text in _axes_texts(pane))
+    assert not any("residual baseline" in text for text in _axes_texts(pane))
     pane.shutdown()
 
 
@@ -260,7 +284,7 @@ def test_rapid_edits_coalesce_to_one_inflight_reduction(qapp: QApplication) -> N
             grouping = dict(dataset.run.grouping)
             grouping["alpha"] = alpha
             pane.request_preview(
-                histograms=dataset.run.histograms, grouping=grouping, run_number=5001
+                histograms=dataset.run.histograms, grouping=grouping, facts=_facts()
             )
             pane.flush()
         _wait_until(lambda: pane._tasks.active_count == 0 and pane._pending is None)
@@ -271,7 +295,7 @@ def test_rapid_edits_coalesce_to_one_inflight_reduction(qapp: QApplication) -> N
     # most first + latest-pending per completion — never one thread per edit).
     assert concurrency["max"] == 1
     assert concurrency["calls"] <= 5
-    assert "Preview: run 5001" in pane._status.text()
+    assert "5001 (selected run)" in pane._status.text()
     pane.shutdown()
 
 
@@ -291,7 +315,7 @@ def test_error_path_is_muted_not_crashing(
     pane.request_preview(
         histograms=dataset.run.histograms,
         grouping=dataset.run.grouping,
-        run_number=5001,
+        facts=_facts(),
     )
     pane.flush()
     _wait_until(lambda: pane._tasks.active_count == 0 and "unavailable" in pane._status.text())
@@ -302,7 +326,7 @@ def test_error_path_is_muted_not_crashing(
 
 def test_histogramless_dataset_hides_pane(qapp: QApplication) -> None:
     pane = GroupingPreviewPane()
-    pane.request_preview(histograms=None, grouping={}, run_number=5002)
+    pane.request_preview(histograms=None, grouping={}, facts=_facts(run_label="5002"))
     assert not pane.isVisible()
     assert "histogram" in pane._status.text().lower()
     pane.shutdown()
@@ -340,7 +364,7 @@ def test_dialog_hides_preview_for_histogramless_dataset(qapp: QApplication) -> N
     # normal run so the dialog opens, then point the preview at the empty run.
     good = _histogram_dataset(run_number=5003)
     dialog = GroupingDialog([good])
-    dialog._preview_pane.request_preview(histograms=None, grouping={}, run_number=5001)
+    dialog._preview_pane.show_unavailable()
     assert not dialog._preview_pane.isVisible()
     dialog._clear_dirty()
     dialog.close()
@@ -519,14 +543,12 @@ def test_profile_request_resolves_on_worker_thread_only(
             return real_resolve(profile, run)
 
         monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
-        pane.request_preview_from_profile(
-            profile=_draft_profile(), run=dataset.run, run_number=5001
-        )
+        pane.request_preview_from_profile(profile=_draft_profile(), run=dataset.run, facts=_facts())
         assert call_threads == [], "resolve ran synchronously during the request call"
         pane.flush()
         _wait_until(lambda: len(call_threads) == 1)
         assert call_threads[0] != gui_thread, "resolve ran on the GUI thread"
-        _wait_until(lambda: pane._status.text().startswith("Preview: run"))
+        _wait_until(lambda: "PREVIEW" in pane._status.text())
         assert _last_curve(pane).size > 0
     finally:
         pane.shutdown()
@@ -548,7 +570,7 @@ def test_profile_is_snapshotted_against_later_edits(
 
         monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
         draft = _draft_profile()
-        pane.request_preview_from_profile(profile=draft, run=dataset.run, run_number=5001)
+        pane.request_preview_from_profile(profile=draft, run=dataset.run, facts=_facts())
         # Simulate the user editing the form while the request is pending.
         draft.groups[1] = [2]
         draft.forward_group = 99
@@ -579,10 +601,10 @@ def test_profile_request_burst_coalesces_resolves(
         monkeypatch.setattr(preview_pane_module, "resolve_effective_grouping", spy)
         for _ in range(10):
             pane.request_preview_from_profile(
-                profile=_draft_profile(), run=dataset.run, run_number=5001
+                profile=_draft_profile(), run=dataset.run, facts=_facts()
             )
         pane.flush()
-        _wait_until(lambda: pane._status.text().startswith("Preview: run"))
+        _wait_until(lambda: "PREVIEW" in pane._status.text())
         # Latest-wins pending slot + single-flight dispatch bound the resolves.
         assert call_count <= 2, f"expected coalescing, saw {call_count} resolves"
     finally:
@@ -597,7 +619,7 @@ def test_profile_with_empty_groups_surfaces_muted_error(qapp: QApplication) -> N
         pane.request_preview_from_profile(
             profile=_draft_profile(groups={1: [], 2: []}),
             run=dataset.run,
-            run_number=5001,
+            facts=_facts(),
         )
         pane.flush()
         _wait_until(lambda: pane._status.text().startswith("Preview unavailable"))
@@ -673,7 +695,7 @@ def _reduce_preview(dataset: MuonDataset, **fields):
         generation=1,
         histograms=list(dataset.run.histograms),
         facility="TESTINST",
-        run_number=int(dataset.run_number),
+        facts=_facts(run_label=str(dataset.run_number)),
         grouping=dict(dataset.run.grouping),
         **fields,
     )
@@ -684,8 +706,8 @@ def test_compare_stage_deadtime_ghosts_the_removed_stage(qapp: QApplication) -> 
     """compare_stage="deadtime" solid = full reduction, ghost = deadtime removed.
 
     The solid curve keeps deadtime applied; the ghost is a second corrected pass
-    with deadtime dropped, labelled "without deadtime". The residual-⟨A⟩ readout
-    is *not* computed for a count-stage compare (that number is α's alone).
+    with deadtime dropped. The residual-⟨A⟩ readout is *not* computed for a
+    count-stage compare (that number is α's alone).
     """
     dataset = _histogram_dataset(
         grouping_extra={
@@ -697,11 +719,9 @@ def test_compare_stage_deadtime_ghosts_the_removed_stage(qapp: QApplication) -> 
     )
     res = _reduce_preview(dataset, compare_stage="deadtime")
     assert res.compare_stage == "deadtime"
-    assert res.overlay is True
     assert res.baseline is not None
-    assert res.baseline_label == "without deadtime"
     assert not np.allclose(res.baseline, res.asymmetry)  # the ghost actually differs
-    assert res.centre_mean is None and res.centre_err is None
+    assert res.centre is None
 
 
 def test_compare_stage_background_ghosts_the_removed_stage(qapp: QApplication) -> None:
@@ -716,21 +736,21 @@ def test_compare_stage_background_ghosts_the_removed_stage(qapp: QApplication) -
     res = _reduce_preview(dataset, compare_stage="background")
     assert res.compare_stage == "background"
     assert res.baseline is not None
-    assert res.baseline_label == "without background"
     assert not np.allclose(res.baseline, res.asymmetry)
 
 
-def test_compare_stage_alpha_matches_legacy_overlay(qapp: QApplication) -> None:
-    """compare_stage="alpha" is the generic form of the legacy overlay=True."""
+def test_compare_stage_alpha_ghosts_unity_and_reports_the_residual(qapp: QApplication) -> None:
+    """The α compare ghosts α = 1 from the same corrected counts and reports ⟨A⟩."""
     dataset = _histogram_dataset(grouping_extra={"alpha": 1.3})
-    via_stage = _reduce_preview(dataset, compare_stage="alpha")
-    via_overlay = _reduce_preview(dataset, overlay=True)
+    res = _reduce_preview(dataset, compare_stage="alpha")
 
-    assert via_overlay.compare_stage == "alpha"  # overlay maps onto the α stage
-    assert via_stage.baseline_label == "α = 1"
-    assert via_stage.centre_mean is not None  # α compare reports the residual ⟨A⟩
-    assert via_stage.baseline is not None and via_overlay.baseline is not None
-    np.testing.assert_allclose(via_stage.baseline, via_overlay.baseline)
+    assert res.compare_stage == "alpha"
+    assert res.alpha == pytest.approx(1.3)
+    assert res.baseline is not None
+    assert not np.allclose(res.baseline, res.asymmetry)
+    # The α compare — and only it — carries the residual baseline, mean and error
+    # together because one without the other is not a state it can be in.
+    assert res.centre is not None and len(res.centre) == 2
 
 
 def test_compare_focus_never_changes_the_solid_curve(qapp: QApplication) -> None:
@@ -754,41 +774,11 @@ def test_compare_focus_never_changes_the_solid_curve(qapp: QApplication) -> None
         }
     )
     solid = _reduce_preview(dataset).asymmetry
-    for stage in ("deadtime", "background", "alpha", "raw"):
+    for stage in ("deadtime", "background", "alpha"):
         focused = _reduce_preview(dataset, compare_stage=stage).asymmetry
         np.testing.assert_allclose(
             focused, solid, err_msg=f"compare_stage={stage!r} changed the solid curve"
         )
-
-
-def test_compare_stage_raw_ghosts_the_fully_uncorrected_curve(qapp: QApplication) -> None:
-    """compare_stage="raw" ghosts every stage removed at once (deadtime, bg, α=1)."""
-    dataset = _histogram_dataset(
-        grouping_extra={
-            "deadtime_correction": True,
-            "deadtime_mode": "manual",
-            "dead_time_us": [0.005, 0.001],
-            "good_frames": 1000.0,
-            "background_correction": True,
-            "background_mode": "fixed",
-            "background_fixed_values": [30.0, 20.0],
-            "alpha": 1.3,
-        }
-    )
-    res = _reduce_preview(dataset, compare_stage="raw")
-    assert res.compare_stage == "raw"
-    assert res.baseline is not None
-    assert res.baseline_label == "raw (uncorrected)"
-    assert not np.allclose(res.baseline, res.asymmetry)
-    # No residual ⟨A⟩ readout for the compound compare (that number is α's alone).
-    assert res.centre_mean is None
-
-
-def test_compare_stage_raw_with_nothing_configured_draws_no_ghost(qapp: QApplication) -> None:
-    """With no corrections and α=1, raw == full — nothing to ghost."""
-    dataset = _histogram_dataset()  # deadtime off, background off, α = 1
-    res = _reduce_preview(dataset, compare_stage="raw")
-    assert res.baseline is None
 
 
 def test_compare_stage_unconfigured_stage_draws_no_ghost(qapp: QApplication) -> None:
@@ -797,11 +787,10 @@ def test_compare_stage_unconfigured_stage_draws_no_ghost(qapp: QApplication) -> 
     res = _reduce_preview(dataset, compare_stage="deadtime")
     assert res.compare_stage == "deadtime"
     assert res.baseline is None
-    assert res.baseline_label is None
 
 
 # --------------------------------------------------------------------------- #
-# Draw contract: solid-only autoscale, no legend, inline ghost label
+# Draw contract: solid-only autoscale, ghost on top, fixed corner caption
 # --------------------------------------------------------------------------- #
 
 
@@ -810,10 +799,12 @@ def _draw_result(pane: GroupingPreviewPane, **fields) -> preview_pane_module._Pr
     t = np.linspace(0.0, 1.0, 50)
     defaults = dict(
         generation=1,
+        facts=_facts(),
         time=t,
         asymmetry=np.sin(2 * np.pi * t),
         error=np.full_like(t, 0.1),
-        run_number=5001,
+        alpha=1.0,
+        beta=1.0,
     )
     defaults.update(fields)
     result = preview_pane_module._PreviewResult(**defaults)
@@ -821,99 +812,194 @@ def _draw_result(pane: GroupingPreviewPane, **fields) -> preview_pane_module._Pr
     return result
 
 
+def _caption_headroom(rows: int) -> float:
+    """The autoscale headroom the pane reserves for *rows* caption rows."""
+    return preview_pane_module._CAPTION_ROW_DY * rows + preview_pane_module._CAPTION_HEADROOM_PAD
+
+
 def test_ghost_never_influences_y_autoscale(qapp: QApplication) -> None:
     """A wildly off-scale ghost must not expand the y-limits.
 
-    The regression this pins: an uncorrected FLAME ghost reaches ~1e7 % and
-    autoscale over both curves crushed the solid flat. The limits must cover
-    exactly the solid's finite asymmetry ± error range (± ~8% pad).
+    The regression this pins: a deadtime-removed FLAME ghost reaches ~1e7 % and
+    autoscale over both curves crushed the solid flat. The limits must cover the
+    solid's finite asymmetry ± error range (± ~8% pad), plus the caption's
+    headroom on top.
     """
     pane = GroupingPreviewPane()
     result = _draw_result(
         pane,
         baseline=np.full(50, 1.0e7),
-        baseline_label="raw (uncorrected)",
-        compare_stage="raw",
-        overlay=True,
+        compare_stage="deadtime",
     )
     ylo, yhi = pane._axes.get_ylim()
     solid_lo = float(np.min(result.asymmetry - result.error))
     solid_hi = float(np.max(result.asymmetry + result.error))
-    pad = 0.08 * (solid_hi - solid_lo)
+    span = solid_hi - solid_lo
+    pad = 0.08 * span
     assert ylo == pytest.approx(solid_lo - pad)
-    assert yhi == pytest.approx(solid_hi + pad)
+    assert yhi == pytest.approx(solid_hi + pad + _caption_headroom(2) * span)
     assert yhi < 100.0  # nowhere near the 1e7 ghost
+    # An off-scale ghost is still named: the caption placement is fixed, not
+    # anchored to a sample that may not be in view.
+    assert "without deadtime (ghost)" in _axes_texts(pane)
+    pane.shutdown()
+
+
+def test_autoscale_reserves_headroom_under_the_caption(qapp: QApplication) -> None:
+    """The curve must not climb under the caption rows it is named by.
+
+    The headroom is sized from the same ``_CAPTION_ROW_DY`` that places the
+    rows, so moving one moves the other.
+    """
+    pane = GroupingPreviewPane()
+    for stage, rows in ((None, 1), ("deadtime", 2)):
+        fields = {} if stage is None else {"baseline": np.full(50, 0.5), "compare_stage": stage}
+        result = _draw_result(pane, **fields)
+        _ylo, yhi = pane._axes.get_ylim()
+        solid_lo = float(np.min(result.asymmetry - result.error))
+        solid_hi = float(np.max(result.asymmetry + result.error))
+        assert yhi - solid_hi >= _caption_headroom(rows) * (solid_hi - solid_lo)
     pane.shutdown()
 
 
 def test_compare_draw_has_no_legend(qapp: QApplication) -> None:
-    """No legend is drawn for a compare — the pager + focused card name it."""
+    """No legend is drawn for a compare — the caption and the pager name it."""
     pane = GroupingPreviewPane()
-    _draw_result(
-        pane,
-        baseline=np.full(50, 0.5),
-        baseline_label="without background",
-        compare_stage="background",
-        overlay=True,
-    )
+    _draw_result(pane, baseline=np.full(50, 0.5), compare_stage="background")
     assert pane._axes.get_legend() is None
     pane.shutdown()
 
 
-def test_ghost_is_labelled_inline_at_its_last_in_view_sample(qapp: QApplication) -> None:
-    """An in-view ghost gets its name drawn at its rightmost visible sample."""
+def test_ghost_is_drawn_above_the_solid(qapp: QApplication) -> None:
+    """The ghost sits ON TOP of the solid: underneath, a small effect is invisible."""
     pane = GroupingPreviewPane()
-    _draw_result(
-        pane,
-        baseline=np.full(50, 0.5),
-        baseline_label="without deadtime",
-        compare_stage="deadtime",
-        overlay=True,
-    )
-    texts = {str(t.get_text()): t for t in pane._axes.texts}
-    assert "without deadtime" in texts
-    label = texts["without deadtime"]
-    x, y = label.get_position()
-    assert x == pytest.approx(1.0)  # the last sample's time
-    assert y == pytest.approx(0.5)  # sits on the ghost
+    _draw_result(pane, baseline=np.full(50, 0.5), compare_stage="deadtime")
+    solid = pane._axes.get_lines()[0]
+    assert _ghost_line(pane).get_zorder() > solid.get_zorder()
     pane.shutdown()
 
 
-def test_off_scale_ghost_label_is_clamped_inside_the_axes(qapp: QApplication) -> None:
-    """A ghost with no in-view sample is still named, just inside the exit side."""
+@pytest.mark.parametrize(
+    ("stage", "label"),
+    [
+        ("deadtime", "without deadtime"),
+        ("background", "without background"),
+        ("alpha", "α = 1"),
+        ("beta", "β = 1"),
+    ],
+)
+def test_ghost_and_caption_wear_the_stage_identity_colour(
+    qapp: QApplication, stage: str, label: str
+) -> None:
+    """Ghost + caption row carry the stage token the chip and card already wear."""
+    from asymmetry.gui.styles import tokens
+
+    expected = {
+        "deadtime": tokens.STAGE_DEADTIME,
+        "background": tokens.STAGE_BACKGROUND,
+        "alpha": tokens.STAGE_ALPHA,
+        "beta": tokens.STAGE_BETA,
+    }[stage]
     pane = GroupingPreviewPane()
-    _draw_result(
-        pane,
-        baseline=np.full(50, 1.0e7),  # exits through the top
-        baseline_label="raw (uncorrected)",
-        compare_stage="raw",
-        overlay=True,
-    )
-    ylo, yhi = pane._axes.get_ylim()
-    texts = {str(t.get_text()): t for t in pane._axes.texts}
-    assert "raw (uncorrected)" in texts
-    x, y = texts["raw (uncorrected)"].get_position()
-    assert ylo < y < yhi  # clamped inside the limits
-    assert y > 0.5 * (ylo + yhi)  # on the top side, where the ghost exited
-    assert x == pytest.approx(1.0)
+    _draw_result(pane, baseline=np.full(50, 0.5), compare_stage=stage, alpha=1.08)
+
+    assert _ghost_line(pane).get_color() == expected
+    texts = {str(text.get_text()): text for text in pane._axes.texts}
+    assert "as reduced · α = 1.080" in texts
+    assert texts["as reduced · α = 1.080"].get_color() == tokens.ACCENT
+    assert f"{label} (ghost)" in texts
+    assert texts[f"{label} (ghost)"].get_color() == expected
+    # Backed so the rows stay readable over whatever the curve does behind them.
+    assert texts["as reduced · α = 1.080"].get_bbox_patch() is not None
+    assert texts[f"{label} (ghost)"].get_bbox_patch() is not None
     pane.shutdown()
 
 
-def test_ghost_label_spec_prefers_last_in_view_sample() -> None:
-    """The pure placement helper: last in-view sample wins; off-scale clamps."""
-    t = np.array([0.0, 1.0, 2.0, 3.0])
-    ghost = np.array([0.5, 5.0, 0.7, 9.0])  # last sample above yhi=1
-    x, y, ha, va = preview_pane_module._ghost_label_spec(t, ghost, 0.0, 1.0)
-    assert (x, y) == (2.0, 0.7)  # rightmost IN-VIEW sample, not the last sample
-    assert ha == "right"
+def test_caption_quotes_beta_only_when_it_is_applied(qapp: QApplication) -> None:
+    """β joins the "as reduced" row only when it is not 1 (the usual case)."""
+    pane = GroupingPreviewPane()
+    _draw_result(pane, alpha=1.08, beta=1.0)
+    assert "as reduced · α = 1.080" in _axes_texts(pane)
 
-    below = np.full(4, -50.0)
-    x, y, _ha, va = preview_pane_module._ghost_label_spec(t, below, 0.0, 1.0)
-    assert x == 3.0
-    assert 0.0 < y < 0.1  # clamped just inside the bottom
-    assert va == "bottom"
+    _draw_result(pane, alpha=1.08, beta=0.94)
+    assert "as reduced · α = 1.080 · β = 0.940" in _axes_texts(pane)
+    pane.shutdown()
 
-    assert preview_pane_module._ghost_label_spec(t, np.full(4, np.nan), 0.0, 1.0) is None
+
+def test_residual_baseline_is_a_line_on_the_alpha_compare_only(qapp: QApplication) -> None:
+    """⟨A⟩ is drawn where it applies (D4) — and never for another stage."""
+    from asymmetry.gui.styles import tokens
+
+    pane = GroupingPreviewPane()
+    _draw_result(pane, baseline=np.full(50, 0.5), compare_stage="alpha", centre=(-0.61, 0.02))
+    rules = [
+        line
+        for line in pane._axes.get_lines()
+        if len(line.get_ydata()) == 2 and np.allclose(line.get_ydata(), -0.61)
+    ]
+    assert len(rules) == 1
+    assert rules[0].get_color() == tokens.STAGE_ALPHA
+    label = "⟨A⟩ = -0.610 ± 0.020 % (residual baseline)"
+    texts = {str(text.get_text()): text for text in pane._axes.texts}
+    assert label in texts
+    assert texts[label].get_bbox_patch() is not None
+
+    _draw_result(pane, baseline=np.full(50, 0.5), compare_stage="background", centre=(-0.61, 0.02))
+    assert not any("residual baseline" in text for text in _axes_texts(pane))
+    pane.shutdown()
+
+
+def test_dense_curve_draws_a_line_and_band_instead_of_markers(qapp: QApplication) -> None:
+    """Past the threshold the markers merge into an opaque band, so draw a line.
+
+    Either side of ``_LINE_MODE_POINTS``: a dense curve is a line plus a
+    ``fill_between`` band and no errorbar container; a sparse one keeps markers.
+    """
+    from matplotlib.collections import PolyCollection
+
+    n = preview_pane_module._LINE_MODE_POINTS + 1
+    t = np.linspace(0.0, 1.0, n)
+    pane = GroupingPreviewPane()
+    _draw_result(pane, time=t, asymmetry=np.sin(t), error=np.full(n, 0.1))
+    assert not pane._axes.containers  # no errorbar
+    assert any(isinstance(c, PolyCollection) for c in pane._axes.collections)
+
+    sparse = np.linspace(0.0, 1.0, preview_pane_module._LINE_MODE_POINTS)
+    _draw_result(
+        pane,
+        time=sparse,
+        asymmetry=np.sin(sparse),
+        error=np.full(sparse.size, 0.1),
+    )
+    assert pane._axes.containers  # markers with error bars
+    assert not any(isinstance(c, PolyCollection) for c in pane._axes.collections)
+    pane.shutdown()
+
+
+def test_status_strip_states_what_the_preview_shows(qapp: QApplication) -> None:
+    """D1: the strip names the run, both groups, the binning and the window."""
+    pane = GroupingPreviewPane()
+    _draw_result(
+        pane,
+        facts=_facts(
+            run_label="7101 · TF 200 G",
+            forward_name="Det 1 (0°)",
+            backward_name="Det 2 (90°)",
+            bunch=5,
+            corrections=("Background: tail fit (late-time)",),
+            vector_pair="P_z",
+        ),
+    )
+    status = pane._status.text()
+    assert "PREVIEW" in status
+    assert "7101 · TF 200 G (selected run)" in status
+    assert "F = Det 1 (0°)" in status
+    assert "B = Det 2 (90°)" in status
+    assert "bin 5" in status
+    assert "0.0 – 1.0 µs" in status
+    assert "Background: tail fit (late-time)" in status
+    assert "P_z pair" in status
+    pane.shutdown()
 
 
 def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> None:
@@ -933,7 +1019,7 @@ def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> 
         pane.request_preview(
             histograms=dataset.run.histograms,
             grouping=dataset.run.grouping,
-            run_number=int(dataset.run_number),
+            facts=_facts(),
         )
         pane.flush()
         _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
@@ -1085,7 +1171,7 @@ def test_preview_axis_uses_the_runs_exact_t0(qapp: QApplication) -> None:
     pane.request_preview(
         histograms=dataset.run.histograms,
         grouping=dataset.run.grouping,
-        run_number=int(dataset.run_number),
+        facts=_facts(),
     )
     pane.flush()
     _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))

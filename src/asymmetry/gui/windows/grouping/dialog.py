@@ -143,7 +143,11 @@ from asymmetry.gui.windows.grouping.format import (
 from asymmetry.gui.windows.grouping.format import (
     format_value_with_uncertainty as _format_value_with_uncertainty,
 )
-from asymmetry.gui.windows.grouping.preview_pane import GroupingPreviewPane
+from asymmetry.gui.windows.grouping.preview_pane import (
+    COMPARE_STAGE_LABELS,
+    GroupingPreviewPane,
+    PreviewFacts,
+)
 from asymmetry.gui.windows.grouping.profile_bridge import (
     instrument_display_for_fingerprint,
     payload_from_profile_for_preview,
@@ -155,7 +159,7 @@ from asymmetry.gui.windows.grouping.scope_panel import ScopePanel
 
 #: Compare-pager cycle order (`_step_compare`/`_sync_compare_pager`). ``None``
 #: ("off") is always available; the rest are gated by `_compare_stage_available`.
-_COMPARE_CYCLE: tuple[str | None, ...] = (None, "deadtime", "background", "alpha", "beta", "raw")
+_COMPARE_CYCLE: tuple[str | None, ...] = (None, "deadtime", "background", "alpha", "beta")
 
 #: Stage identity colours (chip outline = card stripe; see ``tokens.STAGE_*``).
 _STAGE_COLORS: dict[str, tuple[str, str]] = {
@@ -163,24 +167,6 @@ _STAGE_COLORS: dict[str, tuple[str, str]] = {
     "background": (tokens.STAGE_BACKGROUND, tokens.STAGE_BACKGROUND_SOFT),
     "alpha": (tokens.STAGE_ALPHA, tokens.STAGE_ALPHA_SOFT),
     "beta": (tokens.STAGE_BETA, tokens.STAGE_BETA_SOFT),
-}
-
-#: Pager label text per focused stage (see `_sync_compare_pager`).
-_COMPARE_STAGE_LABELS: dict[str, str] = {
-    "deadtime": "without deadtime",
-    "background": "without background",
-    "alpha": "α = 1",
-    "beta": "β = 1",
-    "raw": "vs raw",
-}
-
-#: Correction-card compare indicator per focused stage (`_sync_correction_cards`).
-#: "raw" is deliberately absent: the compound compare is not one stage's card.
-_CARD_COMPARING_TEXTS: dict[str, str] = {
-    "deadtime": "comparing: without deadtime",
-    "background": "comparing: without background",
-    "alpha": "comparing: α = 1 ghost",
-    "beta": "comparing: β = 1 ghost",
 }
 
 #: Card status = the pipeline-chip summary minus the prefix that would
@@ -422,7 +408,7 @@ class GroupingDialog(QDialog):
         self._vector_estimate_queue: list[str] = []
         self._vector_estimate_source_run: int | None = None
         #: Focused compare-in-preview stage ("deadtime"/"background"/"alpha"/
-        #: "raw"/None) — preview-only, drives the ghost overlay (never the payload).
+        #: "beta"/None) — preview-only, drives the ghost (never the payload).
         self._compare_stage: str | None = None
         # Last successful estimate per slot ("single" or axis name):
         # (alpha, alpha_error, reference_run). Used to attach provenance to
@@ -1122,11 +1108,6 @@ class GroupingDialog(QDialog):
         # keeps working across columns because it reduces from the draft's widget
         # *state* (read via `_current_grouping_payload`), never from which column is
         # focused. See docs/porting/correction-order-alpha-estimation.
-        #: Compare checkboxes. Only "raw" remains (the pager-row checkbox): the
-        #: per-stage compares are driven by the pipeline chips + pager and
-        #: *displayed* on the focused correction card (see :meth:`_set_compare_stage`).
-        self._compare_toggles: dict[str, QCheckBox] = {}
-
         # Pipeline strip spans the full right-pane width, above both columns.
         right_layout.addWidget(self._build_pipeline_strip())
 
@@ -1344,10 +1325,10 @@ class GroupingDialog(QDialog):
         self._refresh_alpha_staleness()
         self._refresh_beta_staleness()
         # Open focused on the α compare when α is already calibrated (single mode),
-        # preserving the pre-tab auto-overlay; _sync_compare_toggles reflects it.
+        # preserving the pre-tab auto-overlay; _sync_compare_surfaces reflects it.
         if self._alpha_is_calibrated() and not bool(self._vector_axis_pairs):
             self._compare_stage = "alpha"
-        self._sync_compare_toggles()
+        self._sync_compare_surfaces()
         self._connect_preview_refresh()
         self._refresh_preview()
 
@@ -2910,13 +2891,15 @@ class GroupingDialog(QDialog):
         reaches the cap only when the same amount has also gone to
         Corrections — hence twice the difference. Height: the design floor
         that keeps both columns' default (deadtime-off) state free of a
-        vertical scrollbar. The window opens at ``resize_to_available`` of
-        this, which is smaller on a small display; tests that pin the budget
-        resize to this value rather than reading the window back.
+        vertical scrollbar above the fixed-height preview pinned under them,
+        so it moves with ``preview_pane._PANE_HEIGHT``. The window opens at
+        ``resize_to_available`` of this, which is smaller on a small display;
+        tests that pin the budget resize to this value rather than reading
+        the window back.
         """
         self.layout().activate()
         grouping_room = max(0, self._t0_line_max_px - self._grouping_scroll.minimumWidth())
-        return self.minimumSizeHint().width() + 2 * grouping_room, 680
+        return self.minimumSizeHint().width() + 2 * grouping_room, 780
 
     def _common_t0_for_preview_run(self, detector_t0_bins: list[int] | None) -> int:
         """The common t0 the live analysis groups align to on the given bins.
@@ -3960,8 +3943,7 @@ class GroupingDialog(QDialog):
 
         Runs from the end of :meth:`_sync_pipeline_strip`, so the card headers
         track the same seams that refresh the chips (mode edits, α calibration,
-        staleness, compare-focus changes). "raw" shows no card indicator — the
-        compound compare is not one stage's card; the pager label names it.
+        staleness, compare-focus changes).
         """
         cards = getattr(self, "_correction_cards", None)
         if not cards:
@@ -3973,7 +3955,8 @@ class GroupingDialog(QDialog):
             elif stage == "beta":
                 card.set_stale(self._beta_is_stale())
             comparing = self._compare_stage == stage and self._compare_stage_available(stage)
-            card.set_comparing(_CARD_COMPARING_TEXTS[stage] if comparing else None)
+            # Same wording as the pager ("Comparing: α = 1"), from one dict.
+            card.set_comparing(f"comparing: {COMPARE_STAGE_LABELS[stage]}" if comparing else None)
 
     def _correction_card_status(self, stage: str) -> str:
         """The card's live status: the chip summary minus the title-duplicating prefix."""
@@ -4081,42 +4064,25 @@ class GroupingDialog(QDialog):
         """The uppercase BENCH section-header label used atop each column."""
         return make_section_header(title)
 
-    def _on_compare_toggled(self, stage: str, checked: bool) -> None:
-        """A compare checkbox was clicked ("raw") — focus that stage, or clear."""
-        if getattr(self, "_syncing_compare", False):
-            return  # programmatic sync, not a user click
-        self._set_compare_stage(stage if checked else None)
-
     def _set_compare_stage(self, stage: str | None) -> None:
         """Focus (at most) one compare stage and refresh the preview."""
         self._compare_stage = stage
-        self._sync_compare_toggles()
+        self._sync_compare_surfaces()
         self._refresh_preview()
 
-    def _sync_compare_toggles(self) -> None:
+    def _sync_compare_surfaces(self) -> None:
         """Reflect ``_compare_stage`` across the compare surfaces.
 
-        Syncs the pager-row "raw" checkbox (the only remaining checkbox — the
-        per-stage compares are driven by chips + pager and displayed on the
-        focused card), resets the focus if the focused stage is no longer
-        available (e.g. its correction was switched off, or vector mode made α
-        unavailable), then refreshes the pipeline strip (which refreshes the
-        cards) and the pager, so no surface ever disagrees with the preview.
+        Resets the focus if the focused stage is no longer available (e.g. its
+        correction was switched off, or vector mode made α unavailable), then
+        refreshes the pipeline strip (which refreshes the cards) and the pager,
+        so no surface ever disagrees with the preview. Availability is read only
+        while a stage is focused, which cannot happen before the form is built.
         """
-        if not hasattr(self, "_compare_toggles"):
-            return
         if self._compare_stage is not None and not self._compare_stage_available(
             self._compare_stage
         ):
             self._compare_stage = None
-        self._syncing_compare = True
-        try:
-            for key, toggle in self._compare_toggles.items():
-                available = self._compare_stage_available(key)
-                toggle.setEnabled(available)
-                toggle.setChecked(available and self._compare_stage == key)
-        finally:
-            self._syncing_compare = False
         self._sync_pipeline_strip()
         self._sync_compare_pager()
 
@@ -4125,9 +4091,9 @@ class GroupingDialog(QDialog):
 
         Sits directly above the pinned preview so it works from either column.
         A pure wrapper over :meth:`_set_compare_stage` — same shared state the
-        section toggles and pipeline chips drive; :meth:`_sync_compare_pager`
-        (called from the single :meth:`_sync_compare_toggles` sync seam) keeps
-        the label and arrow enabled-state in step.
+        pipeline chips drive; :meth:`_sync_compare_pager` (called from the single
+        :meth:`_sync_compare_surfaces` sync seam) keeps the label and arrow
+        enabled-state in step.
         """
         widget = QWidget()
         row = QHBoxLayout(widget)
@@ -4152,19 +4118,6 @@ class GroupingDialog(QDialog):
         self._compare_next_btn.clicked.connect(lambda: self._step_compare(1))
         row.addWidget(self._compare_next_btn)
         row.addStretch()
-        # The compound "vs raw" toggle lives here (not in the Corrections column's
-        # scroll content): it is one of the pager's stops, and pinning it beside
-        # the pager keeps it reachable regardless of which column is focused — and
-        # keeps the corrections content short enough to fit the viewport without
-        # outer scrolling.
-        raw = QCheckBox("Compare vs raw (uncorrected)")
-        raw.setToolTip(
-            "Preview only: overlay the fully-uncorrected asymmetry — no deadtime, no "
-            "background, α = 1."
-        )
-        raw.toggled.connect(lambda checked: self._on_compare_toggled("raw", checked))
-        self._compare_toggles["raw"] = raw
-        row.addWidget(raw)
         return widget
 
     def _step_compare(self, direction: int) -> None:
@@ -4188,7 +4141,7 @@ class GroupingDialog(QDialog):
     def _sync_compare_pager(self) -> None:
         """Refresh the pager label + arrow enabled-state from ``_compare_stage``.
 
-        Called from the end of :meth:`_sync_compare_toggles`, the single sync
+        Called from the end of :meth:`_sync_compare_surfaces`, the single sync
         seam that already runs on every stage change, availability change, and
         vector-mode flip.
         """
@@ -4202,7 +4155,7 @@ class GroupingDialog(QDialog):
         if self._compare_stage is None:
             self._compare_pager_label.setText("Comparing: off")
         else:
-            name = _COMPARE_STAGE_LABELS[self._compare_stage]
+            name = COMPARE_STAGE_LABELS[self._compare_stage]
             position = available.index(self._compare_stage) + 1
             self._compare_pager_label.setText(f"Comparing: {name} ({position}/{len(available)})")
         enabled = bool(available)
@@ -4226,13 +4179,6 @@ class GroupingDialog(QDialog):
         if stage == "beta":
             # Scalar-only, like the α compare: never available in vector mode.
             return beta_off_unity
-        if stage == "raw":
-            return (
-                self._current_deadtime_mode() != "off"
-                or self._current_background_mode() != "none"
-                or alpha_off_unity
-                or beta_off_unity
-            )
         return False
 
     def _refresh_preview(self, *args: object) -> None:
@@ -4261,25 +4207,26 @@ class GroupingDialog(QDialog):
         if pane is None:
             return
         run = self._run
+        if run is None or not run.histograms or self._fingerprint is None:
+            pane.show_unavailable()
+            return
         try:
-            profile = self._preview_draft_profile()
-        except Exception:  # noqa: BLE001 — advisory preview, never crash the dialog
-            profile = None
-        if profile is None or run is None:
-            pane.request_preview(
-                histograms=None,
-                grouping={},
-                run_number=self._preview_run_number(),
+            # Cheap (widget reads and dict lifting only) — resolution against the
+            # preview run happens on the pane's worker thread, not here.
+            payload = self._current_grouping_payload()
+            profile = profile_from_form_payload(
+                payload, name=self._draft_name, fingerprint=self._fingerprint, active=True
             )
+        except Exception:  # noqa: BLE001 — advisory preview, never crash the dialog
+            pane.show_unavailable()
             return
         metadata: dict[str, Any] = {}
-        if self._reference_dataset is not None:
-            metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
+        metadata.update(getattr(self._reference_dataset, "metadata", {}) or {})
         metadata.update(getattr(run, "metadata", {}) or {})
         facility = resolve_facility(metadata=metadata, grouping=getattr(run, "grouping", None))
-        # Keep the toggles' enabled/checked state in step with the current draft,
-        # and drop the focus if the focused stage is no longer available.
-        self._sync_compare_toggles()
+        # Keep the compare surfaces in step with the current draft, and drop the
+        # focus if the focused stage is no longer available.
+        self._sync_compare_surfaces()
         # Compare view: the focused stage (if any) draws its before/after ghost over
         # the solid full-pipeline curve. The solid is never degraded, so the α
         # compare's residual-⟨A⟩ acceptance number is always read off the
@@ -4289,32 +4236,33 @@ class GroupingDialog(QDialog):
             profile=profile,
             run=run,
             facility=facility,
-            run_number=self._preview_run_number(),
+            facts=self._preview_facts(payload),
             compare_stage=self._compare_stage,
         )
 
-    def _preview_run_number(self) -> int | None:
-        if self._reference_dataset is None:
-            return None
-        try:
-            return int(self._reference_dataset.run_number)
-        except (TypeError, ValueError):
-            return None
+    def _preview_facts(self, payload: dict[str, Any]) -> PreviewFacts:
+        """What the preview's status strip states about the curve it draws (D1).
 
-    def _preview_draft_profile(self) -> GroupingProfile | None:
-        """Build a throwaway draft profile from the live form payload.
-
-        Cheap (widget reads and dict lifting only) — resolution against the
-        preview run happens on the preview pane's worker thread, not here.
+        Read from the *same* payload the previewed profile is built from, so the
+        strip can never name a different pair or binning than the curve beside
+        it. In vector mode only the primary projection — the pair the payload's
+        forward/backward groups resolve to — is previewed, so the strip says which.
         """
-        if self._run is None or not self._run.histograms or self._fingerprint is None:
-            return None
-        payload = self._current_grouping_payload()
-        return profile_from_form_payload(
-            payload,
-            name=self._draft_name,
-            fingerprint=self._fingerprint,
-            active=True,
+        names = payload["group_names"]
+        pair = (int(payload["forward_group"]), int(payload["backward_group"]))
+        return PreviewFacts(
+            run_label=self._reference_dataset.run_label,
+            forward_name=str(names.get(pair[0], f"group {pair[0]}")),
+            backward_name=str(names.get(pair[1], f"group {pair[1]}")),
+            bunch=int(payload["bunching_factor"]),
+            corrections=tuple(
+                self._pipeline_summary(stage)
+                for stage in ("deadtime", "background")
+                if self._correction_stage_active(stage)
+            ),
+            vector_pair=next(
+                (axis for axis, gids in self._vector_axis_pairs.items() if gids == pair), None
+            ),
         )
 
     def _pending_override_runs(self) -> list[int]:
@@ -4658,11 +4606,11 @@ class GroupingDialog(QDialog):
         # owns the rest. The α card stays put in both modes — its body (single-α
         # widgets or the vector table) always lives in the Corrections column —
         # but the single-α calibration section is hidden in vector mode.
-        # _sync_compare_toggles clears an α compare focus there (α is never
+        # _sync_compare_surfaces clears an α compare focus there (α is never
         # available in vector mode), so no ghost — and no card accent — is left.
         if hasattr(self, "_alpha_section"):
             self._alpha_section.setVisible(not vector_mode)
-            self._sync_compare_toggles()
+            self._sync_compare_surfaces()
         # β is scalar-only: the whole card hides in vector mode and the payload
         # omits the key there (per-projection reductions stay at β = 1). The
         # widget keeps its value so leaving vector mode restores it.
