@@ -154,6 +154,8 @@ class GroupingWindowGoodWindowRowScenario(Scenario):
         # column, so a crop a few pixels wider shows the corrections cards.
         column = dialog._grouping_scroll.viewport()
         crop.setRight(min(crop.right(), column.mapTo(dialog, QPoint(column.width(), 0)).x()))
+        # And start at its left edge, so the row labels are never clipped.
+        crop.setLeft(column.mapTo(dialog, QPoint(0, 0)).x())
         crop = crop.intersected(dialog.rect())
 
         pix = dialog.grab(crop)
