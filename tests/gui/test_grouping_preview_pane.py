@@ -40,10 +40,13 @@ from asymmetry.core.transform import (
     prepare_histograms_with_deadtime,
     reduce_grouped_asymmetry,
 )
+from asymmetry.gui.styles import tokens
+from asymmetry.gui.utils.plot_decimation import preview_stride
 from asymmetry.gui.windows.grouping import preview_pane as preview_pane_module
 from asymmetry.gui.windows.grouping.dialog import GroupingDialog
 from asymmetry.gui.windows.grouping.preview_pane import (
     _MAX_PREVIEW_POINTS,
+    CountsCurves,
     GroupingPreviewPane,
     PreviewFacts,
     _decimate_for_preview,
@@ -130,6 +133,7 @@ def _facts(**overrides) -> PreviewFacts:
         "forward_name": "Det 1",
         "backward_name": "Det 2",
         "bunch": 1,
+        "t0_mode_label": "from file",
     }
     fields.update(overrides)
     return PreviewFacts(**fields)
@@ -794,6 +798,29 @@ def test_compare_stage_unconfigured_stage_draws_no_ghost(qapp: QApplication) -> 
 # --------------------------------------------------------------------------- #
 
 
+def _counts(**overrides) -> CountsCurves:
+    """Count-domain curves for a hand-built result (the worker builds the real ones).
+
+    Ten bins of width 0.1 µs with t0 in bin 2, so bin centres run from
+    −0.25 µs and the bin edges sit on tenths.
+    """
+    n = 10
+    fields: dict = {
+        "time": (np.arange(n, dtype=float) + 0.5) * 0.1 - 0.25,
+        "forward": np.geomspace(1000.0, 10.0, n),
+        "backward": np.geomspace(800.0, 8.0, n),
+        "bin_width": 0.1,
+        "n_bins": n,
+        "t0_bin": 2,
+        "first_good": 3,
+        "last_good": 7,
+        "background_level": None,
+        "background_mode": "none",
+    }
+    fields.update(overrides)
+    return CountsCurves(**fields)
+
+
 def _draw_result(pane: GroupingPreviewPane, **fields) -> preview_pane_module._PreviewResult:
     """Build a ``_PreviewResult`` over a small solid curve and draw it."""
     t = np.linspace(0.0, 1.0, 50)
@@ -803,6 +830,7 @@ def _draw_result(pane: GroupingPreviewPane, **fields) -> preview_pane_module._Pr
         time=t,
         asymmetry=np.sin(2 * np.pi * t),
         error=np.full_like(t, 0.1),
+        counts=_counts(),
         alpha=1.0,
         beta=1.0,
     )
@@ -892,8 +920,6 @@ def test_ghost_and_caption_wear_the_stage_identity_colour(
     qapp: QApplication, stage: str, label: str
 ) -> None:
     """Ghost + caption row carry the stage token the chip and card already wear."""
-    from asymmetry.gui.styles import tokens
-
     expected = {
         "deadtime": tokens.STAGE_DEADTIME,
         "background": tokens.STAGE_BACKGROUND,
@@ -928,8 +954,6 @@ def test_caption_quotes_beta_only_when_it_is_applied(qapp: QApplication) -> None
 
 def test_residual_baseline_is_a_line_on_the_alpha_compare_only(qapp: QApplication) -> None:
     """⟨A⟩ is drawn where it applies (D4) — and never for another stage."""
-    from asymmetry.gui.styles import tokens
-
     pane = GroupingPreviewPane()
     _draw_result(pane, baseline=np.full(50, 0.5), compare_stage="alpha", centre=(-0.61, 0.02))
     rules = [
@@ -1025,6 +1049,270 @@ def test_run_reduction_result_is_bounded_for_large_curve(qapp: QApplication) -> 
         _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
         curve = _last_curve(pane)
         assert curve.size <= _MAX_PREVIEW_POINTS
+    finally:
+        pane.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+# Counts view (D7/D8): one worker pass, two views
+# --------------------------------------------------------------------------- #
+
+
+def _vertical_rules(pane: GroupingPreviewPane) -> list[float]:
+    """The x of every vertical rule (``axvline``) currently on the axes."""
+    return [
+        float(line.get_xdata()[0])
+        for line in pane._axes.get_lines()
+        if len(line.get_xdata()) == 2 and line.get_xdata()[0] == line.get_xdata()[1]
+    ]
+
+
+def _horizontal_rules(pane: GroupingPreviewPane) -> list[float]:
+    """The y of every horizontal rule (``axhline``) currently on the axes."""
+    return [
+        float(line.get_ydata()[0])
+        for line in pane._axes.get_lines()
+        if len(line.get_ydata()) == 2
+        and line.get_ydata()[0] == line.get_ydata()[1]
+        and tuple(line.get_xdata()) == (0.0, 1.0)
+    ]
+
+
+def _counts_curve(pane: GroupingPreviewPane, color: str) -> np.ndarray:
+    """The y-data of the counts curve drawn in *color* (the group spectra)."""
+    curves = [
+        line
+        for line in pane._axes.get_lines()
+        if line.get_color() == color and len(line.get_xdata()) > 2
+    ]
+    assert len(curves) == 1, f"expected one {color} curve, saw {len(curves)}"
+    return np.asarray(curves[0].get_ydata(), dtype=float)
+
+
+def test_view_switch_redraws_without_dispatching_the_worker(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D8: both views come off one reduction, so a switch never starts a task."""
+    pane = GroupingPreviewPane()
+    try:
+        result = _draw_result(pane)
+        pane._last_result = result
+        started: list[object] = []
+        monkeypatch.setattr(pane._tasks, "start", lambda *a, **k: started.append(a))
+
+        pane.set_view("counts")
+        assert pane._view == "counts"
+        assert pane._axes.get_yscale() == "log"
+
+        pane.set_view("asymmetry")
+        assert pane._axes.get_yscale() == "linear"
+        assert started == []
+        assert pane._generation == 0  # no request was ever queued
+    finally:
+        pane.shutdown()
+
+
+def test_view_switch_drops_the_user_view(qapp: QApplication) -> None:
+    """A range chosen on percent asymmetry means nothing on a log counts axis."""
+    pane = GroupingPreviewPane()
+    try:
+        result = _draw_result(pane)
+        pane._last_result = result
+        pane._user_view = ((0.2, 0.4), (-0.5, 0.5))
+
+        pane.set_view("counts")
+        assert pane._user_view is None
+        assert pane._axes.get_xlim() != pytest.approx((0.2, 0.4))
+    finally:
+        pane.shutdown()
+
+
+def test_counts_arrays_are_bounded_and_aligned(qapp: QApplication) -> None:
+    """The counts axis and both spectra share one stride, bounded like the asymmetry."""
+    n = 1_000_000
+    rng = np.random.default_rng(1)
+    dataset = _histogram_dataset(
+        forward=100.0 + rng.normal(size=n),
+        backward=80.0 + rng.normal(size=n),
+    )
+    counts = _reduce_preview(dataset).counts
+    assert counts.time.size <= _MAX_PREVIEW_POINTS
+    assert counts.forward.size == counts.time.size
+    assert counts.backward.size == counts.time.size
+    # The full histogram from bin 0, not the good window the asymmetry is
+    # formed on — every sample of it, on the one shared stride.
+    assert counts.forward.size == len(range(0, n, preview_stride(n, _MAX_PREVIEW_POINTS)))
+
+
+@pytest.mark.parametrize(
+    ("stage", "has_ghost"),
+    [("deadtime", True), ("background", True), ("alpha", False), ("beta", False), (None, False)],
+)
+def test_counts_ghost_only_for_the_count_domain_stages(
+    qapp: QApplication, stage: str | None, has_ghost: bool
+) -> None:
+    """α and β act when the asymmetry is formed, so they leave the spectra alone."""
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "deadtime_correction": True,
+            "deadtime_mode": "manual",
+            "dead_time_us": [0.005, 0.001],
+            "good_frames": 1000.0,
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [10.0, 8.0],
+            "alpha": 1.3,
+            "beta": 0.94,
+        }
+    )
+    counts = _reduce_preview(dataset, compare_stage=stage).counts
+    assert (counts.ghost_forward is not None) is has_ghost
+    assert (counts.ghost_backward is not None) is has_ghost
+    if has_ghost:
+        assert counts.ghost_forward.size == counts.forward.size
+        assert not np.allclose(counts.ghost_forward, counts.forward)
+
+
+def test_counts_records_the_subtracted_level_and_its_mode(qapp: QApplication) -> None:
+    """The constant-level modes carry (F, B) and the mode name for the marker."""
+    dataset = _histogram_dataset(
+        grouping_extra={
+            "background_correction": True,
+            "background_mode": "fixed",
+            "background_fixed_values": [10.0, 8.0],
+        }
+    )
+    counts = _reduce_preview(dataset).counts
+    assert counts.background_level == pytest.approx((10.0, 8.0))
+    assert counts.background_mode == "fixed"
+
+
+def test_counts_log_axis_clips_a_subtracted_bin_at_one(qapp: QApplication) -> None:
+    """An over-subtracted bin has no logarithm — it sits on the floor at 1."""
+    pane = GroupingPreviewPane()
+    try:
+        pane.set_view("counts")
+        forward = np.array([500.0, 200.0, -30.0, 0.0, 50.0, 40.0, 30.0, 20.0, 10.0, 5.0])
+        _draw_result(pane, counts=_counts(forward=forward))
+        drawn = _counts_curve(pane, tokens.ACCENT)
+        assert drawn.min() == 1.0
+        np.testing.assert_allclose(drawn[forward > 1.0], forward[forward > 1.0])
+    finally:
+        pane.shutdown()
+
+
+def test_counts_markers_sit_on_t0_and_the_good_window_edges(qapp: QApplication) -> None:
+    """t0 at x = 0; the window rules on its first and last bins' outer edges."""
+    pane = GroupingPreviewPane()
+    try:
+        pane.set_view("counts")
+        result = _draw_result(pane)
+        counts = result.counts
+        rules = _vertical_rules(pane)
+        for expected in (
+            0.0,
+            counts.bin_edge_time(counts.first_good),
+            counts.bin_edge_time(counts.last_good + 1),
+        ):
+            assert any(rule == pytest.approx(expected) for rule in rules), (
+                f"no rule at {expected}; saw {rules}"
+            )
+        texts = _axes_texts(pane)
+        assert "t0 · bin 2 (from file)" in texts
+        assert "good window: t_good offset 1 bins" in texts
+        assert "last good bin 7" in texts
+    finally:
+        pane.shutdown()
+
+
+def test_counts_x_range_holds_a_window_ending_on_the_last_bin(qapp: QApplication) -> None:
+    """The default window ends on the histogram's last bin — its rule must show.
+
+    The rule sits on bin ``last_good + 1``'s leading edge, half a bin past the
+    last drawn bin *centre*, so an x-range taken from the drawn samples culled
+    it (and its label) on every run that had not narrowed its good window.
+    """
+    pane = GroupingPreviewPane()
+    try:
+        pane.set_view("counts")
+        counts = _counts(last_good=9)
+        result = _draw_result(pane, counts=counts)
+        assert result.counts.last_good == result.counts.n_bins - 1
+
+        window_end = counts.bin_edge_time(counts.last_good + 1)
+        assert pane._axes.get_xlim() == pytest.approx(
+            (counts.bin_edge_time(0), counts.bin_edge_time(counts.n_bins))
+        )
+        assert any(rule == pytest.approx(window_end) for rule in _vertical_rules(pane))
+        assert "last good bin 9" in _axes_texts(pane)
+    finally:
+        pane.shutdown()
+
+
+def test_counts_background_rule_only_when_a_level_was_subtracted(qapp: QApplication) -> None:
+    """``reference_run`` subtracts a spectrum, so there is no level to rule."""
+    pane = GroupingPreviewPane()
+    try:
+        pane.set_view("counts")
+        _draw_result(pane)  # no background
+        assert _horizontal_rules(pane) == []
+        assert not any("background level" in text for text in _axes_texts(pane))
+
+        _draw_result(
+            pane,
+            counts=_counts(background_level=(30.0, 25.0), background_mode="tail_fit"),
+        )
+        assert _horizontal_rules(pane) == [pytest.approx(30.0)]
+        assert "background level · F 30.0 / B 25.0 counts per bin (tail fit)" in _axes_texts(pane)
+    finally:
+        pane.shutdown()
+
+
+def test_counts_caption_names_the_groups_and_the_compare(qapp: QApplication) -> None:
+    """A count-domain compare ghosts both spectra; α says where it acts instead."""
+    pane = GroupingPreviewPane()
+    try:
+        pane.set_view("counts")
+        _draw_result(
+            pane,
+            counts=_counts(
+                ghost_forward=np.linspace(1100.0, 110.0, 10),
+                ghost_backward=np.linspace(900.0, 90.0, 10),
+            ),
+            compare_stage="background",
+        )
+        texts = _axes_texts(pane)
+        assert "F: Det 1 · as reduced" in texts
+        assert "B: Det 2 · as reduced" in texts
+        assert "without background (ghost) · F solid, B dashed" in texts
+
+        _draw_result(pane, compare_stage="alpha", centre=(-0.61, 0.02))
+        texts = _axes_texts(pane)
+        assert "α acts when the asymmetry is formed — see the Asymmetry view" in texts
+        assert not any("(ghost)" in text for text in texts)
+    finally:
+        pane.shutdown()
+
+
+def test_counts_ghost_never_widens_the_y_range(qapp: QApplication) -> None:
+    """Same contract as the asymmetry view: the drawn spectra alone set the range."""
+    pane = GroupingPreviewPane()
+    try:
+        pane.set_view("counts")
+        _draw_result(pane)
+        without_ghost = pane._axes.get_ylim()
+        _draw_result(
+            pane,
+            counts=_counts(
+                ghost_forward=np.full(10, 1.0e7),
+                ghost_backward=np.full(10, 1.0e7),
+            ),
+            compare_stage="deadtime",
+        )
+        # The floor is untouched; the ceiling only rises by the headroom the
+        # extra caption row needs, nowhere near the 1e7 ghost.
+        assert pane._axes.get_ylim()[0] == pytest.approx(without_ghost[0])
+        assert pane._axes.get_ylim()[1] < 1.0e5
     finally:
         pane.shutdown()
 

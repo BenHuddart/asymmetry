@@ -237,3 +237,30 @@ def test_pager_step_reaches_the_preview_request(qapp: QApplication) -> None:
     assert dialog._compare_stage == "alpha"
     dialog._refresh_preview()
     assert dialog._preview_pane._pending.compare_stage == "alpha"
+
+
+def test_view_toggle_sits_on_the_pager_row_and_defaults_to_asymmetry(
+    qapp: QApplication,
+) -> None:
+    """D7: an exclusive Asymmetry | Counts pair, Asymmetry checked at open."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+
+    buttons = dialog._preview_view_buttons
+    assert [b.text() for b in dialog._preview_view_group.buttons()] == ["Asymmetry", "Counts"]
+    assert dialog._preview_view_group.exclusive()
+    assert buttons["asymmetry"].isChecked()
+    assert not buttons["counts"].isChecked()
+    assert dialog._preview_pane._view == "asymmetry"
+
+
+def test_clicking_counts_puts_the_pane_in_the_counts_view(qapp: QApplication) -> None:
+    """The toggle drives the pane's view state directly — no recompute."""
+    dialog = GroupingDialog([_dataset_with_histograms()])
+
+    dialog._preview_view_buttons["counts"].click()
+    assert dialog._preview_view_buttons["counts"].isChecked()
+    assert not dialog._preview_view_buttons["asymmetry"].isChecked()
+    assert dialog._preview_pane._view == "counts"
+
+    dialog._preview_view_buttons["asymmetry"].click()
+    assert dialog._preview_pane._view == "asymmetry"

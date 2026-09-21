@@ -30,6 +30,13 @@ always the full configured reduction and alone sets the y-limits; a compare
 ghost is drawn *on top* in the focused stage's identity colour, and a fixed
 caption in the axes' top-left names both curves (no legend — the pager label
 and the focused correction card name the same comparison).
+
+One reduction serves two views (D7/D8 of ``docs/plans/grouping-preview.md``):
+the asymmetry over the good window, and the count-domain view of the corrected
+F/B group spectra over the *full* histogram with t0, the good window and the
+subtracted background level marked. Both are drawn from the same
+:class:`_PreviewResult`, so :meth:`GroupingPreviewPane.set_view` is a redraw and
+never dispatches the worker.
 """
 
 from __future__ import annotations
@@ -57,11 +64,13 @@ from asymmetry.core.transform import (
     corrected_grouped_counts,
     correction_flags_from_grouping,
     effective_group_indices,
+    resolve_background_mode,
     resolve_facility,
 )
 from asymmetry.gui.styles import tokens
 from asymmetry.gui.tasks import TaskCancelledError, TaskRunner, TaskWorker
 from asymmetry.gui.utils.plot_decimation import decimate_for_preview as _decimate_for_preview
+from asymmetry.gui.utils.plot_decimation import preview_stride as _preview_stride
 
 #: Debounce window for coalescing rapid edits before a recompute.
 _DEBOUNCE_MS = 300
@@ -102,6 +111,21 @@ COMPARE_STAGE_LABELS: dict[str, str] = {
     "beta": "β = 1",
 }
 
+#: The stages that act when the asymmetry is *formed* rather than on the counts,
+#: keyed to the symbol the Counts caption names them by. Membership is the one
+#: fact that decides both: these stages leave the F/B spectra untouched, so the
+#: Counts view has no ghost to draw for them and says so instead.
+_ASYMMETRY_STAGE_SYMBOLS: dict[str, str] = {"alpha": "α", "beta": "β"}
+
+#: How the Counts view words each constant-level background mode. Only these
+#: modes subtract a level (``reference_run`` subtracts a spectrum, so
+#: ``background_level`` is ``None`` and no line is drawn).
+_BACKGROUND_MODE_LABELS: dict[str, str] = {
+    "fixed": "fixed",
+    "range": "pre-t0 range",
+    "tail_fit": "tail fit",
+}
+
 #: Caption geometry in axes fractions: swatch from x to x+width, text after it,
 #: rows stepping down from the top. Fixed placement (never data-dependent) so an
 #: off-scale ghost is still named at a stable spot. ``_CAPTION_ROW_DY`` is the
@@ -139,6 +163,10 @@ class PreviewFacts:
     backward_name: str
     #: Bunching factor, as the binning row states it.
     bunch: int
+    #: Where the previewed t0 came from — ``"from file"``, ``"manual"`` or
+    #: ``"detected"``, as the Counts view's t0 marker names it. A dialog fact:
+    #: the resolved grouping carries the bin, not the policy that chose it.
+    t0_mode_label: str
     #: Active count-domain corrections, worded as the pipeline chips word them.
     corrections: tuple[str, ...] = ()
     #: In vector mode, the primary projection previewed (e.g. ``"P_z"``); the
@@ -177,6 +205,52 @@ class _PreviewRequest:
 
 
 @dataclass(frozen=True)
+class CountsCurves:
+    """The count-domain view of one reduction (D8): spectra plus their markers.
+
+    ``forward``/``backward`` are the *corrected* group counts — deadtime
+    corrected, grouped, background subtracted — over the **full** histogram from
+    bin 0, not the good window the asymmetry is formed on. They and ``time`` are
+    decimated on one shared stride, so a drawn sample keeps its partner sample.
+    ``time`` stamps each drawn bin's *centre* relative to t0, matching the
+    asymmetry axis' convention; the bin *edges* the window markers sit on come
+    from :meth:`bin_edge_time`.
+    """
+
+    #: Bin-centre times of the drawn bins, in µs after t0.
+    time: np.ndarray
+    forward: np.ndarray
+    backward: np.ndarray
+    #: Bin width in µs (undecimated — one histogram bin, not one drawn sample).
+    bin_width: float
+    #: Undecimated histogram length. The drawn arrays are strided, so their last
+    #: sample is not the last bin; the view's x-range runs to bin ``n_bins``'s
+    #: leading edge, which is the only bound every window marker lies inside.
+    n_bins: int
+    #: Resolved common t0 bin, and the good window's inclusive bin bounds.
+    t0_bin: int
+    first_good: int
+    last_good: int
+    #: The constant level subtracted from (F, B), for the modes that subtract
+    #: one; ``None`` for ``reference_run`` (a spectrum) and for no background.
+    background_level: tuple[float, float] | None
+    background_mode: str
+    #: The compare pass' spectra, on the same stride — the deadtime and
+    #: background compares only, whose second corrected pass already ran for the
+    #: asymmetry ghost. ``None`` for α/β (they do not touch the counts) and off.
+    ghost_forward: np.ndarray | None = None
+    ghost_backward: np.ndarray | None = None
+
+    def bin_edge_time(self, bin_index: int) -> float:
+        """Leading edge of bin *bin_index*, on the same axis as :attr:`time`.
+
+        ``time[0]`` is bin 0's centre (the stride always keeps sample 0), so the
+        histogram's origin sits half a bin before it.
+        """
+        return (bin_index - 0.5) * self.bin_width + float(self.time[0])
+
+
+@dataclass(frozen=True)
 class _PreviewResult:
     """Plain-array reduction result marshalled back to the GUI thread."""
 
@@ -185,6 +259,9 @@ class _PreviewResult:
     time: np.ndarray
     asymmetry: np.ndarray
     error: np.ndarray
+    #: The same reduction seen in the count domain — one worker pass feeds both
+    #: views, so switching view is a redraw (D8).
+    counts: CountsCurves
     #: The (α, β) the solid curve was formed with — the caption quotes them.
     alpha: float
     beta: float
@@ -240,6 +317,10 @@ class GroupingPreviewPane(QWidget):
         self._canvas = None
         self._axes = None
         self._nav_toolbar = None
+        #: Which view of the result is drawn — ``"asymmetry"`` or ``"counts"``
+        #: (D7). Preview-only state, owned here; the dialog's segmented control
+        #: drives it through :meth:`set_view`.
+        self._view = "asymmetry"
         #: Last drawn result, retained so Home can redraw with fresh autoscale
         #: without a recompute.
         self._last_result: _PreviewResult | None = None
@@ -375,6 +456,19 @@ class GroupingPreviewPane(QWidget):
             )
         )
 
+    def set_view(self, view: str) -> None:
+        """Draw the last result as *view* (``"asymmetry"`` / ``"counts"``).
+
+        A redraw, never a recompute: one worker pass produces both views (D8).
+        The user's pan/zoom is dropped, because a range chosen on a percent
+        asymmetry over the good window means nothing on a log counts axis over
+        the full histogram.
+        """
+        self._view = view
+        self._user_view = None
+        if self._last_result is not None:
+            self._draw(self._last_result)
+
     def _next_generation(self) -> int:
         self._generation += 1
         return self._generation
@@ -477,15 +571,10 @@ class GroupingPreviewPane(QWidget):
     # -- drawing ---------------------------------------------------------
 
     def _draw(self, result: _PreviewResult) -> None:
-        """Redraw the preview: solid = the full reduction, ghost = the compare.
+        """Redraw the preview in the current view; the status strip is shared.
 
-        The y-axis always follows the *solid* curve (its finite ``asymmetry ±
-        error`` range, padded ~8%) — the ghost never influences the autoscale,
-        because a deadtime-removed ghost can reach ~1e7 % (e.g. a FLAME run) and
-        would crush the solid flat. There is no legend: the fixed caption in the
-        top-left corner names both curves, at a placement independent of the
-        data, so an off-scale ghost is named too. Once the user pans/zooms, their
-        view is preserved verbatim across redraws until Home resets it.
+        Once the user pans/zooms, their view is preserved verbatim across
+        redraws until Home (or a view switch) resets it.
         """
         if self._axes is None or self._canvas is None:
             return
@@ -502,6 +591,30 @@ class GroupingPreviewPane(QWidget):
         # (0..1) view — the "strange state" this guards against.
         preserved = self._user_view
         self._axes.clear()
+        if self._view == "counts":
+            self._draw_counts(result, preserved)
+        else:
+            self._draw_asymmetry(result, preserved)
+        self._axes.tick_params(labelsize=7)
+        self._canvas.draw_idle()
+        self._status.setText(_status_html(result.facts, result.time))
+
+    def _draw_asymmetry(
+        self,
+        result: _PreviewResult,
+        preserved: tuple[tuple[float, float], tuple[float, float]] | None,
+    ) -> None:
+        """Solid = the full reduction, ghost = the compare.
+
+        The y-axis always follows the *solid* curve (its finite ``asymmetry ±
+        error`` range, padded ~8%) — the ghost never influences the autoscale,
+        because a deadtime-removed ghost can reach ~1e7 % (e.g. a FLAME run) and
+        would crush the solid flat. There is no legend: the fixed caption in the
+        top-left corner names both curves, at a placement independent of the
+        data, so an off-scale ghost is named too.
+        """
+        # The counts view leaves the axis logarithmic; this one is always linear.
+        self._axes.set_yscale("linear")
         if result.time.size == 0:
             self._axes.text(
                 0.5,
@@ -529,7 +642,14 @@ class GroupingPreviewPane(QWidget):
                 )
             if result.compare_stage == "alpha" and result.centre is not None:
                 self._draw_residual_baseline(*result.centre)
-            caption_rows = self._draw_caption(result)
+            reduced = f"as reduced · α = {result.alpha:.3f}"
+            if abs(result.beta - 1.0) > 1e-12:
+                reduced += f" · β = {result.beta:.3f}"
+            rows = [(tokens.ACCENT, reduced)]
+            if result.baseline is not None:
+                stage = result.compare_stage
+                rows.append((_GHOST_COLORS[stage], f"{COMPARE_STAGE_LABELS[stage]} (ghost)"))
+            caption_rows = self._draw_caption(rows)
             # Solid-only autoscale, set explicitly AFTER plotting so neither the
             # ghost nor matplotlib's own autoscale can widen the range — unless
             # the user panned/zoomed, in which case their view wins verbatim.
@@ -546,9 +666,214 @@ class GroupingPreviewPane(QWidget):
                 self._axes.set_ylim(*limits)
         self._axes.set_xlabel("Time (µs)", fontsize=8)
         self._axes.set_ylabel("Asymmetry (%)", fontsize=8)
-        self._axes.tick_params(labelsize=7)
-        self._canvas.draw_idle()
-        self._status.setText(_status_html(result.facts, result.time))
+
+    def _draw_counts(
+        self,
+        result: _PreviewResult,
+        preserved: tuple[tuple[float, float], tuple[float, float]] | None,
+    ) -> None:
+        """The count domain (D7): corrected F/B spectra with the settings marked.
+
+        Every count-domain setting the dialog edits acts here and nowhere the
+        asymmetry can show it — t0 shifts the origin, the good window picks the
+        bins the asymmetry is formed from, and the background is a level taken
+        off both spectra. The spectra span decades, so the axis is log₁₀; a
+        background-subtracted bin at or below zero has no logarithm and is drawn
+        on the floor at 1.
+        """
+        counts = result.counts
+        if counts.forward.size == 0:
+            self._axes.text(
+                0.5,
+                0.5,
+                "No counts in this run's histograms.",
+                ha="center",
+                va="center",
+                transform=self._axes.transAxes,
+                color=tokens.TEXT_MUTED,
+            )
+            return
+        self._axes.set_yscale("log")
+        time = counts.time
+        forward = np.maximum(counts.forward, 1.0)
+        backward = np.maximum(counts.backward, 1.0)
+
+        rows = [
+            (tokens.ACCENT, f"F: {result.facts.forward_name} · as reduced"),
+            (tokens.PLOT_AXIS, f"B: {result.facts.backward_name} · as reduced"),
+        ]
+        stage = result.compare_stage
+        if counts.ghost_forward is not None:
+            rows.append(
+                (
+                    _GHOST_COLORS[stage],
+                    f"{COMPARE_STAGE_LABELS[stage]} (ghost) · F solid, B dashed",
+                )
+            )
+        elif stage in _ASYMMETRY_STAGE_SYMBOLS:
+            rows.append(
+                (
+                    _GHOST_COLORS[stage],
+                    f"{_ASYMMETRY_STAGE_SYMBOLS[stage]} acts when the asymmetry is "
+                    "formed — see the Asymmetry view",
+                )
+            )
+
+        # Limits first: the markers below are drawn only where they land inside
+        # the view, and axvline/axhline would otherwise pull the range to them.
+        if preserved is not None:
+            xlimits, ylimits = preserved
+        else:
+            # The histogram's own edges, not its first and last drawn bin
+            # centres: the good window's trailing rule sits on bin
+            # ``last_good + 1``'s edge, which for a window ending at the last
+            # bin — the default — is half a bin past the last centre and would
+            # be culled with its label.
+            xlimits = (counts.bin_edge_time(0), counts.bin_edge_time(counts.n_bins))
+            # The same headroom rule as the asymmetry view, applied in log₁₀
+            # space where the caption rows are laid out: the drawn (clipped)
+            # spectra alone set the range, so a compare ghost can never widen it.
+            drawn = np.concatenate((forward, backward))
+            decades = _solid_ylimits(
+                np.log10(drawn),
+                np.zeros_like(drawn),
+                top_headroom=_CAPTION_ROW_DY * len(rows) + _CAPTION_HEADROOM_PAD,
+            )
+            ylimits = (10.0 ** decades[0], 10.0 ** decades[1])
+
+        self._draw_counts_regions(counts, result.facts.t0_mode_label, xlimits)
+        self._axes.plot(time, forward, color=tokens.ACCENT, linewidth=1.2, zorder=3)
+        self._axes.plot(time, backward, color=tokens.PLOT_AXIS, linewidth=1.2, alpha=0.75, zorder=3)
+        if counts.ghost_forward is not None:
+            ghost_color = _GHOST_COLORS[stage]
+            self._axes.plot(
+                time,
+                np.maximum(counts.ghost_forward, 1.0),
+                color=ghost_color,
+                linewidth=1.3,
+                alpha=0.9,
+                zorder=4,
+            )
+            self._axes.plot(
+                time,
+                np.maximum(counts.ghost_backward, 1.0),
+                color=ghost_color,
+                linewidth=1.3,
+                alpha=0.9,
+                linestyle=(0, (5, 2)),
+                zorder=4,
+            )
+        level = counts.background_level
+        # Drawn only where it lands inside the view, for the same reason the
+        # window rules are: a marker pinned to the axis edge would claim the
+        # level is somewhere it is not. It sits in range whenever the spectra
+        # decay towards it, which is the case the marker exists for.
+        if level is not None and ylimits[0] <= level[0] <= ylimits[1]:
+            self._draw_background_level(counts)
+        self._draw_caption(rows)
+
+        self._axes.set_xlim(*xlimits)
+        self._axes.set_ylim(*ylimits)
+        self._axes.set_xlabel("Time after t0 (µs)", fontsize=8)
+        self._axes.set_ylabel("Counts / bin", fontsize=8)
+
+    def _draw_counts_regions(
+        self,
+        counts: CountsCurves,
+        t0_mode_label: str,
+        xlimits: tuple[float, float],
+    ) -> None:
+        """Shade what the asymmetry never sees, and rule the bins that bound it.
+
+        The good window is the inclusive bin range ``[first_good, last_good]``,
+        so in time it spans its first bin's leading edge to its last bin's
+        trailing edge — the two rules and the two shaded regions share those
+        edges. A rule outside the current x-range is dropped along with its
+        label rather than clamped to the axis edge, which would claim a bin sits
+        somewhere it does not.
+        """
+        window_start = counts.bin_edge_time(counts.first_good)
+        window_end = counts.bin_edge_time(counts.last_good + 1)
+        # Pre-t0 and merely out-of-window bins are different exclusions, so the
+        # window shading is lighter than the (opaque) pre-t0 band and the two
+        # read apart where they overlap.
+        self._axes.axvspan(
+            xlimits[0], counts.bin_edge_time(counts.t0_bin), color=tokens.SURFACE_HI, zorder=1
+        )
+        self._axes.axvspan(xlimits[0], window_start, color=tokens.SURFACE_HI, alpha=0.6, zorder=1)
+        self._axes.axvspan(window_end, xlimits[1], color=tokens.SURFACE_HI, alpha=0.6, zorder=1)
+
+        offset = counts.first_good - counts.t0_bin
+        # (x, colour, dash, label side, label height in axes fraction, label).
+        # The t0 and first-good labels sit at different heights because a small
+        # t_good offset puts their rules within a few pixels of each other.
+        rules = (
+            (
+                0.0,
+                tokens.PLOT_AXIS,
+                (0, (2, 2)),
+                "left",
+                0.03,
+                f"t0 · bin {counts.t0_bin} ({t0_mode_label})",
+            ),
+            (
+                window_start,
+                tokens.TEXT_MUTED,
+                "solid",
+                "left",
+                0.14,
+                f"good window: t_good offset {offset} bins",
+            ),
+            (
+                window_end,
+                tokens.TEXT_MUTED,
+                "solid",
+                "right",
+                0.03,
+                f"last good bin {counts.last_good}",
+            ),
+        )
+        for x, color, dash, side, y, label in rules:
+            if not xlimits[0] <= x <= xlimits[1]:
+                continue
+            self._axes.axvline(x, color=color, linewidth=1.0, linestyle=dash, zorder=2)
+            self._axes.text(
+                x,
+                y,
+                label,
+                transform=self._axes.get_xaxis_transform(),
+                ha=side,
+                va="bottom",
+                fontsize=7,
+                color=tokens.TEXT_MUTED,
+                zorder=5,
+                bbox=dict(_TEXT_BBOX),
+            )
+
+    def _draw_background_level(self, counts: CountsCurves) -> None:
+        """Rule the constant level subtracted from each group, named with its mode."""
+        forward_level, backward_level = counts.background_level
+        self._axes.axhline(
+            forward_level,
+            color=tokens.STAGE_BACKGROUND,
+            linewidth=1.0,
+            linestyle=(0, (4, 3)),
+            zorder=4,
+        )
+        mode = _BACKGROUND_MODE_LABELS[counts.background_mode]
+        self._axes.text(
+            0.99,
+            forward_level,
+            f"background level · F {forward_level:.1f} / B {backward_level:.1f} "
+            f"counts per bin ({mode})",
+            transform=self._axes.get_yaxis_transform(),
+            ha="right",
+            va="bottom",
+            fontsize=7,
+            color=tokens.STAGE_BACKGROUND,
+            zorder=5,
+            bbox=dict(_TEXT_BBOX),
+        )
 
     def _draw_solid(self, result: _PreviewResult) -> None:
         """The "as reduced" curve: a line with a ±σ band, or markers when sparse."""
@@ -599,19 +924,13 @@ class GroupingPreviewPane(QWidget):
             bbox=dict(_TEXT_BBOX),
         )
 
-    def _draw_caption(self, result: _PreviewResult) -> int:
+    def _draw_caption(self, rows: list[tuple[str, str]]) -> int:
         """Name the curves in the axes' top-left; returns the rows drawn.
 
-        The caller sizes the autoscale's top headroom from that count, so the
-        solid curve never climbs under the rows.
+        *rows* is ``(colour, text)`` per curve, in drawing order. The caller
+        sizes the autoscale's top headroom from the returned count, so no curve
+        climbs under the rows that name it.
         """
-        reduced = f"as reduced · α = {result.alpha:.3f}"
-        if abs(result.beta - 1.0) > 1e-12:
-            reduced += f" · β = {result.beta:.3f}"
-        rows = [(tokens.ACCENT, reduced)]
-        if result.baseline is not None:
-            stage = result.compare_stage
-            rows.append((_GHOST_COLORS[stage], f"{COMPARE_STAGE_LABELS[stage]} (ghost)"))
         for index, (color, text) in enumerate(rows):
             y = _CAPTION_TOP - index * _CAPTION_ROW_DY
             # Axes-fraction coordinates leave dataLim untouched, so the caption
@@ -735,6 +1054,9 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
     compare = request.compare_stage
     baseline = None
     centre: tuple[float, float] | None = None
+    # The second corrected pass, when the focused stage acts on the counts — it
+    # is the asymmetry ghost AND the Counts view's ghost, never run twice (D8).
+    ghost_counts = None
     if compare == "alpha":
         # Residual baseline (inverse-variance weighted ⟨A⟩) on the full-res curve.
         centre = _weighted_centre(asymmetry, error)
@@ -751,21 +1073,17 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
             corrected, grouping, alpha, first_good, last_good, beta=1.0
         )
         _dt, baseline, _de = _decimate_for_preview(time, base_asym, error, _MAX_PREVIEW_POINTS)
-    elif compare == "deadtime" and use_deadtime:
+    elif (compare == "deadtime" and use_deadtime) or (compare == "background" and use_background):
         # The ghost is a second full reduction — honour cancellation before it, as
         # the first pass does, so a shutdown mid-flight stops promptly on big runs.
         if worker.is_cancelled():
             raise TaskCancelledError
-        ghost = _form_asymmetry(
-            _reduce(False, use_background), grouping, alpha, first_good, last_good, beta=beta
+        # The focused stage is dropped; the other keeps its configured state.
+        ghost_counts = _reduce(
+            use_deadtime and compare != "deadtime",
+            use_background and compare != "background",
         )
-        _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
-    elif compare == "background" and use_background:
-        if worker.is_cancelled():
-            raise TaskCancelledError
-        ghost = _form_asymmetry(
-            _reduce(use_deadtime, False), grouping, alpha, first_good, last_good, beta=beta
-        )
+        ghost = _form_asymmetry(ghost_counts, grouping, alpha, first_good, last_good, beta=beta)
         _dt, baseline, _de = _decimate_for_preview(time, ghost[1], error, _MAX_PREVIEW_POINTS)
 
     # Decimate here, off the GUI thread: bounds both the marshalled payload and
@@ -778,11 +1096,50 @@ def _run_reduction(worker: TaskWorker, request: _PreviewRequest) -> _PreviewResu
         time=time,
         asymmetry=asymmetry,
         error=error,
+        counts=_counts_curves(corrected, ghost_counts, grouping, first_good, last_good),
         alpha=alpha,
         beta=beta,
         baseline=baseline,
         compare_stage=compare,
         centre=centre,
+    )
+
+
+def _counts_curves(
+    corrected: Any,
+    ghost: Any | None,
+    grouping: dict[str, Any],
+    first_good: int,
+    last_good: int,
+) -> CountsCurves:
+    """The count-domain view of a reduction: full spectra on one shared stride.
+
+    Unlike the asymmetry, this covers the histogram from bin 0 — the pre-t0
+    region the ``range`` background reads, and the bins the good window leaves
+    out, are exactly what the view exists to show. Stamps are bin centres
+    ``(k + ½)·w`` minus the run's exact t0, the same convention the reduction's
+    own axis uses.
+    """
+    n = int(corrected.forward.size)
+    step = _preview_stride(n, _MAX_PREVIEW_POINTS)
+    bins = np.arange(0, n, step, dtype=np.float64)
+    # Dropping a correction stage changes neither the histogram lengths nor the
+    # common t0 they are aligned on, so the ghost shares this stride and axis.
+    ghost_forward = None if ghost is None else np.asarray(ghost.forward[::step], dtype=np.float64)
+    ghost_backward = None if ghost is None else np.asarray(ghost.backward[::step], dtype=np.float64)
+    return CountsCurves(
+        time=(bins + 0.5) * corrected.bin_width - corrected.t0_time_us,
+        forward=np.asarray(corrected.forward[::step], dtype=np.float64),
+        backward=np.asarray(corrected.backward[::step], dtype=np.float64),
+        bin_width=float(corrected.bin_width),
+        n_bins=n,
+        t0_bin=int(corrected.common_t0),
+        first_good=first_good,
+        last_good=last_good,
+        background_level=corrected.background_level,
+        background_mode=resolve_background_mode(grouping),
+        ghost_forward=ghost_forward,
+        ghost_backward=ghost_backward,
     )
 
 
@@ -915,4 +1272,4 @@ def _as_float(value: Any, default: float) -> float:
         return default
 
 
-__all__ = ["COMPARE_STAGE_LABELS", "GroupingPreviewPane", "PreviewFacts"]
+__all__ = ["COMPARE_STAGE_LABELS", "CountsCurves", "GroupingPreviewPane", "PreviewFacts"]

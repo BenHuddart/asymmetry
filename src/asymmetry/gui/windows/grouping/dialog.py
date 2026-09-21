@@ -18,6 +18,7 @@ import json
 import re
 from collections.abc import Iterator
 from dataclasses import replace
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -95,6 +96,8 @@ from asymmetry.core.utils.constants import PeriodMode
 from asymmetry.gui.styles import metrics, tokens
 from asymmetry.gui.styles.widgets import (
     apply_param_table_style,
+    build_segmented_cell_qss,
+    build_segmented_container_qss,
     build_stage_chip_qss,
     clear_layout,
     make_section_header,
@@ -160,6 +163,28 @@ from asymmetry.gui.windows.grouping.scope_panel import ScopePanel
 #: Compare-pager cycle order (`_step_compare`/`_sync_compare_pager`). ``None``
 #: ("off") is always available; the rest are gated by `_compare_stage_available`.
 _COMPARE_CYCLE: tuple[str | None, ...] = (None, "deadtime", "background", "alpha", "beta")
+
+#: How the preview's Counts view names each t0 policy mode beside its marker.
+_T0_MODE_LABELS: dict[str, str] = {
+    "from_file": "from file",
+    "manual": "manual",
+    "auto_detect": "detected",
+}
+
+#: The preview's two views: segmented-control label, `set_view` token, tooltip.
+_PREVIEW_VIEWS: tuple[tuple[str, str, str], ...] = (
+    (
+        "Asymmetry",
+        "asymmetry",
+        "Forward/backward asymmetry of the selected run under the current draft.",
+    ),
+    (
+        "Counts",
+        "counts",
+        "Corrected forward and backward group counts, with t0, the good window "
+        "and the background level marked.",
+    ),
+)
 
 #: Stage identity colours (chip outline = card stripe; see ``tokens.STAGE_*``).
 _STAGE_COLORS: dict[str, tuple[str, str]] = {
@@ -1270,16 +1295,18 @@ class GroupingDialog(QDialog):
             + 2 * self._corrections_scroll.frameWidth()
         )
 
-        # Compare pager: ◀/▶ + a muted label that step `_compare_stage` through
-        # the configured corrections, directly above the preview so it works from
-        # either column (the preview is pinned below both). Pure wrapper over the
-        # same `_set_compare_stage` the section toggles and pipeline chips drive.
-        right_layout.addWidget(self._build_compare_pager())
-
-        # Live asymmetry preview of the preview run under the current draft.
-        # Pinned below both columns, fixed-height so it never fights the form for
-        # space; it reduces off the GUI thread (debounced) and redraws as edited.
+        # Live preview of the preview run under the current draft. Pinned below
+        # both columns, fixed-height so it never fights the form for space; it
+        # reduces off the GUI thread (debounced) and redraws as edited. Built
+        # before its pager row, whose view toggle connects straight to it.
         self._preview_pane = GroupingPreviewPane()
+
+        # Pager row: the Asymmetry | Counts view toggle, then ◀/▶ + a muted label
+        # that step `_compare_stage` through the configured corrections. Directly
+        # above the preview so it works from either column (the preview is pinned
+        # below both). Pure wrapper over the same `_set_compare_stage` the section
+        # toggles and pipeline chips drive.
+        right_layout.addWidget(self._build_compare_pager())
         right_layout.addWidget(self._preview_pane)
 
         splitter.addWidget(right_pane)
@@ -4087,18 +4114,48 @@ class GroupingDialog(QDialog):
         self._sync_compare_pager()
 
     def _build_compare_pager(self) -> QWidget:
-        """The ◀/▶ pager row: steps ``_compare_stage`` through the cycle.
+        """The preview's control row: the view toggle, then the ◀/▶ compare pager.
 
         Sits directly above the pinned preview so it works from either column.
-        A pure wrapper over :meth:`_set_compare_stage` — same shared state the
-        pipeline chips drive; :meth:`_sync_compare_pager` (called from the single
-        :meth:`_sync_compare_surfaces` sync seam) keeps the label and arrow
-        enabled-state in step.
+        The pager is a pure wrapper over :meth:`_set_compare_stage` — same shared
+        state the pipeline chips drive; :meth:`_sync_compare_pager` (called from
+        the single :meth:`_sync_compare_surfaces` sync seam) keeps the label and
+        arrow enabled-state in step. The view toggle (D7) is the pane's own
+        preview-only state: a redraw of the last result, never a recompute, so it
+        drives :meth:`GroupingPreviewPane.set_view` directly.
         """
         widget = QWidget()
         row = QHBoxLayout(widget)
         row.setContentsMargins(0, 2, 0, 2)
         row.setSpacing(6)
+
+        self._preview_view_group = QButtonGroup(widget)
+        self._preview_view_group.setExclusive(True)
+        self._preview_view_buttons: dict[str, QPushButton] = {}
+        views = QFrame()
+        views.setStyleSheet(build_segmented_container_qss())
+        cells = QHBoxLayout(views)
+        cells.setContentsMargins(0, 0, 0, 0)
+        cells.setSpacing(0)
+        for index, (label, view, tooltip) in enumerate(_PREVIEW_VIEWS):
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setAutoDefault(False)
+            button.setDefault(False)
+            button.setToolTip(tooltip)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setStyleSheet(
+                build_segmented_cell_qss(
+                    first=index == 0, last=index == len(_PREVIEW_VIEWS) - 1, padding_h=6
+                )
+            )
+            button.clicked.connect(partial(self._preview_pane.set_view, view))
+            self._preview_view_group.addButton(button)
+            self._preview_view_buttons[view] = button
+            cells.addWidget(button)
+        self._preview_view_buttons["asymmetry"].setChecked(True)
+        row.addWidget(views)
+
         self._compare_prev_btn = QToolButton()
         self._compare_prev_btn.setArrowType(Qt.ArrowType.LeftArrow)
         self._compare_prev_btn.setToolTip("Previous comparison")
@@ -4255,6 +4312,7 @@ class GroupingDialog(QDialog):
             forward_name=str(names.get(pair[0], f"group {pair[0]}")),
             backward_name=str(names.get(pair[1], f"group {pair[1]}")),
             bunch=int(payload["bunching_factor"]),
+            t0_mode_label=_T0_MODE_LABELS[self._current_t0_mode()],
             corrections=tuple(
                 self._pipeline_summary(stage)
                 for stage in ("deadtime", "background")
