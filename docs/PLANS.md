@@ -8,9 +8,10 @@ subsystems or days.
 
 ### Grouping preview: legible compares and a Counts view
 
-Status: planned 2026-09-21, no branch yet; one PR in three phased subagent
-steps (pane rendering and removal of the "vs raw" compare, Counts view, docs)
-with a lead review gate after each. Decision log (D1–D10), verified code map
+Status: implemented 2026-09-21 on `feat/grouping-preview`, PR to follow; one
+PR in three phased subagent steps (pane rendering and removal of the "vs raw"
+compare, Counts view, docs) with a lead review gate after each. Decision log
+(D1–D10), verified code map
 and per-phase briefs in [plans/grouping-preview.md](plans/grouping-preview.md);
 Ben-reviewed mockup at <https://claude.ai/artifact/1Xcbr5vT3qfSpn1vhiWtQ5>.
 

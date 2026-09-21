@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The grouping window's live preview gains a `Counts` view, and the `Asymmetry`
+  view is redrawn to be legible.** An `Asymmetry | Counts` control at the left of
+  the compare pager switches the shared preview pane between the reduced
+  asymmetry (as before) and the corrected forward/backward group spectra over the
+  full histogram on a log axis, with t0, the good window's edges and the
+  subtracted background level ruled and labelled (e.g. `t0 · bin 100 (from
+  file)`, `good window: t_good offset 3 bins`, `background level · F 7119.0 / B
+  7168.3 counts per bin (tail fit)`) — the count-domain settings finally have a
+  picture, and switching views is a redraw, never a recompute. In both views the
+  solid curve is now a line with a ±σ band above 400 drawn points (markers with
+  error bars below), and a stage's compare ghost is drawn *on top* of it in the
+  stage's identity colour and named by a fixed corner caption (`as reduced ·
+  α = 1.080` over `α = 1 (ghost)`), rather than hidden behind the solid curve
+  and named by a label that could overlap the data. The residual baseline for
+  the α compare, `⟨A⟩`, is now drawn as a dashed line on the plot rather than
+  only quoted in the status strip, which itself leads with `PREVIEW` and the
+  selected run, then the forward/backward groups, binning, window and active
+  corrections. See `docs/reference/detector_grouping.rst` § "Comparing a
+  correction's effect" and § "Counts view".
 - **The grouping window's `t_good Offset` row gains a `From file`/`Manual`
   selector, mirroring the t0 row, and together with `Last Good Bin` it now
   governs where each run's analysed window starts and ends.** `From file`
@@ -221,6 +240,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **The grouping window's "Compare vs raw (uncorrected)" checkbox and pager stop**
+  — the compound ghost (no deadtime, no background, α = β = 1) could sit ~10⁷ %
+  off-scale on an uncorrected FLAME run and could not be attributed to any one
+  setting; the compare pager now cycles deadtime → background → α → β. See
+  `docs/reference/detector_grouping.rst` § "Comparing a correction's effect".
 - **Divergence marking** (`FitSeries.diverged_runs`, `mark_diverged`/`clear_diverged`/
   `is_diverged`, `ProjectModel.refresh_divergence`, the trend pill's `⚠` divergence glyph and
   the Data Browser's amber "diverged" tint for a fit series) — impossible now that a batch or

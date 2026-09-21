@@ -1,8 +1,8 @@
 # Grouping preview: legible compares and a Counts view
 
-Status: planned 2026-09-21, no branch yet. Implementation lands as **one PR**
-(`feat/grouping-preview` off `main`), built in three phases by subagents with
-a lead review gate after each. Mockup (Design canvas, Ben-reviewed through
+Status: implemented 2026-09-21 on `feat/grouping-preview`, PR to follow.
+Landed as **one PR** built in three phases by subagents with a lead review
+gate after each. Mockup (Design canvas, Ben-reviewed through
 three rounds): <https://claude.ai/artifact/1Xcbr5vT3qfSpn1vhiWtQ5>. Follows the
 corrections-UX work recorded in
 [porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md](../porting/correction-order-alpha-estimation/corrections-tab-ux-plan.md),
