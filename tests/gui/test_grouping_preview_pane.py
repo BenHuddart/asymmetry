@@ -1158,8 +1158,10 @@ def _horizontal_rules(pane: GroupingPreviewPane) -> list[float]:
 
 
 def _counts_curve(pane: GroupingPreviewPane, color: str, *, dashed: bool = False) -> np.ndarray:
-    """The y-data of one group spectrum: *color* picks with/without, the dash picks F or B."""
+    """The y-data of one group spectrum: *color* picks with/without; B is its lighter, dashed twin."""
     style = "--" if dashed else "-"
+    if dashed:
+        color = preview_pane_module._lighter(color)
     curves = [
         line
         for line in pane._axes.get_lines()
@@ -1363,13 +1365,14 @@ def test_counts_caption_names_the_groups_and_the_compare(qapp: QApplication) -> 
         )
         texts = _axes_texts(pane)
         assert "F: Det 1 · as reduced" in texts
-        assert "B: Det 2 · as reduced (dashed)" in texts
-        assert "without background · F solid, B dashed" in texts
+        assert "B: Det 2 · as reduced" in texts
+        assert "without background" in texts
 
         _draw_result(pane, compare_stage="alpha", centre=(-0.61, 0.02))
         texts = _axes_texts(pane)
         assert "α acts when the asymmetry is formed — see the Asymmetry view" in texts
-        assert not any("F solid, B dashed" in text for text in texts)
+        labels = preview_pane_module.COMPARE_STAGE_LABELS.values()
+        assert not any(text in labels for text in texts)
     finally:
         pane.shutdown()
 
@@ -1381,7 +1384,7 @@ def test_counts_colour_is_the_correction_and_the_dash_is_the_group(
     """D11 in the count domain: colour = with/without, line style = F or B.
 
     Both as-reduced spectra share one colour — ACCENT unfocused, the focused
-    stage's token otherwise — and are told apart by F solid / B dashed; the
+    stage's token otherwise — and B is the lighter, dashed twin of F; the
     ghost pair is grey in the same two styles.
     """
     pane = GroupingPreviewPane()
@@ -1412,9 +1415,10 @@ def test_counts_colour_is_the_correction_and_the_dash_is_the_group(
 
         texts = {str(text.get_text()): text for text in pane._axes.texts}
         assert texts["F: Det 1 · as reduced"].get_color() == expected
-        assert texts["B: Det 2 · as reduced (dashed)"].get_color() == expected
+        b_row = texts["B: Det 2 · as reduced"]
+        assert b_row.get_color() == preview_pane_module._lighter(expected)
         if stage is not None:
-            row = f"{preview_pane_module.COMPARE_STAGE_LABELS[stage]} · F solid, B dashed"
+            row = preview_pane_module.COMPARE_STAGE_LABELS[stage]
             assert texts[row].get_color() == grey
     finally:
         pane.shutdown()
@@ -1637,3 +1641,39 @@ def test_preview_axis_uses_the_runs_exact_t0(qapp: QApplication) -> None:
     # And the axis genuinely moved off the integer-bin grid.
     assert not np.allclose(drawn, np.arange(drawn.size) * 0.016)
     pane.shutdown()
+
+
+def test_layout_is_frozen_while_the_user_holds_a_view(qapp: QApplication) -> None:
+    """A pan/zoom keeps the axes rectangle: tight layout must not re-fit it
+    around the tick and marker labels that moved with the limits."""
+    from matplotlib.layout_engine import TightLayoutEngine
+
+    pane = GroupingPreviewPane()
+    try:
+        result = _draw_result(pane)
+        assert isinstance(pane._figure.get_layout_engine(), TightLayoutEngine)
+        pane._user_view = ((1.0, 2.0), (-1.0, 1.0))
+        pane._draw(result)
+        assert not isinstance(pane._figure.get_layout_engine(), TightLayoutEngine)
+        pane._user_view = None
+        pane._draw(result)
+        assert isinstance(pane._figure.get_layout_engine(), TightLayoutEngine)
+    finally:
+        pane.shutdown()
+
+
+def test_data_anchored_labels_are_clipped_to_the_axes(qapp: QApplication) -> None:
+    """Marker, level and ⟨A⟩ labels never paint outside the axes when a zoom
+    moves their anchor to an edge; the corner caption is placed inside."""
+    pane = GroupingPreviewPane()
+    try:
+        _draw_result(pane, compare_stage="alpha", centre=(-0.61, 0.02))
+        assert next(
+            t for t in pane._axes.texts if "residual baseline" in t.get_text()
+        ).get_clip_on()
+        pane.set_view("counts")
+        _draw_result(pane, counts=_counts(background_level=(30.0, 25.0), background_mode="fixed"))
+        anchored = [t for t in pane._axes.texts if "bin" in t.get_text() or "level" in t.get_text()]
+        assert anchored and all(t.get_clip_on() for t in anchored)
+    finally:
+        pane.shutdown()

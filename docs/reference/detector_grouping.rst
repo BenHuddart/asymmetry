@@ -894,7 +894,7 @@ Counts view
       good window and the subtracted background level marked.
 
    The Counts view with the background compare focused: the corrected F/B
-   spectra (F solid, B dashed) in the background stage's colour, the grey
+   spectra (F solid, B lighter and dashed) in the background stage's colour, the grey
    without-background ghost on top, and t0, the good window's edges, and the
    subtracted background level ruled.
 
@@ -914,11 +914,11 @@ grouped, background-subtracted, exactly as the reduction forms them — over the
 (a background-subtracted bin at or below zero has no logarithm and is
 drawn on the floor at 1 count). Colour follows the same rule as the Asymmetry
 view — colour is the correction, grey is without it — so here the line style
-names the group instead: the as-reduced F is **solid** and the as-reduced B
-**dashed**, both in the accent colour, or both in the focused stage's colour
-while a compare is focused. A fixed caption in the top-left corner names
-both, e.g. "F: Det 1 (0°) · as reduced" over "B: Det 2 (90°) · as reduced
-(dashed)".
+names the group instead: the as-reduced F is a solid line and the as-reduced
+B a lighter, dashed line of the same colour — the accent colour, or the
+focused stage's colour while a compare is focused. A fixed caption in the
+top-left corner names both with matching swatches, e.g. "F: Det 1 (0°) · as
+reduced" over "B: Det 2 (90°) · as reduced".
 
 Four markers show what the asymmetry never does:
 
@@ -939,8 +939,8 @@ no rule.
 
 The deadtime and background compares ghost their stage-removed spectra beneath the as-reduced pair
 in grey, from the same second corrected pass the
-Asymmetry view's ghost uses — F solid, B dashed, captioned "without deadtime
-· F solid, B dashed" (or "without background · F solid, B dashed"). :math:`\alpha` and :math:`\beta` act when the asymmetry is *formed*,
+Asymmetry view's ghost uses — the same F solid / B lighter-and-dashed pair,
+in grey, captioned "without deadtime" (or "without background"). :math:`\alpha` and :math:`\beta` act when the asymmetry is *formed*,
 not on the counts, so their compares draw no ghost here; the caption instead
 reads "α acts when the asymmetry is formed — see the Asymmetry view" (or the
 same for β), in the stage's colour — the colour the F/B spectra above it are

@@ -47,7 +47,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 from html import escape
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 from PySide6.QtCore import QSize, QTimer
@@ -110,8 +110,24 @@ _STAGE_COLORS: dict[str, str] = {
 _GHOST_COLOR = tokens.TEXT_MUTED
 
 #: Counts view: colour is already spent on with/without the correction, so the
-#: backward group is told from the forward one by its dash, in both pairs.
+#: backward group is told from the forward one by being a lighter tint of the
+#: same colour AND dashed, in both pairs — the dash alone merged with F at full
+#: scale, the tint alone would read as a third colour.
 _BACKWARD_DASH = (0, (5, 2))
+_BACKWARD_TINT = 0.45
+
+
+def _lighter(color: str, amount: float = _BACKWARD_TINT) -> str:
+    """*color* (``#rrggbb``) mixed *amount* of the way towards white."""
+    r, g, b = (int(color[i : i + 2], 16) for i in (1, 3, 5))
+    mix = (round(c + (255 - c) * amount) for c in (r, g, b))
+    return "#" + "".join(f"{c:02x}" for c in mix)
+
+
+class _CaptionRow(NamedTuple):
+    color: str
+    text: str
+    dashed: bool = False
 
 
 def _solid_color(compare_stage: str | None) -> str:
@@ -608,6 +624,10 @@ class GroupingPreviewPane(QWidget):
         # limits, and re-capturing those would freeze the preview on a garbage
         # (0..1) view — the "strange state" this guards against.
         preserved = self._user_view
+        # The axes rectangle is part of the user's chosen view: while they hold a
+        # pan/zoom, tight layout must not re-fit it around the tick and marker
+        # labels that moved with the limits.
+        self._figure.set_layout_engine("none" if preserved is not None else "tight")
         self._axes.clear()
         if self._view == "counts":
             self._draw_counts(result, preserved)
@@ -664,10 +684,10 @@ class GroupingPreviewPane(QWidget):
             reduced = f"as reduced · α = {result.alpha:.3f}"
             if abs(result.beta - 1.0) > 1e-12:
                 reduced += f" · β = {result.beta:.3f}"
-            rows = [(solid_color, reduced)]
+            rows = [_CaptionRow(solid_color, reduced)]
             if result.baseline is not None:
                 stage = result.compare_stage
-                rows.append((_GHOST_COLOR, COMPARE_STAGE_LABELS[stage]))
+                rows.append(_CaptionRow(_GHOST_COLOR, COMPARE_STAGE_LABELS[stage]))
             caption_rows = self._draw_caption(rows)
             # Solid-only autoscale, set explicitly AFTER plotting so neither the
             # ghost nor matplotlib's own autoscale can widen the range — unless
@@ -724,19 +744,16 @@ class GroupingPreviewPane(QWidget):
         stage = result.compare_stage
         solid_color = _solid_color(stage)
         rows = [
-            (solid_color, f"F: {result.facts.forward_name} · as reduced"),
-            (solid_color, f"B: {result.facts.backward_name} · as reduced (dashed)"),
+            _CaptionRow(solid_color, f"F: {result.facts.forward_name} · as reduced"),
+            _CaptionRow(
+                _lighter(solid_color), f"B: {result.facts.backward_name} · as reduced", dashed=True
+            ),
         ]
         if counts.ghost_forward is not None:
-            rows.append(
-                (
-                    _GHOST_COLOR,
-                    f"{COMPARE_STAGE_LABELS[stage]} · F solid, B dashed",
-                )
-            )
+            rows.append(_CaptionRow(_GHOST_COLOR, COMPARE_STAGE_LABELS[stage]))
         elif stage in _ASYMMETRY_STAGE_SYMBOLS:
             rows.append(
-                (
+                _CaptionRow(
                     solid_color,
                     f"{_ASYMMETRY_STAGE_SYMBOLS[stage]} acts when the asymmetry is "
                     "formed — see the Asymmetry view",
@@ -768,7 +785,12 @@ class GroupingPreviewPane(QWidget):
         self._draw_counts_regions(counts, result.facts.t0_mode_label, xlimits)
         self._axes.plot(time, forward, color=solid_color, linewidth=1.2, zorder=4)
         self._axes.plot(
-            time, backward, color=solid_color, linewidth=1.2, linestyle=_BACKWARD_DASH, zorder=4
+            time,
+            backward,
+            color=_lighter(solid_color),
+            linewidth=1.2,
+            linestyle=_BACKWARD_DASH,
+            zorder=4,
         )
         if counts.ghost_forward is not None:
             self._axes.plot(
@@ -782,7 +804,7 @@ class GroupingPreviewPane(QWidget):
             self._axes.plot(
                 time,
                 np.maximum(counts.ghost_backward, 1.0),
-                color=_GHOST_COLOR,
+                color=_lighter(_GHOST_COLOR),
                 linewidth=1.3,
                 alpha=0.9,
                 linestyle=_BACKWARD_DASH,
@@ -871,6 +893,7 @@ class GroupingPreviewPane(QWidget):
                 va="bottom",
                 fontsize=7,
                 color=tokens.TEXT_MUTED,
+                clip_on=True,
                 zorder=5,
                 bbox=dict(_TEXT_BBOX),
             )
@@ -896,6 +919,7 @@ class GroupingPreviewPane(QWidget):
             va="bottom",
             fontsize=7,
             color=tokens.STAGE_BACKGROUND,
+            clip_on=True,
             zorder=5,
             bbox=dict(_TEXT_BBOX),
         )
@@ -940,19 +964,20 @@ class GroupingPreviewPane(QWidget):
             va="bottom",
             fontsize=7,
             color=color,
+            clip_on=True,
             # Above both curves, or they paint over the backing.
             zorder=5,
             bbox=dict(_TEXT_BBOX),
         )
 
-    def _draw_caption(self, rows: list[tuple[str, str]]) -> int:
+    def _draw_caption(self, rows: list[_CaptionRow]) -> int:
         """Name the curves in the axes' top-left; returns the rows drawn.
 
-        *rows* is ``(colour, text)`` per curve, in drawing order. The caller
-        sizes the autoscale's top headroom from the returned count, so no curve
-        climbs under the rows that name it.
+        One row per curve, in drawing order, its swatch in the curve's colour
+        and line style. The caller sizes the autoscale's top headroom from the
+        returned count, so no curve climbs under the rows that name it.
         """
-        for index, (color, text) in enumerate(rows):
+        for index, (color, text, dashed) in enumerate(rows):
             y = _CAPTION_TOP - index * _CAPTION_ROW_DY
             # Axes-fraction coordinates leave dataLim untouched, so the caption
             # cannot influence the solid-only autoscale below.
@@ -962,6 +987,7 @@ class GroupingPreviewPane(QWidget):
                 transform=self._axes.transAxes,
                 color=color,
                 linewidth=1.4,
+                linestyle=_BACKWARD_DASH if dashed else "solid",
                 solid_capstyle="butt",
                 zorder=5,
             )

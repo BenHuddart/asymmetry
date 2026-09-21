@@ -140,9 +140,13 @@ Decisions taken with Ben on 2026-09-21 over the mockup rounds.
   opacity. One function, `_solid_color(compare_stage)`, makes every such
   decision, and a focused stage with nothing to remove still colours the solid
   (the chip and card are tinted then too). In Counts, colour is spent on
-  with/without, so the *group* is the line style: F solid, B dashed for both
-  the as-reduced pair and the ghost pair, captioned `F: {name} · as reduced`
-  and `B: {name} · as reduced (dashed)`. The background level's rule stays
+  with/without, so the *group* is the line: F solid, B a lighter tint of the
+  same colour and dashed, for both the as-reduced pair and the ghost pair,
+  captioned `F: {name} · as reduced` and `B: {name} · as reduced` with
+  matching swatches (B was dash-only at first and merged with F at full
+  scale). While the user holds a pan/zoom the figure's tight layout is
+  frozen, so the axes rectangle no longer re-fits around the tick and marker
+  labels that move with the limits. The background level's rule stays
   `STAGE_BACKGROUND` — it names that stage regardless of focus — and the
   t0/window rules are unchanged. Rejected: a single orange ghost token (a
   fifth colour with no meaning in the pipeline strip), re-tinting the stage
