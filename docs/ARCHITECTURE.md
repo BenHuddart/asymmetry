@@ -582,14 +582,23 @@ its run-combo / request builders live in
 same Corrections-column α area and drives its per-axis and "Estimate All α"
 estimates inline through that same worker on the dialog's own `TaskRunner`,
 serialised one axis at a time. Compare focus is driven by the pipeline chips and
-the compare pager (plus a compound "vs raw" checkbox in the pager row — the
-per-section checkboxes are retired); focusing drives `_PreviewRequest.compare_stage`
-(`"deadtime"`/`"background"`/`"alpha"`/`"raw"`), which `preview_pane._run_reduction`
-renders as a **ghost** of that stage removed behind the solid full-pipeline curve —
-the solid is never degraded, so the α compare's residual-⟨A⟩ acceptance number is
+the compare pager (the per-section checkboxes and the old compound "vs raw"
+checkbox are both retired — `preview_pane.py` module docstring, D6 of
+`docs/plans/grouping-preview.md`); focusing drives `_PreviewRequest.compare_stage`
+(`"deadtime"`/`"background"`/`"alpha"`/`"beta"`), which `preview_pane._run_reduction`
+renders as a **ghost** of that stage removed, drawn just beneath the solid
+full-pipeline curve. Colour encodes "with this correction": while a stage is
+focused the *solid* wears its identity colour (`preview_pane._STAGE_COLORS`, via
+the one `_solid_color` seam) and the ghost is always grey
+(`preview_pane._GHOST_COLOR`) — D11 of `docs/plans/grouping-preview.md`.
+The solid is never degraded, so the α compare's residual-⟨A⟩ acceptance number is
 always read off the fully-corrected reduction, and the preview's y-axis follows
-the solid alone (an off-scale ghost is named by an inline label, never a legend).
-The compare is preview-only
+the solid alone (a fixed top-left caption names both curves, so an off-scale
+ghost is still named without a legend). One reduction now feeds two views —
+the asymmetry over the good window, and a `Counts` view of the corrected
+forward/backward spectra over the full histogram with t0, the good window and
+the background level marked (`GroupingPreviewPane.set_view`, `CountsCurves`) —
+switching between them is a redraw, never a recompute. The compare is preview-only
 (`compare_stage` never reaches `_current_grouping_payload`); the α compare
 auto-focuses on calibration and is unavailable in vector mode (the
 per-projection table owns α there). A

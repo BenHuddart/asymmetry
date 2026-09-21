@@ -28,7 +28,7 @@ class AlphaCalibrationDialogScenario(Scenario):
         "Inline alpha calibration in the grouping window's Corrections column, with the "
         "shared before/after (α = 1 ↔ α̂) asymmetry preview."
     )
-    size = (1220, 760)
+    size = (1220, 780)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
         from asymmetry.gui.windows.grouping.dialog import GroupingDialog

@@ -32,7 +32,7 @@ def _renumbered(dataset, run_number: int):
 class GroupingWindowProfileEditorScenario(Scenario):
     name = "grouping_window_profile_editor"
     description = "Grouping window profile editor, with the live asymmetry preview pane."
-    size = (1180, 720)
+    size = (1180, 780)
 
     def capture(self, ctx: CaptureContext) -> Path:  # noqa: D401
         from asymmetry.core.project.profiles import (

@@ -258,8 +258,6 @@ def test_beta_compare_available_only_when_active(qapp: QApplication) -> None:
     assert not dialog._compare_stage_available("beta")
     dialog._beta_section.set_value(0.9)
     assert dialog._compare_stage_available("beta")
-    # β ≠ 1 alone also makes the compound "vs raw" compare meaningful.
-    assert dialog._compare_stage_available("raw")
 
 
 def test_beta_compare_never_touches_the_persisted_payload(qapp: QApplication) -> None:
@@ -274,14 +272,15 @@ def test_beta_compare_never_touches_the_persisted_payload(qapp: QApplication) ->
 
 def test_beta_is_a_pager_stop_in_pipeline_order(qapp: QApplication) -> None:
     dialog = GroupingDialog([_dataset(beta=0.9)])
+    dialog._alpha_spin.setValue(1.2)  # α available too, so the order is testable
     dialog._set_compare_stage(None)
     seen: list[str | None] = []
     for _ in range(6):
         dialog._step_compare(1)
         seen.append(dialog._compare_stage)
     assert "beta" in seen
-    # β follows α (which is unavailable here at α = 1), i.e. β precedes "raw".
-    assert seen.index("beta") < seen.index("raw")
+    # β is the last stop: it follows α, as it does in the reduction pipeline.
+    assert seen.index("alpha") < seen.index("beta")
 
 
 # --------------------------------------------------------------------------- #

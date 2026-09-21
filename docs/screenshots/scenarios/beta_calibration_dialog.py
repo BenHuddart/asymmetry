@@ -53,7 +53,7 @@ class BetaCalibrationDialogScenario(Scenario):
         "column, with a completed count-fit estimate, the fitted-α consistency readout, "
         "and the β = 1 ↔ β̂ asymmetry preview."
     )
-    size = (1220, 760)
+    size = (1220, 780)
 
     def capture(self, ctx: CaptureContext) -> Path:
         import asymmetry.gui.windows.grouping.beta_section as beta_section_module

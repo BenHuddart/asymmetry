@@ -25,6 +25,19 @@ from __future__ import annotations
 import numpy as np
 
 
+def preview_stride(n: int, max_points: int) -> int:
+    """The uniform stride that brings ``n`` points down to at most ``max_points``.
+
+    The one decimation rule, exposed for callers that must stride more (or
+    fewer) than three aligned arrays — e.g. the grouping preview's counts view,
+    which strides a time axis plus two group spectra and their two compare
+    ghosts and needs every one of them on the same sample grid.
+    """
+    if n <= max_points or max_points <= 0:
+        return 1
+    return (n + max_points - 1) // max_points  # ceil(n / max_points)
+
+
 def decimate_for_preview(
     time: np.ndarray,
     y: np.ndarray,
@@ -38,8 +51,7 @@ def decimate_for_preview(
     min/max envelope, just a plain stride — cheap and visually adequate for
     a small preview plot.
     """
-    n = int(time.size)
-    if n <= max_points or max_points <= 0:
+    step = preview_stride(int(time.size), max_points)
+    if step == 1:
         return time, y, yerr
-    step = (n + max_points - 1) // max_points  # ceil(n / max_points)
     return time[::step], y[::step], yerr[::step]
