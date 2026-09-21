@@ -76,6 +76,10 @@ analysis log when you Apply) — the possible messages are:
   equivalent: the window clears the pulse *centre* but not the pulse itself.
   Raise the t_good offset until it starts after the peak.
 
+Both checks read the resolved ``first_good_bin``, whether the window comes
+from the file or from a Manual offset — see :doc:`/reference/detector_grouping`
+§ "Good-window modes" for how the window itself is chosen and stored.
+
 **Tolerances.** Every check above is judged against the *larger* of two
 numbers: a floor per source family, and the measured width — in bins — of the
 feature t0 was read off (the prompt peak's FWHM, or the pulse's 10 %→90 % rise).

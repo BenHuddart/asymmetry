@@ -65,11 +65,13 @@ from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
     BetaPolicy,
+    GoodWindowPolicy,
     GroupingProfile,
     ProfileFingerprint,
     T0Policy,
     profile_fingerprint_for_run,
     resolve_effective_grouping,
+    run_file_good_window,
 )
 from asymmetry.core.transform import (
     RunT0Search,
@@ -712,11 +714,34 @@ class GroupingDialog(QDialog):
             self._t0_detected_label, self._t0_verdict_button
         )
 
+        # Good-window mode selector (From file / Manual) — one switch governing
+        # both ends of the window, as WiMDA's FileValues checkbox does (D3).
+        # It gates BOTH spins below; what a Manual window stores are their
+        # offsets from each run's own effective t0 (D2).
+        self._good_window_mode_combo = NoScrollComboBox()
+        for label, key, tooltip in (
+            (
+                "From file",
+                "from_file",
+                "Use each run's own file-derived good-bin window for the analysis groups.",
+            ),
+            (
+                "Manual",
+                "manual",
+                "Type a window; both ends are stored as bin offsets from each run's t0.",
+            ),
+        ):
+            self._good_window_mode_combo.addItem(label, key)
+            self._good_window_mode_combo.setItemData(
+                self._good_window_mode_combo.count() - 1, tooltip, Qt.ItemDataRole.ToolTipRole
+            )
+        self._good_window_mode_combo.setMaximumWidth(
+            metrics.field_width_for(len("From file") + 4, self._good_window_mode_combo)
+        )
+
         self._t_good_offset_spin = NoScrollSpinBox()
         self._t_good_offset_spin.setRange(0, max_bin)
         self._t_good_offset_spin.setValue(default_t_good)
-        self._t0_spin.valueChanged.connect(self._on_t0_changed)
-        self._on_t0_changed()
 
         self._last_good_spin = NoScrollSpinBox()
         self._last_good_spin.setRange(index_base, max_bin + index_base)
@@ -725,6 +750,27 @@ class GroupingDialog(QDialog):
         if default_last_good < default_first_good:
             default_last_good = default_first_good
         self._last_good_spin.setValue(default_last_good + index_base)
+
+        # The t0 bin the two good-window spins are currently expressed against.
+        # A Manual window is a pair of offsets from t0 (D2), so a t0 edit keeps
+        # them and moves the absolute Last Good Bin display by the same delta —
+        # which needs the previous t0 to compute. Wiring the t0 spin here, after
+        # both good-window spins exist, keeps that slot's inputs complete.
+        self._good_window_t0_bin = default_t0_internal
+        self._t0_spin.valueChanged.connect(self._on_t0_changed)
+        self._on_t0_changed()
+
+        # The good-window provenance line (D8): the offset in time in every
+        # mode, plus the run's own file values while a Manual window can differ
+        # from them. Same shape as the t0 line above — an ElidedLabel painting
+        # itself muted, so a long line elides instead of widening the column.
+        self._good_window_label = ElidedLabel("")
+        self._good_window_label.setWordWrap(False)
+        self._good_window_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._good_window_label.setMinimumWidth(metrics.char_width(40))
+        self._good_window_label.set_pen_color(tokens.TEXT_MUTED)
 
         self._bunch_spin = NoScrollSpinBox()
         self._bunch_spin.setRange(1, 10000)
@@ -1021,8 +1067,24 @@ class GroupingDialog(QDialog):
         # not a field, and indenting it into the field column would spend the
         # label column's width on nothing and widen the whole window for it.
         form.addRow(self._t0_detected_row_widget)
-        form.addRow("t_good Offset", self._t_good_offset_spin)
+        # Kept as an attribute: the docs screenshot scenario crops from this row
+        # down to the provenance line below the pair.
+        self._good_window_row_widget = QWidget()
+        good_window_row = QHBoxLayout(self._good_window_row_widget)
+        good_window_row.setContentsMargins(0, 0, 0, 0)
+        good_window_row.addWidget(self._good_window_mode_combo)
+        good_window_row.addWidget(self._t_good_offset_spin)
+        form.addRow("t_good Offset", self._good_window_row_widget)
         form.addRow("Last Good Bin", self._last_good_spin)
+        self._good_window_line_row_widget = QWidget()
+        good_window_line_row = QHBoxLayout(self._good_window_line_row_widget)
+        good_window_line_row.setContentsMargins(0, 0, 0, 0)
+        good_window_line_row.setSpacing(4)
+        good_window_line_row.addWidget(self._good_window_label)
+        good_window_line_row.addStretch()
+        # Spans both form columns, and sits below BOTH spins: the line is a
+        # sentence about the whole window, not about either end alone.
+        form.addRow(self._good_window_line_row_widget)
         binning_row_widget = QWidget()
         binning_row = QHBoxLayout(binning_row_widget)
         binning_row.setContentsMargins(0, 0, 0, 0)
@@ -1273,6 +1335,9 @@ class GroupingDialog(QDialog):
         self._update_period_mode_visibility()
         self._rebuild_preset_combo()
         self._seed_t0_mode_from_draft()
+        # After the t0 seed: the good window is measured from the t0 the row
+        # resolved to.
+        self._seed_good_window_mode_from_draft()
         self._connect_dirty_tracking()
         self._refresh_preset_chip(self._current_grouping_payload())
         self._update_apply_enabled()
@@ -1709,9 +1774,11 @@ class GroupingDialog(QDialog):
             fingerprint=self._fingerprint,
             active=True,
         )
-        # The t0 mode is an explicit selector, not something to infer from the
-        # per-run t0 value the form carries: set it on the draft directly.
+        # The t0 mode and the good-window mode are explicit selectors, not
+        # something to infer from the per-run values the form carries (D5): set
+        # them on the draft directly.
         self._draft.t0_policy = self._current_t0_policy()
+        self._draft.good_window_policy = self._current_good_window_policy()
         # The identity colour is profile metadata, not form state — carry it
         # across the rebuild or every sync would strip it.
         self._draft.color = color
@@ -2496,15 +2563,232 @@ class GroupingDialog(QDialog):
         except (TypeError, ValueError):
             return 0
 
+    def _effective_t0_for_preview_run(self) -> int:
+        """The internal t0 bin the t0 row currently resolves to for the preview run.
+
+        Whatever the t0 mode put in the spin — the run's file t0, a detected
+        one, or a manual override — this is the bin a Manual good window's
+        offsets are measured from, exactly as ``_apply_good_window_policy``
+        measures them from the effective ``t0_bin`` after the t0 policy ran.
+        """
+        max_bin = self._max_bin_index_for_reference_dataset()
+        return max(0, min(max_bin, int(self._t0_spin.value()) - self._bin_index_base()))
+
     def _on_t0_changed(self) -> None:
-        """Constrain t_good offset so t0 + offset remains in the histogram range."""
+        """Constrain t_good offset, and carry a Manual good window with t0.
+
+        A Manual window is a pair of offsets from t0 (D2), so a t0 edit keeps
+        both offsets: the Last Good Bin spin shows an absolute bin and moves by
+        the same delta, the offset spin needs no change.
+        """
         max_bin = self._max_bin_index_for_reference_dataset()
         base = self._bin_index_base()
-        t0_bin = max(0, min(max_bin, int(self._t0_spin.value()) - base))
+        t0_bin = self._effective_t0_for_preview_run()
+        delta = t0_bin - self._good_window_t0_bin
+        self._good_window_t0_bin = t0_bin
         max_offset = max(0, max_bin - t0_bin)
         self._t_good_offset_spin.setMaximum(max_offset)
         if int(self._t_good_offset_spin.value()) > max_offset:
             self._t_good_offset_spin.setValue(max_offset)
+        if delta and self._current_good_window_mode() == "manual":
+            moved = int(self._last_good_spin.value()) + delta
+            self._last_good_spin.setValue(max(base, min(max_bin + base, moved)))
+
+    # -- good-window policy (t_good Offset + Last Good Bin) ---------------
+
+    def _good_window_grouping(self) -> dict[str, Any]:
+        """The grouping :func:`run_file_good_window` reads for the preview run.
+
+        The live analysis groups (the file window is re-derived for the pair
+        being edited, as the resolver does) plus the run's own per-detector
+        tables and, for a file that carries one window for the whole run, its
+        window keys.
+        """
+        run_grouping = self._run.grouping if isinstance(self._run.grouping, dict) else {}
+        grouping: dict[str, Any] = {
+            "groups": {gid: [idx + 1 for idx in values] for gid, values in self._groups.items()},
+            "forward_group": int(self._forward_combo.currentData() or 1),
+            "backward_group": int(self._backward_combo.currentData() or 2),
+        } | self._exclusion_payload()
+        for key in (
+            "detector_t0_bins",
+            "detector_first_good_bins",
+            "detector_last_good_bins",
+            "first_good_bin",
+            "last_good_bin",
+        ):
+            if key in run_grouping:
+                grouping[key] = run_grouping[key]
+        return grouping
+
+    def _file_good_window_for_preview_run(self) -> tuple[int, int]:
+        """The preview run's **file** good window over the live analysis groups.
+
+        Both what "From file" displays and the base a Manual window's offsets
+        are measured against, so it must be the genuine file value — the same
+        core helper the resolver calls, in the aligned coordinates the effective
+        t0 defines. O(detectors): a pass over the run's good-bin tables, never a
+        counts scan.
+        """
+        return run_file_good_window(
+            self._run,
+            self._good_window_grouping(),
+            common_t0_bin=self._effective_t0_for_preview_run(),
+        )
+
+    def _set_good_window_mode_combo(self, mode: str) -> None:
+        """Select *mode* in the good-window mode combo without emitting change signals."""
+        idx = self._good_window_mode_combo.findData(mode)
+        if idx < 0:
+            idx = self._good_window_mode_combo.findData("from_file")
+        blocked = self._good_window_mode_combo.blockSignals(True)
+        try:
+            self._good_window_mode_combo.setCurrentIndex(max(0, idx))
+        finally:
+            self._good_window_mode_combo.blockSignals(blocked)
+
+    def _current_good_window_mode(self) -> str:
+        """The good-window policy mode currently selected (from_file / manual)."""
+        data = self._good_window_mode_combo.currentData()
+        return str(data) if data else "from_file"
+
+    def _current_good_window_policy(self) -> GoodWindowPolicy:
+        """Build the draft :class:`GoodWindowPolicy` from the selector + both spins.
+
+        Manual stores both ends as signed offsets from the preview run's
+        effective t0 (D2), so one profile gives every run it covers the same
+        window relative to that run's own t0. From file carries no values —
+        resolution re-derives each run's own window.
+        """
+        if self._current_good_window_mode() != "manual":
+            return GoodWindowPolicy(mode="from_file")
+        t0_bin, t_good_offset, _first_good, last_good = (
+            self._resolve_good_bin_limits_from_controls()
+        )
+        return GoodWindowPolicy(
+            mode="manual",
+            first_offset_bins=t_good_offset,
+            last_offset_bins=last_good - t0_bin,
+        )
+
+    def _set_good_window_spins(self, first_good: int, last_good: int) -> None:
+        """Display the window ``[first_good, last_good]`` (internal bins).
+
+        Signals blocked: seeding is not an edit, and the callers that follow a
+        seed refresh the line and the preview themselves.
+        """
+        max_bin = self._max_bin_index_for_reference_dataset()
+        base = self._bin_index_base()
+        t0_bin = self._effective_t0_for_preview_run()
+        offset = max(0, min(max_bin - t0_bin, first_good - t0_bin))
+        last = max(t0_bin + offset, min(max_bin, last_good))
+        for spin, value in (
+            (self._t_good_offset_spin, offset),
+            (self._last_good_spin, last + base),
+        ):
+            blocked = spin.blockSignals(True)
+            try:
+                spin.setValue(value)
+            finally:
+                spin.blockSignals(blocked)
+
+    def _seed_good_window_mode_from_draft(self) -> None:
+        """Set the good-window mode combo + spins from the draft policy, then gate.
+
+        A Manual policy stores both ends as offsets from each run's effective t0
+        (D2), so the spins show them resolved for the preview run: the offset
+        spin the offset itself, the Last Good Bin spin ``t0 + offset``. An end
+        the policy leaves unset keeps the run's file value, as resolution does.
+        Switching the preview run therefore keeps the offsets and re-resolves
+        the displayed bins.
+        """
+        policy = self._draft.good_window_policy
+        self._set_good_window_mode_combo(policy.mode)
+        if (
+            policy.mode == "manual"
+            and self._editing_target() == "profile"
+            and self._run is not None
+            and self._run.histograms
+        ):
+            t0_bin = self._effective_t0_for_preview_run()
+            file_first, file_last = self._file_good_window_for_preview_run()
+            first = (
+                t0_bin + int(policy.first_offset_bins)
+                if policy.first_offset_bins is not None
+                else file_first
+            )
+            last = (
+                t0_bin + int(policy.last_offset_bins)
+                if policy.last_offset_bins is not None
+                else file_last
+            )
+            self._set_good_window_spins(first, last)
+        self._apply_good_window_mode_to_controls()
+
+    def _apply_good_window_mode_to_controls(self) -> None:
+        """Gate both good-window spins per mode, seed them in From file, repaint the line.
+
+        * ``from_file`` — both spins read-only, showing the preview run's own
+          file-derived window for the live analysis groups.
+        * ``manual`` — both editable; what is stored are their offsets from the
+          effective t0. Switching here leaves the file values on display, so the
+          window the user starts editing is the one they were just shown.
+
+        An override target edits a flat payload of absolute per-run values with
+        no policy in it (D6): the selector is hidden, pinned to ``from_file`` so
+        nothing stale can leak into a later profile edit, and both spins are
+        plainly editable.
+        """
+        if self._editing_target() != "profile":
+            self._set_good_window_mode_combo("from_file")
+            self._good_window_mode_combo.hide()
+            self._t_good_offset_spin.setReadOnly(False)
+            self._last_good_spin.setReadOnly(False)
+            self._refresh_good_window_line()
+            return
+        self._good_window_mode_combo.show()
+        manual = self._current_good_window_mode() == "manual"
+        self._t_good_offset_spin.setReadOnly(not manual)
+        self._last_good_spin.setReadOnly(not manual)
+        # A dataset without raw histograms (a co-added curve) has no file window
+        # to re-derive; its stored absolute values stand.
+        if not manual and self._run is not None and self._run.histograms:
+            self._set_good_window_spins(*self._file_good_window_for_preview_run())
+        self._refresh_good_window_line()
+
+    def _on_good_window_mode_changed(self, *args: object) -> None:
+        """React to a good-window mode change: gate/seed the spins, then refresh."""
+        self._apply_good_window_mode_to_controls()
+        self._refresh_preview()
+
+    def _on_manual_good_window_edited(self, *args: object) -> None:
+        """A good-window spin edit only dirties the draft while Manual mode is active."""
+        if self._current_good_window_mode() == "manual":
+            self._mark_dirty()
+
+    def _refresh_good_window_line(self) -> None:
+        """Repaint the good-window provenance line (D8).
+
+        Always the offset in time (the quantity the offset spin's bin count
+        stands for); in Manual also the run's own file values, so the user sees
+        what they overrode next to what they chose. Cheap by construction —
+        widget reads plus one O(detectors) pass over the good-bin tables — so it
+        is safe on the per-edit refresh seam.
+        """
+        if self._run is None or not self._run.histograms:
+            self._good_window_label.setText("")
+            return
+        offset = max(0, int(self._t_good_offset_spin.value()))
+        bin_width = float(self._run.histograms[0].bin_width)
+        parts = [f"≈ {offset * bin_width:.3f} µs after t0"]
+        if self._current_good_window_mode() == "manual":
+            t0_bin = self._effective_t0_for_preview_run()
+            file_first, file_last = self._file_good_window_for_preview_run()
+            base = self._bin_index_base()
+            parts.append(f"File: offset {file_first - t0_bin} · last bin {file_last + base}")
+        text = " · ".join(parts)
+        self._good_window_label.setText(text)
+        self._good_window_label.set_hover_text(text)
 
     def _set_t0_mode_combo(self, mode: str) -> None:
         """Select *mode* in the t0 mode combo without emitting change signals."""
@@ -3055,6 +3339,12 @@ class GroupingDialog(QDialog):
         self._update_vector_mode_controls(grouping)
         self._update_period_mode_visibility()
         self._update_map_periods_visibility()
+        # Last, once the analysis groups and the exclusions are the new run's:
+        # the file window the selector displays and measures Manual offsets
+        # against is derived over them. The spins already hold the resolved
+        # payload's window — this re-asserts the selector and its gating, as
+        # the t0 seed above does for the t0 spin.
+        self._seed_good_window_mode_from_draft()
         # The preset dropdown follows the preview run's instrument; the chip
         # follows the (possibly drifted) draft.
         if hasattr(self, "_preset_combo"):
@@ -3512,6 +3802,11 @@ class GroupingDialog(QDialog):
         # dirties the draft, but only while Manual mode is selected.
         self._t0_mode_combo.currentIndexChanged.connect(self._mark_dirty)
         self._t0_spin.valueChanged.connect(self._on_manual_t0_edited)
+        # Same rule for the good window: the selector is shareable, and the two
+        # spins carry profile offsets only while Manual is selected.
+        self._good_window_mode_combo.currentIndexChanged.connect(self._mark_dirty)
+        self._t_good_offset_spin.valueChanged.connect(self._on_manual_good_window_edited)
+        self._last_good_spin.valueChanged.connect(self._on_manual_good_window_edited)
         # Deadtime/background dirty-tracking happens inline in
         # ``_on_configure_deadtime``/``_on_configure_background`` (the
         # Configure… dialogs mark the draft dirty on Accept).
@@ -3543,6 +3838,7 @@ class GroupingDialog(QDialog):
         self._t_good_offset_spin.valueChanged.connect(self._refresh_preview)
         self._last_good_spin.valueChanged.connect(self._refresh_preview)
         self._t0_mode_combo.currentIndexChanged.connect(self._on_t0_mode_changed)
+        self._good_window_mode_combo.currentIndexChanged.connect(self._on_good_window_mode_changed)
         self._exclude_edit.textEdited.connect(self._refresh_preview)
         self._group_table.itemChanged.connect(self._refresh_preview)
         for button in self._period_mode_buttons.values():
@@ -3958,6 +4254,9 @@ class GroupingDialog(QDialog):
         # read plus an O(detectors) assessment — the scan itself is debounced
         # onto a worker.
         self._refresh_t0_line()
+        # Same seam, same cost class: the good-window line reads the two spins
+        # and the run's good-bin tables.
+        self._refresh_good_window_line()
         pane = getattr(self, "_preview_pane", None)
         if pane is None:
             return
@@ -5483,6 +5782,7 @@ class GroupingDialog(QDialog):
                 and self._background_run_payload
                 else {}
             )
+            | self._good_window_policy_payload()
             | alpha_provenance
             | self._beta_payload()
             | (self._vector_alpha_payload() if canonical else {})
@@ -5492,6 +5792,19 @@ class GroupingDialog(QDialog):
             | {"projections": self._projection_payload(canonical)}
             | deadtime_payload
         )
+
+    def _good_window_policy_payload(self) -> dict[str, Any]:
+        """The good-window policy the payload carries, when there is one (D6).
+
+        The absolute window keys above stay the preview run's, because every
+        consumer reads them; the policy rides alongside so the apply path can
+        re-derive the window from *each* run's own t0 and file window. An
+        override payload is absolute values only — a released run has no policy
+        to follow, and inventing one would re-broadcast the profile's window to it.
+        """
+        if self._editing_target() != "profile":
+            return {}
+        return {"good_window_policy": self._current_good_window_policy().to_dict()}
 
     def _beta_payload(self) -> dict[str, Any]:
         """β plus calibration provenance for the grouping payload.
@@ -5617,7 +5930,11 @@ class GroupingDialog(QDialog):
             if int(ds.run_number) in followers and ds.run is not None:
                 reference_run = ds.run
                 break
-        return dict(payload_from_profile_for_preview(self._draft, reference_run))
+        # The resolved payload carries the reference run's absolute window; the
+        # policy rides alongside so every follower gets its own (D6).
+        return dict(payload_from_profile_for_preview(self._draft, reference_run)) | {
+            "good_window_policy": self._draft.good_window_policy.to_dict()
+        }
 
     def get_grouping_result(self) -> dict[str, Any] | None:
         """Return the applied grouping payload for inheriting runs.

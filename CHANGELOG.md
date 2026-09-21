@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The grouping window's `t_good Offset` row gains a `From file`/`Manual`
+  selector, mirroring the t0 row, and together with `Last Good Bin` it now
+  governs where each run's analysed window starts and ends.** `From file`
+  (the default) re-derives each run's own file window for the profile's
+  analysis groups, exactly as before. `Manual` makes both spins editable
+  and stores **both ends as signed bin offsets from each run's own
+  effective t0** (WiMDA's `toff`/`tgoodend` alongside `tzero`), so one
+  profile gives every run the same window relative to its own t0 and the
+  window rides along a Manual or Auto-detect t0 shift automatically. A
+  read-only line beneath the pair always shows the offset in time (e.g.
+  `≈ 0.112 µs after t0`) and, in Manual, the file's own values alongside
+  it. See `docs/reference/detector_grouping.rst` § "Good-window modes".
 - **Joint fits couple several already-recorded series — even ones fitted with
   different models — by holding named parameters equal across them**, for a
   sample that needs two fit functions across a phase transition (an
@@ -234,6 +246,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An edited `t_good Offset` or `Last Good Bin` no longer reverts to the
+  file's own value the next time the grouping resolves.** Both were
+  recomputed from each run's per-detector good-bin tables on every
+  resolution pass — a profile reassignment, reopening the grouping window,
+  or a project reopen — so an edit survived only on a run whose loader
+  emitted no such tables, and every real PSI, MusrRoot and NeXus file has
+  them. The good window is now a stored profile policy
+  (`good_window_policy`), written only when `Manual` is selected, so an
+  existing project round-trips unchanged and no schema bump is needed. See
+  `docs/reference/project_files.rst` § "Good-window policy".
 - **A freshly loaded PSI/ROOT run no longer opens the grouping window already
   in Manual mode.** The mode was inferred by comparing the run's stored common
   t0 against the *maximum header t0 over every detector*, rather than just the

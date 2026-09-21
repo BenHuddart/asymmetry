@@ -80,8 +80,8 @@ background_reference_run          shareable   count-fit background provenance
 instrument                        fingerprint part of the profile fingerprint
 --------------------------------  ----------  -----------------------------------------------
 t0_bin                            per-run     analysis time-zero bin (file-derived)
-t_good_offset                     per-run     good-window offset from t0
-first_good_bin / last_good_bin    per-run     good-window bounds
+t_good_offset                     per-run*    good-window offset from t0
+first_good_bin / last_good_bin    per-run*    good-window bounds
 bin_index_base                    per-run     0 (PSI/ROOT) or 1 (NeXus) — file format
 detector_t0_bins                  per-run     per-detector t0 (PSI/ROOT)
 detector_first_good_bins          per-run     per-detector good-window start
@@ -103,7 +103,10 @@ period_reduced                    per-run     reduced-array cache
 ``*`` marks a key whose *value* is produced by resolution from a profile policy
 rather than copied verbatim: ``alpha`` (per-run estimate mode computes the
 integral ratio), ``dead_time_us`` (``from_file`` mode reads the run's own
-values), and the ``*_correction`` flags (on/off derived from the policy mode).
+values), the good-window keys ``t_good_offset``/``first_good_bin``/
+``last_good_bin`` (``manual`` ``good_window_policy`` places them relative to the
+run's effective t0; ``from_file`` keeps the run's own), and the
+``*_correction`` flags (on/off derived from the policy mode).
 """
 
 from __future__ import annotations
@@ -151,6 +154,9 @@ BACKGROUND_POLICY_MODES = ("none", "range", "tail_fit", "reference_run", "fixed"
 
 #: Time-zero policy modes.
 T0_POLICY_MODES = ("from_file", "manual", "auto_detect")
+
+#: Good-window policy modes (one selector governs both ends of the window).
+GOOD_WINDOW_POLICY_MODES = ("from_file", "manual")
 
 #: Keys copied verbatim from a payload into ``GroupingProfile.background`` for
 #: the ``fixed`` / ``range`` / ``reference_run`` modes. Only present keys are
@@ -486,6 +492,54 @@ class T0Policy:
 
 
 @dataclass
+class GoodWindowPolicy:
+    """How a profile determines the good-bin window for a run.
+
+    The window is an analysis choice the user wants applied uniformly to a whole
+    set of runs, not a per-run fact (D1) — WiMDA's ``.mgp`` grouping record
+    stores ``toff`` and ``tgoodend`` next to ``tzero`` for exactly that reason,
+    and its *FileValues* checkbox governs t0 and tgood together (D3).
+
+    * ``from_file`` (**default**) — the run's own file-derived window, as
+      re-derived for the profile's analysis groups. Resolution stores nothing.
+    * ``manual`` — both ends are **signed offsets in bins from the run's
+      effective t0** (:attr:`first_offset_bins` is WiMDA's ``toff``,
+      :attr:`last_offset_bins` its ``tgoodend − tzero``), so one profile gives
+      every run the same window relative to its own t0 and the window rides a
+      manual or auto-detected t0 shift with it (D2). An end whose offset is
+      unset keeps the run's file value.
+    """
+
+    mode: str = "from_file"
+    first_offset_bins: int | None = None
+    last_offset_bins: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
+        data: dict[str, Any] = {"mode": self.mode}
+        if self.mode == "manual":
+            if self.first_offset_bins is not None:
+                data["first_offset_bins"] = int(self.first_offset_bins)
+            if self.last_offset_bins is not None:
+                data["last_offset_bins"] = int(self.last_offset_bins)
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Any) -> GoodWindowPolicy:
+        """Reconstruct a policy from :meth:`to_dict` output (lenient; defaults to ``from_file``)."""
+        if not isinstance(data, dict):
+            return cls()
+        mode = str(data.get("mode", "from_file")).strip().lower()
+        if mode not in GOOD_WINDOW_POLICY_MODES:
+            mode = "from_file"
+        return cls(
+            mode=mode,
+            first_offset_bins=_as_int(data.get("first_offset_bins")),
+            last_offset_bins=_as_int(data.get("last_offset_bins")),
+        )
+
+
+@dataclass
 class BackgroundPolicy:
     """How a profile subtracts background.
 
@@ -762,6 +816,7 @@ class GroupingProfile:
     deadtime_policy: DeadtimePolicy = field(default_factory=DeadtimePolicy)
     background_policy: BackgroundPolicy = field(default_factory=BackgroundPolicy)
     t0_policy: T0Policy = field(default_factory=T0Policy)
+    good_window_policy: GoodWindowPolicy = field(default_factory=GoodWindowPolicy)
     # Intrinsic-asymmetry balance beta = A_{0,B}/A_{0,F} (musrfit asymmetry fit
     # type 2), applied with alpha as A = (F - aB)/(bF + aB). Mirrors
     # alpha_policy minus per_run_estimate (docs/porting/beta-correction/).
@@ -811,6 +866,11 @@ class GroupingProfile:
         # — no schema bump is needed.
         if self.t0_policy.mode != "from_file":
             data["t0_policy"] = self.t0_policy.to_dict()
+        # ``good_window_policy`` follows the same rule for the same reason: the
+        # default resolves to the file window a project already stored, so an
+        # untouched profile round-trips byte-identically (D4).
+        if self.good_window_policy.mode != "from_file":
+            data["good_window_policy"] = self.good_window_policy.to_dict()
         # ``beta`` follows the same emit-only-when-non-default rule, flattened
         # (not nested like the other policies) so a fixed, non-default beta
         # round-trips through the exact ``beta`` key the v0.15.0 plain-scalar
@@ -899,6 +959,7 @@ class GroupingProfile:
             deadtime_policy=DeadtimePolicy.from_dict(data.get("deadtime_policy")),
             background_policy=BackgroundPolicy.from_dict(data.get("background_policy")),
             t0_policy=T0Policy.from_dict(data.get("t0_policy")),
+            good_window_policy=GoodWindowPolicy.from_dict(data.get("good_window_policy")),
             # ``beta``'s profile-dict shape is identical to its grouping-payload
             # shape (flat ``beta``/``beta_method``/``beta_error``/
             # ``beta_reference_run`` keys, no nested policy dict — see
@@ -1069,6 +1130,11 @@ def profile_from_payload(
         deadtime_policy=_deadtime_policy_from_payload(payload),
         background_policy=_background_policy_from_payload(payload),
         t0_policy=_t0_policy_from_payload(payload),
+        # D5: the good window is read only from an explicit policy dict. A
+        # payload's absolute ``first_good_bin``/``last_good_bin`` are resolved
+        # *values*, and inferring a policy from them would flip every freshly
+        # loaded run into Manual (the t0 D1 lesson).
+        good_window_policy=GoodWindowPolicy.from_dict(payload.get("good_window_policy")),
         beta_policy=_beta_policy_from_payload(payload),
         binning_mode=binning_mode,
         bin0_us=None if payload.get("bin0_us") is None else _as_float(payload.get("bin0_us"), 0.0),
@@ -1276,6 +1342,9 @@ def resolve_effective_grouping(
         # alpha estimate reads them (see
         # docs/porting/correction-order-alpha-estimation).
         _apply_t0_policy(grouping, profile.t0_policy, run, n_hist, profile_name=profile.name)
+        # Directly after t0: a manual good window is measured from the effective
+        # t0 the policy above just resolved (D2).
+        _apply_good_window_policy(grouping, profile.good_window_policy, run, n_hist)
         _apply_deadtime_policy(grouping, profile.deadtime_policy, run_grouping, n_hist)
         _apply_background_policy(grouping, profile.background_policy)
         _apply_alpha_policy(
@@ -1393,29 +1462,9 @@ def _rebase_on_profile_groups(grouping: dict[str, Any], run: Run, n_hist: int) -
     common_t0 = _file_common_t0(grouping, run, n_hist)
     grouping["t0_bin"] = common_t0
 
-    detector_t0 = grouping.get("detector_t0_bins")
-    firsts = grouping.get("detector_first_good_bins")
-    lasts = grouping.get("detector_last_good_bins")
-    indices = _analysis_group_indices(grouping, n_hist)
-    if not (indices and _is_detector_table(detector_t0, n_hist)):
+    if not _has_good_window_tables(grouping, n_hist):
         return
-    if not (_is_detector_table(firsts, n_hist) and _is_detector_table(lasts, n_hist)):
-        return
-
-    # The aligned group sums are as long as the shortest shifted detector, which
-    # is the length the loaders clamp their window to — computed from the offsets
-    # alone, without summing anything.
-    n_grouped = min(
-        len(run.histograms[i].counts) + common_t0 - int(detector_t0[i]) for i in indices
-    )
-    first_good, last_good = good_window_for_groups(
-        indices,
-        detector_t0,
-        firsts,
-        lasts,
-        common_t0_bin=common_t0,
-        n_bins=n_grouped,
-    )
+    first_good, last_good = run_file_good_window(run, grouping, common_t0_bin=common_t0)
     grouping["first_good_bin"] = first_good
     grouping["last_good_bin"] = last_good
     grouping["t_good_offset"] = max(0, first_good - common_t0)
@@ -1424,6 +1473,99 @@ def _rebase_on_profile_groups(grouping: dict[str, Any], run: Run, n_hist: int) -
 def _is_detector_table(raw: object, n_hist: int) -> bool:
     """True when *raw* is a per-detector table covering every histogram."""
     return isinstance(raw, (list, tuple)) and len(raw) == n_hist
+
+
+def _has_good_window_tables(grouping: dict[str, Any], n_hist: int) -> bool:
+    """True when the payload carries the per-detector t0 + good-bin tables.
+
+    Without them — a file carrying one common t0 and one window for the whole
+    run — there is nothing to re-derive per analysis group, and the loader's own
+    window is the run's file window.
+    """
+    return (
+        bool(_analysis_group_indices(grouping, n_hist))
+        and _is_detector_table(grouping.get("detector_t0_bins"), n_hist)
+        and _is_detector_table(grouping.get("detector_first_good_bins"), n_hist)
+        and _is_detector_table(grouping.get("detector_last_good_bins"), n_hist)
+    )
+
+
+def aligned_n_bins(grouping: dict[str, Any], run: Run, n_hist: int, common_t0_bin: int) -> int:
+    """Length of the aligned group sums — the last bin a window may name (D7).
+
+    The sums are as long as the shortest shifted detector, which is the length
+    the loaders clamp their window to; it is computed from the alignment offsets
+    alone, without summing anything. Without per-detector t0s nothing is
+    shifted and the histograms' own length stands.
+    """
+    detector_t0 = grouping.get("detector_t0_bins")
+    indices = _analysis_group_indices(grouping, n_hist)
+    if indices and _is_detector_table(detector_t0, n_hist):
+        return min(
+            len(run.histograms[i].counts) + common_t0_bin - int(detector_t0[i]) for i in indices
+        )
+    return len(run.histograms[0].counts)
+
+
+def run_file_good_window(
+    run: Run, grouping: dict[str, Any], *, common_t0_bin: int
+) -> tuple[int, int]:
+    """*run*'s file-derived good window for *grouping*'s analysis groups.
+
+    The per-detector good-bin tables run through
+    :func:`~asymmetry.core.transform.t0.good_window_for_groups` when the payload
+    carries them — the intersection over the forward+backward detectors, in the
+    aligned coordinates *common_t0_bin* defines — and otherwise the payload's own
+    ``first_good_bin``/``last_good_bin`` (a file that carries one window for the
+    whole run), falling back to the full histogram range.
+
+    This is the base both :func:`_rebase_on_profile_groups` and a manual
+    :class:`GoodWindowPolicy` measure against, and the value the grouping window
+    shows as the file's own.
+    """
+    n_hist = len(run.histograms)
+    if _has_good_window_tables(grouping, n_hist):
+        return good_window_for_groups(
+            _analysis_group_indices(grouping, n_hist),
+            grouping["detector_t0_bins"],
+            grouping["detector_first_good_bins"],
+            grouping["detector_last_good_bins"],
+            common_t0_bin=common_t0_bin,
+            n_bins=aligned_n_bins(grouping, run, n_hist, common_t0_bin),
+        )
+    n_bins = len(run.histograms[0].counts)
+    first_good = _as_int(grouping.get("first_good_bin"), 0)
+    last_good = _as_int(grouping.get("last_good_bin"), max(0, n_bins - 1))
+    return int(first_good), int(last_good)
+
+
+def resolve_good_window(
+    policy: GoodWindowPolicy,
+    *,
+    t0_bin: int,
+    file_first_good: int,
+    file_last_good: int,
+    n_bins: int,
+) -> tuple[int, int]:
+    """The ``(first_good, last_good)`` bins *policy* asks for on one run.
+
+    ``from_file`` returns the file window; ``manual`` places each end at
+    ``t0_bin + offset`` (an unset offset keeps that end's file value). Both are
+    clamped into ``[0, n_bins)`` with ``last_good >= first_good``, the same rule
+    :func:`~asymmetry.core.transform.t0.good_window_for_groups` applies (D7) — a
+    window that opens *before* t0 keeps its negative offset, only the resulting
+    bounds are clamped.
+    """
+    first_good, last_good = int(file_first_good), int(file_last_good)
+    if policy.mode == "manual":
+        if policy.first_offset_bins is not None:
+            first_good = int(t0_bin) + int(policy.first_offset_bins)
+        if policy.last_offset_bins is not None:
+            last_good = int(t0_bin) + int(policy.last_offset_bins)
+    last_bin = max(0, int(n_bins) - 1)
+    first_good = min(last_bin, max(0, first_good))
+    last_good = min(last_bin, max(0, last_good))
+    return first_good, max(first_good, last_good)
 
 
 def _apply_t0_policy(
@@ -1515,6 +1657,38 @@ def _apply_t0_policy(
     t0_time_us = grouping.get("t0_time_us")
     if t0_time_us is not None:
         grouping["t0_time_us"] = float(t0_time_us) + delta * float(run.histograms[0].bin_width)
+
+
+def _apply_good_window_policy(
+    grouping: dict[str, Any],
+    policy: GoodWindowPolicy,
+    run: Run,
+    n_hist: int,
+) -> None:
+    """Resolve the good-bin window into the grouping per the policy.
+
+    ``from_file`` writes nothing: :func:`_rebase_on_profile_groups` already put
+    the run's own window in the payload and :func:`_apply_t0_policy` carried it
+    with any t0 shift, so the default payload is byte-identical to a pre-policy
+    one (D4). ``manual`` places the window at the policy's offsets from the
+    effective ``t0_bin``, clamped to the aligned group-sum length (D7), and
+    republishes ``t_good_offset`` — which stays non-negative, the convention
+    every consumer of that key already reads.
+    """
+    if policy.mode == "from_file" or not run.histograms:
+        return
+    t0_bin = int(grouping["t0_bin"])
+    file_first_good, file_last_good = run_file_good_window(run, grouping, common_t0_bin=t0_bin)
+    first_good, last_good = resolve_good_window(
+        policy,
+        t0_bin=t0_bin,
+        file_first_good=file_first_good,
+        file_last_good=file_last_good,
+        n_bins=aligned_n_bins(grouping, run, n_hist, t0_bin),
+    )
+    grouping["first_good_bin"] = first_good
+    grouping["last_good_bin"] = last_good
+    grouping["t_good_offset"] = max(0, first_good - t0_bin)
 
 
 def _apply_alpha_policy(
@@ -1839,11 +2013,13 @@ __all__ = [
     "DEADTIME_POLICY_MODES",
     "BACKGROUND_POLICY_MODES",
     "T0_POLICY_MODES",
+    "GOOD_WINDOW_POLICY_MODES",
     "AlphaPolicy",
     "BetaPolicy",
     "DeadtimePolicy",
     "BackgroundPolicy",
     "T0Policy",
+    "GoodWindowPolicy",
     "ProfileFingerprint",
     "GroupingProfile",
     "profile_fingerprint_for_run",
@@ -1852,6 +2028,9 @@ __all__ = [
     "reconcile_instrument_for_payload",
     "profile_from_payload",
     "resolve_effective_grouping",
+    "aligned_n_bins",
+    "resolve_good_window",
+    "run_file_good_window",
     "default_profile_for_run",
     "named_profile_for_run",
     "assigned_profile_for_run",

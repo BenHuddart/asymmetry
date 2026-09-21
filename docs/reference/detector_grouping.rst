@@ -484,20 +484,17 @@ format, the verdict messages, and the tolerances.
   read-only and shows the selected run's resulting common t0 with its
   provenance (strategy, and the spread of the per-detector shifts).
 
-The *t_good* offset and last-good-bin controls are per-run facts and are
-unaffected by the t0 mode — a manual or detected t0 shift carries the good
-window with it so the offset from t0 stays fixed.
-
-**The payload follows the profile's groups.** A run's t0 and good window are
-file-derived facts, but they are not constants of the file: the common t0 is
-the maximum over the detectors the *analysis groups* use, and the good window
-is the intersection of those detectors' own windows relative to it. A profile
-that analyses a different forward/backward pair from the loader's default
+**The payload follows the profile's groups.** A run's t0 and file-derived good
+window are not constants of the file: the common t0 is the maximum over the
+detectors the *analysis groups* use, and the file good window is the
+intersection of those detectors' own windows relative to it. A profile that
+analyses a different forward/backward pair from the loader's default
 therefore resolves to a different common t0, and the resolved payload
-re-derives ``t0_bin``, ``first_good_bin``, ``last_good_bin`` and
-``t_good_offset`` for the profile's own pair rather than copying the loader's.
-Files that carry one common t0 and one window for the whole run have nothing
-to re-derive and keep the loader's values exactly.
+re-derives ``t0_bin``, ``first_good_bin`` and ``last_good_bin`` for the
+profile's own pair rather than copying the loader's — before a Manual good
+window (below) is applied on top. Files that carry one common t0 and one
+window for the whole run have nothing to re-derive and keep the loader's
+values exactly.
 
 **One resolver for every consumer.** Whichever mode is active, the
 per-detector bins it resolves to are read back by reduction, grouped
@@ -523,6 +520,53 @@ phase: at 16 ns binning and 0.1 T it is worth up to 39° (see
 existing ISIS/MusrRoot TF fits shift phase by up to half a bin once this
 lands — correctly. Integer bins remain authoritative for detector alignment
 and the good-bin window; only the time *stamp* uses the exact value.
+
+Good-window modes
+------------------
+
+The **t_good Offset** row carries the same kind of mode selector (**From
+file** / **Manual**) as the t0 row above, and together with **Last Good
+Bin** it decides where each run's analysed window starts and ends. This
+mirrors WiMDA's *FileValues* checkbox, which governs ``toff`` and
+``tgoodend`` alongside ``tzero`` in its ``.mgp`` grouping record: one
+switch, not two, because the two ends of a window are one analysis choice.
+
+* **From file** (the default) — both spins are read-only and show the
+  selected run's own file-derived good-bin window for the profile's
+  analysis groups (the same re-derivation described above for the t0 row's
+  From file mode: the intersection of the analysed detectors' own
+  windows). Nothing is stored on the profile — resolution reads each run's
+  file again, so a project saved in this mode resolves exactly as it did
+  before this feature existed.
+* **Manual** — both spins become editable, seeded from the file window the
+  moment you switch. What a profile stores is not the absolute bins the
+  spins show but **both ends as signed offsets, in bins, from the run's
+  effective t0** — the t0 the t0 row resolved to, after its own mode has
+  run. One profile therefore gives every run in scope the same window
+  relative to its own t0, and the window rides along automatically when a
+  Manual or Auto-detect t0 shift moves that t0. Last Good Bin shows the
+  resulting absolute bin for the previewed run and is converted back to an
+  offset from that run's t0 on Apply.
+
+A read-only line beneath the pair always shows the t_good offset in time,
+e.g. ``≈ 0.112 µs after t0``, computed from the selected run's own bin
+width; in Manual mode it also names the file's own values, so you can see
+what you overrode alongside what you chose, e.g. ``≈ 0.112 µs after t0 ·
+File: offset 3 · last bin 32``.
+
+As with the t0 row, an overridden run has no selector: :ref:`Editing target
+follows selection` edits a released run's absolute window directly — both
+spins stay plainly editable and nothing is added to its override payload.
+
+.. figure:: /_generated/screenshots/grouping_window_good_window_row.png
+   :width: 70%
+   :align: center
+   :alt: The grouping window's t_good Offset row with its From file/Manual
+      selector, the Last Good Bin row, and the provenance line beneath them
+      reading "≈ 0.112 µs after t0 · File: offset 3 · last bin 32".
+
+   The t_good Offset row (mode selector, offset spin), the Last Good Bin
+   row, and the provenance line below them, here in Manual mode.
 
 Alpha calibration
 ------------------

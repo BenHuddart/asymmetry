@@ -424,6 +424,28 @@ mislabelled a plain From file profile as Manual. Each repair is logged (see
 :doc:`detector_grouping`); the project file itself is not rewritten until
 the next save.
 
+Good-window policy
+~~~~~~~~~~~~~~~~~~~
+
+Each profile's ``good_window_policy`` block stores which of the two
+good-window modes (:doc:`detector_grouping` § Good-window modes) it uses —
+an explicit, stored choice, never inferred from a run's resolved values.
+It is written only when the mode is not ``from_file``, so a project without
+a Manual good window round-trips with no trace of the key and needs no
+schema bump.
+
+``mode``
+    ``"from_file"`` (the default, and the only value ever written before
+    this feature) or ``"manual"``.
+
+``first_offset_bins`` / ``last_offset_bins``
+    *Manual* only — each end's signed offset, in bins, from the run's own
+    **effective** t0 (the t0 the profile's ``t0_policy`` resolves to, not
+    necessarily the file t0): one profile therefore gives every run it
+    covers the same window relative to its own t0, and the window rides
+    along automatically when a Manual or Auto-detect t0 shift moves that
+    t0. An end left unset keeps the run's file value for that end.
+
 Grouping overrides
 ------------------
 
