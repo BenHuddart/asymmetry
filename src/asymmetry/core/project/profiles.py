@@ -1490,7 +1490,7 @@ def _has_good_window_tables(grouping: dict[str, Any], n_hist: int) -> bool:
     )
 
 
-def _aligned_n_bins(grouping: dict[str, Any], run: Run, n_hist: int, common_t0_bin: int) -> int:
+def aligned_n_bins(grouping: dict[str, Any], run: Run, n_hist: int, common_t0_bin: int) -> int:
     """Length of the aligned group sums — the last bin a window may name (D7).
 
     The sums are as long as the shortest shifted detector, which is the length
@@ -1531,7 +1531,7 @@ def run_file_good_window(
             grouping["detector_first_good_bins"],
             grouping["detector_last_good_bins"],
             common_t0_bin=common_t0_bin,
-            n_bins=_aligned_n_bins(grouping, run, n_hist, common_t0_bin),
+            n_bins=aligned_n_bins(grouping, run, n_hist, common_t0_bin),
         )
     n_bins = len(run.histograms[0].counts)
     first_good = _as_int(grouping.get("first_good_bin"), 0)
@@ -1684,7 +1684,7 @@ def _apply_good_window_policy(
         t0_bin=t0_bin,
         file_first_good=file_first_good,
         file_last_good=file_last_good,
-        n_bins=_aligned_n_bins(grouping, run, n_hist, t0_bin),
+        n_bins=aligned_n_bins(grouping, run, n_hist, t0_bin),
     )
     grouping["first_good_bin"] = first_good
     grouping["last_good_bin"] = last_good
@@ -2028,6 +2028,7 @@ __all__ = [
     "reconcile_instrument_for_payload",
     "profile_from_payload",
     "resolve_effective_grouping",
+    "aligned_n_bins",
     "resolve_good_window",
     "run_file_good_window",
     "default_profile_for_run",

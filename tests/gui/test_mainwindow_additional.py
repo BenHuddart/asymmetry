@@ -113,6 +113,50 @@ def _make_dataset(run_number: int, *, with_grouping: bool) -> MuonDataset:
     )
 
 
+def _good_window_dataset(
+    run_number: int,
+    *,
+    detector_t0: tuple[int, int] = (6, 8),
+    n_bins: int = 40,
+) -> MuonDataset:
+    """A PSI run with staggered per-detector t0 + good-bin tables.
+
+    The tables put each detector's window 3 bins after its own t0 and 24 bins
+    before its own end, so the run's file window over the analysis pair is
+    ``[t0 + 3, t0 + 24]`` whatever the stagger.
+    """
+    histograms = [
+        Histogram(counts=np.full(n_bins, 100.0), bin_width=0.016, t0_bin=t0_bin)
+        for t0_bin in detector_t0
+    ]
+    common_t0 = max(detector_t0)
+    run = Run(
+        run_number=run_number,
+        histograms=histograms,
+        metadata={"run_number": run_number, "facility": "PSI"},
+        grouping={
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "t0_bin": common_t0,
+            "first_good_bin": common_t0,
+            "last_good_bin": n_bins - 1,
+            "detector_t0_bins": list(detector_t0),
+            "detector_first_good_bins": [t0 + 3 for t0 in detector_t0],
+            "detector_last_good_bins": [t0 + 24 for t0 in detector_t0],
+        },
+    )
+    t = np.arange(n_bins, dtype=float) * 0.016
+    return MuonDataset(
+        time=t,
+        asymmetry=np.zeros_like(t),
+        error=np.full_like(t, 0.01),
+        metadata={"run_number": run_number, "facility": "PSI"},
+        run=run,
+    )
+
+
 def _gps_wep_dataset(run_number: int = 6001) -> MuonDataset:
     """A GPS run with four flat histograms (F, B, U, D) for WEP reduction.
 
@@ -3933,6 +3977,100 @@ class TestMainWindowBasic:
         assert dataset.run.grouping["effective_detector_t0_bins"] == [
             t0 + 1 for t0 in original_hist_t0
         ]
+
+    def test_apply_grouping_derives_the_good_window_per_run_from_the_policy(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """One manual policy, two file t0s: equal offsets, different absolute bins (D6).
+
+        The payload deliberately carries no ``t0_bin``: the flat Apply payload's
+        absolute t0 is the preview run's and is broadcast as-is to every
+        follower (recorded as a follow-up in D9), so each run keeps its own
+        stored t0 here and the window is measured from that.
+        """
+        ds_a = _good_window_dataset(7420, detector_t0=(6, 8))
+        ds_b = _good_window_dataset(7421, detector_t0=(11, 13))
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            # The preview run's absolute window, as the dialog emits it.
+            "t_good_offset": 7,
+            "first_good_bin": 15,
+            "last_good_bin": 30,
+            "good_window_policy": {
+                "mode": "manual",
+                "first_offset_bins": 7,
+                "last_offset_bins": 22,
+            },
+        }
+
+        for dataset in (ds_a, ds_b):
+            applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, dict(payload))
+            assert applied is True
+
+        assert ds_a.run is not None and ds_b.run is not None
+        assert (ds_a.run.grouping["first_good_bin"], ds_a.run.grouping["last_good_bin"]) == (15, 30)
+        assert (ds_b.run.grouping["first_good_bin"], ds_b.run.grouping["last_good_bin"]) == (20, 35)
+        assert ds_a.run.grouping["t_good_offset"] == ds_b.run.grouping["t_good_offset"] == 7
+
+    def test_apply_grouping_from_file_policy_restores_each_runs_file_window(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """A ``from_file`` policy ignores the broadcast absolutes and re-derives."""
+        dataset = _good_window_dataset(7422, detector_t0=(6, 8))
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "t_good_offset": 7,
+            "first_good_bin": 15,
+            "last_good_bin": 30,
+            "good_window_policy": {"mode": "from_file"},
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        # File window over the analysis pair: first = 8 + 3, last = 8 + 24.
+        assert dataset.run.grouping["first_good_bin"] == 11
+        assert dataset.run.grouping["last_good_bin"] == 32
+        assert dataset.run.grouping["t_good_offset"] == 3
+
+    def test_apply_grouping_without_a_policy_keeps_the_absolute_window(
+        self,
+        mainwindow: MainWindow,
+    ) -> None:
+        """Override edits and legacy callers still get the payload's own values."""
+        dataset = _good_window_dataset(7423, detector_t0=(6, 8))
+        payload = {
+            "groups": {1: [1], 2: [2]},
+            "forward_group": 1,
+            "backward_group": 2,
+            "alpha": 1.0,
+            "bunching_factor": 1,
+            "deadtime_correction": False,
+            "t_good_offset": 7,
+            "first_good_bin": 15,
+            "last_good_bin": 30,
+        }
+
+        applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+
+        assert applied is True
+        assert dataset.run is not None
+        assert dataset.run.grouping["first_good_bin"] == 15
+        assert dataset.run.grouping["last_good_bin"] == 30
+        assert dataset.run.grouping["t_good_offset"] == 7
 
     def test_apply_grouping_without_histograms_updates_bunching(
         self,
@@ -8126,6 +8264,72 @@ def test_project_open_heals_a_zero_offset_manual_policy_to_from_file(
         "manual t0 offset is 0 on every run in scope, healed to mode from_file" in record.message
         for record in caplog.records
     )
+
+
+def test_manual_good_window_survives_a_project_save_and_reopen(
+    mainwindow: MainWindow,
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The bug this PR exists for: a follower's manual window persists (D1).
+
+    Set through the grouping window's own controls on a profile-following run,
+    saved, reopened in a fresh window: the run resolves to the manual window and
+    the reopened grouping window shows Manual with the same offsets.
+    """
+    from asymmetry.core.project.profiles import GoodWindowPolicy
+    from asymmetry.gui.windows.grouping.dialog import GroupingDialog
+
+    source_file = tmp_path / "run_9110.nxs"
+    source_file.write_text("placeholder", encoding="utf-8")
+
+    def _dataset() -> MuonDataset:
+        ds = _good_window_dataset(9110)
+        assert ds.run is not None
+        ds.run.source_file = str(source_file)
+        ds.metadata["source_file"] = str(source_file)
+        return ds
+
+    dataset = _dataset()
+    mainwindow._data_browser.add_dataset(dataset)
+
+    dialog = GroupingDialog([dataset], profiles=mainwindow._grouping_profiles)
+    combo = dialog._good_window_mode_combo
+    combo.setCurrentIndex(combo.findData("manual"))
+    dialog._t_good_offset_spin.setValue(7)
+    dialog._last_good_spin.setValue(30)
+    dialog._sync_draft_from_form()
+    payload = dialog.get_grouping_result()
+    mainwindow._store_grouping_profile(dialog._draft)
+    applied, _ = mainwindow._apply_grouping_settings_to_dataset(dataset, payload)
+    assert applied is True
+    assert dataset.run is not None
+    assert (dataset.run.grouping["first_good_bin"], dataset.run.grouping["last_good_bin"]) == (
+        15,
+        30,
+    )
+
+    path = tmp_path / "good_window.asymp"
+    save_project(mainwindow.collect_project_state(), str(path))
+
+    restored = MainWindow()
+    monkeypatch.setattr(restored, "_load_file", lambda _path: _dataset())
+    restored.restore_project_state(load_project(str(path)), str(path))
+
+    assert restored._grouping_profiles[0].good_window_policy == GoodWindowPolicy(
+        mode="manual", first_offset_bins=7, last_offset_bins=22
+    )
+    reopened = restored._data_browser.get_dataset(9110)
+    assert reopened is not None and reopened.run is not None
+    assert reopened.run.grouping["first_good_bin"] == 15
+    assert reopened.run.grouping["last_good_bin"] == 30
+    assert reopened.run.grouping["t_good_offset"] == 7
+
+    reopened_dialog = GroupingDialog([reopened], profiles=restored._grouping_profiles)
+    assert reopened_dialog._current_good_window_mode() == "manual"
+    assert reopened_dialog._t_good_offset_spin.value() == 7
+    assert reopened_dialog._last_good_spin.value() == 30
 
 
 def test_per_run_t0_override_shifts_the_exact_t0(
