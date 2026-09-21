@@ -148,7 +148,10 @@ Decisions taken with Ben on 2026-09-21 over the mockup rounds.
   fifth colour with no meaning in the pipeline strip), re-tinting the stage
   tokens for contrast (they are shared with the chips and cards), and a grey
   solid with a coloured ghost (it makes the reduction the user is configuring
-  the unimportant curve).
+  the unimportant curve). Amended the same day: the as-reduced curve is drawn
+  *above* the ghost (a small effect leaves them nearly coincident, and the
+  reduction should be the curve on top), and the caption drops the "(ghost)"
+  suffix — grey already says it.
 
 ## Code map (verified 2026-09-21)
 

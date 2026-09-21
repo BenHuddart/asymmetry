@@ -244,7 +244,7 @@ def test_alpha_compare_draws_the_ghost_and_the_residual_baseline(qapp: QApplicat
         compare_stage="alpha",
     )
     pane.flush()
-    _wait_until(lambda: pane._tasks.active_count == 0 and "α = 1 (ghost)" in _axes_texts(pane))
+    _wait_until(lambda: pane._tasks.active_count == 0 and "α = 1" in _axes_texts(pane))
     assert "as reduced · α = 1.300" in _axes_texts(pane)
     assert any("residual baseline" in text for text in _axes_texts(pane))
     assert "residual baseline" not in pane._status.text()
@@ -261,7 +261,8 @@ def test_no_compare_draws_a_single_curve(qapp: QApplication) -> None:
     pane.flush()
     _wait_until(lambda: pane._tasks.active_count == 0 and bool(pane._axes.get_lines()))
     assert "as reduced · α = 1.000" in _axes_texts(pane)
-    assert not any("(ghost)" in text for text in _axes_texts(pane))
+    labels = preview_pane_module.COMPARE_STAGE_LABELS.values()
+    assert not any(text in labels for text in _axes_texts(pane))
     assert not any("residual baseline" in text for text in _axes_texts(pane))
     pane.shutdown()
 
@@ -808,7 +809,7 @@ def test_compare_stage_unconfigured_stage_draws_no_ghost(qapp: QApplication) -> 
 
 
 # --------------------------------------------------------------------------- #
-# Draw contract: solid-only autoscale, ghost on top, fixed corner caption
+# Draw contract: solid-only autoscale, solid over the ghost, fixed corner caption
 # --------------------------------------------------------------------------- #
 
 
@@ -890,7 +891,7 @@ def test_ghost_never_influences_y_autoscale(qapp: QApplication) -> None:
     assert yhi < 100.0  # nowhere near the 1e7 ghost
     # An off-scale ghost is still named: the caption placement is fixed, not
     # anchored to a sample that may not be in view.
-    assert "without deadtime (ghost)" in _axes_texts(pane)
+    assert "without deadtime" in _axes_texts(pane)
     pane.shutdown()
 
 
@@ -919,12 +920,13 @@ def test_compare_draw_has_no_legend(qapp: QApplication) -> None:
     pane.shutdown()
 
 
-def test_ghost_is_drawn_above_the_solid(qapp: QApplication) -> None:
-    """The ghost sits ON TOP of the solid: underneath, a small effect is invisible."""
+def test_solid_is_drawn_above_the_ghost(qapp: QApplication) -> None:
+    """Ghost under the solid: where they nearly coincide, the as-reduced curve
+    is the one on top."""
     pane = GroupingPreviewPane()
     _draw_result(pane, baseline=np.full(50, 0.5), compare_stage="deadtime")
     solid = pane._axes.get_lines()[0]
-    assert _ghost_line(pane).get_zorder() > solid.get_zorder()
+    assert solid.get_zorder() > _ghost_line(pane).get_zorder()
     pane.shutdown()
 
 
@@ -971,11 +973,11 @@ def test_focused_stage_colours_the_solid_and_greys_the_ghost(
     texts = {str(text.get_text()): text for text in pane._axes.texts}
     assert "as reduced · α = 1.080" in texts
     assert texts["as reduced · α = 1.080"].get_color() == expected
-    assert f"{label} (ghost)" in texts
-    assert texts[f"{label} (ghost)"].get_color() == preview_pane_module._GHOST_COLOR
+    assert label in texts
+    assert texts[label].get_color() == preview_pane_module._GHOST_COLOR
     # Backed so the rows stay readable over whatever the curve does behind them.
     assert texts["as reduced · α = 1.080"].get_bbox_patch() is not None
-    assert texts[f"{label} (ghost)"].get_bbox_patch() is not None
+    assert texts[label].get_bbox_patch() is not None
     pane.shutdown()
 
 
@@ -1362,12 +1364,12 @@ def test_counts_caption_names_the_groups_and_the_compare(qapp: QApplication) -> 
         texts = _axes_texts(pane)
         assert "F: Det 1 · as reduced" in texts
         assert "B: Det 2 · as reduced (dashed)" in texts
-        assert "without background (ghost) · F solid, B dashed" in texts
+        assert "without background · F solid, B dashed" in texts
 
         _draw_result(pane, compare_stage="alpha", centre=(-0.61, 0.02))
         texts = _axes_texts(pane)
         assert "α acts when the asymmetry is formed — see the Asymmetry view" in texts
-        assert not any("(ghost)" in text for text in texts)
+        assert not any("F solid, B dashed" in text for text in texts)
     finally:
         pane.shutdown()
 
@@ -1412,7 +1414,7 @@ def test_counts_colour_is_the_correction_and_the_dash_is_the_group(
         assert texts["F: Det 1 · as reduced"].get_color() == expected
         assert texts["B: Det 2 · as reduced (dashed)"].get_color() == expected
         if stage is not None:
-            row = f"{preview_pane_module.COMPARE_STAGE_LABELS[stage]} (ghost) · F solid, B dashed"
+            row = f"{preview_pane_module.COMPARE_STAGE_LABELS[stage]} · F solid, B dashed"
             assert texts[row].get_color() == grey
     finally:
         pane.shutdown()

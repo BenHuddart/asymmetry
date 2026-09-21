@@ -27,8 +27,9 @@ canonical EMU that is the P_z axis).
 
 Drawing contract (see :meth:`GroupingPreviewPane._draw`): the solid curve is
 always the full configured reduction and alone sets the y-limits; a compare
-ghost is drawn *on top* of it, and a fixed caption in the axes' top-left names
-both curves (no legend — the pager label and the focused correction card name
+ghost is drawn just beneath it — the as-reduced curve stays on top, so where a
+small correction leaves the two nearly coincident it is the reduction the eye
+follows — and a fixed caption in the axes' top-left names both curves (no legend — the pager label and the focused correction card name
 the same comparison). Colour means "with this correction": while a stage is
 focused the *solid* wears that stage's identity colour and the ghost is grey
 (D11 of ``docs/plans/grouping-preview.md``).
@@ -646,9 +647,9 @@ class GroupingPreviewPane(QWidget):
             solid_color = _solid_color(result.compare_stage)
             self._draw_solid(result, solid_color)
             self._axes.axhline(0.0, color=tokens.TEXT_MUTED, linewidth=0.5, alpha=0.5)
-            # The ghost sits ON TOP of the solid (zorder 4 over 3): a correction
-            # whose effect is small leaves the two curves nearly coincident, and
-            # underneath it would be invisible.
+            # The ghost sits under the solid (zorder 3 under 4) but over the ±σ
+            # band (2): where a small correction leaves the two nearly coincident,
+            # the coloured as-reduced curve is the one on top.
             if result.baseline is not None:
                 self._axes.plot(
                     result.time,
@@ -656,7 +657,7 @@ class GroupingPreviewPane(QWidget):
                     color=_GHOST_COLOR,
                     linewidth=1.4,
                     alpha=0.9,
-                    zorder=4,
+                    zorder=3,
                 )
             if result.compare_stage == "alpha" and result.centre is not None:
                 self._draw_residual_baseline(*result.centre, color=solid_color)
@@ -666,7 +667,7 @@ class GroupingPreviewPane(QWidget):
             rows = [(solid_color, reduced)]
             if result.baseline is not None:
                 stage = result.compare_stage
-                rows.append((_GHOST_COLOR, f"{COMPARE_STAGE_LABELS[stage]} (ghost)"))
+                rows.append((_GHOST_COLOR, COMPARE_STAGE_LABELS[stage]))
             caption_rows = self._draw_caption(rows)
             # Solid-only autoscale, set explicitly AFTER plotting so neither the
             # ghost nor matplotlib's own autoscale can widen the range — unless
@@ -730,7 +731,7 @@ class GroupingPreviewPane(QWidget):
             rows.append(
                 (
                     _GHOST_COLOR,
-                    f"{COMPARE_STAGE_LABELS[stage]} (ghost) · F solid, B dashed",
+                    f"{COMPARE_STAGE_LABELS[stage]} · F solid, B dashed",
                 )
             )
         elif stage in _ASYMMETRY_STAGE_SYMBOLS:
@@ -765,9 +766,9 @@ class GroupingPreviewPane(QWidget):
             ylimits = (10.0 ** decades[0], 10.0 ** decades[1])
 
         self._draw_counts_regions(counts, result.facts.t0_mode_label, xlimits)
-        self._axes.plot(time, forward, color=solid_color, linewidth=1.2, zorder=3)
+        self._axes.plot(time, forward, color=solid_color, linewidth=1.2, zorder=4)
         self._axes.plot(
-            time, backward, color=solid_color, linewidth=1.2, linestyle=_BACKWARD_DASH, zorder=3
+            time, backward, color=solid_color, linewidth=1.2, linestyle=_BACKWARD_DASH, zorder=4
         )
         if counts.ghost_forward is not None:
             self._axes.plot(
@@ -776,7 +777,7 @@ class GroupingPreviewPane(QWidget):
                 color=_GHOST_COLOR,
                 linewidth=1.3,
                 alpha=0.9,
-                zorder=4,
+                zorder=3,
             )
             self._axes.plot(
                 time,
@@ -785,7 +786,7 @@ class GroupingPreviewPane(QWidget):
                 linewidth=1.3,
                 alpha=0.9,
                 linestyle=_BACKWARD_DASH,
-                zorder=4,
+                zorder=3,
             )
         level = counts.background_level
         # Drawn only where it lands inside the view, for the same reason the
@@ -902,7 +903,7 @@ class GroupingPreviewPane(QWidget):
     def _draw_solid(self, result: _PreviewResult, color: str) -> None:
         """The "as reduced" curve: a line with a ±σ band, or markers when sparse."""
         if result.time.size > _LINE_MODE_POINTS:
-            self._axes.plot(result.time, result.asymmetry, color=color, linewidth=1.2, zorder=3)
+            self._axes.plot(result.time, result.asymmetry, color=color, linewidth=1.2, zorder=4)
             self._axes.fill_between(
                 result.time,
                 result.asymmetry - result.error,
@@ -924,7 +925,7 @@ class GroupingPreviewPane(QWidget):
             capsize=0.0,
             color=color,
             ecolor=tokens.TEXT_MUTED,
-            zorder=3,
+            zorder=4,
         )
 
     def _draw_residual_baseline(self, mean: float, err: float, *, color: str) -> None:
@@ -939,7 +940,7 @@ class GroupingPreviewPane(QWidget):
             va="bottom",
             fontsize=7,
             color=color,
-            # Above the ghost (zorder 4), or the ghost paints over the backing.
+            # Above both curves, or they paint over the backing.
             zorder=5,
             bbox=dict(_TEXT_BBOX),
         )

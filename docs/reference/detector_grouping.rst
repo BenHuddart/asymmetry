@@ -838,9 +838,9 @@ background", "comparing: α = 1", or "comparing: β = 1".
 
 In the preview itself the solid curve is always the full reduction — a line
 with a :math:`\pm\sigma` band above 400 drawn points, markers with error bars
-at or below it — and the ghost is drawn *on top* of it, so a correction whose
-effect is small still shows as a second curve nearly coincident with the first
-rather than disappearing underneath it.
+at or below it — and the ghost is drawn just beneath it, above the band, so
+where a correction's effect is small the two curves sit nearly coincident with
+the as-reduced curve on top.
 
 One rule carries the colour, in both views: **colour is the correction, grey is
 without it.** While a stage is focused, the as-reduced curve and its
@@ -851,8 +851,7 @@ with nothing focused, the as-reduced curve is the plain accent blue.
 There is no legend: a fixed caption in the axes' top-left
 corner names both curves, one row each with a colour swatch in its curve's
 colour — "as reduced · α = 1.080" over, depending on the focused stage,
-"α = 1 (ghost)", "without deadtime (ghost)", "without background (ghost)", or
-"β = 1 (ghost)" — at a
+"α = 1", "without deadtime", "without background", or "β = 1" — at a
 placement independent of the data, so an off-scale ghost is still named. For
 the :math:`\alpha` compare, the residual baseline is drawn rather than only
 quoted: a dashed line across the curve at :math:`\langle A \rangle`, in the
@@ -938,11 +937,10 @@ dashed rule at the subtracted level is labelled "background level · F 7119.0
 reference-run background subtracts a spectrum rather than a level and draws
 no rule.
 
-The deadtime and background compares ghost their stage-removed spectra on top
+The deadtime and background compares ghost their stage-removed spectra beneath the as-reduced pair
 in grey, from the same second corrected pass the
 Asymmetry view's ghost uses — F solid, B dashed, captioned "without deadtime
-(ghost) · F solid, B dashed" (or "without background (ghost) · F solid, B
-dashed"). :math:`\alpha` and :math:`\beta` act when the asymmetry is *formed*,
+· F solid, B dashed" (or "without background · F solid, B dashed"). :math:`\alpha` and :math:`\beta` act when the asymmetry is *formed*,
 not on the counts, so their compares draw no ghost here; the caption instead
 reads "α acts when the asymmetry is formed — see the Asymmetry view" (or the
 same for β), in the stage's colour — the colour the F/B spectra above it are
