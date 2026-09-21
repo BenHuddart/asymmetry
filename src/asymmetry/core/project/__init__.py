@@ -8,8 +8,10 @@ from asymmetry.core.project.profiles import (
     AlphaPolicy,
     BackgroundPolicy,
     DeadtimePolicy,
+    GoodWindowPolicy,
     GroupingProfile,
     ProfileFingerprint,
+    aligned_n_bins,
     assigned_profile_for_run,
     default_profile_for_run,
     effective_grouping_for_loaded_run,
@@ -17,6 +19,8 @@ from asymmetry.core.project.profiles import (
     profile_fingerprint_for_run,
     profile_from_payload,
     resolve_effective_grouping,
+    resolve_good_window,
+    run_file_good_window,
 )
 from asymmetry.core.project.schema import (
     CURRENT_SCHEMA_VERSION,
@@ -34,8 +38,10 @@ __all__ = [
     "AlphaPolicy",
     "BackgroundPolicy",
     "DeadtimePolicy",
+    "GoodWindowPolicy",
     "GroupingProfile",
     "ProfileFingerprint",
+    "aligned_n_bins",
     "assigned_profile_for_run",
     "default_profile_for_run",
     "effective_grouping_for_loaded_run",
@@ -43,4 +49,6 @@ __all__ = [
     "profile_fingerprint_for_run",
     "profile_from_payload",
     "resolve_effective_grouping",
+    "resolve_good_window",
+    "run_file_good_window",
 ]

@@ -18,6 +18,7 @@ from asymmetry.core.project.profiles import (
     BackgroundPolicy,
     BetaPolicy,
     DeadtimePolicy,
+    GoodWindowPolicy,
     GroupingProfile,
     ProfileFingerprint,
     T0Policy,
@@ -31,6 +32,8 @@ from asymmetry.core.project.profiles import (
     profile_from_payload,
     reconcile_instrument_for_payload,
     resolve_effective_grouping,
+    resolve_good_window,
+    run_file_good_window,
 )
 from asymmetry.core.transform.grouping import group_forward_backward
 from asymmetry.core.transform.t0 import EFFECTIVE_DETECTOR_T0_KEY
@@ -1050,6 +1053,247 @@ def test_profile_from_payload_no_detector_table_is_from_file():
     payload = {"groups": {1: [1], 2: [2]}, "instrument": "EMU", "t0_bin": 40}
     profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 2))
     assert profile.t0_policy.mode == "from_file"
+
+
+# --------------------------------------------------------------------------- #
+# GoodWindowPolicy
+# --------------------------------------------------------------------------- #
+
+
+def test_good_window_policy_round_trips_each_mode():
+    for policy in (
+        GoodWindowPolicy(mode="from_file"),
+        GoodWindowPolicy(mode="manual", first_offset_bins=25, last_offset_bins=200),
+        GoodWindowPolicy(mode="manual", first_offset_bins=-4),
+    ):
+        assert GoodWindowPolicy.from_dict(policy.to_dict()).to_dict() == policy.to_dict()
+    assert (
+        GoodWindowPolicy.from_dict({"mode": "manual", "first_offset_bins": -4}).first_offset_bins
+        == -4
+    )
+    # Offsets are manual-only: a from_file policy never emits them.
+    assert GoodWindowPolicy(
+        mode="from_file", first_offset_bins=25, last_offset_bins=200
+    ).to_dict() == {"mode": "from_file"}
+
+
+def test_good_window_policy_from_dict_rejects_unknown_mode():
+    assert GoodWindowPolicy.from_dict({"mode": "bogus"}).mode == "from_file"
+    assert GoodWindowPolicy.from_dict(None).mode == "from_file"
+
+
+def test_good_window_policy_default_is_omitted_from_profile_dict():
+    """A from_file (default) good-window policy leaves no key — no schema bump."""
+    profile = _base_profile()
+    assert profile.good_window_policy.mode == "from_file"
+    assert "good_window_policy" not in profile.to_dict()
+
+
+def test_good_window_policy_manual_serializes_in_profile_dict():
+    profile = _base_profile(
+        good_window_policy=GoodWindowPolicy(
+            mode="manual", first_offset_bins=25, last_offset_bins=200
+        )
+    )
+    data = profile.to_dict()
+    assert data["good_window_policy"] == {
+        "mode": "manual",
+        "first_offset_bins": 25,
+        "last_offset_bins": 200,
+    }
+    assert GroupingProfile.from_dict(data).good_window_policy == profile.good_window_policy
+
+
+def test_good_window_from_file_is_bit_identical_on_a_tables_run():
+    """D4: the default resolves to exactly the file-derived window, as before."""
+    run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222])
+    default_resolved = resolve_effective_grouping(_base_profile(), run)
+    explicit_resolved = resolve_effective_grouping(
+        _base_profile(good_window_policy=GoodWindowPolicy(mode="from_file")), run
+    )
+
+    assert default_resolved == explicit_resolved
+    # The file window for the profile's groups: 10 bins after the common t0.
+    assert default_resolved["first_good_bin"] == 230
+    assert default_resolved["last_good_bin"] == 319
+    assert default_resolved["t_good_offset"] == 10
+
+
+def test_good_window_from_file_is_bit_identical_on_a_no_tables_run():
+    """Without per-detector tables the loader's own window still stands."""
+    facts = _per_run_facts()
+    del facts["detector_first_good_bins"]
+    del facts["detector_last_good_bins"]
+    facts["first_good_bin"] = 9
+    facts["last_good_bin"] = 17
+    run = _run(grouping=facts)
+
+    default_resolved = resolve_effective_grouping(_base_profile(), run)
+    explicit_resolved = resolve_effective_grouping(
+        _base_profile(good_window_policy=GoodWindowPolicy(mode="from_file")), run
+    )
+
+    assert default_resolved == explicit_resolved
+    assert default_resolved["first_good_bin"] == 9
+    assert default_resolved["last_good_bin"] == 17
+    # Untouched: the run's own copied offset, not one derived from the window.
+    assert default_resolved["t_good_offset"] == 1
+
+
+def test_good_window_manual_offsets_are_relative_to_each_run_own_t0():
+    """D2: one profile, two runs with different file t0 — same offsets, different bins."""
+    profile = _base_profile(
+        good_window_policy=GoodWindowPolicy(
+            mode="manual", first_offset_bins=25, last_offset_bins=100
+        )
+    )
+    early = _staggered_run([50, 46, 50, 60], [52, 48, 51, 62])  # file common t0 = 60
+    late = _staggered_run([150, 146, 150, 160], [152, 148, 151, 162])  # = 160
+
+    early_resolved = resolve_effective_grouping(profile, early)
+    late_resolved = resolve_effective_grouping(profile, late)
+
+    assert (early_resolved["first_good_bin"], early_resolved["last_good_bin"]) == (85, 160)
+    assert (late_resolved["first_good_bin"], late_resolved["last_good_bin"]) == (185, 260)
+    for resolved in (early_resolved, late_resolved):
+        assert resolved["first_good_bin"] - resolved["t0_bin"] == 25
+        assert resolved["last_good_bin"] - resolved["t0_bin"] == 100
+        assert resolved["t_good_offset"] == 25
+
+
+def test_good_window_manual_rides_a_manual_t0_shift():
+    """The offsets are measured from the *effective* t0, not the file one."""
+    run = _staggered_run([50, 46, 50, 60], [52, 48, 51, 62])  # file common t0 = 60
+    profile = _base_profile(
+        t0_policy=T0Policy(mode="manual", offset_bins=7),
+        good_window_policy=GoodWindowPolicy(
+            mode="manual", first_offset_bins=25, last_offset_bins=100
+        ),
+    )
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved["t0_bin"] == 67
+    assert resolved["first_good_bin"] == 92
+    assert resolved["last_good_bin"] == 167
+    assert resolved["t_good_offset"] == 25
+
+
+def test_good_window_manual_rides_an_auto_detected_t0():
+    run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222])
+    profile = _base_profile(
+        t0_policy=T0Policy(mode="auto_detect"),
+        good_window_policy=GoodWindowPolicy(
+            mode="manual", first_offset_bins=25, last_offset_bins=60
+        ),
+    )
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved["t0_bin"] == 222  # detected max over the analysis groups
+    assert resolved["first_good_bin"] == 247
+    assert resolved["last_good_bin"] == 282
+
+
+def test_good_window_manual_clamps_to_the_aligned_length():
+    """D7: neither end may leave the aligned group sums, and last >= first."""
+    run = _staggered_run([50, 46, 50, 60], [52, 48, 51, 62])  # 320 bins aligned
+    beyond_end = _base_profile(
+        good_window_policy=GoodWindowPolicy(
+            mode="manual", first_offset_bins=25, last_offset_bins=5000
+        )
+    )
+    both_beyond = _base_profile(
+        good_window_policy=GoodWindowPolicy(
+            mode="manual", first_offset_bins=5000, last_offset_bins=6000
+        )
+    )
+
+    assert resolve_effective_grouping(beyond_end, run)["last_good_bin"] == 319
+    resolved = resolve_effective_grouping(both_beyond, run)
+    assert resolved["first_good_bin"] == resolved["last_good_bin"] == 319
+
+
+def test_good_window_manual_honours_a_negative_first_offset():
+    """A window that opens before t0 keeps its negative offset; t_good_offset floors at 0."""
+    run = _staggered_run([50, 46, 50, 60], [52, 48, 51, 62])  # file common t0 = 60
+    profile = _base_profile(
+        good_window_policy=GoodWindowPolicy(
+            mode="manual", first_offset_bins=-5, last_offset_bins=100
+        )
+    )
+
+    resolved = resolve_effective_grouping(profile, run)
+
+    assert resolved["first_good_bin"] == 55
+    assert resolved["t_good_offset"] == 0
+
+
+def test_profile_from_payload_never_infers_a_good_window_policy():
+    """D5: absolute window values are resolved *values*, never a Manual signal."""
+    payload = _t0_payload(first_good_bin=42, last_good_bin=300, t_good_offset=36)
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 6))
+    assert profile.good_window_policy == GoodWindowPolicy(mode="from_file")
+
+
+def test_profile_from_payload_reads_an_explicit_good_window_policy():
+    payload = _t0_payload(
+        first_good_bin=42,
+        good_window_policy={"mode": "manual", "first_offset_bins": 25, "last_offset_bins": 200},
+    )
+    profile = profile_from_payload(payload, "P", ProfileFingerprint("EMU", 6))
+    assert profile.good_window_policy == GoodWindowPolicy(
+        mode="manual", first_offset_bins=25, last_offset_bins=200
+    )
+
+
+def test_resolve_good_window_from_file_returns_the_clamped_file_window():
+    policy = GoodWindowPolicy(mode="from_file")
+    assert resolve_good_window(
+        policy, t0_bin=50, file_first_good=60, file_last_good=300, n_bins=320
+    ) == (60, 300)
+    # Clamped into [0, n_bins) with last >= first.
+    assert resolve_good_window(
+        policy, t0_bin=50, file_first_good=-5, file_last_good=900, n_bins=320
+    ) == (0, 319)
+
+
+def test_resolve_good_window_manual_places_both_ends_from_t0():
+    policy = GoodWindowPolicy(mode="manual", first_offset_bins=25, last_offset_bins=200)
+    assert resolve_good_window(
+        policy, t0_bin=50, file_first_good=60, file_last_good=300, n_bins=320
+    ) == (75, 250)
+
+
+def test_resolve_good_window_manual_keeps_the_file_value_for_an_unset_end():
+    policy = GoodWindowPolicy(mode="manual", first_offset_bins=25)
+    assert resolve_good_window(
+        policy, t0_bin=50, file_first_good=60, file_last_good=300, n_bins=320
+    ) == (75, 300)
+
+
+def test_run_file_good_window_uses_the_per_detector_tables():
+    """The intersection over the analysis detectors, in aligned coordinates."""
+    run = _staggered_run([50, 46, 50, 220], [52, 48, 51, 222])
+    grouping = dict(run.grouping, forward_group=1, backward_group=2, groups={1: [1, 2], 2: [3, 4]})
+
+    assert run_file_good_window(run, grouping, common_t0_bin=220) == (230, 319)
+    # A shifted common t0 carries the whole window — and the aligned length — with it.
+    assert run_file_good_window(run, grouping, common_t0_bin=225) == (235, 324)
+
+
+def test_run_file_good_window_without_tables_reads_the_payload_window():
+    run = _run()
+    grouping = {
+        "groups": {1: [1, 2], 2: [3, 4]},
+        "forward_group": 1,
+        "backward_group": 2,
+        "first_good_bin": 9,
+        "last_good_bin": 17,
+    }
+    assert run_file_good_window(run, grouping, common_t0_bin=5) == (9, 17)
+    # Nothing stored at all: the full histogram range.
+    assert run_file_good_window(run, {}, common_t0_bin=5) == (0, 19)
 
 
 # --------------------------------------------------------------------------- #
