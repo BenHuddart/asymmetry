@@ -64,6 +64,7 @@ _DPI = 120
 #: x-axis label for each scan coordinate a series may be ordered along.
 _ORDER_AXIS_LABELS = {
     "temperature": "temperature / K",
+    "sample_temperature_logged": "logged sample temperature / K",
     "field": "field / G",
     "run": "run",
 }
@@ -413,8 +414,12 @@ def plot_trend(
     order_key: str,
     out_path: str | Path,
     title: str | None = None,
+    model: tuple[Callable[..., np.ndarray], Mapping[str, float], tuple[float, float]] | None = None,
 ) -> Path:
     """Value vs scan coordinate for one free parameter, ordered, with error bars.
+
+    *model* — ``(function, parameters, (x_lo, x_hi))`` — overlays a trend fit,
+    drawn across the x range of the points it was fitted to.
 
     *rows* is a :class:`~asymmetry.core.workflow.series.TrendTable`'s own
     ``rows`` — already ordered along the scan — so this reads ``"x"``,
@@ -482,6 +487,10 @@ def plot_trend(
             label=f"flagged, {n_outside} outside frame",
         )
 
+    if model is not None:
+        function, parameters, (x_lo, x_hi) = model
+        dense_x = np.linspace(x_lo, x_hi, 500)
+        axes.plot(dense_x, function(dense_x, **parameters), "-", color="C1", lw=1.5, label="fit")
     _set_y_range(axes, None if y_lo is None else (y_lo, y_hi))
     axes.set_xlabel(_order_axis_label(order_key))
     axes.set_ylabel(format_param_label(param_name))

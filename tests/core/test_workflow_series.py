@@ -10,7 +10,13 @@ import pytest
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.workflow.recipe import FitRecipe
-from asymmetry.core.workflow.series import ORDER_KEYS, fit_one, fit_series, order_values
+from asymmetry.core.workflow.series import (
+    ORDER_KEYS,
+    fit_one,
+    fit_series,
+    scan_axis,
+    supplied_axis,
+)
 from asymmetry.core.workflow.workdir import WorkDir
 from tests.core.conftest import (
     FLAT_RUN,
@@ -33,24 +39,37 @@ def recipe(reduced_workdir: WorkDir) -> FitRecipe:
 def outcome(reduced_workdir: WorkDir, recipe: FitRecipe):
     """The whole zero-field scan fitted once, broken run included."""
     datasets = {run: reduced_workdir.reduced(run) for run in ZF_RUNS}
-    return fit_series(datasets, recipe, order_key="temperature", name="zf")
+    return fit_series(datasets, recipe, axis=scan_axis(datasets, "temperature"), name="zf")
 
 
 # -- order keys -------------------------------------------------------------
 
 
-def test_order_values_reads_the_scan_coordinate_of_every_run(
+def test_scan_axis_reads_the_scan_coordinate_of_every_run(
     reduced_workdir: WorkDir,
 ) -> None:
     datasets = {run: reduced_workdir.reduced(run) for run in SCAN_RUNS}
-    assert order_values(datasets, "temperature") == {
+    axis = scan_axis(datasets, "temperature")
+    assert axis.name == "temperature"
+    assert axis.values == {
         run: temperature for run, temperature in zip(SCAN_RUNS, SCAN_TEMPERATURES)
     }
-    assert order_values(datasets, "run") == {run: float(run) for run in SCAN_RUNS}
+    assert scan_axis(datasets, "run").values == {run: float(run) for run in SCAN_RUNS}
     assert "run" in ORDER_KEYS
 
 
-def test_order_values_names_the_runs_that_do_not_record_the_quantity() -> None:
+def test_scan_axis_reads_the_logged_sample_temperature_apart_from_the_setpoint() -> None:
+    logged = MuonDataset(
+        time=np.linspace(0.0, 8.0, 10),
+        asymmetry=np.zeros(10),
+        error=np.ones(10),
+        metadata={"run_number": 7, "temperature": 50.0, "sample_temperature_logged": 56.4},
+    )
+    assert scan_axis({7: logged}, "temperature").values == {7: 50.0}
+    assert scan_axis({7: logged}, "sample_temperature_logged").values == {7: 56.4}
+
+
+def test_scan_axis_names_the_runs_that_do_not_record_the_quantity() -> None:
     bare = MuonDataset(
         time=np.linspace(0.0, 8.0, 10),
         asymmetry=np.zeros(10),
@@ -58,9 +77,35 @@ def test_order_values_names_the_runs_that_do_not_record_the_quantity() -> None:
         metadata={"run_number": 7},
     )
     with pytest.raises(ValueError, match="Run\\(s\\) 7 record no temperature"):
-        order_values({7: bare}, "temperature")
-    with pytest.raises(ValueError, match="Unknown order key"):
-        order_values({7: bare}, "pressure")
+        scan_axis({7: bare}, "temperature")
+    with pytest.raises(ValueError, match="'pressure' is not recorded in the files"):
+        scan_axis({7: bare}, "pressure")
+
+
+def test_a_supplied_axis_takes_exactly_one_value_per_run() -> None:
+    axis = supplied_axis("concentration", {1: 0.0, 2: 0.5}, [1, 2])
+    assert (axis.name, axis.values) == ("concentration", {1: 0.0, 2: 0.5})
+    with pytest.raises(ValueError, match="No concentration value for run\\(s\\) 2"):
+        supplied_axis("concentration", {1: 0.0}, [1, 2])
+    with pytest.raises(ValueError, match="given for run\\(s\\) 3, which are not in the series"):
+        supplied_axis("concentration", {1: 0.0, 2: 0.5, 3: 1.0}, [1, 2])
+    with pytest.raises(ValueError, match="'field' is read from the files"):
+        supplied_axis("field", {1: 0.0, 2: 0.5}, [1, 2])
+
+
+def test_a_supplied_axis_orders_the_series_and_labels_its_trend(
+    reduced_workdir: WorkDir, recipe: FitRecipe
+) -> None:
+    runs = SCAN_RUNS[:3]
+    datasets = {run: reduced_workdir.reduced(run) for run in runs}
+    # Reversed against run number, so ordering by it is visible.
+    axis = supplied_axis("foils", {run: float(len(runs) - i) for i, run in enumerate(runs)}, runs)
+    outcome = fit_series(datasets, recipe, axis=axis, name="foils")
+
+    assert outcome.order_key == "foils"
+    assert outcome.trend.order_key == "foils"
+    assert [row["run"] for row in outcome.trend.rows] == list(reversed(runs))
+    assert [row["x"] for row in outcome.trend.rows] == [1.0, 2.0, 3.0]
 
 
 # -- one run ----------------------------------------------------------------
@@ -174,7 +219,9 @@ def test_starting_at_the_first_run_is_the_default(
     # chain downward and the whole scan is one ascending chain — the same fits,
     # in the same order, as omitting --start entirely.
     datasets = {run: reduced_workdir.reduced(run) for run in ZF_RUNS}
-    started = fit_series(datasets, recipe, order_key="temperature", start_run=ZF_RUNS[0], name="zf")
+    started = fit_series(
+        datasets, recipe, axis=scan_axis(datasets, "temperature"), start_run=ZF_RUNS[0], name="zf"
+    )
 
     assert [branch.direction for branch in started.branches] == ["ascending"]
     assert _parameters_by_run(started) == _parameters_by_run(outcome)
@@ -194,9 +241,15 @@ def test_starting_mid_scan_merges_the_two_branches_unchanged(
     below = {run: datasets[run] for run in ZF_RUNS[: ZF_RUNS.index(start) + 1]}
     above = {run: datasets[run] for run in ZF_RUNS[ZF_RUNS.index(start) :]}
 
-    merged = fit_series(datasets, recipe, order_key="temperature", start_run=start, name="outward")
-    descending = fit_series(below, recipe, order_key="temperature", start_run=start, name="down")
-    ascending = fit_series(above, recipe, order_key="temperature", start_run=start, name="up")
+    merged = fit_series(
+        datasets, recipe, axis=scan_axis(datasets, "temperature"), start_run=start, name="outward"
+    )
+    descending = fit_series(
+        below, recipe, axis=scan_axis(below, "temperature"), start_run=start, name="down"
+    )
+    ascending = fit_series(
+        above, recipe, axis=scan_axis(above, "temperature"), start_run=start, name="up"
+    )
 
     assert [branch.direction for branch in merged.branches] == ["descending", "ascending"]
     assert merged.branches[0].runs == list(reversed(below))
@@ -222,7 +275,9 @@ def test_the_start_run_is_fitted_from_the_recipe_itself(
     datasets = {run: reduced_workdir.reduced(run) for run in ZF_RUNS}
     start = ZF_RUNS[2]
 
-    merged = fit_series(datasets, recipe, order_key="temperature", start_run=start, name="outward")
+    merged = fit_series(
+        datasets, recipe, axis=scan_axis(datasets, "temperature"), start_run=start, name="outward"
+    )
     alone = fit_one(datasets[start], recipe)
 
     assert _parameters_by_run(merged)[start] == alone["parameters"]
@@ -233,7 +288,9 @@ def test_a_start_run_outside_the_series_is_rejected(
 ) -> None:
     datasets = {run: reduced_workdir.reduced(run) for run in SCAN_RUNS[:3]}
     with pytest.raises(ValueError, match="Start run 999 is not in this series"):
-        fit_series(datasets, recipe, order_key="temperature", start_run=999, name="nope")
+        fit_series(
+            datasets, recipe, axis=scan_axis(datasets, "temperature"), start_run=999, name="nope"
+        )
 
 
 # -- pinned (global) parameters ---------------------------------------------
@@ -246,7 +303,7 @@ def test_a_global_parameter_is_pinned_in_every_run(
     pinned = fit_series(
         datasets,
         recipe.with_overrides(fix={"A_bg": 0.0}),
-        order_key="temperature",
+        axis=scan_axis(datasets, "temperature"),
         global_params=["A_bg"],
         name="pinned",
     )
@@ -302,7 +359,9 @@ def test_fit_series_re_seeds_a_run_bound_parameter_from_each_runs_own_record() -
     # everywhere but its first point. B_L stays held throughout.
     datasets = _lf_datasets()
 
-    outcome = fit_series(datasets, _lf_recipe(datasets), order_key="field", name="lf")
+    outcome = fit_series(
+        datasets, _lf_recipe(datasets), axis=scan_axis(datasets, "field"), name="lf"
+    )
 
     fitted = {entry["run"]: entry["parameters"]["B_L"] for entry in outcome.results}
     assert list(fitted.values()) == pytest.approx(list(_LF_FIELDS))
@@ -314,7 +373,7 @@ def test_a_hand_pinned_run_bound_parameter_keeps_the_value_a_person_chose() -> N
     datasets = _lf_datasets()
     recipe = _lf_recipe(datasets).with_overrides(fix={"B_L": 7.0})
 
-    outcome = fit_series(datasets, recipe, order_key="field", name="lf-pinned")
+    outcome = fit_series(datasets, recipe, axis=scan_axis(datasets, "field"), name="lf-pinned")
 
     assert [entry["parameters"]["B_L"] for entry in outcome.results] == pytest.approx(
         [7.0] * len(_LF_FIELDS)
@@ -328,7 +387,7 @@ def test_a_global_run_bound_parameter_is_held_at_the_recipes_value() -> None:
     recipe = _lf_recipe(datasets)
 
     outcome = fit_series(
-        datasets, recipe, order_key="field", global_params=["B_L"], name="lf-global"
+        datasets, recipe, axis=scan_axis(datasets, "field"), global_params=["B_L"], name="lf-global"
     )
 
     recipe_field = next(p.value for p in recipe.parameters if p.name == "B_L")
@@ -353,4 +412,10 @@ def test_a_global_parameter_the_recipe_does_not_have_is_rejected(
 ) -> None:
     datasets = {run: reduced_workdir.reduced(run) for run in SCAN_RUNS[:2]}
     with pytest.raises(KeyError, match="Nope"):
-        fit_series(datasets, recipe, order_key="temperature", global_params=["Nope"], name="x")
+        fit_series(
+            datasets,
+            recipe,
+            axis=scan_axis(datasets, "temperature"),
+            global_params=["Nope"],
+            name="x",
+        )

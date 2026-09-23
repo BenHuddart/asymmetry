@@ -130,7 +130,10 @@ def reduced_datasets(workdir: WorkDir, runs: list[int]) -> dict[int, MuonDataset
             f"Run(s) {', '.join(str(run) for run in missing)} have not been reduced into "
             f"{workdir.root}; run 'asymmetry reduce' on them first."
         )
-    return {run: workdir.reduced(run) for run in runs}
+    try:
+        return {run: workdir.reduced(run) for run in runs}
+    except KeyError as exc:
+        raise UserError(exc.args[0]) from None
 
 
 def _range_text(runs: list[int]) -> str:

@@ -12,6 +12,7 @@ import pytest
 from asymmetry import __version__, cli
 from asymmetry.cli._output import SCHEMA, UserError
 from asymmetry.cli._runs import parse_run_spec, resolve_run, resolve_runs, run_files
+from asymmetry.core.workflow.workdir import SCHEMA as WORKDIR_SCHEMA
 from tests.core.conftest import (
     ALL_RUNS,
     CALIBRATION_ALPHA,
@@ -19,6 +20,7 @@ from tests.core.conftest import (
     DEADTIME_RUN,
     DECOUPLING_RUN,
     SCAN_RUNS,
+    SCAN_TEMPERATURES,
 )
 
 
@@ -136,7 +138,7 @@ def test_survey_json_payload_and_written_file(
     assert survey["best_calibration_run"] == CALIBRATION_RUN
 
     stored = json.loads((workdir / "survey.json").read_text(encoding="utf-8"))
-    assert stored["schema"] == SCHEMA
+    assert stored["schema"] == WORKDIR_SCHEMA
     assert stored["best_calibration_run"] == CALIBRATION_RUN
 
 
@@ -840,7 +842,7 @@ def test_fit_series_writes_a_stamped_series_file(
     assert [entry["run"] for entry in payload["series"]["results"]] == list(SCAN_RUNS)
 
     stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
-    assert stored["schema"] == SCHEMA
+    assert stored["schema"] == WORKDIR_SCHEMA
     assert stored["asymmetry_version"] == __version__
     assert stored["order_key"] == "temperature"
 
@@ -1034,6 +1036,232 @@ def test_trend_names_the_series_the_workdir_does_hold(
         )
     assert exc.value.code == 1
     assert "No series 'nope'" in capsys.readouterr().err
+
+
+def _fit_scan(workflow_folder: Path, fitting_workdir: Path, *extra: str) -> None:
+    """Store the relaxation series ``scan`` over the whole temperature scan."""
+    cli.main(
+        [
+            "fit-series",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}",
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--name",
+            "scan",
+            *extra,
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+
+
+def test_trend_model_fits_a_trend_column_and_stores_the_fit(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    cli.main(
+        [
+            "trend",
+            str(workflow_folder),
+            "--series",
+            "scan",
+            "--model",
+            "Linear",
+            "--param",
+            "Lambda",
+            "--plot",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    fit = _json_output(capsys)["fit"]
+
+    # The scan was simulated with Lambda = 0.10 + 0.004 T.
+    assert fit["success"]
+    assert fit["runs"] == list(SCAN_RUNS)
+    assert abs(fit["parameters"]["m"] - 0.004) <= 3.0 * fit["uncertainties"]["m"]
+    assert abs(fit["parameters"]["b"] - 0.10) <= 3.0 * fit["uncertainties"]["b"]
+    stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
+    assert stored["trend_fits"]["Lambda"] == fit
+    assert (fitting_workdir / "plots" / "scan-trend-Lambda.png").exists()
+
+
+def test_trend_model_prints_the_fit_and_what_it_left_out(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    cli.main(
+        [
+            "trend",
+            str(workflow_folder),
+            "--series",
+            "scan",
+            "--model",
+            "Linear",
+            "--param",
+            "Lambda",
+            "--exclude",
+            str(SCAN_RUNS[0]),
+            "--xmax",
+            "40",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "Fit of Linear to Lambda against temperature over - .. 40.0000: 3 point(s)" in out
+    assert f"{SCAN_RUNS[0]} (excluded)" in out
+    assert f"{SCAN_RUNS[-1]} (outside the x range)" in out
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--param", "Lambda"], "--param require --model EXPR"),
+        (["--model", "Linear"], "--model needs --param NAME"),
+        (["--model", "Linear", "--param", "Nope"], "The trend has no column 'Nope'"),
+        (["--model", "Nope", "--param", "Lambda"], "Nope"),
+    ],
+)
+def test_trend_model_refuses_a_malformed_request(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "trend",
+                str(workflow_folder),
+                "--series",
+                "scan",
+                *arguments,
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err
+
+
+def test_trend_reads_a_fit_global_series(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    """A simultaneous fit's run-local parameters trend like a series' do."""
+    cli.main(
+        [
+            "fit-global",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}",
+            "--recipe",
+            "relax",
+            "--shared",
+            "A_bg",
+            "--order",
+            "temperature",
+            "--strategy",
+            "least_squares",
+            "--name",
+            "joint",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "temperature" in out and "Lambda" in out
+
+    cli.main(
+        [
+            "trend",
+            str(workflow_folder),
+            "--series",
+            "joint",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    trend = _json_output(capsys)["trend"]
+    assert trend["order_key"] == "temperature"
+    assert "A_bg" not in trend["columns"]
+    assert [row["x"] for row in trend["rows"]] == list(SCAN_TEMPERATURES)
+
+
+def test_fit_series_orders_along_values_the_analyst_supplies(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    runs = SCAN_RUNS[:3]
+    values = ",".join(f"{run}={len(runs) - index}" for index, run in enumerate(runs))
+    cli.main(
+        [
+            "fit-series",
+            str(workflow_folder),
+            "--runs",
+            f"{runs[0]}-{runs[-1]}",
+            "--recipe",
+            "relax",
+            "--order",
+            "foils",
+            "--x",
+            values,
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    series = _json_output(capsys)["series"]
+    assert series["order_key"] == "foils"
+    assert [row["run"] for row in series["trend"]["rows"]] == list(reversed(runs))
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--order", "foils"], "'foils' is not recorded in the files"),
+        (
+            ["--order", "foils", "--x", f"{SCAN_RUNS[0]}=1"],
+            f"No foils value for run(s) {SCAN_RUNS[1]}",
+        ),
+        (["--order", "foils", "--x", "banana"], "--x entry 'banana' is not RUN=VALUE"),
+        (["--order", "field", "--x", f"{SCAN_RUNS[0]}=1"], "'field' is read from the files"),
+        (["--order", "sample_temperature_logged"], "record no sample_temperature_logged"),
+    ],
+)
+def test_fit_series_refuses_an_axis_it_cannot_build(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "fit-series",
+                str(workflow_folder),
+                "--runs",
+                f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+                "--recipe",
+                "relax",
+                *arguments,
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err
+
+
+def test_the_order_help_names_every_order_key() -> None:
+    from asymmetry.cli._axis import ORDER_HELP
+    from asymmetry.core.workflow.series import ORDER_KEYS
+
+    for key in ORDER_KEYS:
+        assert key in ORDER_HELP
 
 
 def test_fourier_writes_arrays_and_quantitative_metadata(

@@ -57,6 +57,7 @@ def _row(
         title="",
         sample=None,
         temperature=temperature,
+        sample_temperature_logged=None,
         field=field,
         field_direction="",
         geometry=geometry,

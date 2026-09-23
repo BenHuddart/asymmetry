@@ -23,6 +23,9 @@ also has `--help`.
 - Fourier spectra and quantitative peak finding on reduced data;
 - integral-asymmetry field scans, including ALC/QLCR resonance fits;
 - a simultaneous group of runs with genuinely shared fit parameters;
+- a parameter trend fitted with a physical law — an order parameter, an
+  Arrhenius or Redfield law, a superconducting gap, a linear rate law — along
+  temperature (setpoint or logged), field, or a quantity you supply per run;
 - ISIS NeXus (`.nxs`) and PSI (`.bin`, `.mdu`) files, one forward group
   against one backward group.
 
@@ -41,9 +44,9 @@ do it*, and stop without producing fit numbers.
 | Maximum-entropy spectra | `fourier` provides an FFT and peak table, not maximum entropy reconstruction. Do not describe its output as MaxEnt. |
 | Negative-muon (μ⁻) elemental analysis | Gamma spectra, elemental lines. Not asymmetry data. |
 | Rotating-reference-frame or RF-resonance runs | Titles or notes naming RF; data modulated at a reference frequency. |
-| Muonium chemistry / reaction rates | Rates versus concentration across samples, not a spin-relaxation trend. |
-| A series of simultaneous groups | `fit-global` fits one group of runs jointly, but there is not yet one command that repeats that coupled fit for every temperature and trends the shared parameters. Fit and report each group separately; do not substitute independent fits. |
-| A fragment of a published multi-field campaign | Disjoint blocks of run numbers with large gaps, multi-tesla fields, no self-contained scan. You cannot reconstruct the campaign's field log from what is on disk. |
+| A series of simultaneous groups | `fit-global` fits one group of runs jointly and `trend` reads that group's run-local parameters, but there is not yet one command that repeats the coupled fit for every temperature and trends the *shared* parameters. Fit and report each group separately; do not substitute independent fits. |
+| A trend of fitted trend parameters | `trend --model` fits one stored series. A law fitted *across* several such fits — an Arrhenius law through rate constants each fitted at one temperature — has no command. Report each fit's parameters; do not fit the second level by hand. |
+| A fragment of a published multi-field campaign | No self-contained scan in the survey's `scans` list, and fields the files do not record. Check `scans` first: two complete temperature scans at two recorded fields are analysable even with a large gap in run numbers between them. |
 
 A folder the tool can *load* is not automatically a folder the tool can
 *analyse*. Loadability is not scope.
@@ -130,13 +133,13 @@ cryostat files keep the setpoint parked while the sample temperature changes;
 then many distinct runs can appear at one nominal temperature. Several runs at
 exactly the same setpoint inside an otherwise recognisable temperature scan are
 by themselves enough to trigger this check — do not describe them as repeated
-measurements at that temperature. Inspect the scan endpoints and the proposed
-representative run with `asymmetry info <file> --json` and look for a logged
-sample-temperature field such as `sample_temperature_logged`. Call the survey
-temperature a setpoint, report the logged value as the physical scan axis, and
-do not claim that run number is a temperature proxy. If the CLI cannot trend
-the logged field, state that limitation rather than constructing a false
-setpoint trend.
+measurements at that temperature. The survey's `T log/K` column is the logged
+sample temperature (`sample_temperature_logged` in `--json`) where the file
+records one; `T/K` is the setpoint. Call the setpoint a setpoint, order the
+series by the logged value (`--order sample_temperature_logged`) when the two
+disagree, and do not claim that run number is a temperature proxy. PSI `.bin`
+files carry no logged column yet; for those, say that the trend is against the
+setpoint rather than constructing a false precision.
 
 `asymmetry info <file>` prints one file's metadata if you need to check a
 single file directly.
@@ -355,7 +358,13 @@ asymmetry fit-series <folder> --runs 102-107 --recipe wizard-102 \
 - `--recipe` takes a name in `asymmetry-work/recipes/` (no path, no `.json`)
   or a path.
 - `--order temperature` or `--order field` — the quantity the scan varies, the
-  axis of the trend. `--order run` only when neither applies.
+  axis of the trend. `--order sample_temperature_logged` when the logged sample
+  temperature departs from the setpoint (see Step 1). When the scan varies
+  something the files do not record — a concentration, a degrader foil count,
+  a magnet current — name it and give every run's value:
+  `--order concentration --x 78251=0,78279=0.25,78277=0.5`. Take those values
+  from the notes, logbook or titles and say where they came from. `--order run`
+  only when nothing else applies.
 - `--start <run>` is **the run you screened**. The series chains outward from
   it in both directions, so every fit warm-starts from a neighbour near the run
   the recipe actually describes. Starting from the cold end with a recipe
@@ -403,10 +412,15 @@ that run. Other parameters not listed in `--shared` remain run-local. Check the
 model's actual parameter names in the recipe; never copy the example names
 blindly. A decoupling triplet normally shares the dynamic relaxation
 parameters and physically common amplitudes, while the applied LF differs.
-Repeat `fit-global` for each temperature group. There is not yet a batch
-command that trends a sequence of global fits, so quote each stored group's
-shared values and uncertainties directly rather than presenting independent
-fits as a coupled analysis.
+`fit-global` takes the same `--order`/`--x` as `fit-series` (default `run`),
+and its table and stored trend carry every run-local parameter along that
+axis — so `asymmetry trend <folder> --series <name>` reads it, and
+`trend --model` can fit it: a muonium relaxation rate fitted per sample with a
+shared amplitude, ordered by `--order concentration --x …`, gives the rate
+constant from `trend --model Linear`. Repeat `fit-global` for each temperature
+group. There is not yet a batch command that trends a sequence of global fits,
+so quote each stored group's shared values and uncertainties directly rather
+than presenting independent fits as a coupled analysis.
 
 ### Step 5b — build and fit an integral-asymmetry field scan
 
@@ -665,6 +679,46 @@ parameter, with flagged points drawn distinctly.
 that is flat, that jumps, or whose scatter swamps the error bars is telling you
 something the table alone will not.
 
+### Step 6a — fit the trend with a physical law
+
+When the experiment's question is a number that a trend encodes — a
+transition temperature, a critical exponent, an activation energy, a
+correlation time, a gap — fit the law to the trend column instead of reading
+it off the plot or computing it by hand:
+
+```bash
+asymmetry trend <folder> --series zf-scan --model OrderParameter \
+    --param frequency --fix alpha=1 --xmax 69 --exclude 2958 --plot
+```
+
+- `--model` takes a parameter-vs-x expression: `OrderParameter` (a precession
+  frequency or internal field below the transition), `Arrhenius` (a hop or
+  fluctuation rate against temperature), `Redfield` (a relaxation rate against
+  longitudinal field), `SC_SWave` and the other `SC_*` gap models (a
+  superconducting σ against temperature), `Linear` (a rate against
+  concentration), and sums such as `Redfield + Constant`. The physics of the
+  system picks the law; say which you used and why.
+- `--xmin`/`--xmax` set the fit range in the trend's x units. An order
+  parameter is fitted **below** the transition, a Redfield law over the field
+  range where one process dominates. State the range in the summary.
+- `--fix NAME=VALUE` holds a law parameter (e.g. `alpha=1` for the simple
+  power law); `--initial NAME=VALUE` moves a start value.
+- **Every run with a value enters unless you exclude it.** The output lists the
+  runs it left out and the *flagged runs it fitted*. Exclude a flagged run
+  whose value is suspect — `failed`, `spurious_reseeded`, or `bound_pinned` on
+  the parameter you are fitting — with `--exclude RUNS`, and say which you
+  excluded and why. A `large_rel_err` run is weighted down by its own error bar
+  and can usually stay.
+- The fit is stored in `series/<name>.json` under `trend_fits`, and `--plot`
+  draws the curve over the points it was fitted to. Read the PNG: a law that
+  misses the points near the transition, or a parameter reported `at bound`,
+  is not a result.
+
+Quote the law's parameters with their uncertainties exactly as printed. The
+same rule as for integral scans applies: derive nothing further by hand (a
+penetration depth from σ, an energy in meV from a gap in kelvin) and present
+it as Asymmetry output.
+
 ### Step 7 — write the summary
 
 Template in section 6.
@@ -782,7 +836,7 @@ of the asymmetry is an incomplete answer for a superconductor.
 | `fourier` | instant after reduction |
 | `wizard` | 3–8 s per ISIS run |
 | `fit`, `fit-series`, `fit-global` | a few seconds for a scan or one coupled group |
-| `trend` | instant (it reads stored results) |
+| `trend` | instant (it reads stored results); `--model` a second or two |
 
 So: screen **one or two** runs, not every run. Reduce and fit whole scans
 freely — those are cheap.

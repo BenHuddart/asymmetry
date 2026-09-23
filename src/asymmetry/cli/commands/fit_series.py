@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from asymmetry.cli._axis import add_axis_arguments, axis_from_arguments
 from asymmetry.cli._output import (
     UserError,
     checked_name,
@@ -31,12 +32,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Run numbers, e.g. '17294-17322'",
     )
     add_recipe_arguments(parser, free=False)
-    parser.add_argument(
-        "--order",
-        choices=["temperature", "field", "run"],
-        required=True,
-        help="Scan quantity the series is ordered and trended along",
-    )
+    add_axis_arguments(parser, default=None)
     parser.add_argument(
         "--global",
         dest="global_params",
@@ -82,7 +78,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 def run(args: argparse.Namespace) -> None:
     """Fit every named run with the recipe and store the series."""
     from asymmetry.cli import plots
-    from asymmetry.core.workflow.series import fit_series, order_values
+    from asymmetry.core.workflow.series import fit_series
 
     if args.plot:
         plots.require_matplotlib()
@@ -113,22 +109,19 @@ def run(args: argparse.Namespace) -> None:
             f"--start {args.start} is not in the series "
             f"(it holds {', '.join(str(run) for run in sorted(datasets))})."
         )
-    try:
-        order_values(datasets, args.order)
-    except ValueError as exc:
-        raise UserError(str(exc)) from None
+    axis = axis_from_arguments(args, datasets)
 
     outcome = fit_series(
         datasets,
         recipe,
-        order_key=args.order,
+        axis=axis,
         global_params=global_params,
         start_run=args.start,
         name=name,
     )
     # Additive: so that a later `trend --plot` on this series (a separate
     # invocation, with no recipe in hand) can rebuild the model curve.
-    series_payload = outcome.to_dict() | {"recipe": recipe.to_dict()}
+    series_payload = outcome.to_dict() | {"recipe": recipe.to_dict(), "trend_fits": {}}
     series_path = workdir.write_series(name, series_payload)
 
     plot_paths: list[Path] = []

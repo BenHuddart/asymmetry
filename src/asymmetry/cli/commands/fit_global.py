@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from asymmetry.cli._axis import add_axis_arguments, axis_from_arguments
 from asymmetry.cli._output import (
     UserError,
     checked_name,
@@ -40,6 +41,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         choices=["joint", "profiled", "least_squares"],
         default="joint",
     )
+    add_axis_arguments(parser, default="run")
     parser.add_argument("--name", default="global-fit", help="Stored fit name")
     parser.add_argument("--plot", action="store_true", help="Write one fitted plot per run")
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
@@ -63,11 +65,13 @@ def run(args: argparse.Namespace) -> None:
     datasets = reduced_datasets(workdir, parse_run_spec(args.runs))
     shared = [name.strip() for name in args.shared.split(",") if name.strip()]
     name = checked_name(args.name, flag="--name")
+    axis = axis_from_arguments(args, datasets)
     try:
         outcome = fit_global(
             datasets,
             recipe,
             shared_params=shared,
+            axis=axis,
             field_params=[item.strip() for item in args.field_param if item.strip()],
             strategy=args.strategy,
         )
@@ -88,7 +92,9 @@ def run(args: argparse.Namespace) -> None:
         "plots": [str(path) for path in plot_paths],
     }
     stored = (
-        outcome.to_dict() | {"name": name, "recipe": recipe.to_dict(), "kind": "global"} | artefacts
+        outcome.to_dict()
+        | {"name": name, "recipe": recipe.to_dict(), "kind": "global", "trend_fits": {}}
+        | artefacts
     )
     workdir.write_series(name, stored)
     if args.plot:
@@ -117,11 +123,26 @@ def _render(outcome: dict) -> str:
     rows = [
         [
             str(result["run"]),
+            format_number(result["x"], 3),
+            *(
+                format_number(result["parameters"][name], 4)
+                + " ± "
+                + format_number(result["uncertainties"].get(name), 4)
+                for name in outcome["free_params"]
+            ),
             format_number(result["reduced_chi_squared"], 3),
             "unknown" if result["quality"] is None else result["quality"]["verdict"],
             ", ".join(result["quality_flags"]) or "-",
         ]
         for result in outcome["results"]
+    ]
+    headers = [
+        "run",
+        outcome["order_key"],
+        *outcome["free_params"],
+        "chi2_red",
+        "verdict",
+        "flags",
     ]
     shared = ", ".join(
         f"{name}={format_number(value, 6)}"
@@ -136,7 +157,7 @@ def _render(outcome: dict) -> str:
         f"{outcome['name']} — {outcome['expression']}, {len(rows)} simultaneously fitted run(s)",
         f"shared: {shared or '-'}",
         "",
-        render_table(["run", "chi2_red", "verdict", "flags"], rows),
+        render_table(headers, rows),
         "",
         f"Fit written to {outcome['series_path']}",
     ]

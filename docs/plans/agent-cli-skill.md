@@ -335,7 +335,8 @@ Copper (TF, ZF and LF sets in one folder: survey must split them), Spin-Peierls
 **Tier C — must decline gracefully**
 
 AFM transition in high TF (6 T `.mdu` from PSI HIFI: out of scope, must say
-so).
+so). Moved to Tier B as a bounded analysis on 2026-09-23 — see the corpus
+capability audit below; no decline case remains.
 
 **Workflow-expansion gate — must exercise the added path**
 
@@ -848,7 +849,13 @@ decline (the survey reads the fields and temperatures it calls unknown);
 the paper contradicts (λ stays near 2 MHz).
 
 Follow-up: gaps 1–3 and the two rubric corrections are taken up on
-`feat/trend-model-fit`. Reading the logged temperature from the PSI `.bin`
+`feat/trend-model-fit`: `trend --model` (the desktop trend dialog's fit, every
+row with a value entering unless `--exclude`d, flagged rows named), `--order
+sample_temperature_logged` and `--order <name> --x RUN=VALUE,…` on `fit-series`
+and `fit-global`, and a stored trend for `fit-global`. Checked on the corpus:
+the plateau λ(B) Redfield fit (D = 27.5 ± 0.4, ν = 159 ± 15 MHz over
+5–36 kG), Sn ordered by logged temperature, and maleic acid λ_Mu against a
+supplied concentration axis through `fit-global` and `trend --model Linear`. Reading the logged temperature from the PSI `.bin`
 header is deferred: the header's per-sensor means carry no labels, and which
 sensor is the sample differs between GPS and GPD.
 
@@ -874,7 +881,9 @@ Recorded here rather than fixed, because Phase 4 changes skill text only:
   dipolar coupling. Either the CLI should emit ω_D as a derived quantity or
   the rubric should say "coupling".
 - **`survey` prints one temperature column**, so the `fmuf-ptfe` Should about
-  the sample-temperature column and its uncertainty is unreachable.
+  the sample-temperature column and its uncertainty is unreachable. (Since
+  2026-09-23 it also prints the logged sample temperature, `T log/K`, where
+  the file records one; the uncertainty is still not shown.)
 - **`alpha` takes no `--workdir`**, unlike every other command. Harmless, but
   the skill has to say so.
 

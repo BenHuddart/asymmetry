@@ -147,6 +147,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5 minutes, `0` disables it) writes a `<name>.autosave.asymp` crash-recovery snapshot; opening
   a project whose autosave is newer than the file itself offers `Load autosave` or `Open saved
   file`. See `docs/reference/project_files.rst` § "Crash-safe save and autosave".
+- **The agent CLI fits physical laws to a trend, and orders a scan by any quantity.**
+  `asymmetry trend --model EXPR --param NAME` fits a parameter-vs-x law (`OrderParameter`,
+  `Arrhenius`, `Redfield`, the `SC_*` gap models, `Linear`, sums of these) to one trend column
+  with the desktop trend dialog's fit and seeding; `--xmin`/`--xmax`, `--fix`, `--initial` and
+  `--exclude` control it, the output lists the runs left out and the flagged runs fitted, and the
+  fit is stored under `trend_fits` in the series file. `fit-series` and `fit-global` take
+  `--order sample_temperature_logged` (the logged sample temperature, now a `T log/K` column in
+  `survey`) or any other name with per-run values from `--x RUN=VALUE,...`, such as a
+  concentration or a foil count. `fit-global` now stores a trend table and prints its run-local
+  parameters, so `trend` reads a simultaneous fit instead of failing with `KeyError: 'trend'`.
+  Work directories written by an older release are refused with a message to reduce or fit
+  again. See `docs/reference/agent_workflow.rst` § "trend".
 
 ### Changed
 

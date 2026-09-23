@@ -88,13 +88,25 @@ from asymmetry.core.fitting.series import fit_asymmetry_series
 from asymmetry.core.fitting.series_seeding import resolve_series_params
 from asymmetry.core.workflow.recipe import FitRecipe
 
-#: Quantities a series may be ordered along. ``"run"`` needs no metadata; the
-#: other two are read from each run's recorded scan metadata.
-ORDER_KEYS = ("temperature", "field", "run")
+#: Quantities a series may be ordered along by reading each run's metadata.
+#: ``"run"`` needs none; ``"temperature"`` is the setpoint and
+#: ``"sample_temperature_logged"`` the measured sample temperature, which can sit
+#: several kelvin away from it. Any other quantity (a concentration, a foil
+#: count, a magnet current) is supplied per run by the analyst through
+#: :func:`supplied_axis`.
+ORDER_KEYS = ("temperature", "sample_temperature_logged", "field", "run")
 
 
-def order_values(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> dict[int, float]:
-    """The scan coordinate of every run, for ordering and for the trend x-axis.
+@dataclass(frozen=True)
+class ScanAxis:
+    """The coordinate a series is ordered and trended along: one value per run."""
+
+    name: str
+    values: dict[int, float]
+
+
+def scan_axis(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> ScanAxis:
+    """The axis *order_key* names, read from every run's recorded metadata.
 
     Raises :class:`ValueError` naming the runs that do not record *order_key* —
     a scan cannot be chained along a quantity half its members lack, and
@@ -102,10 +114,11 @@ def order_values(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> 
     """
     if order_key not in ORDER_KEYS:
         raise ValueError(
-            f"Unknown order key {order_key!r}; expected one of {', '.join(ORDER_KEYS)}."
+            f"{order_key!r} is not recorded in the files (they record "
+            f"{', '.join(ORDER_KEYS)}); supply its value for every run instead."
         )
     if order_key == "run":
-        return {run: float(run) for run in datasets_by_run}
+        return ScanAxis(order_key, {int(run): float(run) for run in datasets_by_run})
 
     values: dict[int, float] = {}
     missing: list[int] = []
@@ -120,7 +133,30 @@ def order_values(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> 
             f"Run(s) {', '.join(str(run) for run in sorted(missing))} record no {order_key}; "
             f"order the series by a quantity every run has."
         )
-    return values
+    return ScanAxis(order_key, values)
+
+
+def supplied_axis(name: str, values: Mapping[int, float], runs: Iterable[int]) -> ScanAxis:
+    """An axis the analyst supplies, with exactly one value for each of *runs*.
+
+    *name* labels the trend; it may not be one of :data:`ORDER_KEYS`, whose
+    values come from the files. Raises :class:`ValueError` naming the runs with
+    no value, and the values given for runs outside the series.
+    """
+    if name in ORDER_KEYS:
+        raise ValueError(f"{name!r} is read from the files; order by it without supplying values.")
+    runs = {int(run) for run in runs}
+    given = {int(run) for run in values}
+    if runs - given:
+        raise ValueError(
+            f"No {name} value for run(s) {', '.join(str(run) for run in sorted(runs - given))}."
+        )
+    if given - runs:
+        raise ValueError(
+            f"{name} values given for run(s) "
+            f"{', '.join(str(run) for run in sorted(given - runs))}, which are not in the series."
+        )
+    return ScanAxis(name, {int(run): float(value) for run, value in values.items()})
 
 
 @dataclass(frozen=True)
@@ -315,7 +351,7 @@ def fit_series(
     datasets_by_run: Mapping[int, MuonDataset],
     recipe: FitRecipe,
     *,
-    order_key: str = "run",
+    axis: ScanAxis,
     global_params: Iterable[str] = (),
     start_run: int | None = None,
     name: str,
@@ -332,9 +368,10 @@ def fit_series(
     ``global_params`` names the parameters held identical across the scan (see
     the module docstring — they are pinned, not jointly fitted). Each run's
     run-bound values are re-seeded from its own record first, as that section
-    describes. Raises :class:`ValueError` for an unknown order key, a run that
-    does not record it, or a *start_run* outside the series, and
-    :class:`KeyError` for a global parameter the recipe does not carry.
+    describes. *axis* orders the scan and is the trend's x; it carries a value
+    for every run. Raises :class:`ValueError` for a *start_run* outside the
+    series, and :class:`KeyError` for a global parameter the recipe does not
+    carry.
     """
     global_params = list(global_params)
     unknown = sorted(set(global_params) - set(recipe.parameter_names))
@@ -344,7 +381,7 @@ def fit_series(
             f"(it has {', '.join(recipe.parameter_names)})."
         )
 
-    order = order_values(datasets_by_run, order_key)
+    order = axis.values
     runs = sorted(datasets_by_run, key=lambda run: (order[run], run))
     model = recipe.model()
     local_params = [
@@ -418,7 +455,7 @@ def fit_series(
 
     return SeriesOutcome(
         name=name,
-        order_key=order_key,
+        order_key=axis.name,
         expression=recipe.expression,
         global_params=global_params,
         free_params=free_params,
@@ -428,7 +465,7 @@ def fit_series(
         # chain hit them.
         reseeded_runs=[run for run in runs if run in reseeded],
         results=results,
-        trend=build_trend_table(results, free_params, order_key),
+        trend=build_trend_table(results, free_params, axis.name),
     )
 
 
@@ -460,11 +497,13 @@ def build_trend_table(
 
 __all__ = [
     "ORDER_KEYS",
+    "ScanAxis",
     "SeriesBranch",
     "SeriesOutcome",
     "TrendTable",
     "build_trend_table",
     "fit_one",
     "fit_series",
-    "order_values",
+    "scan_axis",
+    "supplied_axis",
 ]

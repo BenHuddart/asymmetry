@@ -314,7 +314,9 @@ class RunRow:
     facility: str
     title: str
     sample: str | None
+    #: The setpoint, and the measured sample temperature when the file logs one.
     temperature: float | None
+    sample_temperature_logged: float | None
     field: float | None
     field_direction: str
     geometry: str | None
@@ -352,6 +354,7 @@ class RunRow:
             "title": self.title,
             "sample": self.sample,
             "temperature": self.temperature,
+            "sample_temperature_logged": self.sample_temperature_logged,
             "field": self.field,
             "field_direction": self.field_direction,
             "geometry": self.geometry,
@@ -518,6 +521,7 @@ def build_run_row(
         title=str(metadata.get("title") or ""),
         sample=sample,
         temperature=dataset.temperature,
+        sample_temperature_logged=dataset.sample_temperature_logged,
         field=dataset.field,
         field_direction=str(metadata.get("field_direction") or metadata.get("field_state") or ""),
         geometry=geometry,

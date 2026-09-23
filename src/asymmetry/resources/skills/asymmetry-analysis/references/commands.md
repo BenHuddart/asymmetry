@@ -43,7 +43,7 @@ positional arguments:
                         parameters
     fit-series          Fit a recipe across a scan of reduced runs, chained along the
                         scan order
-    trend               Print (or export) the parameter trend of a stored series
+    trend               Print, export or fit the parameter trend of a stored series
     fourier             Transform a reduced run and report resolved frequency peaks
     skill               Install, check or remove the asymmetry-analysis agent skill
     info                Show metadata for a data file
@@ -208,7 +208,8 @@ options:
 ```
 usage: asymmetry fit-global [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
                             [--free NAME] --shared P,Q [--field-param NAME]
-                            [--strategy {joint,profiled,least_squares}] [--name NAME]
+                            [--strategy {joint,profiled,least_squares}]
+                            [--order QUANTITY] [--x RUN=VALUE,...] [--name NAME]
                             [--plot] [--json] [--workdir WORKDIR]
                             folder
 
@@ -226,6 +227,12 @@ options:
   --field-param NAME    Set this parameter from each run's field and hold it
                         (repeatable)
   --strategy {joint,profiled,least_squares}
+  --order QUANTITY      Quantity the runs are ordered and trended along: temperature
+                        (the setpoint), sample_temperature_logged, field or run, read
+                        from the files; or any other name, whose value for every run
+                        you give with --x
+  --x RUN=VALUE,...     Per-run values of a quantity the files do not record, e.g. '--
+                        order concentration --x 78251=0,78279=0.25,78277=0.5'
   --name NAME           Stored fit name
   --plot                Write one fitted plot per run
   --json                Emit the machine-readable payload
@@ -236,54 +243,70 @@ options:
 
 ```
 usage: asymmetry fit-series [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
-                            --order {temperature,field,run} [--global P,Q]
+                            --order QUANTITY [--x RUN=VALUE,...] [--global P,Q]
                             [--start RUN] [--name NAME] [--plot] [--json]
                             [--workdir WORKDIR]
                             folder
-
-positional arguments:
-  folder                Directory holding the run files
-
-options:
-  -h, --help            show this help message and exit
-  --runs RUNS           Run numbers, e.g. '17294-17322'
-  --recipe RECIPE       Recipe file, or the name of one in the work directory's
-                        recipes/
-  --fix NAME=VALUE      Hold a parameter at a value (repeatable)
-  --order {temperature,field,run}
-                        Scan quantity the series is ordered and trended along
-  --global P,Q          Parameters held identical across every run. The batch is
-                        block-separable, so these are pinned at their recipe value and
-                        not fitted; everything else is free per run
-  --start RUN           Chain outward from this run in both directions, instead of
-                        from the first run in scan order. Screen the run with the
-                        clearest structure ('asymmetry wizard --run N'), then start
-                        the series there ('--start N'): every fit then warm-starts
-                        from a neighbour nearer the run the recipe describes
-  --name NAME           Name to store the series under (default: series-<recipe stem>)
-  --plot                Write plots/<name>/<run>.png per run and
-                        plots/<name>-trend-<param>.png per free parameter
-  --json                Emit the machine-readable payload
-  --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
-```
-
-## `asymmetry trend`
-
-```
-usage: asymmetry trend [-h] --series SERIES [--csv CSV] [--plot] [--json]
-                       [--workdir WORKDIR]
-                       folder
 
 positional arguments:
   folder             Directory holding the run files
 
 options:
   -h, --help         show this help message and exit
-  --series SERIES    Name the series was stored under
-  --csv CSV          Also write the table to this CSV file
-  --plot             Write plots/<series>-trend-<param>.png for every free parameter
+  --runs RUNS        Run numbers, e.g. '17294-17322'
+  --recipe RECIPE    Recipe file, or the name of one in the work directory's recipes/
+  --fix NAME=VALUE   Hold a parameter at a value (repeatable)
+  --order QUANTITY   Quantity the runs are ordered and trended along: temperature (the
+                     setpoint), sample_temperature_logged, field or run, read from the
+                     files; or any other name, whose value for every run you give with
+                     --x
+  --x RUN=VALUE,...  Per-run values of a quantity the files do not record, e.g. '--
+                     order concentration --x 78251=0,78279=0.25,78277=0.5'
+  --global P,Q       Parameters held identical across every run. The batch is block-
+                     separable, so these are pinned at their recipe value and not
+                     fitted; everything else is free per run
+  --start RUN        Chain outward from this run in both directions, instead of from
+                     the first run in scan order. Screen the run with the clearest
+                     structure ('asymmetry wizard --run N'), then start the series
+                     there ('--start N'): every fit then warm-starts from a neighbour
+                     nearer the run the recipe describes
+  --name NAME        Name to store the series under (default: series-<recipe stem>)
+  --plot             Write plots/<name>/<run>.png per run and
+                     plots/<name>-trend-<param>.png per free parameter
   --json             Emit the machine-readable payload
-  --workdir WORKDIR  Work directory to read (default: ./asymmetry-work)
+  --workdir WORKDIR  Work directory to read and write (default: ./asymmetry-work)
+```
+
+## `asymmetry trend`
+
+```
+usage: asymmetry trend [-h] --series SERIES [--csv CSV] [--plot] [--model EXPR]
+                       [--param PARAM] [--xmin XMIN] [--xmax XMAX]
+                       [--initial NAME=VALUE] [--fix NAME=VALUE] [--exclude RUNS]
+                       [--json] [--workdir WORKDIR]
+                       folder
+
+positional arguments:
+  folder                Directory holding the run files
+
+options:
+  -h, --help            show this help message and exit
+  --series SERIES       Name the series was stored under
+  --csv CSV             Also write the table to this CSV file
+  --plot                Write plots/<series>-trend-<param>.png for every free
+                        parameter (with --model, only for --param, with the fitted
+                        curve)
+  --model EXPR          Fit this parameter-vs-x expression to --param, e.g.
+                        'OrderParameter', 'Redfield'
+  --param PARAM         The trend column --model is fitted to
+  --xmin XMIN           Fit range start, in x units
+  --xmax XMAX           Fit range end, in x units
+  --initial NAME=VALUE  Model start value (repeatable)
+  --fix NAME=VALUE      Hold a model parameter at this value (repeatable)
+  --exclude RUNS        Leave these runs out of the fit (every other run with a value
+                        enters)
+  --json                Emit the machine-readable payload
+  --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
 ```
 
 ## `asymmetry fourier`

@@ -58,6 +58,7 @@ def _render(survey, survey_path: Path) -> str:
     headers = [
         "run",
         "T/K",
+        "T log/K",
         "B/G",
         "geom",
         "prec",
@@ -74,6 +75,7 @@ def _render(survey, survey_path: Path) -> str:
         [
             str(row.run_number),
             format_number(row.temperature, 2),
+            format_number(row.sample_temperature_logged, 2),
             format_number(row.field, 2),
             # A trailing * marks a geometry the spectrum decided, not the file.
             (row.geometry or "-") + ("*" if row.geometry_source == "measured" else ""),

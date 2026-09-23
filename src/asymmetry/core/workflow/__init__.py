@@ -36,13 +36,15 @@ from asymmetry.core.workflow.screen import (
 )
 from asymmetry.core.workflow.series import (
     ORDER_KEYS,
+    ScanAxis,
     SeriesBranch,
     SeriesOutcome,
     TrendTable,
     build_trend_table,
     fit_one,
     fit_series,
-    order_values,
+    scan_axis,
+    supplied_axis,
 )
 from asymmetry.core.workflow.survey import (
     LARMOR_FREQUENCY_TOLERANCE,
@@ -63,6 +65,7 @@ from asymmetry.core.workflow.survey import (
     run_geometry,
     survey_folder,
 )
+from asymmetry.core.workflow.trend_fit import TrendFitOutcome, fit_trend
 from asymmetry.core.workflow.workdir import (
     SCHEMA,
     WORKDIR_NAME,
@@ -97,11 +100,13 @@ __all__ = [
     "ReducedEntry",
     "ReductionSettings",
     "RunRow",
+    "ScanAxis",
     "ScanGroup",
     "ScreenCandidate",
     "ScreenResult",
     "SeriesBranch",
     "SeriesOutcome",
+    "TrendFitOutcome",
     "TrendTable",
     "WorkDir",
     "WorkDirMismatchError",
@@ -117,8 +122,8 @@ __all__ = [
     "fit_global",
     "fourier_spectrum",
     "fit_series",
+    "fit_trend",
     "has_file_deadtime",
-    "order_values",
     "precession_evidence",
     "reduce_run",
     "reduction_digest",
@@ -127,6 +132,8 @@ __all__ = [
     "resolve_row_geometry",
     "run_facility",
     "run_geometry",
+    "scan_axis",
     "screen_run",
+    "supplied_axis",
     "survey_folder",
 ]
