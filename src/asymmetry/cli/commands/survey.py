@@ -53,6 +53,17 @@ def run(args: argparse.Namespace) -> None:
     print(_render(survey, survey_path))
 
 
+def _run_list(runs: list[int]) -> str:
+    """``[1, 2, 3, 7]`` as ``"1-3, 7"``."""
+    spans: list[list[int]] = []
+    for run in sorted(runs):
+        if spans and run == spans[-1][-1] + 1:
+            spans[-1].append(run)
+        else:
+            spans.append([run])
+    return ", ".join(f"{span[0]}-{span[-1]}" if len(span) > 1 else str(span[0]) for span in spans)
+
+
 def _render(survey, survey_path: Path) -> str:
     """The human-readable survey: the run table, then candidates and scans."""
     headers = [
@@ -104,6 +115,15 @@ def _render(survey, survey_path: Path) -> str:
             "prec: precession measured against the Larmor frequency of the recorded field "
             "— larmor / other (a different line) / none / - (not measurable). "
             "geom*: geometry measured from that precession rather than read from the file."
+        )
+        lines.append("")
+    if survey.temperature_departures:
+        runs = survey.temperature_departures
+        lines.append(
+            f"TEMPERATURE: the logged sample temperature (T log) departs from the setpoint "
+            f"(T/K) on {len(runs)} run(s): {_run_list(runs)}. Those runs were not at their "
+            f"setpoint — order their scans with --order sample_temperature_logged, quote the "
+            f"logged value, and treat the scans below (grouped by setpoint) as provisional."
         )
         lines.append("")
     if survey.truncated:

@@ -1490,3 +1490,51 @@ def test_recipe_refuses_a_model_or_name_it_cannot_build(
         )
     assert exc.value.code == 1
     assert message in capsys.readouterr().err
+
+
+def test_wizard_prints_its_spectral_evidence_and_keeps_a_screening_window(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    workdir = tmp_path / "wd"
+    cli.main(
+        [
+            "reduce",
+            str(workflow_folder),
+            "--runs",
+            str(CALIBRATION_RUN),
+            "--workdir",
+            str(workdir),
+        ]
+    )
+    capsys.readouterr()
+    cli.main(
+        [
+            "wizard",
+            str(workflow_folder),
+            "--run",
+            str(CALIBRATION_RUN),
+            "--geometry",
+            "TF",
+            "--tmax",
+            "6",
+            "--workdir",
+            str(workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    # 100 G precesses at 1.355 MHz; the line and the fitted values are printed.
+    assert "Spectral lines: 1.3" in out
+    assert "Recommended fit: " in out
+    stored = json.loads(
+        (workdir / "recipes" / f"wizard-{CALIBRATION_RUN}.json").read_text(encoding="utf-8")
+    )
+    assert stored["t_max"] == 6.0
+
+
+def test_fit_series_fits_inside_the_window_it_is_given(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir, "--tmax", "5", "--json")
+    capsys.readouterr()
+    stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
+    assert stored["recipe"]["t_max"] == 5.0

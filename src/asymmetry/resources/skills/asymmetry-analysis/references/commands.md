@@ -162,8 +162,8 @@ options:
 
 ```
 usage: asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope PRESET]
-                        [--include C,D] [--exclude C,D] [--plot] [--json]
-                        [--workdir WORKDIR]
+                        [--include C,D] [--exclude C,D] [--tmin TMIN] [--tmax TMAX]
+                        [--plot] [--json] [--workdir WORKDIR]
                         folder
 
 positional arguments:
@@ -182,6 +182,8 @@ options:
                         'Oscillatory' for a line in an LF run
   --exclude C,D         Components to drop from the scope, e.g.
                         'VortexLattice,VortexLatticePowder'
+  --tmin TMIN           Screen only above this time / µs
+  --tmax TMAX           Screen only below this time / µs (the recipe keeps the window)
   --plot                Write plots/wizard-<run>.png of data + recommendation
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
@@ -276,9 +278,9 @@ options:
 
 ```
 usage: asymmetry fit-series [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
-                            --order QUANTITY [--x RUN=VALUE,...] [--global P,Q]
-                            [--start RUN] [--name NAME] [--plot] [--json]
-                            [--workdir WORKDIR]
+                            --order QUANTITY [--x RUN=VALUE,...] [--tmin TMIN]
+                            [--tmax TMAX] [--global P,Q] [--start RUN] [--name NAME]
+                            [--plot] [--json] [--workdir WORKDIR]
                             folder
 
 positional arguments:
@@ -295,6 +297,8 @@ options:
                      --x
   --x RUN=VALUE,...  Per-run values of a quantity the files do not record, e.g. '--
                      order concentration --x 101=0,102=0.25,103=0.5'
+  --tmin TMIN        Fit only above this time / µs
+  --tmax TMAX        Fit only below this time / µs
   --global P,Q       Parameters held identical across every run. The batch is block-
                      separable, so these are pinned at their recipe value and not
                      fitted; everything else is free per run

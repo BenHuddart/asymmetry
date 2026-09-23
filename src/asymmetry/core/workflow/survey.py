@@ -419,6 +419,26 @@ class CalibrationCandidate:
         }
 
 
+#: A logged sample temperature this far from its setpoint — in kelvin *and* as a
+#: fraction of the setpoint — is a different temperature, not thermometer
+#: scatter: a cryostat still cooling, or a sensor offset that moves a transition.
+TEMPERATURE_DEPARTURE_K = 0.5
+TEMPERATURE_DEPARTURE_FRACTION = 0.05
+
+
+def temperature_departures(rows: list[RunRow]) -> list[int]:
+    """Runs whose logged sample temperature departs from the setpoint (see above)."""
+    return [
+        row.run_number
+        for row in rows
+        if row.temperature is not None
+        and row.sample_temperature_logged is not None
+        and abs(row.sample_temperature_logged - row.temperature) > TEMPERATURE_DEPARTURE_K
+        and abs(row.sample_temperature_logged - row.temperature)
+        > TEMPERATURE_DEPARTURE_FRACTION * abs(row.temperature)
+    ]
+
+
 #: Relative change in alpha between consecutive calibration candidates that
 #: marks a step — a sample change, a moved detector or a second instrument —
 #: rather than the scatter of one setup's estimates (a few percent).
@@ -514,6 +534,8 @@ class FolderSurvey:
     best_calibration_run: int | None
     #: Where alpha changes between candidates; empty when one alpha serves all.
     alpha_steps: list[AlphaStep]
+    #: Runs whose logged sample temperature departs from the setpoint.
+    temperature_departures: list[int]
     scans: list[ScanGroup]
     #: ``True`` when the directory held more entries than the scan cap, so
     #: ``runs`` may be missing files that exist (see ``scan_run_files``).
@@ -528,6 +550,7 @@ class FolderSurvey:
             "calibration_candidates": [c.to_dict() for c in self.calibration_candidates],
             "best_calibration_run": self.best_calibration_run,
             "alpha_steps": [step.to_dict() for step in self.alpha_steps],
+            "temperature_departures": list(self.temperature_departures),
             "scans": [scan.to_dict() for scan in self.scans],
         }
 
@@ -807,6 +830,7 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
         calibration_candidates=candidates,
         best_calibration_run=best_run,
         alpha_steps=alpha_steps(candidates),
+        temperature_departures=temperature_departures(rows),
         scans=_scan_groups(rows),
         truncated=found.truncated,
     )
@@ -824,6 +848,8 @@ __all__ = [
     "PrecessionEvidence",
     "RunRow",
     "ScanGroup",
+    "TEMPERATURE_DEPARTURE_FRACTION",
+    "TEMPERATURE_DEPARTURE_K",
     "alpha_steps",
     "build_run_row",
     "calibration_verdict",
@@ -833,4 +859,5 @@ __all__ = [
     "run_facility",
     "run_geometry",
     "survey_folder",
+    "temperature_departures",
 ]

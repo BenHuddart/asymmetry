@@ -176,7 +176,11 @@ candidates — always the first command run against a new folder.
 Writes ``survey.json`` into the work directory. Groups runs into scans by
 (instrument, field) ordered by temperature and by (instrument, temperature)
 ordered by field, so the structure of a multi-scan folder is visible without
-reading every file. Each alpha-calibration candidate is listed with its own
+reading every file. When the logged sample temperature departs from the
+setpoint by more than 0.5 K and 5 % on any run, a ``TEMPERATURE:`` line names
+those runs (``temperature_departures`` in ``--json``): they were not at their
+setpoint, and the setpoint-grouped scans that contain them are provisional.
+Each alpha-calibration candidate is listed with its own
 measured alpha, and where alpha moves by more than 10 % between consecutive
 candidates in run order — a sample change, a moved detector, a second
 instrument — the survey prints an ``ALPHA STEP`` line naming the two runs: no
@@ -392,8 +396,8 @@ engine behind the GUI's single-fit wizard.
 .. code-block:: text
 
    asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope PRESET]
-                    [--include C,D] [--exclude C,D] [--plot] [--json]
-                    [--workdir WORKDIR]
+                    [--include C,D] [--exclude C,D] [--tmin TMIN]
+                    [--tmax TMAX] [--plot] [--json] [--workdir WORKDIR]
                     folder
 
 ``--geometry`` overrides every other source. Without it the geometry comes from
@@ -412,6 +416,11 @@ superconductor's intermediate state) and ``--exclude`` drops components the
 physics rules out (``VortexLattice,VortexLatticePowder`` for a magnet in TF);
 exclude wins over include, the header line lists both (``scope lf-dynamics
 +Oscillatory``), and an unknown component name is refused with the full list.
+``--tmin``/``--tmax`` screen a window of the run, and the recipe written keeps
+it. Below the ranked table the report prints ``Spectral lines`` (every line
+the spectral search detected, with its SNR) and ``Recommended fit`` (the
+recommended model's fitted values), so a precession frequency found while
+screening is on the page, not only in the stored recipe.
 Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
@@ -530,7 +539,8 @@ the command that actually produces a trend.
 .. code-block:: text
 
    asymmetry fit-series [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
-                        --order QUANTITY [--x RUN=VALUE,...] [--global P,Q]
+                        --order QUANTITY [--x RUN=VALUE,...] [--tmin TMIN]
+                        [--tmax TMAX] [--global P,Q]
                         [--start RUN] [--name NAME] [--plot] [--json]
                         [--workdir WORKDIR]
                         folder
@@ -666,8 +676,15 @@ The command stores numerical arrays in ``spectra/<name>.npz`` and settings,
 resolution and the peak table in ``spectra/<name>.json``. Zero padding makes
 the plotted curve smoother but does not improve the reported resolution,
 which is set by the selected time window. This is an FFT, not MaxEnt.
-Peak detection is deliberately conservative, so inspect the spectrum PNG for
-weak shoulders as well as reading the table. Heed an
+Peaks are detected on the whole spectrum and then restricted to
+``--fmin``/``--fmax``, so a narrow zoom around a line keeps the line in the
+table (the noise floor is the spectrum's, never the zoomed band's). Peak
+detection is deliberately conservative: when nothing passes it, the command
+lists the band's strongest maxima with their height over the noise floor,
+headed "candidates, not detections" (``candidate_maxima`` in ``--json``) — a
+weak line to confirm or refute with a time-domain fit started at that
+frequency. Inspect the spectrum PNG for weak shoulders as well as reading the
+table. Heed an
 ``ApodisationEarlySignalWarning``: use an unwindowed physical ``--tmax`` crop,
 or a ``lorentzian`` window whose ``--filter-tau`` matches the damping rate,
 when a symmetric taper removes the early-time signal.

@@ -172,6 +172,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flags an `ALPHA STEP`** where alpha moves by more than 10 % between consecutive candidates,
   so a folder whose calibration changed partway (a sample change, a moved detector) is not
   reduced with one run's alpha throughout. See `docs/reference/agent_workflow.rst` § "survey".
+- **The agent CLI shows the spectral evidence it already has.** `fourier` detects peaks on
+  the whole spectrum before restricting them to `--fmin`/`--fmax` (a zoom around a line no
+  longer empties the table) and, when nothing is detected, lists the band's strongest maxima as
+  candidates; `wizard` prints the lines its spectral search detected and the recommended
+  model's fitted values; `survey` prints a `TEMPERATURE:` line naming runs whose logged sample
+  temperature departs from the setpoint. `wizard` and `fit-series` take `--tmin`/`--tmax`.
 
 ### Changed
 

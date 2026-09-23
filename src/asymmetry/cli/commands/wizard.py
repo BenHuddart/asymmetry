@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 
 from asymmetry.cli._output import UserError, emit_json, format_number, payload, render_table
@@ -55,6 +56,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         metavar="C,D",
         help="Components to drop from the scope, e.g. 'VortexLattice,VortexLatticePowder'",
     )
+    parser.add_argument("--tmin", type=float, default=None, help="Screen only above this time / µs")
+    parser.add_argument(
+        "--tmax",
+        type=float,
+        default=None,
+        help="Screen only below this time / µs (the recipe keeps the window)",
+    )
     parser.add_argument(
         "--plot", action="store_true", help="Write plots/wizard-<run>.png of data + recommendation"
     )
@@ -78,6 +86,8 @@ def run(args: argparse.Namespace) -> None:
     folder = Path(args.folder)
     workdir = workdir_for(folder, args.workdir)
     dataset = reduced_datasets(workdir, [args.run])[args.run]
+    if args.tmin is not None or args.tmax is not None:
+        dataset = dataset.time_range(args.tmin, args.tmax)
 
     try:
         result = screen_run(
@@ -91,6 +101,8 @@ def run(args: argparse.Namespace) -> None:
         )
     except ValueError as exc:
         raise UserError(str(exc)) from None
+    if result.recipe is not None and (args.tmin is not None or args.tmax is not None):
+        result = replace(result, recipe=result.recipe.with_window(t_min=args.tmin, t_max=args.tmax))
     wizard_path = workdir.write_wizard(args.run, result.to_dict())
     recipe_name = f"wizard-{args.run}"
     recipe_path = (
@@ -200,6 +212,28 @@ def _render(
     ]
     lines.append(render_table(headers, rows))
     lines.append("(* recommended, ~ comparable)")
+    lines.append("")
+
+    # The spectral evidence and the fitted values are what an analyst reads
+    # first: a precession frequency found here is a finding even when the
+    # recommendation is not the model the scan ends up fitted with.
+    peaks = result.recommendation["peak_analysis"]["peaks"]
+    lines.append(
+        "Spectral lines: "
+        + (
+            ", ".join(f"{peak['frequency_mhz']:.4g} MHz (SNR {peak['snr']:.1f})" for peak in peaks)
+            if peaks
+            else "none detected"
+        )
+    )
+    if result.recipe is not None:
+        lines.append(
+            "Recommended fit: "
+            + ", ".join(
+                f"{parameter.name}={parameter.value:.4g}" + (" (fixed)" if parameter.fixed else "")
+                for parameter in result.recipe.parameters
+            )
+        )
     lines.append("")
 
     lines.append(result.narrative.rstrip())

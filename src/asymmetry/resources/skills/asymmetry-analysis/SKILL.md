@@ -128,6 +128,13 @@ below.
 - Which runs are *not* part of any scan (detector tests, a lone reference run,
   an above-Tc run). Mention them; do not analyse them as scan members.
 
+**When the survey prints a `TEMPERATURE:` line**, the listed runs were not at
+their setpoint — a cryostat still cooling, a block of runs at the wrong
+temperature, or a sensor offset. The `scans` block still groups them by
+setpoint, so take its temperature scans as provisional: order those series by
+`sample_temperature_logged`, split off runs that sit far from the rest, and
+quote logged temperatures in the summary.
+
 **Check temperature provenance before interpreting a temperature scan.** Some
 cryostat files keep the setpoint parked while the sample temperature changes;
 then many distinct runs can appear at one nominal temperature. Several runs at
@@ -219,7 +226,9 @@ asymmetry reduce <folder> --runs 102-107 --alpha-from 101 --deadtime from_file -
   middle. That is how you learn whether there is an oscillation, a Kubo–Toyabe
   dip, or featureless relaxation, before any model is chosen.
 - `--tmax` trims a noisy tail; `--rebin k` merges bins. Both are available on
-  `reduce`, and `fit`/`fit-series` also take `--tmin`/`--tmax` per fit.
+  `reduce`, and `wizard`, `recipe`, `fit` and `fit-series` also take
+  `--tmin`/`--tmax` per screen or fit (a wizard window is kept in the recipe
+  it writes).
 - `--period red`, `--period green` or `--period N` selects one acquisition
   period before calibration or reduction. For ISIS photo-μSR files the usual
   convention is red/light-ON and green/light-OFF, but confirm that against the
@@ -360,6 +369,12 @@ Read from the output:
 
 - **the recommendation** (model key and title) and the **ranked table** of
   candidates with AICc, reduced χ² and parameter count;
+- **`Spectral lines`** — every line the wizard's spectral search detected,
+  with its SNR — and **`Recommended fit`**, the fitted values. A precession
+  frequency here is a finding in its own right: if you later fit the scan with
+  a different model, a frequency the wizard found on this run still has to be
+  accounted for in the summary, never contradicted by an empty `fourier`
+  table;
 - **confidence**: `high` or `medium` are both fine to proceed on — medium is
   the normal outcome on real data and just means residual structure remains.
   **`low` or `none` means do not fit a series on this run**: screen a different
@@ -530,7 +545,12 @@ Peak detection is deliberately conservative, so use this evidence ladder:
    absent or much weaker in a matched reference, but it did not pass the peak
    threshold. Read an approximate frequency from the plotted axis, label it
    explicitly as visual-only, and do not attach a fitted width or SNR to it.
-   An empty peak table means *not detected*, not *featureless*.
+   An empty peak table means *not detected*, not *featureless*. When nothing
+   is detected, `fourier` lists the band's **strongest maxima** with their
+   height over the noise floor: they are candidates of this kind. When the
+   physics predicts a weak line, fit the time domain with a recipe started at
+   the candidate frequency (`recipe --initial frequency=…`) and let the fitted
+   amplitude and its error decide.
 3. **Pattern-level interpretation** — several detected and/or visual features
    may form a recognisable physical pattern. State what the pattern is
    consistent with, while keeping the component frequencies and derived
@@ -1025,9 +1045,21 @@ Use these headings. Fill only from command output.
 > session.
 
 This also excludes numbers you calculated in Python, PowerShell, a spreadsheet
-or by applying a literature conversion to a stored JSON value. The evidence
-must be an `asymmetry` command's own output. If a useful derived quantity is not
-printed by the CLI, explain the qualitative relation and leave the number out.
+or by applying a literature conversion to a stored JSON value — and numbers you
+worked out in your head: a significance in σ, a percentage change, a ratio or a
+sum of two printed values. The evidence must be an `asymmetry` command's own
+output. If a useful derived quantity is not printed by the CLI, explain the
+qualitative relation and leave the number out.
+
+**A law that did not fit does not get to tell the story.** When `trend
+--model` fails to converge, lands a parameter at a bound or on an unphysical
+value, or leaves a χ²ᵣ far above the scan's own fits, the physics that law
+stands for — critical slowing down, activated hopping, a Redfield correlation
+time, an order-parameter exponent — is **not established**. Say the fit
+failed and describe the trend in plain words; do not borrow the law's
+vocabulary. And fit a law only to the quantity it is written for: an Arrhenius
+law belongs to a rate constant or hop rate, not to whatever rate a model
+happened to fit.
 
 **Experiment** — what the survey shows: instrument(s), run count and range, the
 scans and their field/temperature span, anything that is not part of a scan,

@@ -33,6 +33,8 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     add_recipe_arguments(parser, free=False)
     add_axis_arguments(parser, default=None)
+    parser.add_argument("--tmin", type=float, default=None, help="Fit only above this time / µs")
+    parser.add_argument("--tmax", type=float, default=None, help="Fit only below this time / µs")
     parser.add_argument(
         "--global",
         dest="global_params",
@@ -87,6 +89,8 @@ def run(args: argparse.Namespace) -> None:
     workdir = workdir_for(folder, args.workdir)
 
     recipe = recipe_with_overrides(load_recipe(workdir, args.recipe), fix=args.fix)
+    if args.tmin is not None or args.tmax is not None:
+        recipe = recipe.with_window(t_min=args.tmin, t_max=args.tmax)
     global_params = [name.strip() for name in args.global_params.split(",") if name.strip()]
     # ``args.name is None`` — not falsy — is "no --name given": an explicit
     # empty one is a name that cannot be used, and says so rather than

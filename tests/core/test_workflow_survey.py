@@ -17,6 +17,7 @@ from asymmetry.core.workflow.survey import (
     calibration_verdict,
     resolve_row_geometry,
     survey_folder,
+    temperature_departures,
 )
 from tests.core.conftest import (
     ALL_RUNS,
@@ -408,3 +409,18 @@ def test_an_alpha_step_is_reported_between_consecutive_candidates_in_run_order()
         {"before_run": 280, "after_run": 281, "alpha_before": 1.068, "alpha_after": 1.401}
     ]
     assert alpha_steps(candidates[1:3]) == []
+
+
+def test_a_logged_temperature_far_from_its_setpoint_is_a_departure() -> None:
+    from dataclasses import replace
+
+    rows = [
+        replace(_row(run_number=1, temperature=15.0), sample_temperature_logged=285.2),
+        # Close in kelvin but not in proportion, and close in proportion but
+        # not in kelvin: thermometer scatter either way, not a departure.
+        replace(_row(run_number=2, temperature=1.6), sample_temperature_logged=1.9),
+        replace(_row(run_number=3, temperature=300.0), sample_temperature_logged=305.0),
+        replace(_row(run_number=4, temperature=2.0), sample_temperature_logged=8.2),
+        _row(run_number=5, temperature=10.0),
+    ]
+    assert temperature_departures(rows) == [1, 4]
