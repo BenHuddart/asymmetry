@@ -781,6 +781,77 @@ whether the agent issued a `Skill` tool call for `asymmetry-analysis`:
 
 4/4 should-fire, 0/2 should-not-fire. The description was not changed.
 
+### Corpus capability audit — 2026-09-23
+
+Host: Claude Code, lead model Opus with five parallel audit subagents. This is
+not a scored evaluation: each agent read the worksheet (or paper) and logbook
+of the experiments the gates above never covered, then **ran the CLI on
+representative runs** and classified every analysis step as supported,
+partial, missing or out of scope, naming the smallest addition that would
+close each gap and whether it is a core or a CLI/skill gap. Scratch outputs
+stayed outside the repo. Every one of the 21 data folders loads in `survey`;
+the gaps are all in analysis.
+
+| Experiment | Verdict | Blocker or main gap |
+|---|---|---|
+| LiFeAs (PSI GPS `.bin`) | blocked | TF signal sits in the Up/Down pair but the loader pairs Back/Forw on these 5-histogram files; no CLI grouping choice; PSI background subtraction not exposed (`BACKGROUND_MODES = ("none",)`) |
+| Muonium + maleic acid | blocked | the skill declines muonium kinetics although `core/fitting/mu_kinetics.py` fits k_Mu and Arrhenius; no concentration axis |
+| Benzene: RF resonance | blocked | the skill declines RF although `build_rf_difference_scan` and `RFResonanceMuP` exist; green−red difference is GUI-only |
+| Ca₃Co₂O₆ plateau (Redfield) | workarounds; headline blocked | λ(B) reproduces the paper's Fig. 2a; the core `Redfield` trend fit on that trend gives τ ≈ 0.91 ns and Δ ≈ 40 mT (paper 880 ps, 40.6 mT) but no command runs it |
+| Critical fields in Sn | workarounds; headline blocked | Hc(T) needs a trend fit and the logged sample temperature (setpoint is 1–6 K off); LF wizard scope omits precession |
+| Copper (diffusion, QLCR) | workarounds; E_a blocked | trend fit; the wizard never offers Abragam; logged vs setpoint temperature |
+| Molecular antiferromagnet | workarounds; T_N blocked | trend fit; FFT peak table misses the 2.55 MHz line |
+| EuO (PSI GPS) | workarounds; β blocked | trend fit; background subtraction; logged T lives in the `.bin` header |
+| TRSB Re₆Zr | workarounds; gap fit blocked | ZF Δ(T) step reproduces the paper's Fig. 4; the s-wave fit needs a trend fit; `trend` crashes on a `fit-global` series |
+| Basics | workarounds | `emu00044989` and `MUSR00044989` share run numbers, so every command refuses the folder; no t0/t_good offsets or custom x axis |
+| Corannulene | workarounds | whole-scan ALC multi-resonance fits fail (suffixed `B0_n`/`Bwid_n` unbounded, polynomial seeds on a gauss axis); no radical repolarisation model; poor scan grouping over 383 runs |
+| Benzene: high TF, ALC | workarounds | FFT resolves the 208.6/305.6 MHz radical pair; co-add and the correlation spectrum are core-only; coupling-parameterised ALC models missing |
+| Benzene: repolarisation | fully analysable | `MuRepolarisation` gives A_hf directly; only `integral-scan --deadtime` missing |
+| AFM transition in high TF | rubric stale | FFT and two-line tracking of the 6 T and 8 T `.mdu` scans work; only MaxEnt, wing area and DFT need declining |
+
+Cross-cutting gaps, ranked by how many experiments they unblock:
+
+1. **No trend-model fit in the CLI.** The last step of about eight
+   experiments; the core `fit_parameter_model` already carries Redfield,
+   OrderParameter, Arrhenius, SC_SWave and Linear. (CLI only.)
+2. **Series axis limited to setpoint temperature, field or run.** Sn, copper
+   and EuO need the logged sample temperature; maleic acid and Basics need a
+   per-run value the user supplies.
+3. **`fit-global` is a dead end.** `trend` raises `KeyError: 'trend'` on its
+   stored fit, and the human output hides the run-local parameters.
+4. **Reduction options the core has but the CLI does not expose:** detector
+   pair/grouping, background subtraction by range, t0/t_good offsets, co-add,
+   the green−red period difference, `integral-scan --deadtime`.
+5. **The FFT peak table empties when zoomed:** `core/workflow/fourier.py`
+   crops to `--fmin/--fmax` before estimating the noise, which is exactly the
+   re-transform the skill prescribes (benzene, HAL `.mdu`, molecular AFM,
+   LiFeAs, EuO).
+6. **Recipe authoring:** no expression → recipe command, the wizard saves only
+   its recommendation, a wrong parameter name gives a traceback, and the skill
+   documents a `fit-series --tmin/--tmax` that does not exist.
+7. **Survey scan grouping:** merges samples, geometries and time-separated
+   segments; does not recurse into sub-folders (benzene); reports a false
+   ≈0.095 MHz `other` line for sub-cycle signals.
+
+Also found: the skill's rule that a `spurious_reseeded` flag disqualifies a
+run discards good copper points; missing core models (anisotropic radical
+repolarisation, coupling-parameterised ALC D0/D1, the analytic RF
+approximation, time-domain QLCR); the ARGUS `t0_bin`/`time_zero` warning is a
+false positive from a float32 bin width (8 ns effect, 38 warnings per survey).
+A reported MUSR forward/backward sign flip was checked and is not real: MUSR
+runs reduce to positive asymmetry; only the preset's group naming disagrees
+with the file's.
+
+Rubric corrections: `afm-high-tf-mdu` should expect a partial analysis, not a
+decline (the survey reads the fields and temperatures it calls unknown);
+`euo-psi` asks for "relaxation consistent with critical slowing down", which
+the paper contradicts (λ stays near 2 MHz).
+
+Follow-up: gaps 1–3 and the two rubric corrections are taken up on
+`feat/trend-model-fit`. Reading the logged temperature from the PSI `.bin`
+header is deferred: the header's per-sensor means carry no labels, and which
+sensor is the sample differs between GPS and GPD.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
