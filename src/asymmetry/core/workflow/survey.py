@@ -35,7 +35,11 @@ from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.component_tags import geometry_from_field_direction
 from asymmetry.core.fitting.fit_wizard import fingerprint_spectrum
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
-from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
+from asymmetry.core.workflow.reduction import (
+    ReductionSettings,
+    estimate_alpha_for_run,
+    reduce_run,
+)
 
 #: Timestamp spellings the loaders hand us: ISO-8601 from the ISIS NeXus
 #: headers and the PSI ``dd-MMM-yy HH:MM:SS`` run header form. External file
@@ -397,6 +401,9 @@ class CalibrationCandidate:
     reason: str
     source: str
     snr: float | None
+    #: This run's own forward/backward balance
+    #: (:func:`~asymmetry.core.workflow.reduction.estimate_alpha_for_run`).
+    alpha: float
     best: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -407,8 +414,53 @@ class CalibrationCandidate:
             "reason": self.reason,
             "source": self.source,
             "snr": self.snr,
+            "alpha": self.alpha,
             "best": self.best,
         }
+
+
+#: Relative change in alpha between consecutive calibration candidates that
+#: marks a step — a sample change, a moved detector or a second instrument —
+#: rather than the scatter of one setup's estimates (a few percent).
+ALPHA_STEP_TOLERANCE = 0.10
+
+
+@dataclass(frozen=True)
+class AlphaStep:
+    """Alpha changing between two consecutive calibration candidates, in run order."""
+
+    before_run: int
+    after_run: int
+    alpha_before: float
+    alpha_after: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict."""
+        return {
+            "before_run": self.before_run,
+            "after_run": self.after_run,
+            "alpha_before": self.alpha_before,
+            "alpha_after": self.alpha_after,
+        }
+
+
+def alpha_steps(candidates: list[CalibrationCandidate]) -> list[AlphaStep]:
+    """Every place, in run order, where alpha moves by more than :data:`ALPHA_STEP_TOLERANCE`.
+
+    A step means no single calibration run serves the folder: each block of runs
+    between steps needs a calibration run from inside it.
+    """
+    ordered = sorted(candidates, key=lambda candidate: candidate.run_number)
+    return [
+        AlphaStep(
+            before_run=first.run_number,
+            after_run=second.run_number,
+            alpha_before=first.alpha,
+            alpha_after=second.alpha,
+        )
+        for first, second in zip(ordered, ordered[1:])
+        if abs(second.alpha / first.alpha - 1.0) > ALPHA_STEP_TOLERANCE
+    ]
 
 
 @dataclass(frozen=True)
@@ -460,6 +512,8 @@ class FolderSurvey:
     runs: list[RunRow]
     calibration_candidates: list[CalibrationCandidate]
     best_calibration_run: int | None
+    #: Where alpha changes between candidates; empty when one alpha serves all.
+    alpha_steps: list[AlphaStep]
     scans: list[ScanGroup]
     #: ``True`` when the directory held more entries than the scan cap, so
     #: ``runs`` may be missing files that exist (see ``scan_run_files``).
@@ -473,6 +527,7 @@ class FolderSurvey:
             "runs": [row.to_dict() for row in self.runs],
             "calibration_candidates": [c.to_dict() for c in self.calibration_candidates],
             "best_calibration_run": self.best_calibration_run,
+            "alpha_steps": [step.to_dict() for step in self.alpha_steps],
             "scans": [scan.to_dict() for scan in self.scans],
         }
 
@@ -659,7 +714,7 @@ def calibration_verdict(
 
 
 def _calibration_candidates(
-    rows: list[RunRow], metadatas: list[dict[str, Any] | None]
+    rows: list[RunRow], metadatas: list[dict[str, Any] | None], alphas: dict[int, float]
 ) -> tuple[list[CalibrationCandidate], int | None]:
     """The runs that could calibrate alpha, and the best of them.
 
@@ -684,6 +739,7 @@ def _calibration_candidates(
                 reason=reason,
                 source=source,
                 snr=row.precession.snr if source == "measured" else None,
+                alpha=alphas[row.run_number],
                 best=False,
             )
         )
@@ -722,6 +778,7 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
 
     rows: list[RunRow] = []
     metadatas: list[dict[str, Any] | None] = []
+    alphas: dict[int, float] = {}
     for prefix, run_number, path in found.entries:
         result = load(str(path))
         # A multi-period file loads as a list; the survey describes its first
@@ -739,29 +796,35 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
             )
         )
         metadatas.append(dataset.run.metadata)
+        if calibration_verdict(dataset.run.metadata, dataset.field, precession)[0] is not None:
+            alphas[run_number] = estimate_alpha_for_run(dataset.run).alpha
 
-    candidates, best_run = _calibration_candidates(rows, metadatas)
+    candidates, best_run = _calibration_candidates(rows, metadatas, alphas)
 
     return FolderSurvey(
         folder=str(folder),
         runs=rows,
         calibration_candidates=candidates,
         best_calibration_run=best_run,
+        alpha_steps=alpha_steps(candidates),
         scans=_scan_groups(rows),
         truncated=found.truncated,
     )
 
 
 __all__ = [
+    "ALPHA_STEP_TOLERANCE",
     "LARMOR_FREQUENCY_TOLERANCE",
     "PRECESSION_SNR_FLOOR",
     "PRECESSION_STATES",
     "ROW_GEOMETRY_SOURCES",
+    "AlphaStep",
     "CalibrationCandidate",
     "FolderSurvey",
     "PrecessionEvidence",
     "RunRow",
     "ScanGroup",
+    "alpha_steps",
     "build_run_row",
     "calibration_verdict",
     "has_file_deadtime",

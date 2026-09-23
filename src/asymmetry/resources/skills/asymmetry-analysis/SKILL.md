@@ -176,10 +176,19 @@ The survey's candidate list has two sources, marked in the block it prints:
 
 Then:
 
-- **The survey lists calibration candidates** → use one and report the value.
-  When several are listed, prefer the one the survey marks `(best)` — the
-  strongest measured precession — unless it is a member of the scan you are
-  about to analyse and a separate run is available. A dedicated run at 20 G is
+- **The survey prints an `ALPHA STEP`** → alpha changed partway through the
+  folder (a sample change, a moved detector, a second instrument), and **no
+  single run calibrates it**. Each candidate line carries its own measured
+  alpha. Split the runs into blocks at each step and reduce every block with
+  `--alpha-from` a calibration run *inside that block*; never carry the
+  `(best)` run's alpha across a step. A block with no candidate of its own is
+  reduced with the neighbouring block's alpha only if you say so and why. An
+  asymmetry that collapses or turns negative in one block is the signature of
+  the wrong alpha, not of physics — check that before interpreting it.
+- **The survey lists calibration candidates and no step** → use one and report
+  the value. When several are listed, prefer the one the survey marks
+  `(best)` — the strongest measured precession — unless it is a member of the
+  scan you are about to analyse and a separate run is available. A dedicated run at 20 G is
   the calibration; twelve runs of a 100 G paramagnetic scan are candidates
   *because* the sample is paramagnetic there, and calibrating on one of them is
   legitimate — **say which run alpha came from**.
@@ -320,6 +329,15 @@ Pick it from the `reduce` table and the reduced PNGs, not from the run list:
 - The clearest run for a **relaxation** effect (a glass freezing, a dynamic
   rate) is where the relaxation is *fastest but still resolved* — usually the
   cold end, and usually not the run where A(0) has collapsed.
+- **A scan that crosses a transition needs a screen on each side.** An
+  ordered magnet below T_c and the same sample above it are described by
+  different models (a precession below, a paramagnetic relaxation above); one
+  recipe chained through both fits neither. Screen one run on each side, fit
+  the two sides as separate series with their own recipes, and report where
+  the ordered-state model stops fitting. Never conclude that an ordered-state
+  signal is unresolvable from a model that was screened above the transition:
+  screen the coldest run and one just below the transition, and look at their
+  reduced PNGs and `fourier` spectra before saying so.
 - The clearest run for an **oscillation** is where the precession is slow
   enough to resolve. At a pulsed source (ISIS) a large internal field precesses
   far too fast to see, so a magnet deep in its ordered state shows no
@@ -365,7 +383,15 @@ component name is refused with the full list.
 When the candidate the physics calls for is in the ranked table but not the
 recommendation, or the wizard has no template for it at all, **write the recipe
 yourself** with `asymmetry recipe` (see "Writing a recipe" below) rather than
-re-screening again. One or two wizard calls per scan is the norm; more means
+re-screening again. The same holds when a component you `--include`d was fitted
+and then rejected — the narrative says its frequency sat at the resolution
+floor, completed less than a cycle, or had no supporting spectral peak. That
+means the wizard had no line to start the frequency from, not that the physics
+is absent: write the recipe with a physically estimated starting frequency
+(`--initial frequency=<MHz>`, from γ_μ/2π = 0.01355 MHz/G times the field you
+expect the muon to see), fit it, and accept it only if the fitted amplitude is
+several times its error and the frequency moves smoothly across the scan. A
+starting value from a textbook is fine; quoting it as a result is not. One or two wizard calls per scan is the norm; more means
 the class decision in Step 3b was skipped.
 
 The scope note may say "sample name suggests fluorine": that is read from the
@@ -938,10 +964,13 @@ superconducting domains, and the field inside the normal domains is H_c, not
 the applied field. Muons stopping there precess at γ_μ·H_c = 13.55 kHz/G × H_c
 — a line that is **not** at the applied field's Larmor frequency, so the
 survey reports `prec none`, and one that is present in an LF geometry when
-the foil is tilted. Its frequency falls to zero as the sample warms to T_c. Find
-it with `fourier` (a narrow `--fmin`/`--fmax` around a few MHz on the coldest
-run) and fit it with an oscillating term plus the background at the applied
-field; the H_c(T) law is `OrderParameter` with `alpha=2`, `beta=1`.
+the foil is tilted. Its frequency falls to zero as the sample warms to T_c. The
+line is small — a fraction of a percent against the background — so screen at
+the field and temperature where it is clearest (the middle of the field range,
+the coldest logged temperature), look with `fourier` over a few MHz, and when
+the wizard cannot seed it, write the recipe (`Oscillatory * Exponential +
+Constant`, `--initial frequency=<0.01355 × H_c estimate>`) and fit the scan from
+that. The H_c(T) law is `OrderParameter` with `alpha=2`, `beta=1`.
 
 **Weak-TF muonium.** In water, solutions and many insulators a fraction of the
 muons form muonium (Mu). In a weak transverse field its triplet precesses at
@@ -951,7 +980,11 @@ than a cycle in the record. The 100 G runs beside them are for the diamagnetic
 fraction and for alpha. The survey reports the 2 G runs as `prec other` or
 `none` (the Mu line is not the applied field's Larmor line), and a full-record
 Fourier transform may show nothing because Mu relaxes quickly; look with
-`fourier --tmax 4`. The wizard has no dependable template for this; write the
+`fourier --tmax 4`. **Look first in the sample with the least scavenger** — a
+deoxygenated solvent blank — where the Mu line lives longest. Untreated water
+carries dissolved O₂, which relaxes Mu too fast to see; a concentrated solution
+likewise. Absence of a line there says nothing about the blank. Reduce that
+blank with the right alpha for its block (Step 2) before concluding anything. The wizard has no dependable template for this; write the
 recipe:
 
 ```bash
@@ -968,8 +1001,9 @@ diamagnetic amplitudes and phases shared, ordered by
 `--order concentration --x <run>=<value>,…` with the concentrations read from
 the titles or notes — and take k_Mu from `trend --model Linear`. Concentrations
 given as "quarter", "half", "full" or "0.25" are **relative**: keep k_Mu per
-unit of that relative concentration and never invent a molarity. Faster Mu
-relaxation in untreated than in deoxygenated water is dissolved O₂.
+unit of that relative concentration, write the values as the titles do (no "M"
+after them), and never invent a molarity. Faster Mu relaxation in untreated
+than in deoxygenated water is dissolved O₂.
 
 **Transverse field.** The precession frequency gives the local field at the
 muon: a shift relative to the applied field is a Knight shift. The relaxation

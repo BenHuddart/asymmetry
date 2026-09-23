@@ -168,6 +168,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   preset, and the header line and `wizard/<run>.json` record them. The agent skill now has
   the agent decide what the system is before screening, with a table from system to scope
   and trend law. See `docs/reference/agent_workflow.rst` § "recipe".
+- **`asymmetry survey` gives every alpha-calibration candidate its own measured alpha and
+  flags an `ALPHA STEP`** where alpha moves by more than 10 % between consecutive candidates,
+  so a folder whose calibration changed partway (a sample change, a moved detector) is not
+  reduced with one run's alpha throughout. See `docs/reference/agent_workflow.rst` § "survey".
 
 ### Changed
 

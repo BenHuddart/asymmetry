@@ -8,16 +8,19 @@ import pytest
 
 from asymmetry.core.workflow.survey import (
     PRECESSION_SNR_FLOOR,
+    CalibrationCandidate,
     PrecessionEvidence,
     RunRow,
     _group_geometry,
     _scan_groups,
+    alpha_steps,
     calibration_verdict,
     resolve_row_geometry,
     survey_folder,
 )
 from tests.core.conftest import (
     ALL_RUNS,
+    CALIBRATION_ALPHA,
     CALIBRATION_FIELD_G,
     CALIBRATION_RUN,
     DEADTIME_RUN,
@@ -146,6 +149,9 @@ def test_survey_finds_the_weak_tf_calibration_candidate(survey) -> None:
     assert candidate.source == "measured"
     assert candidate.snr == pytest.approx(survey.row(CALIBRATION_RUN).precession.snr)
     assert "Larmor frequency" in candidate.reason
+    # Each candidate carries its own measured balance; one candidate, no step.
+    assert candidate.alpha == pytest.approx(CALIBRATION_ALPHA, rel=0.02)
+    assert survey.alpha_steps == []
 
 
 # -- measured precession ----------------------------------------------------
@@ -375,3 +381,30 @@ def test_survey_rejects_a_path_that_is_not_a_directory(tmp_path: Path) -> None:
     missing = tmp_path / "nowhere"
     with pytest.raises(ValueError):
         survey_folder(missing)
+
+
+def _candidate(run_number: int, alpha: float) -> CalibrationCandidate:
+    return CalibrationCandidate(
+        run_number=run_number,
+        field_gauss=100.0,
+        reason="",
+        source="measured",
+        snr=100.0,
+        alpha=alpha,
+        best=False,
+    )
+
+
+def test_an_alpha_step_is_reported_between_consecutive_candidates_in_run_order() -> None:
+    # Listed out of order, with scatter inside each block and one step.
+    candidates = [
+        _candidate(281, 1.401),
+        _candidate(252, 1.027),
+        _candidate(280, 1.068),
+        _candidate(293, 1.406),
+    ]
+    steps = alpha_steps(candidates)
+    assert [step.to_dict() for step in steps] == [
+        {"before_run": 280, "after_run": 281, "alpha_before": 1.068, "alpha_after": 1.401}
+    ]
+    assert alpha_steps(candidates[1:3]) == []

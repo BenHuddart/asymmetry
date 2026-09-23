@@ -176,7 +176,12 @@ candidates — always the first command run against a new folder.
 Writes ``survey.json`` into the work directory. Groups runs into scans by
 (instrument, field) ordered by temperature and by (instrument, temperature)
 ordered by field, so the structure of a multi-scan folder is visible without
-reading every file. ``T/K`` is the temperature setpoint and ``T log/K`` the
+reading every file. Each alpha-calibration candidate is listed with its own
+measured alpha, and where alpha moves by more than 10 % between consecutive
+candidates in run order — a sample change, a moved detector, a second
+instrument — the survey prints an ``ALPHA STEP`` line naming the two runs: no
+single run calibrates such a folder, and each block of runs is reduced with a
+calibration run from inside it (``alpha_steps`` in ``--json``). ``T/K`` is the temperature setpoint and ``T log/K`` the
 logged sample temperature where the file records one (``-`` where it does
 not, as in these simulated files and in PSI ``.bin`` files); a cryostat can
 leave the two several kelvin apart, and a series can be ordered by either:
@@ -195,7 +200,7 @@ leave the two several kelvin apart, and a series can be ordered by either:
    108  2.00   -        110.00  -     none    Longitudinal  8     1        500     1999544  no   Sample T=2.0 K B=110.0 G (decoupling)
 
    Alpha-calibration candidates:
-     run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
+     run 101 (best) [measured] alpha 1.2500: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
    Scans:
      temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)

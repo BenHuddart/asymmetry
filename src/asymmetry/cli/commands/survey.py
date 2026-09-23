@@ -118,7 +118,14 @@ def _render(survey, survey_path: Path) -> str:
             marker = " (best)" if candidate.best else ""
             # The SNR of a measured candidate is already in its reason.
             lines.append(
-                f"  run {candidate.run_number}{marker} [{candidate.source}]: {candidate.reason}"
+                f"  run {candidate.run_number}{marker} [{candidate.source}] "
+                f"alpha {candidate.alpha:.4f}: {candidate.reason}"
+            )
+        for step in survey.alpha_steps:
+            lines.append(
+                f"  ALPHA STEP between runs {step.before_run} and {step.after_run} "
+                f"({step.alpha_before:.4f} -> {step.alpha_after:.4f}): no single run calibrates "
+                f"this folder; reduce each block of runs with a calibration run from inside it."
             )
     else:
         lines.append(
