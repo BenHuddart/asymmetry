@@ -967,6 +967,46 @@ each side; (3) `--include` should force its components' candidates past the
 spectral gate (core/CLI); (4) weak-TF muonium: look first in the
 lowest-scavenger, deoxygenated sample.
 
+#### Pass 3 — 2026-09-23/24, two repeats per dataset
+
+Between passes: `survey` gives each calibration candidate its own alpha and
+flags an `ALPHA STEP`; skill text for alpha blocks, a screen and a series on
+each side of a transition, seeding a rejected physics component with
+`recipe --initial frequency=…`, and where to look for weak-TF muonium.
+`--include` was deliberately *not* forced past the wizard's spectral gate: on
+Sn run 91488 the included oscillation was fitted and collapsed to the 1/T
+resolution floor, a genuinely bad fit. Runs scored by a scoring subagent
+against the unchanged rubrics, with the number rule checked in the
+transcripts.
+
+| Dataset | 3a | 3b |
+|---|---|---|
+| plateau-redfield | pass | pass |
+| maleic-mu-kinetics | pass | pass |
+| euo-psi | pass | fail (internal-field Musts) |
+| sn-critical-field | fail | fail |
+
+- **maleic** now passes twice: `ALPHA STEP` respected, hand-written Mu recipe,
+  `trend --model Linear` on λ_Mu against supplied concentrations.
+- **euo 3b** screened inside the transition cluster; the wizard's recipe for
+  the 10 K run held `frequency_1 = 29.89 MHz` but its text only said "3
+  line(s) detected", and a `fourier` over 0–20 MHz printed "No peaks", so the
+  summary claimed no ordered-state oscillation. It also used "critical
+  slowing" after both `CriticalDivergence` fits failed.
+- **sn 3a** trusted the survey's setpoint-grouped 23-run scan and never
+  reached the type-I row; **sn 3b** handled the logged temperature but its
+  `fourier --fmin 0.3 --fmax 6` printed "No peaks" over a band whose strongest
+  maximum was the 2.16 MHz normal-domain line, and it fitted Redfield to Λ(B).
+
+Changes after pass 3 (all general, none dataset-specific): `fourier` detects
+on the whole spectrum then restricts to the band, and lists the strongest
+sub-threshold maxima as candidates; `wizard` prints its detected lines and
+the recommended fit's values; `survey` prints a `TEMPERATURE:` line for runs
+whose logged temperature departs from the setpoint (flags real departures in
+Sn, the plateau cooldown and the EMU cuprate runs, none in nickel or YMnAl);
+`wizard`/`fit-series` take `--tmin`/`--tmax`; skill text that a failed trend
+law does not supply the physics and that derived σ, % and ratios are numbers.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
