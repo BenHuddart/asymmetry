@@ -119,7 +119,7 @@ def run(args: argparse.Namespace) -> None:
                 args.model,
                 x_min=args.xmin,
                 x_max=args.xmax,
-                initial=parse_fix(args.initial),
+                initial=parse_fix(args.initial, flag="--initial"),
                 fixed=parse_fix(args.fix),
                 exclude=parse_run_spec(args.exclude) if args.exclude else (),
             ).to_dict()

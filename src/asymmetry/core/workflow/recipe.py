@@ -205,13 +205,15 @@ class FitRecipe:
         *,
         fix: Mapping[str, float] | None = None,
         free: Iterable[str] | None = None,
+        initial: Mapping[str, float] | None = None,
     ) -> FitRecipe:
-        """A copy with parameters pinned at a value and/or released.
+        """A copy with parameters pinned at a value, released, or restarted.
 
         ``fix`` maps a parameter name to the value it is held at; ``free``
-        names parameters to release. A name neither the model nor the recipe
-        carries raises :class:`KeyError` naming it — a typo must not silently
-        do nothing to the fit.
+        names parameters to release; ``initial`` moves a starting value
+        without holding it. A name neither the model nor the recipe carries
+        raises :class:`KeyError` naming it — a typo must not silently do
+        nothing to the fit.
 
         A fixed name is recorded in :attr:`pinned`: the value came from a
         person, so a series fit must never re-seed it from a run's own record.
@@ -219,8 +221,9 @@ class FitRecipe:
         """
         fix = dict(fix or {})
         free = list(free or [])
+        initial = dict(initial or {})
         known = set(self.parameter_names)
-        unknown = sorted((set(fix) | set(free)) - known)
+        unknown = sorted((set(fix) | set(free) | set(initial)) - known)
         if unknown:
             raise KeyError(
                 f"{', '.join(unknown)} is not a parameter of {self.expression!r} "
@@ -229,6 +232,8 @@ class FitRecipe:
 
         rebuilt: list[RecipeParameter] = []
         for parameter in self.parameters:
+            if parameter.name in initial:
+                parameter = replace(parameter, value=float(initial[parameter.name]))
             if parameter.name in fix:
                 parameter = replace(parameter, value=float(fix[parameter.name]), fixed=True)
             if parameter.name in free:

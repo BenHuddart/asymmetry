@@ -387,7 +387,8 @@ engine behind the GUI's single-fit wizard.
 .. code-block:: text
 
    asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope PRESET]
-                    [--plot] [--json] [--workdir WORKDIR]
+                    [--include C,D] [--exclude C,D] [--plot] [--json]
+                    [--workdir WORKDIR]
                     folder
 
 ``--geometry`` overrides every other source. Without it the geometry comes from
@@ -400,7 +401,13 @@ longitudinal decoupling run the file stamps ``TF``. ``--scope`` restricts the
 candidate families to a preset (``auto``, ``zf-static-magnetism``,
 ``tf-knight-precession``, ``tf-superconductor``, ``lf-dynamics``,
 ``fluoride-fmuf``, ``muonium-radical``, ``all``) when the physics is already
-known. Writes ``wizard/<run>.json`` (the full screening payload:
+known. ``--include`` adds time-domain components the preset leaves out (for
+example ``Oscillatory`` for a precession line in an LF run, as in a type-I
+superconductor's intermediate state) and ``--exclude`` drops components the
+physics rules out (``VortexLattice,VortexLatticePowder`` for a magnet in TF);
+exclude wins over include, the header line lists both (``scope lf-dynamics
++Oscillatory``), and an unknown component name is refused with the full list.
+Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
 candidate's fitted values — see `The fit recipe`_), plus
@@ -420,6 +427,48 @@ candidate's fitted values — see `The fit recipe`_), plus
       key           title                  category  AICc   chi2_red  params
    -  ------------  ---------------------  --------  -----  --------  ------
    *  exp_constant  Exponential + Constant  General  487.7  0.969     3
+
+``recipe``
+~~~~~~~~~~
+
+Write a fit recipe for a model expression, bypassing the wizard — for the model
+the physics calls for when the wizard does not recommend it, or has no template
+for it.
+
+.. code-block:: text
+
+   asymmetry recipe [-h] --expression EXPRESSION --name NAME [--run RUN]
+                    [--initial NAME=VALUE] [--fix NAME=VALUE] [--tmin TMIN]
+                    [--tmax TMAX] [--json] [--workdir WORKDIR]
+                    folder
+
+``--run`` seeds the amplitudes, background and applied field from that reduced
+run (the same seeding every fit surface uses); ``--initial`` moves a start
+value, ``--fix`` holds one (and pins it, so a series never re-seeds it), and
+``--tmin``/``--tmax`` set the fit window. The command writes
+``recipes/<name>.json`` and prints every parameter — the names a repeated
+component is numbered with are otherwise easy to guess wrong:
+
+.. code-block:: console
+
+   $ asymmetry recipe runs --name mu --run 101 \
+         --expression "Oscillatory * Exponential + Oscillatory * Exponential" \
+         --fix frequency_1=2.79 --fix frequency_3=0.0279
+   mu — Oscillatory * Exponential + Oscillatory * Exponential, seeded from run 101
+
+   parameter    start      min     max  state
+   -----------  ---------  ------  ---  -----
+   A_1          ...        0.0000  inf  free
+   frequency_1  2.790000   0.0000  inf  fixed
+   phase_1      0.000000   -inf    inf  free
+   Lambda_2     ...        0.0000  inf  free
+   A_3          ...        0.0000  inf  free
+   frequency_3  0.027900   0.0000  inf  fixed
+   phase_3      0.000000   -inf    inf  free
+   Lambda_4     ...        0.0000  inf  free
+
+An unknown component is refused with the nearest names, and a parameter the
+expression does not have with the list it does.
 
 ``fit``
 ~~~~~~~
@@ -486,7 +535,7 @@ the command that actually produces a trend.
 ``run``, read from each run's file. Any other name orders the series along a
 quantity the files do not record — a concentration, a degrader foil count, a
 magnet current — whose value for every run is given with ``--x``, for
-example ``--order concentration --x 78251=0,78279=0.25,78277=0.5``. A run
+example ``--order concentration --x 101=0,102=0.25,103=0.5``. A run
 with no value, a value for a run outside the series, or a file-recorded
 quantity given values by hand is refused.
 ``--start RUN`` chains outward from that run in both directions instead of
@@ -655,8 +704,8 @@ the loader's verbatim NeXus field tree, which would bury it).
 The work directory
 -------------------
 
-``survey``, ``reduce``, ``integral-scan``, ``wizard``, ``fit-global``,
-``fit-series`` and ``fourier`` persist their state in ``./asymmetry-work/``;
+``survey``, ``reduce``, ``integral-scan``, ``wizard``, ``recipe``,
+``fit-global``, ``fit-series`` and ``fourier`` persist their state in ``./asymmetry-work/``;
 ``fit`` and ``trend`` read it and add only what
 ``--plot`` (and ``trend --csv``) asks for. ``alpha`` and ``info`` are
 stateless — they load a file, print, and write nothing — and ``skill`` writes

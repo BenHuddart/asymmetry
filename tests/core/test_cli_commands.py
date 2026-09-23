@@ -235,6 +235,7 @@ def test_every_command_offers_the_same_default_work_directory() -> None:
         "reduce",
         "integral-scan",
         "wizard",
+        "recipe",
         "fit",
         "fit-global",
         "fit-series",
@@ -1397,3 +1398,95 @@ def test_an_internal_error_exits_two_with_a_traceback(
         cli.main(["survey", str(workflow_folder)])
     assert exc.value.code == 2
     assert "kaboom" in capsys.readouterr().err
+
+
+def test_wizard_refuses_a_component_it_does_not_have(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "wizard",
+                str(workflow_folder),
+                "--run",
+                str(SCAN_RUNS[0]),
+                "--include",
+                "Oscilatory",
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert "Unknown component(s) Oscilatory" in capsys.readouterr().err
+
+
+def test_recipe_writes_a_fittable_recipe_and_names_every_parameter(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "recipe",
+            str(workflow_folder),
+            "--expression",
+            "Exponential + Constant",
+            "--name",
+            "hand",
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--initial",
+            "Lambda=0.2",
+            "--fix",
+            "A_bg=0",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    for name in ("A_1", "Lambda", "A_bg"):
+        assert name in out
+    stored = json.loads((fitting_workdir / "recipes" / "hand.json").read_text(encoding="utf-8"))
+    by_name = {p["name"]: p for p in stored["parameters"]}
+    assert (by_name["Lambda"]["value"], by_name["Lambda"]["fixed"]) == (0.2, False)
+    assert (by_name["A_bg"]["value"], by_name["A_bg"]["fixed"]) == (0.0, True)
+    assert stored["pinned"] == ["A_bg"]
+
+    cli.main(
+        [
+            "fit",
+            str(workflow_folder),
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--recipe",
+            "hand",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    assert "chi2_red" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--expression", "Exponentail"], "Unknown component 'Exponentail'"),
+        (["--expression", "Exponential", "--fix", "Lamda=1"], "Lamda is not a parameter"),
+        (["--expression", "Exponential", "--initial", "Lambda"], "--initial 'Lambda' is not"),
+    ],
+)
+def test_recipe_refuses_a_model_or_name_it_cannot_build(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "recipe",
+                str(workflow_folder),
+                *arguments,
+                "--name",
+                "bad",
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err

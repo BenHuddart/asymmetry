@@ -41,6 +41,21 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Candidate-family scope preset (default: auto, from the run's geometry)",
     )
     parser.add_argument(
+        "--include",
+        default="",
+        metavar="C,D",
+        help=(
+            "Time-domain components to add to the scope's families, e.g. "
+            "'Oscillatory' for a line in an LF run"
+        ),
+    )
+    parser.add_argument(
+        "--exclude",
+        default="",
+        metavar="C,D",
+        help="Components to drop from the scope, e.g. 'VortexLattice,VortexLatticePowder'",
+    )
+    parser.add_argument(
         "--plot", action="store_true", help="Write plots/wizard-<run>.png of data + recommendation"
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
@@ -64,13 +79,18 @@ def run(args: argparse.Namespace) -> None:
     workdir = workdir_for(folder, args.workdir)
     dataset = reduced_datasets(workdir, [args.run])[args.run]
 
-    result = screen_run(
-        dataset,
-        geometry=args.geometry,
-        survey_geometry=_survey_geometry(workdir, args.run),
-        scope_preset=args.scope,
-        run_number=args.run,
-    )
+    try:
+        result = screen_run(
+            dataset,
+            geometry=args.geometry,
+            survey_geometry=_survey_geometry(workdir, args.run),
+            scope_preset=args.scope,
+            include=_names(args.include),
+            exclude=_names(args.exclude),
+            run_number=args.run,
+        )
+    except ValueError as exc:
+        raise UserError(str(exc)) from None
     wizard_path = workdir.write_wizard(args.run, result.to_dict())
     recipe_name = f"wizard-{args.run}"
     recipe_path = (
@@ -113,6 +133,11 @@ def run(args: argparse.Namespace) -> None:
     print(_render(result, wizard_path, recipe_path, plot_path, plot_note))
 
 
+def _names(text: str) -> list[str]:
+    """``"A, B"`` as ``["A", "B"]``."""
+    return [name.strip() for name in text.split(",") if name.strip()]
+
+
 def _survey_geometry(workdir, run_number: int) -> str | None:
     """The geometry the folder's survey resolved for *run_number*, if surveyed.
 
@@ -141,7 +166,9 @@ def _render(
     geometry = result.geometry or "unknown"
     lines = [
         f"Run {result.run_number} — geometry {geometry} (from {result.geometry_source}), "
-        f"scope {result.scope_preset}",
+        f"scope {result.scope_preset}"
+        + "".join(f" +{name}" for name in result.scope_include)
+        + "".join(f" -{name}" for name in result.scope_exclude),
     ]
     if result.scope_note:
         lines.append(f"  scope: {result.scope_note}")

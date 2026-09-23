@@ -80,6 +80,13 @@ def test_an_unknown_scope_preset_is_rejected(reduced_workdir: WorkDir) -> None:
         screen_run(reduced_workdir.reduced(SCAN_RUNS[0]), scope_preset="nonsense", run_number=1)
 
 
+def test_an_unknown_component_is_rejected_naming_the_vocabulary(
+    reduced_workdir: WorkDir,
+) -> None:
+    with pytest.raises(ValueError, match="Unknown component\\(s\\) Oscilatory; .*Oscillatory"):
+        screen_run(reduced_workdir.reduced(SCAN_RUNS[0]), include=["Oscilatory"], run_number=1)
+
+
 # -- screening --------------------------------------------------------------
 
 
@@ -94,6 +101,7 @@ def test_screen_run_recommends_a_relaxation_model_and_writes_a_usable_recipe(
     assert result.geometry == "ZF"
     assert result.geometry_source == "field"
     assert result.scope_preset == "auto"
+    assert (result.scope_include, result.scope_exclude) == ([], [])
     assert "zero field" in result.scope_note
 
     # The run is a single exponential relaxation, so that is the family the
@@ -132,7 +140,16 @@ def test_a_geometry_override_changes_the_geometry_source_and_the_resolved_scope(
     reduced_workdir: WorkDir,
 ) -> None:
     run = SCAN_RUNS[0]
-    result = screen_run(reduced_workdir.reduced(run), geometry="TF", run_number=run)
+    dropped = ["Oscillatory", "OscillatoryField"]
+    result = screen_run(
+        reduced_workdir.reduced(run), geometry="TF", exclude=dropped, run_number=run
+    )
+
+    # Components the caller excluded never reach the candidate table, and the
+    # exclusion is recorded beside the preset.
+    assert result.scope_exclude == dropped
+    assert result.to_dict()["scope_exclude"] == dropped
+    assert not any("oscillatory" in c.key for c in result.candidates)
 
     assert result.geometry == "TF"
     assert result.geometry_source == "user"

@@ -159,6 +159,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameters, so `trend` reads a simultaneous fit instead of failing with `KeyError: 'trend'`.
   Work directories written by an older release are refused with a message to reduce or fit
   again. See `docs/reference/agent_workflow.rst` § "trend".
+- **`asymmetry recipe` writes a fit recipe for a model expression, and `wizard` takes
+  `--include`/`--exclude`.** `recipe --expression EXPR --name NAME [--run N]` seeds a recipe
+  the way every fit surface does, applies `--initial`/`--fix` and a `--tmin`/`--tmax` window,
+  and prints every parameter name, so a model the wizard does not recommend — a weak-TF
+  muonium line beside the diamagnetic one, a precession line in an LF run — is one command
+  away. `wizard --include C,D --exclude C,D` adds components to or drops them from the scope
+  preset, and the header line and `wizard/<run>.json` record them. The agent skill now has
+  the agent decide what the system is before screening, with a table from system to scope
+  and trend law. See `docs/reference/agent_workflow.rst` § "recipe".
 
 ### Changed
 
@@ -284,6 +293,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precession column and the run's own fit before it is described as absent.
 
 ### Fixed
+
+- **The fit wizard no longer reads a geometry token as fluorine.** A run titled `EuO TF60G`,
+  `EuO ZF` or `sample LF100` "suggested fluorine" and promoted the F–μ–F family; an `F`
+  directly after `T`, `L` or `Z` is now never taken for the element (no element symbol is one
+  of those letters, so `CaF2 TF20` still is).
 
 - **An edited `t_good Offset` or `Last Good Bin` no longer reverts to the
   file's own value the next time the grouping resolves.** Both were

@@ -3,7 +3,8 @@
 ``asymmetry <command>`` drives the scriptable façade in
 :mod:`asymmetry.core.workflow`, in the order an analysis runs: ``survey`` a
 folder of runs, measure ``alpha`` on a calibration run, ``reduce`` runs to
-asymmetry, screen one of them with the fit ``wizard``, ``fit`` a run or a whole
+asymmetry, screen one of them with the fit ``wizard`` (or write a ``recipe`` for the
+model the physics calls for), ``fit`` a run or a whole
 scan with ``fit-series``, and read the ``trend`` out of the result — plus
 ``skill`` to install this workflow as an agent skill, and the original
 ``info`` file summary. Every command takes ``--json``.
@@ -46,6 +47,7 @@ from asymmetry.cli.commands import fit_series as fit_series_command
 from asymmetry.cli.commands import fourier as fourier_command
 from asymmetry.cli.commands import info as info_command
 from asymmetry.cli.commands import integral_scan as integral_scan_command
+from asymmetry.cli.commands import recipe as recipe_command
 from asymmetry.cli.commands import reduce as reduce_command
 from asymmetry.cli.commands import skill as skill_command
 from asymmetry.cli.commands import survey as survey_command
@@ -61,6 +63,7 @@ _COMMANDS = (
     reduce_command,
     integral_scan_command,
     wizard_command,
+    recipe_command,
     fit_command,
     fit_global_command,
     fit_series_command,

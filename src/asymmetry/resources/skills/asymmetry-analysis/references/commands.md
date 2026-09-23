@@ -23,13 +23,13 @@ Exit codes: 0 success, 1 user error (one line on stderr), 2 internal error
 
 ```
 usage: asymmetry [-h] [--version] [--verbose]
-                 {survey,alpha,reduce,integral-scan,wizard,fit,fit-global,fit-series,trend,fourier,skill,info}
+                 {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,skill,info}
                  ...
 
 Asymmetry — μSR data analysis
 
 positional arguments:
-  {survey,alpha,reduce,integral-scan,wizard,fit,fit-global,fit-series,trend,fourier,skill,info}
+  {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,skill,info}
     survey              List the runs in a folder with their metadata, scans and
                         calibration runs
     alpha               Estimate the forward/backward balance alpha from one run
@@ -38,6 +38,8 @@ positional arguments:
     integral-scan       Build an integral-asymmetry scan and optionally fit a field-
                         scan model
     wizard              Screen a reduced run against the fit wizard's candidate models
+    recipe              Write a fit recipe for a model expression, bypassing the
+                        wizard
     fit                 Fit one reduced run with a recipe
     fit-global          Fit multiple reduced runs simultaneously with shared
                         parameters
@@ -160,7 +162,8 @@ options:
 
 ```
 usage: asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope PRESET]
-                        [--plot] [--json] [--workdir WORKDIR]
+                        [--include C,D] [--exclude C,D] [--plot] [--json]
+                        [--workdir WORKDIR]
                         folder
 
 positional arguments:
@@ -175,9 +178,39 @@ options:
                         nothing)
   --scope PRESET        Candidate-family scope preset (default: auto, from the run's
                         geometry)
+  --include C,D         Time-domain components to add to the scope's families, e.g.
+                        'Oscillatory' for a line in an LF run
+  --exclude C,D         Components to drop from the scope, e.g.
+                        'VortexLattice,VortexLatticePowder'
   --plot                Write plots/wizard-<run>.png of data + recommendation
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+```
+
+## `asymmetry recipe`
+
+```
+usage: asymmetry recipe [-h] --expression EXPRESSION --name NAME [--run RUN]
+                        [--initial NAME=VALUE] [--fix NAME=VALUE] [--tmin TMIN]
+                        [--tmax TMAX] [--json] [--workdir WORKDIR]
+                        folder
+
+positional arguments:
+  folder                Directory holding the run files
+
+options:
+  -h, --help            show this help message and exit
+  --expression EXPRESSION
+                        Time-domain model, e.g. 'Oscillatory * Exponential + Constant'
+  --name NAME           Name to store the recipe under
+  --run RUN             Seed amplitudes, background and applied field from this
+                        reduced run
+  --initial NAME=VALUE  Starting value (repeatable)
+  --fix NAME=VALUE      Hold a parameter at a value (repeatable)
+  --tmin TMIN           Fit window start / µs
+  --tmax TMAX           Fit window end / µs
+  --json                Emit the machine-readable payload
+  --workdir WORKDIR     Work directory to write into (default: ./asymmetry-work)
 ```
 
 ## `asymmetry fit`
@@ -232,7 +265,7 @@ options:
                         from the files; or any other name, whose value for every run
                         you give with --x
   --x RUN=VALUE,...     Per-run values of a quantity the files do not record, e.g. '--
-                        order concentration --x 78251=0,78279=0.25,78277=0.5'
+                        order concentration --x 101=0,102=0.25,103=0.5'
   --name NAME           Stored fit name
   --plot                Write one fitted plot per run
   --json                Emit the machine-readable payload
@@ -261,7 +294,7 @@ options:
                      files; or any other name, whose value for every run you give with
                      --x
   --x RUN=VALUE,...  Per-run values of a quantity the files do not record, e.g. '--
-                     order concentration --x 78251=0,78279=0.25,78277=0.5'
+                     order concentration --x 101=0,102=0.25,103=0.5'
   --global P,Q       Parameters held identical across every run. The batch is block-
                      separable, so these are pinned at their recipe value and not
                      fitted; everything else is free per run

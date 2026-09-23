@@ -56,7 +56,7 @@ A folder the tool can *load* is not automatically a folder the tool can
 Run every command from the project directory you are working in, and pass the
 data folder as the command's argument — an absolute path is fine, and is what
 you want when the data sits on a share or in an archive. `survey`, `reduce`,
-`wizard`, `integral-scan`, `fourier`, `fit-global` and `fit-series` write into
+`wizard`, `recipe`, `integral-scan`, `fourier`, `fit-global` and `fit-series` write into
 `./asymmetry-work/` — the work directory,
 in the project, never in the data folder — so the next command picks the state
 up; `fit` and `trend` read it and add only what `--plot` (and `trend --csv`)
@@ -278,6 +278,33 @@ and say in the summary what each scan's geometry is and how you established it.
 Calling a decoupling LF series "TF" misreads the whole experiment even when the
 fitted model is right.
 
+### Step 3b — decide what the system is, then scope everything to it
+
+Before screening anything, write down in one line **what the sample is and what
+the experiment measures**. The evidence is already in hand: the sample and
+title text and the notes in the survey, any logbook or README in the folder
+(read it), the field and geometry of each scan, and the run structure. Then
+take the wizard's scope and the trend law from that class, not from `auto`.
+`auto` is for a sample you genuinely cannot place: it expands a family only
+where its spectral search finds support, which on real data means repeated
+re-screens — and it will happily offer a vortex lattice to a ferromagnet.
+
+| The system | What gives it away | Screen with | Trend law (Step 6a) |
+|---|---|---|---|
+| Magnet ordering in zero field | ZF temperature scan; `prec other`, or A(0) collapsing on cooling | `--geometry ZF --scope zf-static-magnetism` | `OrderParameter` on the frequency below the transition; `CriticalDivergence` on a rate diverging towards it |
+| Spin glass or frozen moments | relaxation only, rate rising and stretching on cooling | `--scope zf-static-magnetism` (ZF) or `lf-dynamics` (LF) | `CriticalDivergence` on the rate, if it diverges |
+| Fluctuating moments decoupled by a field | LF **field** scan at one temperature, `prec none` | `--geometry LF --scope lf-dynamics`; a **single** exponential rate λ | `Redfield` on λ(B), over the field range one process dominates |
+| Nuclear dipolar fields, muon or ion hopping | a dense-nucleus compound; Kubo–Toyabe dip | `zf-static-magnetism` / `lf-dynamics`, Gaussian KT (see decision rules) | `Arrhenius` on the hop rate `nu` |
+| Type-II superconductor | TF scan through Tc, `prec larmor`, line broadening on cooling | `--geometry TF --scope tf-superconductor` | an `SC_*` gap model on σ(T) |
+| Type-I superconductor, intermediate state | a pure elemental superconductor (Sn, Pb, In, Al …) in a field **below H_c**, often LF on a tilted foil; `prec none` at the applied field | `--geometry LF --scope lf-dynamics --include Oscillatory`, and `fourier` to find the line — muons in the normal domains precess at γ_μ·H_c whatever field is applied | `OrderParameter` with `--fix alpha=2 --fix beta=1` (H_c(0)[1−(T/T_c)²]) on the frequency, against the logged temperature |
+| Fluoride | fluorine in the sample name | `--scope fluoride-fmuf` | — |
+| Muonium chemistry in a weak TF | water, solutions, gases, a few gauss TF paired with ~100 G diamagnetic runs; samples differing by concentration in the titles | not the wizard — see "Weak-TF muonium" in section 5 and write the recipe with `asymmetry recipe` | `Linear` on λ_Mu against the concentration you supply with `--order concentration --x …` |
+| Radicals at high field, level crossings | kilogauss TF lines at hundreds of MHz; ALC field scans | `--scope muonium-radical`; `fourier`; `integral-scan` | the scan's own resonance fit |
+
+Say in the summary which class you decided and on what evidence. If the
+evidence contradicts it once you look at the spectra, change your mind and say
+that too.
+
 ### Step 4 — screen one run with the wizard
 
 ```bash
@@ -326,13 +353,20 @@ Read from the output:
   recommended model is a `null_...` baseline or ties with one, there is no
   structure to fit — say so rather than trending a meaningless parameter.
 
-`--scope <preset>` restricts the candidate families when you know the physics:
-`auto` (default), `zf-static-magnetism`, `tf-knight-precession`,
-`tf-superconductor`, `lf-dynamics`, `fluoride-fmuf`, `muonium-radical`, `all`.
-`auto` expands a family only when the spectral search finds support for it, so
-a magnet whose oscillation is fast and heavily damped can come back as a bare
-`Exponential + Constant`. If you expect static order and `auto` gives you a
-plain relaxation, re-screen with `--scope zf-static-magnetism` and compare.
+`--scope <preset>` restricts the candidate families to the class you decided in
+Step 3b: `zf-static-magnetism`, `tf-knight-precession`, `tf-superconductor`,
+`lf-dynamics`, `fluoride-fmuf`, `muonium-radical`, `all`, or `auto` (the
+default, for a sample you cannot place). `--include C,D` adds time-domain
+components the preset leaves out — `Oscillatory` for a line in an LF run —
+and `--exclude C,D` drops ones the physics rules out, e.g.
+`--exclude VortexLattice,VortexLatticePowder` for a magnet in TF. An unknown
+component name is refused with the full list.
+
+When the candidate the physics calls for is in the ranked table but not the
+recommendation, or the wizard has no template for it at all, **write the recipe
+yourself** with `asymmetry recipe` (see "Writing a recipe" below) rather than
+re-screening again. One or two wizard calls per scan is the norm; more means
+the class decision in Step 3b was skipped.
 
 The scope note may say "sample name suggests fluorine": that is read from the
 run's title or sample text (`CaF2`, `LiF`, `KTCNQF4`), and it promotes the
@@ -362,7 +396,7 @@ asymmetry fit-series <folder> --runs 102-107 --recipe wizard-102 \
   temperature departs from the setpoint (see Step 1). When the scan varies
   something the files do not record — a concentration, a degrader foil count,
   a magnet current — name it and give every run's value:
-  `--order concentration --x 78251=0,78279=0.25,78277=0.5`. Take those values
+  `--order concentration --x 101=0,102=0.25,103=0.5`. Take those values
   from the notes, logbook or titles and say where they came from. `--order run`
   only when nothing else applies.
 - `--start <run>` is **the run you screened**. The series chains outward from
@@ -692,12 +726,16 @@ asymmetry trend <folder> --series zf-scan --model OrderParameter \
 ```
 
 - `--model` takes a parameter-vs-x expression: `OrderParameter` (a precession
-  frequency or internal field below the transition), `Arrhenius` (a hop or
-  fluctuation rate against temperature), `Redfield` (a relaxation rate against
-  longitudinal field), `SC_SWave` and the other `SC_*` gap models (a
-  superconducting σ against temperature), `Linear` (a rate against
-  concentration), and sums such as `Redfield + Constant`. The physics of the
-  system picks the law; say which you used and why.
+  frequency or internal field below the transition), `CriticalDivergence` (a
+  rate or width diverging towards a transition, fitted from one side),
+  `Arrhenius` (a hop or fluctuation rate against temperature), `Redfield` (a
+  relaxation rate against longitudinal field; hold its exponent with
+  `--fix m=2` for the textbook form), `SC_SWave` and the other `SC_*` gap
+  models (a superconducting σ against temperature), `Linear` (a rate against
+  concentration), and sums such as `Redfield + Constant`. The class you
+  decided in Step 3b picks the law; say which you used and why. A transition
+  temperature or exponent is measured against the trend's x — say whether that
+  was the setpoint or the logged sample temperature.
 - `--xmin`/`--xmax` set the fit range in the trend's x units. An order
   parameter is fitted **below** the transition, a Redfield law over the field
   range where one process dominates. State the range in the summary.
@@ -796,13 +834,24 @@ is wrong for part of the scan. In order of effort:
    of them from a run where the relaxation *is* well resolved is the fix.
    Noticing the degeneracy and reporting the numbers anyway is not.
 
-**Hand-editing a recipe.** A recipe is small JSON. To swap one component, edit
-three things: `expression`, the entry in `model.component_names`, and the
-parameter list (name and starting value). For example, `Exponential` →
-`Gaussian` means `Lambda` → `sigma`; `Constant` carries `A_bg`. Write it to
-`asymmetry-work/recipes/<name>.json` and pass `--recipe <name>`. Run
-`asymmetry fit <folder> --run N --recipe <name>` on one run first to check it
-converges before spending a series on it.
+**Writing a recipe.** When the model you want is not the wizard's
+recommendation, build it from an expression:
+
+```bash
+asymmetry recipe <folder> --expression "Oscillatory * Exponential + Constant" \
+    --name line --run <run> --initial frequency=1.9
+```
+
+`--run` seeds the amplitudes, background and applied field from that reduced
+run; `--initial NAME=VALUE` moves a start value, `--fix NAME=VALUE` holds one,
+`--tmin`/`--tmax` set the window. The command prints **every parameter name**
+— in a repeated-component expression they are numbered by component
+(`Oscillatory * Exponential + Oscillatory * Exponential` has `A_1`,
+`frequency_1`, `phase_1`, `Lambda_2`, `A_3`, `frequency_3`, `phase_3`,
+`Lambda_4`) — so read them from its output rather than guessing. Then run
+`asymmetry fit <folder> --run N --recipe <name>` on one run to check it
+converges before spending a series on it. (A recipe is also small JSON in
+`asymmetry-work/recipes/`, and editing it by hand still works.)
 
 **The wizard found nothing.** Confidence `low`/`none`, or the null baseline
 winning, on the run you screened: screen a different run before concluding
@@ -873,7 +922,54 @@ scan *is* a temperature-independent dipolar coupling — say so in those terms.
 relaxation survives is dynamic. Does the rate rise on cooling towards a
 freezing or glass transition? Is a stretched exponential needed (a distribution
 of rates, as in a spin glass) rather than a single exponential? Does the
-recovered asymmetry increase with field, as decoupling predicts?
+recovered asymmetry increase with field, as decoupling predicts? A **field scan
+at fixed temperature** of a fluctuating system asks one quantitative question:
+does the rate follow Redfield's law, λ(B) ∝ τ / (1 + γ_μ²B²τ²)? Fit a single
+exponential rate per run and then `trend --model Redfield` on λ(B); its `D`
+and `nu` (MHz) are the width of the fluctuating field and the fluctuation
+rate. A change of slope in λ(B) away from the fitted law is a finding —
+a field-induced change of state (a magnetisation plateau's edges, a
+spin-flop) — worth pointing at.
+
+**A superconductor that is not in a vortex state.** A type-I superconductor
+(pure Sn, Pb, In, Al, Hg) in a field below its critical field H_c, with a
+large demagnetising factor (a foil across the field), splits into normal and
+superconducting domains, and the field inside the normal domains is H_c, not
+the applied field. Muons stopping there precess at γ_μ·H_c = 13.55 kHz/G × H_c
+— a line that is **not** at the applied field's Larmor frequency, so the
+survey reports `prec none`, and one that is present in an LF geometry when
+the foil is tilted. Its frequency falls to zero as the sample warms to T_c. Find
+it with `fourier` (a narrow `--fmin`/`--fmax` around a few MHz on the coldest
+run) and fit it with an oscillating term plus the background at the applied
+field; the H_c(T) law is `OrderParameter` with `alpha=2`, `beta=1`.
+
+**Weak-TF muonium.** In water, solutions and many insulators a fraction of the
+muons form muonium (Mu). In a weak transverse field its triplet precesses at
+1.394 MHz/G — 103 times the bare muon's 13.55 kHz/G — so a 2 G run shows a
+line near 2.8 MHz from Mu and a diamagnetic line (27 kHz) that completes less
+than a cycle in the record. The 100 G runs beside them are for the diamagnetic
+fraction and for alpha. The survey reports the 2 G runs as `prec other` or
+`none` (the Mu line is not the applied field's Larmor line), and a full-record
+Fourier transform may show nothing because Mu relaxes quickly; look with
+`fourier --tmax 4`. The wizard has no dependable template for this; write the
+recipe:
+
+```bash
+asymmetry recipe <folder> --name mu --run <2 G run> \
+    --expression "Oscillatory * Exponential + Oscillatory * Exponential" \
+    --fix frequency_1=2.79 --fix frequency_3=0.0279 --initial Lambda_2=0.5
+```
+
+(frequency_1 = 1.394 MHz/G × B for Mu and frequency_3 = 0.01355 MHz/G × B for
+the diamagnetic muon, at the run's recorded field B — here 2 G.) `Lambda_2` is the Mu
+relaxation rate λ_Mu. In a reaction-kinetics experiment λ_Mu = λ₀ + k_Mu[x],
+so fit λ_Mu for each sample at one temperature — `fit-global` with the Mu and
+diamagnetic amplitudes and phases shared, ordered by
+`--order concentration --x <run>=<value>,…` with the concentrations read from
+the titles or notes — and take k_Mu from `trend --model Linear`. Concentrations
+given as "quarter", "half", "full" or "0.25" are **relative**: keep k_Mu per
+unit of that relative concentration and never invent a molarity. Faster Mu
+relaxation in untreated than in deoxygenated water is dissolved O₂.
 
 **Transverse field.** The precession frequency gives the local field at the
 muon: a shift relative to the applied field is a Knight shift. The relaxation

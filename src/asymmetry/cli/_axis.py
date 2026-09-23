@@ -36,7 +36,7 @@ def add_axis_arguments(parser: argparse.ArgumentParser, *, default: str | None) 
         metavar="RUN=VALUE,...",
         help=(
             "Per-run values of a quantity the files do not record, e.g. "
-            "'--order concentration --x 78251=0,78279=0.25,78277=0.5'"
+            "'--order concentration --x 101=0,102=0.25,103=0.5'"
         ),
     )
 

@@ -69,17 +69,20 @@ def load_recipe(workdir: WorkDir, reference: str) -> FitRecipe:
     return workdir.read_recipe(reference)
 
 
-def parse_fix(entries: list[str]) -> dict[str, float]:
-    """Turn ``["A0=20", "phase=0"]`` into ``{"A0": 20.0, "phase": 0.0}``."""
+def parse_fix(entries: list[str], *, flag: str = "--fix") -> dict[str, float]:
+    """Turn ``["A0=20", "phase=0"]`` into ``{"A0": 20.0, "phase": 0.0}``.
+
+    *flag* names the option the entries came from, for the error message.
+    """
     fixed: dict[str, float] = {}
     for entry in entries:
         name, separator, value = entry.partition("=")
         if not separator or not name.strip():
-            raise UserError(f"--fix {entry!r} is not NAME=VALUE.")
+            raise UserError(f"{flag} {entry!r} is not NAME=VALUE.")
         try:
             fixed[name.strip()] = float(value)
         except ValueError:
-            raise UserError(f"--fix {entry!r} does not name a number.") from None
+            raise UserError(f"{flag} {entry!r} does not name a number.") from None
     return fixed
 
 
