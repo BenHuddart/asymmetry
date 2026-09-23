@@ -903,7 +903,7 @@ were written from the worksheets and handout before any run.
   constant. The skill has no weak-TF muonium physics, and the wizard's
   low-field muonium matcher needs a resolved doublet (audit gap).
 
-Skill changes proposed (text only, not yet made): name `CriticalDivergence`
+Skill changes proposed after pass 1 (made in pass 2 below): name `CriticalDivergence`
 in Step 6a; a "which law for which scan" table in section 5 (LF decoupling of
 a dynamic magnet → Redfield; activated hopping → Arrhenius; order parameter →
 OrderParameter; σ(T) → SC_*; rate vs concentration → Linear); type-I
@@ -911,6 +911,61 @@ intermediate state (precession at H_c independent of the applied field,
 look with `fourier` even in LF); weak-TF muonium (triplet line at
 1.394 MHz/G, the diamagnetic line barely a cycle, relative concentrations
 stay relative).
+
+#### Pass 2 — 2026-09-23, after `recipe`, `wizard --include/--exclude` and a system-first skill
+
+Between the passes: `asymmetry recipe` (a recipe from an expression, printing
+every parameter name), `wizard --include/--exclude` (the engine's existing
+scope overrides), the fluorine sniff no longer firing on `TF60G`/`ZF`/`LF100`,
+and skill text — Step 3b (decide the system class before screening; a table
+from class to scope and trend law), `CriticalDivergence`, LF Redfield, the
+type-I intermediate state and weak-TF muonium. Examples use placeholder run
+numbers so the skill does not carry this corpus's answers.
+
+| Dataset | Wall | Cost | Wizard calls (pass 1 → 2) | Verdict |
+|---|---:|---:|---:|---|
+| Ca₃Co₂O₆ plateau | 902 s | $1.55 | 3 → 2 | **pass** (5/5) |
+| EuO (PSI GPS) | 1192 s | $2.49 | 16 → 3 | **fail** (internal-field Must) |
+| Critical fields in Sn | 1219 s | $3.31 | 1 → 4 | **fail** (sample-precession Must) |
+| Maleic acid | 1178 s | $2.42 | 5 → 3 | **fail** (3 Musts) |
+
+- **plateau-redfield — pass.** Decided "LF decoupling", fitted single
+  exponential λ(B), then `trend --model Redfield --param Lambda --fix m=2
+  --xmax 25000 --exclude 9049`: D = 31.78 ± 0.53 MHz, ν = 159 ± 11 MHz, range
+  and exclusion stated. Gaps (Should): fitted 1–25 kG rather than the plateau;
+  no comment on the plateau edges.
+- **euo-psi — fail (regression).** Three wizard calls with physics-chosen
+  scopes, as intended — but it screened only the 200 K paramagnetic run and
+  chained that Gaussian-KT model through the whole ZF scan, so the ordered-state
+  precession pass 1 fitted (30 MHz at 1.5 K) was never looked for, and the
+  summary calls the ordered-state field "too fast to resolve". The skill does
+  not say that a scan crossing a transition needs a model on each side,
+  screened on each side; pass 1 did that unprompted.
+- **sn-critical-field — fail.** Classified as a type-I superconductor and
+  screened with `--geometry LF --scope lf-dynamics --include Oscillatory` plus
+  `fourier`, as the skill now says — on run 91488 (20 G), where the spectral
+  search finds no line and the wizard drops the included oscillatory
+  candidates for "no support in the spectrum". `--include` widens the scope;
+  it does not force a candidate past the wizard's spectral gate. On 91516
+  (40 G) the same options rank the oscillatory model first. The sample line is
+  ~0.3 % against ~20 % background, so the run chosen decides the outcome.
+- **maleic-mu-kinetics — fail.** Now tests the weak-TF muonium hypothesis
+  explicitly (`fourier` with `--tmax` crops) — but took alpha = 1.401 from the
+  survey's best candidate 78281 for the whole folder, while 78251–78280 need
+  ≈1.03–1.07. The deoxygenated water (A(0) = 0.07 %) and the whole "neat"
+  series were therefore mis-reduced, and the collapse was read as chemistry. It
+  looked for Mu in untreated water (O₂ relaxes it) and the mis-reduced neat
+  runs, never in correctly reduced deoxygenated water. Wrote "0.5 M" again.
+
+Outcome and what it says: the system-first step cut screening (EuO 16 → 3
+wizard calls) and produced the first Redfield fit; single runs are noisy
+(EuO passed then failed on the same dataset). Remaining gaps, in order:
+(1) calibration — measure alpha on every candidate and reduce each block with
+its own when they differ (the survey could print alpha per candidate and flag
+a step: CLI); (2) a scan through a transition needs a model and a screen on
+each side; (3) `--include` should force its components' candidates past the
+spectral gate (core/CLI); (4) weak-TF muonium: look first in the
+lowest-scavenger, deoxygenated sample.
 
 ### Things this loop found that are not skill problems
 
