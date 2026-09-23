@@ -859,6 +859,59 @@ supplied concentration axis through `fit-global` and `trend --model Linear`. Rea
 header is deferred: the header's per-sensor means carry no labels, and which
 sensor is the sample differs between GPS and GPD.
 
+### Sonnet trend-fit pass — 2026-09-23, on `feat/trend-model-fit`
+
+Host: Claude Code. Model: `sonnet`. Runner: `tools/agent_eval/run_eval.py`,
+the fixed prompt, `--max-turns 80`, macOS. The first run of the skill text
+that teaches `trend --model` and the new scan axes, on four audit cases.
+Three rubrics (`plateau-redfield`, `sn-critical-field`, `maleic-mu-kinetics`)
+were written from the worksheets and handout before any run.
+
+| Dataset | Wall | Turns | Cost | Verdict |
+|---|---:|---:|---:|---|
+| EuO (PSI GPS) | 1016 s | — | $3.99 | **pass** (5/5) |
+| Ca₃Co₂O₆ plateau | 555 s | 46 | $2.48 | **fail** (Redfield Must) |
+| Critical fields in Sn | 705 s | — | $2.56 | **fail** (sample-precession Must) |
+| Maleic acid | 1188 s | — | $3.61 | **fail** (3 Musts) |
+
+- **euo-psi — pass.** The first real use of the new path:
+  `trend --model OrderParameter --param frequency --exclude <6 flagged runs>`
+  over 1.5–69.3 K gave Tc = 69.17 ± 0.05 K, β = 0.443 ± 0.004,
+  α = 1.54 ± 0.02, with the excluded runs named. ZF and TF blocks separated;
+  paramagnetic Gaussian-KT Δ flat; the TF relaxation rising near Tc is
+  reported from its own fits. Gaps: it said no trend law suits a rate
+  diverging at Tc (`CriticalDivergence` exists; Step 6a's list omits it); β is
+  not labelled as measured against the setpoint; the wizard's fluorine hint
+  fired on the title `TF60G`.
+- **plateau-redfield — fail.** Alpha from 9023, the cooldown in 9024–9030
+  found from `T log/K`, λ(B) falling through the sweep — but a stretched
+  exponential and a descriptive trend, never `trend --model Redfield`. The
+  agent sees only the data and logbook, not the handout; nothing in the skill
+  says that an LF decoupling scan of a fluctuating magnet is the case
+  Redfield's law is for.
+- **sn-critical-field — fail.** Excellent thermometry (the 91501–91515
+  excursion to ≈8.2 K found and ordered by logged temperature, the 40 G
+  transition bracketed at logged 2.8–3.2 K) but analysed as LF decoupling
+  with a Gaussian envelope: the sample's precession at γ_μH_c (≈1.9 MHz) was
+  never looked for. The survey says `prec none` and the LF wizard scope has
+  no precession template; the skill has no type-I intermediate-state physics.
+- **maleic-mu-kinetics — fail.** Found the alpha step at 78281 and the
+  per-sample structure, but did not recognise the 2 G runs as muonium
+  precession (γ_Mu/2π ≈ 1.39 MHz/G, a line near 2.8 MHz); fitted Kubo–Toyabe
+  to "water protons", reported a 17 MHz "doublet" the wizard matched, and
+  wrote the titles' relative concentrations as molar ("0.25 M"). No rate
+  constant. The skill has no weak-TF muonium physics, and the wizard's
+  low-field muonium matcher needs a resolved doublet (audit gap).
+
+Skill changes proposed (text only, not yet made): name `CriticalDivergence`
+in Step 6a; a "which law for which scan" table in section 5 (LF decoupling of
+a dynamic magnet → Redfield; activated hopping → Arrhenius; order parameter →
+OrderParameter; σ(T) → SC_*; rate vs concentration → Linear); type-I
+intermediate state (precession at H_c independent of the applied field,
+look with `fourier` even in LF); weak-TF muonium (triplet line at
+1.394 MHz/G, the diamagnetic line barely a cycle, relative concentrations
+stay relative).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
