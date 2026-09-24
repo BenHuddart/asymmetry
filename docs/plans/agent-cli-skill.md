@@ -1082,6 +1082,29 @@ when the fit failed, hit a bound or left an error as large as its value; skill
 text splits a transition at the last unflagged ordered run and sets a weak
 line's amplitude and background explicitly.
 
+#### Pass 7 — 2026-09-24, two repeats (first with `asymmetry audit`)
+
+| Dataset | 7a | 7b |
+|---|---|---|
+| plateau-redfield | fail (no Redfield: trended without `--model`) | fail (Redfield fitted in summary.md, dropped from the reply) |
+| sn-critical-field | pass | pass |
+| euo-psi | fail (no ZF internal field) | fail (no ZF internal field; no paramagnetic rate) |
+| maleic-mu-kinetics | fail (untreated water as the blank) | fail (same; an audit-flagged number restored in the reply) |
+
+Every run ran `audit` and ended with a clean `summary.md`, but the scored
+reply was a fresh recap. Sn is now robust (both runs: `OrderParameter`
+α=2, β=1 against logged temperature, 8 K block excluded). No EuO run found the
+ordered-state line: the survey never searched zero-field runs. Both maleic
+runs avoided the deoxygenated blank after the `TEMPERATURE:` line asserted it
+was "not at its setpoint" — its block logs +17 to +25 K, including a neat
+aqueous sample at 375 K, which points to the sensor. Changes: the survey
+searches ZF runs for spontaneous precession (EuO 30.2 → 5.5 MHz then `none` at
+T_c; nickel; the molecular AFM; nothing in paramagnetic, KT or F–μ–F runs);
+the `TEMPERATURE:` line asks the agent to decide which to trust per block;
+`LAW NOT ESTABLISHED` also for missing or zero errors; `trend` without
+`--model` points at Step 6a; skill: the reply is `summary.md` as audited, the
+Mu blank is the run noted deoxygenated.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
