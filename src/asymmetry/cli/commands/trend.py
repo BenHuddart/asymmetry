@@ -321,12 +321,14 @@ def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
 _NUISANCE_BASES = frozenset({"a", "b", "c"})
 
 
-#: A law's shape exponent that points near its transition cannot fix, with the
-#: value to hold it at and what it sets. Near Tc the order parameter's
-#: (1 - (T/Tc)^alpha)^beta reduces to a power of (Tc - T) whatever alpha is, so
-#: alpha trades off against the prefactor y0 and the fit wanders.
+#: A law's shape exponent the points often cannot fix, with the value to hold
+#: it at and what it sets; a free fit of one must also come out positive. Near
+#: Tc the order parameter's (1 - (T/Tc)^alpha)^beta reduces to a power of
+#: (Tc - T) whatever alpha is, so alpha trades off against y0; Redfield's m is
+#: 2 for the Lorentzian spectral density of an exponential correlation.
 _SHAPE_EXPONENTS: dict[str, tuple[str, float, str]] = {
     "alpha": ("OrderParameter", 1.0, "the curve's shape far below the transition"),
+    "m": ("Redfield", 2.0, "the spectral density's fall-off (2 for a Lorentzian)"),
 }
 
 
@@ -382,10 +384,17 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
         if not 0.0 < abs(fit["uncertainties"].get(name, 0.0)) * scale < abs(fit["parameters"][name])
     ]
     pinned = [name for name in fit["params_at_bound"] if name in physical]
-    if not fit["success"] or pinned or undetermined:
+    shapes = [
+        (name, value, meaning)
+        for name, (law, value, meaning) in _SHAPE_EXPONENTS.items()
+        if law in fit["expression"] and name in physical
+    ]
+    negative = [name for name, _, _ in shapes if fit["parameters"][name] <= 0.0]
+    if not fit["success"] or pinned or undetermined or negative:
         reasons = (
             (["the fit did not converge"] if not fit["success"] else [])
             + [f"{name} is at a bound" for name in pinned]
+            + [f"{name} is not positive, which the law does not allow" for name in negative]
             + [
                 f"{name}'s scaled error is missing, zero or as large as its value"
                 for name in undetermined
@@ -395,11 +404,6 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
             f"LAW NOT ESTABLISHED ({'; '.join(reasons)}): {fit['expression']} does not describe "
             f"this trend. Describe the trend in plain words and do not use this law's physics."
         )
-        shapes = [
-            (name, value, meaning)
-            for name, (law, value, meaning) in _SHAPE_EXPONENTS.items()
-            if law in fit["expression"] and name in physical
-        ]
         determined = [name for name in physical if name not in undetermined + pinned]
         if shapes:
             lines.append(

@@ -246,6 +246,35 @@ def envelope_change(trend: TrendTable) -> str | None:
     )
 
 
+#: Flags that say a fit did not describe its run.
+_UNDESCRIBED = frozenset({"failed", FREQUENCY_UNRESOLVED, AMPLITUDE_EXCEEDS_DATA})
+
+
+def lineless_end(trend: TrendTable) -> list[int]:
+    """The runs at one end of a precession scan that hold no line to fit.
+
+    A block of at least two runs, at the start or the end of the scan, where the
+    survey found no line and the fit is flagged as not describing the run: the
+    other side of a transition, which the precession model cannot follow. The
+    longer block when both ends qualify; empty for a series that fits no
+    frequency.
+    """
+    if "survey_line_mhz" not in trend.columns:
+        return []
+
+    def block(rows: list[dict[str, Any]]) -> list[int]:
+        runs: list[int] = []
+        for row in rows:
+            if row["survey_line_mhz"] is not None or not _UNDESCRIBED & set(row["flags"]):
+                break
+            runs.append(row["run"])
+        return runs
+
+    ends = [block(list(reversed(trend.rows)))[::-1], block(trend.rows)]
+    longest = max(ends, key=len)
+    return longest if len(longest) >= 2 else []
+
+
 def _span(rows: Sequence[Mapping[str, Any]]) -> str:
     values = [row["x"] for row in rows]
     return f"{min(values):g}" if len(values) == 1 else f"{min(values):g}–{max(values):g}"
@@ -736,6 +765,7 @@ __all__ = [
     "fit_one",
     "fit_series",
     "frequency_unresolved",
+    "lineless_end",
     "rival_envelope_model",
     "scan_axis",
     "supplied_axis",

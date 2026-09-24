@@ -617,7 +617,12 @@ by a χ² margin of 10 (the two have the same parameter count), or ``either`` �
 and ``envelope_dchi2``, χ²(other) − χ²(recipe). When the winning shape changes
 along the scan the command ends with a note naming the runs on each side: a
 Gaussian (a static spread of fields) turning exponential as the fluctuations
-outrun it is motional narrowing. Ordered by ``temperature`` (the setpoint) while the logged sample
+outrun it is motional narrowing. When the series fits a frequency and at least
+two runs at one end of the scan show no survey line and carry a flag saying
+the fit does not describe them (``failed``, ``frequency_unresolved``,
+``amplitude_exceeds_data``), the command names them as the other side of a
+transition and prints the ``recipe`` and ``fit-series`` commands that fit them
+with ``Exponential + Constant``. Ordered by ``temperature`` (the setpoint) while the logged sample
 temperature departs on some of its runs, the command ends with a note naming
 them. Writes
 ``series/<name>.json`` (per-run results, a trend table, and quality flags —
@@ -693,7 +698,9 @@ open does not by itself sink a determined T\ :sub:`c`); it notes when the fitted
 points turn through an extremum, across which a monotonic law averages two
 regimes. A law not established ends with the next step: for ``OrderParameter``
 with ``alpha`` free, refit with ``--fix alpha=1`` (points near T\ :sub:`c` fix
-only a power of T\ :sub:`c` − T, so α trades off against ``y0``); otherwise,
+only a power of T\ :sub:`c` − T, so α trades off against ``y0``); for
+``Redfield`` with ``m`` free, ``--fix m=2`` (a free ``m`` that is not positive
+is itself a reason the law is not established); otherwise,
 when some physical parameters are determined and others are not, hold the
 undetermined ones at a textbook value and report the rest with it stated.
 Excluding a run is the analyst's call: every run with a

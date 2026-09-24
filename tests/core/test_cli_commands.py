@@ -1726,6 +1726,17 @@ def test_a_failed_order_parameter_fit_is_pointed_at_its_shape_exponent() -> None
     text = "\n".join(_render_fit(fit, ["frequency"]))
     assert "LAW NOT ESTABLISHED" in text
     assert "refit with --fix alpha=1" in text
+    # A free Redfield exponent below zero is no law at all.
+    redfield = fit | {
+        "expression": "Redfield",
+        "success": True,
+        "parameters": {"D": 25.9, "nu": 114.0, "m": -1.55},
+        "uncertainties": {"D": 0.6, "nu": 17.0, "m": 0.1},
+        "reduced_chi_squared": 1.0,
+    }
+    text = "\n".join(_render_fit(redfield, ["Lambda"]))
+    assert "m is not positive" in text
+    assert "refit with --fix m=2" in text
     # Once alpha is held, the hint has nothing left to say.
     held = fit | {"fixed": ["alpha"], "success": True}
     assert "--fix alpha" not in "\n".join(_render_fit(held, ["frequency"]))

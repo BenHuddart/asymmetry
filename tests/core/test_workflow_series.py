@@ -527,3 +527,24 @@ def test_a_model_with_two_envelopes_is_not_weighed() -> None:
     )
     assert rival.component_names == ["Oscillatory", "Exponential", "Constant"]
     assert renames["sigma"] == "Lambda"
+
+
+def test_the_lineless_end_of_a_precession_scan_is_named() -> None:
+    from asymmetry.core.workflow.series import TrendTable, lineless_end
+
+    def row(run: int, line: float | None, flags: list[str]) -> dict:
+        return {"run": run, "x": float(run), "survey_line_mhz": line, "flags": flags}
+
+    columns = ["run", "x", "frequency", "survey_line_mhz", "flags"]
+    rows = [
+        row(1, 30.0, []),
+        row(2, None, ["large_rel_err"]),  # no line, but the fit describes it
+        row(3, 5.5, ["failed"]),
+        row(4, None, ["failed", "frequency_unresolved"]),
+        row(5, None, ["amplitude_exceeds_data"]),
+        row(6, None, ["frequency_unresolved"]),
+    ]
+    assert lineless_end(TrendTable("temperature", columns, rows)) == [4, 5, 6]
+    # One such run is not a block; a series fitting no frequency has none.
+    assert lineless_end(TrendTable("temperature", columns, rows[:4])) == []
+    assert lineless_end(TrendTable("temperature", ["run", "x", "flags"], [])) == []

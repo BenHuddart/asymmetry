@@ -169,11 +169,33 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(outcome, series_path, plot_paths))
-    from asymmetry.core.workflow.series import envelope_change
+    from asymmetry.core.workflow.series import envelope_change, lineless_end
 
     for note in (window_note(workdir, sorted(datasets)), envelope_change(outcome.trend)):
         if note is not None:
             print(note)
+    lineless = lineless_end(outcome.trend)
+    if lineless:
+        folder_arg = shlex.quote(args.folder)
+        runs = ",".join(str(run) for run in lineless)
+        middle = lineless[len(lineless) // 2]
+        x_by_run = {row["run"]: row["x"] for row in outcome.trend.rows}
+        supplied = (
+            ""
+            if args.x is None
+            else " --x " + ",".join(f"{run}={x_by_run[run]:g}" for run in lineless)
+        )
+        print(
+            f"NOTE: runs {runs} show no line in the survey and this model does not describe "
+            f"them (see their flags): they are the other side of a transition, and their "
+            f"physics is a relaxation. Fit them with a relaxation-only recipe and report its "
+            f"rate against {outcome.order_key}:\n"
+            f"  asymmetry recipe {folder_arg} --expression 'Exponential + Constant' "
+            f"--run {middle} --name {name}-relax\n"
+            f"  asymmetry fit-series {folder_arg} --runs {runs} --recipe {name}-relax "
+            f"--order {outcome.order_key}{supplied} --name {name}-relax\n"
+            f"(or screen run {middle} with the wizard for the relaxation shape first)."
+        )
     print(
         f"Next: asymmetry trend {shlex.quote(args.folder)} --series {name} — the trend "
         f"table, and the law it calls for."
