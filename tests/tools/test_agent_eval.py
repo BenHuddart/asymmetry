@@ -268,3 +268,20 @@ def test_every_wave_case_names_a_rubric_and_every_set_names_cases() -> None:
     assert set(module.CASES) == rubrics - {"README"}
     for cases in module.SETS.values():
         assert set(cases) <= set(module.CASES)
+
+
+def test_a_wave_runs_every_named_set_once(tmp_path: Path, monkeypatch) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "asymmetry_run_wave", ROOT / "tools" / "agent_eval" / "run_wave.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ran: list[str] = []
+    monkeypatch.setattr(
+        module, "run_case", lambda case, corpus, out, model: ran.append(case) or (case, 0)
+    )
+    argv = ["--set", "trend-fit", "--set", "hold-out", "--case", "euo-psi", "--out", str(tmp_path)]
+    assert module.main(argv) == 0
+    assert sorted(ran) == sorted({*module.SETS["trend-fit"], *module.SETS["hold-out"]})

@@ -95,7 +95,13 @@ def report(case: str, returncode: int, out: Path) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--set", choices=sorted(SETS), help="A named wave of cases")
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        choices=sorted(SETS),
+        help="A named wave of cases (repeatable)",
+    )
     parser.add_argument(
         "--case", action="append", default=[], choices=sorted(CASES), help="A case (repeatable)"
     )
@@ -106,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keep-data", action="store_true", help="Keep the per-run dataset copies")
     args = parser.parse_args(argv)
 
-    cases = [*(SETS[args.set] if args.set else ()), *args.case]
+    cases = list(dict.fromkeys([*(case for name in args.set for case in SETS[name]), *args.case]))
     if not cases:
         parser.error("name a --set or at least one --case")
     out = Path(args.out)

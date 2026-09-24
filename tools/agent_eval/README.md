@@ -133,7 +133,7 @@ python tools/agent_eval/run_wave.py --case copper-diffusion --case molecular-ant
     --out /tmp/evals/hold-out
 ```
 
-The named sets are `trend-fit` (the four cases the 2026-09-23/24 loop iterated
+The named sets (`--set` is repeatable) are `trend-fit` (the four cases the 2026-09-23/24 loop iterated
 on), `tier-a` (the regression set) and `hold-out` (two cases never tuned
 against); `--case` adds any rubric. Run repeats of a set as separate waves —
 single runs are noisy, and a claim that a change fixed a case needs two or
