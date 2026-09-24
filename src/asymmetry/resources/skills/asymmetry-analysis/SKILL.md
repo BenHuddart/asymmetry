@@ -1050,9 +1050,11 @@ of the asymmetry is an incomplete answer for a superconductor.
 So: screen **one or two** runs, not every run. Reduce and fit whole scans
 freely — those are cheap.
 
-**Let long commands finish.** Give a `wizard` or `fit-series` call a shell
-timeout of several minutes, and do not pipe it through `tail` or `head` (you
-lose the output if it is cut off). If a command is moved to the background,
+**Let long commands finish.** Give a `wizard` or `fit-series` call several
+minutes through your shell tool's own timeout setting (in Claude Code, the Bash
+tool's `timeout` parameter, e.g. 600000 ms) — not a `timeout` command, which
+macOS does not have — and do not pipe it through `tail` or `head` (you lose the
+output if it is cut off). If a command is moved to the background,
 wait for it to complete before doing anything that depends on it — and never
 end your turn while one is still running: the analysis stops with it.
 

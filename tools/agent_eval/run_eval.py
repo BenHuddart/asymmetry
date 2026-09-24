@@ -241,10 +241,18 @@ def agent_env(args: argparse.Namespace) -> dict[str, str]:
 
     ``--hdf4-dll-dir`` reaches the ``asymmetry`` commands the agent launches as
     ``ASYMMETRY_HDF4_DLL_DIR``, which legacy NeXus files need on Windows.
+
+    The shell tool's timeouts are raised to ten minutes: at the 120 s default a
+    long ``wizard`` moves to the background, and a headless session whose agent
+    then ends its turn ends with it — where an interactive one would be woken
+    when the command finished. That lost three runs to the harness, not the
+    skill (passes 15–16).
     """
     env = dict(os.environ)
     env["PATH"] = f"{cli_bin_dir()}{os.pathsep}{env.get('PATH', '')}"
     env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "600000")
+    env.setdefault("BASH_MAX_TIMEOUT_MS", "600000")
     if args.hdf4_dll_dir:
         env["ASYMMETRY_HDF4_DLL_DIR"] = str(args.hdf4_dll_dir)
     return env
