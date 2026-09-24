@@ -1062,6 +1062,26 @@ fixed where a Must was unverifiable from a summary (EuO loader path) or too
 narrow (plateau 9031–9034), and the README now states that arithmetic on
 printed values counts under the number rule, as pass 4 already applied it.
 
+#### Pass 6 — 2026-09-24, two repeats
+
+| Dataset | 6a | 6b |
+|---|---|---|
+| plateau-redfield | pass | pass |
+| sn-critical-field | fail (number rule "~3 %"; no H_c(T) — recipe seeded the whole asymmetry into the line and it collapsed) | fail (discarded the logged column after one min–max offset range hid the 6 K block; MHz → G, σ by hand) |
+| euo-psi | fail (paramagnetic rates from runs still precessing; "critical slowing" after CriticalDivergence failed) | pass |
+| maleic-mu-kinetics | pass | fail (no concentration axis; source of concentrations unstated) |
+
+Plateau now passes 6 of its last 8 runs. The Step 7 audit as text still let
+arithmetic through, so it became a tool: every command logs its printed output
+to `<workdir>/cli-output.log`, and `asymmetry audit draft.md` lists the numbers
+no command printed (a multiple or σ must match verbatim). Also: the survey's
+`TEMPERATURE:` line lists consecutive blocks with offsets (relative threshold
+1 %, which catches the 5–8 K maleic offsets at 300 K and flags nothing
+spurious across the corpus); `trend --model` prints `LAW NOT ESTABLISHED`
+when the fit failed, hit a bound or left an error as large as its value; skill
+text splits a transition at the last unflagged ordered run and sets a weak
+line's amplitude and background explicitly.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
