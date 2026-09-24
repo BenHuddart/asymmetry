@@ -1308,18 +1308,52 @@ the same moment (as in pass 15).
 
 #### Pass 16 — 2026-09-24, reliability repeats on the pass-15 tooling
 
-| Dataset | 16a |
-|---|---|
-| plateau-redfield | pass (free-m Redfield gave m = −1.55, printed as "determined") |
-| sn-critical-field | pass (Tc 3.488 ± 0.013 K against logged T; the 6 K block kept as real) |
-| euo-psi | fail, judgement (no ZF paramagnetic λ: the ordered recipe ran over all 38 ZF runs and the 16 lineless warm runs were excluded, not refitted) |
-| maleic-mu-kinetics | pass (k_Mu slope with a caveat; but Arrhenius on λ_Mu read as a reaction Ea — the Should-level trap) |
+| Dataset | 16a | 16b |
+|---|---|---|
+| plateau-redfield | pass (free-m Redfield gave m = −1.55, printed as "determined") | fail, harness (turn ended with a wizard in the background) |
+| sn-critical-field | pass (Tc 3.488 ± 0.013 K against logged T; the 6 K block kept as real) | fail, harness (same) |
+| euo-psi | fail, judgement (no ZF paramagnetic λ: the ordered recipe ran over all 38 ZF runs and the 16 lineless warm runs were excluded, not refitted) | pass (a relaxation-only ZF series above T_c) |
+| maleic-mu-kinetics | pass (k_Mu slope with a caveat; but Arrhenius on λ_Mu read as a reaction Ea — the Should-level trap) | pass (declined Arrhenius without k_Mu at more temperatures) |
 
-Two runs still hit the shell's 120 s default on `wizard`/`fit-series`; both
-recovered by polling and neither ended a turn in the background. The EuO
-failure is the pass-15b one again: the skill text on fitting the paramagnetic
-side was in context both times and not acted on, while the output showed only
-flags and the `OrderParameter` hint.
+In 16a two runs hit the shell's 120 s default on `wizard`/`fit-series` and
+recovered by polling. In 16b polling was refused (`sleep` blocked, command
+substitution denied), both agents left the wizard in the background and ended
+their turn, and the headless session ended with it — the pass-15b Sn failure
+again. An interactive session is woken when the command finishes, so these
+are harness results; they are scored as fails to stay comparable with 15b.
+One agent read "a shell timeout" as the `timeout` command, which macOS lacks.
+The EuO 16a failure is the pass-15b one: the skill text on fitting the
+paramagnetic side was in context and not acted on, while the output showed
+only flags and the `OrderParameter` hint.
+
+Passes 12–16 on the pass-15 tooling (voids excluded): plateau 7/9, maleic
+8/10, EuO 5/9, Sn 3/9; counting the three background-job endings as void,
+plateau 7/8 and Sn 3/8.
+
+Changes after pass 16 (from these two waves and generalisation wave 2, all
+general, none dataset-specific):
+
+- `fit-series` weighs the other relaxation envelope on every converged run of
+  a single-envelope recipe (Gaussian ↔ Exponential, same parameter count) and
+  reports an `envelope` column; `fit-series` and `trend` note a change of shape
+  along the scan (copper's ARGUS TF scan: Gaussian at 56 K, exponential from
+  103 K).
+- `fit-series` names a block of lineless, badly described runs at one end of
+  a precession scan as the other side of a transition and prints the
+  relaxation-only `recipe`/`fit-series` commands for exactly those runs (EuO's
+  16 paramagnetic ZF runs; nickel's paramagnetic ZF runs; Sn above T_c).
+- `trend` no longer calls a frequency held within 10 % "an order parameter";
+  a law not established names its next step (`--fix alpha=1` for
+  `OrderParameter`, `--fix m=2` for `Redfield`, and a non-positive free `m` is
+  itself not established; otherwise hold the undetermined parameters and
+  report the determined ones).
+- `survey` names a line-free run of a mostly-TF temperature scan that also
+  sits in a field scan with no transverse line (only copper's 20898 and 76942
+  across all 16 rubric folders).
+- `audit` always lists numbers after difference phrases ("within about 2 G",
+  "differ by") and hedged ratios ("a factor of ~2").
+- Harness: `run_eval.py` sets ten-minute shell timeouts; the skill names the
+  shell tool's timeout parameter.
 
 ### Things this loop found that are not skill problems
 
