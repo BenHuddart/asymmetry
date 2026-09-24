@@ -143,7 +143,10 @@ def run(args: argparse.Namespace) -> None:
         )
         return
 
-    print(_render(args.folder, result, wizard_path, recipe_path, plot_path, plot_note))
+    from asymmetry.core.fitting.fit_wizard import effective_window_duration
+
+    duration_us = effective_window_duration(dataset)
+    print(_render(args.folder, duration_us, result, wizard_path, recipe_path, plot_path, plot_note))
 
 
 def _names(text: str) -> list[str]:
@@ -170,6 +173,7 @@ def _survey_geometry(workdir, run_number: int) -> str | None:
 
 def _render(
     folder: str,
+    duration_us: float,
     result,
     wizard_path: Path,
     recipe_path: Path | None,
@@ -219,7 +223,16 @@ def _render(
     # The spectral evidence and the fitted values are what an analyst reads
     # first: a precession frequency found here is a finding even when the
     # recommendation is not the model the scan ends up fitted with.
-    peaks = result.recommendation["peak_analysis"]["peaks"]
+    from asymmetry.core.fitting.fit_wizard import MIN_CYCLES_IN_EFFECTIVE_WINDOW
+
+    # A "line" completing under MIN_CYCLES_IN_EFFECTIVE_WINDOW cycles in the
+    # record is relaxation leaking into the lowest bins, not precession (the
+    # survey's rule too), so it is neither printed nor offered as a seed.
+    peaks = [
+        peak
+        for peak in result.recommendation["peak_analysis"]["peaks"]
+        if peak["frequency_mhz"] * duration_us >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
+    ]
     lines.append(
         "Spectral lines: "
         + (

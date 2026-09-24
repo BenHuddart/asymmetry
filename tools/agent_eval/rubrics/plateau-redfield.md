@@ -23,8 +23,9 @@ edges leave features in the muon data.
 ## Must
 
 - [ ] Uses run 9023 for alpha and says so.
-- [ ] Treats 9031–9051 as the 15 K field sweep and does not present
-      9024–9030 as 15 K points of that sweep.
+- [ ] Treats the longitudinal-field runs from 9035 to 9051 (with or without
+      the zero-field 15.9 K runs 9031–9034 before them) as the 15 K field
+      sweep, and does not present 9024–9030 as 15 K points of that sweep.
 - [ ] Reports the relaxation rate falling as the longitudinal field rises
       through the sweep, from a series fitted along field.
 - [ ] Fits Redfield's law to λ(B) with the CLI (`trend --model Redfield` or a

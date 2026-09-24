@@ -24,8 +24,8 @@ contiguous, no gaps), no ISIS-style field stamp in the filename:
 
 ## Must
 
-- [ ] Identifies this as a PSI/GPS `.bin` dataset, distinct from the
-      ISIS `.nxs` datasets, and confirms the PSI loader path was used.
+- [ ] Identifies this as PSI GPS data (the `.bin` format), not an ISIS
+      NeXus dataset.
 - [ ] Separates the ZF block from the TF 60 G block as two distinct
       scans.
 - [ ] Reports an internal field (from the TF block, or from ZF

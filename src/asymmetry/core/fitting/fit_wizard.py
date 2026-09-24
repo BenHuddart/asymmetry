@@ -2827,7 +2827,7 @@ def build_fit_wizard_recommendation(
                         analysis_dataset,
                         field_gauss=field_gauss,
                         include_families=envelope_scope,
-                        analysis_window_us=_effective_window_duration(dataset),
+                        analysis_window_us=effective_window_duration(dataset),
                     ),
                 )
         pattern_family_keys = frozenset(
@@ -5988,7 +5988,7 @@ def _fit_window_duration(dataset: MuonDataset) -> float:
     return float(time.max() - time.min())
 
 
-def _effective_window_duration(dataset: MuonDataset) -> float:
+def effective_window_duration(dataset: MuonDataset) -> float:
     """Length T_eff of the SNR-truncated informative window (µs), or 0.
 
     Always measured on the record handed in, which for wizard callers is the

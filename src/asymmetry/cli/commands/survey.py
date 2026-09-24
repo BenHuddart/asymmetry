@@ -123,9 +123,13 @@ def _render(survey, survey_path: Path) -> str:
         lines.append("")
     if survey.temperature_departures:
         runs = survey.temperature_departures
+        offsets = [
+            survey.row(run).sample_temperature_logged - survey.row(run).temperature for run in runs
+        ]
         lines.append(
             f"TEMPERATURE: the logged sample temperature (T log) departs from the setpoint "
-            f"(T/K) on {len(runs)} run(s): {_run_list(runs)}. Those runs were not at their "
+            f"(T/K) on {len(runs)} run(s): {_run_list(runs)}, by {min(offsets):+.2f} to "
+            f"{max(offsets):+.2f} K (T log - T/K). Those runs were not at their "
             f"setpoint — order their scans with --order sample_temperature_logged, quote the "
             f"logged value, and treat the scans below (grouped by setpoint) as provisional."
         )

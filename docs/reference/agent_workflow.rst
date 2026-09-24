@@ -436,8 +436,9 @@ the spectral search detected, with its SNR) and ``Recommended fit`` (the
 recommended model's fitted values), so a precession frequency found while
 screening is on the page, not only in the stored recipe. A detected line the
 recommendation does not fit is followed by a ready ``asymmetry recipe`` command
-started at that frequency, and ``fourier`` prints the same for its strongest
-candidate maximum.
+started at that frequency. Lines that complete fewer than two cycles in the
+record's informative window — relaxation leaking into the lowest bins — are
+not listed, by the survey's rule.
 Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
@@ -628,10 +629,11 @@ internal field below a transition, ``Arrhenius`` for an activated rate,
 gap models for a superconducting σ(T), ``Linear`` and sums such as
 ``Redfield + Constant``. ``--xmin``/``--xmax`` bound the fit in the trend's x
 units, ``--fix NAME=VALUE`` holds a law parameter and ``--initial NAME=VALUE``
-moves a start value. When χ²\ :sub:`r` is above 1 the report adds a column of
-errors scaled by √χ²\ :sub:`r`, and it warns when ``--param`` is one of several
-components of the same kind in the series' model (``Lambda_1`` beside
-``Lambda_2``), since a law written for one rate needs a single-rate fit. Excluding a run is the analyst's call: every run with a
+moves a start value. When χ²\ :sub:`r` is above 1 the error column holds the
+errors scaled by √χ²\ :sub:`r` (the unscaled ones follow), and a ``NOTE``
+appears when ``--param`` is one of several components of the same kind in the
+series' model (``Lambda_1`` beside ``Lambda_2``): a law describes one physical
+rate or line, not one of two that split it between them. Excluding a run is the analyst's call: every run with a
 value enters unless ``--exclude RUNS`` names it, and the output lists both the
 runs left out (with the reason) and the flagged runs that were fitted. The fit
 is stored in ``series/<name>.json`` under ``trend_fits``, and ``--plot``

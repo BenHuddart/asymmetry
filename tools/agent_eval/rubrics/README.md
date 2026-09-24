@@ -88,6 +88,11 @@ includes:
   each file's "Known traps").
 - Any fit parameter, transition temperature, or rate the agent did not
   itself obtain via a tool call in the session being scored.
+- Arithmetic on printed values presented as a result: a percentage change,
+  a ratio, a difference between two printed columns, a unit conversion, or a
+  significance in σ that no command printed (made explicit 2026-09-24; the
+  rule was already applied this way). Quoting the two printed values and
+  describing the relation in words is fine.
 
 A summary may still *discuss* such numbers in words (e.g. "the
 worksheet's textbook Tc is far higher than the temperatures probed

@@ -1561,12 +1561,14 @@ def test_a_trend_fit_report_scales_errors_and_warns_on_a_multi_component_paramet
         "flagged": [],
     }
     text = "\n".join(_render_fit(fit, ["A_1", "Lambda_1", "A_2", "Lambda_2", "A_bg"]))
-    # χ²ᵣ = 4 doubles the errors in the scaled column.
-    assert "error x sqrt(chi2_red)" in text
-    assert "1.000000" in text and "20.000000" in text
-    assert "WARNING: Lambda_1 is one of several Lambda components" in text
+    # χ²ᵣ = 4 doubles the errors, and the scaled column leads.
+    assert "error (x sqrt(chi2_red) = 2)" in text
+    assert "unscaled error" in text
+    d_row = next(line for line in text.splitlines() if line.startswith("D "))
+    assert d_row.split()[2:4] == ["1.000000", "0.500000"]
+    assert "NOTE: Lambda_1 is one of several Lambda components" in text
     assert "also Lambda_2" in text
 
     single = "\n".join(_render_fit(fit | {"reduced_chi_squared": 0.9}, ["A_1", "Lambda_1"]))
     assert "sqrt(chi2_red)" not in single
-    assert "WARNING" not in single
+    assert "NOTE" not in single

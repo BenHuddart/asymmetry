@@ -312,7 +312,7 @@ re-screens — and it will happily offer a vortex lattice to a ferromagnet.
 |---|---|---|---|
 | Magnet ordering in zero field | ZF temperature scan; `prec other`, or A(0) collapsing on cooling | `--geometry ZF --scope zf-static-magnetism` | `OrderParameter` on the frequency below the transition; `CriticalDivergence` on a rate diverging towards it |
 | Spin glass or frozen moments | relaxation only, rate rising and stretching on cooling | `--scope zf-static-magnetism` (ZF) or `lf-dynamics` (LF) | `CriticalDivergence` on the rate, if it diverges |
-| Fluctuating moments decoupled by a field | LF **field** scan at one temperature, `prec none` | `--geometry LF --scope lf-dynamics`; a **single** exponential rate λ | `Redfield` on λ(B), over the field range one process dominates |
+| Fluctuating moments decoupled by a field | a **field** scan at one temperature whose runs do not precess at their field (`prec none` where measurable, `-` above Nyquist) — longitudinal decoupling, whatever zero field showed | `--geometry LF --scope lf-dynamics`; a **single** exponential rate λ | `Redfield` on λ(B), over the field range one process dominates |
 | Nuclear dipolar fields, muon or ion hopping | a dense-nucleus compound; Kubo–Toyabe dip | `zf-static-magnetism` / `lf-dynamics`, Gaussian KT (see decision rules) | `Arrhenius` on the hop rate `nu` |
 | Type-II superconductor | TF scan through Tc, `prec larmor`, line broadening on cooling | `--geometry TF --scope tf-superconductor` | an `SC_*` gap model on σ(T) |
 | Type-I superconductor, intermediate state | a pure elemental superconductor (Sn, Pb, In, Al …) in a field **below H_c**, often LF on a tilted foil; `prec none` at the applied field | `--geometry LF --scope lf-dynamics --include Oscillatory`, and `fourier` to find the line — muons in the normal domains precess at γ_μ·H_c whatever field is applied | `OrderParameter` with `--fix alpha=2 --fix beta=1` (H_c(0)[1−(T/T_c)²]) on the frequency, against the logged temperature |
@@ -785,9 +785,11 @@ asymmetry trend <folder> --series zf-scan --model OrderParameter \
   was the setpoint or the logged sample temperature.
 - `--param` is the one quantity the law is written for: a single relaxation
   rate for Redfield or Arrhenius, a single frequency for an order parameter.
-  When the series model carries two rates or two lines, the command warns;
-  refit the series with a single-component recipe first, whatever AICc
-  preferred per run.
+  When the series model carries two components of that kind the command
+  prints a `NOTE`. If they are two species (a muonium and a diamagnetic line)
+  fit the one the law describes. If they are two rates splitting one
+  relaxation between them because AICc preferred it, refit the series with a
+  single-rate recipe first — the law describes the one rate.
 - `--xmin`/`--xmax` set the fit range in the trend's x units. An order
   parameter is fitted **below** the transition, a Redfield law over the field
   range where one process dominates. Compare points measured under matched
@@ -815,9 +817,24 @@ same rule as for integral scans applies: derive nothing further by hand (a
 penetration depth from σ, an energy in meV from a gap in kelvin) and present
 it as Asymmetry output.
 
-### Step 7 — write the summary
+### Step 7 — write the summary, then audit every number in it
 
-Template in section 6.
+Template in section 6. Then, before sending it, go through the draft number by
+number and name the command whose output printed each one. Delete or reword
+every number you cannot name a command for — they are almost always one of
+these, and each fails the analysis as surely as an invented value:
+
+- a **percentage change** or **ratio** of two printed values ("14 % higher",
+  "10× faster");
+- a **difference** between two printed columns (a logged temperature minus its
+  setpoint — the survey's `TEMPERATURE:` line prints the offsets);
+- a **unit conversion** (MHz to gauss, K to meV, a relative concentration to
+  molar) not printed by a command;
+- a **significance** in σ, or a sum of two fitted amplitudes.
+
+Say the relation in words instead ("the frequency rises by several percent on
+approaching T_c", "the Mu rate is an order of magnitude faster"), or quote the
+two printed values side by side and let the reader compare them.
 
 ## 3. Decision rules
 
@@ -985,7 +1002,9 @@ parameterises the dipolar coupling as the muon–fluorine distance `r_muF` in
 scan *is* a temperature-independent dipolar coupling — say so in those terms.
 
 **Longitudinal field.** An LF is applied to decouple static fields, so what
-relaxation survives is dynamic. Does the rate rise on cooling towards a
+relaxation survives is dynamic — even in a sample whose zero-field spectrum
+looked static (a Kubo–Toyabe shape): the field removes the static part, and
+the rate left over as the field rises is the fluctuating part. Does the rate rise on cooling towards a
 freezing or glass transition? Is a stretched exponential needed (a distribution
 of rates, as in a spin glass) rather than a single exponential? Does the
 recovered asymmetry increase with field, as decoupling predicts? A **field scan

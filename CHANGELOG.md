@@ -183,9 +183,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the fingerprint's damped-line scan result (or `none`); the `prec` column prints the frequency
   of an `other` line (`other@2.81`). Weak-TF muonium and a type-I superconductor's
   normal-domain line now show up where a false ~0.1 MHz line did. `trend --model` prints
-  √χ²ᵣ-scaled errors when χ²ᵣ > 1 and warns when the fitted parameter is one of several
-  components of its kind; `wizard` and `fourier` print a seeded `recipe` command for a line
-  the recommendation does not fit.
+  √χ²ᵣ-scaled errors first when χ²ᵣ > 1 and notes when the fitted parameter is one of several
+  components of its kind; `wizard` prints a seeded `recipe` command for a detected line the
+  recommendation does not fit, and no longer lists sub-cycle leakage as a line. The survey's
+  `TEMPERATURE:` line gives the size of the departure.
 
 ### Changed
 

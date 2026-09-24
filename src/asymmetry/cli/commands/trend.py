@@ -228,29 +228,24 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
         ),
     ]
     # A χ²ᵣ above 1 says the points scatter more than their own errors allow;
-    # the fit's errors scaled by √χ²ᵣ are the honest ones to quote then.
+    # the fit's errors scaled by √χ²ᵣ are the honest ones then, so they lead.
     scale = max(1.0, fit["reduced_chi_squared"]) ** 0.5 if fit["success"] else 1.0
+
+    def error(name: str, factor: float) -> str:
+        if name in fit["fixed"]:
+            return "fixed"
+        return format_number(fit["uncertainties"].get(name, 0.0) * factor, 6) + (
+            " (at bound)" if name in fit["params_at_bound"] else ""
+        )
+
     rows = [
-        [
-            name,
-            format_number(value, 6),
-            "fixed"
-            if name in fit["fixed"]
-            else format_number(fit["uncertainties"].get(name), 6)
-            + (" (at bound)" if name in fit["params_at_bound"] else ""),
-            *(
-                [
-                    "fixed"
-                    if name in fit["fixed"]
-                    else format_number(fit["uncertainties"].get(name, 0.0) * scale, 6)
-                ]
-                if scale > 1.0
-                else []
-            ),
-        ]
+        [name, format_number(value, 6), error(name, scale)]
+        + ([error(name, 1.0)] if scale > 1.0 else [])
         for name, value in fit["parameters"].items()
     ]
-    headers = ["parameter", "value", "error"] + (["error x sqrt(chi2_red)"] if scale > 1.0 else [])
+    headers = ["parameter", "value"] + (
+        [f"error (x sqrt(chi2_red) = {scale:.3g})", "unscaled error"] if scale > 1.0 else ["error"]
+    )
     lines.append(render_table(headers, rows))
     base = re.sub(r"_\d+$", "", fit["param"])
     siblings = [
@@ -258,9 +253,9 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
     ]
     if siblings:
         lines.append(
-            f"WARNING: {fit['param']} is one of several {base} components in this series' "
-            f"model (also {', '.join(siblings)}); a law written for one rate or frequency "
-            f"needs the series refitted with a single-component model."
+            f"NOTE: {fit['param']} is one of several {base} components in this series' model "
+            f"(also {', '.join(siblings)}). Check it is the component the law describes — "
+            f"the one physical rate or line — and not one of two that together describe it."
         )
     if fit["excluded"]:
         lines.append(
