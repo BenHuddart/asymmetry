@@ -1192,6 +1192,23 @@ system disk to 93 % and iCloud offloaded ~2,200 corpus files ("dataless",
 reading as empty). The scratch copies were deleted and the runner now refuses
 a copy shorter than its source; some target files stayed offloaded.
 
+#### Pass 12 — 2026-09-24, two repeats
+
+| Dataset | 12a | 12b |
+|---|---|---|
+| plateau-redfield | pass | pass |
+| sn-critical-field | fail (number rule: a hand-summed A(0) the audit matched to a logged time bin) | fail (no falling frequency: the wizard's line hint replaced the model and the fit fell to a 0.025 MHz branch) |
+| euo-psi | pass | pass |
+| maleic-mu-kinetics | pass | pass |
+
+6/8, the best pass; maleic passed both runs for the first time (k_Mu reported
+with a caveat in both). Changes: the wizard's line hint adds the line to the
+recommended model with a small amplitude; `frequency_unresolved` flags a free
+frequency under two cycles in the informative window; `audit` ignores bulk
+arrays in the log and its success message asks for the text with no preface
+(all eight replies had opened "Clean audit"); skill: a line the survey tracks
+along a scan is a measurement to quote.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
