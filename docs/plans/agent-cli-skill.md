@@ -1275,6 +1275,37 @@ or the next step in front of the agent (ZF spontaneous-line search, survey
 `other@<MHz>`, `audit`, the scan-specific `trend` hints, `line-<run>`), not
 additional skill text; skill text alone rarely changed behaviour across passes.
 
+#### Generalisation wave 2 — 2026-09-24, on the pass-15 tooling
+
+Host: Claude Code, `sonnet`, `run_wave.py --set tier-a` and `--set hold-out`,
+scored by one scoring subagent per wave with `scoring_brief.md`.
+
+| Dataset | Verdict |
+|---|---|
+| ferromagnetic-nickel | pass |
+| fmuf-ptfe | pass |
+| spin-glass-ymnal | pass |
+| high-tc-cuprate | pass (a judgement concern: a low-T σ turnover at 200 G read as physics while the chain may follow another line) |
+| molecular-antiferromagnet | pass (paramagnetic ν(T) fitted with a relaxation-only series, as the pass-15 skill text asks) |
+| copper-diffusion | fail (TF line shape never compared, as in pass 11; unprinted differences "within about 2 G") |
+
+Tier A holds at 4/4 with no regression from passes 11–15; the molecular AFM
+passes again; copper fails on the same Must as in pass 11. Copper's root
+causes are general: `fit-series` carried one envelope through each TF scan,
+so no output could show a change of shape, and `trend` then called the
+applied-field precession frequency "an order parameter"; the survey put an
+unlabelled longitudinal point of the 40 K field scan into each TF
+temperature scan; `audit` matched the bare "2" of "within about 2 G" and the
+"~2" of "a factor of ~2". The EMU upturn was handled (the turning-point note
+led to a split fit) but the ARGUS one was not. In Tier A all three nickel
+`OrderParameter` fits printed `FAILED` with Tc ≈ 357.7 K and β ≈ 0.38: over
+320–356 K the shape exponent α trades off against y0, and Minuit exhausts its
+calls; α fixed at 1 converges (Tc 357.74 K, β 0.387). YMnAl withheld a
+determined T_g because ν was not.
+
+A first pass-16 wave was voided: every session ended "Request timed out" at
+the same moment (as in pass 15).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
