@@ -23,13 +23,13 @@ Exit codes: 0 success, 1 user error (one line on stderr), 2 internal error
 
 ```
 usage: asymmetry [-h] [--version] [--verbose]
-                 {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,skill,info}
+                 {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,audit,skill,info}
                  ...
 
 Asymmetry — μSR data analysis
 
 positional arguments:
-  {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,skill,info}
+  {survey,alpha,reduce,integral-scan,wizard,recipe,fit,fit-global,fit-series,trend,fourier,audit,skill,info}
     survey              List the runs in a folder with their metadata, scans and
                         calibration runs
     alpha               Estimate the forward/backward balance alpha from one run
@@ -47,6 +47,8 @@ positional arguments:
                         scan order
     trend               Print, export or fit the parameter trend of a stored series
     fourier             Transform a reduced run and report resolved frequency peaks
+    audit               List the numbers in a draft summary that no command's output
+                        printed
     skill               Install, check or remove the asymmetry-analysis agent skill
     info                Show metadata for a data file
 
@@ -377,6 +379,21 @@ options:
   --plot                Write plots/<name>.png
   --json                Emit the machine-readable payload
   --workdir WORKDIR     Work directory to read and write (default: ./asymmetry-work)
+```
+
+## `asymmetry audit`
+
+```
+usage: asymmetry audit [-h] [--workdir WORKDIR] [--json] draft
+
+positional arguments:
+  draft              The draft summary (a text or Markdown file)
+
+options:
+  -h, --help         show this help message and exit
+  --workdir WORKDIR  Work directory whose cli-output.log to check against (repeatable;
+                     default: every ./asymmetry-work* directory here)
+  --json             Emit the machine-readable payload
 ```
 
 ## `asymmetry skill`

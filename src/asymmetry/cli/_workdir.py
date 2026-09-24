@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 #: The default work directory's name, relative to the current directory.
 WORKDIR_NAME = "asymmetry-work"
 
+#: Every command's printed output is appended here, inside the work directory
+#: it used, so ``asymmetry audit`` can hold a summary's numbers against it.
+OUTPUT_LOG = "cli-output.log"
+
 
 def add_workdir_argument(parser: argparse.ArgumentParser, *, purpose: str) -> None:
     """Declare ``--workdir`` on *parser*, with the default every command shares."""
@@ -51,4 +55,4 @@ def workdir_for(folder: str | Path, root: str | Path | None) -> WorkDir:
         raise UserError(str(exc)) from None
 
 
-__all__ = ["WORKDIR_NAME", "add_workdir_argument", "workdir_for"]
+__all__ = ["OUTPUT_LOG", "WORKDIR_NAME", "add_workdir_argument", "workdir_for"]

@@ -435,7 +435,7 @@ class CalibrationCandidate:
 #: fraction of the setpoint — is a different temperature, not thermometer
 #: scatter: a cryostat still cooling, or a sensor offset that moves a transition.
 TEMPERATURE_DEPARTURE_K = 0.3
-TEMPERATURE_DEPARTURE_FRACTION = 0.03
+TEMPERATURE_DEPARTURE_FRACTION = 0.01
 
 
 def temperature_departures(rows: list[RunRow]) -> list[int]:

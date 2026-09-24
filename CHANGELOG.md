@@ -177,7 +177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   longer empties the table) and, when nothing is detected, lists the band's strongest maxima as
   candidates; `wizard` prints the lines its spectral search detected and the recommended
   model's fitted values; `survey` prints a `TEMPERATURE:` line naming runs whose logged sample
-  temperature departs from the setpoint. `wizard` and `fit-series` take `--tmin`/`--tmax`.
+  temperature departs from the setpoint by more than 0.3 K and 1 %, in blocks of runs with their
+  offsets. `wizard` and `fit-series` take `--tmin`/`--tmax`.
 - **`survey` no longer reports relaxation leakage as precession.** A dominant spectral line that
   completes fewer than two cycles in the record, away from the Larmor frequency, is replaced by
   the fingerprint's damped-line scan result (or `none`); the `prec` column prints the frequency
@@ -187,6 +188,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   components of its kind; `wizard` prints a seeded `recipe` command for a detected line the
   recommendation does not fit, and no longer lists sub-cycle leakage as a line. The survey's
   `TEMPERATURE:` line gives the size of the departure.
+- **`asymmetry audit` lists the numbers in a draft summary that no command printed.** Every
+  command now appends its printed output to `cli-output.log` in its work directory, and `audit`
+  holds a draft against those logs — catching the percentage changes, ratios and unit
+  conversions an analyst writes in prose. `trend --model` prints `LAW NOT ESTABLISHED` when the
+  fit failed, a parameter sits at a bound, or an error is as large as its value. See
+  `docs/reference/agent_workflow.rst` § "audit".
 
 ### Changed
 

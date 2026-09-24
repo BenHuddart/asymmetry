@@ -1572,3 +1572,37 @@ def test_a_trend_fit_report_scales_errors_and_warns_on_a_multi_component_paramet
     single = "\n".join(_render_fit(fit | {"reduced_chi_squared": 0.9}, ["A_1", "Lambda_1"]))
     assert "sqrt(chi2_red)" not in single
     assert "NOTE" not in single
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"success": False}, "the fit did not converge"),
+        ({"params_at_bound": ["nu"]}, "nu is at a bound"),
+        ({"uncertainties": {"D": 45.0, "nu": 10.0}}, "D's error is as large as its value"),
+    ],
+)
+def test_a_trend_law_that_did_not_fit_is_named_as_not_established(changes, reason) -> None:
+    from asymmetry.cli.commands.trend import _render_fit
+
+    fit = {
+        "param": "Lambda",
+        "expression": "Redfield",
+        "order_key": "field",
+        "x_min": None,
+        "x_max": None,
+        "n_points": 12,
+        "success": True,
+        "message": "did not converge",
+        "parameters": {"D": 30.0, "nu": 150.0, "m": 2.0},
+        "uncertainties": {"D": 0.5, "nu": 10.0},
+        "fixed": ["m"],
+        "reduced_chi_squared": 1.2,
+        "params_at_bound": [],
+        "excluded": [],
+        "flagged": [],
+    }
+    assert "LAW NOT ESTABLISHED" not in "\n".join(_render_fit(fit, ["Lambda"]))
+    text = "\n".join(_render_fit(fit | changes, ["Lambda"]))
+    assert "LAW NOT ESTABLISHED" in text
+    assert reason in text

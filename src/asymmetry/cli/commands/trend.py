@@ -247,6 +247,21 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
         [f"error (x sqrt(chi2_red) = {scale:.3g})", "unscaled error"] if scale > 1.0 else ["error"]
     )
     lines.append(render_table(headers, rows))
+    undetermined = [
+        name
+        for name, value in fit["parameters"].items()
+        if name not in fit["fixed"] and abs(fit["uncertainties"].get(name, 0.0)) >= abs(value)
+    ]
+    if not fit["success"] or fit["params_at_bound"] or undetermined:
+        reasons = (
+            (["the fit did not converge"] if not fit["success"] else [])
+            + [f"{name} is at a bound" for name in fit["params_at_bound"]]
+            + [f"{name}'s error is as large as its value" for name in undetermined]
+        )
+        lines.append(
+            f"LAW NOT ESTABLISHED ({'; '.join(reasons)}): {fit['expression']} does not describe "
+            f"this trend. Describe the trend in plain words and do not use this law's physics."
+        )
     base = re.sub(r"_\d+$", "", fit["param"])
     siblings = [
         name for name in free_params if name != fit["param"] and re.sub(r"_\d+$", "", name) == base

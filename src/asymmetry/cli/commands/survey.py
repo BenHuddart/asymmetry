@@ -53,6 +53,34 @@ def run(args: argparse.Namespace) -> None:
     print(_render(survey, survey_path))
 
 
+def _departure_blocks(survey) -> list[tuple[list[int], float, float]]:
+    """Departing runs in consecutive blocks of similar offset: ``(runs, min, max)``.
+
+    Consecutive in the survey's run order, with an offset within 0.5 K or 20 %
+    of the block's last one — so a cryostat that sat 6 K warm for fifteen runs
+    reads as its own block, not as the far end of one range.
+    """
+    departing = set(survey.temperature_departures)
+    blocks: list[list[tuple[int, float]]] = []
+    previous_departed = False
+    for row in survey.runs:
+        if row.run_number not in departing:
+            previous_departed = False
+            continue
+        offset = row.sample_temperature_logged - row.temperature
+        if previous_departed and abs(offset - blocks[-1][-1][1]) <= max(
+            0.5, 0.2 * abs(blocks[-1][-1][1])
+        ):
+            blocks[-1].append((row.run_number, offset))
+        else:
+            blocks.append([(row.run_number, offset)])
+        previous_departed = True
+    return [
+        ([run for run, _ in block], min(o for _, o in block), max(o for _, o in block))
+        for block in blocks
+    ]
+
+
 def _run_list(runs: list[int]) -> str:
     """``[1, 2, 3, 7]`` as ``"1-3, 7"``."""
     spans: list[list[int]] = []
@@ -122,17 +150,15 @@ def _render(survey, survey_path: Path) -> str:
         )
         lines.append("")
     if survey.temperature_departures:
-        runs = survey.temperature_departures
-        offsets = [
-            survey.row(run).sample_temperature_logged - survey.row(run).temperature for run in runs
-        ]
         lines.append(
-            f"TEMPERATURE: the logged sample temperature (T log) departs from the setpoint "
-            f"(T/K) on {len(runs)} run(s): {_run_list(runs)}, by {min(offsets):+.2f} to "
-            f"{max(offsets):+.2f} K (T log - T/K). Those runs were not at their "
-            f"setpoint — order their scans with --order sample_temperature_logged, quote the "
-            f"logged value, and treat the scans below (grouped by setpoint) as provisional."
+            "TEMPERATURE: the logged sample temperature (T log) departs from the setpoint "
+            "(T/K) on these runs, by the offset shown (T log - T/K). They were not at their "
+            "setpoint — order their scans with --order sample_temperature_logged, quote the "
+            "logged value, and treat the scans below (grouped by setpoint) as provisional:"
         )
+        for runs, lo, hi in _departure_blocks(survey):
+            span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"
+            lines.append(f"  {_run_list(runs)}: {span}")
         lines.append("")
     if survey.truncated:
         lines.append(

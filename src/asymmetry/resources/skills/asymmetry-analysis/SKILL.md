@@ -130,7 +130,9 @@ below.
 
 **When the survey prints a `TEMPERATURE:` line**, the listed runs were not at
 their setpoint — a cryostat still cooling, a block of runs at the wrong
-temperature, or a sensor offset. The `scans` block still groups them by
+temperature, or a sensor offset. It lists them in blocks with each block's
+offset (T log − T/K): a block several kelvin away from the rest is a different
+measurement, not a faulty thermometer to ignore. The `scans` block still groups them by
 setpoint, so take its temperature scans as provisional: order those series by
 `sample_temperature_logged`, split off runs that sit far from the rest, and
 quote logged temperatures in the summary.
@@ -344,7 +346,10 @@ Pick it from the `reduce` table and the reduced PNGs, not from the run list:
   different models (a precession below, a paramagnetic relaxation above); one
   recipe chained through both fits neither. Screen one run on each side, fit
   the two sides as separate series with their own recipes, and report where
-  the ordered-state model stops fitting. Never conclude that an ordered-state
+  the ordered-state model stops fitting. Split the scan at the last run the
+  ordered model fits unflagged: no run belongs to both series, because a
+  relaxation fitted to a signal that still precesses is not a paramagnetic
+  rate. Never conclude that an ordered-state
   signal is unresolvable from a model that was screened above the transition:
   screen the coldest run and one just below the transition, and look at their
   reduced PNGs and `fourier` spectra before saying so.
@@ -817,24 +822,25 @@ same rule as for integral scans applies: derive nothing further by hand (a
 penetration depth from σ, an energy in meV from a gap in kelvin) and present
 it as Asymmetry output.
 
-### Step 7 — write the summary, then audit every number in it
+### Step 7 — write the summary, audit its numbers, then send it
 
-Template in section 6. Then, before sending it, go through the draft number by
-number and name the command whose output printed each one. Delete or reword
-every number you cannot name a command for — they are almost always one of
-these, and each fails the analysis as surely as an invented value:
+Template in section 6. Write the draft to `summary.md` in the project directory,
+then run
 
-- a **percentage change** or **ratio** of two printed values ("14 % higher",
-  "10× faster");
-- a **difference** between two printed columns (a logged temperature minus its
-  setpoint — the survey's `TEMPERATURE:` line prints the offsets);
-- a **unit conversion** (MHz to gauss, K to meV, a relative concentration to
-  molar) not printed by a command;
-- a **significance** in σ, or a sum of two fitted amplitudes.
+```bash
+asymmetry audit summary.md
+```
 
-Say the relation in words instead ("the frequency rises by several percent on
-approaching T_c", "the Mu rate is an order of magnitude faster"), or quote the
-two printed values side by side and let the reader compare them.
+Every command's printed output is logged in the work directory, and `audit`
+lists each number in the draft that no command printed. Each one it lists is
+almost always arithmetic on printed values — a percentage change, a ratio, a
+difference of two columns, a unit conversion (MHz to gauss, relative to molar),
+a significance in σ — or a value from memory. Remove it, quote the printed
+value instead, or say the relation in words ("rises by several percent", "an
+order of magnitude faster"). Re-run `audit` until it lists nothing you would
+defend as printed, then send the summary. A clean audit means each number
+appears in some output, not that it is the right one — still quote values from
+the command that produced them.
 
 ## 3. Decision rules
 
@@ -918,7 +924,9 @@ asymmetry recipe <folder> --expression "Oscillatory * Exponential + Constant" \
 ```
 
 `--run` seeds the amplitudes, background and applied field from that reduced
-run; `--initial NAME=VALUE` moves a start value, `--fix NAME=VALUE` holds one,
+run — every amplitude starts at the run's whole early-time asymmetry, so for a
+weak line beside a large background give both explicitly
+(`--initial A_1=0.5 --initial A_bg=<the background level>`); `--initial NAME=VALUE` moves a start value, `--fix NAME=VALUE` holds one,
 `--tmin`/`--tmax` set the window. The command prints **every parameter name**
 — in a repeated-component expression they are numbered by component
 (`Oscillatory * Exponential + Oscillatory * Exponential` has `A_1`,
@@ -1092,8 +1100,8 @@ output. If a useful derived quantity is not printed by the CLI, explain the
 qualitative relation and leave the number out.
 
 **A law that did not fit does not get to tell the story.** When `trend
---model` fails to converge, lands a parameter at a bound or on an unphysical
-value, or leaves a χ²ᵣ far above the scan's own fits, the physics that law
+--model` prints `LAW NOT ESTABLISHED` — it did not converge, a parameter sits at
+a bound, or an error is as large as its value — the physics that law
 stands for — critical slowing down, activated hopping, a Redfield correlation
 time, an order-parameter exponent — is **not established**. Say the fit
 failed and describe the trend in plain words; do not borrow the law's

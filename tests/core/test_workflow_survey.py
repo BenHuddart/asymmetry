@@ -419,7 +419,7 @@ def test_a_logged_temperature_far_from_its_setpoint_is_a_departure() -> None:
         # Close in kelvin but not in proportion, and close in proportion but
         # not in kelvin: thermometer scatter either way, not a departure.
         replace(_row(run_number=2, temperature=1.6), sample_temperature_logged=1.8),
-        replace(_row(run_number=3, temperature=300.0), sample_temperature_logged=305.0),
+        replace(_row(run_number=3, temperature=300.0), sample_temperature_logged=302.0),
         replace(_row(run_number=4, temperature=2.0), sample_temperature_logged=8.2),
         _row(run_number=5, temperature=10.0),
     ]

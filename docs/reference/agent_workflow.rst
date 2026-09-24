@@ -177,9 +177,12 @@ Writes ``survey.json`` into the work directory. Groups runs into scans by
 (instrument, field) ordered by temperature and by (instrument, temperature)
 ordered by field, so the structure of a multi-scan folder is visible without
 reading every file. When the logged sample temperature departs from the
-setpoint by more than 0.3 K and 3 % on any run, a ``TEMPERATURE:`` line names
+setpoint by more than 0.3 K and 1 % on any run, a ``TEMPERATURE:`` line names
 those runs (``temperature_departures`` in ``--json``): they were not at their
 setpoint, and the setpoint-grouped scans that contain them are provisional.
+The line lists the runs in consecutive blocks of similar offset with each
+block's range (``T log − T/K``), so a block sitting several kelvin away from the
+rest stands out as its own measurement.
 Each alpha-calibration candidate is listed with its own
 measured alpha, and where alpha moves by more than 10 % between consecutive
 candidates in run order — a sample change, a moved detector, a second
@@ -651,6 +654,27 @@ was generated as 0.10 + 0.004 T:
    b          0.099391  0.022419
    flagged but fitted: 102 (large_rel_err); 103 (large_rel_err); ...
 
+``audit``
+~~~~~~~~~
+
+List the numbers in a draft summary that no command printed.
+
+.. code-block:: text
+
+   asymmetry audit [-h] [--workdir WORKDIR] [--json] draft
+
+Every other command appends what it printed to ``cli-output.log`` in the work
+directory it used (commands without a ``--workdir``, such as ``alpha``, log to
+the default one when it exists). ``audit`` extracts each number from the draft
+and reports the ones that appear in none of those logs, with the line they sit
+on. A number written with *d* decimals matches any printed value it rounds
+from, so a clean audit means every number appears in *some* output, not that it
+is the right one; a multiple or a significance (``10×``, ``4.3σ``) matches only
+when a command printed that exact token. What it catches is the arithmetic an
+analyst does in prose — percentage changes, ratios, unit conversions,
+differences between printed columns — which the agent skill's number rule
+forbids.
+
 ``integral-scan``
 ~~~~~~~~~~~~~~~~~
 
@@ -778,6 +802,7 @@ The work directory holds:
      spectra/<name>.npz     # Fourier frequency, real part and magnitude
      spectra/<name>.json    # Fourier settings, resolution and peak table
      plots/*.png            # headless PNGs written by --plot
+     cli-output.log         # every command's printed output, for `audit`
 
 so a later command picks up a reduced spectrum, a recipe, or a series without
 reloading or recomputing it, and an agent (or a shell script run in several
