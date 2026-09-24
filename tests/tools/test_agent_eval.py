@@ -253,3 +253,18 @@ def test_a_copy_shorter_than_its_source_is_reported(tmp_path: Path) -> None:
     (source / "sub" / "b.nxs").write_bytes(b"x" * 10)
     (copy / "sub" / "b.nxs").write_bytes(b"")
     assert module.short_copies(source, copy) == [Path("sub/b.nxs")]
+
+
+def test_every_wave_case_names_a_rubric_and_every_set_names_cases() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "asymmetry_run_wave", ROOT / "tools" / "agent_eval" / "run_wave.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    rubrics = {path.stem for path in (ROOT / "tools" / "agent_eval" / "rubrics").glob("*.md")}
+    assert set(module.CASES) <= rubrics
+    assert set(module.CASES) == rubrics - {"README"}
+    for cases in module.SETS.values():
+        assert set(cases) <= set(module.CASES)

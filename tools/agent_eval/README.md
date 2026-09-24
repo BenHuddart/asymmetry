@@ -120,6 +120,31 @@ the directory they search. They can therefore still list and search outside
 the copy. Add a `Read` deny rule for this repository if a future rubric makes
 that worth closing.
 
+## Running a wave
+
+`run_wave.py` runs several evaluations in parallel into one output root, one
+directory per case, then prints each case's exit code, wall time and cost and
+deletes the per-run dataset copies (`--keep-data` keeps them):
+
+```bash
+python tools/agent_eval/run_wave.py --set trend-fit --out /tmp/evals/pass16a
+python tools/agent_eval/run_wave.py --set tier-a --out /tmp/evals/regress
+python tools/agent_eval/run_wave.py --case copper-diffusion --case molecular-antiferromagnet \
+    --out /tmp/evals/hold-out
+```
+
+The named sets are `trend-fit` (the four cases the 2026-09-23/24 loop iterated
+on), `tier-a` (the regression set) and `hold-out` (two cases never tuned
+against); `--case` adds any rubric. Run repeats of a set as separate waves —
+single runs are noisy, and a claim that a change fixed a case needs two or
+three passing repeats. Score a wave with [`scoring_brief.md`](scoring_brief.md),
+by hand or by handing it to a scoring agent.
+
+Delete the dataset copies of old waves: a few passes fill a disk, and on macOS
+iCloud then offloads the corpus, whose "dataless" files read as empty.
+`run_eval.py` refuses a copy shorter than its source rather than run on it;
+reading a file (`cat file > /dev/null`) brings it back.
+
 ## Outputs
 
 Everything lands under `--out`, and nothing outside it is touched:
