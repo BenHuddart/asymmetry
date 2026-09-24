@@ -219,8 +219,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a turning point that a monotonic law would be fitted across.
 - **`fit`/`fit-series` flag `frequency_unresolved`**, a fitted frequency completing under two
   cycles in the record's informative window; the wizard's line hint adds the line to the
-  recommended model with a small starting amplitude instead of replacing the model; `audit`
-  ignores bulk arrays in the logged output.
+  recommended model with a small starting amplitude — written as recipe `line-<run>` — instead
+  of replacing the model; `audit` ignores bulk arrays in the logged output and lists the
+  vocabulary of a trend law no logged fit established.
 
 ### Changed
 

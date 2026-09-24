@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from asymmetry.cli._numbers import unverified_numbers
+from asymmetry.cli._numbers import unsupported_laws, unverified_numbers
 from asymmetry.cli._output import UserError, emit_json, payload
 from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
 
@@ -47,12 +47,15 @@ def run(args: argparse.Namespace) -> None:
             f"run the analysis commands from this directory first."
         )
     log_text = "\n".join(log.read_text(encoding="utf-8") for log in logs)
-    found = unverified_numbers(draft.read_text(encoding="utf-8"), log_text)
+    text = draft.read_text(encoding="utf-8")
+    found = unverified_numbers(text, log_text)
+    laws = unsupported_laws(text, log_text)
 
     if args.json:
         emit_json(
             payload(
                 logs=[str(log) for log in logs],
+                unsupported_laws=[{"law": law, "phrase": phrase} for law, phrase in laws],
                 unverified=[
                     {"text": entry.text, "line_number": entry.line_number, "line": entry.line}
                     for entry in found
@@ -60,12 +63,19 @@ def run(args: argparse.Namespace) -> None:
             )
         )
         return
-    if not found:
+    for law, phrase in laws:
+        print(
+            f"The draft says {phrase!r}, but every {law} fit this session printed LAW NOT "
+            f"ESTABLISHED: describe that trend in plain words instead."
+        )
+    if not found and not laws:
         print(
             f"No unprinted numbers found in {draft}. Now send its text as your whole final "
             f"message, starting at its title — the user sees neither this output nor the "
             f"file, and the reply says nothing about this check."
         )
+        return
+    if not found:
         return
     print(
         f"{len(found)} number(s) in {draft} appear in no logged command output — "

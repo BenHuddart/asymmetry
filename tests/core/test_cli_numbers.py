@@ -83,3 +83,23 @@ def test_bulk_arrays_in_the_log_verify_nothing() -> None:
     # 22.94 lies among the time bins, but no one read it there.
     assert [entry.text for entry in unverified_numbers("A(0) = 22.94 %", log)] == ["22.94"]
     assert unverified_numbers("A(0) = 22.52 %", log) == []
+
+
+def test_the_vocabulary_of_a_law_no_fit_established_is_flagged() -> None:
+    from asymmetry.cli._numbers import unsupported_laws
+
+    log = """$ asymmetry trend runs --series tf --model CriticalDivergence --param Lambda
+Fit of CriticalDivergence to Lambda against temperature, over the points' span 69 .. 200: 9 point(s)
+LAW NOT ESTABLISHED (Tc is at a bound): CriticalDivergence does not describe this trend.
+$ asymmetry trend runs --series zf --model OrderParameter --param frequency
+Fit of OrderParameter to frequency against temperature, over the points' span 1.5 .. 68: 20 point(s)
+Converged, with its physical parameters determined: report them.
+"""
+    draft = "The rate rises: critical slowing down. The critical exponent is 0.44."
+    # OrderParameter converged, so its vocabulary stands; CriticalDivergence never did.
+    assert unsupported_laws(draft, log) == [("CriticalDivergence", "critical slowing")]
+    # A law fitted once without success and once with is established.
+    retried = log + log.replace("LAW NOT ESTABLISHED (Tc is at a bound)", "Converged")
+    assert unsupported_laws(draft, retried) == []
+    # A law never fitted is not judged.
+    assert unsupported_laws("an activation energy", log) == []

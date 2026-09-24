@@ -446,11 +446,11 @@ exclude wins over include, the header line lists both (``scope lf-dynamics
 it. Below the ranked table the report prints ``Spectral lines`` (every line
 the spectral search detected, with its SNR) and ``Recommended fit`` (the
 recommended model's fitted values), so a precession frequency found while
-screening is on the page, not only in the stored recipe. A detected line the
-recommendation does not fit is followed by a ready ``asymmetry recipe`` command
-that adds the line to the recommended model, started at that frequency with a
-small amplitude — a weak line sits on the relaxation the recommendation already
-describes. Lines that complete fewer than two cycles in the
+screening is on the page, not only in the stored recipe. When a detected line
+is not in the recommendation, the wizard also writes ``recipes/line-<run>.json``
+— the recommended model **plus** that line, started at its frequency with a
+small amplitude, since a weak line sits on the relaxation the recommendation
+already describes — and prints the ``fit`` command to try it. Lines that complete fewer than two cycles in the
 record's informative window — relaxation leaking into the lowest bins — are
 not listed, by the survey's rule.
 Writes ``wizard/<run>.json`` (the full screening payload:
@@ -708,7 +708,9 @@ is the right one; a multiple, a significance or a whole-number percentage
 token, and a number after "a factor of" is always listed. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions,
 differences between printed columns — which the agent skill's number rule
-forbids. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+forbids. It also lists a law's vocabulary ("critical slowing",
+"activation energy", "correlation time") when every fit of that law in the
+logged session printed ``LAW NOT ESTABLISHED``. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
 left out of the match, since a rounded sum would otherwise find one of their
 elements by chance.
 

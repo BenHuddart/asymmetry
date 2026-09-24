@@ -402,7 +402,14 @@ Read from the output:
 - **the recommendation** (model key and title) and the **ranked table** of
   candidates with AICc, reduced χ² and parameter count;
 - **`Spectral lines`** — every line the wizard's spectral search detected,
-  with its SNR — and **`Recommended fit`**, the fitted values. A precession
+  with its SNR — and **`Recommended fit`**, the fitted values. When a
+  detected line is not in the recommendation, the wizard also writes recipe
+  `line-<run>`: the recommendation **plus** that line, its amplitude started
+  small. Fit it next (`asymmetry fit … --recipe line-<run>`); a line amplitude
+  several times its error is the line, measured. Do not replace the
+  recommendation with a bare oscillation — a weak line sits on the relaxation,
+  and without it the fit turns the relaxation into a spurious slow
+  "frequency". A precession
   frequency here is a finding in its own right: if you later fit the scan with
   a different model, a frequency the wizard found on this run still has to be
   accounted for in the summary, never contradicted by an empty `fourier`

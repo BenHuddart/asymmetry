@@ -90,4 +90,47 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
     return found
 
 
-__all__ = ["Unverified", "printed_values", "unverified_numbers"]
+#: What a summary says when it leans on a trend law, by the law's component.
+LAW_VOCABULARY: dict[str, tuple[str, ...]] = {
+    "CriticalDivergence": ("critical slowing", "critical divergence", "critical fluctuation"),
+    "Arrhenius": ("activation energy", "thermally activated", "arrhenius"),
+    "Redfield": ("correlation time", "redfield"),
+    "OrderParameter": ("critical exponent",),
+}
+
+_FIT_HEADER = re.compile(r"^Fit of (?P<expression>.+?) to ", re.MULTILINE)
+
+
+def unsupported_laws(draft: str, log_text: str) -> list[tuple[str, str]]:
+    """``(law, phrase)`` for vocabulary of a law no logged fit established.
+
+    A law counts as established when at least one logged ``trend --model`` fit
+    of an expression containing it did not print ``LAW NOT ESTABLISHED``; a law
+    never fitted at all is not judged here.
+    """
+    verdicts: dict[str, bool] = {}
+    for block in re.split(r"(?=^Fit of )", log_text, flags=re.MULTILINE):
+        header = _FIT_HEADER.match(block)
+        if header is None:
+            continue
+        established = "LAW NOT ESTABLISHED" not in block.split("\n$ asymmetry", 1)[0]
+        for law in LAW_VOCABULARY:
+            if law in header.group("expression"):
+                verdicts[law] = verdicts.get(law, False) or established
+    lowered = draft.lower()
+    return [
+        (law, phrase)
+        for law, established in verdicts.items()
+        if not established
+        for phrase in LAW_VOCABULARY[law]
+        if phrase in lowered
+    ]
+
+
+__all__ = [
+    "LAW_VOCABULARY",
+    "Unverified",
+    "printed_values",
+    "unsupported_laws",
+    "unverified_numbers",
+]

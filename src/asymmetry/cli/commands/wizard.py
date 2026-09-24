@@ -109,6 +109,17 @@ def run(args: argparse.Namespace) -> None:
     recipe_path = (
         None if result.recipe is None else workdir.write_recipe(recipe_name, result.recipe)
     )
+    from asymmetry.core.fitting.fit_wizard import effective_window_duration
+
+    peaks, unfitted = _spectral_lines(result, effective_window_duration(dataset))
+    line_recipe = (
+        None
+        if not unfitted or result.recipe is None
+        else (
+            unfitted[0],
+            workdir.write_recipe(f"line-{args.run}", _line_recipe(result, dataset, unfitted[0])),
+        )
+    )
 
     plot_path = None
     plot_note = None
@@ -137,20 +148,49 @@ def run(args: argparse.Namespace) -> None:
                 wizard_path=str(wizard_path),
                 recipe_name=None if recipe_path is None else recipe_name,
                 recipe_path=None if recipe_path is None else str(recipe_path),
+                line_recipe_name=None if line_recipe is None else f"line-{args.run}",
                 plots=[] if plot_path is None else [str(plot_path)],
                 plot_note=plot_note,
             )
         )
         return
 
-    from asymmetry.core.fitting.fit_wizard import effective_window_duration
+    print(
+        _render(
+            args.folder, peaks, line_recipe, result, wizard_path, recipe_path, plot_path, plot_note
+        )
+    )
 
-    duration_us = effective_window_duration(dataset)
-    print(_render(args.folder, duration_us, result, wizard_path, recipe_path, plot_path, plot_note))
+
+def _spectral_lines(result, duration_us: float) -> tuple[list[dict], list[float]]:
+    """The detected lines worth reading, and those the recommendation does not fit.
+
+    A "line" completing under MIN_CYCLES_IN_EFFECTIVE_WINDOW cycles in the
+    informative window is relaxation leaking into the lowest bins, not
+    precession (the survey's rule too), so it is dropped.
+    """
+    from asymmetry.core.fitting.fit_wizard import MIN_CYCLES_IN_EFFECTIVE_WINDOW
+
+    peaks = [
+        peak
+        for peak in result.recommendation["peak_analysis"]["peaks"]
+        if peak["frequency_mhz"] * duration_us >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
+    ]
+    fitted = (
+        []
+        if result.recipe is None
+        else [p.value for p in result.recipe.parameters if p.name.startswith("frequency")]
+    )
+    unfitted = [
+        peak["frequency_mhz"]
+        for peak in peaks
+        if not any(abs(value / peak["frequency_mhz"] - 1.0) < 0.1 for value in fitted)
+    ]
+    return peaks, unfitted
 
 
-def _line_test_hint(folder: str, result, frequency: float) -> list[str]:
-    """A ``recipe`` command adding the detected line to the recommended model.
+def _line_recipe(result, dataset, frequency: float):
+    """The recommendation plus the detected line, as a recipe to fit next.
 
     The line is added, not substituted: a weak line sits on the relaxation the
     recommendation already describes, and a bare oscillation fitted to the
@@ -158,23 +198,20 @@ def _line_test_hint(folder: str, result, frequency: float) -> list[str]:
     amplitude starts at a tenth of the recommendation's largest one, so the fit
     does not begin by giving the line the whole asymmetry.
     """
-    from asymmetry.core.fitting.composite import CompositeModel
+    from asymmetry.core.workflow.recipe import FitRecipe
 
-    expression = f"{result.recipe.expression} + Oscillatory * Exponential"
-    names = CompositeModel.from_expression(expression).param_names
-    amplitude = next(name for name in reversed(names) if name.startswith("A_"))
-    line = next(name for name in reversed(names) if name.startswith("frequency"))
-    largest = max(
-        (abs(p.value) for p in result.recipe.parameters if p.name.startswith("A_")),
-        default=1.0,
+    recommended = {p.name: p.value for p in result.recipe.parameters}
+    recipe = FitRecipe.from_expression(
+        f"{result.recipe.expression} + Oscillatory * Exponential",
+        dataset=dataset,
+        t_min=result.recipe.t_min,
+        t_max=result.recipe.t_max,
     )
-    return [
-        "A detected line the recommendation does not fit is still a candidate. To test it,"
-        " add it to the recommended model and check the fitted amplitude against its error:",
-        f"  asymmetry recipe {shlex.quote(folder)} --run {result.run_number} "
-        f"--name line-{result.run_number} --expression {shlex.quote(expression)} "
-        f"--initial {line}={frequency:.4g} --initial {amplitude}={0.1 * largest:.3g}",
-    ]
+    amplitude = next(n for n in reversed(recipe.parameter_names) if n.startswith("A_"))
+    line = next(n for n in reversed(recipe.parameter_names) if n.startswith("frequency"))
+    largest = max((abs(v) for n, v in recommended.items() if n.startswith("A_")), default=1.0)
+    starts = {n: v for n, v in recommended.items() if n in recipe.parameter_names}
+    return recipe.with_overrides(initial=starts | {line: frequency, amplitude: 0.1 * largest})
 
 
 def _names(text: str) -> list[str]:
@@ -201,7 +238,8 @@ def _survey_geometry(workdir, run_number: int) -> str | None:
 
 def _render(
     folder: str,
-    duration_us: float,
+    peaks: list[dict],
+    line_recipe: tuple[float, Path] | None,
     result,
     wizard_path: Path,
     recipe_path: Path | None,
@@ -251,16 +289,6 @@ def _render(
     # The spectral evidence and the fitted values are what an analyst reads
     # first: a precession frequency found here is a finding even when the
     # recommendation is not the model the scan ends up fitted with.
-    from asymmetry.core.fitting.fit_wizard import MIN_CYCLES_IN_EFFECTIVE_WINDOW
-
-    # A "line" completing under MIN_CYCLES_IN_EFFECTIVE_WINDOW cycles in the
-    # record is relaxation leaking into the lowest bins, not precession (the
-    # survey's rule too), so it is neither printed nor offered as a seed.
-    peaks = [
-        peak
-        for peak in result.recommendation["peak_analysis"]["peaks"]
-        if peak["frequency_mhz"] * duration_us >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
-    ]
     lines.append(
         "Spectral lines: "
         + (
@@ -269,22 +297,14 @@ def _render(
             else "none detected"
         )
     )
-    fitted_lines = (
-        []
-        if result.recipe is None
-        else [
-            parameter.value
-            for parameter in result.recipe.parameters
-            if parameter.name.startswith("frequency")
-        ]
-    )
-    unfitted = [
-        peak["frequency_mhz"]
-        for peak in peaks
-        if not any(abs(value / peak["frequency_mhz"] - 1.0) < 0.1 for value in fitted_lines)
-    ]
-    if unfitted and result.recipe is not None:
-        lines.extend(_line_test_hint(folder, result, unfitted[0]))
+    if line_recipe is not None:
+        frequency, path = line_recipe
+        lines.append(
+            f"A detected line at {frequency:.4g} MHz is not in the recommendation. Recipe "
+            f"line-{result.run_number} ({path}) adds it, amplitude started small — fit it next "
+            f"and check the line's amplitude against its error: asymmetry fit "
+            f"{shlex.quote(folder)} --run {result.run_number} --recipe line-{result.run_number}"
+        )
     if result.recipe is not None:
         lines.append(
             "Recommended fit: "
