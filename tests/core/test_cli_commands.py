@@ -1613,7 +1613,11 @@ def test_a_trend_law_that_did_not_fit_is_named_as_not_established(changes, reaso
     ("order_key", "free_params", "expected"),
     [
         ("field", ["A_1", "Lambda", "A_bg"], ["Redfield --param Lambda"]),
-        ("field", ["A_1", "Lambda_1", "Lambda_2"], ["Redfield --param Lambda_1", "splits the rate"]),
+        (
+            "field",
+            ["A_1", "Lambda_1", "Lambda_2"],
+            ["Redfield --param Lambda_1", "splits the rate"],
+        ),
         ("temperature", ["A_1", "frequency", "Lambda"], ["OrderParameter --param frequency"]),
         ("concentration", ["A_1", "Lambda_2"], ["Linear --param Lambda_2"]),
         ("run", ["A_1"], ["<law> --param <column>"]),
