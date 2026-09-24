@@ -1125,6 +1125,25 @@ verbatim; `trend` without `--model` names the law for its axis and parameters
 OrderParameter on a frequency; Linear on a supplied axis); skill: a caveat is
 not a reason to withhold a fitted result.
 
+#### Pass 9 — 2026-09-24, two repeats
+
+| Dataset | 9a | 9b |
+|---|---|---|
+| plateau-redfield | pass | fail (shared the rate over a 17-field scan with `fit-global`) |
+| sn-critical-field | fail (took the setpoint axis against the logged evidence) | pass |
+| euo-psi | pass | pass (though it called the survey's cold-run lines "aliases") |
+| maleic-mu-kinetics | fail (Arrhenius per sample; no concentration fit) | fail (reported, then withdrew, the converged slope) |
+
+Every dataset now passes some of the time (≈50 % each since pass 5, maleic
+lower). The reply-delivery fix held: no one-line replies. Changes: a
+`survey_line_mhz` column beside fitted frequencies in `fit-series` trends; a
+note when a series is ordered by the setpoint while the logged temperature
+departs; a note when `fit-global` shares a rate over a many-field scan; a
+converged poor-χ²ᵣ law says it is the result; skill text separating a
+decoupling triplet from a field scan and making the logged temperature the
+default axis; maleic rubric M3/M4 wording (matched setpoints; a caveated slope
+counts, a withdrawn one does not).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
