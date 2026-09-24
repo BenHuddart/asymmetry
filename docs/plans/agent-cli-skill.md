@@ -1007,6 +1007,37 @@ Sn, the plateau cooldown and the EMU cuprate runs, none in nickel or YMnAl);
 `wizard`/`fit-series` take `--tmin`/`--tmax`; skill text that a failed trend
 law does not supply the physics and that derived σ, % and ratios are numbers.
 
+#### Pass 4 — 2026-09-24, two repeats
+
+| Dataset | 4a | 4b |
+|---|---|---|
+| plateau-redfield | pass | fail (Redfield on one rate of a two-exponential model; a hand-computed %) |
+| euo-psi | pass | fail (number rule only: a hand-computed "~9 %") |
+| sn-critical-field | fail | fail |
+| maleic-mu-kinetics | fail | fail |
+
+3/8, down from 5/8 — run-to-run variance is large. The new outputs were read
+where they were decisive: `TEMPERATURE:` caught the Sn 8 K block and the
+plateau cooldown in every run, `ALPHA STEP` was respected in both maleic runs,
+EuO quoted the wizard's printed 30 MHz line. Fourier candidates were ignored.
+Root causes: Sn — the wizard printed the 1.913 MHz line but the recommendation
+was a relaxation and no seeded fit followed; the survey's merged 23-run 40 G
+"scan" was taken as the scan. Maleic 4a took untreated water for the blank and
+abandoned Mu for the folder after one failed fit; 4b printed k_Mu from
+`trend --model Linear` (χ²ᵣ 23) and then withheld it. Plateau 4b fitted
+Redfield to `Lambda_1` of a two-rate model because AICc preferred it.
+
+A deeper cause surfaced while fixing these: the survey's `other` verdict named
+a ~0.1 MHz "line" on nearly every weak-field and decoupling run — relaxation
+leakage completing under a cycle — while the fingerprint's damped-line scan
+held the real line (2.806 MHz, SNR 68 on the Mu blank; 1.91 MHz on Sn). Fixed
+in the survey, with a unit test; calibration candidates on the corpus are
+unchanged and the false copper/YMnAl `other` lines are gone. Also: seeded
+`recipe` commands printed by `wizard`/`fourier`, √χ²ᵣ-scaled errors and a
+multi-component warning in `trend --model`, and skill text (a single-component
+`--param`; report a poor-χ²ᵣ law with its caveat; one negative run is not a
+negative folder; no invented units).
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
