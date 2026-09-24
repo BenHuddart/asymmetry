@@ -419,3 +419,31 @@ def test_a_global_parameter_the_recipe_does_not_have_is_rejected(
             global_params=["Nope"],
             name="x",
         )
+
+
+def test_a_frequency_trend_sets_the_surveyed_line_beside_the_fit() -> None:
+    from asymmetry.core.workflow.series import build_trend_table, survey_line
+
+    def dataset(metadata: dict) -> MuonDataset:
+        return MuonDataset(np.zeros(3), np.zeros(3), np.ones(3), metadata)
+
+    assert survey_line(dataset({"precession": "other", "precession_frequency_mhz": 29.9})) == 29.9
+    assert survey_line(dataset({"precession": "none", "precession_frequency_mhz": None})) is None
+    assert survey_line(dataset({})) is None
+
+    results = [
+        {
+            "run": run,
+            "x": x,
+            "parameters": {"frequency": f},
+            "uncertainties": {"frequency": 0.1},
+            "quality_flags": [],
+        }
+        for run, x, f in ((1, 10.0, 29.8), (2, 60.0, 0.4))
+    ]
+    trend = build_trend_table(
+        results, ["frequency"], "temperature", survey_lines={1: 29.9, 2: None}
+    )
+    assert "survey_line_mhz" in trend.columns
+    assert [row["survey_line_mhz"] for row in trend.rows] == [29.9, None]
+    assert "survey_line_mhz" not in build_trend_table(results, ["frequency"], "run").columns

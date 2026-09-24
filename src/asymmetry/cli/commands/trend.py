@@ -317,6 +317,11 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
             f"LAW NOT ESTABLISHED ({'; '.join(reasons)}): {fit['expression']} does not describe "
             f"this trend. Describe the trend in plain words and do not use this law's physics."
         )
+    if fit["success"] and scale > 1.0 and not (fit["params_at_bound"] or undetermined):
+        lines.append(
+            "This converged: it is the result. Report it with the scaled errors and the "
+            "chi2_red as a caveat (the law describes the trend approximately) — do not withhold it."
+        )
     base = re.sub(r"_\d+$", "", fit["param"])
     siblings = [
         name for name in free_params if name != fit["param"] and re.sub(r"_\d+$", "", name) == base

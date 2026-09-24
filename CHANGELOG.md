@@ -204,6 +204,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against field, `OrderParameter` for a frequency against temperature, `Linear` against a
   supplied quantity) and warns when a rate is split between two components; `audit` lists
   whole-number percentages and "factor of" ratios no command printed.
+- **A frequency series carries the survey's line beside the fit.** `fit-series` adds a
+  `survey_line_mhz` trend column when its model fits a frequency, notes runs whose logged
+  temperature departs when ordered by the setpoint, and `fit-global` notes that a shared rate
+  over a many-field scan cannot show λ(B). A converged poor-χ²ᵣ trend law says it is the result,
+  to be reported with its caveat.
 
 ### Changed
 

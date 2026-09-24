@@ -508,3 +508,13 @@ def test_a_zero_field_line_is_spontaneous_precession(monkeypatch, fingerprint, e
     dataset = MuonDataset(time, np.zeros_like(time), np.ones_like(time), {"run_number": 1})
     evidence = survey_module.precession_evidence(dataset, 0.0)
     assert (evidence.state, evidence.frequency_mhz) == expected
+
+
+def test_departs_needs_both_an_absolute_and_a_relative_offset() -> None:
+    from asymmetry.core.workflow.survey import departs
+
+    assert departs(2.0, 8.2)
+    assert not departs(1.6, 1.8)
+    assert not departs(300.0, 302.0)
+    assert not departs(None, 5.0)
+    assert not departs(5.0, None)

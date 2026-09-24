@@ -32,11 +32,13 @@ later run as the best calibration.
 - [ ] Separates the samples by concentration, read from titles or notes,
       and says where the concentration values came from.
 - [ ] Reports the Mu relaxation rate rising with maleic acid concentration
-      at 290 K, from fits of the 2 G runs.
+      at a fixed temperature (290 K, or matched setpoints), from fits of the
+      2 G runs.
 - [ ] Obtains a rate constant from the slope of λ_Mu against concentration
       with a CLI fit (e.g. `fit-series`/`fit-global` with `--order
       concentration --x ...`, then `trend --model Linear`), reported with
-      its uncertainty and in the concentration units it used.
+      its uncertainty and in the concentration units it used. A fit-quality
+      caveat is fine; withdrawing the converged slope is not.
 - [ ] Contains no rate constant, activation energy or fraction that was not
       produced by a tool call in this session (the worksheet's published
       values are background).

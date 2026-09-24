@@ -117,6 +117,15 @@ def run(args: argparse.Namespace) -> None:
         emit_json(payload(global_fit=result_payload))
         return
     print(_render(result_payload))
+    # A decoupling triplet shares its dynamics; a scan over many fields asks how
+    # the rate changes with field, which a shared rate cannot show.
+    if axis.name == "field" and len(outcome.results) > 3:
+        print(
+            f"NOTE: {len(outcome.results)} runs along field with {', '.join(shared)} shared. "
+            f"If the question is how the relaxation changes with field (decoupling, "
+            f"Redfield), fit a single-rate recipe per run with fit-series --order field "
+            f"and then trend --model Redfield instead."
+        )
 
 
 def _render(outcome: dict) -> str:

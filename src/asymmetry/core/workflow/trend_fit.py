@@ -100,7 +100,7 @@ def fit_trend(
     value_columns = [
         column
         for column in trend.columns
-        if column not in ("run", "x", "flags") and not column.endswith("_err")
+        if column not in ("run", "x", "flags", "survey_line_mhz") and not column.endswith("_err")
     ]
     if param not in value_columns:
         raise ValueError(

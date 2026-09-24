@@ -558,7 +558,9 @@ along that axis with its run-local parameters, and the stored
 fits a simultaneous fit exactly as it does a series. The shared values and
 their uncertainties are stored beside it; ``--plot`` writes one fit plot per
 run. The command fits one group at a time—repeat it for each temperature when
-analysing a sequence of triplets.
+analysing a sequence of triplets. Over more than three runs ordered by field it
+notes that a shared rate cannot show how relaxation changes with field, which
+is a ``fit-series`` and Redfield question.
 
 ``fit-series``
 ~~~~~~~~~~~~~~
@@ -587,6 +589,12 @@ quantity given values by hand is refused.
 from the first run in scan order — see `Series fitting`_ for why this
 matters. ``--global P,Q`` pins those parameters at their recipe value for
 every run rather than fitting them (see `The fit recipe`_). Writes
+A series that fits a frequency adds a ``survey_line_mhz`` column: the line the
+survey measured in each run, beside the fitted frequency, so a fit that drifted
+off the measured line or found one where the survey saw none shows in the
+table. Ordered by ``temperature`` (the setpoint) while the logged sample
+temperature departs on some of its runs, the command ends with a note naming
+them. Writes
 ``series/<name>.json`` (per-run results, a trend table, and quality flags —
 the default name is ``series-<recipe stem>``), plus a PNG per run
 (``plots/<name>/<run>.png``) and one trend PNG per free parameter

@@ -465,23 +465,49 @@ def fit_series(
         # chain hit them.
         reseeded_runs=[run for run in runs if run in reseeded],
         results=results,
-        trend=build_trend_table(results, free_params, axis.name),
+        trend=build_trend_table(
+            results,
+            free_params,
+            axis.name,
+            survey_lines=(
+                {run: survey_line(datasets_by_run[run]) for run in runs}
+                if any(name.startswith("frequency") for name in free_params)
+                else None
+            ),
+        ),
     )
+
+
+def survey_line(dataset: MuonDataset) -> float | None:
+    """The line the folder's survey measured in this run (MHz), or ``None``.
+
+    A reduced run carries its survey row as metadata; a line is recorded there
+    when the survey found precession (``larmor`` or ``other``).
+    """
+    if dataset.metadata.get("precession") not in ("larmor", "other"):
+        return None
+    return float(dataset.metadata["precession_frequency_mhz"])
 
 
 def build_trend_table(
     results: Sequence[Mapping[str, Any]],
     free_params: Sequence[str],
     order_key: str,
+    survey_lines: Mapping[int, float | None] | None = None,
 ) -> TrendTable:
     """The trend table for a series: run, scan coordinate, each free parameter, flags.
 
     Every run that was fitted has a row, flagged or not — see the module
-    docstring.
+    docstring. With *survey_lines*, a ``survey_line_mhz`` column sets each
+    run's surveyed line beside its fitted frequencies, so a fit that has
+    drifted off the measured line, or found one where the survey saw none,
+    shows in the table.
     """
     columns = ["run", "x"]
     for name in free_params:
         columns.extend([name, f"{name}_err"])
+    if survey_lines is not None:
+        columns.append("survey_line_mhz")
     columns.append("flags")
 
     rows: list[dict[str, Any]] = []
@@ -490,6 +516,8 @@ def build_trend_table(
         for name in free_params:
             row[name] = entry["parameters"].get(name)
             row[f"{name}_err"] = entry["uncertainties"].get(name)
+        if survey_lines is not None:
+            row["survey_line_mhz"] = survey_lines[entry["run"]]
         row["flags"] = list(entry["quality_flags"])
         rows.append(row)
     return TrendTable(order_key=order_key, columns=columns, rows=rows)
@@ -506,4 +534,5 @@ __all__ = [
     "fit_series",
     "scan_axis",
     "supplied_axis",
+    "survey_line",
 ]

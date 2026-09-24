@@ -465,16 +465,20 @@ TEMPERATURE_DEPARTURE_K = 0.3
 TEMPERATURE_DEPARTURE_FRACTION = 0.01
 
 
+def departs(setpoint: float | None, logged: float | None) -> bool:
+    """Whether a logged sample temperature departs from its setpoint (see above)."""
+    if setpoint is None or logged is None:
+        return False
+    offset = abs(logged - setpoint)
+    return offset > TEMPERATURE_DEPARTURE_K and offset > TEMPERATURE_DEPARTURE_FRACTION * abs(
+        setpoint
+    )
+
+
 def temperature_departures(rows: list[RunRow]) -> list[int]:
     """Runs whose logged sample temperature departs from the setpoint (see above)."""
     return [
-        row.run_number
-        for row in rows
-        if row.temperature is not None
-        and row.sample_temperature_logged is not None
-        and abs(row.sample_temperature_logged - row.temperature) > TEMPERATURE_DEPARTURE_K
-        and abs(row.sample_temperature_logged - row.temperature)
-        > TEMPERATURE_DEPARTURE_FRACTION * abs(row.temperature)
+        row.run_number for row in rows if departs(row.temperature, row.sample_temperature_logged)
     ]
 
 
@@ -892,6 +896,7 @@ __all__ = [
     "alpha_steps",
     "build_run_row",
     "calibration_verdict",
+    "departs",
     "has_file_deadtime",
     "precession_evidence",
     "resolve_row_geometry",

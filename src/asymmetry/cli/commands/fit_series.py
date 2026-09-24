@@ -168,6 +168,25 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(outcome, series_path, plot_paths))
+    if args.order == "temperature":
+        from asymmetry.core.workflow.survey import departs
+
+        departing = sorted(
+            run
+            for run, dataset in datasets.items()
+            if departs(
+                dataset.metadata.get("temperature"),
+                dataset.metadata.get("sample_temperature_logged"),
+            )
+        )
+        if departing:
+            print(
+                f"NOTE: ordered by the setpoint, but the logged sample temperature departs on "
+                f"{len(departing)} of these runs ({', '.join(str(run) for run in departing)}). "
+                f"Decide which axis the physics follows — a parameter that is smooth against "
+                f"one and not the other says which — and refit with --order "
+                f"sample_temperature_logged if it is the logged one."
+            )
 
 
 def _render(outcome, series_path: Path, plot_paths: list[Path] | None = None) -> str:

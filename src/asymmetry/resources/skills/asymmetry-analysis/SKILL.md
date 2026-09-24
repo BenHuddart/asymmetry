@@ -139,7 +139,8 @@ below.
 their setpoint — a cryostat still cooling, a block of runs at the wrong
 temperature, or a sensor offset. It lists them in blocks with each block's
 offset (T log − T/K), and you decide which to trust, block by block, and say
-why. A block sitting at a different temperature from its neighbours is a
+why. The logged sample temperature is the default — it is the measured one;
+the setpoint needs a reason (a logged value the sample could not have had). A block sitting at a different temperature from its neighbours is a
 different measurement, not a faulty thermometer to ignore. A steady offset the
 sample could not have had — a liquid logged above its boiling point, a
 cryostat base temperature below what the setpoint allows — points to the
@@ -502,8 +503,12 @@ asymmetry fit-global <folder> --runs 51341-51343 --recipe dynamic-gkt \
 `--field-param B_L` sets `B_L` from each run's recorded field and fixes it for
 that run. Other parameters not listed in `--shared` remain run-local. Check the
 model's actual parameter names in the recipe; never copy the example names
-blindly. A decoupling triplet normally shares the dynamic relaxation
-parameters and physically common amplitudes, while the applied LF differs.
+blindly. A decoupling **triplet** — a few fields at one temperature, repeated
+across temperatures — normally shares the dynamic relaxation parameters and
+physically common amplitudes, while the applied LF differs. A **field scan**
+over many fields at one temperature asks the opposite question — how the rate
+changes with field — so it is not a `fit-global`: fit one rate per run with
+`fit-series --order field` and then `trend --model Redfield`.
 `fit-global` takes the same `--order`/`--x` as `fit-series` (default `run`),
 and its table and stored trend carry every run-local parameter along that
 axis — so `asymmetry trend <folder> --series <name>` reads it, and
@@ -771,6 +776,11 @@ This is the table your Results section comes from: the scan variable and every
 fitted parameter with its uncertainty, per run, with the flags carried
 through. `--csv <path>` also writes it as CSV. `--plot` writes one PNG per
 parameter, with flagged points drawn distinctly.
+
+When the series fits a frequency, the table carries `survey_line_mhz`: the line
+the survey measured in each run. A fitted frequency far from it, or a line
+fitted where the survey found none (`-`), is the fit locking onto noise or an
+artefact — trust the survey's line and say which runs disagree.
 
 **Look at the trend PNGs with the Read tool before writing anything.** A trend
 that is flat, that jumps, or whose scatter swamps the error bars is telling you
