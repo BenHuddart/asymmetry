@@ -1306,6 +1306,21 @@ determined T_g because ν was not.
 A first pass-16 wave was voided: every session ended "Request timed out" at
 the same moment (as in pass 15).
 
+#### Pass 16 — 2026-09-24, reliability repeats on the pass-15 tooling
+
+| Dataset | 16a |
+|---|---|
+| plateau-redfield | pass (free-m Redfield gave m = −1.55, printed as "determined") |
+| sn-critical-field | pass (Tc 3.488 ± 0.013 K against logged T; the 6 K block kept as real) |
+| euo-psi | fail, judgement (no ZF paramagnetic λ: the ordered recipe ran over all 38 ZF runs and the 16 lineless warm runs were excluded, not refitted) |
+| maleic-mu-kinetics | pass (k_Mu slope with a caveat; but Arrhenius on λ_Mu read as a reaction Ea — the Should-level trap) |
+
+Two runs still hit the shell's 120 s default on `wizard`/`fit-series`; both
+recovered by polling and neither ended a turn in the background. The EuO
+failure is the pass-15b one again: the skill text on fitting the paramagnetic
+side was in context both times and not acted on, while the output showed only
+flags and the `OrderParameter` hint.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
