@@ -24,7 +24,7 @@ from dataclasses import dataclass
 _NUMBER = re.compile(r"(?<![\w.])[-+−]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
 #: Suffixes that make a number a derived multiple, significance or percentage.
-_DERIVED_SUFFIX = re.compile(r"\s?(?:×|x|σ|sigma|%|percent)(?![a-zA-Z])")
+_DERIVED_SUFFIX = re.compile(r"\s?(?:×|x|σ|sigma|%|percent|-fold|fold|\s?times)(?![a-zA-Z])")
 
 #: Phrases that make the number after them a ratio ("a factor of 3").
 _RATIO_PREFIX = re.compile(r"(?:factor of|times|fold)\s*$", re.IGNORECASE)

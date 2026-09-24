@@ -34,6 +34,8 @@ def test_printed_values_verify_at_the_precision_they_are_written() -> None:
         # ... but a decimal percentage is an asymmetry in its unit.
         ("A(0) of 69.17 %", []),
         ("a factor of 3 increase", ["3"]),
+        ("rises roughly 3.5-fold", ["3.5-fold"]),
+        ("about 4 times faster", ["4 times"]),
         # A multiple a command printed verbatim is fine.
         ("the candidate at 3.1x the noise floor", []),
         # A negative printed value verifies a negative in the draft.

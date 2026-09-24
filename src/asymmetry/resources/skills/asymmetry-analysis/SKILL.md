@@ -140,7 +140,10 @@ their setpoint — a cryostat still cooling, a block of runs at the wrong
 temperature, or a sensor offset. It lists them in blocks with each block's
 offset (T log − T/K), and you decide which to trust, block by block, and say
 why. The logged sample temperature is the default — it is the measured one;
-the setpoint needs a reason (a logged value the sample could not have had). A block sitting at a different temperature from its neighbours is a
+the setpoint needs a reason (a logged value the sample could not have had).
+Whichever you decide for a block holds everywhere those runs are used: a
+sensor you judged faulty for one series cannot supply an argument against a
+comparison in another. A block sitting at a different temperature from its neighbours is a
 different measurement, not a faulty thermometer to ignore. A steady offset the
 sample could not have had — a liquid logged above its boiling point, a
 cryostat base temperature below what the setpoint allows — points to the
@@ -348,7 +351,10 @@ The wizard fits a scoped set of candidate models to one reduced run and ranks
 them. Screen **the run whose spectrum shows the effect you are measuring most
 clearly** — not every run, and not reflexively the coldest one.
 
-Pick it from the `reduce` table and the reduced PNGs, not from the run list:
+Pick it from the `reduce` table and the reduced PNGs, not from the run list.
+For a scan, screen a run from inside the range the question is about — the
+middle of a field scan, not its zero-field end, whose physics (static fields)
+is the one the field removes:
 
 - The clearest run for a **relaxation** effect (a glass freezing, a dynamic
   rate) is where the relaxation is *fastest but still resolved* — usually the
@@ -475,6 +481,7 @@ The per-run table gives reduced χ², a verdict and quality flags:
 | `large_rel_err` | A free parameter's σ/value is large — the data barely constrained it. |
 | `bound_pinned` | A free parameter sat on a bound. |
 | `spurious_reseeded` | The fit landed on the spurious branch (amplitude collapse or frequency jump) near a transition, whether or not a reseed rescued it. |
+| `amplitude_exceeds_data` | The fitted amplitudes (backgrounds included) add up to several times the record's own asymmetry: two components cancelling to describe a signal the data do not hold. The fit's parameters are not physical. |
 
 A `poor` χ² verdict is common on high-statistics ISIS data (the band is tight
 with thousands of degrees of freedom) and is not by itself a reason to discard

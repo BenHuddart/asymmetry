@@ -81,7 +81,8 @@ from typing import Any
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
 from asymmetry.core.fitting.engine import FitEngine
-from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.models import LINEAR_PARAM_ROLE_NAMES
+from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
 from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.fitting.seeding import SeedContext, seed_parameters
 from asymmetry.core.fitting.series import fit_asymmetry_series
@@ -95,6 +96,32 @@ from asymmetry.core.workflow.recipe import FitRecipe
 #: count, a magnet current) is supplied per run by the analyst through
 #: :func:`supplied_axis`.
 ORDER_KEYS = ("temperature", "sample_temperature_logged", "field", "run")
+
+
+#: A fit whose amplitudes (backgrounds included) add up to more than this many
+#: times the largest early-time asymmetry the record holds is describing a
+#: signal the data do not contain — typically two amplitudes cancelling.
+AMPLITUDE_EXCESS_FACTOR = 3.0
+AMPLITUDE_EXCEEDS_DATA = "amplitude_exceeds_data"
+
+
+def amplitude_exceeds_data(dataset: MuonDataset, parameters: Mapping[str, float]) -> bool:
+    """Whether a fit's amplitudes add up to more than the record can hold (see above).
+
+    The record's scale is the 95th percentile of ``|A|`` over its first tenth —
+    robust to an oscillation, whose early mean can sit near zero.
+    """
+    import numpy as np
+
+    asymmetry = np.abs(np.asarray(dataset.asymmetry, dtype=float))
+    early = asymmetry[: max(5, asymmetry.size // 10)]
+    scale = max(float(np.percentile(early, 95)), 1.0)
+    total = sum(
+        abs(value)
+        for name, value in parameters.items()
+        if split_parameter_name(name)[0] in LINEAR_PARAM_ROLE_NAMES
+    )
+    return total > AMPLITUDE_EXCESS_FACTOR * scale
 
 
 @dataclass(frozen=True)
@@ -313,10 +340,13 @@ def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
         t_min=recipe.t_min,
         t_max=recipe.t_max,
     )
+    summary = fit_result_summary(result)
+    if amplitude_exceeds_data(record, summary["parameters"]):
+        summary["quality_flags"] = [*summary["quality_flags"], AMPLITUDE_EXCEEDS_DATA]
     return {
         "run": int(dataset.run_number),
         "free_params": recipe.free_parameter_names(),
-        **fit_result_summary(result),
+        **summary,
     }
 
 
@@ -443,6 +473,10 @@ def fit_series(
         # scan), so the summary is asked for those flags rather than
         # re-deriving a narrower set from the result on its own.
         summary = fit_result_summary(fitted[run], extra_flags=tuple(sorted(quality.quality_flags)))
+        # Not a member-quality flag (that vocabulary is the engine's): the
+        # workflow's own check of the fit against the record's scale.
+        if amplitude_exceeds_data(records[run], summary["parameters"]):
+            summary["quality_flags"] = sorted([*summary["quality_flags"], AMPLITUDE_EXCEEDS_DATA])
         results.append(
             {
                 "run": int(run),
@@ -524,11 +558,14 @@ def build_trend_table(
 
 
 __all__ = [
+    "AMPLITUDE_EXCEEDS_DATA",
+    "AMPLITUDE_EXCESS_FACTOR",
     "ORDER_KEYS",
     "ScanAxis",
     "SeriesBranch",
     "SeriesOutcome",
     "TrendTable",
+    "amplitude_exceeds_data",
     "build_trend_table",
     "fit_one",
     "fit_series",

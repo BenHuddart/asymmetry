@@ -588,7 +588,11 @@ quantity given values by hand is refused.
 ``--start RUN`` chains outward from that run in both directions instead of
 from the first run in scan order — see `Series fitting`_ for why this
 matters. ``--global P,Q`` pins those parameters at their recipe value for
-every run rather than fitting them (see `The fit recipe`_). A series that fits a frequency adds a ``survey_line_mhz`` column: the line the
+every run rather than fitting them (see `The fit recipe`_). Besides the engine's quality flags, a run whose fitted amplitudes
+(backgrounds included) add up to more than three times the record's own
+early-time asymmetry is flagged ``amplitude_exceeds_data`` — two components
+cancelling to describe a signal the data do not hold; ``fit`` applies the same
+check. A series that fits a frequency adds a ``survey_line_mhz`` column: the line the
 survey measured in each run, beside the fitted frequency, so a fit that drifted
 off the measured line or found one where the survey saw none shows in the
 table. Ordered by ``temperature`` (the setpoint) while the logged sample

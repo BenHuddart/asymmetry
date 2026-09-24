@@ -317,6 +317,16 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
             f"LAW NOT ESTABLISHED ({'; '.join(reasons)}): {fit['expression']} does not describe "
             f"this trend. Describe the trend in plain words and do not use this law's physics."
         )
+    if (
+        fit["success"]
+        and fit["expression"].strip() == "Linear"
+        and fit["order_key"] not in _FILE_AXES
+    ):
+        lines.append(
+            f"The slope m is the change in {fit['param']} per unit {fit['order_key']}: for a "
+            f"rate against a concentration it is the rate constant. Report m with its error, "
+            f"in {fit['param']}'s unit per unit {fit['order_key']}."
+        )
     if fit["success"] and scale > 1.0 and not (fit["params_at_bound"] or undetermined):
         lines.append(
             "This converged: it is the result. Report it with the scaled errors and the "

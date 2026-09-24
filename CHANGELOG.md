@@ -209,6 +209,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temperature departs when ordered by the setpoint, and `fit-global` notes that a shared rate
   over a many-field scan cannot show λ(B). A converged poor-χ²ᵣ trend law says it is the result,
   to be reported with its caveat.
+- **`fit` and `fit-series` flag amplitudes the data cannot hold** (`amplitude_exceeds_data`:
+  amplitudes summing past three times the record's early-time asymmetry); `audit` also lists
+  "-fold" and "N times" multiples; a `Linear` trend against a supplied quantity says its slope
+  is the rate constant to report.
 
 ### Changed
 

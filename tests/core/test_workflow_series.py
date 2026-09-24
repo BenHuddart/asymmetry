@@ -447,3 +447,16 @@ def test_a_frequency_trend_sets_the_surveyed_line_beside_the_fit() -> None:
     assert "survey_line_mhz" in trend.columns
     assert [row["survey_line_mhz"] for row in trend.rows] == [29.9, None]
     assert "survey_line_mhz" not in build_trend_table(results, ["frequency"], "run").columns
+
+
+def test_amplitudes_far_beyond_the_record_are_flagged() -> None:
+    from asymmetry.core.workflow.series import amplitude_exceeds_data
+
+    time = np.linspace(0.0, 8.0, 400)
+    # A 20 % precession: its early mean is near zero, its scale is not.
+    record = MuonDataset(time, 20.0 * np.cos(2 * np.pi * 1.4 * time), np.ones(400), {})
+    assert not amplitude_exceeds_data(record, {"A_1": 20.0, "frequency": 1.4, "A_bg": 0.5})
+    # Two amplitudes cancelling to describe the same 20 % are not.
+    assert amplitude_exceeds_data(record, {"A_1": 143.6, "Lambda": 3.0, "A_bg": -120.0})
+    # Non-amplitude parameters never count.
+    assert not amplitude_exceeds_data(record, {"A_1": 18.0, "nu": 16351.0})
