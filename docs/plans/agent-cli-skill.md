@@ -1400,6 +1400,47 @@ survey named copper's stray LF runs. What misfired, to fix next (all CLI):
 
 Paused here at the maintainer's request.
 
+#### Where evaluation stands — handoff, 2026-09-24
+
+Host Claude Code, model `sonnet`, one run per case per wave, scored against the
+rubrics with `scoring_brief.md`. Counts exclude voids (API outages).
+
+| Case | Set | Record | Window | Typical failure now |
+|---|---|---|---|---|
+| plateau-redfield | trend-fit | 8/10 | passes 12–17a | harness: a wizard left in the background (16b); otherwise passes |
+| maleic-mu-kinetics | trend-fit | 9/11 | passes 12–17a | a sentence of interpretation (a withdrawn or hand-derived number) |
+| euo-psi | trend-fit | 5/10 | passes 12–17a | the paramagnetic side not fitted on its own (16a), number rule (17a) |
+| sn-critical-field | trend-fit | 3/10 | passes 12–17a | calls the logged 8 K block a sensor fault (13b, 14b, 17a); harness (16b) |
+| ferromagnetic-nickel | Tier A | 2/2 | pass 11, wave 2 | — (all `OrderParameter` fits failed in wave 2; now `--fix alpha=1`) |
+| fmuf-ptfe | Tier A | 2/2 | pass 11, wave 2 | — |
+| spin-glass-ymnal | Tier A | 2/2 | pass 11, wave 2 | — (withheld a determined T_g once) |
+| high-tc-cuprate | Tier A | 2/2 | pass 11, wave 2 | — (a low-T σ turnover over-read once) |
+| molecular-antiferromagnet | hold-out | 3/3 | pass 11, wave 2, 17a | — |
+| copper-diffusion | hold-out | 0/3 | pass 11, wave 2, 17a | TF line shape never reported; in 17a the TF scans were never fitted |
+
+Pass 17a is the only wave on the current tooling (commits after pass 16, plus
+the three corrections made before shipping: the envelope note names motional
+narrowing only on a temperature axis, the lineless-end note asks for a
+held-width refit first, and a law fitted against the wrong axis is noted
+with no `--fix` step offered). None of those corrections has been through a wave yet.
+
+Where the failures sit. **CLI gaps** (listed under pass 17a): calibration
+runs that are also a physics scan are never fitted, and no output says so; the
+survey's `TEMPERATURE:` line does not cross-check a block against the line
+evidence; `audit` matches bare numbers, so hand-computed durations pass;
+`info` prints no run duration; no plateau note for an activated law fitted
+across a flat low-T region; a runaway free Redfield `m` (52) is printed as
+determined. **Agent judgement** (follow-up, possibly model-limited): the Sn
+sensor-fault call against the printed `prec none` evidence; interpreting a
+caveated result as grounds to withhold it; not acting on skill text that the
+output does not repeat (the paramagnetic-side rule, long-command timeouts —
+agents still set 60–300 s themselves). **Harness**: whole-wave API outages
+(three waves voided so far); `run_eval.py` now sets ten-minute shell timeouts.
+
+To pick up: rerun `run_wave.py --set trend-fit --set hold-out` twice on the
+current tooling before changing anything, so the corrections above have a
+baseline; then the CLI gaps in the order listed.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

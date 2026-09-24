@@ -187,9 +187,11 @@ def run(args: argparse.Namespace) -> None:
         )
         print(
             f"NOTE: runs {runs} show no line in the survey and this model does not describe "
-            f"them (see their flags): they are the other side of a transition, and their "
-            f"physics is a relaxation. Fit them with a relaxation-only recipe and report its "
-            f"rate against {outcome.order_key}:\n"
+            f"them (see their flags). Either they are the other side of a transition, where "
+            f"the physics is a relaxation, or a free envelope width has swallowed a weak "
+            f"line: first refit them with the width held (--fix) at a value from the runs "
+            f"that do precess. If they stay undescribed, fit them with a relaxation-only "
+            f"recipe and report its rate against {outcome.order_key}:\n"
             f"  asymmetry recipe {folder_arg} --expression 'Exponential + Constant' "
             f"--run {middle} --name {name}-relax\n"
             f"  asymmetry fit-series {folder_arg} --runs {runs} --recipe {name}-relax "

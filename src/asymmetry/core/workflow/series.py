@@ -240,9 +240,15 @@ def envelope_change(trend: TrendTable) -> str | None:
     )
     return (
         f"NOTE: the relaxation shape changes along this scan — {described} (the envelope "
-        f"column; runs marked 'either' fit both alike). A Gaussian (a static spread of fields) "
-        f"turning exponential as the fluctuations outrun it is motional narrowing: report the "
-        f"shape against {trend.order_key}, not only the rate."
+        f"column; runs marked 'either' fit both alike). "
+        + (
+            "A Gaussian (a static spread of fields) turning exponential on warming, as the "
+            "fluctuations outrun it, is motional narrowing: report the shape against "
+            f"{trend.order_key}, not only the rate."
+            if trend.order_key in ("temperature", "sample_temperature_logged")
+            else f"A change of shape along {trend.order_key} is a result: report it with the "
+            "runs on each side, not only the rate."
+        )
     )
 
 

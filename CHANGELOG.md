@@ -226,6 +226,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fit` and `fit-series` note runs whose stored reduction was cut by `reduce --tmin/--tmax`
   (a plot zoom had been silently starving later fits of the record). `fit-series` ends with the
   `trend` step; the two-rate hint names the single-rate recipe to refit with.
+- **`fit-series` weighs the relaxation envelope's shape on every run.** For a recipe with one
+  `Gaussian` or `Exponential` envelope, each converged run is refitted with the other one and
+  the trend gains `envelope`/`envelope_dchi2` columns, with a note when the preferred shape
+  changes along the scan (motional narrowing, on a temperature axis). A block of runs at one
+  end of a precession scan with no survey line and a fit that does not describe them is named,
+  with the relaxation-only commands for exactly those runs. `trend` no longer calls a
+  frequency that holds within 10 % an order parameter, notes a law fitted against an axis it
+  is not written in, and after a law not established names the next step (`--fix alpha=1`
+  for `OrderParameter`, `--fix m=2` for `Redfield`, whose free `m` must be positive). The
+  survey names a line-free run of a mostly transverse temperature scan that also belongs to a
+  longitudinal field scan, and `audit` always lists numbers after difference phrases
+  ("within about 2 G") and hedged ratios ("a factor of ~2").
 
 ### Changed
 

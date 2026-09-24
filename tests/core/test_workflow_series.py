@@ -513,6 +513,11 @@ def test_the_series_weighs_a_gaussian_against_an_exponential_envelope_run_by_run
     note = envelope_change(outcome.trend)
     assert "Gaussian on 1, 2 (temperature 50–100)" in note
     assert "Exponential on 3, 4 (temperature 200–300)" in note
+    assert "motional narrowing" in note
+    # Along a field the same change is reported without the narrowing reading.
+    by_field = envelope_change(replace(outcome.trend, order_key="field"))
+    assert "motional narrowing" not in by_field
+    assert "A change of shape along field is a result" in by_field
 
 
 def test_a_model_with_two_envelopes_is_not_weighed() -> None:

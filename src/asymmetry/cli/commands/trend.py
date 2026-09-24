@@ -332,6 +332,16 @@ _SHAPE_EXPONENTS: dict[str, tuple[str, float, str]] = {
 }
 
 
+#: The axis each law is a law in; fitted against another, its parameters mean nothing.
+_LAW_AXES: dict[str, frozenset[str]] = {
+    "Redfield": frozenset({"field"}),
+    **dict.fromkeys(
+        ("OrderParameter", "Arrhenius", "CriticalDivergence"),
+        frozenset({"temperature", "sample_temperature_logged"}),
+    ),
+}
+
+
 def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
     """The fit block: model, range, parameters with errors, verdict and what was left out."""
     lo, hi = fit["x_fitted"]
@@ -384,10 +394,15 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
         if not 0.0 < abs(fit["uncertainties"].get(name, 0.0)) * scale < abs(fit["parameters"][name])
     ]
     pinned = [name for name in fit["params_at_bound"] if name in physical]
+    misplaced = [
+        law
+        for law, axes in _LAW_AXES.items()
+        if law in fit["expression"] and fit["order_key"] not in axes
+    ]
     shapes = [
         (name, value, meaning)
         for name, (law, value, meaning) in _SHAPE_EXPONENTS.items()
-        if law in fit["expression"] and name in physical
+        if law in fit["expression"] and name in physical and law not in misplaced
     ]
     negative = [name for name, _, _ in shapes if fit["parameters"][name] <= 0.0]
     if not fit["success"] or pinned or undetermined or negative:
@@ -439,6 +454,12 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
                 f"rate against a concentration it is the rate constant. Report m with its "
                 f"error, in {fit['param']}'s unit per unit {fit['order_key']}."
             )
+    for law in misplaced:
+        lines.append(
+            f"NOTE: {law} is a law in {' or '.join(sorted(_LAW_AXES[law]))}, and this trend is "
+            f"against {fit['order_key']}: its parameters have no physical meaning here. Describe "
+            f"the trend in plain words, or fit it against the axis the law is written in."
+        )
     if fit["turning_point"] is not None:
         lines.append(
             f"NOTE: the fitted points turn through an extremum near {fit['order_key']} = "
