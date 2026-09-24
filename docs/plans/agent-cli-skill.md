@@ -1355,6 +1355,51 @@ general, none dataset-specific):
 - Harness: `run_eval.py` sets ten-minute shell timeouts; the skill names the
   shell tool's timeout parameter.
 
+#### Pass 17a — 2026-09-24, first run on the post-pass-16 tooling
+
+| Dataset | 17a |
+|---|---|
+| plateau-redfield | pass (Redfield `--fix m=2` over 3–38 kG: D 27.50 ± 0.29, ν 174 ± 7 MHz) |
+| sn-critical-field | fail, judgement (called the logged 8 K block a sensor fault — the 13b/14b failure) |
+| euo-psi | fail, number rule (run durations subtracted by hand from `info` start/stop stamps; all Musts met, paramagnetic side fitted) |
+| maleic-mu-kinetics | pass (k_Mu at 278 and 298 K; Arrhenius declined for want of temperatures) |
+| copper-diffusion | fail (TF scans filed as "calibration only" and never fitted, so the envelope check never ran on them) |
+| molecular-antiferromagnet | pass (`OrderParameter` failed free, converged with `--fix alpha=1` as the new Next step said) |
+
+Records, passes 12–17a (voids excluded): plateau 8/10, maleic 9/11, EuO
+5/10, Sn 3/10; molecular AFM 3/3 and copper 0/3 across the generalisation
+runs. No turn ended with a command in the background, though agents still
+set their own 60–300 s timeouts.
+
+What the new outputs did: the audit's difference phrases fired in every run
+and were acted on; `--fix alpha=1` rescued the molecular AFM's T_c; the
+survey named copper's stray LF runs. What misfired, to fix next (all CLI):
+
+- **The lineless-end note fired falsely on Sn** (91526–91529), because a
+  free Gaussian width absorbed the weak line; with σ held those runs carry
+  H_c lines. It should first propose holding the envelope width from the start
+  run, and skip runs sitting at the applied field's Larmor frequency.
+- **The envelope note assumes a temperature axis.** On copper's LF field
+  scan it called a decoupled static Kubo–Toyabe "motional narrowing"; on a
+  field axis a rate extremum should point at a level crossing and
+  `integral-scan`, not narrowing.
+- **`trend` accepts a law against the wrong axis**: Redfield fitted against
+  temperature (EuO) printed `Next: --fix m=2`. A free Redfield m of 52 was
+  printed as determined — a runaway exponent should not be.
+- **Calibration runs that are also a physics scan are never fitted**
+  (copper's TF scans): the survey could say so, and `audit` could list survey
+  scans with no series.
+- **Sn sensor-fault call (third time):** the survey could cross-check a
+  `TEMPERATURE:` block against the line evidence — a block that loses the
+  line another block shows at the same setpoint supports the logged value.
+- **`audit` matches bare numbers anywhere in the log**, so hand-computed
+  durations ("27 minutes") passed; `info` could print durations, and `audit`
+  could match a number with its unit.
+- An Arrhenius fit across a flat low-T plateau (copper ARGUS, χ²ᵣ 92) still
+  gets no plateau note.
+
+Paused here at the maintainer's request.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
