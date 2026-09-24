@@ -1105,6 +1105,26 @@ the `TEMPERATURE:` line asks the agent to decide which to trust per block;
 `--model` points at Step 6a; skill: the reply is `summary.md` as audited, the
 Mu blank is the run noted deoxygenated.
 
+#### Pass 8 — 2026-09-24, two repeats
+
+| Dataset | 8a | 8b |
+|---|---|---|
+| plateau-redfield | fail (no Redfield) | fail (full analysis in summary.md; one-line reply) |
+| sn-critical-field | pass | fail (dismissed the survey's falling line after failed time-domain fits) |
+| euo-psi | pass | fail (number rule: derived percentages) |
+| maleic-mu-kinetics | fail (k_Mu fitted in summary.md; one-line reply) | fail (declined k_Mu over block temperature offsets) |
+
+The ZF search worked: both EuO runs got the order parameter right (Tc
+69.76 ± 0.12 K in 8b). Three of six failures were delivery — agents read
+their audited `summary.md` with a tool and replied with one line, taking the
+tool call for the reply. Changes: the skill says the user sees only the final
+message, which must be the summary text; `audit`'s clean pass says the same;
+`audit` lists whole-number percentages and "factor of" ratios not printed
+verbatim; `trend` without `--model` names the law for its axis and parameters
+(Redfield on a field-ordered rate, with a warning on a split rate;
+OrderParameter on a frequency; Linear on a supplied axis); skill: a caveat is
+not a reason to withhold a fitted result.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
