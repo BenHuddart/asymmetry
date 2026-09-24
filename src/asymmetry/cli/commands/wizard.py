@@ -149,6 +149,34 @@ def run(args: argparse.Namespace) -> None:
     print(_render(args.folder, duration_us, result, wizard_path, recipe_path, plot_path, plot_note))
 
 
+def _line_test_hint(folder: str, result, frequency: float) -> list[str]:
+    """A ``recipe`` command adding the detected line to the recommended model.
+
+    The line is added, not substituted: a weak line sits on the relaxation the
+    recommendation already describes, and a bare oscillation fitted to the
+    whole record puts that relaxation into a spurious near-zero frequency. Its
+    amplitude starts at a tenth of the recommendation's largest one, so the fit
+    does not begin by giving the line the whole asymmetry.
+    """
+    from asymmetry.core.fitting.composite import CompositeModel
+
+    expression = f"{result.recipe.expression} + Oscillatory * Exponential"
+    names = CompositeModel.from_expression(expression).param_names
+    amplitude = next(name for name in reversed(names) if name.startswith("A_"))
+    line = next(name for name in reversed(names) if name.startswith("frequency"))
+    largest = max(
+        (abs(p.value) for p in result.recipe.parameters if p.name.startswith("A_")),
+        default=1.0,
+    )
+    return [
+        "A detected line the recommendation does not fit is still a candidate. To test it,"
+        " add it to the recommended model and check the fitted amplitude against its error:",
+        f"  asymmetry recipe {shlex.quote(folder)} --run {result.run_number} "
+        f"--name line-{result.run_number} --expression {shlex.quote(expression)} "
+        f"--initial {line}={frequency:.4g} --initial {amplitude}={0.1 * largest:.3g}",
+    ]
+
+
 def _names(text: str) -> list[str]:
     """``"A, B"`` as ``["A", "B"]``."""
     return [name.strip() for name in text.split(",") if name.strip()]
@@ -255,17 +283,8 @@ def _render(
         for peak in peaks
         if not any(abs(value / peak["frequency_mhz"] - 1.0) < 0.1 for value in fitted_lines)
     ]
-    if unfitted:
-        lines.append(
-            "A detected line the recommendation does not fit is still a candidate. To test "
-            "one in the time domain, start a recipe at it and check the fitted amplitude "
-            "against its error:"
-        )
-        lines.append(
-            f"  asymmetry recipe {shlex.quote(folder)} --run {result.run_number} --name line-{result.run_number} "
-            f'--expression "Oscillatory * Exponential + Constant" '
-            f"--initial frequency={unfitted[0]:.4g}"
-        )
+    if unfitted and result.recipe is not None:
+        lines.extend(_line_test_hint(folder, result, unfitted[0]))
     if result.recipe is not None:
         lines.append(
             "Recommended fit: "

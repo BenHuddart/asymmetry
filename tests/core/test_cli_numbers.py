@@ -76,3 +76,10 @@ def test_audit_without_any_log_says_what_to_do(tmp_path: Path, monkeypatch, caps
         cli.main(["audit", str(draft)])
     assert exc.value.code == 1
     assert "No cli-output.log" in capsys.readouterr().err
+
+
+def test_bulk_arrays_in_the_log_verify_nothing() -> None:
+    log = "time: [" + ", ".join(f"{0.016 * i:.6f}" for i in range(2000)) + "]\nA(0) 22.516\n"
+    # 22.94 lies among the time bins, but no one read it there.
+    assert [entry.text for entry in unverified_numbers("A(0) = 22.94 %", log)] == ["22.94"]
+    assert unverified_numbers("A(0) = 22.52 %", log) == []

@@ -460,3 +460,15 @@ def test_amplitudes_far_beyond_the_record_are_flagged() -> None:
     assert amplitude_exceeds_data(record, {"A_1": 143.6, "Lambda": 3.0, "A_bg": -120.0})
     # Non-amplitude parameters never count.
     assert not amplitude_exceeds_data(record, {"A_1": 18.0, "nu": 16351.0})
+
+
+def test_a_frequency_below_the_records_resolution_is_flagged() -> None:
+    from asymmetry.core.workflow.series import frequency_unresolved
+
+    time = np.linspace(0.0, 8.0, 500)
+    record = MuonDataset(time, np.zeros(500), np.full(500, 0.1), {})
+    free = ["A_1", "frequency", "Lambda"]
+    assert frequency_unresolved(record, {"A_1": 20.0, "frequency": 0.025, "Lambda": 0.1}, free)
+    assert not frequency_unresolved(record, {"A_1": 20.0, "frequency": 1.9, "Lambda": 0.1}, free)
+    # A frequency the recipe holds is not the fit's choice.
+    assert not frequency_unresolved(record, {"frequency": 0.025}, ["A_1"])

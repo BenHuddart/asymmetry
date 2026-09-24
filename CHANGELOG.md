@@ -217,6 +217,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   undetermined prefactor or offset no longer declares a law not established; the report gives
   the x span of the fitted points and each parameter's unit (Arrhenius `Ea` in meV), and notes
   a turning point that a monotonic law would be fitted across.
+- **`fit`/`fit-series` flag `frequency_unresolved`**, a fitted frequency completing under two
+  cycles in the record's informative window; the wizard's line hint adds the line to the
+  recommended model with a small starting amplitude instead of replacing the model; `audit`
+  ignores bulk arrays in the logged output.
 
 ### Changed
 

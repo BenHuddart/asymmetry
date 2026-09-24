@@ -62,9 +62,9 @@ def run(args: argparse.Namespace) -> None:
         return
     if not found:
         print(
-            f"Every number in {draft} appears in the logged command output. The user sees "
-            f"neither this output nor the file: your final message must contain the summary "
-            f"text itself, in full."
+            f"No unprinted numbers found in {draft}. Now send its text as your whole final "
+            f"message, starting at its title — the user sees neither this output nor the "
+            f"file, and the reply says nothing about this check."
         )
         return
     print(

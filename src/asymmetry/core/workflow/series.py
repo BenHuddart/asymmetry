@@ -124,6 +124,31 @@ def amplitude_exceeds_data(dataset: MuonDataset, parameters: Mapping[str, float]
     return total > AMPLITUDE_EXCESS_FACTOR * scale
 
 
+FREQUENCY_UNRESOLVED = "frequency_unresolved"
+
+
+def frequency_unresolved(
+    dataset: MuonDataset, parameters: Mapping[str, float], free: Sequence[str]
+) -> bool:
+    """Whether a free frequency completes too few cycles in the informative window.
+
+    The wizard's own :data:`MIN_CYCLES_IN_EFFECTIVE_WINDOW` rule: below it a
+    fitted "frequency" is a relaxation in disguise — the spurious branch a weak
+    line fitted without its relaxing background falls onto.
+    """
+    from asymmetry.core.fitting.fit_wizard import (
+        MIN_CYCLES_IN_EFFECTIVE_WINDOW,
+        effective_window_duration,
+    )
+
+    window = effective_window_duration(dataset)
+    return any(
+        abs(parameters[name]) * window < MIN_CYCLES_IN_EFFECTIVE_WINDOW
+        for name in free
+        if split_parameter_name(name)[0] == "frequency"
+    )
+
+
 @dataclass(frozen=True)
 class ScanAxis:
     """The coordinate a series is ordered and trended along: one value per run."""
@@ -319,6 +344,22 @@ def _prepared(dataset: MuonDataset, recipe: FitRecipe) -> MuonDataset:
     return dataset if recipe.rebin <= 1 else dataset.rebin(recipe.rebin)
 
 
+def _workflow_flags(
+    record: MuonDataset, summary: Mapping[str, Any], free: Sequence[str]
+) -> list[str]:
+    """The engine's quality flags plus the workflow's own checks against the record.
+
+    Not member-quality flags (that vocabulary is the engine's): a fit whose
+    amplitudes the record cannot hold, or whose frequency it cannot resolve.
+    """
+    flags = set(summary["quality_flags"])
+    if amplitude_exceeds_data(record, summary["parameters"]):
+        flags.add(AMPLITUDE_EXCEEDS_DATA)
+    if frequency_unresolved(record, summary["parameters"], free):
+        flags.add(FREQUENCY_UNRESOLVED)
+    return sorted(flags)
+
+
 def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
     """Fit one run with *recipe* and summarise the result.
 
@@ -341,8 +382,7 @@ def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
         t_max=recipe.t_max,
     )
     summary = fit_result_summary(result)
-    if amplitude_exceeds_data(record, summary["parameters"]):
-        summary["quality_flags"] = [*summary["quality_flags"], AMPLITUDE_EXCEEDS_DATA]
+    summary["quality_flags"] = _workflow_flags(record, summary, recipe.free_parameter_names())
     return {
         "run": int(dataset.run_number),
         "free_params": recipe.free_parameter_names(),
@@ -473,10 +513,7 @@ def fit_series(
         # scan), so the summary is asked for those flags rather than
         # re-deriving a narrower set from the result on its own.
         summary = fit_result_summary(fitted[run], extra_flags=tuple(sorted(quality.quality_flags)))
-        # Not a member-quality flag (that vocabulary is the engine's): the
-        # workflow's own check of the fit against the record's scale.
-        if amplitude_exceeds_data(records[run], summary["parameters"]):
-            summary["quality_flags"] = sorted([*summary["quality_flags"], AMPLITUDE_EXCEEDS_DATA])
+        summary["quality_flags"] = _workflow_flags(records[run], summary, free_params)
         results.append(
             {
                 "run": int(run),
@@ -560,6 +597,7 @@ def build_trend_table(
 __all__ = [
     "AMPLITUDE_EXCEEDS_DATA",
     "AMPLITUDE_EXCESS_FACTOR",
+    "FREQUENCY_UNRESOLVED",
     "ORDER_KEYS",
     "ScanAxis",
     "SeriesBranch",
@@ -569,6 +607,7 @@ __all__ = [
     "build_trend_table",
     "fit_one",
     "fit_series",
+    "frequency_unresolved",
     "scan_axis",
     "supplied_axis",
     "survey_line",

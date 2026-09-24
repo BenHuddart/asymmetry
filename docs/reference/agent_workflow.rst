@@ -448,7 +448,9 @@ the spectral search detected, with its SNR) and ``Recommended fit`` (the
 recommended model's fitted values), so a precession frequency found while
 screening is on the page, not only in the stored recipe. A detected line the
 recommendation does not fit is followed by a ready ``asymmetry recipe`` command
-started at that frequency. Lines that complete fewer than two cycles in the
+that adds the line to the recommended model, started at that frequency with a
+small amplitude — a weak line sits on the relaxation the recommendation already
+describes. Lines that complete fewer than two cycles in the
 record's informative window — relaxation leaking into the lowest bins — are
 not listed, by the survey's rule.
 Writes ``wizard/<run>.json`` (the full screening payload:
@@ -591,8 +593,10 @@ matters. ``--global P,Q`` pins those parameters at their recipe value for
 every run rather than fitting them (see `The fit recipe`_). Besides the engine's quality flags, a run whose fitted amplitudes
 (backgrounds included) add up to more than 1.5 times the record's own
 early-time asymmetry is flagged ``amplitude_exceeds_data`` — two components
-cancelling to describe a signal the data do not hold; ``fit`` applies the same
-check. A series that fits a frequency adds a ``survey_line_mhz`` column: the line the
+cancelling to describe a signal the data do not hold — and one whose fitted
+frequency completes fewer than two cycles in the informative window is flagged
+``frequency_unresolved``, a relaxation fitted as a line; ``fit`` applies both
+checks. A series that fits a frequency adds a ``survey_line_mhz`` column: the line the
 survey measured in each run, beside the fitted frequency, so a fit that drifted
 off the measured line or found one where the survey saw none shows in the
 table. Ordered by ``temperature`` (the setpoint) while the logged sample
@@ -704,7 +708,9 @@ is the right one; a multiple, a significance or a whole-number percentage
 token, and a number after "a factor of" is always listed. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions,
 differences between printed columns — which the agent skill's number rule
-forbids.
+forbids. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+left out of the match, since a rounded sum would otherwise find one of their
+elements by chance.
 
 ``integral-scan``
 ~~~~~~~~~~~~~~~~~

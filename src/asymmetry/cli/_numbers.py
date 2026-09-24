@@ -48,9 +48,16 @@ def _decimals(token: str) -> int:
     return len(mantissa.split(".")[1]) if "." in mantissa else 0
 
 
+#: A JSON array of ten or more numbers — a time axis, a histogram, a spectrum
+#: dumped by ``--json``. Its values were never read by anyone, and a rounded
+#: sum or ratio would match one of its thousands of elements by chance.
+_NUMBER_ARRAY = re.compile(r"\[(?:\s*[-+\deE.]+\s*,){9,}\s*[-+\deE.]+\s*\]")
+
+
 def printed_values(log_text: str) -> list[float]:
-    """Every number in the logged command output, sorted."""
-    return sorted(_value(match.group()) for match in _NUMBER.finditer(log_text))
+    """Every number in the logged command output, sorted, bulk arrays left out."""
+    readable = _NUMBER_ARRAY.sub("[]", log_text)
+    return sorted(_value(match.group()) for match in _NUMBER.finditer(readable))
 
 
 def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:

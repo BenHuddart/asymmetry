@@ -109,6 +109,13 @@ Kubo–Toyabe, or an order whose field is too large or too broad to resolve).
 A ZF temperature scan whose `other@` frequency falls on warming and gives way
 to `none` is an order parameter going to zero at the transition.
 
+**A line the survey tracks along a scan is a measurement.** When `other@`
+changes smoothly from run to run — an internal field, a critical field, a
+muonium line — quote that progression in the summary as the line's trend, run
+by run, even if a time-domain fit of a weak line will not converge; say that
+the values are the survey's spectral lines, and use your fits where they
+succeed.
+
 `scans` groups by **instrument** and the held quantity, never by geometry, so a
 physical scan stays one scan even where the measurement resolves only part of it
 — and two instruments in one folder never merge. When the members disagree the
@@ -482,6 +489,7 @@ The per-run table gives reduced χ², a verdict and quality flags:
 | `large_rel_err` | A free parameter's σ/value is large — the data barely constrained it. |
 | `bound_pinned` | A free parameter sat on a bound. |
 | `spurious_reseeded` | The fit landed on the spurious branch (amplitude collapse or frequency jump) near a transition, whether or not a reseed rescued it. |
+| `frequency_unresolved` | A fitted frequency completes under two cycles in the informative window: a relaxation masquerading as a line (typically a weak line fitted without the relaxation it sits on). Not a precession result. |
 | `amplitude_exceeds_data` | The fitted amplitudes (backgrounds included) add up to several times the record's own asymmetry: two components cancelling to describe a signal the data do not hold. The fit's parameters are not physical. |
 
 A `poor` χ² verdict is common on high-statistics ISIS data (the band is tight
