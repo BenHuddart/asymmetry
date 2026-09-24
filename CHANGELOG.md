@@ -199,6 +199,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   EuO's 29.9 MHz at 10 K, nickel's, a molecular antiferromagnet's) and `none` when it does not;
   it used to read `-` for every zero-field run. The `TEMPERATURE:` line no longer asserts which
   of the logged and setpoint temperatures is right.
+- **`trend` names the law its series calls for, and `audit` is stricter on ratios.** Without
+  `--model`, `trend` ends with the law the axis and parameters point to (Redfield for a rate
+  against field, `OrderParameter` for a frequency against temperature, `Linear` against a
+  supplied quantity) and warns when a rate is split between two components; `audit` lists
+  whole-number percentages and "factor of" ratios no command printed.
 
 ### Changed
 

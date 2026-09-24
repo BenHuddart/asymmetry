@@ -1607,3 +1607,23 @@ def test_a_trend_law_that_did_not_fit_is_named_as_not_established(changes, reaso
     text = "\n".join(_render_fit(fit | changes, ["Lambda"]))
     assert "LAW NOT ESTABLISHED" in text
     assert reason in text
+
+
+@pytest.mark.parametrize(
+    ("order_key", "free_params", "expected"),
+    [
+        ("field", ["A_1", "Lambda", "A_bg"], ["Redfield --param Lambda"]),
+        ("field", ["A_1", "Lambda_1", "Lambda_2"], ["Redfield --param Lambda_1", "splits the rate"]),
+        ("temperature", ["A_1", "frequency", "Lambda"], ["OrderParameter --param frequency"]),
+        ("concentration", ["A_1", "Lambda_2"], ["Linear --param Lambda_2"]),
+        ("run", ["A_1"], ["<law> --param <column>"]),
+    ],
+)
+def test_trend_names_the_law_its_axis_and_parameters_call_for(
+    order_key, free_params, expected
+) -> None:
+    from asymmetry.cli.commands.trend import _law_hints
+
+    text = "\n".join(_law_hints("scan", order_key, free_params))
+    for fragment in expected:
+        assert fragment in text

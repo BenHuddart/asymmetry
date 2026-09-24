@@ -8,8 +8,9 @@ a command's output. Every command's printed output is appended to
 A match is deliberately loose — a number written with *d* decimals matches any
 printed value it rounds from — so a match says only that the number appears in
 some output, not that it is the right one. Numbers written as a multiple or a
-significance (``10×``, ``4.3σ``) are almost always arithmetic on printed values,
-so they match only when a command printed that exact token.
+significance or a whole-number percentage (``10×``, ``4.3σ``, ``32 %``) are almost always
+arithmetic on printed values, so they match only when a command printed that
+exact token, and a number after "a factor of" is always listed.
 """
 
 from __future__ import annotations
@@ -22,8 +23,11 @@ from dataclasses import dataclass
 #: left, so a run range ``9031-9051`` reads as two numbers, not a negative one.
 _NUMBER = re.compile(r"(?<![\w.])[-+−]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
-#: Suffixes that make a number a derived multiple or significance.
-_DERIVED_SUFFIX = re.compile(r"\s?(?:×|x|σ|sigma)(?![a-zA-Z])")
+#: Suffixes that make a number a derived multiple, significance or percentage.
+_DERIVED_SUFFIX = re.compile(r"\s?(?:×|x|σ|sigma|%|percent)(?![a-zA-Z])")
+
+#: Phrases that make the number after them a ratio ("a factor of 3").
+_RATIO_PREFIX = re.compile(r"(?:factor of|times|fold)\s*$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -56,7 +60,14 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
     for line_number, line in enumerate(draft.splitlines(), start=1):
         for match in _NUMBER.finditer(line):
             token = match.group()
+            if _RATIO_PREFIX.search(line[: match.start()]):
+                found.append(Unverified(token, line_number, line.strip()))
+                continue
             suffix = _DERIVED_SUFFIX.match(line, match.end())
+            # A decimal percentage ("A(0) 16.42 %") is a printed asymmetry in
+            # its unit; a whole-number one ("32 %") is almost always a ratio.
+            if suffix is not None and "%" in suffix.group() and "." in token:
+                suffix = None
             if suffix is not None:
                 if token + suffix.group() not in log_text:
                     found.append(Unverified(token + suffix.group(), line_number, line.strip()))

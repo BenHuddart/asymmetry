@@ -849,9 +849,13 @@ difference of two columns, a unit conversion (MHz to gauss, relative to molar),
 a significance in σ — or a value from memory. Remove it, quote the printed
 value instead, or say the relation in words ("rises by several percent", "an
 order of magnitude faster"). Re-run `audit` until it lists nothing you would
-defend as printed. **Your final reply is `summary.md` exactly as audited** —
-paste it in full; do not write a shorter recap, which drops results and brings
-back numbers the audit removed. A clean audit means each number
+defend as printed.
+
+**The user sees neither tool output nor files — only your final message.** So
+your final message must *be* the summary: its full text, as audited, typed out
+in the reply. Reading `summary.md` with a tool, pointing to the file, or
+writing a shorter recap is not a reply — the first two show the user nothing,
+and a recap drops results and brings back numbers the audit removed. A clean audit means each number
 appears in some output, not that it is the right one — still quote values from
 the command that produced them.
 
@@ -948,6 +952,13 @@ weak line beside a large background give both explicitly
 `asymmetry fit <folder> --run N --recipe <name>` on one run to check it
 converges before spending a series on it. (A recipe is also small JSON in
 `asymmetry-work/recipes/`, and editing it by hand still works.)
+
+**A caveat is not a reason to withhold a result.** When the experiment asks
+for a quantity — a rate constant, a transition temperature, a correlation
+time — and the data allow a fit, do the fit and report it with its caveat (a
+temperature offset between samples, a poor χ²ᵣ, a short range), rather than
+declining because the comparison is imperfect. Declining is for a question the
+data cannot answer at all.
 
 **One negative run is not a negative folder.** When a feature the physics
 predicts — a line, a dip, a step — is missing from one run, test the run where

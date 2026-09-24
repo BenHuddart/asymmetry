@@ -205,20 +205,64 @@ def _render(
     if fit is not None:
         lines.extend(["", *_render_fit(fit, series["free_params"])])
     else:
-        lines.extend(
-            [
-                "",
-                "If the experiment asks for a number this trend encodes — a transition "
-                "temperature, a correlation time, an activation energy, a rate constant — fit "
-                "the law for it: asymmetry trend <folder> --series "
-                f"{series['name']} --model <law> --param <column> (Step 6a of the skill).",
-            ]
-        )
+        lines.extend(["", *_law_hints(series["name"], trend.order_key, series["free_params"])])
     if csv_path is not None:
         lines.extend(["", f"Trend written to {csv_path}"])
     if plot_paths:
         lines.append(f"Plots written: {', '.join(str(path) for path in plot_paths)}")
     return "\n".join(lines)
+
+
+#: Base names of relaxation rates and of precession frequencies.
+_RATE_BASES = frozenset({"Lambda", "lambda", "sigma", "Delta", "nu"})
+_FREQUENCY_BASES = frozenset({"frequency", "freq", "B_int", "field"})
+
+#: Axes a trend is read along from the files; anything else was supplied.
+_FILE_AXES = frozenset({"temperature", "sample_temperature_logged", "field", "run"})
+
+
+def _law_hints(name: str, order_key: str, free_params: list[str]) -> list[str]:
+    """Which trend law this series' axis and parameters call for (Step 6a).
+
+    A field-ordered rate is the Redfield question and needs one rate; a
+    frequency against temperature is an order parameter; a rate against a
+    supplied quantity (a concentration) is a linear rate law.
+    """
+    by_base: dict[str, list[str]] = {}
+    for param in free_params:
+        by_base.setdefault(re.sub(r"_\d+$", "", param), []).append(param)
+    rates = [p for base, ps in by_base.items() if base in _RATE_BASES for p in ps]
+    frequencies = [p for base, ps in by_base.items() if base in _FREQUENCY_BASES for p in ps]
+    command = f"asymmetry trend <folder> --series {name} --model"
+    hints: list[str] = []
+    if order_key == "field" and rates:
+        hints.append(
+            f"A relaxation rate against field is the decoupling question: {command} "
+            f"Redfield --param {rates[0]} (--fix m=2 for the textbook form)."
+        )
+        siblings = by_base[re.sub(r"_\d+$", "", rates[0])]
+        if len(siblings) > 1:
+            hints.append(
+                f"  This series splits the rate between {', '.join(siblings)}: Redfield "
+                f"describes one rate, so refit the series with a single-rate recipe first."
+            )
+    if order_key in ("temperature", "sample_temperature_logged") and frequencies:
+        hints.append(
+            f"A precession frequency against temperature is an order parameter: {command} "
+            f"OrderParameter --param {frequencies[0]} (fit below the transition)."
+        )
+    if order_key not in _FILE_AXES and rates:
+        hints.append(
+            f"A rate against a supplied {order_key} is a rate law: {command} Linear "
+            f"--param {rates[0]}."
+        )
+    if not hints:
+        hints.append(
+            "If the experiment asks for a number this trend encodes — a transition "
+            "temperature, a correlation time, an activation energy — fit the law for it: "
+            f"{command} <law> --param <column> (Step 6a of the skill)."
+        )
+    return ["Next — the law this trend calls for:", *hints]
 
 
 def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:

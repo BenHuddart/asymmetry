@@ -645,7 +645,11 @@ moves a start value. When χ²\ :sub:`r` is above 1 the error column holds the
 errors scaled by √χ²\ :sub:`r` (the unscaled ones follow), and a ``NOTE``
 appears when ``--param`` is one of several components of the same kind in the
 series' model (``Lambda_1`` beside ``Lambda_2``): a law describes one physical
-rate or line, not one of two that split it between them. Excluding a run is the analyst's call: every run with a
+rate or line, not one of two that split it between them. Without ``--model``,
+the report ends by naming the law the series' axis and parameters call for —
+Redfield for a rate against field (and a warning when the model splits the
+rate between two components), ``OrderParameter`` for a frequency against
+temperature, ``Linear`` for a rate against a supplied quantity. Excluding a run is the analyst's call: every run with a
 value enters unless ``--exclude RUNS`` names it, and the output lists both the
 runs left out (with the reason) and the flagged runs that were fitted. The fit
 is stored in ``series/<name>.json`` under ``trend_fits``, and ``--plot``
@@ -678,8 +682,9 @@ the default one when it exists). ``audit`` extracts each number from the draft
 and reports the ones that appear in none of those logs, with the line they sit
 on. A number written with *d* decimals matches any printed value it rounds
 from, so a clean audit means every number appears in *some* output, not that it
-is the right one; a multiple or a significance (``10×``, ``4.3σ``) matches only
-when a command printed that exact token. What it catches is the arithmetic an
+is the right one; a multiple, a significance or a whole-number percentage
+(``10×``, ``4.3σ``, ``32 %``) matches only when a command printed that exact
+token, and a number after "a factor of" is always listed. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions,
 differences between printed columns — which the agent skill's number rule
 forbids.

@@ -61,7 +61,11 @@ def run(args: argparse.Namespace) -> None:
         )
         return
     if not found:
-        print(f"Every number in {draft} appears in the logged command output.")
+        print(
+            f"Every number in {draft} appears in the logged command output. The user sees "
+            f"neither this output nor the file: your final message must contain the summary "
+            f"text itself, in full."
+        )
         return
     print(
         f"{len(found)} number(s) in {draft} appear in no logged command output — "

@@ -29,6 +29,11 @@ def test_printed_values_verify_at_the_precision_they_are_written() -> None:
         ("the field is 223.4 G", ["223.4"]),
         ("a 4.3σ effect", ["4.3σ"]),
         ("rises 10× on cooling", ["10×"]),
+        # A percentage or a "factor of" is a ratio of printed values.
+        ("errors of 32 % throughout", ["32 %"]),
+        # ... but a decimal percentage is an asymmetry in its unit.
+        ("A(0) of 69.17 %", []),
+        ("a factor of 3 increase", ["3"]),
         # A multiple a command printed verbatim is fine.
         ("the candidate at 3.1x the noise floor", []),
         # A negative printed value verifies a negative in the draft.
