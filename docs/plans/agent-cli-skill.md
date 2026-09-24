@@ -1227,6 +1227,24 @@ on Sn 91516 it fits the line at 1.902 ± 0.012 MHz with amplitude
 0.36 ± 0.07 %), and `audit` lists a law's vocabulary when every logged fit of
 that law printed `LAW NOT ESTABLISHED`.
 
+#### Pass 14 — 2026-09-24, two repeats
+
+| Dataset | 14a | 14b |
+|---|---|---|
+| plateau-redfield | pass | fail (left the two-rate series for a flagged stretched one, then fitted no law) |
+| sn-critical-field | pass (Tc 3.511 ± 0.038 K against logged T) | fail (called the 8 K block a sensor fault) |
+| euo-psi | pass | fail, judgement ("consistent with critical slowing" from fits it flagged unresolved) |
+| maleic-mu-kinetics | fail, judgement (a hand-computed "1–2σ" agreement) | pass |
+
+Passes 12–14: plateau 5/6, EuO 4/6, maleic 4/6, Sn 2/6. A general trap found:
+three runs used `reduce --tmax 2` to zoom a plot, which cut the stored
+reduction every later command reads. Changes: `reduce --plot-tmax` zooms the
+PNG only; `wizard`/`fit`/`fit-series` note runs reduced to a window;
+`fit-series` ends with the `trend` step; the two-rate hint names
+`Exponential + Constant`; `audit` treats "N combined/standard errors" as
+derived; skill text on the stored window, on a missing expected signal as
+evidence for the logged temperature, and that flagged fits carry no physics.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
