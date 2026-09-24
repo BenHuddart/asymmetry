@@ -198,13 +198,7 @@ def precession_evidence(dataset: MuonDataset, field: float | None) -> Precession
         )
     larmor_mhz = field_gauss_to_frequency_mhz(abs(float(field)))
     if larmor_mhz == 0.0:
-        return PrecessionEvidence(
-            state=None,
-            frequency_mhz=None,
-            snr=None,
-            larmor_mhz=0.0,
-            note="the applied field is zero, so there is no Larmor precession to look for",
-        )
+        return _spontaneous_precession(fingerprint_spectrum(dataset))
     nyquist_mhz = _nyquist_mhz(dataset)
     if larmor_mhz > nyquist_mhz:
         return PrecessionEvidence(
@@ -245,6 +239,39 @@ def precession_evidence(dataset: MuonDataset, field: float | None) -> Precession
         snr=snr,
         larmor_mhz=larmor_mhz,
         note="",
+    )
+
+
+def _spontaneous_precession(fingerprint: Any) -> PrecessionEvidence:
+    """A zero-field run's own line: precession in an internal field, or none.
+
+    The same reading as the transverse case (see :func:`precession_evidence`):
+    a resolved dominant line, else the damped-line scan's, else nothing. There
+    is no Larmor frequency to compare with, so any line is ``"other"`` — a
+    spontaneous internal field, the signature of static magnetic order.
+    """
+    if (
+        fingerprint.oscillatory_hint
+        and fingerprint.dominant_fft_snr >= PRECESSION_SNR_FLOOR
+        and fingerprint.dominant_fft_cycles_in_window >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
+    ):
+        frequency, snr = fingerprint.dominant_fft_frequency_mhz, fingerprint.dominant_fft_snr
+    elif fingerprint.has_damped_line_candidate:
+        frequency, snr = fingerprint.damped_line_frequency_mhz, fingerprint.damped_line_snr
+    else:
+        return PrecessionEvidence(
+            state="none",
+            frequency_mhz=None,
+            snr=None,
+            larmor_mhz=0.0,
+            note="zero field: no spontaneous line — no static order resolved in this record",
+        )
+    return PrecessionEvidence(
+        state="other",
+        frequency_mhz=float(frequency),
+        snr=float(snr),
+        larmor_mhz=0.0,
+        note="zero field: spontaneous precession in an internal field",
     )
 
 

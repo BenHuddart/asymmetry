@@ -151,10 +151,13 @@ def _render(survey, survey_path: Path) -> str:
         lines.append("")
     if survey.temperature_departures:
         lines.append(
-            "TEMPERATURE: the logged sample temperature (T log) departs from the setpoint "
-            "(T/K) on these runs, by the offset shown (T log - T/K). They were not at their "
-            "setpoint — order their scans with --order sample_temperature_logged, quote the "
-            "logged value, and treat the scans below (grouped by setpoint) as provisional:"
+            "TEMPERATURE: the logged sample temperature (T log) and the setpoint (T/K) "
+            "disagree on these runs, by the offset shown (T log - T/K). Decide which to trust "
+            "for each block and say why: a block sitting at a different temperature from its "
+            "neighbours (a cryostat still cooling or parked elsewhere) is a different "
+            "measurement — order it with --order sample_temperature_logged; a steady offset "
+            "a sample could not have had (a liquid logged above its boiling point) points to "
+            "the sensor. The scans below are grouped by setpoint:"
         )
         for runs, lo, hi in _departure_blocks(survey):
             span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"

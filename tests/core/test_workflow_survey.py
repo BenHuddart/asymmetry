@@ -172,13 +172,14 @@ def test_the_calibration_run_is_the_strongest_measured_candidate(survey) -> None
     assert max(measured, key=lambda c: c.snr).run_number == CALIBRATION_RUN
 
 
-def test_zero_field_runs_report_no_measurement_and_say_why(survey) -> None:
+def test_zero_field_runs_are_searched_for_a_spontaneous_line(survey) -> None:
+    # The simulated zero-field runs only relax: no static order, no line.
     for run_number in ZF_RUNS:
         evidence = survey.row(run_number).precession
-        assert evidence.state is None
+        assert evidence.state == "none"
         assert evidence.frequency_mhz is None
-        assert evidence.snr is None
-        assert "the applied field is zero" in evidence.note
+        assert evidence.larmor_mhz == 0.0
+        assert "no spontaneous line" in evidence.note
 
 
 def test_a_field_run_whose_spectrum_is_a_plain_decay_reports_no_precession(survey) -> None:
@@ -229,8 +230,8 @@ def test_the_survey_carries_the_precession_evidence_into_its_dict(survey) -> Non
     assert calibration["geometry_source"] == "measured"
 
     zero_field = next(row for row in data["runs"] if row["run_number"] == ZF_RUNS[0])
-    assert zero_field["precession"] is None
-    assert "the applied field is zero" in zero_field["precession_note"]
+    assert zero_field["precession"] == "none"
+    assert "zero field" in zero_field["precession_note"]
 
     candidate = data["calibration_candidates"][0]
     assert candidate["source"] == "measured"
@@ -476,4 +477,34 @@ def test_a_sub_cycle_line_away_from_larmor_is_not_precession(
     time = np.arange(0.0, 8.0, 0.016)
     dataset = MuonDataset(time, np.zeros_like(time), np.ones_like(time), {"run_number": 1})
     evidence = survey_module.precession_evidence(dataset, 2.0)
+    assert (evidence.state, evidence.frequency_mhz) == expected
+
+
+@pytest.mark.parametrize(
+    ("fingerprint", "expected"),
+    [
+        # An ordered magnet's line, found by the damped-line scan behind a
+        # sub-cycle leakage "line" (EuO at 10 K: 29.9 MHz).
+        ({"damped_line_frequency_mhz": 29.9, "damped_line_snr": 21.6}, ("other", 29.9)),
+        # A resolved dominant line stands on its own.
+        (
+            {"dominant_fft_frequency_mhz": 1.56, "dominant_fft_cycles_in_window": 12.0},
+            ("other", 1.56),
+        ),
+        # A Kubo-Toyabe or paramagnetic relaxation has no line.
+        ({}, ("none", None)),
+    ],
+)
+def test_a_zero_field_line_is_spontaneous_precession(monkeypatch, fingerprint, expected) -> None:
+    import numpy as np
+
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.workflow import survey as survey_module
+
+    monkeypatch.setattr(
+        survey_module, "fingerprint_spectrum", lambda dataset: _fingerprint(**fingerprint)
+    )
+    time = np.arange(0.0, 8.0, 0.016)
+    dataset = MuonDataset(time, np.zeros_like(time), np.ones_like(time), {"run_number": 1})
+    evidence = survey_module.precession_evidence(dataset, 0.0)
     assert (evidence.state, evidence.frequency_mhz) == expected

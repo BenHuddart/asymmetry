@@ -1579,7 +1579,8 @@ def test_a_trend_fit_report_scales_errors_and_warns_on_a_multi_component_paramet
     [
         ({"success": False}, "the fit did not converge"),
         ({"params_at_bound": ["nu"]}, "nu is at a bound"),
-        ({"uncertainties": {"D": 45.0, "nu": 10.0}}, "D's error is as large as its value"),
+        ({"uncertainties": {"D": 45.0, "nu": 10.0}}, "D's error is missing, zero or as large"),
+        ({"uncertainties": {"D": 0.0, "nu": 10.0}}, "D's error is missing, zero"),
     ],
 )
 def test_a_trend_law_that_did_not_fit_is_named_as_not_established(changes, reason) -> None:

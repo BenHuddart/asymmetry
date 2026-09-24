@@ -256,9 +256,18 @@ dominant line is compared with the Larmor frequency of the recorded field,
        claim is evidence for neither. A fixed-temperature field scan of such
        runs is longitudinal decoupling.
    * - ``-``
-     - Not measured: the field is zero (nothing to look for), or its Larmor
-       frequency is above the record's Nyquist frequency. ``precession_note`` in
-       the JSON says which.
+     - Not measured: no field is recorded, or its Larmor frequency is above
+       the record's Nyquist frequency. ``precession_note`` in the JSON says
+       which.
+
+**Zero-field runs are searched for a spontaneous line** by the same reading —
+the resolved dominant line, else the damped-line scan's. There is no Larmor
+frequency to compare with, so a line is ``other@<MHz>``: precession in a static
+internal field, the signature of long-range magnetic order. ``none`` means no
+line was resolved in that record. On the corpus this finds the ordered-state
+lines of EuO (29.9 MHz at 10 K, falling towards T\ :sub:`c`), nickel and a
+molecular antiferromagnet, and nothing in paramagnetic, Kubo–Toyabe or F–μ–F
+zero-field runs.
 
 The thresholds are :data:`~asymmetry.core.workflow.survey.PRECESSION_SNR_FLOOR`
 (10) and :data:`~asymmetry.core.workflow.survey.LARMOR_FREQUENCY_TOLERANCE`

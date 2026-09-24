@@ -100,7 +100,14 @@ it found:
 | `larmor` | A strong line at the Larmor frequency of the recorded field. The field **is** transverse, and `geom` reads `TF*` — the `*` says the spectrum decided it, not the file. |
 | `other@<MHz>` | A line at a frequency other than the Larmor one, printed beside it. The muon sees a field that is not the applied one: an **internal** field (an ordered magnet below its transition), muonium in a weak TF (1.394 MHz/G), the critical field inside a type-I superconductor's normal domains. The frequency tells you which. |
 | `none` | No line worth the name. Whatever the file stamps, **this field is not precessing the muon**. The file's claim is refuted, so `geom` reads `-`: either the field is longitudinal, or it is transverse with no resolvable line. |
-| `-` | Not measurable: zero field (nothing to look for), or a Larmor frequency above the record's Nyquist frequency (a kilogauss-scale field at a pulsed source). |
+| `-` | Not measurable: a Larmor frequency above the record's Nyquist frequency (a kilogauss-scale field at a pulsed source), or no field recorded. |
+
+**Zero-field runs are searched too.** There `other@<MHz>` is **spontaneous
+precession** — a static internal field, the signature of long-range magnetic
+order — and `none` means no line was resolved in that record (a paramagnet, a
+Kubo–Toyabe, or an order whose field is too large or too broad to resolve).
+A ZF temperature scan whose `other@` frequency falls on warming and gives way
+to `none` is an order parameter going to zero at the transition.
 
 `scans` groups by **instrument** and the held quantity, never by geometry, so a
 physical scan stays one scan even where the measurement resolves only part of it
@@ -131,8 +138,12 @@ below.
 **When the survey prints a `TEMPERATURE:` line**, the listed runs were not at
 their setpoint — a cryostat still cooling, a block of runs at the wrong
 temperature, or a sensor offset. It lists them in blocks with each block's
-offset (T log − T/K): a block several kelvin away from the rest is a different
-measurement, not a faulty thermometer to ignore. The `scans` block still groups them by
+offset (T log − T/K), and you decide which to trust, block by block, and say
+why. A block sitting at a different temperature from its neighbours is a
+different measurement, not a faulty thermometer to ignore. A steady offset the
+sample could not have had — a liquid logged above its boiling point, a
+cryostat base temperature below what the setpoint allows — points to the
+sensor, and then the setpoint is the better axis. The `scans` block still groups them by
 setpoint, so take its temperature scans as provisional: order those series by
 `sample_temperature_logged`, split off runs that sit far from the rest, and
 quote logged temperatures in the summary.
@@ -312,7 +323,7 @@ re-screens — and it will happily offer a vortex lattice to a ferromagnet.
 
 | The system | What gives it away | Screen with | Trend law (Step 6a) |
 |---|---|---|---|
-| Magnet ordering in zero field | ZF temperature scan; `prec other`, or A(0) collapsing on cooling | `--geometry ZF --scope zf-static-magnetism` | `OrderParameter` on the frequency below the transition; `CriticalDivergence` on a rate diverging towards it |
+| Magnet ordering in zero field | ZF temperature scan with `prec other@<MHz>` on the cold runs (spontaneous precession), or A(0) collapsing on cooling | `--geometry ZF --scope zf-static-magnetism` | `OrderParameter` on the frequency below the transition; `CriticalDivergence` on a rate diverging towards it |
 | Spin glass or frozen moments | relaxation only, rate rising and stretching on cooling | `--scope zf-static-magnetism` (ZF) or `lf-dynamics` (LF) | `CriticalDivergence` on the rate, if it diverges |
 | Fluctuating moments decoupled by a field | a **field** scan at one temperature whose runs do not precess at their field (`prec none` where measurable, `-` above Nyquist) — longitudinal decoupling, whatever zero field showed | `--geometry LF --scope lf-dynamics`; a **single** exponential rate λ | `Redfield` on λ(B), over the field range one process dominates |
 | Nuclear dipolar fields, muon or ion hopping | a dense-nucleus compound; Kubo–Toyabe dip | `zf-static-magnetism` / `lf-dynamics`, Gaussian KT (see decision rules) | `Arrhenius` on the hop rate `nu` |
@@ -838,7 +849,9 @@ difference of two columns, a unit conversion (MHz to gauss, relative to molar),
 a significance in σ — or a value from memory. Remove it, quote the printed
 value instead, or say the relation in words ("rises by several percent", "an
 order of magnitude faster"). Re-run `audit` until it lists nothing you would
-defend as printed, then send the summary. A clean audit means each number
+defend as printed. **Your final reply is `summary.md` exactly as audited** —
+paste it in full; do not write a shorter recap, which drops results and brings
+back numbers the audit removed. A clean audit means each number
 appears in some output, not that it is the right one — still quote values from
 the command that produced them.
 
@@ -1047,8 +1060,10 @@ than a cycle in the record. The 100 G runs beside them are for the diamagnetic
 fraction and for alpha. The survey reports the 2 G runs as `prec other` or
 `none` (the Mu line is not the applied field's Larmor line), and a full-record
 Fourier transform may show nothing because Mu relaxes quickly; look with
-`fourier --tmax 4`. **Look first in the sample with the least scavenger** — a
-deoxygenated solvent blank — where the Mu line lives longest. Untreated water
+`fourier --tmax 4`. **Look first in the sample with the least scavenger** — the
+run the notes call **deoxygenated** — where the Mu line lives longest; the
+survey shows it as `other@` near 1.394 MHz/G × B. Untreated water is **not** a
+blank: its dissolved O₂ is a scavenger. Untreated water
 carries dissolved O₂, which relaxes Mu too fast to see; a concentrated solution
 likewise. Absence of a line there says nothing about the blank. Reduce that
 blank with the right alpha for its block (Step 2) before concluding anything. The wizard has no dependable template for this; write the

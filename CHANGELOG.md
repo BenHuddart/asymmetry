@@ -194,6 +194,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conversions an analyst writes in prose. `trend --model` prints `LAW NOT ESTABLISHED` when the
   fit failed, a parameter sits at a bound, or an error is as large as its value. See
   `docs/reference/agent_workflow.rst` § "audit".
+- **`asymmetry survey` searches zero-field runs for spontaneous precession.** A ZF run's
+  `prec` column reads `other@<MHz>` when the spectrum holds a line (static magnetic order —
+  EuO's 29.9 MHz at 10 K, nickel's, a molecular antiferromagnet's) and `none` when it does not;
+  it used to read `-` for every zero-field run. The `TEMPERATURE:` line no longer asserts which
+  of the logged and setpoint temperatures is right.
 
 ### Changed
 

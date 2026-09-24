@@ -204,6 +204,16 @@ def _render(
     ]
     if fit is not None:
         lines.extend(["", *_render_fit(fit, series["free_params"])])
+    else:
+        lines.extend(
+            [
+                "",
+                "If the experiment asks for a number this trend encodes — a transition "
+                "temperature, a correlation time, an activation energy, a rate constant — fit "
+                "the law for it: asymmetry trend <folder> --series "
+                f"{series['name']} --model <law> --param <column> (Step 6a of the skill).",
+            ]
+        )
     if csv_path is not None:
         lines.extend(["", f"Trend written to {csv_path}"])
     if plot_paths:
@@ -250,13 +260,14 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
     undetermined = [
         name
         for name, value in fit["parameters"].items()
-        if name not in fit["fixed"] and abs(fit["uncertainties"].get(name, 0.0)) >= abs(value)
+        if name not in fit["fixed"]
+        and not 0.0 < abs(fit["uncertainties"].get(name, 0.0)) < abs(value)
     ]
     if not fit["success"] or fit["params_at_bound"] or undetermined:
         reasons = (
             (["the fit did not converge"] if not fit["success"] else [])
             + [f"{name} is at a bound" for name in fit["params_at_bound"]]
-            + [f"{name}'s error is as large as its value" for name in undetermined]
+            + [f"{name}'s error is missing, zero or as large as its value" for name in undetermined]
         )
         lines.append(
             f"LAW NOT ESTABLISHED ({'; '.join(reasons)}): {fit['expression']} does not describe "
