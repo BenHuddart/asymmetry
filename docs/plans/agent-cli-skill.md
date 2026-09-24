@@ -1038,6 +1038,30 @@ multi-component warning in `trend --model`, and skill text (a single-component
 `--param`; report a poor-χ²ᵣ law with its caveat; one negative run is not a
 negative folder; no invented units).
 
+#### Pass 5 — 2026-09-24, two repeats
+
+| Dataset | 5a | 5b |
+|---|---|---|
+| plateau-redfield | fail (no Redfield: read the LF scan as decoupling a static field) | pass |
+| sn-critical-field | pass | pass |
+| euo-psi | fail (number rule: "~14 %", count ratios) | fail (number rule: MHz → G by hand) |
+| maleic-mu-kinetics | fail (number rule: ratios, "17 K hotter") | fail (number rule: setpoint offsets; "0.5 %" unit) |
+
+Physics Musts held in 6/8 — Sn passed twice for the first time, both runs
+seeding their recipes from the survey's new `other@<MHz>` lines and fitting
+H_c(T) with `OrderParameter` (α=2, β=1). Four of the five failures were hand
+arithmetic in the prose; the skill's rule, buried in section 6, had not moved
+that behaviour in two passes. Changes: Step 7 becomes an explicit number audit
+naming the usual offenders; the survey's `TEMPERATURE:` line prints the
+offsets agents were computing; `trend --model` leads with the √χ²ᵣ-scaled
+error; the multi-component warning (a false positive on the Mu/diamagnetic
+pair) becomes a note that distinguishes species from split rates; the wizard
+stops listing sub-cycle leakage lines (still present in its payload); the LF
+cue in the class table no longer depends on `prec none`. Rubric wording
+fixed where a Must was unverifiable from a summary (EuO loader path) or too
+narrow (plateau 9031–9034), and the README now states that arithmetic on
+printed values counts under the number rule, as pass 4 already applied it.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
