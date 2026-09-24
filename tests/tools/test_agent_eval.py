@@ -240,3 +240,16 @@ def test_the_work_directory_the_agent_built_is_copied_out(eval_inputs, tmp_path:
     _run(runner, data=data, out=out, claude=claude)
 
     assert (out / "workdir" / "manifest.json").is_file()
+
+
+def test_a_copy_shorter_than_its_source_is_reported(tmp_path: Path) -> None:
+    module = _load_runner()
+    source = tmp_path / "source"
+    copy = tmp_path / "copy"
+    (source / "sub").mkdir(parents=True)
+    (copy / "sub").mkdir(parents=True)
+    (source / "a.nxs").write_bytes(b"x" * 10)
+    (copy / "a.nxs").write_bytes(b"x" * 10)
+    (source / "sub" / "b.nxs").write_bytes(b"x" * 10)
+    (copy / "sub" / "b.nxs").write_bytes(b"")
+    assert module.short_copies(source, copy) == [Path("sub/b.nxs")]

@@ -1117,7 +1117,10 @@ def test_trend_model_prints_the_fit_and_what_it_left_out(
         ]
     )
     out = capsys.readouterr().out
-    assert "Fit of Linear to Lambda against temperature over - .. 40.0000: 3 point(s)" in out
+    assert (
+        "Fit of Linear to Lambda against temperature, over the points' span "
+        "20.0000 .. 40.0000: 3 point(s)"
+    ) in out
     assert f"{SCAN_RUNS[0]} (excluded)" in out
     assert f"{SCAN_RUNS[-1]} (outside the x range)" in out
 
@@ -1559,6 +1562,9 @@ def test_a_trend_fit_report_scales_errors_and_warns_on_a_multi_component_paramet
         "params_at_bound": [],
         "excluded": [],
         "flagged": [],
+        "x_fitted": [1000.0, 38000.0],
+        "units": {"D": "MHz", "nu": "MHz", "m": None},
+        "turning_point": None,
     }
     text = "\n".join(_render_fit(fit, ["A_1", "Lambda_1", "A_2", "Lambda_2", "A_bg"]))
     # χ²ᵣ = 4 doubles the errors, and the scaled column leads.
@@ -1579,8 +1585,8 @@ def test_a_trend_fit_report_scales_errors_and_warns_on_a_multi_component_paramet
     [
         ({"success": False}, "the fit did not converge"),
         ({"params_at_bound": ["nu"]}, "nu is at a bound"),
-        ({"uncertainties": {"D": 45.0, "nu": 10.0}}, "D's error is missing, zero or as large"),
-        ({"uncertainties": {"D": 0.0, "nu": 10.0}}, "D's error is missing, zero"),
+        ({"uncertainties": {"D": 45.0, "nu": 10.0}}, "D's scaled error is missing, zero or as"),
+        ({"uncertainties": {"D": 0.0, "nu": 10.0}}, "D's scaled error is missing, zero"),
     ],
 )
 def test_a_trend_law_that_did_not_fit_is_named_as_not_established(changes, reason) -> None:
@@ -1602,6 +1608,9 @@ def test_a_trend_law_that_did_not_fit_is_named_as_not_established(changes, reaso
         "params_at_bound": [],
         "excluded": [],
         "flagged": [],
+        "x_fitted": [1000.0, 38000.0],
+        "units": {"D": "MHz", "nu": "MHz", "m": None},
+        "turning_point": None,
     }
     assert "LAW NOT ESTABLISHED" not in "\n".join(_render_fit(fit, ["Lambda"]))
     text = "\n".join(_render_fit(fit | changes, ["Lambda"]))
@@ -1631,3 +1640,35 @@ def test_trend_names_the_law_its_axis_and_parameters_call_for(
     text = "\n".join(_law_hints("scan", order_key, free_params))
     for fragment in expected:
         assert fragment in text
+
+
+def test_a_trend_law_is_judged_on_its_physical_parameters_and_scaled_errors() -> None:
+    from asymmetry.cli.commands.trend import _render_fit
+
+    fit = {
+        "param": "Lambda",
+        "expression": "CriticalDivergence",
+        "order_key": "temperature",
+        "n_points": 12,
+        "success": True,
+        "message": "",
+        "parameters": {"a": 12.3, "Tc": 84.44, "nu": 1.78, "c": 0.1},
+        "uncertainties": {"a": 13.7, "Tc": 1.63, "nu": 0.76, "c": 0.5},
+        "fixed": [],
+        "reduced_chi_squared": 1.0,
+        "params_at_bound": [],
+        "excluded": [],
+        "flagged": [],
+        "x_fitted": [90.0, 290.0],
+        "units": {"Tc": "K"},
+        "turning_point": None,
+    }
+    # An undetermined prefactor or offset does not sink a well-determined Tc.
+    text = "\n".join(_render_fit(fit, ["Lambda"]))
+    assert "LAW NOT ESTABLISHED" not in text
+    assert "Converged" in text
+    # ... but scaled errors do: chi2_red 25 makes nu's error 3.8 > 1.78.
+    text = "\n".join(_render_fit(fit | {"reduced_chi_squared": 25.0}, ["Lambda"]))
+    assert "LAW NOT ESTABLISHED" in text
+    assert "nu's scaled error" in text
+    assert "Tc's scaled error" not in text

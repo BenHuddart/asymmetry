@@ -589,7 +589,7 @@ quantity given values by hand is refused.
 from the first run in scan order — see `Series fitting`_ for why this
 matters. ``--global P,Q`` pins those parameters at their recipe value for
 every run rather than fitting them (see `The fit recipe`_). Besides the engine's quality flags, a run whose fitted amplitudes
-(backgrounds included) add up to more than three times the record's own
+(backgrounds included) add up to more than 1.5 times the record's own
 early-time asymmetry is flagged ``amplitude_exceeds_data`` — two components
 cancelling to describe a signal the data do not hold; ``fit`` applies the same
 check. A series that fits a frequency adds a ``survey_line_mhz`` column: the line the
@@ -660,7 +660,13 @@ rate or line, not one of two that split it between them. Without ``--model``,
 the report ends by naming the law the series' axis and parameters call for —
 Redfield for a rate against field (and a warning when the model splits the
 rate between two components), ``OrderParameter`` for a frequency against
-temperature, ``Linear`` for a rate against a supplied quantity. Excluding a run is the analyst's call: every run with a
+temperature, ``Linear`` for a rate against a supplied quantity. A fitted law's
+report states the x span of the points it rests on and each parameter's unit,
+and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
+parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
+open does not by itself sink a determined T\ :sub:`c`); it notes when the fitted
+points turn through an extremum, across which a monotonic law averages two
+regimes. Excluding a run is the analyst's call: every run with a
 value enters unless ``--exclude RUNS`` names it, and the output lists both the
 runs left out (with the reason) and the flagged runs that were fitted. The fit
 is stored in ``series/<name>.json`` under ``trend_fits``, and ``--plot``

@@ -327,10 +327,11 @@ re-screens — and it will happily offer a vortex lattice to a ferromagnet.
 
 | The system | What gives it away | Screen with | Trend law (Step 6a) |
 |---|---|---|---|
-| Magnet ordering in zero field | ZF temperature scan with `prec other@<MHz>` on the cold runs (spontaneous precession), or A(0) collapsing on cooling | `--geometry ZF --scope zf-static-magnetism` | `OrderParameter` on the frequency below the transition; `CriticalDivergence` on a rate diverging towards it |
-| Spin glass or frozen moments | relaxation only, rate rising and stretching on cooling | `--scope zf-static-magnetism` (ZF) or `lf-dynamics` (LF) | `CriticalDivergence` on the rate, if it diverges |
+| Magnet ordering in zero field | ZF temperature scan with `prec other@<MHz>` on the cold runs (spontaneous precession) | `--geometry ZF --scope zf-static-magnetism` | `OrderParameter` on the frequency below the transition; `CriticalDivergence` on a rate diverging towards it |
+| Spin glass or frozen moments | no spontaneous line; the rate rises and stretches on cooling, then A(0) collapses at the freezing temperature (the fast-relaxing fraction leaves the resolvable window) | `--scope zf-static-magnetism` (ZF) or `lf-dynamics` (LF) | `CriticalDivergence` on the rate from above the freezing; place T_g where the rate peaks or A(0) collapses, not where the wizard stops finding structure |
 | Fluctuating moments decoupled by a field | a **field** scan at one temperature whose runs do not precess at their field (`prec none` where measurable, `-` above Nyquist) — longitudinal decoupling, whatever zero field showed | `--geometry LF --scope lf-dynamics`; a **single** exponential rate λ | `Redfield` on λ(B), over the field range one process dominates |
-| Nuclear dipolar fields, muon or ion hopping | a dense-nucleus compound; Kubo–Toyabe dip | `zf-static-magnetism` / `lf-dynamics`, Gaussian KT (see decision rules) | `Arrhenius` on the hop rate `nu` |
+| Nuclear dipolar fields, muon or ion hopping | a dense-nucleus compound; Kubo–Toyabe dip in ZF; in TF a Gaussian envelope that turns exponential on warming (motional narrowing) | ZF/LF: `zf-static-magnetism` / `lf-dynamics`, Gaussian KT (see decision rules). TF: fit the envelope shape per run (a stretched exponential with β free, or Gaussian vs exponential) and report the shape against temperature | `Arrhenius` on the hop rate `nu` over the range where it rises; state any low-temperature upturn separately |
+| Quadrupolar level crossing | an LF scan over a narrow field range (tens of gauss) at one low temperature, in a compound with quadrupolar nuclei (Cu, Al, Nb …); a dip in the integral asymmetry, or fits whose χ²ᵣ spikes, at particular fields | `integral-scan` over the field range (Step 5b), not a decoupling analysis | the scan's resonance fit (`GaussianLCR`/`LorentzianLCR` + background) |
 | Type-II superconductor | TF scan through Tc, `prec larmor`, line broadening on cooling | `--geometry TF --scope tf-superconductor` | an `SC_*` gap model on σ(T) |
 | Type-I superconductor, intermediate state | a pure elemental superconductor (Sn, Pb, In, Al …) in a field **below H_c**, often LF on a tilted foil; `prec none` at the applied field | `--geometry LF --scope lf-dynamics --include Oscillatory`, and `fourier` to find the line — muons in the normal domains precess at γ_μ·H_c whatever field is applied | `OrderParameter` with `--fix alpha=2 --fix beta=1` (H_c(0)[1−(T/T_c)²]) on the frequency, against the logged temperature |
 | Fluoride | fluorine in the sample name | `--scope fluoride-fmuf` | — |
@@ -866,7 +867,8 @@ difference of two columns, a unit conversion (MHz to gauss, relative to molar),
 a significance in σ — or a value from memory. Remove it, quote the printed
 value instead, or say the relation in words ("rises by several percent", "an
 order of magnitude faster"). Re-run `audit` until it lists nothing you would
-defend as printed.
+defend as printed. Do not mention the audit in the reply; it is a check on
+your draft, not a finding.
 
 **The user sees neither tool output nor files — only your final message.** So
 your final message must *be* the summary: its full text, as audited, typed out

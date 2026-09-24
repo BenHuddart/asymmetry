@@ -55,6 +55,12 @@ class TrendFitOutcome:
     chi_squared: float
     reduced_chi_squared: float
     params_at_bound: list[str]
+    #: The x range the fitted points actually span.
+    x_fitted: tuple[float, float]
+    #: Each parameter's unit, where the law's component declares one.
+    units: dict[str, str | None]
+    #: x of an interior extremum the fitted points turn through, or ``None``.
+    turning_point: float | None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict."""
@@ -76,6 +82,9 @@ class TrendFitOutcome:
             "chi_squared": self.chi_squared,
             "reduced_chi_squared": self.reduced_chi_squared,
             "params_at_bound": list(self.params_at_bound),
+            "x_fitted": list(self.x_fitted),
+            "units": dict(self.units),
+            "turning_point": self.turning_point,
         }
 
 
@@ -176,7 +185,26 @@ def fit_trend(
         chi_squared=float(result.chi_squared),
         reduced_chi_squared=float(result.reduced_chi_squared),
         params_at_bound=list(result.params_at_bound),
+        x_fitted=(float(np.min(x)), float(np.max(x))),
+        units={name: model.param_info[name].unit for name in model.param_names},
+        turning_point=turning_point(x, y, y_err),
     )
+
+
+def turning_point(x: np.ndarray, y: np.ndarray, y_err: np.ndarray) -> float | None:
+    """x of an interior minimum or maximum both ends clear by two errors, else ``None``.
+
+    A monotonic law (Arrhenius, an order parameter, a one-sided divergence)
+    fitted across such a point averages two regimes into one.
+    """
+    order = np.argsort(x)
+    xs, ys, es = x[order], y[order], np.abs(y_err[order])
+    for index in (int(np.argmin(ys)), int(np.argmax(ys))):
+        if 0 < index < ys.size - 1:
+            depth = np.abs(ys[[0, -1]] - ys[index]) - 2.0 * np.hypot(es[[0, -1]], es[index])
+            if np.all(depth > 0.0):
+                return float(xs[index])
+    return None
 
 
 def _exclusion_reason(
@@ -196,4 +224,4 @@ def _exclusion_reason(
     return None
 
 
-__all__ = ["TrendFitOutcome", "fit_trend"]
+__all__ = ["TrendFitOutcome", "fit_trend", "turning_point"]

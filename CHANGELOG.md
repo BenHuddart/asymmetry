@@ -210,9 +210,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over a many-field scan cannot show λ(B). A converged poor-χ²ᵣ trend law says it is the result,
   to be reported with its caveat.
 - **`fit` and `fit-series` flag amplitudes the data cannot hold** (`amplitude_exceeds_data`:
-  amplitudes summing past three times the record's early-time asymmetry); `audit` also lists
+  amplitudes summing past 1.5 times the record's early-time asymmetry); `audit` also lists
   "-fold" and "N times" multiples; a `Linear` trend against a supplied quantity says its slope
   is the rate constant to report.
+- **`trend --model` judges a law on the scaled errors of its physical parameters.** An
+  undetermined prefactor or offset no longer declares a law not established; the report gives
+  the x span of the fitted points and each parameter's unit (Arrhenius `Ea` in meV), and notes
+  a turning point that a monotonic law would be fitted across.
 
 ### Changed
 

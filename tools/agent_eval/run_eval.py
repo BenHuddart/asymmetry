@@ -191,6 +191,19 @@ def check_inputs(args: argparse.Namespace) -> None:
         sys.exit(f"Claude Code CLI not found at {args.claude}; pass --claude")
 
 
+def short_copies(source: Path, copy: Path) -> list[Path]:
+    """Files under *copy* smaller than their counterpart under *source*.
+
+    A cloud-offloaded file reports its full size but reads as empty, so a
+    copy of it is silently truncated and the run would analyse missing data.
+    """
+    return sorted(
+        path.relative_to(source)
+        for path in source.rglob("*")
+        if path.is_file() and (copy / path.relative_to(source)).stat().st_size < path.stat().st_size
+    )
+
+
 def stage(args: argparse.Namespace) -> tuple[Path, Path]:
     """Copy the dataset to ``<out>/data`` and build the agent's ``<out>/project``.
 
@@ -202,6 +215,13 @@ def stage(args: argparse.Namespace) -> tuple[Path, Path]:
     project = args.out / "project"
     data.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(args.data, data)
+    short = short_copies(args.data, data)
+    if short:
+        sys.exit(
+            f"{len(short)} file(s) copied short of their source, e.g. {short[0]} — an "
+            f"iCloud-offloaded ('dataless') file reads as empty. Download the dataset "
+            f"(open or read its files) and run again."
+        )
     project.mkdir()
     subprocess.run(
         [*asymmetry_command(), "skill", "install", "--agent", "claude", "--project"],

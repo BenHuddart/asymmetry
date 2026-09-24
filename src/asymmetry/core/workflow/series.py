@@ -101,7 +101,7 @@ ORDER_KEYS = ("temperature", "sample_temperature_logged", "field", "run")
 #: A fit whose amplitudes (backgrounds included) add up to more than this many
 #: times the largest early-time asymmetry the record holds is describing a
 #: signal the data do not contain — typically two amplitudes cancelling.
-AMPLITUDE_EXCESS_FACTOR = 3.0
+AMPLITUDE_EXCESS_FACTOR = 1.5
 AMPLITUDE_EXCEEDS_DATA = "amplitude_exceeds_data"
 
 

@@ -107,3 +107,25 @@ def test_bad_requests_are_refused_naming_the_problem(kwargs, match) -> None:
     expression = arguments.pop("expression")
     with pytest.raises(ValueError, match=match):
         fit_trend(_trend(), param, expression, **arguments)
+
+
+def test_a_turning_point_is_found_only_when_both_ends_clear_it() -> None:
+    from asymmetry.core.workflow.trend_fit import turning_point
+
+    x = np.array([5.0, 40.0, 60.0, 100.0, 200.0])
+    errors = np.full(5, 0.01)
+    # A minimum at 40 K both ends rise well clear of.
+    assert turning_point(x, np.array([0.10, 0.02, 0.05, 0.4, 2.2]), errors) == 40.0
+    # Monotonic: none.
+    assert turning_point(x, np.array([0.01, 0.02, 0.05, 0.4, 2.2]), errors) is None
+    # An interior dip inside the errors: none.
+    assert turning_point(x, np.array([0.03, 0.02, 0.05, 0.4, 2.2]), errors) is None
+
+
+def test_the_fit_reports_its_span_and_units() -> None:
+    fit = fit_trend(
+        _trend(), "frequency", "OrderParameter", fixed={"alpha": 1.0}, exclude=[_FLAGGED_RUN]
+    )
+    assert fit.x_fitted == (float(_TEMPERATURES[0]), float(_TEMPERATURES[-1]))
+    assert fit.units["Tc"] == "K"
+    assert fit.turning_point is None

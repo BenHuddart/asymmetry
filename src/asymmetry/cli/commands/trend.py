@@ -265,15 +265,18 @@ def _law_hints(name: str, order_key: str, free_params: list[str]) -> list[str]:
     return ["Next — the law this trend calls for:", *hints]
 
 
+#: Prefactors and offsets of the trend components (Arrhenius and
+#: CriticalDivergence ``a``/``c``, Linear's intercept ``b``): an undetermined
+#: one says nothing about whether the law's physical parameters are.
+_NUISANCE_BASES = frozenset({"a", "b", "c"})
+
+
 def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
-    """The fit block: model, range, parameters with errors, and what was left out."""
-    span = (
-        ""
-        if fit["x_min"] is None and fit["x_max"] is None
-        else f" over {format_number(fit['x_min'], 4)} .. {format_number(fit['x_max'], 4)}"
-    )
+    """The fit block: model, range, parameters with errors, verdict and what was left out."""
+    lo, hi = fit["x_fitted"]
     lines = [
-        f"Fit of {fit['expression']} to {fit['param']} against {fit['order_key']}{span}: "
+        f"Fit of {fit['expression']} to {fit['param']} against {fit['order_key']}, over the "
+        f"points' span {format_number(lo, 4)} .. {format_number(hi, 4)}: "
         f"{fit['n_points']} point(s), "
         + (
             f"chi2_red {format_number(fit['reduced_chi_squared'], 3)}"
@@ -282,7 +285,8 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
         ),
     ]
     # A χ²ᵣ above 1 says the points scatter more than their own errors allow;
-    # the fit's errors scaled by √χ²ᵣ are the honest ones then, so they lead.
+    # the fit's errors scaled by √χ²ᵣ are the honest ones then, so they lead
+    # and the verdict below is judged on them.
     scale = max(1.0, fit["reduced_chi_squared"]) ** 0.5 if fit["success"] else 1.0
 
     def error(name: str, factor: float) -> str:
@@ -295,42 +299,67 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
     rows = [
         [name, format_number(value, 6), error(name, scale)]
         + ([error(name, 1.0)] if scale > 1.0 else [])
+        + [fit["units"].get(name) or ""]
         for name, value in fit["parameters"].items()
     ]
-    headers = ["parameter", "value"] + (
-        [f"error (x sqrt(chi2_red) = {scale:.3g})", "unscaled error"] if scale > 1.0 else ["error"]
+    headers = (
+        ["parameter", "value"]
+        + (
+            [f"error (x sqrt(chi2_red) = {scale:.3g})", "unscaled error"]
+            if scale > 1.0
+            else ["error"]
+        )
+        + ["unit"]
     )
     lines.append(render_table(headers, rows))
+    physical = [
+        name
+        for name in fit["parameters"]
+        if name not in fit["fixed"] and re.sub(r"_\d+$", "", name) not in _NUISANCE_BASES
+    ]
     undetermined = [
         name
-        for name, value in fit["parameters"].items()
-        if name not in fit["fixed"]
-        and not 0.0 < abs(fit["uncertainties"].get(name, 0.0)) < abs(value)
+        for name in physical
+        if not 0.0 < abs(fit["uncertainties"].get(name, 0.0)) * scale < abs(fit["parameters"][name])
     ]
-    if not fit["success"] or fit["params_at_bound"] or undetermined:
+    pinned = [name for name in fit["params_at_bound"] if name in physical]
+    if not fit["success"] or pinned or undetermined:
         reasons = (
             (["the fit did not converge"] if not fit["success"] else [])
-            + [f"{name} is at a bound" for name in fit["params_at_bound"]]
-            + [f"{name}'s error is missing, zero or as large as its value" for name in undetermined]
+            + [f"{name} is at a bound" for name in pinned]
+            + [
+                f"{name}'s scaled error is missing, zero or as large as its value"
+                for name in undetermined
+            ]
         )
         lines.append(
             f"LAW NOT ESTABLISHED ({'; '.join(reasons)}): {fit['expression']} does not describe "
             f"this trend. Describe the trend in plain words and do not use this law's physics."
         )
-    if (
-        fit["success"]
-        and fit["expression"].strip() == "Linear"
-        and fit["order_key"] not in _FILE_AXES
-    ):
+    else:
         lines.append(
-            f"The slope m is the change in {fit['param']} per unit {fit['order_key']}: for a "
-            f"rate against a concentration it is the rate constant. Report m with its error, "
-            f"in {fit['param']}'s unit per unit {fit['order_key']}."
+            "Converged, with its physical parameters determined: report them with the "
+            "errors in the first error column"
+            + (
+                f" and the chi2_red ({format_number(fit['reduced_chi_squared'], 3)}); if the "
+                "curve visibly misses points on the plot, say the law describes the trend "
+                "only roughly — but do not withhold the values."
+                if scale > 1.0
+                else "."
+            )
         )
-    if fit["success"] and scale > 1.0 and not (fit["params_at_bound"] or undetermined):
+        if fit["expression"].strip() == "Linear" and fit["order_key"] not in _FILE_AXES:
+            lines.append(
+                f"The slope m is the change in {fit['param']} per unit {fit['order_key']}: for a "
+                f"rate against a concentration it is the rate constant. Report m with its "
+                f"error, in {fit['param']}'s unit per unit {fit['order_key']}."
+            )
+    if fit["turning_point"] is not None:
         lines.append(
-            "This converged: it is the result. Report it with the scaled errors and the "
-            "chi2_red as a caveat (the law describes the trend approximately) — do not withhold it."
+            f"NOTE: the fitted points turn through an extremum near {fit['order_key']} = "
+            f"{format_number(fit['turning_point'], 4)}. A law that only rises or only falls, "
+            f"fitted across it, averages two regimes: say so, and fit each side with "
+            f"--xmin/--xmax if the physics differs."
         )
     base = re.sub(r"_\d+$", "", fit["param"])
     siblings = [
