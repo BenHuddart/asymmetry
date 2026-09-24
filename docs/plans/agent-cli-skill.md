@@ -1209,6 +1209,24 @@ arrays in the log and its success message asks for the text with no preface
 (all eight replies had opened "Clean audit"); skill: a line the survey tracks
 along a scan is a measurement to quote.
 
+#### Pass 13 — 2026-09-24, two repeats
+
+| Dataset | 13a | 13b |
+|---|---|---|
+| plateau-redfield | pass | pass |
+| sn-critical-field | pass (Must 3 met by quoting the survey's line run by run) | fail, judgement (called the logged 8 K block a sensor fault) |
+| euo-psi | pass | fail, judgement ("critical slowing down" after three CriticalDivergence fits printed LAW NOT ESTABLISHED) |
+| maleic-mu-kinetics | fail, borderline (the converged slope downgraded to "qualitative") | pass |
+
+5/8 strictly, 8/8 leniently. Passes 12–13 combined: plateau 4/4, EuO 3/4,
+maleic 3/4, Sn 1/4. No reply opened with the audit any more. The failures are
+guidance the tools already print being overridden, so the next changes turn
+two of them into mechanism: the wizard writes recipe `line-<run>` (the
+recommendation plus a detected line it does not fit, amplitude started small;
+on Sn 91516 it fits the line at 1.902 ± 0.012 MHz with amplitude
+0.36 ± 0.07 %), and `audit` lists a law's vocabulary when every logged fit of
+that law printed `LAW NOT ESTABLISHED`.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
