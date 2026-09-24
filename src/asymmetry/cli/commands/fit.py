@@ -8,7 +8,7 @@ from typing import Any
 
 from asymmetry.cli._output import emit_json, format_number, payload, render_table
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
-from asymmetry.cli._runs import reduced_datasets
+from asymmetry.cli._runs import reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -74,6 +74,9 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(result, recipe, plot_path))
+    note = window_note(workdir, [args.run])
+    if note is not None:
+        print(note)
 
 
 def _render(result: dict[str, Any], recipe, plot_path: Path | None = None) -> str:

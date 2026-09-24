@@ -240,3 +240,48 @@ def test_the_work_directory_the_agent_built_is_copied_out(eval_inputs, tmp_path:
     _run(runner, data=data, out=out, claude=claude)
 
     assert (out / "workdir" / "manifest.json").is_file()
+
+
+def test_a_copy_shorter_than_its_source_is_reported(tmp_path: Path) -> None:
+    module = _load_runner()
+    source = tmp_path / "source"
+    copy = tmp_path / "copy"
+    (source / "sub").mkdir(parents=True)
+    (copy / "sub").mkdir(parents=True)
+    (source / "a.nxs").write_bytes(b"x" * 10)
+    (copy / "a.nxs").write_bytes(b"x" * 10)
+    (source / "sub" / "b.nxs").write_bytes(b"x" * 10)
+    (copy / "sub" / "b.nxs").write_bytes(b"")
+    assert module.short_copies(source, copy) == [Path("sub/b.nxs")]
+
+
+def test_every_wave_case_names_a_rubric_and_every_set_names_cases() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "asymmetry_run_wave", ROOT / "tools" / "agent_eval" / "run_wave.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    rubrics = {path.stem for path in (ROOT / "tools" / "agent_eval" / "rubrics").glob("*.md")}
+    assert set(module.CASES) <= rubrics
+    assert set(module.CASES) == rubrics - {"README"}
+    for cases in module.SETS.values():
+        assert set(cases) <= set(module.CASES)
+
+
+def test_a_wave_runs_every_named_set_once(tmp_path: Path, monkeypatch) -> None:
+    spec = importlib.util.spec_from_file_location(
+        "asymmetry_run_wave", ROOT / "tools" / "agent_eval" / "run_wave.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    ran: list[str] = []
+    monkeypatch.setattr(
+        module, "run_case", lambda case, corpus, out, model: ran.append(case) or (case, 0)
+    )
+    argv = ["--set", "trend-fit", "--set", "hold-out", "--case", "euo-psi", "--out", str(tmp_path)]
+    assert module.main(argv) == 0
+    assert sorted(ran) == sorted({*module.SETS["trend-fit"], *module.SETS["hold-out"]})

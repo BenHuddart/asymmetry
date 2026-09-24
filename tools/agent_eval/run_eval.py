@@ -191,6 +191,19 @@ def check_inputs(args: argparse.Namespace) -> None:
         sys.exit(f"Claude Code CLI not found at {args.claude}; pass --claude")
 
 
+def short_copies(source: Path, copy: Path) -> list[Path]:
+    """Files under *copy* smaller than their counterpart under *source*.
+
+    A cloud-offloaded file reports its full size but reads as empty, so a
+    copy of it is silently truncated and the run would analyse missing data.
+    """
+    return sorted(
+        path.relative_to(source)
+        for path in source.rglob("*")
+        if path.is_file() and (copy / path.relative_to(source)).stat().st_size < path.stat().st_size
+    )
+
+
 def stage(args: argparse.Namespace) -> tuple[Path, Path]:
     """Copy the dataset to ``<out>/data`` and build the agent's ``<out>/project``.
 
@@ -202,6 +215,13 @@ def stage(args: argparse.Namespace) -> tuple[Path, Path]:
     project = args.out / "project"
     data.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(args.data, data)
+    short = short_copies(args.data, data)
+    if short:
+        sys.exit(
+            f"{len(short)} file(s) copied short of their source, e.g. {short[0]} — an "
+            f"iCloud-offloaded ('dataless') file reads as empty. Download the dataset "
+            f"(open or read its files) and run again."
+        )
     project.mkdir()
     subprocess.run(
         [*asymmetry_command(), "skill", "install", "--agent", "claude", "--project"],
@@ -221,10 +241,18 @@ def agent_env(args: argparse.Namespace) -> dict[str, str]:
 
     ``--hdf4-dll-dir`` reaches the ``asymmetry`` commands the agent launches as
     ``ASYMMETRY_HDF4_DLL_DIR``, which legacy NeXus files need on Windows.
+
+    The shell tool's timeouts are raised to ten minutes: at the 120 s default a
+    long ``wizard`` moves to the background, and a headless session whose agent
+    then ends its turn ends with it — where an interactive one would be woken
+    when the command finished. That lost three runs to the harness, not the
+    skill (passes 15–16).
     """
     env = dict(os.environ)
     env["PATH"] = f"{cli_bin_dir()}{os.pathsep}{env.get('PATH', '')}"
     env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("BASH_DEFAULT_TIMEOUT_MS", "600000")
+    env.setdefault("BASH_MAX_TIMEOUT_MS", "600000")
     if args.hdf4_dll_dir:
         env["ASYMMETRY_HDF4_DLL_DIR"] = str(args.hdf4_dll_dir)
     return env

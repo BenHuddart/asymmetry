@@ -74,27 +74,228 @@ the analyst's call, never this function's.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import FitEngine
-from asymmetry.core.fitting.parameters import ParameterSet
+from asymmetry.core.fitting.engine import AsymmetryScaleWarning, FitEngine
+from asymmetry.core.fitting.models import LINEAR_PARAM_ROLE_NAMES
+from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
 from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.fitting.seeding import SeedContext, seed_parameters
 from asymmetry.core.fitting.series import fit_asymmetry_series
 from asymmetry.core.fitting.series_seeding import resolve_series_params
 from asymmetry.core.workflow.recipe import FitRecipe
 
-#: Quantities a series may be ordered along. ``"run"`` needs no metadata; the
-#: other two are read from each run's recorded scan metadata.
-ORDER_KEYS = ("temperature", "field", "run")
+#: Quantities a series may be ordered along by reading each run's metadata.
+#: ``"run"`` needs none; ``"temperature"`` is the setpoint and
+#: ``"sample_temperature_logged"`` the measured sample temperature, which can sit
+#: several kelvin away from it. Any other quantity (a concentration, a foil
+#: count, a magnet current) is supplied per run by the analyst through
+#: :func:`supplied_axis`.
+ORDER_KEYS = ("temperature", "sample_temperature_logged", "field", "run")
 
 
-def order_values(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> dict[int, float]:
-    """The scan coordinate of every run, for ordering and for the trend x-axis.
+#: A fit whose amplitudes (backgrounds included) add up to more than this many
+#: times the largest early-time asymmetry the record holds is describing a
+#: signal the data do not contain — typically two amplitudes cancelling.
+AMPLITUDE_EXCESS_FACTOR = 1.5
+AMPLITUDE_EXCEEDS_DATA = "amplitude_exceeds_data"
+
+
+def amplitude_exceeds_data(dataset: MuonDataset, parameters: Mapping[str, float]) -> bool:
+    """Whether a fit's amplitudes add up to more than the record can hold (see above).
+
+    The record's scale is the 95th percentile of ``|A|`` over its first tenth —
+    robust to an oscillation, whose early mean can sit near zero.
+    """
+    import numpy as np
+
+    asymmetry = np.abs(np.asarray(dataset.asymmetry, dtype=float))
+    early = asymmetry[: max(5, asymmetry.size // 10)]
+    scale = max(float(np.percentile(early, 95)), 1.0)
+    total = sum(
+        abs(value)
+        for name, value in parameters.items()
+        if split_parameter_name(name)[0] in LINEAR_PARAM_ROLE_NAMES
+    )
+    return total > AMPLITUDE_EXCESS_FACTOR * scale
+
+
+FREQUENCY_UNRESOLVED = "frequency_unresolved"
+
+
+def frequency_unresolved(
+    dataset: MuonDataset, parameters: Mapping[str, float], free: Sequence[str]
+) -> bool:
+    """Whether a free frequency completes too few cycles in the informative window.
+
+    The wizard's own :data:`MIN_CYCLES_IN_EFFECTIVE_WINDOW` rule: below it a
+    fitted "frequency" is a relaxation in disguise — the spurious branch a weak
+    line fitted without its relaxing background falls onto.
+    """
+    from asymmetry.core.fitting.fit_wizard import (
+        MIN_CYCLES_IN_EFFECTIVE_WINDOW,
+        effective_window_duration,
+    )
+
+    window = effective_window_duration(dataset)
+    return any(
+        abs(parameters[name]) * window < MIN_CYCLES_IN_EFFECTIVE_WINDOW
+        for name in free
+        if split_parameter_name(name)[0] == "frequency"
+    )
+
+
+#: The two relaxation envelopes a single-envelope recipe is weighed between on
+#: every run: a static distribution of fields dephases as a Gaussian, one
+#: fluctuating faster than its width (motional narrowing) as an exponential.
+RIVAL_ENVELOPES = {"Gaussian": "Exponential", "Exponential": "Gaussian"}
+
+#: The χ² margin by which one envelope must beat the other to be named — the
+#: two have the same parameter count, so this is also the AIC difference.
+ENVELOPE_MARGIN = 10.0
+
+
+def rival_envelope_model(model: CompositeModel) -> tuple[CompositeModel, dict[str, str]] | None:
+    """*model* with its one relaxation envelope swapped, and the parameter renames.
+
+    ``None`` unless the model carries exactly one Gaussian or Exponential — with
+    two, which one is "the" envelope is not the model's to say.
+    """
+    names = model.component_names
+    envelopes = [index for index, name in enumerate(names) if name in RIVAL_ENVELOPES]
+    if len(envelopes) != 1:
+        return None
+    index = envelopes[0]
+    payload = model.to_dict()
+    payload["component_names"] = [
+        *names[:index],
+        RIVAL_ENVELOPES[names[index]],
+        *names[index + 1 :],
+    ]
+    rival = CompositeModel.from_dict(payload)
+    return rival, dict(zip(model.param_names, rival.param_names, strict=True))
+
+
+def envelope_preference(
+    record: MuonDataset,
+    recipe: FitRecipe,
+    rival: tuple[CompositeModel, dict[str, str]],
+    fitted: Mapping[str, float],
+    chi_squared: float,
+) -> dict[str, Any]:
+    """Refit one run with the rival envelope, started from its fitted values.
+
+    Returns the preferred envelope's name (``"either"`` inside
+    :data:`ENVELOPE_MARGIN`) and ``delta_chi2`` = χ²(rival) − χ²(recipe); both
+    ``None`` when the rival fit failed, since a failed fit weighs nothing.
+    """
+    model, renames = rival
+    parameters = ParameterSet(
+        [
+            replace(entry, name=renames[entry.name], value=fitted[entry.name]).to_parameter()
+            for entry in recipe.parameters
+        ]
+    )
+    # The start is a converged fit, not a seed, so the seed-scale guard's
+    # premise does not hold: a small fitted amplitude is a result.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", AsymmetryScaleWarning)
+        result = FitEngine().fit(
+            record, model.function, parameters, t_min=recipe.t_min, t_max=recipe.t_max
+        )
+    if not result.success:
+        return {"preferred": None, "delta_chi2": None}
+    own = next(name for name in recipe.model().component_names if name in RIVAL_ENVELOPES)
+    delta = float(result.chi_squared) - float(chi_squared)
+    if delta >= ENVELOPE_MARGIN:
+        preferred = own
+    elif delta <= -ENVELOPE_MARGIN:
+        preferred = RIVAL_ENVELOPES[own]
+    else:
+        preferred = "either"
+    return {"preferred": preferred, "delta_chi2": delta}
+
+
+def envelope_change(trend: TrendTable) -> str | None:
+    """A note naming where the preferred envelope changes along the scan, or ``None``."""
+    if "envelope" not in trend.columns:
+        return None
+    decided = [row for row in trend.rows if row["envelope"] in RIVAL_ENVELOPES]
+    if len({row["envelope"] for row in decided}) < 2:
+        return None
+    blocks: list[tuple[str, list[dict[str, Any]]]] = []
+    for row in decided:
+        if blocks and blocks[-1][0] == row["envelope"]:
+            blocks[-1][1].append(row)
+        else:
+            blocks.append((row["envelope"], [row]))
+    described = "; ".join(
+        f"{shape} on {', '.join(str(row['run']) for row in rows)} ({trend.order_key} {_span(rows)})"
+        for shape, rows in blocks
+    )
+    return (
+        f"NOTE: the relaxation shape changes along this scan — {described} (the envelope "
+        f"column; runs marked 'either' fit both alike). "
+        + (
+            "A Gaussian (a static spread of fields) turning exponential on warming, as the "
+            "fluctuations outrun it, is motional narrowing: report the shape against "
+            f"{trend.order_key}, not only the rate."
+            if trend.order_key in ("temperature", "sample_temperature_logged")
+            else f"A change of shape along {trend.order_key} is a result: report it with the "
+            "runs on each side, not only the rate."
+        )
+    )
+
+
+#: Flags that say a fit did not describe its run.
+_UNDESCRIBED = frozenset({"failed", FREQUENCY_UNRESOLVED, AMPLITUDE_EXCEEDS_DATA})
+
+
+def lineless_end(trend: TrendTable) -> list[int]:
+    """The runs at one end of a precession scan that hold no line to fit.
+
+    A block of at least two runs, at the start or the end of the scan, where the
+    survey found no line and the fit is flagged as not describing the run: the
+    other side of a transition, which the precession model cannot follow. The
+    longer block when both ends qualify; empty for a series that fits no
+    frequency.
+    """
+    if "survey_line_mhz" not in trend.columns:
+        return []
+
+    def block(rows: list[dict[str, Any]]) -> list[int]:
+        runs: list[int] = []
+        for row in rows:
+            if row["survey_line_mhz"] is not None or not _UNDESCRIBED & set(row["flags"]):
+                break
+            runs.append(row["run"])
+        return runs
+
+    ends = [block(list(reversed(trend.rows)))[::-1], block(trend.rows)]
+    longest = max(ends, key=len)
+    return longest if len(longest) >= 2 else []
+
+
+def _span(rows: Sequence[Mapping[str, Any]]) -> str:
+    values = [row["x"] for row in rows]
+    return f"{min(values):g}" if len(values) == 1 else f"{min(values):g}–{max(values):g}"
+
+
+@dataclass(frozen=True)
+class ScanAxis:
+    """The coordinate a series is ordered and trended along: one value per run."""
+
+    name: str
+    values: dict[int, float]
+
+
+def scan_axis(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> ScanAxis:
+    """The axis *order_key* names, read from every run's recorded metadata.
 
     Raises :class:`ValueError` naming the runs that do not record *order_key* —
     a scan cannot be chained along a quantity half its members lack, and
@@ -102,10 +303,11 @@ def order_values(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> 
     """
     if order_key not in ORDER_KEYS:
         raise ValueError(
-            f"Unknown order key {order_key!r}; expected one of {', '.join(ORDER_KEYS)}."
+            f"{order_key!r} is not recorded in the files (they record "
+            f"{', '.join(ORDER_KEYS)}); supply its value for every run instead."
         )
     if order_key == "run":
-        return {run: float(run) for run in datasets_by_run}
+        return ScanAxis(order_key, {int(run): float(run) for run in datasets_by_run})
 
     values: dict[int, float] = {}
     missing: list[int] = []
@@ -120,7 +322,30 @@ def order_values(datasets_by_run: Mapping[int, MuonDataset], order_key: str) -> 
             f"Run(s) {', '.join(str(run) for run in sorted(missing))} record no {order_key}; "
             f"order the series by a quantity every run has."
         )
-    return values
+    return ScanAxis(order_key, values)
+
+
+def supplied_axis(name: str, values: Mapping[int, float], runs: Iterable[int]) -> ScanAxis:
+    """An axis the analyst supplies, with exactly one value for each of *runs*.
+
+    *name* labels the trend; it may not be one of :data:`ORDER_KEYS`, whose
+    values come from the files. Raises :class:`ValueError` naming the runs with
+    no value, and the values given for runs outside the series.
+    """
+    if name in ORDER_KEYS:
+        raise ValueError(f"{name!r} is read from the files; order by it without supplying values.")
+    runs = {int(run) for run in runs}
+    given = {int(run) for run in values}
+    if runs - given:
+        raise ValueError(
+            f"No {name} value for run(s) {', '.join(str(run) for run in sorted(runs - given))}."
+        )
+    if given - runs:
+        raise ValueError(
+            f"{name} values given for run(s) "
+            f"{', '.join(str(run) for run in sorted(given - runs))}, which are not in the series."
+        )
+    return ScanAxis(name, {int(run): float(value) for run, value in values.items()})
 
 
 @dataclass(frozen=True)
@@ -256,6 +481,22 @@ def _prepared(dataset: MuonDataset, recipe: FitRecipe) -> MuonDataset:
     return dataset if recipe.rebin <= 1 else dataset.rebin(recipe.rebin)
 
 
+def _workflow_flags(
+    record: MuonDataset, summary: Mapping[str, Any], free: Sequence[str]
+) -> list[str]:
+    """The engine's quality flags plus the workflow's own checks against the record.
+
+    Not member-quality flags (that vocabulary is the engine's): a fit whose
+    amplitudes the record cannot hold, or whose frequency it cannot resolve.
+    """
+    flags = set(summary["quality_flags"])
+    if amplitude_exceeds_data(record, summary["parameters"]):
+        flags.add(AMPLITUDE_EXCEEDS_DATA)
+    if frequency_unresolved(record, summary["parameters"], free):
+        flags.add(FREQUENCY_UNRESOLVED)
+    return sorted(flags)
+
+
 def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
     """Fit one run with *recipe* and summarise the result.
 
@@ -277,10 +518,12 @@ def fit_one(dataset: MuonDataset, recipe: FitRecipe) -> dict[str, Any]:
         t_min=recipe.t_min,
         t_max=recipe.t_max,
     )
+    summary = fit_result_summary(result)
+    summary["quality_flags"] = _workflow_flags(record, summary, recipe.free_parameter_names())
     return {
         "run": int(dataset.run_number),
         "free_params": recipe.free_parameter_names(),
-        **fit_result_summary(result),
+        **summary,
     }
 
 
@@ -315,7 +558,7 @@ def fit_series(
     datasets_by_run: Mapping[int, MuonDataset],
     recipe: FitRecipe,
     *,
-    order_key: str = "run",
+    axis: ScanAxis,
     global_params: Iterable[str] = (),
     start_run: int | None = None,
     name: str,
@@ -332,9 +575,10 @@ def fit_series(
     ``global_params`` names the parameters held identical across the scan (see
     the module docstring — they are pinned, not jointly fitted). Each run's
     run-bound values are re-seeded from its own record first, as that section
-    describes. Raises :class:`ValueError` for an unknown order key, a run that
-    does not record it, or a *start_run* outside the series, and
-    :class:`KeyError` for a global parameter the recipe does not carry.
+    describes. *axis* orders the scan and is the trend's x; it carries a value
+    for every run. Raises :class:`ValueError` for a *start_run* outside the
+    series, and :class:`KeyError` for a global parameter the recipe does not
+    carry.
     """
     global_params = list(global_params)
     unknown = sorted(set(global_params) - set(recipe.parameter_names))
@@ -344,7 +588,7 @@ def fit_series(
             f"(it has {', '.join(recipe.parameter_names)})."
         )
 
-    order = order_values(datasets_by_run, order_key)
+    order = axis.values
     runs = sorted(datasets_by_run, key=lambda run: (order[run], run))
     model = recipe.model()
     local_params = [
@@ -399,6 +643,7 @@ def fit_series(
             )
         )
 
+    rival = rival_envelope_model(model)
     results: list[dict[str, Any]] = []
     for run in runs:
         quality = quality_by_run[run]
@@ -406,6 +651,7 @@ def fit_series(
         # scan), so the summary is asked for those flags rather than
         # re-deriving a narrower set from the result on its own.
         summary = fit_result_summary(fitted[run], extra_flags=tuple(sorted(quality.quality_flags)))
+        summary["quality_flags"] = _workflow_flags(records[run], summary, free_params)
         results.append(
             {
                 "run": int(run),
@@ -413,12 +659,27 @@ def fit_series(
                 "reseeded": run in reseeded,
                 "member_quality": quality.to_payload(),
                 **summary,
+                **(
+                    {}
+                    if rival is None
+                    else {"envelope": {"preferred": None, "delta_chi2": None}}
+                    if not summary["success"]
+                    else {
+                        "envelope": envelope_preference(
+                            records[run],
+                            recipe,
+                            rival,
+                            summary["parameters"],
+                            summary["chi_squared"],
+                        )
+                    }
+                ),
             }
         )
 
     return SeriesOutcome(
         name=name,
-        order_key=order_key,
+        order_key=axis.name,
         expression=recipe.expression,
         global_params=global_params,
         free_params=free_params,
@@ -428,23 +689,52 @@ def fit_series(
         # chain hit them.
         reseeded_runs=[run for run in runs if run in reseeded],
         results=results,
-        trend=build_trend_table(results, free_params, order_key),
+        trend=build_trend_table(
+            results,
+            free_params,
+            axis.name,
+            survey_lines=(
+                {run: survey_line(datasets_by_run[run]) for run in runs}
+                if any(name.startswith("frequency") for name in free_params)
+                else None
+            ),
+        ),
     )
+
+
+def survey_line(dataset: MuonDataset) -> float | None:
+    """The line the folder's survey measured in this run (MHz), or ``None``.
+
+    A reduced run carries its survey row as metadata; a line is recorded there
+    when the survey found precession (``larmor`` or ``other``).
+    """
+    if dataset.metadata.get("precession") not in ("larmor", "other"):
+        return None
+    return float(dataset.metadata["precession_frequency_mhz"])
 
 
 def build_trend_table(
     results: Sequence[Mapping[str, Any]],
     free_params: Sequence[str],
     order_key: str,
+    survey_lines: Mapping[int, float | None] | None = None,
 ) -> TrendTable:
     """The trend table for a series: run, scan coordinate, each free parameter, flags.
 
     Every run that was fitted has a row, flagged or not — see the module
-    docstring.
+    docstring. With *survey_lines*, a ``survey_line_mhz`` column sets each
+    run's surveyed line beside its fitted frequencies, so a fit that has
+    drifted off the measured line, or found one where the survey saw none,
+    shows in the table.
     """
     columns = ["run", "x"]
     for name in free_params:
         columns.extend([name, f"{name}_err"])
+    if survey_lines is not None:
+        columns.append("survey_line_mhz")
+    compared = all("envelope" in entry for entry in results)
+    if compared:
+        columns.extend(["envelope", "envelope_dchi2"])
     columns.append("flags")
 
     rows: list[dict[str, Any]] = []
@@ -453,18 +743,37 @@ def build_trend_table(
         for name in free_params:
             row[name] = entry["parameters"].get(name)
             row[f"{name}_err"] = entry["uncertainties"].get(name)
+        if survey_lines is not None:
+            row["survey_line_mhz"] = survey_lines[entry["run"]]
+        if compared:
+            row["envelope"] = entry["envelope"]["preferred"]
+            row["envelope_dchi2"] = entry["envelope"]["delta_chi2"]
         row["flags"] = list(entry["quality_flags"])
         rows.append(row)
     return TrendTable(order_key=order_key, columns=columns, rows=rows)
 
 
 __all__ = [
+    "AMPLITUDE_EXCEEDS_DATA",
+    "AMPLITUDE_EXCESS_FACTOR",
+    "ENVELOPE_MARGIN",
+    "FREQUENCY_UNRESOLVED",
     "ORDER_KEYS",
+    "RIVAL_ENVELOPES",
+    "ScanAxis",
     "SeriesBranch",
     "SeriesOutcome",
     "TrendTable",
+    "amplitude_exceeds_data",
     "build_trend_table",
+    "envelope_change",
+    "envelope_preference",
     "fit_one",
     "fit_series",
-    "order_values",
+    "frequency_unresolved",
+    "lineless_end",
+    "rival_envelope_model",
+    "scan_axis",
+    "supplied_axis",
+    "survey_line",
 ]

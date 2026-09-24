@@ -50,10 +50,26 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
     )
     parser.add_argument("--rebin", type=int, default=1, help="Merge this many bins (default: 1)")
     parser.add_argument(
-        "--tmin", type=float, default=None, help="Discard points below this time/µs"
+        "--tmin",
+        type=float,
+        default=None,
+        help="Discard points below this time/µs from the stored reduction every later fit uses",
     )
     parser.add_argument(
-        "--tmax", type=float, default=None, help="Discard points above this time/µs"
+        "--tmax",
+        type=float,
+        default=None,
+        help=(
+            "Discard points above this time/µs from the stored reduction every later fit "
+            "uses; to zoom the plot only, use --plot-tmax"
+        ),
+    )
+    parser.add_argument(
+        "--plot-tmax",
+        dest="plot_tmax",
+        type=float,
+        default=None,
+        help="Draw the reduced PNG only up to this time/µs; the stored reduction keeps it all",
     )
     parser.add_argument(
         "--period",
@@ -188,9 +204,7 @@ def run(args: argparse.Namespace) -> None:
         if args.plot:
             plot_paths.append(
                 plots.plot_reduced(
-                    dataset.time,
-                    dataset.asymmetry,
-                    dataset.error,
+                    *_plot_window(dataset, args.plot_tmax),
                     run_number=run_number,
                     temperature=entry.run.get("temperature"),
                     field=entry.run.get("field"),
@@ -212,6 +226,12 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(entries, settings, workdir.root, plot_paths))
+
+
+def _plot_window(dataset, plot_tmax: float | None):
+    """``(time, asymmetry, error)`` up to *plot_tmax* for the PNG, the whole record without."""
+    shown = dataset if plot_tmax is None else dataset.time_range(None, plot_tmax)
+    return shown.time, shown.asymmetry, shown.error
 
 
 def _entry_payload(entry, dataset, *, recomputed: bool) -> dict[str, Any]:

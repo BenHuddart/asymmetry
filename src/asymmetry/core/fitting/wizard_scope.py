@@ -101,8 +101,11 @@ _COST_FIT_WEIGHT: dict[ComputationalCost, int] = {
 #: Matches ``PbF2``/``CaF2``/``LiF``/``NaF``; rejects ``Fe``/``FeSe``/``Fer``.
 #: Case-sensitive on purpose — a lowercase ``f`` is never the fluorine element.
 #: An ``F`` followed by ``=`` is excluded: ISIS run titles carry the applied
-#: field as ``F=<gauss>`` (``nickel T=100 F=0``), which is not a formula.
-_FLUORINE_TOKEN = re.compile(r"F(?=[0-9]|[^a-z=]|$)")
+#: field as ``F=<gauss>`` (``nickel T=100 F=0``), which is not a formula. So is
+#: an ``F`` after ``T``, ``L`` or ``Z`` — the geometry tokens ``TF60G``,
+#: ``LF100``, ``ZF`` — and no element symbol is one of those letters, so no
+#: formula loses its fluorine to the rule.
+_FLUORINE_TOKEN = re.compile(r"(?<![TLZ])F(?=[0-9]|[^a-z=]|$)")
 
 
 class WizardScopePreset(str, Enum):

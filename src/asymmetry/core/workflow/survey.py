@@ -33,9 +33,16 @@ from asymmetry.core.data.calibration import (
 )
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.component_tags import geometry_from_field_direction
-from asymmetry.core.fitting.fit_wizard import fingerprint_spectrum
+from asymmetry.core.fitting.fit_wizard import (
+    MIN_CYCLES_IN_EFFECTIVE_WINDOW,
+    fingerprint_spectrum,
+)
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
-from asymmetry.core.workflow.reduction import ReductionSettings, reduce_run
+from asymmetry.core.workflow.reduction import (
+    ReductionSettings,
+    estimate_alpha_for_run,
+    reduce_run,
+)
 
 #: Timestamp spellings the loaders hand us: ISO-8601 from the ISIS NeXus
 #: headers and the PSI ``dd-MMM-yy HH:MM:SS`` run header form. External file
@@ -191,13 +198,7 @@ def precession_evidence(dataset: MuonDataset, field: float | None) -> Precession
         )
     larmor_mhz = field_gauss_to_frequency_mhz(abs(float(field)))
     if larmor_mhz == 0.0:
-        return PrecessionEvidence(
-            state=None,
-            frequency_mhz=None,
-            snr=None,
-            larmor_mhz=0.0,
-            note="the applied field is zero, so there is no Larmor precession to look for",
-        )
+        return _spontaneous_precession(fingerprint_spectrum(dataset))
     nyquist_mhz = _nyquist_mhz(dataset)
     if larmor_mhz > nyquist_mhz:
         return PrecessionEvidence(
@@ -212,23 +213,65 @@ def precession_evidence(dataset: MuonDataset, field: float | None) -> Precession
         )
 
     fingerprint = fingerprint_spectrum(dataset)
-    snr = float(fingerprint.dominant_fft_snr)
-    if not (fingerprint.oscillatory_hint and snr >= PRECESSION_SNR_FLOOR):
-        return PrecessionEvidence(
-            state="none",
-            frequency_mhz=None,
-            snr=snr,
-            larmor_mhz=larmor_mhz,
-            note="",
-        )
     frequency_mhz = float(fingerprint.dominant_fft_frequency_mhz)
+    snr = float(fingerprint.dominant_fft_snr)
     matches = abs(frequency_mhz / larmor_mhz - 1.0) <= LARMOR_FREQUENCY_TOLERANCE
+    # A dominant "line" that completes under two cycles in the record, away
+    # from the Larmor frequency, is the relaxation leaking into the lowest bins,
+    # not precession. The damped-line scan — the one that reaches heavily
+    # damped lines the Hann-windowed FFT is blind to — speaks instead.
+    resolved = fingerprint.dominant_fft_cycles_in_window >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
+    if not (fingerprint.oscillatory_hint and snr >= PRECESSION_SNR_FLOOR and (resolved or matches)):
+        if not fingerprint.has_damped_line_candidate:
+            return PrecessionEvidence(
+                state="none",
+                frequency_mhz=None,
+                snr=snr,
+                larmor_mhz=larmor_mhz,
+                note="",
+            )
+        frequency_mhz = float(fingerprint.damped_line_frequency_mhz)
+        snr = float(fingerprint.damped_line_snr)
+        matches = abs(frequency_mhz / larmor_mhz - 1.0) <= LARMOR_FREQUENCY_TOLERANCE
     return PrecessionEvidence(
         state="larmor" if matches else "other",
         frequency_mhz=frequency_mhz,
         snr=snr,
         larmor_mhz=larmor_mhz,
         note="",
+    )
+
+
+def _spontaneous_precession(fingerprint: Any) -> PrecessionEvidence:
+    """A zero-field run's own line: precession in an internal field, or none.
+
+    The same reading as the transverse case (see :func:`precession_evidence`):
+    a resolved dominant line, else the damped-line scan's, else nothing. There
+    is no Larmor frequency to compare with, so any line is ``"other"`` — a
+    spontaneous internal field, the signature of static magnetic order.
+    """
+    if (
+        fingerprint.oscillatory_hint
+        and fingerprint.dominant_fft_snr >= PRECESSION_SNR_FLOOR
+        and fingerprint.dominant_fft_cycles_in_window >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
+    ):
+        frequency, snr = fingerprint.dominant_fft_frequency_mhz, fingerprint.dominant_fft_snr
+    elif fingerprint.has_damped_line_candidate:
+        frequency, snr = fingerprint.damped_line_frequency_mhz, fingerprint.damped_line_snr
+    else:
+        return PrecessionEvidence(
+            state="none",
+            frequency_mhz=None,
+            snr=None,
+            larmor_mhz=0.0,
+            note="zero field: no spontaneous line — no static order resolved in this record",
+        )
+    return PrecessionEvidence(
+        state="other",
+        frequency_mhz=float(frequency),
+        snr=float(snr),
+        larmor_mhz=0.0,
+        note="zero field: spontaneous precession in an internal field",
     )
 
 
@@ -314,7 +357,9 @@ class RunRow:
     facility: str
     title: str
     sample: str | None
+    #: The setpoint, and the measured sample temperature when the file logs one.
     temperature: float | None
+    sample_temperature_logged: float | None
     field: float | None
     field_direction: str
     geometry: str | None
@@ -352,6 +397,7 @@ class RunRow:
             "title": self.title,
             "sample": self.sample,
             "temperature": self.temperature,
+            "sample_temperature_logged": self.sample_temperature_logged,
             "field": self.field,
             "field_direction": self.field_direction,
             "geometry": self.geometry,
@@ -394,6 +440,9 @@ class CalibrationCandidate:
     reason: str
     source: str
     snr: float | None
+    #: This run's own forward/backward balance
+    #: (:func:`~asymmetry.core.workflow.reduction.estimate_alpha_for_run`).
+    alpha: float
     best: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -404,8 +453,77 @@ class CalibrationCandidate:
             "reason": self.reason,
             "source": self.source,
             "snr": self.snr,
+            "alpha": self.alpha,
             "best": self.best,
         }
+
+
+#: A logged sample temperature this far from its setpoint — in kelvin *and* as a
+#: fraction of the setpoint — is a different temperature, not thermometer
+#: scatter: a cryostat still cooling, or a sensor offset that moves a transition.
+TEMPERATURE_DEPARTURE_K = 0.3
+TEMPERATURE_DEPARTURE_FRACTION = 0.01
+
+
+def departs(setpoint: float | None, logged: float | None) -> bool:
+    """Whether a logged sample temperature departs from its setpoint (see above)."""
+    if setpoint is None or logged is None:
+        return False
+    offset = abs(logged - setpoint)
+    return offset > TEMPERATURE_DEPARTURE_K and offset > TEMPERATURE_DEPARTURE_FRACTION * abs(
+        setpoint
+    )
+
+
+def temperature_departures(rows: list[RunRow]) -> list[int]:
+    """Runs whose logged sample temperature departs from the setpoint (see above)."""
+    return [
+        row.run_number for row in rows if departs(row.temperature, row.sample_temperature_logged)
+    ]
+
+
+#: Relative change in alpha between consecutive calibration candidates that
+#: marks a step — a sample change, a moved detector or a second instrument —
+#: rather than the scatter of one setup's estimates (a few percent).
+ALPHA_STEP_TOLERANCE = 0.10
+
+
+@dataclass(frozen=True)
+class AlphaStep:
+    """Alpha changing between two consecutive calibration candidates, in run order."""
+
+    before_run: int
+    after_run: int
+    alpha_before: float
+    alpha_after: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a plain, JSON-safe dict."""
+        return {
+            "before_run": self.before_run,
+            "after_run": self.after_run,
+            "alpha_before": self.alpha_before,
+            "alpha_after": self.alpha_after,
+        }
+
+
+def alpha_steps(candidates: list[CalibrationCandidate]) -> list[AlphaStep]:
+    """Every place, in run order, where alpha moves by more than :data:`ALPHA_STEP_TOLERANCE`.
+
+    A step means no single calibration run serves the folder: each block of runs
+    between steps needs a calibration run from inside it.
+    """
+    ordered = sorted(candidates, key=lambda candidate: candidate.run_number)
+    return [
+        AlphaStep(
+            before_run=first.run_number,
+            after_run=second.run_number,
+            alpha_before=first.alpha,
+            alpha_after=second.alpha,
+        )
+        for first, second in zip(ordered, ordered[1:])
+        if abs(second.alpha / first.alpha - 1.0) > ALPHA_STEP_TOLERANCE
+    ]
 
 
 @dataclass(frozen=True)
@@ -457,6 +575,10 @@ class FolderSurvey:
     runs: list[RunRow]
     calibration_candidates: list[CalibrationCandidate]
     best_calibration_run: int | None
+    #: Where alpha changes between candidates; empty when one alpha serves all.
+    alpha_steps: list[AlphaStep]
+    #: Runs whose logged sample temperature departs from the setpoint.
+    temperature_departures: list[int]
     scans: list[ScanGroup]
     #: ``True`` when the directory held more entries than the scan cap, so
     #: ``runs`` may be missing files that exist (see ``scan_run_files``).
@@ -470,6 +592,8 @@ class FolderSurvey:
             "runs": [row.to_dict() for row in self.runs],
             "calibration_candidates": [c.to_dict() for c in self.calibration_candidates],
             "best_calibration_run": self.best_calibration_run,
+            "alpha_steps": [step.to_dict() for step in self.alpha_steps],
+            "temperature_departures": list(self.temperature_departures),
             "scans": [scan.to_dict() for scan in self.scans],
         }
 
@@ -518,6 +642,7 @@ def build_run_row(
         title=str(metadata.get("title") or ""),
         sample=sample,
         temperature=dataset.temperature,
+        sample_temperature_logged=dataset.sample_temperature_logged,
         field=dataset.field,
         field_direction=str(metadata.get("field_direction") or metadata.get("field_state") or ""),
         geometry=geometry,
@@ -616,7 +741,43 @@ def _scan_groups(rows: list[RunRow]) -> list[ScanGroup]:
                 )
             )
     scans.sort(key=lambda scan: (scan.axis, scan.runs[0]))
-    return scans
+    return [_note_shared_unresolved(scan, scans, rows) for scan in scans]
+
+
+def _note_shared_unresolved(
+    scan: ScanGroup, scans: list[ScanGroup], rows: list[RunRow]
+) -> ScanGroup:
+    """*scan* with the few members that look like another scan's points named.
+
+    A temperature scan resolved as transverse on at least three runs in four,
+    whose remaining runs show no line and also sit in a field scan with no
+    transverse line of its own, is most likely holding that field scan's
+    (longitudinal) points — which a precession model then fails to fit. A grid
+    of fields by temperatures, where every run belongs to both kinds of scan,
+    does not qualify: its scans are not mostly resolved.
+    """
+    geometry = {row.run_number: row.geometry for row in rows}
+    unresolved = [run for run in scan.runs if geometry[run] is None]
+    if scan.axis != "temperature" or not unresolved or 4 * len(unresolved) > len(scan.runs):
+        return scan
+    longitudinal_like = {
+        run
+        for other in scans
+        if other.axis == "field" and all(geometry[member] != "TF" for member in other.runs)
+        for run in other.runs
+    }
+    shared = [run for run in unresolved if run in longitudinal_like]
+    if not shared:
+        return scan
+    runs = ", ".join(str(run) for run in shared)
+    return replace(
+        scan,
+        geometry_note=(
+            f"{scan.geometry_note}; run{'s' if len(shared) > 1 else ''} {runs} also "
+            f"belong{'' if len(shared) > 1 else 's'} to a field scan with no transverse line "
+            f"at this temperature — likely its points, not this scan's"
+        ),
+    )
 
 
 def calibration_verdict(
@@ -655,7 +816,7 @@ def calibration_verdict(
 
 
 def _calibration_candidates(
-    rows: list[RunRow], metadatas: list[dict[str, Any] | None]
+    rows: list[RunRow], metadatas: list[dict[str, Any] | None], alphas: dict[int, float]
 ) -> tuple[list[CalibrationCandidate], int | None]:
     """The runs that could calibrate alpha, and the best of them.
 
@@ -680,6 +841,7 @@ def _calibration_candidates(
                 reason=reason,
                 source=source,
                 snr=row.precession.snr if source == "measured" else None,
+                alpha=alphas[row.run_number],
                 best=False,
             )
         )
@@ -718,6 +880,7 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
 
     rows: list[RunRow] = []
     metadatas: list[dict[str, Any] | None] = []
+    alphas: dict[int, float] = {}
     for prefix, run_number, path in found.entries:
         result = load(str(path))
         # A multi-period file loads as a list; the survey describes its first
@@ -735,35 +898,46 @@ def survey_folder(folder: str | Path) -> FolderSurvey:
             )
         )
         metadatas.append(dataset.run.metadata)
+        if calibration_verdict(dataset.run.metadata, dataset.field, precession)[0] is not None:
+            alphas[run_number] = estimate_alpha_for_run(dataset.run).alpha
 
-    candidates, best_run = _calibration_candidates(rows, metadatas)
+    candidates, best_run = _calibration_candidates(rows, metadatas, alphas)
 
     return FolderSurvey(
         folder=str(folder),
         runs=rows,
         calibration_candidates=candidates,
         best_calibration_run=best_run,
+        alpha_steps=alpha_steps(candidates),
+        temperature_departures=temperature_departures(rows),
         scans=_scan_groups(rows),
         truncated=found.truncated,
     )
 
 
 __all__ = [
+    "ALPHA_STEP_TOLERANCE",
     "LARMOR_FREQUENCY_TOLERANCE",
     "PRECESSION_SNR_FLOOR",
     "PRECESSION_STATES",
     "ROW_GEOMETRY_SOURCES",
+    "AlphaStep",
     "CalibrationCandidate",
     "FolderSurvey",
     "PrecessionEvidence",
     "RunRow",
     "ScanGroup",
+    "TEMPERATURE_DEPARTURE_FRACTION",
+    "TEMPERATURE_DEPARTURE_K",
+    "alpha_steps",
     "build_run_row",
     "calibration_verdict",
+    "departs",
     "has_file_deadtime",
     "precession_evidence",
     "resolve_row_geometry",
     "run_facility",
     "run_geometry",
     "survey_folder",
+    "temperature_departures",
 ]

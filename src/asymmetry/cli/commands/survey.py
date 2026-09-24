@@ -53,11 +53,51 @@ def run(args: argparse.Namespace) -> None:
     print(_render(survey, survey_path))
 
 
+def _departure_blocks(survey) -> list[tuple[list[int], float, float]]:
+    """Departing runs in consecutive blocks of similar offset: ``(runs, min, max)``.
+
+    Consecutive in the survey's run order, with an offset within 0.5 K or 20 %
+    of the block's last one — so a cryostat that sat 6 K warm for fifteen runs
+    reads as its own block, not as the far end of one range.
+    """
+    departing = set(survey.temperature_departures)
+    blocks: list[list[tuple[int, float]]] = []
+    previous_departed = False
+    for row in survey.runs:
+        if row.run_number not in departing:
+            previous_departed = False
+            continue
+        offset = row.sample_temperature_logged - row.temperature
+        if previous_departed and abs(offset - blocks[-1][-1][1]) <= max(
+            0.5, 0.2 * abs(blocks[-1][-1][1])
+        ):
+            blocks[-1].append((row.run_number, offset))
+        else:
+            blocks.append([(row.run_number, offset)])
+        previous_departed = True
+    return [
+        ([run for run, _ in block], min(o for _, o in block), max(o for _, o in block))
+        for block in blocks
+    ]
+
+
+def _run_list(runs: list[int]) -> str:
+    """``[1, 2, 3, 7]`` as ``"1-3, 7"``."""
+    spans: list[list[int]] = []
+    for run in sorted(runs):
+        if spans and run == spans[-1][-1] + 1:
+            spans[-1].append(run)
+        else:
+            spans.append([run])
+    return ", ".join(f"{span[0]}-{span[-1]}" if len(span) > 1 else str(span[0]) for span in spans)
+
+
 def _render(survey, survey_path: Path) -> str:
     """The human-readable survey: the run table, then candidates and scans."""
     headers = [
         "run",
         "T/K",
+        "T log/K",
         "B/G",
         "geom",
         "prec",
@@ -74,10 +114,14 @@ def _render(survey, survey_path: Path) -> str:
         [
             str(row.run_number),
             format_number(row.temperature, 2),
+            format_number(row.sample_temperature_logged, 2),
             format_number(row.field, 2),
             # A trailing * marks a geometry the spectrum decided, not the file.
             (row.geometry or "-") + ("*" if row.geometry_source == "measured" else ""),
-            row.precession.state or "-",
+            # An `other` line's frequency is itself evidence: an internal
+            # field, a muonium line, or a sub-cycle artefact near 0.1 MHz.
+            (row.precession.state or "-")
+            + (f"@{row.precession.frequency_mhz:.3g}" if row.precession.state == "other" else ""),
             row.detector_orientation or "-",
             str(row.n_histograms),
             str(row.n_periods),
@@ -100,9 +144,24 @@ def _render(survey, survey_path: Path) -> str:
     if rows:
         lines.append(
             "prec: precession measured against the Larmor frequency of the recorded field "
-            "— larmor / other (a different line) / none / - (not measurable). "
+            "— larmor / other@<MHz> (a different line, at that frequency) / none / - "
+            "(not measurable). "
             "geom*: geometry measured from that precession rather than read from the file."
         )
+        lines.append("")
+    if survey.temperature_departures:
+        lines.append(
+            "TEMPERATURE: the logged sample temperature (T log) and the setpoint (T/K) "
+            "disagree on these runs, by the offset shown (T log - T/K). Decide which to trust "
+            "for each block and say why: a block sitting at a different temperature from its "
+            "neighbours (a cryostat still cooling or parked elsewhere) is a different "
+            "measurement — order it with --order sample_temperature_logged; a steady offset "
+            "a sample could not have had (a liquid logged above its boiling point) points to "
+            "the sensor. The scans below are grouped by setpoint:"
+        )
+        for runs, lo, hi in _departure_blocks(survey):
+            span = f"{lo:+.2f} K" if abs(hi - lo) < 0.005 else f"{lo:+.2f} to {hi:+.2f} K"
+            lines.append(f"  {_run_list(runs)}: {span}")
         lines.append("")
     if survey.truncated:
         lines.append(
@@ -116,7 +175,14 @@ def _render(survey, survey_path: Path) -> str:
             marker = " (best)" if candidate.best else ""
             # The SNR of a measured candidate is already in its reason.
             lines.append(
-                f"  run {candidate.run_number}{marker} [{candidate.source}]: {candidate.reason}"
+                f"  run {candidate.run_number}{marker} [{candidate.source}] "
+                f"alpha {candidate.alpha:.4f}: {candidate.reason}"
+            )
+        for step in survey.alpha_steps:
+            lines.append(
+                f"  ALPHA STEP between runs {step.before_run} and {step.after_run} "
+                f"({step.alpha_before:.4f} -> {step.alpha_after:.4f}): no single run calibrates "
+                f"this folder; reduce each block of runs with a calibration run from inside it."
             )
     else:
         lines.append(

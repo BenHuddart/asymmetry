@@ -8,16 +8,20 @@ import pytest
 
 from asymmetry.core.workflow.survey import (
     PRECESSION_SNR_FLOOR,
+    CalibrationCandidate,
     PrecessionEvidence,
     RunRow,
     _group_geometry,
     _scan_groups,
+    alpha_steps,
     calibration_verdict,
     resolve_row_geometry,
     survey_folder,
+    temperature_departures,
 )
 from tests.core.conftest import (
     ALL_RUNS,
+    CALIBRATION_ALPHA,
     CALIBRATION_FIELD_G,
     CALIBRATION_RUN,
     DEADTIME_RUN,
@@ -57,6 +61,7 @@ def _row(
         title="",
         sample=None,
         temperature=temperature,
+        sample_temperature_logged=None,
         field=field,
         field_direction="",
         geometry=geometry,
@@ -145,6 +150,9 @@ def test_survey_finds_the_weak_tf_calibration_candidate(survey) -> None:
     assert candidate.source == "measured"
     assert candidate.snr == pytest.approx(survey.row(CALIBRATION_RUN).precession.snr)
     assert "Larmor frequency" in candidate.reason
+    # Each candidate carries its own measured balance; one candidate, no step.
+    assert candidate.alpha == pytest.approx(CALIBRATION_ALPHA, rel=0.02)
+    assert survey.alpha_steps == []
 
 
 # -- measured precession ----------------------------------------------------
@@ -164,13 +172,14 @@ def test_the_calibration_run_is_the_strongest_measured_candidate(survey) -> None
     assert max(measured, key=lambda c: c.snr).run_number == CALIBRATION_RUN
 
 
-def test_zero_field_runs_report_no_measurement_and_say_why(survey) -> None:
+def test_zero_field_runs_are_searched_for_a_spontaneous_line(survey) -> None:
+    # The simulated zero-field runs only relax: no static order, no line.
     for run_number in ZF_RUNS:
         evidence = survey.row(run_number).precession
-        assert evidence.state is None
+        assert evidence.state == "none"
         assert evidence.frequency_mhz is None
-        assert evidence.snr is None
-        assert "the applied field is zero" in evidence.note
+        assert evidence.larmor_mhz == 0.0
+        assert "no spontaneous line" in evidence.note
 
 
 def test_a_field_run_whose_spectrum_is_a_plain_decay_reports_no_precession(survey) -> None:
@@ -221,8 +230,8 @@ def test_the_survey_carries_the_precession_evidence_into_its_dict(survey) -> Non
     assert calibration["geometry_source"] == "measured"
 
     zero_field = next(row for row in data["runs"] if row["run_number"] == ZF_RUNS[0])
-    assert zero_field["precession"] is None
-    assert "the applied field is zero" in zero_field["precession_note"]
+    assert zero_field["precession"] == "none"
+    assert "zero field" in zero_field["precession_note"]
 
     candidate = data["calibration_candidates"][0]
     assert candidate["source"] == "measured"
@@ -342,6 +351,30 @@ def test_a_zero_field_run_beside_one_field_run_is_not_a_field_scan() -> None:
     assert scans[0].values == pytest.approx([0.0, 100.0, 2000.0])
 
 
+def test_a_line_free_point_of_a_longitudinal_field_scan_is_named_in_a_tf_scan() -> None:
+    tf = [
+        _row(run_number=run, temperature=t, field=100.0, geometry="TF", geometry_source="measured")
+        for run, t in ((1, 100.0), (2, 250.0), (3, 280.0))
+    ]
+    # A decoupling scan at 40 K whose 100 G point lands in the 100 G TF scan.
+    lf = [
+        _row(run_number=run, temperature=40.0, field=b, geometry=None, geometry_source="refuted")
+        for run, b in ((10, 50.0), (11, 80.0), (12, 100.0))
+    ]
+    scan = next(s for s in _scan_groups(tf + lf) if s.axis == "temperature")
+    assert scan.runs == [12, 1, 2, 3]
+    assert "run 12 also belongs to a field scan with no transverse line" in scan.geometry_note
+
+    # In a grid of fields by temperatures every run is in both kinds of scan,
+    # and most runs resolve no line: nothing is singled out.
+    grid = [
+        _row(run_number=10 * i + j, temperature=t, field=b, geometry=None)
+        for i, t in enumerate((2.0, 3.0, 4.0))
+        for j, b in enumerate((20.0, 40.0))
+    ]
+    assert all("also belong" not in s.geometry_note for s in _scan_groups(grid))
+
+
 def test_two_instruments_in_one_folder_never_share_a_scan() -> None:
     rows = [
         _row(run_number=1, temperature=10.0, instrument="EMU"),
@@ -374,3 +407,138 @@ def test_survey_rejects_a_path_that_is_not_a_directory(tmp_path: Path) -> None:
     missing = tmp_path / "nowhere"
     with pytest.raises(ValueError):
         survey_folder(missing)
+
+
+def _candidate(run_number: int, alpha: float) -> CalibrationCandidate:
+    return CalibrationCandidate(
+        run_number=run_number,
+        field_gauss=100.0,
+        reason="",
+        source="measured",
+        snr=100.0,
+        alpha=alpha,
+        best=False,
+    )
+
+
+def test_an_alpha_step_is_reported_between_consecutive_candidates_in_run_order() -> None:
+    # Listed out of order, with scatter inside each block and one step.
+    candidates = [
+        _candidate(281, 1.401),
+        _candidate(252, 1.027),
+        _candidate(280, 1.068),
+        _candidate(293, 1.406),
+    ]
+    steps = alpha_steps(candidates)
+    assert [step.to_dict() for step in steps] == [
+        {"before_run": 280, "after_run": 281, "alpha_before": 1.068, "alpha_after": 1.401}
+    ]
+    assert alpha_steps(candidates[1:3]) == []
+
+
+def test_a_logged_temperature_far_from_its_setpoint_is_a_departure() -> None:
+    from dataclasses import replace
+
+    rows = [
+        replace(_row(run_number=1, temperature=15.0), sample_temperature_logged=285.2),
+        # Close in kelvin but not in proportion, and close in proportion but
+        # not in kelvin: thermometer scatter either way, not a departure.
+        replace(_row(run_number=2, temperature=1.6), sample_temperature_logged=1.8),
+        replace(_row(run_number=3, temperature=300.0), sample_temperature_logged=302.0),
+        replace(_row(run_number=4, temperature=2.0), sample_temperature_logged=8.2),
+        _row(run_number=5, temperature=10.0),
+    ]
+    assert temperature_departures(rows) == [1, 4]
+
+
+def _fingerprint(**fields):
+    from types import SimpleNamespace
+
+    base = {
+        "oscillatory_hint": True,
+        "dominant_fft_frequency_mhz": 0.096,
+        "dominant_fft_snr": 100.0,
+        "dominant_fft_cycles_in_window": 0.75,
+        "damped_line_frequency_mhz": 0.0,
+        "damped_line_snr": 0.0,
+    }
+    namespace = SimpleNamespace(**(base | fields))
+    namespace.has_damped_line_candidate = namespace.damped_line_frequency_mhz > 0.0
+    return namespace
+
+
+@pytest.mark.parametrize(
+    ("fingerprint", "expected"),
+    [
+        # A sub-cycle "line" away from Larmor is leakage; the damped scan's
+        # line (a muonium line in a 2 G field, here) is the precession.
+        (
+            {"damped_line_frequency_mhz": 2.8, "damped_line_snr": 68.0},
+            ("other", 2.8),
+        ),
+        # ... and with no damped line there is no precession at all.
+        ({}, ("none", None)),
+        # A slow line at the Larmor frequency is a weak-TF calibration, kept.
+        ({"dominant_fft_frequency_mhz": 0.0271}, ("larmor", 0.0271)),
+        # A resolved line away from Larmor is an internal field, as before.
+        (
+            {"dominant_fft_frequency_mhz": 30.0, "dominant_fft_cycles_in_window": 200.0},
+            ("other", 30.0),
+        ),
+    ],
+)
+def test_a_sub_cycle_line_away_from_larmor_is_not_precession(
+    monkeypatch, fingerprint, expected
+) -> None:
+    import numpy as np
+
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.workflow import survey as survey_module
+
+    monkeypatch.setattr(
+        survey_module, "fingerprint_spectrum", lambda dataset: _fingerprint(**fingerprint)
+    )
+    time = np.arange(0.0, 8.0, 0.016)
+    dataset = MuonDataset(time, np.zeros_like(time), np.ones_like(time), {"run_number": 1})
+    evidence = survey_module.precession_evidence(dataset, 2.0)
+    assert (evidence.state, evidence.frequency_mhz) == expected
+
+
+@pytest.mark.parametrize(
+    ("fingerprint", "expected"),
+    [
+        # An ordered magnet's line, found by the damped-line scan behind a
+        # sub-cycle leakage "line" (EuO at 10 K: 29.9 MHz).
+        ({"damped_line_frequency_mhz": 29.9, "damped_line_snr": 21.6}, ("other", 29.9)),
+        # A resolved dominant line stands on its own.
+        (
+            {"dominant_fft_frequency_mhz": 1.56, "dominant_fft_cycles_in_window": 12.0},
+            ("other", 1.56),
+        ),
+        # A Kubo-Toyabe or paramagnetic relaxation has no line.
+        ({}, ("none", None)),
+    ],
+)
+def test_a_zero_field_line_is_spontaneous_precession(monkeypatch, fingerprint, expected) -> None:
+    import numpy as np
+
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.workflow import survey as survey_module
+
+    monkeypatch.setattr(
+        survey_module, "fingerprint_spectrum", lambda dataset: _fingerprint(**fingerprint)
+    )
+    time = np.arange(0.0, 8.0, 0.016)
+    dataset = MuonDataset(time, np.zeros_like(time), np.ones_like(time), {"run_number": 1})
+    evidence = survey_module.precession_evidence(dataset, 0.0)
+    assert (evidence.state, evidence.frequency_mhz) == expected
+
+
+def test_departs_needs_both_an_absolute_and_a_relative_offset() -> None:
+    from asymmetry.core.workflow.survey import departs
+
+    assert departs(2.0, 8.2)
+    assert not departs(1.6, 1.8)
+    assert not departs(300.0, 302.0)
+    assert not departs(None, 5.0)
+    assert not departs(5.0, None)

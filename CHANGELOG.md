@@ -147,6 +147,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5 minutes, `0` disables it) writes a `<name>.autosave.asymp` crash-recovery snapshot; opening
   a project whose autosave is newer than the file itself offers `Load autosave` or `Open saved
   file`. See `docs/reference/project_files.rst` § "Crash-safe save and autosave".
+- **The agent CLI fits physical laws to a trend, and orders a scan by any quantity.**
+  `asymmetry trend --model EXPR --param NAME` fits a parameter-vs-x law (`OrderParameter`,
+  `Arrhenius`, `Redfield`, the `SC_*` gap models, `Linear`, sums of these) to one trend column
+  with the desktop trend dialog's fit and seeding; `--xmin`/`--xmax`, `--fix`, `--initial` and
+  `--exclude` control it, the output lists the runs left out and the flagged runs fitted, and the
+  fit is stored under `trend_fits` in the series file. `fit-series` and `fit-global` take
+  `--order sample_temperature_logged` (the logged sample temperature, now a `T log/K` column in
+  `survey`) or any other name with per-run values from `--x RUN=VALUE,...`, such as a
+  concentration or a foil count. `fit-global` now stores a trend table and prints its run-local
+  parameters, so `trend` reads a simultaneous fit instead of failing with `KeyError: 'trend'`.
+  Work directories written by an older release are refused with a message to reduce or fit
+  again. See `docs/reference/agent_workflow.rst` § "trend".
+- **`asymmetry recipe` writes a fit recipe for a model expression, and `wizard` takes
+  `--include`/`--exclude`.** `recipe --expression EXPR --name NAME [--run N]` seeds a recipe
+  the way every fit surface does, applies `--initial`/`--fix` and a `--tmin`/`--tmax` window,
+  and prints every parameter name, so a model the wizard does not recommend — a weak-TF
+  muonium line beside the diamagnetic one, a precession line in an LF run — is one command
+  away. `wizard --include C,D --exclude C,D` adds components to or drops them from the scope
+  preset, and the header line and `wizard/<run>.json` record them. The agent skill now has
+  the agent decide what the system is before screening, with a table from system to scope
+  and trend law. See `docs/reference/agent_workflow.rst` § "recipe".
+- **`asymmetry survey` gives every alpha-calibration candidate its own measured alpha and
+  flags an `ALPHA STEP`** where alpha moves by more than 10 % between consecutive candidates,
+  so a folder whose calibration changed partway (a sample change, a moved detector) is not
+  reduced with one run's alpha throughout. See `docs/reference/agent_workflow.rst` § "survey".
+- **The agent CLI shows the spectral evidence it already has.** `fourier` detects peaks on
+  the whole spectrum before restricting them to `--fmin`/`--fmax` (a zoom around a line no
+  longer empties the table) and, when nothing is detected, lists the band's strongest maxima as
+  candidates; `wizard` prints the lines its spectral search detected and the recommended
+  model's fitted values; `survey` prints a `TEMPERATURE:` line naming runs whose logged sample
+  temperature departs from the setpoint by more than 0.3 K and 1 %, in blocks of runs with their
+  offsets. `wizard` and `fit-series` take `--tmin`/`--tmax`.
+- **`survey` no longer reports relaxation leakage as precession.** A dominant spectral line that
+  completes fewer than two cycles in the record, away from the Larmor frequency, is replaced by
+  the fingerprint's damped-line scan result (or `none`); the `prec` column prints the frequency
+  of an `other` line (`other@2.81`). Weak-TF muonium and a type-I superconductor's
+  normal-domain line now show up where a false ~0.1 MHz line did. `trend --model` prints
+  √χ²ᵣ-scaled errors first when χ²ᵣ > 1 and notes when the fitted parameter is one of several
+  components of its kind; `wizard` prints a seeded `recipe` command for a detected line the
+  recommendation does not fit, and no longer lists sub-cycle leakage as a line. The survey's
+  `TEMPERATURE:` line gives the size of the departure.
+- **`asymmetry audit` lists the numbers in a draft summary that no command printed.** Every
+  command now appends its printed output to `cli-output.log` in its work directory, and `audit`
+  holds a draft against those logs — catching the percentage changes, ratios and unit
+  conversions an analyst writes in prose. `trend --model` prints `LAW NOT ESTABLISHED` when the
+  fit failed, a parameter sits at a bound, or an error is as large as its value. See
+  `docs/reference/agent_workflow.rst` § "audit".
+- **`asymmetry survey` searches zero-field runs for spontaneous precession.** A ZF run's
+  `prec` column reads `other@<MHz>` when the spectrum holds a line (static magnetic order —
+  EuO's 29.9 MHz at 10 K, nickel's, a molecular antiferromagnet's) and `none` when it does not;
+  it used to read `-` for every zero-field run. The `TEMPERATURE:` line no longer asserts which
+  of the logged and setpoint temperatures is right.
+- **`trend` names the law its series calls for, and `audit` is stricter on ratios.** Without
+  `--model`, `trend` ends with the law the axis and parameters point to (Redfield for a rate
+  against field, `OrderParameter` for a frequency against temperature, `Linear` against a
+  supplied quantity) and warns when a rate is split between two components; `audit` lists
+  whole-number percentages and "factor of" ratios no command printed.
+- **A frequency series carries the survey's line beside the fit.** `fit-series` adds a
+  `survey_line_mhz` trend column when its model fits a frequency, notes runs whose logged
+  temperature departs when ordered by the setpoint, and `fit-global` notes that a shared rate
+  over a many-field scan cannot show λ(B). A converged poor-χ²ᵣ trend law says it is the result,
+  to be reported with its caveat.
+- **`fit` and `fit-series` flag amplitudes the data cannot hold** (`amplitude_exceeds_data`:
+  amplitudes summing past 1.5 times the record's early-time asymmetry); `audit` also lists
+  "-fold" and "N times" multiples; a `Linear` trend against a supplied quantity says its slope
+  is the rate constant to report.
+- **`trend --model` judges a law on the scaled errors of its physical parameters.** An
+  undetermined prefactor or offset no longer declares a law not established; the report gives
+  the x span of the fitted points and each parameter's unit (Arrhenius `Ea` in meV), and notes
+  a turning point that a monotonic law would be fitted across.
+- **`fit`/`fit-series` flag `frequency_unresolved`**, a fitted frequency completing under two
+  cycles in the record's informative window; the wizard's line hint adds the line to the
+  recommended model with a small starting amplitude — written as recipe `line-<run>` — instead
+  of replacing the model; `audit` ignores bulk arrays in the logged output and lists the
+  vocabulary of a trend law no logged fit established.
+- **`reduce --plot-tmax` zooms the PNG without cutting the stored reduction**, and `wizard`,
+  `fit` and `fit-series` note runs whose stored reduction was cut by `reduce --tmin/--tmax`
+  (a plot zoom had been silently starving later fits of the record). `fit-series` ends with the
+  `trend` step; the two-rate hint names the single-rate recipe to refit with.
+- **`fit-series` weighs the relaxation envelope's shape on every run.** For a recipe with one
+  `Gaussian` or `Exponential` envelope, each converged run is refitted with the other one and
+  the trend gains `envelope`/`envelope_dchi2` columns, with a note when the preferred shape
+  changes along the scan (motional narrowing, on a temperature axis). A block of runs at one
+  end of a precession scan with no survey line and a fit that does not describe them is named,
+  with the relaxation-only commands for exactly those runs. `trend` no longer calls a
+  frequency that holds within 10 % an order parameter, notes a law fitted against an axis it
+  is not written in, and after a law not established names the next step (`--fix alpha=1`
+  for `OrderParameter`, `--fix m=2` for `Redfield`, whose free `m` must be positive). The
+  survey names a line-free run of a mostly transverse temperature scan that also belongs to a
+  longitudinal field scan, and `audit` always lists numbers after difference phrases
+  ("within about 2 G") and hedged ratios ("a factor of ~2").
 
 ### Changed
 
@@ -272,6 +363,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precession column and the run's own fit before it is described as absent.
 
 ### Fixed
+
+- **The fit wizard no longer reads a geometry token as fluorine.** A run titled `EuO TF60G`,
+  `EuO ZF` or `sample LF100` "suggested fluorine" and promoted the F–μ–F family; an `F`
+  directly after `T`, `L` or `Z` is now never taken for the element (no element symbol is one
+  of those letters, so `CaF2 TF20` still is).
 
 - **An edited `t_good Offset` or `Last Good Bin` no longer reverts to the
   file's own value the next time the grouping resolves.** Both were

@@ -236,3 +236,14 @@ def test_with_overrides_rejects_a_name_the_model_does_not_have() -> None:
         recipe.with_overrides(fix={"Nope": 1.0})
     with pytest.raises(KeyError, match="Nope"):
         recipe.with_overrides(free=["Nope"])
+
+
+def test_an_initial_override_moves_a_start_value_without_holding_it() -> None:
+    recipe = FitRecipe.from_expression("Exponential + Constant")
+    moved = recipe.with_overrides(initial={"Lambda": 2.5})
+
+    lam = next(p for p in moved.parameters if p.name == "Lambda")
+    assert (lam.value, lam.fixed) == (2.5, False)
+    assert moved.pinned == ()
+    with pytest.raises(KeyError, match="Lamda is not a parameter"):
+        recipe.with_overrides(initial={"Lamda": 1.0})

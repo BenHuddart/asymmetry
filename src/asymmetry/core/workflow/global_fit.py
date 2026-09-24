@@ -11,6 +11,7 @@ from asymmetry.core.fitting.engine import FitEngine
 from asymmetry.core.fitting.result_summary import fit_result_summary
 from asymmetry.core.fitting.seeding import SeedContext, seed_parameters
 from asymmetry.core.workflow.recipe import FitRecipe
+from asymmetry.core.workflow.series import ScanAxis, TrendTable, build_trend_table
 
 
 @dataclass(frozen=True)
@@ -22,18 +23,25 @@ class GlobalFitOutcome:
     strategy: str
     shared: dict[str, float]
     shared_uncertainties: dict[str, float]
+    #: The run-local parameters that were fitted — what the trend tabulates.
+    free_params: list[str]
+    #: One entry per run, ordered along the axis, each carrying its ``x``.
     results: list[dict[str, Any]]
+    trend: TrendTable
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "expression": self.expression,
+            "order_key": self.trend.order_key,
             "shared_params": list(self.shared_params),
             "local_params": list(self.local_params),
             "field_params": list(self.field_params),
             "strategy": self.strategy,
             "shared": dict(self.shared),
             "shared_uncertainties": dict(self.shared_uncertainties),
+            "free_params": list(self.free_params),
             "results": [dict(result) for result in self.results],
+            "trend": self.trend.to_dict(),
         }
 
 
@@ -42,6 +50,7 @@ def fit_global(
     recipe: FitRecipe,
     *,
     shared_params: Sequence[str],
+    axis: ScanAxis,
     field_params: Sequence[str] = (),
     strategy: str = "joint",
 ) -> GlobalFitOutcome:
@@ -50,6 +59,8 @@ def fit_global(
     ``field_params`` are re-seeded from each run's recorded field and held for
     that run.  This is the key contract for LF decoupling triplets: the applied
     field differs, while amplitudes and dynamic parameters are fitted jointly.
+    The runs are reported in *axis* order, and the free run-local parameters
+    are tabulated against it as the fit's trend.
     """
     if len(datasets_by_run) < 2:
         raise ValueError("A simultaneous fit needs at least two reduced runs.")
@@ -69,7 +80,7 @@ def fit_global(
         raise ValueError("Name at least one fitted shared parameter.")
 
     model = recipe.model()
-    runs = sorted(datasets_by_run)
+    runs = sorted(datasets_by_run, key=lambda run: (axis.values[run], run))
     datasets = [
         datasets_by_run[run] if recipe.rebin <= 1 else datasets_by_run[run].rebin(recipe.rebin)
         for run in runs
@@ -104,7 +115,13 @@ def fit_global(
         t_max=recipe.t_max,
         strategy=strategy,
     )
-    results = [{"run": run, **fit_result_summary(results_by_run[run])} for run in runs]
+    results = [
+        {"run": run, "x": axis.values[run], **fit_result_summary(results_by_run[run])}
+        for run in runs
+    ]
+    free_params = [
+        name for name in recipe.free_parameter_names() if name not in shared and name not in field
+    ]
     shared_values = {parameter.name: float(parameter.value) for parameter in fitted_shared}
     shared_uncertainties: dict[str, float] = {}
     for name in shared_values:
@@ -121,7 +138,9 @@ def fit_global(
         strategy=strategy,
         shared=shared_values,
         shared_uncertainties=shared_uncertainties,
+        free_params=free_params,
         results=results,
+        trend=build_trend_table(results, free_params, axis.name),
     )
 
 

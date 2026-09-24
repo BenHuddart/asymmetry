@@ -28,7 +28,7 @@ from asymmetry.core.fitting.engine import FitCancelledError, FitResult
 from asymmetry.core.fitting.fit_wizard import (
     _FIT_WIZARD_TITLES,
     _FMUF_R_LADDER,
-    _MIN_CYCLES_IN_EFFECTIVE_WINDOW,
+    MIN_CYCLES_IN_EFFECTIVE_WINDOW,
     CandidateAssessment,
     CandidateTemplate,
     ConfidenceTier,
@@ -1584,7 +1584,7 @@ def test_rebinning_lengthens_the_informative_window_of_a_counting_error_record()
 
     assert rebinned > 1.15 * raw
     # ...and the 0.69 MHz line straddles the two-cycle floor because of it.
-    assert 0.69 * raw < _MIN_CYCLES_IN_EFFECTIVE_WINDOW <= 0.69 * rebinned
+    assert 0.69 * raw < MIN_CYCLES_IN_EFFECTIVE_WINDOW <= 0.69 * rebinned
 
 
 def test_frequency_support_verdict_differs_between_the_record_and_its_rebinned_copy() -> None:

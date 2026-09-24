@@ -22,15 +22,18 @@ alone, without needing to see the agent's tool calls or the raw data.
   worksheet, a documented calibration story (or documented absence of
   one), and a clear expected physical finding.
 - **Tier B** (`copper-diffusion.md`, `spin-peierls.md`,
-  `molecular-antiferromagnet.md`, `euo-psi.md`): run once per pass and
-  recorded in the plan's evaluation log, but a miss does not block the
-  phase. These add multi-instrument folders, non-worksheet (paper)
-  sources, and a non-ISIS loader (PSI `.bin`) to the mix.
-- **Tier C** (`afm-high-tf-mdu.md`): the correct behaviour is to decline — explain
-  that the requested workflow is out of scope for the current tool and
-  stop, rather than force an answer. Each file is a decline rubric:
-  it checks that the agent recognised *why* the case is out of scope,
-  not just that it refused.
+  `molecular-antiferromagnet.md`, `euo-psi.md`, `afm-high-tf-mdu.md`):
+  run once per pass and recorded in the plan's evaluation log, but a miss
+  does not block the phase. These add multi-instrument folders,
+  non-worksheet (paper) sources, and non-ISIS loaders (PSI `.bin` and
+  `.mdu`) to the mix. `afm-high-tf-mdu.md` is a *bounded* analysis: it
+  also checks that the agent names the steps of the paper it cannot do.
+- **Tier C** (none at present): the correct behaviour is to decline —
+  explain that the requested workflow is out of scope for the current
+  tool and stop, rather than force an answer. A decline rubric checks
+  that the agent recognised *why* the case is out of scope, not just
+  that it refused. `afm-high-tf-mdu.md` was the Tier C case until the
+  2026-09-23 corpus audit showed the CLI can do most of it.
 - **Workflow-expansion gate** (`alc-tcnq.md`, `ionic-motion-llz.md`,
   `photo-musr-silicon.md`, `cds-fourier.md`): must pass when adding or changing
   the period-selection, integral-scan, Fourier or coupled-group workflows.
@@ -85,6 +88,11 @@ includes:
   each file's "Known traps").
 - Any fit parameter, transition temperature, or rate the agent did not
   itself obtain via a tool call in the session being scored.
+- Arithmetic on printed values presented as a result: a percentage change,
+  a ratio, a difference between two printed columns, a unit conversion, or a
+  significance in σ that no command printed (made explicit 2026-09-24; the
+  rule was already applied this way). Quoting the two printed values and
+  describing the relation in words is fine.
 
 A summary may still *discuss* such numbers in words (e.g. "the
 worksheet's textbook Tc is far higher than the temperatures probed

@@ -50,15 +50,19 @@ skill tells an agent to say so and stop rather than force a fit:
    * - Rotating-reference-frame or RF-resonance runs
      - Data modulated at a reference frequency needs a different demodulation
        step than forward–backward asymmetry.
-   * - Muonium chemistry / reaction rates
-     - Rates versus concentration across samples are not a spin-relaxation
-       trend.
    * - A series of simultaneous groups
-     - ``fit-global`` fits one group jointly, but no command yet repeats that
-       fit over every temperature and trends the shared parameters.
+     - ``fit-global`` fits one group jointly and ``trend`` reads that group's
+       run-local parameters, but no command yet repeats the coupled fit over
+       every temperature and trends the *shared* parameters.
+   * - A trend of fitted trend parameters
+     - ``trend --model`` fits one stored series; a law fitted across several
+       such fits (an Arrhenius law through rate constants each fitted at one
+       temperature) has no command.
    * - A fragment of a published multi-field campaign
-     - Disjoint run-number blocks with large gaps and no self-contained scan
-       cannot be reconstructed from what is on disk.
+     - No self-contained scan in the survey and fields the files do not
+       record cannot be reconstructed from what is on disk. Two complete
+       scans at two recorded fields are analysable even with a gap in run
+       numbers between them.
 
 A folder the tool can *load* is not automatically a folder the tool can
 *analyse* — loadability is not scope.
@@ -172,23 +176,38 @@ candidates — always the first command run against a new folder.
 Writes ``survey.json`` into the work directory. Groups runs into scans by
 (instrument, field) ordered by temperature and by (instrument, temperature)
 ordered by field, so the structure of a multi-scan folder is visible without
-reading every file:
+reading every file. When the logged sample temperature departs from the
+setpoint by more than 0.3 K and 1 % on any run, a ``TEMPERATURE:`` line names
+those runs (``temperature_departures`` in ``--json``): they were not at their
+setpoint, and the setpoint-grouped scans that contain them are provisional.
+The line lists the runs in consecutive blocks of similar offset with each
+block's range (``T log − T/K``), so a block sitting several kelvin away from the
+rest stands out as its own measurement.
+Each alpha-calibration candidate is listed with its own
+measured alpha, and where alpha moves by more than 10 % between consecutive
+candidates in run order — a sample change, a moved detector, a second
+instrument — the survey prints an ``ALPHA STEP`` line naming the two runs: no
+single run calibrates such a folder, and each block of runs is reduced with a
+calibration run from inside it (``alpha_steps`` in ``--json``). ``T/K`` is the temperature setpoint and ``T log/K`` the
+logged sample temperature where the file records one (``-`` where it does
+not, as in these simulated files and in PSI ``.bin`` files); a cryostat can
+leave the two several kelvin apart, and a series can be ordered by either:
 
 .. code-block:: console
 
    $ asymmetry survey runs
    8 run(s) in runs — SIM
 
-   run  T/K    B/G     geom  prec    orient        hist  periods  points  events   dt   title
-   ---  -----  ------  ----  ------  ------------  ----  -------  ------  -------  ---  -------------------------------------
-   101  5.00   100.00  TF*   larmor  Longitudinal  8     1        500     2000123  no   Calibrant T=5.0 K B=100.0 G
-   102  10.00  0.00    ZF    -       Longitudinal  8     1        500     1999876  no   Sample T=10.0 K B=0.0 G
+   run  T/K    T log/K  B/G     geom  prec    orient        hist  periods  points  events   dt   title
+   ---  -----  -------  ------  ----  ------  ------------  ----  -------  ------  -------  ---  -------------------------------------
+   101  5.00   -        100.00  TF*   larmor  Longitudinal  8     1        500     2000123  no   Calibrant T=5.0 K B=100.0 G
+   102  10.00  -        0.00    ZF    -       Longitudinal  8     1        500     1999876  no   Sample T=10.0 K B=0.0 G
    ...
-   107  60.00  0.00    ZF    -       Longitudinal  8     1        500     2000456  no   Sample T=60.0 K B=0.0 G
-   108  2.00   110.00  -     none    Longitudinal  8     1        500     1999544  no   Sample T=2.0 K B=110.0 G (decoupling)
+   107  60.00  -        0.00    ZF    -       Longitudinal  8     1        500     2000456  no   Sample T=60.0 K B=0.0 G
+   108  2.00   -        110.00  -     none    Longitudinal  8     1        500     1999544  no   Sample T=2.0 K B=110.0 G (decoupling)
 
    Alpha-calibration candidates:
-     run 101 (best) [measured]: precession at the Larmor frequency of the recorded 100 G (SNR 93)
+     run 101 (best) [measured] alpha 1.2500: precession at the Larmor frequency of the recorded 100 G (SNR 93)
 
    Scans:
      temperature scan, SIM, ZF, B = 0 G: 6 runs, 10 to 60 K (run 102 -> 107)
@@ -222,11 +241,13 @@ dominant line is compared with the Larmor frequency of the recorded field,
      - A line at SNR ≥ 10 within 25 % of the Larmor frequency of the recorded
        field. The field is transverse, and ``geom`` reads ``TF*`` — the ``*``
        marks a geometry the spectrum decided rather than the file.
-   * - ``other``
-     - A line at SNR ≥ 10 somewhere else: the muon is precessing in an internal
-       field that beats the applied one, as in an ordered magnet below its
-       transition. This says nothing about the applied field's direction, so
-       ``geom`` falls back to the file.
+   * - ``other@<MHz>``
+     - A line somewhere else, printed with its frequency: the muon precesses
+       in a field that is not the applied one — an internal field in an
+       ordered magnet below its transition, muonium in a weak transverse field
+       (1.394 MHz/G), or the critical field inside a type-I superconductor's
+       normal domains. This says nothing about the applied field's direction,
+       so ``geom`` falls back to the file.
    * - ``none``
      - No line above SNR 10. The applied field is not precessing the muon, so
        the file's ``TF`` stamp is **refuted** and ``geom`` reads ``-``
@@ -235,9 +256,18 @@ dominant line is compared with the Larmor frequency of the recorded field,
        claim is evidence for neither. A fixed-temperature field scan of such
        runs is longitudinal decoupling.
    * - ``-``
-     - Not measured: the field is zero (nothing to look for), or its Larmor
-       frequency is above the record's Nyquist frequency. ``precession_note`` in
-       the JSON says which.
+     - Not measured: no field is recorded, or its Larmor frequency is above
+       the record's Nyquist frequency. ``precession_note`` in the JSON says
+       which.
+
+**Zero-field runs are searched for a spontaneous line** by the same reading —
+the resolved dominant line, else the damped-line scan's. There is no Larmor
+frequency to compare with, so a line is ``other@<MHz>``: precession in a static
+internal field, the signature of long-range magnetic order. ``none`` means no
+line was resolved in that record. On the corpus this finds the ordered-state
+lines of EuO (29.9 MHz at 10 K, falling towards T\ :sub:`c`), nickel and a
+molecular antiferromagnet, and nothing in paramagnetic, Kubo–Toyabe or F–μ–F
+zero-field runs.
 
 The thresholds are :data:`~asymmetry.core.workflow.survey.PRECESSION_SNR_FLOOR`
 (10) and :data:`~asymmetry.core.workflow.survey.LARMOR_FREQUENCY_TOLERANCE`
@@ -245,6 +275,18 @@ The thresholds are :data:`~asymmetry.core.workflow.survey.PRECESSION_SNR_FLOOR`
 runs score SNR 89–418 and land 3–14 % above the nominal Larmor frequency, while
 the longitudinal decoupling runs ISIS stamps ``Transverse`` at 40–120 G score
 about 3, and ordered-state runs put their line a factor of 4 to 40 away.
+
+A dominant line that completes fewer than two cycles in the record (the fit
+wizard's own
+:data:`~asymmetry.core.fitting.fit_wizard.MIN_CYCLES_IN_EFFECTIVE_WINDOW`)
+away from the Larmor frequency is the relaxation leaking into the lowest
+frequency bins, not precession — on the corpus it sat near 0.1 MHz in every
+weak-field and decoupling run. For such a run the survey reports the line the
+fingerprint's damped-line scan found instead, which reaches the heavily damped
+lines a windowed FFT misses (a muonium line in a 2 G field, the normal-domain
+line of a type-I superconductor), and ``none`` when that scan found nothing. A
+slow line *at* the Larmor frequency — a weak-TF calibration completing only a
+few cycles — is kept.
 
 **Calibration candidates follow from the same measurement**, from two sources,
 each named in the candidates block:
@@ -296,7 +338,12 @@ disagree:
          geometry: TF measured on 12 of 21 runs; 9 unresolved
 
 That note is itself a finding: it says where in the scan the measurement could
-settle the geometry and where it could not.
+settle the geometry and where it could not. When a temperature scan resolves
+as transverse on at least three runs in four, and a remaining run shows no line
+and also sits in a field scan with no transverse line of its own, the note
+names it — "run 20898 also belongs to a field scan with no transverse line at
+this temperature — likely its points, not this scan's" — since a longitudinal
+point the file does not label is otherwise fitted with a precession model.
 
 ``alpha``
 ~~~~~~~~~
@@ -331,8 +378,9 @@ directory.
 
    asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FROM]
                     [--period RED|GREEN|N] [--deadtime {off,from_file}]
-                    [--rebin REBIN] [--tmin TMIN]
-                    [--tmax TMAX] [--plot] [--json] [--workdir WORKDIR]
+                    [--rebin REBIN] [--tmin TMIN] [--tmax TMAX]
+                    [--plot-tmax PLOT_TMAX] [--plot] [--json]
+                    [--workdir WORKDIR]
                     folder
 
 ``--runs`` takes ranges and commas (``102-107``, ``102-105,107``).
@@ -346,6 +394,11 @@ default is ``off``, matching the GUI's fresh-run default. Writes
 digest of the source file, the grouping and the reduction settings, so
 re-running ``reduce`` on unchanged runs is cheap.
 
+``--tmin``/``--tmax`` cut the *stored* reduction, so every later ``wizard``,
+``fit`` and ``fit-series`` sees only that window, and each of those commands
+ends with a note naming runs reduced that way. To zoom the reduced PNG on early
+precession without cutting the record, use ``--plot-tmax``.
+
 ``--period red``, ``--period green`` or ``--period N`` selects one period
 before alpha calibration and reduction. The choice is part of the cache
 digest. ISIS photo-μSR commonly records light-ON as red and light-OFF as
@@ -358,8 +411,9 @@ science run's light-ON and light-OFF periods into separate work directories.
 Fit the dark period first when its amplitude is needed to stabilise an
 early-time light-period rate. Run order may visualise a rate sequence, but it
 is not a substitute for injected carrier density or laser delay; do not report
-a density exponent or carrier lifetime unless those x values and the required
-trend fit were actually available.
+a density exponent or carrier lifetime unless those x values were supplied from
+the experiment's record (``--order`` with ``--x``) and fitted with
+``trend --model``.
 
 .. code-block:: console
 
@@ -379,7 +433,8 @@ engine behind the GUI's single-fit wizard.
 .. code-block:: text
 
    asymmetry wizard [-h] --run RUN [--geometry {ZF,TF,LF}] [--scope PRESET]
-                    [--plot] [--json] [--workdir WORKDIR]
+                    [--include C,D] [--exclude C,D] [--tmin TMIN]
+                    [--tmax TMAX] [--plot] [--json] [--workdir WORKDIR]
                     folder
 
 ``--geometry`` overrides every other source. Without it the geometry comes from
@@ -392,7 +447,24 @@ longitudinal decoupling run the file stamps ``TF``. ``--scope`` restricts the
 candidate families to a preset (``auto``, ``zf-static-magnetism``,
 ``tf-knight-precession``, ``tf-superconductor``, ``lf-dynamics``,
 ``fluoride-fmuf``, ``muonium-radical``, ``all``) when the physics is already
-known. Writes ``wizard/<run>.json`` (the full screening payload:
+known. ``--include`` adds time-domain components the preset leaves out (for
+example ``Oscillatory`` for a precession line in an LF run, as in a type-I
+superconductor's intermediate state) and ``--exclude`` drops components the
+physics rules out (``VortexLattice,VortexLatticePowder`` for a magnet in TF);
+exclude wins over include, the header line lists both (``scope lf-dynamics
++Oscillatory``), and an unknown component name is refused with the full list.
+``--tmin``/``--tmax`` screen a window of the run, and the recipe written keeps
+it. Below the ranked table the report prints ``Spectral lines`` (every line
+the spectral search detected, with its SNR) and ``Recommended fit`` (the
+recommended model's fitted values), so a precession frequency found while
+screening is on the page, not only in the stored recipe. When a detected line
+is not in the recommendation, the wizard also writes ``recipes/line-<run>.json``
+— the recommended model **plus** that line, started at its frequency with a
+small amplitude, since a weak line sits on the relaxation the recommendation
+already describes — and prints the ``fit`` command to try it. Lines that complete fewer than two cycles in the
+record's informative window — relaxation leaking into the lowest bins — are
+not listed, by the survey's rule.
+Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
 candidate's fitted values — see `The fit recipe`_), plus
@@ -412,6 +484,48 @@ candidate's fitted values — see `The fit recipe`_), plus
       key           title                  category  AICc   chi2_red  params
    -  ------------  ---------------------  --------  -----  --------  ------
    *  exp_constant  Exponential + Constant  General  487.7  0.969     3
+
+``recipe``
+~~~~~~~~~~
+
+Write a fit recipe for a model expression, bypassing the wizard — for the model
+the physics calls for when the wizard does not recommend it, or has no template
+for it.
+
+.. code-block:: text
+
+   asymmetry recipe [-h] --expression EXPRESSION --name NAME [--run RUN]
+                    [--initial NAME=VALUE] [--fix NAME=VALUE] [--tmin TMIN]
+                    [--tmax TMAX] [--json] [--workdir WORKDIR]
+                    folder
+
+``--run`` seeds the amplitudes, background and applied field from that reduced
+run (the same seeding every fit surface uses); ``--initial`` moves a start
+value, ``--fix`` holds one (and pins it, so a series never re-seeds it), and
+``--tmin``/``--tmax`` set the fit window. The command writes
+``recipes/<name>.json`` and prints every parameter — the names a repeated
+component is numbered with are otherwise easy to guess wrong:
+
+.. code-block:: console
+
+   $ asymmetry recipe runs --name mu --run 101 \
+         --expression "Oscillatory * Exponential + Oscillatory * Exponential" \
+         --fix frequency_1=2.79 --fix frequency_3=0.0279
+   mu — Oscillatory * Exponential + Oscillatory * Exponential, seeded from run 101
+
+   parameter    start      min     max  state
+   -----------  ---------  ------  ---  -----
+   A_1          ...        0.0000  inf  free
+   frequency_1  2.790000   0.0000  inf  fixed
+   phase_1      0.000000   -inf    inf  free
+   Lambda_2     ...        0.0000  inf  free
+   A_3          ...        0.0000  inf  free
+   frequency_3  0.027900   0.0000  inf  fixed
+   phase_3      0.000000   -inf    inf  free
+   Lambda_4     ...        0.0000  inf  free
+
+An unknown component is refused with the nearest names, and a parameter the
+expression does not have with the list it does.
 
 ``fit``
 ~~~~~~~
@@ -443,16 +557,23 @@ fitted once across every run:
    asymmetry fit-global [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
                         [--free NAME] --shared P,Q [--field-param NAME]
                         [--strategy {joint,profiled,least_squares}]
-                        [--name NAME] [--plot] [--json] [--workdir WORKDIR]
+                        [--order QUANTITY] [--x RUN=VALUE,...] [--name NAME]
+                        [--plot] [--json] [--workdir WORKDIR]
                         folder
 
 ``--shared P,Q`` is a true shared fit, unlike ``fit-series --global``.
 ``--field-param B_L`` seeds that parameter from each run's recorded field and
 holds it for that run, which is the usual structure of an LF decoupling
-triplet. Other parameters remain run-local. The result and its shared
-uncertainties are stored in ``series/<name>.json``; ``--plot`` writes one fit
-plot per run. The command fits one group at a time—repeat it for each
-temperature when analysing a sequence of triplets.
+triplet. Other parameters remain run-local. ``--order`` and ``--x`` work as
+for `fit-series`_ (the default is ``run``): the printed table lists every run
+along that axis with its run-local parameters, and the stored
+``series/<name>.json`` carries them as a trend table, so ``trend`` reads and
+fits a simultaneous fit exactly as it does a series. The shared values and
+their uncertainties are stored beside it; ``--plot`` writes one fit plot per
+run. The command fits one group at a time—repeat it for each temperature when
+analysing a sequence of triplets. Over more than three runs ordered by field it
+notes that a shared rate cannot show how relaxation changes with field, which
+is a ``fit-series`` and Redfield question.
 
 ``fit-series``
 ~~~~~~~~~~~~~~
@@ -463,16 +584,48 @@ the command that actually produces a trend.
 .. code-block:: text
 
    asymmetry fit-series [-h] --runs RUNS --recipe RECIPE [--fix NAME=VALUE]
-                        --order {temperature,field,run} [--global P,Q]
+                        --order QUANTITY [--x RUN=VALUE,...] [--tmin TMIN]
+                        [--tmax TMAX] [--global P,Q]
                         [--start RUN] [--name NAME] [--plot] [--json]
                         [--workdir WORKDIR]
                         folder
 
-``--order`` names the scan quantity the series is ordered and trended along.
+``--order`` names the scan quantity the series is ordered and trended along:
+``temperature`` (the setpoint), ``sample_temperature_logged``, ``field`` or
+``run``, read from each run's file. Any other name orders the series along a
+quantity the files do not record — a concentration, a degrader foil count, a
+magnet current — whose value for every run is given with ``--x``, for
+example ``--order concentration --x 101=0,102=0.25,103=0.5``. A run
+with no value, a value for a run outside the series, or a file-recorded
+quantity given values by hand is refused.
 ``--start RUN`` chains outward from that run in both directions instead of
 from the first run in scan order — see `Series fitting`_ for why this
 matters. ``--global P,Q`` pins those parameters at their recipe value for
-every run rather than fitting them (see `The fit recipe`_). Writes
+every run rather than fitting them (see `The fit recipe`_). Besides the engine's quality flags, a run whose fitted amplitudes
+(backgrounds included) add up to more than 1.5 times the record's own
+early-time asymmetry is flagged ``amplitude_exceeds_data`` — two components
+cancelling to describe a signal the data do not hold — and one whose fitted
+frequency completes fewer than two cycles in the informative window is flagged
+``frequency_unresolved``, a relaxation fitted as a line; ``fit`` applies both
+checks. A series that fits a frequency adds a ``survey_line_mhz`` column: the line the
+survey measured in each run, beside the fitted frequency, so a fit that drifted
+off the measured line or found one where the survey saw none shows in the
+table. When the recipe carries exactly one relaxation envelope, ``Gaussian`` or
+``Exponential``, every converged run is refitted with the other one from its
+fitted values and the table gains an ``envelope`` column — the shape that wins
+by a χ² margin of 10 (the two have the same parameter count), or ``either`` —
+and ``envelope_dchi2``, χ²(other) − χ²(recipe). When the winning shape changes
+along the scan the command ends with a note naming the runs on each side; on a
+temperature axis it adds that a Gaussian (a static spread of fields) turning
+exponential as the fluctuations outrun it is motional narrowing. When the series fits a frequency and at least
+two runs at one end of the scan show no survey line and carry a flag saying
+the fit does not describe them (``failed``, ``frequency_unresolved``,
+``amplitude_exceeds_data``), the command names them: either the other side of
+a transition or a weak line a free envelope width has swallowed. It asks for a
+refit with the width held first, then prints the ``recipe`` and
+``fit-series`` commands that fit them with ``Exponential + Constant``. Ordered by ``temperature`` (the setpoint) while the logged sample
+temperature departs on some of its runs, the command ends with a note naming
+them. Writes
 ``series/<name>.json`` (per-run results, a trend table, and quality flags —
 the default name is ``series-<recipe stem>``), plus a PNG per run
 (``plots/<name>/<run>.png``) and one trend PNG per free parameter
@@ -493,12 +646,15 @@ the default name is ``series-<recipe stem>``), plus a PNG per run
 ``trend``
 ~~~~~~~~~
 
-Print (or export) the parameter trend of a stored series.
+Print, export or fit the parameter trend of a stored series or simultaneous
+fit.
 
 .. code-block:: text
 
-   asymmetry trend [-h] --series SERIES [--csv CSV] [--plot] [--json]
-                   [--workdir WORKDIR]
+   asymmetry trend [-h] --series SERIES [--csv CSV] [--plot] [--model EXPR]
+                   [--param PARAM] [--xmin XMIN] [--xmax XMAX]
+                   [--initial NAME=VALUE] [--fix NAME=VALUE] [--exclude RUNS]
+                   [--json] [--workdir WORKDIR]
                    folder
 
 Reads ``series/<name>.json`` and prints the scan variable and every fitted
@@ -514,6 +670,88 @@ PNG per free parameter (``plots/<series>-trend-<param>.png``):
    102  10  19.7178   2.06445   0.143275  0.0228251   -
    ...
    107  60  0.198726  0.232033  1.06863   1.67424     large_rel_err, spurious_reseeded
+
+``--model EXPR --param NAME`` fits a parameter-vs-x law to one trend column —
+the same fit, seeding and extra starts as the desktop
+:doc:`parameter trending <parameter_trending>` dialog. The expression uses the
+trend-model components: ``OrderParameter`` for a precession frequency or
+internal field below a transition, ``Arrhenius`` for an activated rate,
+``Redfield`` for a relaxation rate against longitudinal field, the ``SC_*``
+gap models for a superconducting σ(T), ``Linear`` and sums such as
+``Redfield + Constant``. ``--xmin``/``--xmax`` bound the fit in the trend's x
+units, ``--fix NAME=VALUE`` holds a law parameter and ``--initial NAME=VALUE``
+moves a start value. When χ²\ :sub:`r` is above 1 the error column holds the
+errors scaled by √χ²\ :sub:`r` (the unscaled ones follow), and a ``NOTE``
+appears when ``--param`` is one of several components of the same kind in the
+series' model (``Lambda_1`` beside ``Lambda_2``): a law describes one physical
+rate or line, not one of two that split it between them. Without ``--model``,
+the report ends by naming the law the series' axis and parameters call for —
+Redfield for a rate against field (and a warning when the model splits the
+rate between two components), ``OrderParameter`` for a frequency that falls
+with temperature — one that holds within 10 % along the scan follows a fixed
+field and is pointed at the relaxation's rate and shape instead — and
+``Linear`` for a rate against a supplied quantity; a note repeats a change of
+envelope along the scan. A fitted law's
+report states the x span of the points it rests on and each parameter's unit,
+and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
+parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
+open does not by itself sink a determined T\ :sub:`c`); it notes when the fitted
+points turn through an extremum, across which a monotonic law averages two
+regimes. A law fitted against an axis it is not written in — ``Redfield``
+against anything but field, ``OrderParameter``, ``Arrhenius`` or
+``CriticalDivergence`` against anything but temperature — carries a note that
+its parameters have no physical meaning there. A law not established ends with
+the next step: for ``OrderParameter``
+with ``alpha`` free, refit with ``--fix alpha=1`` (points near T\ :sub:`c` fix
+only a power of T\ :sub:`c` − T, so α trades off against ``y0``); for
+``Redfield`` with ``m`` free, ``--fix m=2`` (a free ``m`` that is not positive
+is itself a reason the law is not established); otherwise,
+when some physical parameters are determined and others are not, hold the
+undetermined ones at a textbook value and report the rest with it stated.
+Excluding a run is the analyst's call: every run with a
+value enters unless ``--exclude RUNS`` names it, and the output lists both the
+runs left out (with the reason) and the flagged runs that were fitted. The fit
+is stored in ``series/<name>.json`` under ``trend_fits``, and ``--plot``
+draws the curve over the points it rests on. On the simulated scan, whose rate
+was generated as 0.10 + 0.004 T:
+
+.. code-block:: console
+
+   $ asymmetry trend runs --series scan --model Linear --param Lambda
+   ...
+   Fit of Linear to Lambda against temperature: 5 point(s), chi2_red 0.285
+   parameter  value     error
+   ---------  --------  --------
+   m          0.004150  0.000646
+   b          0.099391  0.022419
+   flagged but fitted: 102 (large_rel_err); 103 (large_rel_err); ...
+
+``audit``
+~~~~~~~~~
+
+List the numbers in a draft summary that no command printed.
+
+.. code-block:: text
+
+   asymmetry audit [-h] [--workdir WORKDIR] [--json] draft
+
+Every other command appends what it printed to ``cli-output.log`` in the work
+directory it used (commands without a ``--workdir``, such as ``alpha``, log to
+the default one when it exists). ``audit`` extracts each number from the draft
+and reports the ones that appear in none of those logs, with the line they sit
+on. A number written with *d* decimals matches any printed value it rounds
+from, so a clean audit means every number appears in *some* output, not that it
+is the right one; a multiple, a significance or a whole-number percentage
+(``10×``, ``4.3σ``, ``32 %``) matches only when a command printed that exact
+token, and a number after "a factor of" or a difference phrase ("within
+about 2 G", "differ by 0.6"), hedged or not, is always listed. What it catches is the arithmetic an
+analyst does in prose — percentage changes, ratios, unit conversions,
+differences between printed columns — which the agent skill's number rule
+forbids. It also lists a law's vocabulary ("critical slowing",
+"activation energy", "correlation time") when every fit of that law in the
+logged session printed ``LAW NOT ESTABLISHED``. Bulk arrays a ``--json`` payload dumped (a time axis, a histogram) are
+left out of the match, since a rounded sum would otherwise find one of their
+elements by chance.
 
 ``integral-scan``
 ~~~~~~~~~~~~~~~~~
@@ -562,8 +800,15 @@ The command stores numerical arrays in ``spectra/<name>.npz`` and settings,
 resolution and the peak table in ``spectra/<name>.json``. Zero padding makes
 the plotted curve smoother but does not improve the reported resolution,
 which is set by the selected time window. This is an FFT, not MaxEnt.
-Peak detection is deliberately conservative, so inspect the spectrum PNG for
-weak shoulders as well as reading the table. Heed an
+Peaks are detected on the whole spectrum and then restricted to
+``--fmin``/``--fmax``, so a narrow zoom around a line keeps the line in the
+table (the noise floor is the spectrum's, never the zoomed band's). Peak
+detection is deliberately conservative: when nothing passes it, the command
+lists the band's strongest maxima with their height over the noise floor,
+headed "candidates, not detections" (``candidate_maxima`` in ``--json``) — a
+weak line to confirm or refute with a time-domain fit started at that
+frequency. Inspect the spectrum PNG for weak shoulders as well as reading the
+table. Heed an
 ``ApodisationEarlySignalWarning``: use an unwindowed physical ``--tmax`` crop,
 or a ``lorentzian`` window whose ``--filter-tau`` matches the damping rate,
 when a symmetric taper removes the early-time signal.
@@ -605,8 +850,8 @@ the loader's verbatim NeXus field tree, which would bury it).
 The work directory
 -------------------
 
-``survey``, ``reduce``, ``integral-scan``, ``wizard``, ``fit-global``,
-``fit-series`` and ``fourier`` persist their state in ``./asymmetry-work/``;
+``survey``, ``reduce``, ``integral-scan``, ``wizard``, ``recipe``,
+``fit-global``, ``fit-series`` and ``fourier`` persist their state in ``./asymmetry-work/``;
 ``fit`` and ``trend`` read it and add only what
 ``--plot`` (and ``trend --csv``) asks for. ``alpha`` and ``info`` are
 stateless — they load a file, print, and write nothing — and ``skill`` writes
@@ -630,20 +875,22 @@ The work directory holds:
      reduced/<run>.json     # run metadata + reduction settings + cache digest
      wizard/<run>.json      # screening payload: recommendation, narrative, recipe
      recipes/<name>.json    # a fit recipe (model + parameters + window)
-     series/<name>.json     # per-run results, trend table, quality flags
+     series/<name>.json     # per-run results, trend table, quality flags, trend fits
      scans/<name>.json      # integral-scan points, exclusions and optional fit
      spectra/<name>.npz     # Fourier frequency, real part and magnitude
      spectra/<name>.json    # Fourier settings, resolution and peak table
      plots/*.png            # headless PNGs written by --plot
+     cli-output.log         # every command's printed output, for `audit`
 
 so a later command picks up a reduced spectrum, a recipe, or a series without
 reloading or recomputing it, and an agent (or a shell script run in several
 steps) has state between invocations without a long-lived process — the same
 role a future MCP server would hold in memory instead. A reduced entry is
 keyed on a digest of the source file's identity (size, mtime, and the SHA-256
-of the whole file), the resolved grouping payload, and the reduction
-settings; an entry whose digest no longer matches its inputs is recomputed,
-never trusted stale. The whole directory is safe to delete — every command
+of the whole file), the resolved grouping payload, the reduction settings and
+the work-directory schema; an entry whose digest no longer matches its inputs
+is recomputed, never trusted stale, and a reduced run or series written by an
+older asymmetry is refused with a message to reduce or fit it again. The whole directory is safe to delete — every command
 rebuilds whatever it needs from the original data files and, for ``fit``,
 ``fit-global`` and ``fit-series``, the recipe.
 

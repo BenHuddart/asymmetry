@@ -1,8 +1,19 @@
-"""Agent-facing Fourier transform with quantitative peak reporting."""
+"""Agent-facing Fourier transform with quantitative peak reporting.
+
+Peaks are detected on the **whole** spectrum and then restricted to the
+requested band: the detector's noise floor is a property of the spectrum, and
+estimating it from a narrow zoom around a line measures the line itself as
+noise, so a zoomed transform would otherwise report nothing exactly where it
+was asked to look.
+
+When no line passes the detector, the strongest local maxima in the band are
+still reported, with their height over that noise floor, as *candidates* — a
+weak line that a time-domain fit can confirm or refute, never a detection.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -50,6 +61,10 @@ class FourierSettings:
         }
 
 
+#: Sub-threshold maxima reported when no line passes the detector.
+_CANDIDATE_MAXIMA = 3
+
+
 @dataclass(frozen=True)
 class FourierOutcome:
     frequency: np.ndarray
@@ -58,6 +73,9 @@ class FourierOutcome:
     settings: FourierSettings
     resolution_mhz: float
     peaks: dict[str, Any]
+    #: ``{"frequency_mhz", "height_over_noise"}`` for the strongest maxima in
+    #: the band — filled only when no peak was detected there.
+    candidate_maxima: list[dict[str, float]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +85,7 @@ class FourierOutcome:
             "frequency_min_mhz": float(self.frequency[0]),
             "frequency_max_mhz": float(self.frequency[-1]),
             "peak_analysis": self.peaks,
+            "candidate_maxima": [dict(entry) for entry in self.candidate_maxima],
         }
 
 
@@ -85,12 +104,14 @@ def fourier_spectrum(dataset: MuonDataset, settings: FourierSettings) -> Fourier
         filter_time_constant_us=settings.filter_time_constant_us,
         subtract_average_signal=True,
     )
-    mask = frequency >= settings.f_min
+    full_frequency = np.asarray(frequency, dtype=np.float64)
+    full_magnitude = np.asarray(magnitude, dtype=np.float64)
+    mask = full_frequency >= settings.f_min
     if settings.f_max is not None:
-        mask &= frequency <= settings.f_max
-    frequency = np.asarray(frequency[mask], dtype=np.float64)
+        mask &= full_frequency <= settings.f_max
+    frequency = full_frequency[mask]
     real = np.asarray(real[mask], dtype=np.float64)
-    magnitude = np.asarray(magnitude[mask], dtype=np.float64)
+    magnitude = full_magnitude[mask]
     if frequency.size < 2:
         raise ValueError("The requested Fourier frequency window contains fewer than two bins.")
 
@@ -106,13 +127,16 @@ def fourier_spectrum(dataset: MuonDataset, settings: FourierSettings) -> Fourier
     duration = float(selected_time[-1] - selected_time[0])
     resolution = 1.0 / duration if duration > 0.0 else float(np.median(np.diff(frequency)))
     analysis = detect_peaks_in_spectrum(
-        frequency,
-        magnitude,
+        full_frequency,
+        full_magnitude,
         resolution_mhz=resolution,
-        max_peaks=settings.max_peaks,
+        max_peaks=max(settings.max_peaks, int(full_frequency.size)),
         source="fft",
         leakage_profile="hann" if settings.window == "hann" else "rect",
     )
+    f_hi = np.inf if settings.f_max is None else settings.f_max
+    in_band = [peak for peak in analysis.peaks if settings.f_min <= peak.frequency_mhz <= f_hi]
+    analysis = replace(analysis, peaks=tuple(in_band[: settings.max_peaks]))
     return FourierOutcome(
         frequency=frequency,
         real=real,
@@ -120,7 +144,25 @@ def fourier_spectrum(dataset: MuonDataset, settings: FourierSettings) -> Fourier
         settings=settings,
         resolution_mhz=resolution,
         peaks=serialize_peak_analysis(analysis),
+        candidate_maxima=[] if in_band else _strongest_maxima(frequency, magnitude, analysis),
     )
+
+
+def _strongest_maxima(
+    frequency: np.ndarray, magnitude: np.ndarray, analysis: Any
+) -> list[dict[str, float]]:
+    """The band's highest interior local maxima, with height over the noise floor."""
+    interior = (
+        np.flatnonzero((magnitude[1:-1] > magnitude[:-2]) & (magnitude[1:-1] >= magnitude[2:])) + 1
+    )
+    strongest = interior[np.argsort(magnitude[interior])[::-1][:_CANDIDATE_MAXIMA]]
+    return [
+        {
+            "frequency_mhz": float(frequency[index]),
+            "height_over_noise": float(magnitude[index] / analysis.noise_floor),
+        }
+        for index in sorted(strongest, key=lambda i: -magnitude[i])
+    ]
 
 
 __all__ = ["FourierOutcome", "FourierSettings", "fourier_spectrum"]

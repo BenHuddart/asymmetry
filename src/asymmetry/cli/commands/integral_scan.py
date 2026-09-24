@@ -173,7 +173,7 @@ def run(args: argparse.Namespace) -> None:
             fit_scan, fit_payload = fit_integral_scan(
                 scan,
                 args.model,
-                initial=parse_fix(args.initial),
+                initial=parse_fix(args.initial, flag="--initial"),
                 fixed=parse_fix(args.fix),
                 baseline_model=args.baseline,
                 baseline_regions=_regions(args.baseline_regions),
