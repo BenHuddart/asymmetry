@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 from dataclasses import replace
 from pathlib import Path
 
@@ -142,7 +143,7 @@ def run(args: argparse.Namespace) -> None:
         )
         return
 
-    print(_render(result, wizard_path, recipe_path, plot_path, plot_note))
+    print(_render(args.folder, result, wizard_path, recipe_path, plot_path, plot_note))
 
 
 def _names(text: str) -> list[str]:
@@ -168,6 +169,7 @@ def _survey_geometry(workdir, run_number: int) -> str | None:
 
 
 def _render(
+    folder: str,
     result,
     wizard_path: Path,
     recipe_path: Path | None,
@@ -226,6 +228,31 @@ def _render(
             else "none detected"
         )
     )
+    fitted_lines = (
+        []
+        if result.recipe is None
+        else [
+            parameter.value
+            for parameter in result.recipe.parameters
+            if parameter.name.startswith("frequency")
+        ]
+    )
+    unfitted = [
+        peak["frequency_mhz"]
+        for peak in peaks
+        if not any(abs(value / peak["frequency_mhz"] - 1.0) < 0.1 for value in fitted_lines)
+    ]
+    if unfitted:
+        lines.append(
+            "A detected line the recommendation does not fit is still a candidate. To test "
+            "one in the time domain, start a recipe at it and check the fitted amplitude "
+            "against its error:"
+        )
+        lines.append(
+            f"  asymmetry recipe {shlex.quote(folder)} --run {result.run_number} --name line-{result.run_number} "
+            f'--expression "Oscillatory * Exponential + Constant" '
+            f"--initial frequency={unfitted[0]:.4g}"
+        )
     if result.recipe is not None:
         lines.append(
             "Recommended fit: "

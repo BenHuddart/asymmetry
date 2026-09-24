@@ -177,7 +177,7 @@ Writes ``survey.json`` into the work directory. Groups runs into scans by
 (instrument, field) ordered by temperature and by (instrument, temperature)
 ordered by field, so the structure of a multi-scan folder is visible without
 reading every file. When the logged sample temperature departs from the
-setpoint by more than 0.5 K and 5 % on any run, a ``TEMPERATURE:`` line names
+setpoint by more than 0.3 K and 3 % on any run, a ``TEMPERATURE:`` line names
 those runs (``temperature_departures`` in ``--json``): they were not at their
 setpoint, and the setpoint-grouped scans that contain them are provisional.
 Each alpha-calibration candidate is listed with its own
@@ -238,11 +238,13 @@ dominant line is compared with the Larmor frequency of the recorded field,
      - A line at SNR ≥ 10 within 25 % of the Larmor frequency of the recorded
        field. The field is transverse, and ``geom`` reads ``TF*`` — the ``*``
        marks a geometry the spectrum decided rather than the file.
-   * - ``other``
-     - A line at SNR ≥ 10 somewhere else: the muon is precessing in an internal
-       field that beats the applied one, as in an ordered magnet below its
-       transition. This says nothing about the applied field's direction, so
-       ``geom`` falls back to the file.
+   * - ``other@<MHz>``
+     - A line somewhere else, printed with its frequency: the muon precesses
+       in a field that is not the applied one — an internal field in an
+       ordered magnet below its transition, muonium in a weak transverse field
+       (1.394 MHz/G), or the critical field inside a type-I superconductor's
+       normal domains. This says nothing about the applied field's direction,
+       so ``geom`` falls back to the file.
    * - ``none``
      - No line above SNR 10. The applied field is not precessing the muon, so
        the file's ``TF`` stamp is **refuted** and ``geom`` reads ``-``
@@ -261,6 +263,18 @@ The thresholds are :data:`~asymmetry.core.workflow.survey.PRECESSION_SNR_FLOOR`
 runs score SNR 89–418 and land 3–14 % above the nominal Larmor frequency, while
 the longitudinal decoupling runs ISIS stamps ``Transverse`` at 40–120 G score
 about 3, and ordered-state runs put their line a factor of 4 to 40 away.
+
+A dominant line that completes fewer than two cycles in the record (the fit
+wizard's own
+:data:`~asymmetry.core.fitting.fit_wizard.MIN_CYCLES_IN_EFFECTIVE_WINDOW`)
+away from the Larmor frequency is the relaxation leaking into the lowest
+frequency bins, not precession — on the corpus it sat near 0.1 MHz in every
+weak-field and decoupling run. For such a run the survey reports the line the
+fingerprint's damped-line scan found instead, which reaches the heavily damped
+lines a windowed FFT misses (a muonium line in a 2 G field, the normal-domain
+line of a type-I superconductor), and ``none`` when that scan found nothing. A
+slow line *at* the Larmor frequency — a weak-TF calibration completing only a
+few cycles — is kept.
 
 **Calibration candidates follow from the same measurement**, from two sources,
 each named in the candidates block:
@@ -420,7 +434,10 @@ exclude wins over include, the header line lists both (``scope lf-dynamics
 it. Below the ranked table the report prints ``Spectral lines`` (every line
 the spectral search detected, with its SNR) and ``Recommended fit`` (the
 recommended model's fitted values), so a precession frequency found while
-screening is on the page, not only in the stored recipe.
+screening is on the page, not only in the stored recipe. A detected line the
+recommendation does not fit is followed by a ready ``asymmetry recipe`` command
+started at that frequency, and ``fourier`` prints the same for its strongest
+candidate maximum.
 Writes ``wizard/<run>.json`` (the full screening payload:
 recommendation, ranked candidate table, narrative) and
 ``recipes/wizard-<run>.json`` (the fit recipe built from the recommended
@@ -611,7 +628,10 @@ internal field below a transition, ``Arrhenius`` for an activated rate,
 gap models for a superconducting σ(T), ``Linear`` and sums such as
 ``Redfield + Constant``. ``--xmin``/``--xmax`` bound the fit in the trend's x
 units, ``--fix NAME=VALUE`` holds a law parameter and ``--initial NAME=VALUE``
-moves a start value. Excluding a run is the analyst's call: every run with a
+moves a start value. When χ²\ :sub:`r` is above 1 the report adds a column of
+errors scaled by √χ²\ :sub:`r`, and it warns when ``--param`` is one of several
+components of the same kind in the series' model (``Lambda_1`` beside
+``Lambda_2``), since a law written for one rate needs a single-rate fit. Excluding a run is the analyst's call: every run with a
 value enters unless ``--exclude RUNS`` names it, and the output lists both the
 runs left out (with the reason) and the flagged runs that were fitted. The fit
 is stored in ``series/<name>.json`` under ``trend_fits``, and ``--plot``

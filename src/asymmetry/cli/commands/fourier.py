@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 from pathlib import Path
 
 from asymmetry.cli._output import (
@@ -101,10 +102,10 @@ def run(args: argparse.Namespace) -> None:
     if args.json:
         emit_json(payload(**result))
         return
-    print(_render(result))
+    print(_render(args.folder, result))
 
 
-def _render(result: dict) -> str:
+def _render(folder: str, result: dict) -> str:
     peaks = result["peak_analysis"]["peaks"]
     rows = [
         [
@@ -130,6 +131,10 @@ def _render(result: dict) -> str:
                     f"(height {entry['height_over_noise']:.1f}x the noise floor)"
                     for entry in result["candidate_maxima"]
                 ),
+                "When the physics predicts a line, test the strongest in the time domain:",
+                f"  asymmetry recipe {shlex.quote(folder)} --run {result['run']} --name line-{result['run']} "
+                f'--expression "Oscillatory * Exponential + Constant" '
+                f"--initial frequency={result['candidate_maxima'][0]['frequency_mhz']:.4g}",
             ]
             if result["candidate_maxima"]
             else []

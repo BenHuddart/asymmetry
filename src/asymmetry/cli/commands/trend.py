@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import Any
 
@@ -202,7 +203,7 @@ def _render(
         render_table(trend.columns, rows),
     ]
     if fit is not None:
-        lines.extend(["", *_render_fit(fit)])
+        lines.extend(["", *_render_fit(fit, series["free_params"])])
     if csv_path is not None:
         lines.extend(["", f"Trend written to {csv_path}"])
     if plot_paths:
@@ -210,7 +211,7 @@ def _render(
     return "\n".join(lines)
 
 
-def _render_fit(fit: dict[str, Any]) -> list[str]:
+def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
     """The fit block: model, range, parameters with errors, and what was left out."""
     span = (
         ""
@@ -226,6 +227,9 @@ def _render_fit(fit: dict[str, Any]) -> list[str]:
             else f"FAILED — {fit['message']}"
         ),
     ]
+    # A χ²ᵣ above 1 says the points scatter more than their own errors allow;
+    # the fit's errors scaled by √χ²ᵣ are the honest ones to quote then.
+    scale = max(1.0, fit["reduced_chi_squared"]) ** 0.5 if fit["success"] else 1.0
     rows = [
         [
             name,
@@ -234,10 +238,30 @@ def _render_fit(fit: dict[str, Any]) -> list[str]:
             if name in fit["fixed"]
             else format_number(fit["uncertainties"].get(name), 6)
             + (" (at bound)" if name in fit["params_at_bound"] else ""),
+            *(
+                [
+                    "fixed"
+                    if name in fit["fixed"]
+                    else format_number(fit["uncertainties"].get(name, 0.0) * scale, 6)
+                ]
+                if scale > 1.0
+                else []
+            ),
         ]
         for name, value in fit["parameters"].items()
     ]
-    lines.append(render_table(["parameter", "value", "error"], rows))
+    headers = ["parameter", "value", "error"] + (["error x sqrt(chi2_red)"] if scale > 1.0 else [])
+    lines.append(render_table(headers, rows))
+    base = re.sub(r"_\d+$", "", fit["param"])
+    siblings = [
+        name for name in free_params if name != fit["param"] and re.sub(r"_\d+$", "", name) == base
+    ]
+    if siblings:
+        lines.append(
+            f"WARNING: {fit['param']} is one of several {base} components in this series' "
+            f"model (also {', '.join(siblings)}); a law written for one rate or frequency "
+            f"needs the series refitted with a single-component model."
+        )
     if fit["excluded"]:
         lines.append(
             "left out: "

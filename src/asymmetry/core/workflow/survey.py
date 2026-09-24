@@ -33,7 +33,10 @@ from asymmetry.core.data.calibration import (
 )
 from asymmetry.core.data.dataset import MuonDataset, Run
 from asymmetry.core.fitting.component_tags import geometry_from_field_direction
-from asymmetry.core.fitting.fit_wizard import fingerprint_spectrum
+from asymmetry.core.fitting.fit_wizard import (
+    MIN_CYCLES_IN_EFFECTIVE_WINDOW,
+    fingerprint_spectrum,
+)
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
 from asymmetry.core.workflow.reduction import (
     ReductionSettings,
@@ -216,17 +219,26 @@ def precession_evidence(dataset: MuonDataset, field: float | None) -> Precession
         )
 
     fingerprint = fingerprint_spectrum(dataset)
-    snr = float(fingerprint.dominant_fft_snr)
-    if not (fingerprint.oscillatory_hint and snr >= PRECESSION_SNR_FLOOR):
-        return PrecessionEvidence(
-            state="none",
-            frequency_mhz=None,
-            snr=snr,
-            larmor_mhz=larmor_mhz,
-            note="",
-        )
     frequency_mhz = float(fingerprint.dominant_fft_frequency_mhz)
+    snr = float(fingerprint.dominant_fft_snr)
     matches = abs(frequency_mhz / larmor_mhz - 1.0) <= LARMOR_FREQUENCY_TOLERANCE
+    # A dominant "line" that completes under two cycles in the record, away
+    # from the Larmor frequency, is the relaxation leaking into the lowest bins,
+    # not precession. The damped-line scan — the one that reaches heavily
+    # damped lines the Hann-windowed FFT is blind to — speaks instead.
+    resolved = fingerprint.dominant_fft_cycles_in_window >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
+    if not (fingerprint.oscillatory_hint and snr >= PRECESSION_SNR_FLOOR and (resolved or matches)):
+        if not fingerprint.has_damped_line_candidate:
+            return PrecessionEvidence(
+                state="none",
+                frequency_mhz=None,
+                snr=snr,
+                larmor_mhz=larmor_mhz,
+                note="",
+            )
+        frequency_mhz = float(fingerprint.damped_line_frequency_mhz)
+        snr = float(fingerprint.damped_line_snr)
+        matches = abs(frequency_mhz / larmor_mhz - 1.0) <= LARMOR_FREQUENCY_TOLERANCE
     return PrecessionEvidence(
         state="larmor" if matches else "other",
         frequency_mhz=frequency_mhz,
@@ -422,8 +434,8 @@ class CalibrationCandidate:
 #: A logged sample temperature this far from its setpoint — in kelvin *and* as a
 #: fraction of the setpoint — is a different temperature, not thermometer
 #: scatter: a cryostat still cooling, or a sensor offset that moves a transition.
-TEMPERATURE_DEPARTURE_K = 0.5
-TEMPERATURE_DEPARTURE_FRACTION = 0.05
+TEMPERATURE_DEPARTURE_K = 0.3
+TEMPERATURE_DEPARTURE_FRACTION = 0.03
 
 
 def temperature_departures(rows: list[RunRow]) -> list[int]:

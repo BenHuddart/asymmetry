@@ -178,6 +178,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   candidates; `wizard` prints the lines its spectral search detected and the recommended
   model's fitted values; `survey` prints a `TEMPERATURE:` line naming runs whose logged sample
   temperature departs from the setpoint. `wizard` and `fit-series` take `--tmin`/`--tmax`.
+- **`survey` no longer reports relaxation leakage as precession.** A dominant spectral line that
+  completes fewer than two cycles in the record, away from the Larmor frequency, is replaced by
+  the fingerprint's damped-line scan result (or `none`); the `prec` column prints the frequency
+  of an `other` line (`other@2.81`). Weak-TF muonium and a type-I superconductor's
+  normal-domain line now show up where a false ~0.1 MHz line did. `trend --model` prints
+  √χ²ᵣ-scaled errors when χ²ᵣ > 1 and warns when the fitted parameter is one of several
+  components of its kind; `wizard` and `fourier` print a seeded `recipe` command for a line
+  the recommendation does not fit.
 
 ### Changed
 

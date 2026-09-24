@@ -1538,3 +1538,35 @@ def test_fit_series_fits_inside_the_window_it_is_given(
     capsys.readouterr()
     stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
     assert stored["recipe"]["t_max"] == 5.0
+
+
+def test_a_trend_fit_report_scales_errors_and_warns_on_a_multi_component_parameter() -> None:
+    from asymmetry.cli.commands.trend import _render_fit
+
+    fit = {
+        "param": "Lambda_1",
+        "expression": "Redfield",
+        "order_key": "field",
+        "x_min": None,
+        "x_max": None,
+        "n_points": 12,
+        "success": True,
+        "message": "",
+        "parameters": {"D": 30.0, "nu": 150.0, "m": 2.0},
+        "uncertainties": {"D": 0.5, "nu": 10.0},
+        "fixed": ["m"],
+        "reduced_chi_squared": 4.0,
+        "params_at_bound": [],
+        "excluded": [],
+        "flagged": [],
+    }
+    text = "\n".join(_render_fit(fit, ["A_1", "Lambda_1", "A_2", "Lambda_2", "A_bg"]))
+    # χ²ᵣ = 4 doubles the errors in the scaled column.
+    assert "error x sqrt(chi2_red)" in text
+    assert "1.000000" in text and "20.000000" in text
+    assert "WARNING: Lambda_1 is one of several Lambda components" in text
+    assert "also Lambda_2" in text
+
+    single = "\n".join(_render_fit(fit | {"reduced_chi_squared": 0.9}, ["A_1", "Lambda_1"]))
+    assert "sqrt(chi2_red)" not in single
+    assert "WARNING" not in single

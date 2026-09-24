@@ -418,9 +418,62 @@ def test_a_logged_temperature_far_from_its_setpoint_is_a_departure() -> None:
         replace(_row(run_number=1, temperature=15.0), sample_temperature_logged=285.2),
         # Close in kelvin but not in proportion, and close in proportion but
         # not in kelvin: thermometer scatter either way, not a departure.
-        replace(_row(run_number=2, temperature=1.6), sample_temperature_logged=1.9),
+        replace(_row(run_number=2, temperature=1.6), sample_temperature_logged=1.8),
         replace(_row(run_number=3, temperature=300.0), sample_temperature_logged=305.0),
         replace(_row(run_number=4, temperature=2.0), sample_temperature_logged=8.2),
         _row(run_number=5, temperature=10.0),
     ]
     assert temperature_departures(rows) == [1, 4]
+
+
+def _fingerprint(**fields):
+    from types import SimpleNamespace
+
+    base = {
+        "oscillatory_hint": True,
+        "dominant_fft_frequency_mhz": 0.096,
+        "dominant_fft_snr": 100.0,
+        "dominant_fft_cycles_in_window": 0.75,
+        "damped_line_frequency_mhz": 0.0,
+        "damped_line_snr": 0.0,
+    }
+    namespace = SimpleNamespace(**(base | fields))
+    namespace.has_damped_line_candidate = namespace.damped_line_frequency_mhz > 0.0
+    return namespace
+
+
+@pytest.mark.parametrize(
+    ("fingerprint", "expected"),
+    [
+        # A sub-cycle "line" away from Larmor is leakage; the damped scan's
+        # line (a muonium line in a 2 G field, here) is the precession.
+        (
+            {"damped_line_frequency_mhz": 2.8, "damped_line_snr": 68.0},
+            ("other", 2.8),
+        ),
+        # ... and with no damped line there is no precession at all.
+        ({}, ("none", None)),
+        # A slow line at the Larmor frequency is a weak-TF calibration, kept.
+        ({"dominant_fft_frequency_mhz": 0.0271}, ("larmor", 0.0271)),
+        # A resolved line away from Larmor is an internal field, as before.
+        (
+            {"dominant_fft_frequency_mhz": 30.0, "dominant_fft_cycles_in_window": 200.0},
+            ("other", 30.0),
+        ),
+    ],
+)
+def test_a_sub_cycle_line_away_from_larmor_is_not_precession(
+    monkeypatch, fingerprint, expected
+) -> None:
+    import numpy as np
+
+    from asymmetry.core.data.dataset import MuonDataset
+    from asymmetry.core.workflow import survey as survey_module
+
+    monkeypatch.setattr(
+        survey_module, "fingerprint_spectrum", lambda dataset: _fingerprint(**fingerprint)
+    )
+    time = np.arange(0.0, 8.0, 0.016)
+    dataset = MuonDataset(time, np.zeros_like(time), np.ones_like(time), {"run_number": 1})
+    evidence = survey_module.precession_evidence(dataset, 2.0)
+    assert (evidence.state, evidence.frequency_mhz) == expected

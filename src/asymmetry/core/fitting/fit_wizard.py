@@ -1529,7 +1529,7 @@ _NULL_EXPONENTIAL_KEY = "null_exp"
 #: false positives were all of this kind). Generalises the 1/T_full floor in
 #: ``_disqualification_reasons`` to the window that actually carries
 #: information.
-_MIN_CYCLES_IN_EFFECTIVE_WINDOW = 2.0
+MIN_CYCLES_IN_EFFECTIVE_WINDOW = 2.0
 
 #: Fractional tolerance for matching a fitted frequency to a detected peak in
 #: the spectral-corroboration check (widened by the effective resolution and by
@@ -1538,7 +1538,7 @@ _FREQUENCY_SUPPORT_REL_TOL = 0.10
 
 #: Effective-window cycle count above which a recommended oscillation is no
 #: longer flagged as sitting at the "edge" of resolvability. Below
-#: ``_MIN_CYCLES_IN_EFFECTIVE_WINDOW`` (2.0) the frequency is disqualified
+#: ``MIN_CYCLES_IN_EFFECTIVE_WINDOW`` (2.0) the frequency is disqualified
 #: outright by ``_apply_frequency_support_disqualifiers``; the [2.0, 3.0) band
 #: is the zone where the fit survives that gate but is still marginal, so a
 #: caveat rather than a veto is appropriate when spectral support is also
@@ -3317,7 +3317,7 @@ def _edge_of_window_caveat(
     Computed entirely from serialized state (``peak_analysis``), so a metric
     rerank or an ``.asymp`` reload sees the same verdict as the original build.
     Fires when a ``frequency``-named fitted parameter completes
-    ``[_MIN_CYCLES_IN_EFFECTIVE_WINDOW, _EDGE_WINDOW_MAX_CYCLES)`` cycles in
+    ``[MIN_CYCLES_IN_EFFECTIVE_WINDOW, _EDGE_WINDOW_MAX_CYCLES)`` cycles in
     the effective window (fewer would already be disqualified by
     ``_apply_frequency_support_disqualifiers``) AND its supporting spectral
     peak — matched with the same tolerance rule as that disqualifier — is
@@ -3338,7 +3338,7 @@ def _edge_of_window_caveat(
         if frequency <= _EPS:
             continue
         cycles = frequency / resolution_mhz
-        if not (_MIN_CYCLES_IN_EFFECTIVE_WINDOW <= cycles < _EDGE_WINDOW_MAX_CYCLES):
+        if not (MIN_CYCLES_IN_EFFECTIVE_WINDOW <= cycles < _EDGE_WINDOW_MAX_CYCLES):
             continue
         supporting_peak = _supporting_peak(frequency, peak_analysis.peaks, resolution_mhz)
         snr = supporting_peak.snr if supporting_peak is not None else 0.0
@@ -6038,7 +6038,7 @@ def _apply_frequency_support_disqualifiers(
     muonium/fluorine families carry no literal ``frequency`` parameter):
 
     * **Effective-window floor** — the frequency completes fewer than
-      ``_MIN_CYCLES_IN_EFFECTIVE_WINDOW`` cycles inside the SNR-truncated
+      ``MIN_CYCLES_IN_EFFECTIVE_WINDOW`` cycles inside the SNR-truncated
       informative window (see :func:`effective_analysis_window`); such a claim
       rests on the noise-dominated tail or on smooth systematics.
     * **Spectral corroboration** — the frequency is resolvable in the effective
@@ -6086,7 +6086,7 @@ def _apply_frequency_support_disqualifiers(
                 continue
             frequency = abs(float(parameter.value))
             cycles = frequency * t_eff
-            if cycles < _MIN_CYCLES_IN_EFFECTIVE_WINDOW:
+            if cycles < MIN_CYCLES_IN_EFFECTIVE_WINDOW:
                 reasons.append(
                     f"{parameter.name} completes only {cycles:.1f} cycles inside the "
                     f"statistically informative window ({t_eff:.1f} µs)"

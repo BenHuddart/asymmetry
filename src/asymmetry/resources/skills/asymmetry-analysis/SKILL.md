@@ -98,7 +98,7 @@ it found:
 | `prec` | Means |
 |---|---|
 | `larmor` | A strong line at the Larmor frequency of the recorded field. The field **is** transverse, and `geom` reads `TF*` — the `*` says the spectrum decided it, not the file. |
-| `other` | A strong line somewhere else: the muon is precessing in an **internal** field that beats the applied one. An ordered magnet, below its transition. |
+| `other@<MHz>` | A line at a frequency other than the Larmor one, printed beside it. The muon sees a field that is not the applied one: an **internal** field (an ordered magnet below its transition), muonium in a weak TF (1.394 MHz/G), the critical field inside a type-I superconductor's normal domains. The frequency tells you which. |
 | `none` | No line worth the name. Whatever the file stamps, **this field is not precessing the muon**. The file's claim is refuted, so `geom` reads `-`: either the field is longitudinal, or it is transverse with no resolvable line. |
 | `-` | Not measurable: zero field (nothing to look for), or a Larmor frequency above the record's Nyquist frequency (a kilogauss-scale field at a pulsed source). |
 
@@ -279,9 +279,10 @@ evidence, not a stamp:
   pulse). **A fixed-temperature field scan of such runs is LF decoupling**, and
   this is how you confirm it; a single such run in a temperature scan wants the
   PNG looked at before you call it. Pass `--geometry LF` once you have decided.
-- `prec other` → an ordered magnet precessing in its own internal field. That
-  says nothing about the applied field's direction, so `geom` falls back to the
-  file; judge it from the scan the run belongs to and the reduced PNG.
+- `prec other@<MHz>` → the muon precesses in a field that is not the applied
+  one (see the table above for what the frequency can mean). That says nothing
+  about the applied field's direction, so `geom` falls back to the file; judge
+  it from the scan the run belongs to and the reduced PNG.
 - `prec -` → nothing was measurable. Judge it from the PNG as below.
 
 **Confirm on the reduced PNG** — always for `other` and `-`, and as a sanity
@@ -782,9 +783,16 @@ asymmetry trend <folder> --series zf-scan --model OrderParameter \
   decided in Step 3b picks the law; say which you used and why. A transition
   temperature or exponent is measured against the trend's x — say whether that
   was the setpoint or the logged sample temperature.
+- `--param` is the one quantity the law is written for: a single relaxation
+  rate for Redfield or Arrhenius, a single frequency for an order parameter.
+  When the series model carries two rates or two lines, the command warns;
+  refit the series with a single-component recipe first, whatever AICc
+  preferred per run.
 - `--xmin`/`--xmax` set the fit range in the trend's x units. An order
   parameter is fitted **below** the transition, a Redfield law over the field
-  range where one process dominates. State the range in the summary.
+  range where one process dominates. Compare points measured under matched
+  conditions (one temperature for a concentration series). State the range in
+  the summary.
 - `--fix NAME=VALUE` holds a law parameter (e.g. `alpha=1` for the simple
   power law); `--initial NAME=VALUE` moves a start value.
 - **Every run with a value enters unless you exclude it.** The output lists the
@@ -798,7 +806,11 @@ asymmetry trend <folder> --series zf-scan --model OrderParameter \
   misses the points near the transition, or a parameter reported `at bound`,
   is not a result.
 
-Quote the law's parameters with their uncertainties exactly as printed. The
+Quote the law's parameters with their uncertainties exactly as printed, and
+its χ²ᵣ. When χ²ᵣ is well above 1 the output adds errors scaled by √χ²ᵣ:
+quote those, and say the law describes the trend only approximately — a
+converged fit with a poor χ²ᵣ is still the result, reported with its caveat,
+never withheld. The
 same rule as for integral scans applies: derive nothing further by hand (a
 penetration depth from σ, an energy in meV from a gap in kelvin) and present
 it as Asymmetry output.
@@ -898,6 +910,14 @@ run; `--initial NAME=VALUE` moves a start value, `--fix NAME=VALUE` holds one,
 `asymmetry fit <folder> --run N --recipe <name>` on one run to check it
 converges before spending a series on it. (A recipe is also small JSON in
 `asymmetry-work/recipes/`, and editing it by hand still works.)
+
+**One negative run is not a negative folder.** When a feature the physics
+predicts — a line, a dip, a step — is missing from one run, test the run where
+it should be strongest before concluding it is absent: the least perturbed
+sample (a deoxygenated blank, a pure reference), the coldest run, the field
+where it is clearest. Read the survey's notes to find that run. A fit that
+drives the expected component to zero on an unfavourable run says nothing
+about the others.
 
 **The wizard found nothing.** Confidence `low`/`none`, or the null baseline
 winning, on the run you screened: screen a different run before concluding
@@ -1042,7 +1062,8 @@ Use these headings. Fill only from command output.
 > that no command printed does not go in. Textbook or literature values may be
 > *discussed* — clearly attributed as such ("the textbook value for bulk nickel
 > is far above the range scanned here") — never presented as a result of this
-> session.
+> session. Nor may a unit the data does not give be attached to a number: a
+> concentration written "0.25" or "quarter" in a title is not 0.25 M.
 
 This also excludes numbers you calculated in Python, PowerShell, a spreadsheet
 or by applying a literature conversion to a stored JSON value — and numbers you

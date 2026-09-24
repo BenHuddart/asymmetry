@@ -90,7 +90,10 @@ def _render(survey, survey_path: Path) -> str:
             format_number(row.field, 2),
             # A trailing * marks a geometry the spectrum decided, not the file.
             (row.geometry or "-") + ("*" if row.geometry_source == "measured" else ""),
-            row.precession.state or "-",
+            # An `other` line's frequency is itself evidence: an internal
+            # field, a muonium line, or a sub-cycle artefact near 0.1 MHz.
+            (row.precession.state or "-")
+            + (f"@{row.precession.frequency_mhz:.3g}" if row.precession.state == "other" else ""),
             row.detector_orientation or "-",
             str(row.n_histograms),
             str(row.n_periods),
@@ -113,7 +116,8 @@ def _render(survey, survey_path: Path) -> str:
     if rows:
         lines.append(
             "prec: precession measured against the Larmor frequency of the recorded field "
-            "— larmor / other (a different line) / none / - (not measurable). "
+            "— larmor / other@<MHz> (a different line, at that frequency) / none / - "
+            "(not measurable). "
             "geom*: geometry measured from that precession rather than read from the file."
         )
         lines.append("")
