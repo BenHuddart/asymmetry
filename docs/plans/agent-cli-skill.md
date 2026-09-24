@@ -1161,6 +1161,37 @@ supplied axis states that the slope is the rate constant to report; skill: a
 sensor-trust decision holds everywhere those runs are used, and a scan is
 screened mid-range, not at its zero-field end.
 
+#### Pass 11 and a generalisation wave — 2026-09-24
+
+| Dataset | 11a | 11b |
+|---|---|---|
+| plateau-redfield | fail (stated a fit range it did not fit) | pass |
+| sn-critical-field | pass | pass |
+| euo-psi | pass | pass |
+| maleic-mu-kinetics | fail (number rule: hand-computed "~7–14 % errors") | fail (withdrew the converged slope, citing temperatures from a sensor it had judged faulty) |
+
+Over the last six runs: EuO 6/6, Sn 5/6 (reliable); plateau ≈ 50 %; maleic
+0/6, each failure now a single sentence.
+
+Generalisation wave (one run each, same skill text): **Tier A 4/4 pass**
+(nickel, PTFE, YMnAl, cuprate — no regression), hold-outs **molecular AFM
+pass**, **copper fail** (TF line shape never compared; a low-T upturn in the
+ZF hop rate narrated away and an Arrhenius law fitted across it). Additions
+that helped: ZF `other@` lines (nickel, molecular AFM), the audit (nickel,
+copper), `amplitude_exceeds_data` (nickel). That hurt: `LAW NOT ESTABLISHED`
+on an undetermined nuisance prefactor (lost YMnAl's T_g = 84.4 ± 1.6 K), and
+"it is the result" on a cuprate fit with scaled errors larger than its values
+(judged on unscaled errors). Fixed: the law verdict uses scaled errors of the
+physical parameters only; the report gives the fitted span, units and a
+turning-point note; `amplitude_exceeds_data` at 1.5×; skill rows for spin
+glass (freezing at the A(0) collapse), TF line shape for hopping, and
+quadrupolar level crossings.
+
+**Environment note.** The eval copies (~4 GB in the scratchpad) pushed the
+system disk to 93 % and iCloud offloaded ~2,200 corpus files ("dataless",
+reading as empty). The scratch copies were deleted and the runner now refuses
+a copy shorter than its source; some target files stayed offloaded.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
