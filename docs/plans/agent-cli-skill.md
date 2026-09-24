@@ -1144,6 +1144,23 @@ decoupling triplet from a field scan and making the logged temperature the
 default axis; maleic rubric M3/M4 wording (matched setpoints; a caveated slope
 counts, a withdrawn one does not).
 
+#### Pass 10 — 2026-09-24, two repeats
+
+| Dataset | 10a | 10b |
+|---|---|---|
+| plateau-redfield | pass | fail (screened the ZF end; chained fits with A_1 = 143 % made a spurious λ(B) "peak") |
+| sn-critical-field | pass | pass |
+| euo-psi | pass | pass |
+| maleic-mu-kinetics | fail (number rule: "3.5-fold") | fail (withdrew the converged k_Mu slope a third time) |
+
+5/8, the best so far. Over the last four runs: EuO 4/4, Sn 3/4, plateau 2/4,
+maleic 0/4. Changes: `fit`/`fit-series` flag `amplitude_exceeds_data` when the
+fitted amplitudes sum past three times the record's early-time |A| (robust to
+precession); `audit` lists "-fold" and "N times"; `trend --model Linear` on a
+supplied axis states that the slope is the rate constant to report; skill: a
+sensor-trust decision holds everywhere those runs are used, and a scan is
+screened mid-range, not at its zero-field end.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
