@@ -65,3 +65,9 @@ later run as the best calibration.
 - The survey calls the 2 G runs `prec other` or `none`: the Mu line at
   about 2.8 MHz is not the applied-field Larmor line.
 - The survey merges all samples into one "temperature scan at 2 G".
+- Run 78251's title says "Water/maleic acid solution" while its notes say
+  "deoxygenated pure water": the notes identify the blank. Treating it as a
+  neat-solution run loses the zero-concentration point.
+- An Arrhenius law fitted to λ_Mu(T) at one concentration is not the
+  reaction's activation energy: λ_Mu carries λ₀(T). The worksheet's Ea comes
+  from k_Mu at each temperature.

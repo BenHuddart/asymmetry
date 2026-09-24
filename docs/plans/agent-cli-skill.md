@@ -1245,6 +1245,36 @@ PNG only; `wizard`/`fit`/`fit-series` note runs reduced to a window;
 derived; skill text on the stored window, on a missing expected signal as
 evidence for the logged temperature, and that flagged fits carry no physics.
 
+#### Pass 15 — 2026-09-24, two repeats (three runs voided)
+
+| Dataset | 15a | 15b |
+|---|---|---|
+| plateau-redfield | void (API outage mid-run, on track) | pass |
+| sn-critical-field | void (API outage; had fitted `line-91516` and was trending on logged T) | fail (a 120 s wizard went to the background and the agent ended its turn) |
+| euo-psi | void (API outage) | fail, judgement (no paramagnetic λ(T): the ordered recipe was carried above T_c) |
+| maleic-mu-kinetics | pass | pass |
+
+An `ENOTFOUND` API outage cut three sessions at the same moment; those runs
+are infrastructure, not skill, results. `--plot-tmax` was used for every zoom
+and no run cut its stored reduction. Changes: skill text on long commands
+(shell timeout of minutes, no `| tail`, never end a turn with a command in the
+background) and on fitting the paramagnetic side of a transition with a
+relaxation-only recipe to report λ(T); maleic Known traps (78251's title/notes
+conflict; Arrhenius on λ_Mu is not the reaction Ea).
+
+#### Where the night's loop ended — 2026-09-24 10:00
+
+Passes 12–15 on the current tooling (voids excluded): plateau 6/7, maleic
+6/8, EuO 4/7, Sn 2/7; the generalisation wave passed Tier A 4/4 and one of two
+hold-outs. EuO and maleic failures are now mostly a single sentence of
+interpretation; Sn remains the hard case — its signal is ~0.3 % against a
+~20 % background, and it now has a working path (survey `other@` lines,
+`line-<run>` recipe, `OrderParameter` against logged T) that about half the
+runs follow. What moved the numbers most were CLI changes that put evidence
+or the next step in front of the agent (ZF spontaneous-line search, survey
+`other@<MHz>`, `audit`, the scan-specific `trend` hints, `line-<run>`), not
+additional skill text; skill text alone rarely changed behaviour across passes.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:

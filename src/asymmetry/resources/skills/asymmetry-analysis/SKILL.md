@@ -379,7 +379,10 @@ is the one the field removes:
   the ordered-state model stops fitting. Split the scan at the last run the
   ordered model fits unflagged: no run belongs to both series, because a
   relaxation fitted to a signal that still precesses is not a paramagnetic
-  rate. Never conclude that an ordered-state
+  rate. Fit the paramagnetic side with a **relaxation-only** recipe (no
+  oscillating term) and report its rate λ(T) — flat or rising towards T_c —
+  as the dynamics observable; an oscillating recipe carried above T_c comes
+  back `frequency_unresolved` and gives no rate at all. Never conclude that an ordered-state
   signal is unresolvable from a model that was screened above the transition:
   screen the coldest run and one just below the transition, and look at their
   reduced PNGs and `fourier` spectra before saying so.
@@ -1036,12 +1039,18 @@ of the asymmetry is an incomplete answer for a superconductor.
 | `alpha`, `reduce` | ~0.2 s per run |
 | `integral-scan` | roughly the cost of reducing its runs, plus a quick scan fit |
 | `fourier` | instant after reduction |
-| `wizard` | 3–8 s per ISIS run |
+| `wizard` | 3–8 s per ISIS run; up to a few minutes for a long HIFI or PSI record, or with `--include` |
 | `fit`, `fit-series`, `fit-global` | a few seconds for a scan or one coupled group |
 | `trend` | instant (it reads stored results); `--model` a second or two |
 
 So: screen **one or two** runs, not every run. Reduce and fit whole scans
 freely — those are cheap.
+
+**Let long commands finish.** Give a `wizard` or `fit-series` call a shell
+timeout of several minutes, and do not pipe it through `tail` or `head` (you
+lose the output if it is cut off). If a command is moved to the background,
+wait for it to complete before doing anything that depends on it — and never
+end your turn while one is still running: the analysis stops with it.
 
 ## 5. Physics to ask yourself
 
