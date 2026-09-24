@@ -28,9 +28,10 @@ unclaimed; the first ``survey`` or ``reduce`` writes the binding.
 
 A reduced entry is keyed on a **digest** of everything that determines its
 numbers: the source file's identity (size, mtime and the SHA-256 of the whole
-file), the resolved grouping payload, and the reduction settings. A cached
-entry whose digest no longer matches is stale and is recomputed, never
-trusted.
+file), the resolved grouping payload, the reduction settings and the schema the
+sidecar was written under. A cached entry whose digest no longer matches is
+stale and is recomputed, never trusted; one written under an older schema is
+refused until ``reduce`` rewrites it.
 
 Names a caller chooses — a recipe's, a series' — become path components under
 this directory, so every path built from one goes through :func:`safe_name`.
@@ -53,8 +54,10 @@ from asymmetry.core.workflow.jsonio import write_json as _write_json
 from asymmetry.core.workflow.recipe import FitRecipe
 from asymmetry.core.workflow.reduction import ReductionSettings
 
-#: Schema version stamped into every file the work directory writes.
-SCHEMA = 1
+#: Schema version stamped into every file the work directory writes. 2: a
+#: reduced sidecar's run record carries ``sample_temperature_logged``, and every
+#: stored series its ``trend`` and ``trend_fits``.
+SCHEMA = 2
 
 #: Default work-directory name, resolved against the current directory. Not
 #: hidden: an analyst who has to find a plot, delete a stale session or put a
@@ -160,6 +163,7 @@ def reduction_digest(
 ) -> str:
     """The digest a reduced entry is keyed on."""
     payload = {
+        "schema": SCHEMA,
         "file": file_fingerprint(source_file),
         "grouping": _canonical(grouping),
         "settings": settings.to_dict(),
@@ -380,11 +384,21 @@ class WorkDir:
         return array_path
 
     def entry(self, run_number: int) -> ReducedEntry:
-        """The sidecar for a reduced run; :class:`KeyError` when it is not stored."""
+        """The sidecar for a reduced run.
+
+        :class:`KeyError` when it is not stored, or was written under an older
+        schema whose run record lacks fields later commands read.
+        """
         _, json_path = self._reduced_paths(run_number)
         if not json_path.exists():
             raise KeyError(f"Run {run_number} has not been reduced into {self.root}")
-        return ReducedEntry.from_dict(json.loads(json_path.read_text(encoding="utf-8")))
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        if data["schema"] != SCHEMA:
+            raise KeyError(
+                f"Run {run_number} was reduced into {self.root} by an older asymmetry "
+                f"(work-directory schema {data['schema']}, now {SCHEMA}); reduce it again."
+            )
+        return ReducedEntry.from_dict(data)
 
     def reduced(self, run_number: int) -> MuonDataset:
         """The stored reduced dataset; :class:`KeyError` when it is not stored.
@@ -404,11 +418,15 @@ class WorkDir:
             )
 
     def is_current(self, run_number: int, digest: str) -> bool:
-        """Whether the stored reduction of *run_number* was made with *digest*."""
+        """Whether the stored reduction of *run_number* was made with *digest*.
+
+        Reads the raw sidecar: the schema is part of the digest, so an entry
+        written under an older schema is simply not current.
+        """
         _, json_path = self._reduced_paths(run_number)
         if not json_path.exists():
             return False
-        return self.entry(run_number).digest == digest
+        return json.loads(json_path.read_text(encoding="utf-8"))["digest"] == digest
 
     def reduced_runs(self) -> list[int]:
         """Run numbers with a stored reduction, ascending (empty before any write)."""
@@ -503,11 +521,21 @@ class WorkDir:
         return path
 
     def read_series(self, name: str) -> dict[str, Any]:
-        """The stored series payload; :class:`KeyError` when there is none."""
+        """The stored series payload.
+
+        :class:`KeyError` when there is none, or it was written under an older
+        schema (before it carried its trend and ``trend_fits``).
+        """
         path = self.series_path(name)
         if not path.exists():
             raise KeyError(f"No series {name!r} in {self.series_dir}")
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data["schema"] != SCHEMA:
+            raise KeyError(
+                f"Series {name!r} was written by an older asymmetry (work-directory schema "
+                f"{data['schema']}, now {SCHEMA}); fit it again."
+            )
+        return data
 
     def series_names(self) -> list[str]:
         """The names of every stored series, sorted."""

@@ -24,15 +24,18 @@ contiguous, no gaps), no ISIS-style field stamp in the filename:
 
 ## Must
 
-- [ ] Identifies this as a PSI/GPS `.bin` dataset, distinct from the
-      ISIS `.nxs` datasets, and confirms the PSI loader path was used.
+- [ ] Identifies this as PSI GPS data (the `.bin` format), not an ISIS
+      NeXus dataset.
 - [ ] Separates the ZF block from the TF 60 G block as two distinct
       scans.
 - [ ] Reports an internal field (from the TF block, or from ZF
       oscillations if present) that changes with temperature, growing
       as the sample is cooled below the ordering region.
-- [ ] Reports a relaxation rate that changes with temperature,
-      consistent with critical slowing down near the ordering region.
+- [ ] Reports the relaxation rate above the ordering region as this
+      session's fits give it, and does not claim a critical divergence
+      (critical slowing down) that those fits do not show. The paper
+      finds the paramagnetic relaxation rate roughly constant, near
+      2 MHz, rather than diverging at the transition.
 - [ ] Contains no internal-field value, relaxation rate, or Curie
       temperature that was not produced by a tool call in this
       session.
@@ -45,8 +48,11 @@ contiguous, no gaps), no ISIS-style field stamp in the filename:
       block) as a low-temperature reference point rather than ignoring
       it or assuming it belongs elsewhere in the sequence.
 - [ ] Frames the comparison to theory (e.g. mean-field/Heisenberg
-      critical behaviour) as the paper's stated goal, without
-      inventing a critical exponent value.
+      critical behaviour) as the paper's stated goal. A critical
+      exponent, if quoted, comes from a `trend --model OrderParameter`
+      fit in this session with its fit range stated, and is labelled as
+      measured against the setpoint temperature (the PSI header's
+      sensor readings are not yet read).
 
 ## Known traps
 
@@ -58,6 +64,10 @@ contiguous, no gaps), no ISIS-style field stamp in the filename:
   in a `.nxs`-style filename or an ISIS-convention stamp — grouping by
   filename alone (as for the ISIS datasets) will not separate the ZF
   and TF blocks; the survey's own field metadata must be used.
+- Without background subtraction (not yet exposed by the CLI for PSI
+  data) a paramagnetic exponential fit carries a large constant and a
+  relaxation rate above the paper's; a summary should present the rate
+  as this reduction's, not as the intrinsic value.
 - Run order is not monotonic in temperature in either block; treating
   "first run to last run" as "high T to low T" (or vice versa)
   throughout will misdescribe the coverage.

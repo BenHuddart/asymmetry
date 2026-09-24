@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 from pathlib import Path
 
+from asymmetry.cli._axis import add_axis_arguments, axis_from_arguments
 from asymmetry.cli._output import (
     UserError,
     checked_name,
@@ -14,7 +16,7 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
-from asymmetry.cli._runs import parse_run_spec, reduced_datasets
+from asymmetry.cli._runs import parse_run_spec, reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -31,12 +33,9 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Run numbers, e.g. '17294-17322'",
     )
     add_recipe_arguments(parser, free=False)
-    parser.add_argument(
-        "--order",
-        choices=["temperature", "field", "run"],
-        required=True,
-        help="Scan quantity the series is ordered and trended along",
-    )
+    add_axis_arguments(parser, default=None)
+    parser.add_argument("--tmin", type=float, default=None, help="Fit only above this time / µs")
+    parser.add_argument("--tmax", type=float, default=None, help="Fit only below this time / µs")
     parser.add_argument(
         "--global",
         dest="global_params",
@@ -82,7 +81,7 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 def run(args: argparse.Namespace) -> None:
     """Fit every named run with the recipe and store the series."""
     from asymmetry.cli import plots
-    from asymmetry.core.workflow.series import fit_series, order_values
+    from asymmetry.core.workflow.series import fit_series
 
     if args.plot:
         plots.require_matplotlib()
@@ -91,6 +90,8 @@ def run(args: argparse.Namespace) -> None:
     workdir = workdir_for(folder, args.workdir)
 
     recipe = recipe_with_overrides(load_recipe(workdir, args.recipe), fix=args.fix)
+    if args.tmin is not None or args.tmax is not None:
+        recipe = recipe.with_window(t_min=args.tmin, t_max=args.tmax)
     global_params = [name.strip() for name in args.global_params.split(",") if name.strip()]
     # ``args.name is None`` — not falsy — is "no --name given": an explicit
     # empty one is a name that cannot be used, and says so rather than
@@ -113,22 +114,19 @@ def run(args: argparse.Namespace) -> None:
             f"--start {args.start} is not in the series "
             f"(it holds {', '.join(str(run) for run in sorted(datasets))})."
         )
-    try:
-        order_values(datasets, args.order)
-    except ValueError as exc:
-        raise UserError(str(exc)) from None
+    axis = axis_from_arguments(args, datasets)
 
     outcome = fit_series(
         datasets,
         recipe,
-        order_key=args.order,
+        axis=axis,
         global_params=global_params,
         start_run=args.start,
         name=name,
     )
     # Additive: so that a later `trend --plot` on this series (a separate
     # invocation, with no recipe in hand) can rebuild the model curve.
-    series_payload = outcome.to_dict() | {"recipe": recipe.to_dict()}
+    series_payload = outcome.to_dict() | {"recipe": recipe.to_dict(), "trend_fits": {}}
     series_path = workdir.write_series(name, series_payload)
 
     plot_paths: list[Path] = []
@@ -171,11 +169,71 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(outcome, series_path, plot_paths))
+    from asymmetry.core.workflow.series import envelope_change, lineless_end
+
+    for note in (window_note(workdir, sorted(datasets)), envelope_change(outcome.trend)):
+        if note is not None:
+            print(note)
+    lineless = lineless_end(outcome.trend)
+    if lineless:
+        folder_arg = shlex.quote(args.folder)
+        runs = ",".join(str(run) for run in lineless)
+        middle = lineless[len(lineless) // 2]
+        x_by_run = {row["run"]: row["x"] for row in outcome.trend.rows}
+        supplied = (
+            ""
+            if args.x is None
+            else " --x " + ",".join(f"{run}={x_by_run[run]:g}" for run in lineless)
+        )
+        print(
+            f"NOTE: runs {runs} show no line in the survey and this model does not describe "
+            f"them (see their flags). Either they are the other side of a transition, where "
+            f"the physics is a relaxation, or a free envelope width has swallowed a weak "
+            f"line: first refit them with the width held (--fix) at a value from the runs "
+            f"that do precess. If they stay undescribed, fit them with a relaxation-only "
+            f"recipe and report its rate against {outcome.order_key}:\n"
+            f"  asymmetry recipe {folder_arg} --expression 'Exponential + Constant' "
+            f"--run {middle} --name {name}-relax\n"
+            f"  asymmetry fit-series {folder_arg} --runs {runs} --recipe {name}-relax "
+            f"--order {outcome.order_key}{supplied} --name {name}-relax\n"
+            f"(or screen run {middle} with the wizard for the relaxation shape first)."
+        )
+    print(
+        f"Next: asymmetry trend {shlex.quote(args.folder)} --series {name} — the trend "
+        f"table, and the law it calls for."
+    )
+    if args.order == "temperature":
+        from asymmetry.core.workflow.survey import departs
+
+        departing = sorted(
+            run
+            for run, dataset in datasets.items()
+            if departs(
+                dataset.metadata.get("temperature"),
+                dataset.metadata.get("sample_temperature_logged"),
+            )
+        )
+        if departing:
+            print(
+                f"NOTE: ordered by the setpoint, but the logged sample temperature departs on "
+                f"{len(departing)} of these runs ({', '.join(str(run) for run in departing)}). "
+                f"Decide which axis the physics follows — a parameter that is smooth against "
+                f"one and not the other says which — and refit with --order "
+                f"sample_temperature_logged if it is the logged one."
+            )
 
 
 def _render(outcome, series_path: Path, plot_paths: list[Path] | None = None) -> str:
     """The human-readable per-run table plus the seeding that was used."""
-    headers = ["run", outcome.order_key, "chi2_red", "verdict", "flags"]
+    compared = "envelope" in outcome.trend.columns
+    headers = [
+        "run",
+        outcome.order_key,
+        "chi2_red",
+        "verdict",
+        *(["envelope (dchi2 rival-own)"] if compared else []),
+        "flags",
+    ]
     rows = []
     for entry in outcome.results:
         quality = entry["quality"]
@@ -185,6 +243,16 @@ def _render(outcome, series_path: Path, plot_paths: list[Path] | None = None) ->
                 format_number(entry["x"], 3),
                 format_number(entry["reduced_chi_squared"], 3),
                 "unknown" if quality is None else quality["verdict"],
+                *(
+                    [
+                        "-"
+                        if entry["envelope"]["preferred"] is None
+                        else f"{entry['envelope']['preferred']} "
+                        f"({format_number(entry['envelope']['delta_chi2'], 3)})"
+                    ]
+                    if compared
+                    else []
+                ),
                 ", ".join(entry["quality_flags"]) or "-",
             ]
         )

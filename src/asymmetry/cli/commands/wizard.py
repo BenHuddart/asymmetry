@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import shlex
+from dataclasses import replace
 from pathlib import Path
 
 from asymmetry.cli._output import UserError, emit_json, format_number, payload, render_table
-from asymmetry.cli._runs import reduced_datasets
+from asymmetry.cli._runs import reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 #: Candidates listed in the human-readable table.
@@ -41,6 +43,28 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         help="Candidate-family scope preset (default: auto, from the run's geometry)",
     )
     parser.add_argument(
+        "--include",
+        default="",
+        metavar="C,D",
+        help=(
+            "Time-domain components to add to the scope's families, e.g. "
+            "'Oscillatory' for a line in an LF run"
+        ),
+    )
+    parser.add_argument(
+        "--exclude",
+        default="",
+        metavar="C,D",
+        help="Components to drop from the scope, e.g. 'VortexLattice,VortexLatticePowder'",
+    )
+    parser.add_argument("--tmin", type=float, default=None, help="Screen only above this time / µs")
+    parser.add_argument(
+        "--tmax",
+        type=float,
+        default=None,
+        help="Screen only below this time / µs (the recipe keeps the window)",
+    )
+    parser.add_argument(
         "--plot", action="store_true", help="Write plots/wizard-<run>.png of data + recommendation"
     )
     parser.add_argument("--json", action="store_true", help="Emit the machine-readable payload")
@@ -63,18 +87,38 @@ def run(args: argparse.Namespace) -> None:
     folder = Path(args.folder)
     workdir = workdir_for(folder, args.workdir)
     dataset = reduced_datasets(workdir, [args.run])[args.run]
+    if args.tmin is not None or args.tmax is not None:
+        dataset = dataset.time_range(args.tmin, args.tmax)
 
-    result = screen_run(
-        dataset,
-        geometry=args.geometry,
-        survey_geometry=_survey_geometry(workdir, args.run),
-        scope_preset=args.scope,
-        run_number=args.run,
-    )
+    try:
+        result = screen_run(
+            dataset,
+            geometry=args.geometry,
+            survey_geometry=_survey_geometry(workdir, args.run),
+            scope_preset=args.scope,
+            include=_names(args.include),
+            exclude=_names(args.exclude),
+            run_number=args.run,
+        )
+    except ValueError as exc:
+        raise UserError(str(exc)) from None
+    if result.recipe is not None and (args.tmin is not None or args.tmax is not None):
+        result = replace(result, recipe=result.recipe.with_window(t_min=args.tmin, t_max=args.tmax))
     wizard_path = workdir.write_wizard(args.run, result.to_dict())
     recipe_name = f"wizard-{args.run}"
     recipe_path = (
         None if result.recipe is None else workdir.write_recipe(recipe_name, result.recipe)
+    )
+    from asymmetry.core.fitting.fit_wizard import effective_window_duration
+
+    peaks, unfitted = _spectral_lines(result, effective_window_duration(dataset))
+    line_recipe = (
+        None
+        if not unfitted or result.recipe is None
+        else (
+            unfitted[0],
+            workdir.write_recipe(f"line-{args.run}", _line_recipe(result, dataset, unfitted[0])),
+        )
     )
 
     plot_path = None
@@ -104,13 +148,78 @@ def run(args: argparse.Namespace) -> None:
                 wizard_path=str(wizard_path),
                 recipe_name=None if recipe_path is None else recipe_name,
                 recipe_path=None if recipe_path is None else str(recipe_path),
+                line_recipe_name=None if line_recipe is None else f"line-{args.run}",
                 plots=[] if plot_path is None else [str(plot_path)],
                 plot_note=plot_note,
             )
         )
         return
 
-    print(_render(result, wizard_path, recipe_path, plot_path, plot_note))
+    print(
+        _render(
+            args.folder, peaks, line_recipe, result, wizard_path, recipe_path, plot_path, plot_note
+        )
+    )
+    note = window_note(workdir, [args.run])
+    if note is not None:
+        print(note)
+
+
+def _spectral_lines(result, duration_us: float) -> tuple[list[dict], list[float]]:
+    """The detected lines worth reading, and those the recommendation does not fit.
+
+    A "line" completing under MIN_CYCLES_IN_EFFECTIVE_WINDOW cycles in the
+    informative window is relaxation leaking into the lowest bins, not
+    precession (the survey's rule too), so it is dropped.
+    """
+    from asymmetry.core.fitting.fit_wizard import MIN_CYCLES_IN_EFFECTIVE_WINDOW
+
+    peaks = [
+        peak
+        for peak in result.recommendation["peak_analysis"]["peaks"]
+        if peak["frequency_mhz"] * duration_us >= MIN_CYCLES_IN_EFFECTIVE_WINDOW
+    ]
+    fitted = (
+        []
+        if result.recipe is None
+        else [p.value for p in result.recipe.parameters if p.name.startswith("frequency")]
+    )
+    unfitted = [
+        peak["frequency_mhz"]
+        for peak in peaks
+        if not any(abs(value / peak["frequency_mhz"] - 1.0) < 0.1 for value in fitted)
+    ]
+    return peaks, unfitted
+
+
+def _line_recipe(result, dataset, frequency: float):
+    """The recommendation plus the detected line, as a recipe to fit next.
+
+    The line is added, not substituted: a weak line sits on the relaxation the
+    recommendation already describes, and a bare oscillation fitted to the
+    whole record puts that relaxation into a spurious near-zero frequency. Its
+    amplitude starts at a tenth of the recommendation's largest one, so the fit
+    does not begin by giving the line the whole asymmetry.
+    """
+    from asymmetry.core.workflow.recipe import FitRecipe
+
+    recommended = {p.name: p.value for p in result.recipe.parameters}
+    recipe = FitRecipe.from_expression(
+        f"{result.recipe.expression} + Oscillatory * Exponential",
+        dataset=dataset,
+        t_min=result.recipe.t_min,
+        t_max=result.recipe.t_max,
+    )
+    amplitude = next(n for n in reversed(recipe.parameter_names) if n.startswith("A_"))
+    line = next(n for n in reversed(recipe.parameter_names) if n.startswith("frequency"))
+    largest = max((abs(v) for n, v in recommended.items() if n.startswith("A_")), default=1.0)
+    starts = {n: v for n, v in recommended.items() if n in recipe.parameter_names}
+    return recipe.with_overrides(initial=starts | {line: frequency, amplitude: 0.1 * largest})
+
+
+def _names(text: str) -> list[str]:
+    """``"A, B"`` as ``["A", "B"]``."""
+    return [name.strip() for name in text.split(",") if name.strip()]
 
 
 def _survey_geometry(workdir, run_number: int) -> str | None:
@@ -131,6 +240,9 @@ def _survey_geometry(workdir, run_number: int) -> str | None:
 
 
 def _render(
+    folder: str,
+    peaks: list[dict],
+    line_recipe: tuple[float, Path] | None,
     result,
     wizard_path: Path,
     recipe_path: Path | None,
@@ -141,7 +253,9 @@ def _render(
     geometry = result.geometry or "unknown"
     lines = [
         f"Run {result.run_number} — geometry {geometry} (from {result.geometry_source}), "
-        f"scope {result.scope_preset}",
+        f"scope {result.scope_preset}"
+        + "".join(f" +{name}" for name in result.scope_include)
+        + "".join(f" -{name}" for name in result.scope_exclude),
     ]
     if result.scope_note:
         lines.append(f"  scope: {result.scope_note}")
@@ -173,6 +287,35 @@ def _render(
     ]
     lines.append(render_table(headers, rows))
     lines.append("(* recommended, ~ comparable)")
+    lines.append("")
+
+    # The spectral evidence and the fitted values are what an analyst reads
+    # first: a precession frequency found here is a finding even when the
+    # recommendation is not the model the scan ends up fitted with.
+    lines.append(
+        "Spectral lines: "
+        + (
+            ", ".join(f"{peak['frequency_mhz']:.4g} MHz (SNR {peak['snr']:.1f})" for peak in peaks)
+            if peaks
+            else "none detected"
+        )
+    )
+    if line_recipe is not None:
+        frequency, path = line_recipe
+        lines.append(
+            f"A detected line at {frequency:.4g} MHz is not in the recommendation. Recipe "
+            f"line-{result.run_number} ({path}) adds it, amplitude started small — fit it next "
+            f"and check the line's amplitude against its error: asymmetry fit "
+            f"{shlex.quote(folder)} --run {result.run_number} --recipe line-{result.run_number}"
+        )
+    if result.recipe is not None:
+        lines.append(
+            "Recommended fit: "
+            + ", ".join(
+                f"{parameter.name}={parameter.value:.4g}" + (" (fixed)" if parameter.fixed else "")
+                for parameter in result.recipe.parameters
+            )
+        )
     lines.append("")
 
     lines.append(result.narrative.rstrip())

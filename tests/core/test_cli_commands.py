@@ -12,6 +12,7 @@ import pytest
 from asymmetry import __version__, cli
 from asymmetry.cli._output import SCHEMA, UserError
 from asymmetry.cli._runs import parse_run_spec, resolve_run, resolve_runs, run_files
+from asymmetry.core.workflow.workdir import SCHEMA as WORKDIR_SCHEMA
 from tests.core.conftest import (
     ALL_RUNS,
     CALIBRATION_ALPHA,
@@ -19,6 +20,7 @@ from tests.core.conftest import (
     DEADTIME_RUN,
     DECOUPLING_RUN,
     SCAN_RUNS,
+    SCAN_TEMPERATURES,
 )
 
 
@@ -136,7 +138,7 @@ def test_survey_json_payload_and_written_file(
     assert survey["best_calibration_run"] == CALIBRATION_RUN
 
     stored = json.loads((workdir / "survey.json").read_text(encoding="utf-8"))
-    assert stored["schema"] == SCHEMA
+    assert stored["schema"] == WORKDIR_SCHEMA
     assert stored["best_calibration_run"] == CALIBRATION_RUN
 
 
@@ -233,6 +235,7 @@ def test_every_command_offers_the_same_default_work_directory() -> None:
         "reduce",
         "integral-scan",
         "wizard",
+        "recipe",
         "fit",
         "fit-global",
         "fit-series",
@@ -840,7 +843,7 @@ def test_fit_series_writes_a_stamped_series_file(
     assert [entry["run"] for entry in payload["series"]["results"]] == list(SCAN_RUNS)
 
     stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
-    assert stored["schema"] == SCHEMA
+    assert stored["schema"] == WORKDIR_SCHEMA
     assert stored["asymmetry_version"] == __version__
     assert stored["order_key"] == "temperature"
 
@@ -1036,6 +1039,235 @@ def test_trend_names_the_series_the_workdir_does_hold(
     assert "No series 'nope'" in capsys.readouterr().err
 
 
+def _fit_scan(workflow_folder: Path, fitting_workdir: Path, *extra: str) -> None:
+    """Store the relaxation series ``scan`` over the whole temperature scan."""
+    cli.main(
+        [
+            "fit-series",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}",
+            "--recipe",
+            "relax",
+            "--order",
+            "temperature",
+            "--name",
+            "scan",
+            *extra,
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+
+
+def test_trend_model_fits_a_trend_column_and_stores_the_fit(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    cli.main(
+        [
+            "trend",
+            str(workflow_folder),
+            "--series",
+            "scan",
+            "--model",
+            "Linear",
+            "--param",
+            "Lambda",
+            "--plot",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    fit = _json_output(capsys)["fit"]
+
+    # The scan was simulated with Lambda = 0.10 + 0.004 T.
+    assert fit["success"]
+    assert fit["runs"] == list(SCAN_RUNS)
+    assert abs(fit["parameters"]["m"] - 0.004) <= 3.0 * fit["uncertainties"]["m"]
+    assert abs(fit["parameters"]["b"] - 0.10) <= 3.0 * fit["uncertainties"]["b"]
+    stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
+    assert stored["trend_fits"]["Lambda"] == fit
+    assert (fitting_workdir / "plots" / "scan-trend-Lambda.png").exists()
+
+
+def test_trend_model_prints_the_fit_and_what_it_left_out(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    cli.main(
+        [
+            "trend",
+            str(workflow_folder),
+            "--series",
+            "scan",
+            "--model",
+            "Linear",
+            "--param",
+            "Lambda",
+            "--exclude",
+            str(SCAN_RUNS[0]),
+            "--xmax",
+            "40",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert (
+        "Fit of Linear to Lambda against temperature, over the points' span "
+        "20.0000 .. 40.0000: 3 point(s)"
+    ) in out
+    assert f"{SCAN_RUNS[0]} (excluded)" in out
+    assert f"{SCAN_RUNS[-1]} (outside the x range)" in out
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--param", "Lambda"], "--param require --model EXPR"),
+        (["--model", "Linear"], "--model needs --param NAME"),
+        (["--model", "Linear", "--param", "Nope"], "The trend has no column 'Nope'"),
+        (["--model", "Nope", "--param", "Lambda"], "Nope"),
+    ],
+)
+def test_trend_model_refuses_a_malformed_request(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir)
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "trend",
+                str(workflow_folder),
+                "--series",
+                "scan",
+                *arguments,
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err
+
+
+def test_trend_reads_a_fit_global_series(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    """A simultaneous fit's run-local parameters trend like a series' do."""
+    cli.main(
+        [
+            "fit-global",
+            str(workflow_folder),
+            "--runs",
+            f"{SCAN_RUNS[0]}-{SCAN_RUNS[-1]}",
+            "--recipe",
+            "relax",
+            "--shared",
+            "A_bg",
+            "--order",
+            "temperature",
+            "--strategy",
+            "least_squares",
+            "--name",
+            "joint",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "temperature" in out and "Lambda" in out
+
+    cli.main(
+        [
+            "trend",
+            str(workflow_folder),
+            "--series",
+            "joint",
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    trend = _json_output(capsys)["trend"]
+    assert trend["order_key"] == "temperature"
+    assert "A_bg" not in trend["columns"]
+    assert [row["x"] for row in trend["rows"]] == list(SCAN_TEMPERATURES)
+
+
+def test_fit_series_orders_along_values_the_analyst_supplies(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    runs = SCAN_RUNS[:3]
+    values = ",".join(f"{run}={len(runs) - index}" for index, run in enumerate(runs))
+    cli.main(
+        [
+            "fit-series",
+            str(workflow_folder),
+            "--runs",
+            f"{runs[0]}-{runs[-1]}",
+            "--recipe",
+            "relax",
+            "--order",
+            "foils",
+            "--x",
+            values,
+            "--json",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    series = _json_output(capsys)["series"]
+    assert series["order_key"] == "foils"
+    assert [row["run"] for row in series["trend"]["rows"]] == list(reversed(runs))
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--order", "foils"], "'foils' is not recorded in the files"),
+        (
+            ["--order", "foils", "--x", f"{SCAN_RUNS[0]}=1"],
+            f"No foils value for run(s) {SCAN_RUNS[1]}",
+        ),
+        (["--order", "foils", "--x", "banana"], "--x entry 'banana' is not RUN=VALUE"),
+        (["--order", "field", "--x", f"{SCAN_RUNS[0]}=1"], "'field' is read from the files"),
+        (["--order", "sample_temperature_logged"], "record no sample_temperature_logged"),
+    ],
+)
+def test_fit_series_refuses_an_axis_it_cannot_build(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "fit-series",
+                str(workflow_folder),
+                "--runs",
+                f"{SCAN_RUNS[0]}-{SCAN_RUNS[1]}",
+                "--recipe",
+                "relax",
+                *arguments,
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err
+
+
+def test_the_order_help_names_every_order_key() -> None:
+    from asymmetry.cli._axis import ORDER_HELP
+    from asymmetry.core.workflow.series import ORDER_KEYS
+
+    for key in ORDER_KEYS:
+        assert key in ORDER_HELP
+
+
 def test_fourier_writes_arrays_and_quantitative_metadata(
     workflow_folder: Path, fitting_workdir: Path, capsys
 ) -> None:
@@ -1169,3 +1401,385 @@ def test_an_internal_error_exits_two_with_a_traceback(
         cli.main(["survey", str(workflow_folder)])
     assert exc.value.code == 2
     assert "kaboom" in capsys.readouterr().err
+
+
+def test_wizard_refuses_a_component_it_does_not_have(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "wizard",
+                str(workflow_folder),
+                "--run",
+                str(SCAN_RUNS[0]),
+                "--include",
+                "Oscilatory",
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert "Unknown component(s) Oscilatory" in capsys.readouterr().err
+
+
+def test_recipe_writes_a_fittable_recipe_and_names_every_parameter(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    cli.main(
+        [
+            "recipe",
+            str(workflow_folder),
+            "--expression",
+            "Exponential + Constant",
+            "--name",
+            "hand",
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--initial",
+            "Lambda=0.2",
+            "--fix",
+            "A_bg=0",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    for name in ("A_1", "Lambda", "A_bg"):
+        assert name in out
+    stored = json.loads((fitting_workdir / "recipes" / "hand.json").read_text(encoding="utf-8"))
+    by_name = {p["name"]: p for p in stored["parameters"]}
+    assert (by_name["Lambda"]["value"], by_name["Lambda"]["fixed"]) == (0.2, False)
+    assert (by_name["A_bg"]["value"], by_name["A_bg"]["fixed"]) == (0.0, True)
+    assert stored["pinned"] == ["A_bg"]
+
+    cli.main(
+        [
+            "fit",
+            str(workflow_folder),
+            "--run",
+            str(SCAN_RUNS[0]),
+            "--recipe",
+            "hand",
+            "--workdir",
+            str(fitting_workdir),
+        ]
+    )
+    assert "chi2_red" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--expression", "Exponentail"], "Unknown component 'Exponentail'"),
+        (["--expression", "Exponential", "--fix", "Lamda=1"], "Lamda is not a parameter"),
+        (["--expression", "Exponential", "--initial", "Lambda"], "--initial 'Lambda' is not"),
+    ],
+)
+def test_recipe_refuses_a_model_or_name_it_cannot_build(
+    workflow_folder: Path, fitting_workdir: Path, capsys, arguments: list[str], message: str
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(
+            [
+                "recipe",
+                str(workflow_folder),
+                *arguments,
+                "--name",
+                "bad",
+                "--workdir",
+                str(fitting_workdir),
+            ]
+        )
+    assert exc.value.code == 1
+    assert message in capsys.readouterr().err
+
+
+def test_wizard_prints_its_spectral_evidence_and_keeps_a_screening_window(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    workdir = tmp_path / "wd"
+    cli.main(
+        [
+            "reduce",
+            str(workflow_folder),
+            "--runs",
+            str(CALIBRATION_RUN),
+            "--workdir",
+            str(workdir),
+        ]
+    )
+    capsys.readouterr()
+    cli.main(
+        [
+            "wizard",
+            str(workflow_folder),
+            "--run",
+            str(CALIBRATION_RUN),
+            "--geometry",
+            "TF",
+            "--tmax",
+            "6",
+            "--workdir",
+            str(workdir),
+        ]
+    )
+    out = capsys.readouterr().out
+    # 100 G precesses at 1.355 MHz; the line and the fitted values are printed.
+    assert "Spectral lines: 1.3" in out
+    assert "Recommended fit: " in out
+    stored = json.loads(
+        (workdir / "recipes" / f"wizard-{CALIBRATION_RUN}.json").read_text(encoding="utf-8")
+    )
+    assert stored["t_max"] == 6.0
+
+
+def test_fit_series_fits_inside_the_window_it_is_given(
+    workflow_folder: Path, fitting_workdir: Path, capsys
+) -> None:
+    _fit_scan(workflow_folder, fitting_workdir, "--tmax", "5", "--json")
+    capsys.readouterr()
+    stored = json.loads((fitting_workdir / "series" / "scan.json").read_text(encoding="utf-8"))
+    assert stored["recipe"]["t_max"] == 5.0
+
+
+def test_a_trend_fit_report_scales_errors_and_warns_on_a_multi_component_parameter() -> None:
+    from asymmetry.cli.commands.trend import _render_fit
+
+    fit = {
+        "param": "Lambda_1",
+        "expression": "Redfield",
+        "order_key": "field",
+        "x_min": None,
+        "x_max": None,
+        "n_points": 12,
+        "success": True,
+        "message": "",
+        "parameters": {"D": 30.0, "nu": 150.0, "m": 2.0},
+        "uncertainties": {"D": 0.5, "nu": 10.0},
+        "fixed": ["m"],
+        "reduced_chi_squared": 4.0,
+        "params_at_bound": [],
+        "excluded": [],
+        "flagged": [],
+        "x_fitted": [1000.0, 38000.0],
+        "units": {"D": "MHz", "nu": "MHz", "m": None},
+        "turning_point": None,
+    }
+    text = "\n".join(_render_fit(fit, ["A_1", "Lambda_1", "A_2", "Lambda_2", "A_bg"]))
+    # χ²ᵣ = 4 doubles the errors, and the scaled column leads.
+    assert "error (x sqrt(chi2_red) = 2)" in text
+    assert "unscaled error" in text
+    d_row = next(line for line in text.splitlines() if line.startswith("D "))
+    assert d_row.split()[2:4] == ["1.000000", "0.500000"]
+    assert "NOTE: Lambda_1 is one of several Lambda components" in text
+    assert "also Lambda_2" in text
+
+    single = "\n".join(_render_fit(fit | {"reduced_chi_squared": 0.9}, ["A_1", "Lambda_1"]))
+    assert "sqrt(chi2_red)" not in single
+    assert "NOTE" not in single
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"success": False}, "the fit did not converge"),
+        ({"params_at_bound": ["nu"]}, "nu is at a bound"),
+        ({"uncertainties": {"D": 45.0, "nu": 10.0}}, "D's scaled error is missing, zero or as"),
+        ({"uncertainties": {"D": 0.0, "nu": 10.0}}, "D's scaled error is missing, zero"),
+    ],
+)
+def test_a_trend_law_that_did_not_fit_is_named_as_not_established(changes, reason) -> None:
+    from asymmetry.cli.commands.trend import _render_fit
+
+    fit = {
+        "param": "Lambda",
+        "expression": "Redfield",
+        "order_key": "field",
+        "x_min": None,
+        "x_max": None,
+        "n_points": 12,
+        "success": True,
+        "message": "did not converge",
+        "parameters": {"D": 30.0, "nu": 150.0, "m": 2.0},
+        "uncertainties": {"D": 0.5, "nu": 10.0},
+        "fixed": ["m"],
+        "reduced_chi_squared": 1.2,
+        "params_at_bound": [],
+        "excluded": [],
+        "flagged": [],
+        "x_fitted": [1000.0, 38000.0],
+        "units": {"D": "MHz", "nu": "MHz", "m": None},
+        "turning_point": None,
+    }
+    assert "LAW NOT ESTABLISHED" not in "\n".join(_render_fit(fit, ["Lambda"]))
+    text = "\n".join(_render_fit(fit | changes, ["Lambda"]))
+    assert "LAW NOT ESTABLISHED" in text
+    assert reason in text
+
+
+@pytest.mark.parametrize(
+    ("order_key", "free_params", "expected"),
+    [
+        ("field", ["A_1", "Lambda", "A_bg"], ["Redfield --param Lambda"]),
+        (
+            "field",
+            ["A_1", "Lambda_1", "Lambda_2"],
+            ["Redfield --param Lambda_1", "splits the rate"],
+        ),
+        ("temperature", ["A_1", "frequency", "Lambda"], ["OrderParameter --param frequency"]),
+        ("concentration", ["A_1", "Lambda_2"], ["Linear --param Lambda_2"]),
+        ("run", ["A_1"], ["<law> --param <column>"]),
+    ],
+)
+def test_trend_names_the_law_its_axis_and_parameters_call_for(
+    order_key, free_params, expected
+) -> None:
+    from asymmetry.cli.commands.trend import _law_hints
+    from asymmetry.core.workflow.series import TrendTable
+
+    trend = TrendTable(order_key=order_key, columns=["run", "x", *free_params], rows=[])
+    text = "\n".join(_law_hints("scan", trend, free_params))
+    for fragment in expected:
+        assert fragment in text
+
+
+@pytest.mark.parametrize(
+    ("frequencies", "expected"),
+    [
+        # A line falling to zero at the transition is an order parameter.
+        ([15.2, 11.0, 2.8], "OrderParameter --param frequency"),
+        # One held at the applied field's Larmor frequency is not.
+        ([0.285, 0.280, 0.273], "frequency holds at 0.2800 MHz"),
+    ],
+)
+def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
+    frequencies, expected
+) -> None:
+    from asymmetry.cli.commands.trend import _law_hints
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {"run": run, "x": 50.0 * run, "frequency": value, "sigma": 0.3, "flags": []}
+        for run, value in enumerate(frequencies, start=1)
+    ]
+    trend = TrendTable("temperature", ["run", "x", "frequency", "sigma", "flags"], rows)
+    text = "\n".join(_law_hints("tf", trend, ["frequency", "sigma"]))
+    assert expected in text
+
+
+def test_a_trend_law_is_judged_on_its_physical_parameters_and_scaled_errors() -> None:
+    from asymmetry.cli.commands.trend import _render_fit
+
+    fit = {
+        "param": "Lambda",
+        "expression": "CriticalDivergence",
+        "order_key": "temperature",
+        "n_points": 12,
+        "success": True,
+        "message": "",
+        "parameters": {"a": 12.3, "Tc": 84.44, "nu": 1.78, "c": 0.1},
+        "uncertainties": {"a": 13.7, "Tc": 1.63, "nu": 0.76, "c": 0.5},
+        "fixed": [],
+        "reduced_chi_squared": 1.0,
+        "params_at_bound": [],
+        "excluded": [],
+        "flagged": [],
+        "x_fitted": [90.0, 290.0],
+        "units": {"Tc": "K"},
+        "turning_point": None,
+    }
+    # An undetermined prefactor or offset does not sink a well-determined Tc.
+    text = "\n".join(_render_fit(fit, ["Lambda"]))
+    assert "LAW NOT ESTABLISHED" not in text
+    assert "Converged" in text
+    # ... but scaled errors do: chi2_red 25 makes nu's error 3.8 > 1.78.
+    text = "\n".join(_render_fit(fit | {"reduced_chi_squared": 25.0}, ["Lambda"]))
+    assert "LAW NOT ESTABLISHED" in text
+    assert "nu's scaled error" in text
+    assert "Tc's scaled error" not in text
+    # The determined parameter is named, with the way to report it.
+    assert "Next: Tc is determined and nu not. Hold nu at a textbook value" in text
+
+
+def test_a_failed_order_parameter_fit_is_pointed_at_its_shape_exponent() -> None:
+    from asymmetry.cli.commands.trend import _render_fit
+
+    fit = {
+        "param": "frequency",
+        "expression": "OrderParameter",
+        "order_key": "temperature",
+        "n_points": 7,
+        "success": False,
+        "message": "Fit failed",
+        "parameters": {"y0": 27.0, "Tc": 357.7, "beta": 0.38, "alpha": 0.58},
+        "uncertainties": {"y0": 0.12, "Tc": 0.009, "beta": 0.0004, "alpha": 0.008},
+        "fixed": [],
+        "reduced_chi_squared": 158.0,
+        "params_at_bound": [],
+        "excluded": [],
+        "flagged": [],
+        "x_fitted": [320.0, 356.0],
+        "units": {"Tc": "K"},
+        "turning_point": None,
+    }
+    text = "\n".join(_render_fit(fit, ["frequency"]))
+    assert "LAW NOT ESTABLISHED" in text
+    assert "refit with --fix alpha=1" in text
+    # A free Redfield exponent below zero is no law at all.
+    redfield = fit | {
+        "expression": "Redfield",
+        "order_key": "field",
+        "success": True,
+        "parameters": {"D": 25.9, "nu": 114.0, "m": -1.55},
+        "uncertainties": {"D": 0.6, "nu": 17.0, "m": 0.1},
+        "reduced_chi_squared": 1.0,
+    }
+    text = "\n".join(_render_fit(redfield, ["Lambda"]))
+    assert "m is not positive" in text
+    assert "refit with --fix m=2" in text
+    # Against the wrong axis the law's parameters mean nothing, and no refit is offered.
+    text = "\n".join(_render_fit(redfield | {"order_key": "temperature"}, ["Lambda"]))
+    assert "NOTE: Redfield is a law in field, and this trend is against temperature" in text
+    assert "--fix m=2" not in text
+    # Once alpha is held, the hint has nothing left to say.
+    held = fit | {"fixed": ["alpha"], "success": True}
+    assert "--fix alpha" not in "\n".join(_render_fit(held, ["frequency"]))
+
+
+def test_a_fit_on_a_windowed_reduction_says_so_and_plot_tmax_keeps_the_record(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    from asymmetry.core.workflow.recipe import FitRecipe
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    workdir = tmp_path / "wd"
+    run = SCAN_RUNS[0]
+    base = ["reduce", str(workflow_folder), "--runs", str(run), "--workdir", str(workdir)]
+    cli.main([*base, "--plot-tmax", "2", "--plot"])
+    full = WorkDir(workdir).reduced(run).n_points
+    assert WorkDir(workdir).entry(run).settings.t_max is None
+
+    cli.main([*base, "--tmax", "2"])
+    assert WorkDir(workdir).reduced(run).n_points < full
+    WorkDir(workdir).write_recipe(
+        "relax",
+        FitRecipe.from_expression("Exponential + Constant", dataset=WorkDir(workdir).reduced(run)),
+    )
+    capsys.readouterr()
+    cli.main(
+        [
+            "fit",
+            str(workflow_folder),
+            "--run",
+            str(run),
+            "--recipe",
+            "relax",
+            "--workdir",
+            str(workdir),
+        ]
+    )
+    assert (
+        f"NOTE: run(s) {run} were reduced to a time window (start-2.0 µs)"
+        in capsys.readouterr().out
+    )

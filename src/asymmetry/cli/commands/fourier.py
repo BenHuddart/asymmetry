@@ -121,6 +121,19 @@ def _render(result: dict) -> str:
         render_table(["frequency/MHz", "amplitude", "width/MHz", "SNR"], rows)
         if rows
         else "No peaks passed the detection threshold.",
+        *(
+            [
+                "Strongest maxima in the band — candidates, not detections; confirm one "
+                "with a time-domain fit before calling it a line:",
+                *(
+                    f"  {entry['frequency_mhz']:.4f} MHz  "
+                    f"(height {entry['height_over_noise']:.1f}x the noise floor)"
+                    for entry in result["candidate_maxima"]
+                ),
+            ]
+            if result["candidate_maxima"]
+            else []
+        ),
         "",
         f"Spectrum written to {result['array_path']}",
         f"Provenance written to {result['metadata_path']}",

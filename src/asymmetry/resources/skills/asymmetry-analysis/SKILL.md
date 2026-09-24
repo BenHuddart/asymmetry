@@ -23,6 +23,9 @@ also has `--help`.
 - Fourier spectra and quantitative peak finding on reduced data;
 - integral-asymmetry field scans, including ALC/QLCR resonance fits;
 - a simultaneous group of runs with genuinely shared fit parameters;
+- a parameter trend fitted with a physical law — an order parameter, an
+  Arrhenius or Redfield law, a superconducting gap, a linear rate law — along
+  temperature (setpoint or logged), field, or a quantity you supply per run;
 - ISIS NeXus (`.nxs`) and PSI (`.bin`, `.mdu`) files, one forward group
   against one backward group.
 
@@ -41,9 +44,9 @@ do it*, and stop without producing fit numbers.
 | Maximum-entropy spectra | `fourier` provides an FFT and peak table, not maximum entropy reconstruction. Do not describe its output as MaxEnt. |
 | Negative-muon (μ⁻) elemental analysis | Gamma spectra, elemental lines. Not asymmetry data. |
 | Rotating-reference-frame or RF-resonance runs | Titles or notes naming RF; data modulated at a reference frequency. |
-| Muonium chemistry / reaction rates | Rates versus concentration across samples, not a spin-relaxation trend. |
-| A series of simultaneous groups | `fit-global` fits one group of runs jointly, but there is not yet one command that repeats that coupled fit for every temperature and trends the shared parameters. Fit and report each group separately; do not substitute independent fits. |
-| A fragment of a published multi-field campaign | Disjoint blocks of run numbers with large gaps, multi-tesla fields, no self-contained scan. You cannot reconstruct the campaign's field log from what is on disk. |
+| A series of simultaneous groups | `fit-global` fits one group of runs jointly and `trend` reads that group's run-local parameters, but there is not yet one command that repeats the coupled fit for every temperature and trends the *shared* parameters. Fit and report each group separately; do not substitute independent fits. |
+| A trend of fitted trend parameters | `trend --model` fits one stored series. A law fitted *across* several such fits — an Arrhenius law through rate constants each fitted at one temperature — has no command. Report each fit's parameters; do not fit the second level by hand. |
+| A fragment of a published multi-field campaign | No self-contained scan in the survey's `scans` list, and fields the files do not record. Check `scans` first: two complete temperature scans at two recorded fields are analysable even with a large gap in run numbers between them. |
 
 A folder the tool can *load* is not automatically a folder the tool can
 *analyse*. Loadability is not scope.
@@ -53,7 +56,7 @@ A folder the tool can *load* is not automatically a folder the tool can
 Run every command from the project directory you are working in, and pass the
 data folder as the command's argument — an absolute path is fine, and is what
 you want when the data sits on a share or in an archive. `survey`, `reduce`,
-`wizard`, `integral-scan`, `fourier`, `fit-global` and `fit-series` write into
+`wizard`, `recipe`, `integral-scan`, `fourier`, `fit-global` and `fit-series` write into
 `./asymmetry-work/` — the work directory,
 in the project, never in the data folder — so the next command picks the state
 up; `fit` and `trend` read it and add only what `--plot` (and `trend --csv`)
@@ -95,9 +98,23 @@ it found:
 | `prec` | Means |
 |---|---|
 | `larmor` | A strong line at the Larmor frequency of the recorded field. The field **is** transverse, and `geom` reads `TF*` — the `*` says the spectrum decided it, not the file. |
-| `other` | A strong line somewhere else: the muon is precessing in an **internal** field that beats the applied one. An ordered magnet, below its transition. |
+| `other@<MHz>` | A line at a frequency other than the Larmor one, printed beside it. The muon sees a field that is not the applied one: an **internal** field (an ordered magnet below its transition), muonium in a weak TF (1.394 MHz/G), the critical field inside a type-I superconductor's normal domains. The frequency tells you which. |
 | `none` | No line worth the name. Whatever the file stamps, **this field is not precessing the muon**. The file's claim is refuted, so `geom` reads `-`: either the field is longitudinal, or it is transverse with no resolvable line. |
-| `-` | Not measurable: zero field (nothing to look for), or a Larmor frequency above the record's Nyquist frequency (a kilogauss-scale field at a pulsed source). |
+| `-` | Not measurable: a Larmor frequency above the record's Nyquist frequency (a kilogauss-scale field at a pulsed source), or no field recorded. |
+
+**Zero-field runs are searched too.** There `other@<MHz>` is **spontaneous
+precession** — a static internal field, the signature of long-range magnetic
+order — and `none` means no line was resolved in that record (a paramagnet, a
+Kubo–Toyabe, or an order whose field is too large or too broad to resolve).
+A ZF temperature scan whose `other@` frequency falls on warming and gives way
+to `none` is an order parameter going to zero at the transition.
+
+**A line the survey tracks along a scan is a measurement.** When `other@`
+changes smoothly from run to run — an internal field, a critical field, a
+muonium line — quote that progression in the summary as the line's trend, run
+by run, even if a time-domain fit of a weak line will not converge; say that
+the values are the survey's spectral lines, and use your fits where they
+succeed.
 
 `scans` groups by **instrument** and the held quantity, never by geometry, so a
 physical scan stays one scan even where the measurement resolves only part of it
@@ -125,18 +142,37 @@ below.
 - Which runs are *not* part of any scan (detector tests, a lone reference run,
   an above-Tc run). Mention them; do not analyse them as scan members.
 
+**When the survey prints a `TEMPERATURE:` line**, the listed runs were not at
+their setpoint — a cryostat still cooling, a block of runs at the wrong
+temperature, or a sensor offset. It lists them in blocks with each block's
+offset (T log − T/K), and you decide which to trust, block by block, and say
+why. The logged sample temperature is the default — it is the measured one;
+the setpoint needs a reason (a logged value the sample could not have had).
+Whichever you decide for a block holds everywhere those runs are used: a
+sensor you judged faulty for one series cannot supply an argument against a
+comparison in another. A block sitting at a different temperature from its neighbours is a
+different measurement, not a faulty thermometer to ignore. A steady offset the
+sample could not have had — a liquid logged above its boiling point, a
+cryostat base temperature below what the setpoint allows — points to the
+sensor, and then the setpoint is the better axis. The data can settle it: a
+signal missing where the setpoint predicts one (a line that should be there
+below a transition) is evidence that the logged temperature is the real one. The `scans` block still groups them by
+setpoint, so take its temperature scans as provisional: order those series by
+`sample_temperature_logged`, split off runs that sit far from the rest, and
+quote logged temperatures in the summary.
+
 **Check temperature provenance before interpreting a temperature scan.** Some
 cryostat files keep the setpoint parked while the sample temperature changes;
 then many distinct runs can appear at one nominal temperature. Several runs at
 exactly the same setpoint inside an otherwise recognisable temperature scan are
 by themselves enough to trigger this check — do not describe them as repeated
-measurements at that temperature. Inspect the scan endpoints and the proposed
-representative run with `asymmetry info <file> --json` and look for a logged
-sample-temperature field such as `sample_temperature_logged`. Call the survey
-temperature a setpoint, report the logged value as the physical scan axis, and
-do not claim that run number is a temperature proxy. If the CLI cannot trend
-the logged field, state that limitation rather than constructing a false
-setpoint trend.
+measurements at that temperature. The survey's `T log/K` column is the logged
+sample temperature (`sample_temperature_logged` in `--json`) where the file
+records one; `T/K` is the setpoint. Call the setpoint a setpoint, order the
+series by the logged value (`--order sample_temperature_logged`) when the two
+disagree, and do not claim that run number is a temperature proxy. PSI `.bin`
+files carry no logged column yet; for those, say that the trend is against the
+setpoint rather than constructing a false precision.
 
 `asymmetry info <file>` prints one file's metadata if you need to check a
 single file directly.
@@ -173,10 +209,19 @@ The survey's candidate list has two sources, marked in the block it prints:
 
 Then:
 
-- **The survey lists calibration candidates** → use one and report the value.
-  When several are listed, prefer the one the survey marks `(best)` — the
-  strongest measured precession — unless it is a member of the scan you are
-  about to analyse and a separate run is available. A dedicated run at 20 G is
+- **The survey prints an `ALPHA STEP`** → alpha changed partway through the
+  folder (a sample change, a moved detector, a second instrument), and **no
+  single run calibrates it**. Each candidate line carries its own measured
+  alpha. Split the runs into blocks at each step and reduce every block with
+  `--alpha-from` a calibration run *inside that block*; never carry the
+  `(best)` run's alpha across a step. A block with no candidate of its own is
+  reduced with the neighbouring block's alpha only if you say so and why. An
+  asymmetry that collapses or turns negative in one block is the signature of
+  the wrong alpha, not of physics — check that before interpreting it.
+- **The survey lists calibration candidates and no step** → use one and report
+  the value. When several are listed, prefer the one the survey marks
+  `(best)` — the strongest measured precession — unless it is a member of the
+  scan you are about to analyse and a separate run is available. A dedicated run at 20 G is
   the calibration; twelve runs of a 100 G paramagnetic scan are candidates
   *because* the sample is paramagnetic there, and calibrating on one of them is
   legitimate — **say which run alpha came from**.
@@ -206,8 +251,12 @@ asymmetry reduce <folder> --runs 102-107 --alpha-from 101 --deadtime from_file -
   them with the Read tool — the lowest-temperature, the highest, and one in the
   middle. That is how you learn whether there is an oscillation, a Kubo–Toyabe
   dip, or featureless relaxation, before any model is chosen.
-- `--tmax` trims a noisy tail; `--rebin k` merges bins. Both are available on
-  `reduce`, and `fit`/`fit-series` also take `--tmin`/`--tmax` per fit.
+- `reduce --tmin/--tmax` **cut the stored reduction** every later command
+  reads — the wizard and every fit then see only that window. To zoom a plot,
+  use `reduce --plot --plot-tmax 2`, which leaves the record whole. To restrict
+  one screen or fit, pass `--tmin`/`--tmax` to `wizard`, `recipe`, `fit` or
+  `fit-series` instead (a wizard window is kept in the recipe it writes).
+  `--rebin k` merges bins.
 - `--period red`, `--period green` or `--period N` selects one acquisition
   period before calibration or reduction. For ISIS photo-μSR files the usual
   convention is red/light-ON and green/light-OFF, but confirm that against the
@@ -258,22 +307,51 @@ evidence, not a stamp:
   pulse). **A fixed-temperature field scan of such runs is LF decoupling**, and
   this is how you confirm it; a single such run in a temperature scan wants the
   PNG looked at before you call it. Pass `--geometry LF` once you have decided.
-- `prec other` → an ordered magnet precessing in its own internal field. That
-  says nothing about the applied field's direction, so `geom` falls back to the
-  file; judge it from the scan the run belongs to and the reduced PNG.
+- `prec other@<MHz>` → the muon precesses in a field that is not the applied
+  one (see the table above for what the frequency can mean). That says nothing
+  about the applied field's direction, so `geom` falls back to the file; judge
+  it from the scan the run belongs to and the reduced PNG.
 - `prec -` → nothing was measurable. Judge it from the PNG as below.
 
 **Confirm on the reduced PNG** — always for `other` and `-`, and as a sanity
 check otherwise. A **transverse** field precesses the muon at γ_μ/2π × B —
 13.55 kHz/G, so 20 G ≈ 0.27 MHz, 110 G ≈ 1.5 MHz, 400 G ≈ 5.4 MHz — a plainly
 visible oscillation filling the early-time window. No oscillation at that
-frequency means the field is longitudinal. (Use `reduce --tmax 2 --plot` to zoom
+frequency means the field is longitudinal. (Use `reduce --plot --plot-tmax 2` to zoom
 the early window if the full range is too compressed to judge.)
 
 Then pass the right `--geometry ZF|TF|LF` to `wizard` for every run you screen,
 and say in the summary what each scan's geometry is and how you established it.
 Calling a decoupling LF series "TF" misreads the whole experiment even when the
 fitted model is right.
+
+### Step 3b — decide what the system is, then scope everything to it
+
+Before screening anything, write down in one line **what the sample is and what
+the experiment measures**. The evidence is already in hand: the sample and
+title text and the notes in the survey, any logbook or README in the folder
+(read it), the field and geometry of each scan, and the run structure. Then
+take the wizard's scope and the trend law from that class, not from `auto`.
+`auto` is for a sample you genuinely cannot place: it expands a family only
+where its spectral search finds support, which on real data means repeated
+re-screens — and it will happily offer a vortex lattice to a ferromagnet.
+
+| The system | What gives it away | Screen with | Trend law (Step 6a) |
+|---|---|---|---|
+| Magnet ordering in zero field | ZF temperature scan with `prec other@<MHz>` on the cold runs (spontaneous precession) | `--geometry ZF --scope zf-static-magnetism` | `OrderParameter` on the frequency below the transition; `CriticalDivergence` on a rate diverging towards it |
+| Spin glass or frozen moments | no spontaneous line; the rate rises and stretches on cooling, then A(0) collapses at the freezing temperature (the fast-relaxing fraction leaves the resolvable window) | `--scope zf-static-magnetism` (ZF) or `lf-dynamics` (LF) | `CriticalDivergence` on the rate from above the freezing; place T_g where the rate peaks or A(0) collapses, not where the wizard stops finding structure |
+| Fluctuating moments decoupled by a field | a **field** scan at one temperature whose runs do not precess at their field (`prec none` where measurable, `-` above Nyquist) — longitudinal decoupling, whatever zero field showed | `--geometry LF --scope lf-dynamics`; a **single** exponential rate λ | `Redfield` on λ(B), over the field range one process dominates |
+| Nuclear dipolar fields, muon or ion hopping | a dense-nucleus compound; Kubo–Toyabe dip in ZF; in TF a Gaussian envelope that turns exponential on warming (motional narrowing) | ZF/LF: `zf-static-magnetism` / `lf-dynamics`, Gaussian KT (see decision rules). TF: fit the series with one Gaussian or exponential envelope; `fit-series` weighs the other shape on every run (the `envelope` column) — report the shape against temperature | `Arrhenius` on the hop rate `nu` over the range where it rises; state any low-temperature upturn separately |
+| Quadrupolar level crossing | an LF scan over a narrow field range (tens of gauss) at one low temperature, in a compound with quadrupolar nuclei (Cu, Al, Nb …); a dip in the integral asymmetry, or fits whose χ²ᵣ spikes, at particular fields | `integral-scan` over the field range (Step 5b), not a decoupling analysis | the scan's resonance fit (`GaussianLCR`/`LorentzianLCR` + background) |
+| Type-II superconductor | TF scan through Tc, `prec larmor`, line broadening on cooling | `--geometry TF --scope tf-superconductor` | an `SC_*` gap model on σ(T) |
+| Type-I superconductor, intermediate state | a pure elemental superconductor (Sn, Pb, In, Al …) in a field **below H_c**, often LF on a tilted foil; `prec none` at the applied field | `--geometry LF --scope lf-dynamics --include Oscillatory`, and `fourier` to find the line — muons in the normal domains precess at γ_μ·H_c whatever field is applied | `OrderParameter` with `--fix alpha=2 --fix beta=1` (H_c(0)[1−(T/T_c)²]) on the frequency, against the logged temperature |
+| Fluoride | fluorine in the sample name | `--scope fluoride-fmuf` | — |
+| Muonium chemistry in a weak TF | water, solutions, gases, a few gauss TF paired with ~100 G diamagnetic runs; samples differing by concentration in the titles | not the wizard — see "Weak-TF muonium" in section 5 and write the recipe with `asymmetry recipe` | `Linear` on λ_Mu against the concentration you supply with `--order concentration --x …` |
+| Radicals at high field, level crossings | kilogauss TF lines at hundreds of MHz; ALC field scans | `--scope muonium-radical`; `fourier`; `integral-scan` | the scan's own resonance fit |
+
+Say in the summary which class you decided and on what evidence. If the
+evidence contradicts it once you look at the spectra, change your mind and say
+that too.
 
 ### Step 4 — screen one run with the wizard
 
@@ -285,11 +363,29 @@ The wizard fits a scoped set of candidate models to one reduced run and ranks
 them. Screen **the run whose spectrum shows the effect you are measuring most
 clearly** — not every run, and not reflexively the coldest one.
 
-Pick it from the `reduce` table and the reduced PNGs, not from the run list:
+Pick it from the `reduce` table and the reduced PNGs, not from the run list.
+For a scan, screen a run from inside the range the question is about — the
+middle of a field scan, not its zero-field end, whose physics (static fields)
+is the one the field removes:
 
 - The clearest run for a **relaxation** effect (a glass freezing, a dynamic
   rate) is where the relaxation is *fastest but still resolved* — usually the
   cold end, and usually not the run where A(0) has collapsed.
+- **A scan that crosses a transition needs a screen on each side.** An
+  ordered magnet below T_c and the same sample above it are described by
+  different models (a precession below, a paramagnetic relaxation above); one
+  recipe chained through both fits neither. Screen one run on each side, fit
+  the two sides as separate series with their own recipes, and report where
+  the ordered-state model stops fitting. Split the scan at the last run the
+  ordered model fits unflagged: no run belongs to both series, because a
+  relaxation fitted to a signal that still precesses is not a paramagnetic
+  rate. Fit the paramagnetic side with a **relaxation-only** recipe (no
+  oscillating term) and report its rate λ(T) — flat or rising towards T_c —
+  as the dynamics observable; an oscillating recipe carried above T_c comes
+  back `frequency_unresolved` and gives no rate at all. Never conclude that an ordered-state
+  signal is unresolvable from a model that was screened above the transition:
+  screen the coldest run and one just below the transition, and look at their
+  reduced PNGs and `fourier` spectra before saying so.
 - The clearest run for an **oscillation** is where the precession is slow
   enough to resolve. At a pulsed source (ISIS) a large internal field precesses
   far too fast to see, so a magnet deep in its ordered state shows no
@@ -312,6 +408,19 @@ Read from the output:
 
 - **the recommendation** (model key and title) and the **ranked table** of
   candidates with AICc, reduced χ² and parameter count;
+- **`Spectral lines`** — every line the wizard's spectral search detected,
+  with its SNR — and **`Recommended fit`**, the fitted values. When a
+  detected line is not in the recommendation, the wizard also writes recipe
+  `line-<run>`: the recommendation **plus** that line, its amplitude started
+  small. Fit it next (`asymmetry fit … --recipe line-<run>`); a line amplitude
+  several times its error is the line, measured. Do not replace the
+  recommendation with a bare oscillation — a weak line sits on the relaxation,
+  and without it the fit turns the relaxation into a spurious slow
+  "frequency". A precession
+  frequency here is a finding in its own right: if you later fit the scan with
+  a different model, a frequency the wizard found on this run still has to be
+  accounted for in the summary, never contradicted by an empty `fourier`
+  table;
 - **confidence**: `high` or `medium` are both fine to proceed on — medium is
   the normal outcome on real data and just means residual structure remains.
   **`low` or `none` means do not fit a series on this run**: screen a different
@@ -323,13 +432,28 @@ Read from the output:
   recommended model is a `null_...` baseline or ties with one, there is no
   structure to fit — say so rather than trending a meaningless parameter.
 
-`--scope <preset>` restricts the candidate families when you know the physics:
-`auto` (default), `zf-static-magnetism`, `tf-knight-precession`,
-`tf-superconductor`, `lf-dynamics`, `fluoride-fmuf`, `muonium-radical`, `all`.
-`auto` expands a family only when the spectral search finds support for it, so
-a magnet whose oscillation is fast and heavily damped can come back as a bare
-`Exponential + Constant`. If you expect static order and `auto` gives you a
-plain relaxation, re-screen with `--scope zf-static-magnetism` and compare.
+`--scope <preset>` restricts the candidate families to the class you decided in
+Step 3b: `zf-static-magnetism`, `tf-knight-precession`, `tf-superconductor`,
+`lf-dynamics`, `fluoride-fmuf`, `muonium-radical`, `all`, or `auto` (the
+default, for a sample you cannot place). `--include C,D` adds time-domain
+components the preset leaves out — `Oscillatory` for a line in an LF run —
+and `--exclude C,D` drops ones the physics rules out, e.g.
+`--exclude VortexLattice,VortexLatticePowder` for a magnet in TF. An unknown
+component name is refused with the full list.
+
+When the candidate the physics calls for is in the ranked table but not the
+recommendation, or the wizard has no template for it at all, **write the recipe
+yourself** with `asymmetry recipe` (see "Writing a recipe" below) rather than
+re-screening again. The same holds when a component you `--include`d was fitted
+and then rejected — the narrative says its frequency sat at the resolution
+floor, completed less than a cycle, or had no supporting spectral peak. That
+means the wizard had no line to start the frequency from, not that the physics
+is absent: write the recipe with a physically estimated starting frequency
+(`--initial frequency=<MHz>`, from γ_μ/2π = 0.01355 MHz/G times the field you
+expect the muon to see), fit it, and accept it only if the fitted amplitude is
+several times its error and the frequency moves smoothly across the scan. A
+starting value from a textbook is fine; quoting it as a result is not. One or two wizard calls per scan is the norm; more means
+the class decision in Step 3b was skipped.
 
 The scope note may say "sample name suggests fluorine": that is read from the
 run's title or sample text (`CaF2`, `LiF`, `KTCNQF4`), and it promotes the
@@ -355,7 +479,13 @@ asymmetry fit-series <folder> --runs 102-107 --recipe wizard-102 \
 - `--recipe` takes a name in `asymmetry-work/recipes/` (no path, no `.json`)
   or a path.
 - `--order temperature` or `--order field` — the quantity the scan varies, the
-  axis of the trend. `--order run` only when neither applies.
+  axis of the trend. `--order sample_temperature_logged` when the logged sample
+  temperature departs from the setpoint (see Step 1). When the scan varies
+  something the files do not record — a concentration, a degrader foil count,
+  a magnet current — name it and give every run's value:
+  `--order concentration --x 101=0,102=0.25,103=0.5`. Take those values
+  from the notes, logbook or titles and say where they came from. `--order run`
+  only when nothing else applies.
 - `--start <run>` is **the run you screened**. The series chains outward from
   it in both directions, so every fit warm-starts from a neighbour near the run
   the recipe actually describes. Starting from the cold end with a recipe
@@ -373,6 +503,8 @@ The per-run table gives reduced χ², a verdict and quality flags:
 | `large_rel_err` | A free parameter's σ/value is large — the data barely constrained it. |
 | `bound_pinned` | A free parameter sat on a bound. |
 | `spurious_reseeded` | The fit landed on the spurious branch (amplitude collapse or frequency jump) near a transition, whether or not a reseed rescued it. |
+| `frequency_unresolved` | A fitted frequency completes under two cycles in the informative window: a relaxation masquerading as a line (typically a weak line fitted without the relaxation it sits on). Not a precession result. |
+| `amplitude_exceeds_data` | The fitted amplitudes (backgrounds included) add up to several times the record's own asymmetry: two components cancelling to describe a signal the data do not hold. The fit's parameters are not physical. |
 
 A `poor` χ² verdict is common on high-statistics ISIS data (the band is tight
 with thousands of degrees of freedom) and is not by itself a reason to discard
@@ -401,12 +533,21 @@ asymmetry fit-global <folder> --runs 51341-51343 --recipe dynamic-gkt \
 `--field-param B_L` sets `B_L` from each run's recorded field and fixes it for
 that run. Other parameters not listed in `--shared` remain run-local. Check the
 model's actual parameter names in the recipe; never copy the example names
-blindly. A decoupling triplet normally shares the dynamic relaxation
-parameters and physically common amplitudes, while the applied LF differs.
-Repeat `fit-global` for each temperature group. There is not yet a batch
-command that trends a sequence of global fits, so quote each stored group's
-shared values and uncertainties directly rather than presenting independent
-fits as a coupled analysis.
+blindly. A decoupling **triplet** — a few fields at one temperature, repeated
+across temperatures — normally shares the dynamic relaxation parameters and
+physically common amplitudes, while the applied LF differs. A **field scan**
+over many fields at one temperature asks the opposite question — how the rate
+changes with field — so it is not a `fit-global`: fit one rate per run with
+`fit-series --order field` and then `trend --model Redfield`.
+`fit-global` takes the same `--order`/`--x` as `fit-series` (default `run`),
+and its table and stored trend carry every run-local parameter along that
+axis — so `asymmetry trend <folder> --series <name>` reads it, and
+`trend --model` can fit it: a muonium relaxation rate fitted per sample with a
+shared amplitude, ordered by `--order concentration --x …`, gives the rate
+constant from `trend --model Linear`. Repeat `fit-global` for each temperature
+group. There is not yet a batch command that trends a sequence of global fits,
+so quote each stored group's shared values and uncertainties directly rather
+than presenting independent fits as a coupled analysis.
 
 ### Step 5b — build and fit an integral-asymmetry field scan
 
@@ -456,7 +597,12 @@ Peak detection is deliberately conservative, so use this evidence ladder:
    absent or much weaker in a matched reference, but it did not pass the peak
    threshold. Read an approximate frequency from the plotted axis, label it
    explicitly as visual-only, and do not attach a fitted width or SNR to it.
-   An empty peak table means *not detected*, not *featureless*.
+   An empty peak table means *not detected*, not *featureless*. When nothing
+   is detected, `fourier` lists the band's **strongest maxima** with their
+   height over the noise floor: they are candidates of this kind. When the
+   physics predicts a weak line, fit the time domain with a recipe started at
+   the candidate frequency (`recipe --initial frequency=…`) and let the fitted
+   amplitude and its error decide.
 3. **Pattern-level interpretation** — several detected and/or visual features
    may form a recognisable physical pattern. State what the pattern is
    consistent with, while keeping the component frequencies and derived
@@ -661,13 +807,102 @@ fitted parameter with its uncertainty, per run, with the flags carried
 through. `--csv <path>` also writes it as CSV. `--plot` writes one PNG per
 parameter, with flagged points drawn distinctly.
 
+When the series fits a frequency, the table carries `survey_line_mhz`: the line
+the survey measured in each run. A fitted frequency far from it, or a line
+fitted where the survey found none (`-`), is the fit locking onto noise or an
+artefact — trust the survey's line and say which runs disagree.
+
+When the model has one Gaussian or exponential envelope, the `envelope` column
+says which shape each run prefers (`either` when they fit alike). A change of
+shape along the scan is a result: report it with the runs on each side.
+
 **Look at the trend PNGs with the Read tool before writing anything.** A trend
 that is flat, that jumps, or whose scatter swamps the error bars is telling you
 something the table alone will not.
 
-### Step 7 — write the summary
+### Step 6a — fit the trend with a physical law
 
-Template in section 6.
+When the experiment's question is a number that a trend encodes — a
+transition temperature, a critical exponent, an activation energy, a
+correlation time, a gap — fit the law to the trend column instead of reading
+it off the plot or computing it by hand:
+
+```bash
+asymmetry trend <folder> --series zf-scan --model OrderParameter \
+    --param frequency --fix alpha=1 --xmax 69 --exclude 2958 --plot
+```
+
+- `--model` takes a parameter-vs-x expression: `OrderParameter` (a precession
+  frequency or internal field below the transition), `CriticalDivergence` (a
+  rate or width diverging towards a transition, fitted from one side),
+  `Arrhenius` (a hop or fluctuation rate against temperature), `Redfield` (a
+  relaxation rate against longitudinal field; hold its exponent with
+  `--fix m=2` for the textbook form), `SC_SWave` and the other `SC_*` gap
+  models (a superconducting σ against temperature), `Linear` (a rate against
+  concentration), and sums such as `Redfield + Constant`. The class you
+  decided in Step 3b picks the law; say which you used and why. A transition
+  temperature or exponent is measured against the trend's x — say whether that
+  was the setpoint or the logged sample temperature.
+- `--param` is the one quantity the law is written for: a single relaxation
+  rate for Redfield or Arrhenius, a single frequency for an order parameter.
+  When the series model carries two components of that kind the command
+  prints a `NOTE`. If they are two species (a muonium and a diamagnetic line)
+  fit the one the law describes. If they are two rates splitting one
+  relaxation between them because AICc preferred it, refit the series with a
+  single-rate recipe first — the law describes the one rate.
+- `--xmin`/`--xmax` set the fit range in the trend's x units. An order
+  parameter is fitted **below** the transition, a Redfield law over the field
+  range where one process dominates. Compare points measured under matched
+  conditions (one temperature for a concentration series). State the range in
+  the summary.
+- `--fix NAME=VALUE` holds a law parameter (e.g. `alpha=1` for the simple
+  power law); `--initial NAME=VALUE` moves a start value.
+- **Every run with a value enters unless you exclude it.** The output lists the
+  runs it left out and the *flagged runs it fitted*. Exclude a flagged run
+  whose value is suspect — `failed`, `spurious_reseeded`, or `bound_pinned` on
+  the parameter you are fitting — with `--exclude RUNS`, and say which you
+  excluded and why. A `large_rel_err` run is weighted down by its own error bar
+  and can usually stay.
+- The fit is stored in `series/<name>.json` under `trend_fits`, and `--plot`
+  draws the curve over the points it was fitted to. Read the PNG: a law that
+  misses the points near the transition, or a parameter reported `at bound`,
+  is not a result.
+
+Quote the law's parameters with their uncertainties exactly as printed, and
+its χ²ᵣ. When χ²ᵣ is well above 1 the output adds errors scaled by √χ²ᵣ:
+quote those, and say the law describes the trend only approximately — a
+converged fit with a poor χ²ᵣ is still the result, reported with its caveat,
+never withheld. The
+same rule as for integral scans applies: derive nothing further by hand (a
+penetration depth from σ, an energy in meV from a gap in kelvin) and present
+it as Asymmetry output.
+
+### Step 7 — write the summary, audit its numbers, then send it
+
+Template in section 6. Write the draft to `summary.md` in the project directory,
+then run
+
+```bash
+asymmetry audit summary.md
+```
+
+Every command's printed output is logged in the work directory, and `audit`
+lists each number in the draft that no command printed. Each one it lists is
+almost always arithmetic on printed values — a percentage change, a ratio, a
+difference of two columns, a unit conversion (MHz to gauss, relative to molar),
+a significance in σ — or a value from memory. Remove it, quote the printed
+value instead, or say the relation in words ("rises by several percent", "an
+order of magnitude faster"). Re-run `audit` until it lists nothing you would
+defend as printed. Do not mention the audit in the reply; it is a check on
+your draft, not a finding.
+
+**The user sees neither tool output nor files — only your final message.** So
+your final message must *be* the summary: its full text, as audited, typed out
+in the reply. Reading `summary.md` with a tool, pointing to the file, or
+writing a shorter recap is not a reply — the first two show the user nothing,
+and a recap drops results and brings back numbers the audit removed. A clean audit means each number
+appears in some output, not that it is the right one — still quote values from
+the command that produced them.
 
 ## 3. Decision rules
 
@@ -742,13 +977,41 @@ is wrong for part of the scan. In order of effort:
    of them from a run where the relaxation *is* well resolved is the fix.
    Noticing the degeneracy and reporting the numbers anyway is not.
 
-**Hand-editing a recipe.** A recipe is small JSON. To swap one component, edit
-three things: `expression`, the entry in `model.component_names`, and the
-parameter list (name and starting value). For example, `Exponential` →
-`Gaussian` means `Lambda` → `sigma`; `Constant` carries `A_bg`. Write it to
-`asymmetry-work/recipes/<name>.json` and pass `--recipe <name>`. Run
-`asymmetry fit <folder> --run N --recipe <name>` on one run first to check it
-converges before spending a series on it.
+**Writing a recipe.** When the model you want is not the wizard's
+recommendation, build it from an expression:
+
+```bash
+asymmetry recipe <folder> --expression "Oscillatory * Exponential + Constant" \
+    --name line --run <run> --initial frequency=1.9
+```
+
+`--run` seeds the amplitudes, background and applied field from that reduced
+run — every amplitude starts at the run's whole early-time asymmetry, so for a
+weak line beside a large background give both explicitly
+(`--initial A_1=0.5 --initial A_bg=<the background level>`); `--initial NAME=VALUE` moves a start value, `--fix NAME=VALUE` holds one,
+`--tmin`/`--tmax` set the window. The command prints **every parameter name**
+— in a repeated-component expression they are numbered by component
+(`Oscillatory * Exponential + Oscillatory * Exponential` has `A_1`,
+`frequency_1`, `phase_1`, `Lambda_2`, `A_3`, `frequency_3`, `phase_3`,
+`Lambda_4`) — so read them from its output rather than guessing. Then run
+`asymmetry fit <folder> --run N --recipe <name>` on one run to check it
+converges before spending a series on it. (A recipe is also small JSON in
+`asymmetry-work/recipes/`, and editing it by hand still works.)
+
+**A caveat is not a reason to withhold a result.** When the experiment asks
+for a quantity — a rate constant, a transition temperature, a correlation
+time — and the data allow a fit, do the fit and report it with its caveat (a
+temperature offset between samples, a poor χ²ᵣ, a short range), rather than
+declining because the comparison is imperfect. Declining is for a question the
+data cannot answer at all.
+
+**One negative run is not a negative folder.** When a feature the physics
+predicts — a line, a dip, a step — is missing from one run, test the run where
+it should be strongest before concluding it is absent: the least perturbed
+sample (a deoxygenated blank, a pure reference), the coldest run, the field
+where it is clearest. Read the survey's notes to find that run. A fit that
+drives the expected component to zero on an unfavourable run says nothing
+about the others.
 
 **The wizard found nothing.** Confidence `low`/`none`, or the null baseline
 winning, on the run you screened: screen a different run before concluding
@@ -780,12 +1043,20 @@ of the asymmetry is an incomplete answer for a superconductor.
 | `alpha`, `reduce` | ~0.2 s per run |
 | `integral-scan` | roughly the cost of reducing its runs, plus a quick scan fit |
 | `fourier` | instant after reduction |
-| `wizard` | 3–8 s per ISIS run |
+| `wizard` | 3–8 s per ISIS run; up to a few minutes for a long HIFI or PSI record, or with `--include` |
 | `fit`, `fit-series`, `fit-global` | a few seconds for a scan or one coupled group |
-| `trend` | instant (it reads stored results) |
+| `trend` | instant (it reads stored results); `--model` a second or two |
 
 So: screen **one or two** runs, not every run. Reduce and fit whole scans
 freely — those are cheap.
+
+**Let long commands finish.** Give a `wizard` or `fit-series` call several
+minutes through your shell tool's own timeout setting (in Claude Code, the Bash
+tool's `timeout` parameter, e.g. 600000 ms) — not a `timeout` command, which
+macOS does not have — and do not pipe it through `tail` or `head` (you lose the
+output if it is cut off). If a command is moved to the background,
+wait for it to complete before doing anything that depends on it — and never
+end your turn while one is still running: the analysis stops with it.
 
 ## 5. Physics to ask yourself
 
@@ -816,10 +1087,69 @@ parameterises the dipolar coupling as the muon–fluorine distance `r_muF` in
 scan *is* a temperature-independent dipolar coupling — say so in those terms.
 
 **Longitudinal field.** An LF is applied to decouple static fields, so what
-relaxation survives is dynamic. Does the rate rise on cooling towards a
+relaxation survives is dynamic — even in a sample whose zero-field spectrum
+looked static (a Kubo–Toyabe shape): the field removes the static part, and
+the rate left over as the field rises is the fluctuating part. Does the rate rise on cooling towards a
 freezing or glass transition? Is a stretched exponential needed (a distribution
 of rates, as in a spin glass) rather than a single exponential? Does the
-recovered asymmetry increase with field, as decoupling predicts?
+recovered asymmetry increase with field, as decoupling predicts? A **field scan
+at fixed temperature** of a fluctuating system asks one quantitative question:
+does the rate follow Redfield's law, λ(B) ∝ τ / (1 + γ_μ²B²τ²)? Fit a single
+exponential rate per run and then `trend --model Redfield` on λ(B); its `D`
+and `nu` (MHz) are the width of the fluctuating field and the fluctuation
+rate. A change of slope in λ(B) away from the fitted law is a finding —
+a field-induced change of state (a magnetisation plateau's edges, a
+spin-flop) — worth pointing at.
+
+**A superconductor that is not in a vortex state.** A type-I superconductor
+(pure Sn, Pb, In, Al, Hg) in a field below its critical field H_c, with a
+large demagnetising factor (a foil across the field), splits into normal and
+superconducting domains, and the field inside the normal domains is H_c, not
+the applied field. Muons stopping there precess at γ_μ·H_c = 13.55 kHz/G × H_c
+— a line that is **not** at the applied field's Larmor frequency, so the
+survey reports `prec none`, and one that is present in an LF geometry when
+the foil is tilted. Its frequency falls to zero as the sample warms to T_c. The
+line is small — a fraction of a percent against the background — so screen at
+the field and temperature where it is clearest (the middle of the field range,
+the coldest logged temperature), look with `fourier` over a few MHz, and when
+the wizard cannot seed it, write the recipe (`Oscillatory * Exponential +
+Constant`, `--initial frequency=<0.01355 × H_c estimate>`) and fit the scan from
+that. The H_c(T) law is `OrderParameter` with `alpha=2`, `beta=1`.
+
+**Weak-TF muonium.** In water, solutions and many insulators a fraction of the
+muons form muonium (Mu). In a weak transverse field its triplet precesses at
+1.394 MHz/G — 103 times the bare muon's 13.55 kHz/G — so a 2 G run shows a
+line near 2.8 MHz from Mu and a diamagnetic line (27 kHz) that completes less
+than a cycle in the record. The 100 G runs beside them are for the diamagnetic
+fraction and for alpha. The survey reports the 2 G runs as `prec other` or
+`none` (the Mu line is not the applied field's Larmor line), and a full-record
+Fourier transform may show nothing because Mu relaxes quickly; look with
+`fourier --tmax 4`. **Look first in the sample with the least scavenger** — the
+run the notes call **deoxygenated** — where the Mu line lives longest; the
+survey shows it as `other@` near 1.394 MHz/G × B. Untreated water is **not** a
+blank: its dissolved O₂ is a scavenger. Untreated water
+carries dissolved O₂, which relaxes Mu too fast to see; a concentrated solution
+likewise. Absence of a line there says nothing about the blank. Reduce that
+blank with the right alpha for its block (Step 2) before concluding anything. The wizard has no dependable template for this; write the
+recipe:
+
+```bash
+asymmetry recipe <folder> --name mu --run <2 G run> \
+    --expression "Oscillatory * Exponential + Oscillatory * Exponential" \
+    --fix frequency_1=2.79 --fix frequency_3=0.0279 --initial Lambda_2=0.5
+```
+
+(frequency_1 = 1.394 MHz/G × B for Mu and frequency_3 = 0.01355 MHz/G × B for
+the diamagnetic muon, at the run's recorded field B — here 2 G.) `Lambda_2` is the Mu
+relaxation rate λ_Mu. In a reaction-kinetics experiment λ_Mu = λ₀ + k_Mu[x],
+so fit λ_Mu for each sample at one temperature — `fit-global` with the Mu and
+diamagnetic amplitudes and phases shared, ordered by
+`--order concentration --x <run>=<value>,…` with the concentrations read from
+the titles or notes — and take k_Mu from `trend --model Linear`. Concentrations
+given as "quarter", "half", "full" or "0.25" are **relative**: keep k_Mu per
+unit of that relative concentration, write the values as the titles do (no "M"
+after them), and never invent a molarity. Faster Mu relaxation in untreated
+than in deoxygenated water is dissolved O₂.
 
 **Transverse field.** The precession frequency gives the local field at the
 muon: a shift relative to the applied field is a Knight shift. The relaxation
@@ -838,12 +1168,30 @@ Use these headings. Fill only from command output.
 > that no command printed does not go in. Textbook or literature values may be
 > *discussed* — clearly attributed as such ("the textbook value for bulk nickel
 > is far above the range scanned here") — never presented as a result of this
-> session.
+> session. Nor may a unit the data does not give be attached to a number: a
+> concentration written "0.25" or "quarter" in a title is not 0.25 M.
 
 This also excludes numbers you calculated in Python, PowerShell, a spreadsheet
-or by applying a literature conversion to a stored JSON value. The evidence
-must be an `asymmetry` command's own output. If a useful derived quantity is not
-printed by the CLI, explain the qualitative relation and leave the number out.
+or by applying a literature conversion to a stored JSON value — and numbers you
+worked out in your head: a significance in σ, a percentage change, a ratio or a
+sum of two printed values. The evidence must be an `asymmetry` command's own
+output. If a useful derived quantity is not printed by the CLI, explain the
+qualitative relation and leave the number out.
+
+**Fits you flag do not carry physics.** A series whose runs are
+`frequency_unresolved` or `amplitude_exceeds_data`, or that you call unreliable
+yourself, supports no conclusion about the system — not even a qualitative
+one ("consistent with critical slowing"). Say what failed and why.
+
+**A law that did not fit does not get to tell the story.** When `trend
+--model` prints `LAW NOT ESTABLISHED` — it did not converge, a parameter sits at
+a bound, or an error is as large as its value — the physics that law
+stands for — critical slowing down, activated hopping, a Redfield correlation
+time, an order-parameter exponent — is **not established**. Say the fit
+failed and describe the trend in plain words; do not borrow the law's
+vocabulary. And fit a law only to the quantity it is written for: an Arrhenius
+law belongs to a rate constant or hop rate, not to whatever rate a model
+happened to fit.
 
 **Experiment** — what the survey shows: instrument(s), run count and range, the
 scans and their field/temperature span, anything that is not part of a scan,

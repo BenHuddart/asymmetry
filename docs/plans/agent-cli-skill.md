@@ -335,7 +335,8 @@ Copper (TF, ZF and LF sets in one folder: survey must split them), Spin-Peierls
 **Tier C — must decline gracefully**
 
 AFM transition in high TF (6 T `.mdu` from PSI HIFI: out of scope, must say
-so).
+so). Moved to Tier B as a bounded analysis on 2026-09-23 — see the corpus
+capability audit below; no decline case remains.
 
 **Workflow-expansion gate — must exercise the added path**
 
@@ -781,6 +782,665 @@ whether the agent issued a `Skill` tool call for `asymmetry-analysis`:
 
 4/4 should-fire, 0/2 should-not-fire. The description was not changed.
 
+### Corpus capability audit — 2026-09-23
+
+Host: Claude Code, lead model Opus with five parallel audit subagents. This is
+not a scored evaluation: each agent read the worksheet (or paper) and logbook
+of the experiments the gates above never covered, then **ran the CLI on
+representative runs** and classified every analysis step as supported,
+partial, missing or out of scope, naming the smallest addition that would
+close each gap and whether it is a core or a CLI/skill gap. Scratch outputs
+stayed outside the repo. Every one of the 21 data folders loads in `survey`;
+the gaps are all in analysis.
+
+| Experiment | Verdict | Blocker or main gap |
+|---|---|---|
+| LiFeAs (PSI GPS `.bin`) | blocked | TF signal sits in the Up/Down pair but the loader pairs Back/Forw on these 5-histogram files; no CLI grouping choice; PSI background subtraction not exposed (`BACKGROUND_MODES = ("none",)`) |
+| Muonium + maleic acid | blocked | the skill declines muonium kinetics although `core/fitting/mu_kinetics.py` fits k_Mu and Arrhenius; no concentration axis |
+| Benzene: RF resonance | blocked | the skill declines RF although `build_rf_difference_scan` and `RFResonanceMuP` exist; green−red difference is GUI-only |
+| Ca₃Co₂O₆ plateau (Redfield) | workarounds; headline blocked | λ(B) reproduces the paper's Fig. 2a; the core `Redfield` trend fit on that trend gives τ ≈ 0.91 ns and Δ ≈ 40 mT (paper 880 ps, 40.6 mT) but no command runs it |
+| Critical fields in Sn | workarounds; headline blocked | Hc(T) needs a trend fit and the logged sample temperature (setpoint is 1–6 K off); LF wizard scope omits precession |
+| Copper (diffusion, QLCR) | workarounds; E_a blocked | trend fit; the wizard never offers Abragam; logged vs setpoint temperature |
+| Molecular antiferromagnet | workarounds; T_N blocked | trend fit; FFT peak table misses the 2.55 MHz line |
+| EuO (PSI GPS) | workarounds; β blocked | trend fit; background subtraction; logged T lives in the `.bin` header |
+| TRSB Re₆Zr | workarounds; gap fit blocked | ZF Δ(T) step reproduces the paper's Fig. 4; the s-wave fit needs a trend fit; `trend` crashes on a `fit-global` series |
+| Basics | workarounds | `emu00044989` and `MUSR00044989` share run numbers, so every command refuses the folder; no t0/t_good offsets or custom x axis |
+| Corannulene | workarounds | whole-scan ALC multi-resonance fits fail (suffixed `B0_n`/`Bwid_n` unbounded, polynomial seeds on a gauss axis); no radical repolarisation model; poor scan grouping over 383 runs |
+| Benzene: high TF, ALC | workarounds | FFT resolves the 208.6/305.6 MHz radical pair; co-add and the correlation spectrum are core-only; coupling-parameterised ALC models missing |
+| Benzene: repolarisation | fully analysable | `MuRepolarisation` gives A_hf directly; only `integral-scan --deadtime` missing |
+| AFM transition in high TF | rubric stale | FFT and two-line tracking of the 6 T and 8 T `.mdu` scans work; only MaxEnt, wing area and DFT need declining |
+
+Cross-cutting gaps, ranked by how many experiments they unblock:
+
+1. **No trend-model fit in the CLI.** The last step of about eight
+   experiments; the core `fit_parameter_model` already carries Redfield,
+   OrderParameter, Arrhenius, SC_SWave and Linear. (CLI only.)
+2. **Series axis limited to setpoint temperature, field or run.** Sn, copper
+   and EuO need the logged sample temperature; maleic acid and Basics need a
+   per-run value the user supplies.
+3. **`fit-global` is a dead end.** `trend` raises `KeyError: 'trend'` on its
+   stored fit, and the human output hides the run-local parameters.
+4. **Reduction options the core has but the CLI does not expose:** detector
+   pair/grouping, background subtraction by range, t0/t_good offsets, co-add,
+   the green−red period difference, `integral-scan --deadtime`.
+5. **The FFT peak table empties when zoomed:** `core/workflow/fourier.py`
+   crops to `--fmin/--fmax` before estimating the noise, which is exactly the
+   re-transform the skill prescribes (benzene, HAL `.mdu`, molecular AFM,
+   LiFeAs, EuO).
+6. **Recipe authoring:** no expression → recipe command, the wizard saves only
+   its recommendation, a wrong parameter name gives a traceback, and the skill
+   documents a `fit-series --tmin/--tmax` that does not exist.
+7. **Survey scan grouping:** merges samples, geometries and time-separated
+   segments; does not recurse into sub-folders (benzene); reports a false
+   ≈0.095 MHz `other` line for sub-cycle signals.
+
+Also found: the skill's rule that a `spurious_reseeded` flag disqualifies a
+run discards good copper points; missing core models (anisotropic radical
+repolarisation, coupling-parameterised ALC D0/D1, the analytic RF
+approximation, time-domain QLCR); the ARGUS `t0_bin`/`time_zero` warning is a
+false positive from a float32 bin width (8 ns effect, 38 warnings per survey).
+A reported MUSR forward/backward sign flip was checked and is not real: MUSR
+runs reduce to positive asymmetry; only the preset's group naming disagrees
+with the file's.
+
+Rubric corrections: `afm-high-tf-mdu` should expect a partial analysis, not a
+decline (the survey reads the fields and temperatures it calls unknown);
+`euo-psi` asks for "relaxation consistent with critical slowing down", which
+the paper contradicts (λ stays near 2 MHz).
+
+Follow-up: gaps 1–3 and the two rubric corrections are taken up on
+`feat/trend-model-fit`: `trend --model` (the desktop trend dialog's fit, every
+row with a value entering unless `--exclude`d, flagged rows named), `--order
+sample_temperature_logged` and `--order <name> --x RUN=VALUE,…` on `fit-series`
+and `fit-global`, and a stored trend for `fit-global`. Checked on the corpus:
+the plateau λ(B) Redfield fit (D = 27.5 ± 0.4, ν = 159 ± 15 MHz over
+5–36 kG), Sn ordered by logged temperature, and maleic acid λ_Mu against a
+supplied concentration axis through `fit-global` and `trend --model Linear`. Reading the logged temperature from the PSI `.bin`
+header is deferred: the header's per-sensor means carry no labels, and which
+sensor is the sample differs between GPS and GPD.
+
+### Sonnet trend-fit pass — 2026-09-23, on `feat/trend-model-fit`
+
+Host: Claude Code. Model: `sonnet`. Runner: `tools/agent_eval/run_eval.py`,
+the fixed prompt, `--max-turns 80`, macOS. The first run of the skill text
+that teaches `trend --model` and the new scan axes, on four audit cases.
+Three rubrics (`plateau-redfield`, `sn-critical-field`, `maleic-mu-kinetics`)
+were written from the worksheets and handout before any run.
+
+| Dataset | Wall | Turns | Cost | Verdict |
+|---|---:|---:|---:|---|
+| EuO (PSI GPS) | 1016 s | — | $3.99 | **pass** (5/5) |
+| Ca₃Co₂O₆ plateau | 555 s | 46 | $2.48 | **fail** (Redfield Must) |
+| Critical fields in Sn | 705 s | — | $2.56 | **fail** (sample-precession Must) |
+| Maleic acid | 1188 s | — | $3.61 | **fail** (3 Musts) |
+
+- **euo-psi — pass.** The first real use of the new path:
+  `trend --model OrderParameter --param frequency --exclude <6 flagged runs>`
+  over 1.5–69.3 K gave Tc = 69.17 ± 0.05 K, β = 0.443 ± 0.004,
+  α = 1.54 ± 0.02, with the excluded runs named. ZF and TF blocks separated;
+  paramagnetic Gaussian-KT Δ flat; the TF relaxation rising near Tc is
+  reported from its own fits. Gaps: it said no trend law suits a rate
+  diverging at Tc (`CriticalDivergence` exists; Step 6a's list omits it); β is
+  not labelled as measured against the setpoint; the wizard's fluorine hint
+  fired on the title `TF60G`.
+- **plateau-redfield — fail.** Alpha from 9023, the cooldown in 9024–9030
+  found from `T log/K`, λ(B) falling through the sweep — but a stretched
+  exponential and a descriptive trend, never `trend --model Redfield`. The
+  agent sees only the data and logbook, not the handout; nothing in the skill
+  says that an LF decoupling scan of a fluctuating magnet is the case
+  Redfield's law is for.
+- **sn-critical-field — fail.** Excellent thermometry (the 91501–91515
+  excursion to ≈8.2 K found and ordered by logged temperature, the 40 G
+  transition bracketed at logged 2.8–3.2 K) but analysed as LF decoupling
+  with a Gaussian envelope: the sample's precession at γ_μH_c (≈1.9 MHz) was
+  never looked for. The survey says `prec none` and the LF wizard scope has
+  no precession template; the skill has no type-I intermediate-state physics.
+- **maleic-mu-kinetics — fail.** Found the alpha step at 78281 and the
+  per-sample structure, but did not recognise the 2 G runs as muonium
+  precession (γ_Mu/2π ≈ 1.39 MHz/G, a line near 2.8 MHz); fitted Kubo–Toyabe
+  to "water protons", reported a 17 MHz "doublet" the wizard matched, and
+  wrote the titles' relative concentrations as molar ("0.25 M"). No rate
+  constant. The skill has no weak-TF muonium physics, and the wizard's
+  low-field muonium matcher needs a resolved doublet (audit gap).
+
+Skill changes proposed after pass 1 (made in pass 2 below): name `CriticalDivergence`
+in Step 6a; a "which law for which scan" table in section 5 (LF decoupling of
+a dynamic magnet → Redfield; activated hopping → Arrhenius; order parameter →
+OrderParameter; σ(T) → SC_*; rate vs concentration → Linear); type-I
+intermediate state (precession at H_c independent of the applied field,
+look with `fourier` even in LF); weak-TF muonium (triplet line at
+1.394 MHz/G, the diamagnetic line barely a cycle, relative concentrations
+stay relative).
+
+#### Pass 2 — 2026-09-23, after `recipe`, `wizard --include/--exclude` and a system-first skill
+
+Between the passes: `asymmetry recipe` (a recipe from an expression, printing
+every parameter name), `wizard --include/--exclude` (the engine's existing
+scope overrides), the fluorine sniff no longer firing on `TF60G`/`ZF`/`LF100`,
+and skill text — Step 3b (decide the system class before screening; a table
+from class to scope and trend law), `CriticalDivergence`, LF Redfield, the
+type-I intermediate state and weak-TF muonium. Examples use placeholder run
+numbers so the skill does not carry this corpus's answers.
+
+| Dataset | Wall | Cost | Wizard calls (pass 1 → 2) | Verdict |
+|---|---:|---:|---:|---|
+| Ca₃Co₂O₆ plateau | 902 s | $1.55 | 3 → 2 | **pass** (5/5) |
+| EuO (PSI GPS) | 1192 s | $2.49 | 16 → 3 | **fail** (internal-field Must) |
+| Critical fields in Sn | 1219 s | $3.31 | 1 → 4 | **fail** (sample-precession Must) |
+| Maleic acid | 1178 s | $2.42 | 5 → 3 | **fail** (3 Musts) |
+
+- **plateau-redfield — pass.** Decided "LF decoupling", fitted single
+  exponential λ(B), then `trend --model Redfield --param Lambda --fix m=2
+  --xmax 25000 --exclude 9049`: D = 31.78 ± 0.53 MHz, ν = 159 ± 11 MHz, range
+  and exclusion stated. Gaps (Should): fitted 1–25 kG rather than the plateau;
+  no comment on the plateau edges.
+- **euo-psi — fail (regression).** Three wizard calls with physics-chosen
+  scopes, as intended — but it screened only the 200 K paramagnetic run and
+  chained that Gaussian-KT model through the whole ZF scan, so the ordered-state
+  precession pass 1 fitted (30 MHz at 1.5 K) was never looked for, and the
+  summary calls the ordered-state field "too fast to resolve". The skill does
+  not say that a scan crossing a transition needs a model on each side,
+  screened on each side; pass 1 did that unprompted.
+- **sn-critical-field — fail.** Classified as a type-I superconductor and
+  screened with `--geometry LF --scope lf-dynamics --include Oscillatory` plus
+  `fourier`, as the skill now says — on run 91488 (20 G), where the spectral
+  search finds no line and the wizard drops the included oscillatory
+  candidates for "no support in the spectrum". `--include` widens the scope;
+  it does not force a candidate past the wizard's spectral gate. On 91516
+  (40 G) the same options rank the oscillatory model first. The sample line is
+  ~0.3 % against ~20 % background, so the run chosen decides the outcome.
+- **maleic-mu-kinetics — fail.** Now tests the weak-TF muonium hypothesis
+  explicitly (`fourier` with `--tmax` crops) — but took alpha = 1.401 from the
+  survey's best candidate 78281 for the whole folder, while 78251–78280 need
+  ≈1.03–1.07. The deoxygenated water (A(0) = 0.07 %) and the whole "neat"
+  series were therefore mis-reduced, and the collapse was read as chemistry. It
+  looked for Mu in untreated water (O₂ relaxes it) and the mis-reduced neat
+  runs, never in correctly reduced deoxygenated water. Wrote "0.5 M" again.
+
+Outcome and what it says: the system-first step cut screening (EuO 16 → 3
+wizard calls) and produced the first Redfield fit; single runs are noisy
+(EuO passed then failed on the same dataset). Remaining gaps, in order:
+(1) calibration — measure alpha on every candidate and reduce each block with
+its own when they differ (the survey could print alpha per candidate and flag
+a step: CLI); (2) a scan through a transition needs a model and a screen on
+each side; (3) `--include` should force its components' candidates past the
+spectral gate (core/CLI); (4) weak-TF muonium: look first in the
+lowest-scavenger, deoxygenated sample.
+
+#### Pass 3 — 2026-09-23/24, two repeats per dataset
+
+Between passes: `survey` gives each calibration candidate its own alpha and
+flags an `ALPHA STEP`; skill text for alpha blocks, a screen and a series on
+each side of a transition, seeding a rejected physics component with
+`recipe --initial frequency=…`, and where to look for weak-TF muonium.
+`--include` was deliberately *not* forced past the wizard's spectral gate: on
+Sn run 91488 the included oscillation was fitted and collapsed to the 1/T
+resolution floor, a genuinely bad fit. Runs scored by a scoring subagent
+against the unchanged rubrics, with the number rule checked in the
+transcripts.
+
+| Dataset | 3a | 3b |
+|---|---|---|
+| plateau-redfield | pass | pass |
+| maleic-mu-kinetics | pass | pass |
+| euo-psi | pass | fail (internal-field Musts) |
+| sn-critical-field | fail | fail |
+
+- **maleic** now passes twice: `ALPHA STEP` respected, hand-written Mu recipe,
+  `trend --model Linear` on λ_Mu against supplied concentrations.
+- **euo 3b** screened inside the transition cluster; the wizard's recipe for
+  the 10 K run held `frequency_1 = 29.89 MHz` but its text only said "3
+  line(s) detected", and a `fourier` over 0–20 MHz printed "No peaks", so the
+  summary claimed no ordered-state oscillation. It also used "critical
+  slowing" after both `CriticalDivergence` fits failed.
+- **sn 3a** trusted the survey's setpoint-grouped 23-run scan and never
+  reached the type-I row; **sn 3b** handled the logged temperature but its
+  `fourier --fmin 0.3 --fmax 6` printed "No peaks" over a band whose strongest
+  maximum was the 2.16 MHz normal-domain line, and it fitted Redfield to Λ(B).
+
+Changes after pass 3 (all general, none dataset-specific): `fourier` detects
+on the whole spectrum then restricts to the band, and lists the strongest
+sub-threshold maxima as candidates; `wizard` prints its detected lines and
+the recommended fit's values; `survey` prints a `TEMPERATURE:` line for runs
+whose logged temperature departs from the setpoint (flags real departures in
+Sn, the plateau cooldown and the EMU cuprate runs, none in nickel or YMnAl);
+`wizard`/`fit-series` take `--tmin`/`--tmax`; skill text that a failed trend
+law does not supply the physics and that derived σ, % and ratios are numbers.
+
+#### Pass 4 — 2026-09-24, two repeats
+
+| Dataset | 4a | 4b |
+|---|---|---|
+| plateau-redfield | pass | fail (Redfield on one rate of a two-exponential model; a hand-computed %) |
+| euo-psi | pass | fail (number rule only: a hand-computed "~9 %") |
+| sn-critical-field | fail | fail |
+| maleic-mu-kinetics | fail | fail |
+
+3/8, down from 5/8 — run-to-run variance is large. The new outputs were read
+where they were decisive: `TEMPERATURE:` caught the Sn 8 K block and the
+plateau cooldown in every run, `ALPHA STEP` was respected in both maleic runs,
+EuO quoted the wizard's printed 30 MHz line. Fourier candidates were ignored.
+Root causes: Sn — the wizard printed the 1.913 MHz line but the recommendation
+was a relaxation and no seeded fit followed; the survey's merged 23-run 40 G
+"scan" was taken as the scan. Maleic 4a took untreated water for the blank and
+abandoned Mu for the folder after one failed fit; 4b printed k_Mu from
+`trend --model Linear` (χ²ᵣ 23) and then withheld it. Plateau 4b fitted
+Redfield to `Lambda_1` of a two-rate model because AICc preferred it.
+
+A deeper cause surfaced while fixing these: the survey's `other` verdict named
+a ~0.1 MHz "line" on nearly every weak-field and decoupling run — relaxation
+leakage completing under a cycle — while the fingerprint's damped-line scan
+held the real line (2.806 MHz, SNR 68 on the Mu blank; 1.91 MHz on Sn). Fixed
+in the survey, with a unit test; calibration candidates on the corpus are
+unchanged and the false copper/YMnAl `other` lines are gone. Also: seeded
+`recipe` commands printed by `wizard`/`fourier`, √χ²ᵣ-scaled errors and a
+multi-component warning in `trend --model`, and skill text (a single-component
+`--param`; report a poor-χ²ᵣ law with its caveat; one negative run is not a
+negative folder; no invented units).
+
+#### Pass 5 — 2026-09-24, two repeats
+
+| Dataset | 5a | 5b |
+|---|---|---|
+| plateau-redfield | fail (no Redfield: read the LF scan as decoupling a static field) | pass |
+| sn-critical-field | pass | pass |
+| euo-psi | fail (number rule: "~14 %", count ratios) | fail (number rule: MHz → G by hand) |
+| maleic-mu-kinetics | fail (number rule: ratios, "17 K hotter") | fail (number rule: setpoint offsets; "0.5 %" unit) |
+
+Physics Musts held in 6/8 — Sn passed twice for the first time, both runs
+seeding their recipes from the survey's new `other@<MHz>` lines and fitting
+H_c(T) with `OrderParameter` (α=2, β=1). Four of the five failures were hand
+arithmetic in the prose; the skill's rule, buried in section 6, had not moved
+that behaviour in two passes. Changes: Step 7 becomes an explicit number audit
+naming the usual offenders; the survey's `TEMPERATURE:` line prints the
+offsets agents were computing; `trend --model` leads with the √χ²ᵣ-scaled
+error; the multi-component warning (a false positive on the Mu/diamagnetic
+pair) becomes a note that distinguishes species from split rates; the wizard
+stops listing sub-cycle leakage lines (still present in its payload); the LF
+cue in the class table no longer depends on `prec none`. Rubric wording
+fixed where a Must was unverifiable from a summary (EuO loader path) or too
+narrow (plateau 9031–9034), and the README now states that arithmetic on
+printed values counts under the number rule, as pass 4 already applied it.
+
+#### Pass 6 — 2026-09-24, two repeats
+
+| Dataset | 6a | 6b |
+|---|---|---|
+| plateau-redfield | pass | pass |
+| sn-critical-field | fail (number rule "~3 %"; no H_c(T) — recipe seeded the whole asymmetry into the line and it collapsed) | fail (discarded the logged column after one min–max offset range hid the 6 K block; MHz → G, σ by hand) |
+| euo-psi | fail (paramagnetic rates from runs still precessing; "critical slowing" after CriticalDivergence failed) | pass |
+| maleic-mu-kinetics | pass | fail (no concentration axis; source of concentrations unstated) |
+
+Plateau now passes 6 of its last 8 runs. The Step 7 audit as text still let
+arithmetic through, so it became a tool: every command logs its printed output
+to `<workdir>/cli-output.log`, and `asymmetry audit draft.md` lists the numbers
+no command printed (a multiple or σ must match verbatim). Also: the survey's
+`TEMPERATURE:` line lists consecutive blocks with offsets (relative threshold
+1 %, which catches the 5–8 K maleic offsets at 300 K and flags nothing
+spurious across the corpus); `trend --model` prints `LAW NOT ESTABLISHED`
+when the fit failed, hit a bound or left an error as large as its value; skill
+text splits a transition at the last unflagged ordered run and sets a weak
+line's amplitude and background explicitly.
+
+#### Pass 7 — 2026-09-24, two repeats (first with `asymmetry audit`)
+
+| Dataset | 7a | 7b |
+|---|---|---|
+| plateau-redfield | fail (no Redfield: trended without `--model`) | fail (Redfield fitted in summary.md, dropped from the reply) |
+| sn-critical-field | pass | pass |
+| euo-psi | fail (no ZF internal field) | fail (no ZF internal field; no paramagnetic rate) |
+| maleic-mu-kinetics | fail (untreated water as the blank) | fail (same; an audit-flagged number restored in the reply) |
+
+Every run ran `audit` and ended with a clean `summary.md`, but the scored
+reply was a fresh recap. Sn is now robust (both runs: `OrderParameter`
+α=2, β=1 against logged temperature, 8 K block excluded). No EuO run found the
+ordered-state line: the survey never searched zero-field runs. Both maleic
+runs avoided the deoxygenated blank after the `TEMPERATURE:` line asserted it
+was "not at its setpoint" — its block logs +17 to +25 K, including a neat
+aqueous sample at 375 K, which points to the sensor. Changes: the survey
+searches ZF runs for spontaneous precession (EuO 30.2 → 5.5 MHz then `none` at
+T_c; nickel; the molecular AFM; nothing in paramagnetic, KT or F–μ–F runs);
+the `TEMPERATURE:` line asks the agent to decide which to trust per block;
+`LAW NOT ESTABLISHED` also for missing or zero errors; `trend` without
+`--model` points at Step 6a; skill: the reply is `summary.md` as audited, the
+Mu blank is the run noted deoxygenated.
+
+#### Pass 8 — 2026-09-24, two repeats
+
+| Dataset | 8a | 8b |
+|---|---|---|
+| plateau-redfield | fail (no Redfield) | fail (full analysis in summary.md; one-line reply) |
+| sn-critical-field | pass | fail (dismissed the survey's falling line after failed time-domain fits) |
+| euo-psi | pass | fail (number rule: derived percentages) |
+| maleic-mu-kinetics | fail (k_Mu fitted in summary.md; one-line reply) | fail (declined k_Mu over block temperature offsets) |
+
+The ZF search worked: both EuO runs got the order parameter right (Tc
+69.76 ± 0.12 K in 8b). Three of six failures were delivery — agents read
+their audited `summary.md` with a tool and replied with one line, taking the
+tool call for the reply. Changes: the skill says the user sees only the final
+message, which must be the summary text; `audit`'s clean pass says the same;
+`audit` lists whole-number percentages and "factor of" ratios not printed
+verbatim; `trend` without `--model` names the law for its axis and parameters
+(Redfield on a field-ordered rate, with a warning on a split rate;
+OrderParameter on a frequency; Linear on a supplied axis); skill: a caveat is
+not a reason to withhold a fitted result.
+
+#### Pass 9 — 2026-09-24, two repeats
+
+| Dataset | 9a | 9b |
+|---|---|---|
+| plateau-redfield | pass | fail (shared the rate over a 17-field scan with `fit-global`) |
+| sn-critical-field | fail (took the setpoint axis against the logged evidence) | pass |
+| euo-psi | pass | pass (though it called the survey's cold-run lines "aliases") |
+| maleic-mu-kinetics | fail (Arrhenius per sample; no concentration fit) | fail (reported, then withdrew, the converged slope) |
+
+Every dataset now passes some of the time (≈50 % each since pass 5, maleic
+lower). The reply-delivery fix held: no one-line replies. Changes: a
+`survey_line_mhz` column beside fitted frequencies in `fit-series` trends; a
+note when a series is ordered by the setpoint while the logged temperature
+departs; a note when `fit-global` shares a rate over a many-field scan; a
+converged poor-χ²ᵣ law says it is the result; skill text separating a
+decoupling triplet from a field scan and making the logged temperature the
+default axis; maleic rubric M3/M4 wording (matched setpoints; a caveated slope
+counts, a withdrawn one does not).
+
+#### Pass 10 — 2026-09-24, two repeats
+
+| Dataset | 10a | 10b |
+|---|---|---|
+| plateau-redfield | pass | fail (screened the ZF end; chained fits with A_1 = 143 % made a spurious λ(B) "peak") |
+| sn-critical-field | pass | pass |
+| euo-psi | pass | pass |
+| maleic-mu-kinetics | fail (number rule: "3.5-fold") | fail (withdrew the converged k_Mu slope a third time) |
+
+5/8, the best so far. Over the last four runs: EuO 4/4, Sn 3/4, plateau 2/4,
+maleic 0/4. Changes: `fit`/`fit-series` flag `amplitude_exceeds_data` when the
+fitted amplitudes sum past three times the record's early-time |A| (robust to
+precession); `audit` lists "-fold" and "N times"; `trend --model Linear` on a
+supplied axis states that the slope is the rate constant to report; skill: a
+sensor-trust decision holds everywhere those runs are used, and a scan is
+screened mid-range, not at its zero-field end.
+
+#### Pass 11 and a generalisation wave — 2026-09-24
+
+| Dataset | 11a | 11b |
+|---|---|---|
+| plateau-redfield | fail (stated a fit range it did not fit) | pass |
+| sn-critical-field | pass | pass |
+| euo-psi | pass | pass |
+| maleic-mu-kinetics | fail (number rule: hand-computed "~7–14 % errors") | fail (withdrew the converged slope, citing temperatures from a sensor it had judged faulty) |
+
+Over the last six runs: EuO 6/6, Sn 5/6 (reliable); plateau ≈ 50 %; maleic
+0/6, each failure now a single sentence.
+
+Generalisation wave (one run each, same skill text): **Tier A 4/4 pass**
+(nickel, PTFE, YMnAl, cuprate — no regression), hold-outs **molecular AFM
+pass**, **copper fail** (TF line shape never compared; a low-T upturn in the
+ZF hop rate narrated away and an Arrhenius law fitted across it). Additions
+that helped: ZF `other@` lines (nickel, molecular AFM), the audit (nickel,
+copper), `amplitude_exceeds_data` (nickel). That hurt: `LAW NOT ESTABLISHED`
+on an undetermined nuisance prefactor (lost YMnAl's T_g = 84.4 ± 1.6 K), and
+"it is the result" on a cuprate fit with scaled errors larger than its values
+(judged on unscaled errors). Fixed: the law verdict uses scaled errors of the
+physical parameters only; the report gives the fitted span, units and a
+turning-point note; `amplitude_exceeds_data` at 1.5×; skill rows for spin
+glass (freezing at the A(0) collapse), TF line shape for hopping, and
+quadrupolar level crossings.
+
+**Environment note.** The eval copies (~4 GB in the scratchpad) pushed the
+system disk to 93 % and iCloud offloaded ~2,200 corpus files ("dataless",
+reading as empty). The scratch copies were deleted and the runner now refuses
+a copy shorter than its source; some target files stayed offloaded.
+
+#### Pass 12 — 2026-09-24, two repeats
+
+| Dataset | 12a | 12b |
+|---|---|---|
+| plateau-redfield | pass | pass |
+| sn-critical-field | fail (number rule: a hand-summed A(0) the audit matched to a logged time bin) | fail (no falling frequency: the wizard's line hint replaced the model and the fit fell to a 0.025 MHz branch) |
+| euo-psi | pass | pass |
+| maleic-mu-kinetics | pass | pass |
+
+6/8, the best pass; maleic passed both runs for the first time (k_Mu reported
+with a caveat in both). Changes: the wizard's line hint adds the line to the
+recommended model with a small amplitude; `frequency_unresolved` flags a free
+frequency under two cycles in the informative window; `audit` ignores bulk
+arrays in the log and its success message asks for the text with no preface
+(all eight replies had opened "Clean audit"); skill: a line the survey tracks
+along a scan is a measurement to quote.
+
+#### Pass 13 — 2026-09-24, two repeats
+
+| Dataset | 13a | 13b |
+|---|---|---|
+| plateau-redfield | pass | pass |
+| sn-critical-field | pass (Must 3 met by quoting the survey's line run by run) | fail, judgement (called the logged 8 K block a sensor fault) |
+| euo-psi | pass | fail, judgement ("critical slowing down" after three CriticalDivergence fits printed LAW NOT ESTABLISHED) |
+| maleic-mu-kinetics | fail, borderline (the converged slope downgraded to "qualitative") | pass |
+
+5/8 strictly, 8/8 leniently. Passes 12–13 combined: plateau 4/4, EuO 3/4,
+maleic 3/4, Sn 1/4. No reply opened with the audit any more. The failures are
+guidance the tools already print being overridden, so the next changes turn
+two of them into mechanism: the wizard writes recipe `line-<run>` (the
+recommendation plus a detected line it does not fit, amplitude started small;
+on Sn 91516 it fits the line at 1.902 ± 0.012 MHz with amplitude
+0.36 ± 0.07 %), and `audit` lists a law's vocabulary when every logged fit of
+that law printed `LAW NOT ESTABLISHED`.
+
+#### Pass 14 — 2026-09-24, two repeats
+
+| Dataset | 14a | 14b |
+|---|---|---|
+| plateau-redfield | pass | fail (left the two-rate series for a flagged stretched one, then fitted no law) |
+| sn-critical-field | pass (Tc 3.511 ± 0.038 K against logged T) | fail (called the 8 K block a sensor fault) |
+| euo-psi | pass | fail, judgement ("consistent with critical slowing" from fits it flagged unresolved) |
+| maleic-mu-kinetics | fail, judgement (a hand-computed "1–2σ" agreement) | pass |
+
+Passes 12–14: plateau 5/6, EuO 4/6, maleic 4/6, Sn 2/6. A general trap found:
+three runs used `reduce --tmax 2` to zoom a plot, which cut the stored
+reduction every later command reads. Changes: `reduce --plot-tmax` zooms the
+PNG only; `wizard`/`fit`/`fit-series` note runs reduced to a window;
+`fit-series` ends with the `trend` step; the two-rate hint names
+`Exponential + Constant`; `audit` treats "N combined/standard errors" as
+derived; skill text on the stored window, on a missing expected signal as
+evidence for the logged temperature, and that flagged fits carry no physics.
+
+#### Pass 15 — 2026-09-24, two repeats (three runs voided)
+
+| Dataset | 15a | 15b |
+|---|---|---|
+| plateau-redfield | void (API outage mid-run, on track) | pass |
+| sn-critical-field | void (API outage; had fitted `line-91516` and was trending on logged T) | fail (a 120 s wizard went to the background and the agent ended its turn) |
+| euo-psi | void (API outage) | fail, judgement (no paramagnetic λ(T): the ordered recipe was carried above T_c) |
+| maleic-mu-kinetics | pass | pass |
+
+An `ENOTFOUND` API outage cut three sessions at the same moment; those runs
+are infrastructure, not skill, results. `--plot-tmax` was used for every zoom
+and no run cut its stored reduction. Changes: skill text on long commands
+(shell timeout of minutes, no `| tail`, never end a turn with a command in the
+background) and on fitting the paramagnetic side of a transition with a
+relaxation-only recipe to report λ(T); maleic Known traps (78251's title/notes
+conflict; Arrhenius on λ_Mu is not the reaction Ea).
+
+#### Where the night's loop ended — 2026-09-24 10:00
+
+Passes 12–15 on the current tooling (voids excluded): plateau 6/7, maleic
+6/8, EuO 4/7, Sn 2/7; the generalisation wave passed Tier A 4/4 and one of two
+hold-outs. EuO and maleic failures are now mostly a single sentence of
+interpretation; Sn remains the hard case — its signal is ~0.3 % against a
+~20 % background, and it now has a working path (survey `other@` lines,
+`line-<run>` recipe, `OrderParameter` against logged T) that about half the
+runs follow. What moved the numbers most were CLI changes that put evidence
+or the next step in front of the agent (ZF spontaneous-line search, survey
+`other@<MHz>`, `audit`, the scan-specific `trend` hints, `line-<run>`), not
+additional skill text; skill text alone rarely changed behaviour across passes.
+
+#### Generalisation wave 2 — 2026-09-24, on the pass-15 tooling
+
+Host: Claude Code, `sonnet`, `run_wave.py --set tier-a` and `--set hold-out`,
+scored by one scoring subagent per wave with `scoring_brief.md`.
+
+| Dataset | Verdict |
+|---|---|
+| ferromagnetic-nickel | pass |
+| fmuf-ptfe | pass |
+| spin-glass-ymnal | pass |
+| high-tc-cuprate | pass (a judgement concern: a low-T σ turnover at 200 G read as physics while the chain may follow another line) |
+| molecular-antiferromagnet | pass (paramagnetic ν(T) fitted with a relaxation-only series, as the pass-15 skill text asks) |
+| copper-diffusion | fail (TF line shape never compared, as in pass 11; unprinted differences "within about 2 G") |
+
+Tier A holds at 4/4 with no regression from passes 11–15; the molecular AFM
+passes again; copper fails on the same Must as in pass 11. Copper's root
+causes are general: `fit-series` carried one envelope through each TF scan,
+so no output could show a change of shape, and `trend` then called the
+applied-field precession frequency "an order parameter"; the survey put an
+unlabelled longitudinal point of the 40 K field scan into each TF
+temperature scan; `audit` matched the bare "2" of "within about 2 G" and the
+"~2" of "a factor of ~2". The EMU upturn was handled (the turning-point note
+led to a split fit) but the ARGUS one was not. In Tier A all three nickel
+`OrderParameter` fits printed `FAILED` with Tc ≈ 357.7 K and β ≈ 0.38: over
+320–356 K the shape exponent α trades off against y0, and Minuit exhausts its
+calls; α fixed at 1 converges (Tc 357.74 K, β 0.387). YMnAl withheld a
+determined T_g because ν was not.
+
+A first pass-16 wave was voided: every session ended "Request timed out" at
+the same moment (as in pass 15).
+
+#### Pass 16 — 2026-09-24, reliability repeats on the pass-15 tooling
+
+| Dataset | 16a | 16b |
+|---|---|---|
+| plateau-redfield | pass (free-m Redfield gave m = −1.55, printed as "determined") | fail, harness (turn ended with a wizard in the background) |
+| sn-critical-field | pass (Tc 3.488 ± 0.013 K against logged T; the 6 K block kept as real) | fail, harness (same) |
+| euo-psi | fail, judgement (no ZF paramagnetic λ: the ordered recipe ran over all 38 ZF runs and the 16 lineless warm runs were excluded, not refitted) | pass (a relaxation-only ZF series above T_c) |
+| maleic-mu-kinetics | pass (k_Mu slope with a caveat; but Arrhenius on λ_Mu read as a reaction Ea — the Should-level trap) | pass (declined Arrhenius without k_Mu at more temperatures) |
+
+In 16a two runs hit the shell's 120 s default on `wizard`/`fit-series` and
+recovered by polling. In 16b polling was refused (`sleep` blocked, command
+substitution denied), both agents left the wizard in the background and ended
+their turn, and the headless session ended with it — the pass-15b Sn failure
+again. An interactive session is woken when the command finishes, so these
+are harness results; they are scored as fails to stay comparable with 15b.
+One agent read "a shell timeout" as the `timeout` command, which macOS lacks.
+The EuO 16a failure is the pass-15b one: the skill text on fitting the
+paramagnetic side was in context and not acted on, while the output showed
+only flags and the `OrderParameter` hint.
+
+Passes 12–16 on the pass-15 tooling (voids excluded): plateau 7/9, maleic
+8/10, EuO 5/9, Sn 3/9; counting the three background-job endings as void,
+plateau 7/8 and Sn 3/8.
+
+Changes after pass 16 (from these two waves and generalisation wave 2, all
+general, none dataset-specific):
+
+- `fit-series` weighs the other relaxation envelope on every converged run of
+  a single-envelope recipe (Gaussian ↔ Exponential, same parameter count) and
+  reports an `envelope` column; `fit-series` and `trend` note a change of shape
+  along the scan (copper's ARGUS TF scan: Gaussian at 56 K, exponential from
+  103 K).
+- `fit-series` names a block of lineless, badly described runs at one end of
+  a precession scan as the other side of a transition and prints the
+  relaxation-only `recipe`/`fit-series` commands for exactly those runs (EuO's
+  16 paramagnetic ZF runs; nickel's paramagnetic ZF runs; Sn above T_c).
+- `trend` no longer calls a frequency held within 10 % "an order parameter";
+  a law not established names its next step (`--fix alpha=1` for
+  `OrderParameter`, `--fix m=2` for `Redfield`, and a non-positive free `m` is
+  itself not established; otherwise hold the undetermined parameters and
+  report the determined ones).
+- `survey` names a line-free run of a mostly-TF temperature scan that also
+  sits in a field scan with no transverse line (only copper's 20898 and 76942
+  across all 16 rubric folders).
+- `audit` always lists numbers after difference phrases ("within about 2 G",
+  "differ by") and hedged ratios ("a factor of ~2").
+- Harness: `run_eval.py` sets ten-minute shell timeouts; the skill names the
+  shell tool's timeout parameter.
+
+#### Pass 17a — 2026-09-24, first run on the post-pass-16 tooling
+
+| Dataset | 17a |
+|---|---|
+| plateau-redfield | pass (Redfield `--fix m=2` over 3–38 kG: D 27.50 ± 0.29, ν 174 ± 7 MHz) |
+| sn-critical-field | fail, judgement (called the logged 8 K block a sensor fault — the 13b/14b failure) |
+| euo-psi | fail, number rule (run durations subtracted by hand from `info` start/stop stamps; all Musts met, paramagnetic side fitted) |
+| maleic-mu-kinetics | pass (k_Mu at 278 and 298 K; Arrhenius declined for want of temperatures) |
+| copper-diffusion | fail (TF scans filed as "calibration only" and never fitted, so the envelope check never ran on them) |
+| molecular-antiferromagnet | pass (`OrderParameter` failed free, converged with `--fix alpha=1` as the new Next step said) |
+
+Records, passes 12–17a (voids excluded): plateau 8/10, maleic 9/11, EuO
+5/10, Sn 3/10; molecular AFM 3/3 and copper 0/3 across the generalisation
+runs. No turn ended with a command in the background, though agents still
+set their own 60–300 s timeouts.
+
+What the new outputs did: the audit's difference phrases fired in every run
+and were acted on; `--fix alpha=1` rescued the molecular AFM's T_c; the
+survey named copper's stray LF runs. What misfired, to fix next (all CLI):
+
+- **The lineless-end note fired falsely on Sn** (91526–91529), because a
+  free Gaussian width absorbed the weak line; with σ held those runs carry
+  H_c lines. It should first propose holding the envelope width from the start
+  run, and skip runs sitting at the applied field's Larmor frequency.
+- **The envelope note assumes a temperature axis.** On copper's LF field
+  scan it called a decoupled static Kubo–Toyabe "motional narrowing"; on a
+  field axis a rate extremum should point at a level crossing and
+  `integral-scan`, not narrowing.
+- **`trend` accepts a law against the wrong axis**: Redfield fitted against
+  temperature (EuO) printed `Next: --fix m=2`. A free Redfield m of 52 was
+  printed as determined — a runaway exponent should not be.
+- **Calibration runs that are also a physics scan are never fitted**
+  (copper's TF scans): the survey could say so, and `audit` could list survey
+  scans with no series.
+- **Sn sensor-fault call (third time):** the survey could cross-check a
+  `TEMPERATURE:` block against the line evidence — a block that loses the
+  line another block shows at the same setpoint supports the logged value.
+- **`audit` matches bare numbers anywhere in the log**, so hand-computed
+  durations ("27 minutes") passed; `info` could print durations, and `audit`
+  could match a number with its unit.
+- An Arrhenius fit across a flat low-T plateau (copper ARGUS, χ²ᵣ 92) still
+  gets no plateau note.
+
+Paused here at the maintainer's request.
+
+#### Where evaluation stands — handoff, 2026-09-24
+
+Host Claude Code, model `sonnet`, one run per case per wave, scored against the
+rubrics with `scoring_brief.md`. Counts exclude voids (API outages).
+
+| Case | Set | Record | Window | Typical failure now |
+|---|---|---|---|---|
+| plateau-redfield | trend-fit | 8/10 | passes 12–17a | harness: a wizard left in the background (16b); otherwise passes |
+| maleic-mu-kinetics | trend-fit | 9/11 | passes 12–17a | a sentence of interpretation (a withdrawn or hand-derived number) |
+| euo-psi | trend-fit | 5/10 | passes 12–17a | the paramagnetic side not fitted on its own (16a), number rule (17a) |
+| sn-critical-field | trend-fit | 3/10 | passes 12–17a | calls the logged 8 K block a sensor fault (13b, 14b, 17a); harness (16b) |
+| ferromagnetic-nickel | Tier A | 2/2 | pass 11, wave 2 | — (all `OrderParameter` fits failed in wave 2; now `--fix alpha=1`) |
+| fmuf-ptfe | Tier A | 2/2 | pass 11, wave 2 | — |
+| spin-glass-ymnal | Tier A | 2/2 | pass 11, wave 2 | — (withheld a determined T_g once) |
+| high-tc-cuprate | Tier A | 2/2 | pass 11, wave 2 | — (a low-T σ turnover over-read once) |
+| molecular-antiferromagnet | hold-out | 3/3 | pass 11, wave 2, 17a | — |
+| copper-diffusion | hold-out | 0/3 | pass 11, wave 2, 17a | TF line shape never reported; in 17a the TF scans were never fitted |
+
+Pass 17a is the only wave on the current tooling (commits after pass 16, plus
+the three corrections made before shipping: the envelope note names motional
+narrowing only on a temperature axis, the lineless-end note asks for a
+held-width refit first, and a law fitted against the wrong axis is noted
+with no `--fix` step offered). None of those corrections has been through a wave yet.
+
+Where the failures sit. **CLI gaps** (listed under pass 17a): calibration
+runs that are also a physics scan are never fitted, and no output says so; the
+survey's `TEMPERATURE:` line does not cross-check a block against the line
+evidence; `audit` matches bare numbers, so hand-computed durations pass;
+`info` prints no run duration; no plateau note for an activated law fitted
+across a flat low-T region; a runaway free Redfield `m` (52) is printed as
+determined. **Agent judgement** (follow-up, possibly model-limited): the Sn
+sensor-fault call against the printed `prec none` evidence; interpreting a
+caveated result as grounds to withhold it; not acting on skill text that the
+output does not repeat (the paramagnetic-side rule, long-command timeouts —
+agents still set 60–300 s themselves). **Harness**: whole-wave API outages
+(three waves voided so far); `run_eval.py` now sets ten-minute shell timeouts.
+
+To pick up: rerun `run_wave.py --set trend-fit --set hold-out` twice on the
+current tooling before changing anything, so the corrections above have a
+baseline; then the CLI gaps in the order listed.
+
 ### Things this loop found that are not skill problems
 
 Recorded here rather than fixed, because Phase 4 changes skill text only:
@@ -803,7 +1463,9 @@ Recorded here rather than fixed, because Phase 4 changes skill text only:
   dipolar coupling. Either the CLI should emit ω_D as a derived quantity or
   the rubric should say "coupling".
 - **`survey` prints one temperature column**, so the `fmuf-ptfe` Should about
-  the sample-temperature column and its uncertainty is unreachable.
+  the sample-temperature column and its uncertainty is unreachable. (Since
+  2026-09-23 it also prints the logged sample temperature, `T log/K`, where
+  the file records one; the uncertainty is still not shown.)
 - **`alpha` takes no `--workdir`**, unlike every other command. Harmless, but
   the skill has to say so.
 

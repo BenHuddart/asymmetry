@@ -33,11 +33,13 @@ result records which source decided.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.component_tags import geometry_from_field_direction
+from asymmetry.core.fitting.composite import COMPONENTS
 from asymmetry.core.fitting.fit_wizard import (
     build_fit_wizard_recommendation,
     serialize_fit_wizard_recommendation,
@@ -121,6 +123,9 @@ class ScreenResult:
     geometry: str | None
     geometry_source: str
     scope_preset: str
+    #: Components added to and dropped from the preset's families.
+    scope_include: list[str]
+    scope_exclude: list[str]
     scope_note: str
     confidence: str
     verdict: str
@@ -142,6 +147,8 @@ class ScreenResult:
             "geometry": self.geometry,
             "geometry_source": self.geometry_source,
             "scope_preset": self.scope_preset,
+            "scope_include": list(self.scope_include),
+            "scope_exclude": list(self.scope_exclude),
             "scope_note": self.scope_note,
             "confidence": self.confidence,
             "verdict": self.verdict,
@@ -161,6 +168,8 @@ def screen_run(
     geometry: str | None = None,
     survey_geometry: str | None = None,
     scope_preset: str = WizardScopePreset.AUTO.value,
+    include: Iterable[str] = (),
+    exclude: Iterable[str] = (),
     run_number: int,
 ) -> ScreenResult:
     """Screen *dataset* against the wizard's candidate models.
@@ -168,11 +177,20 @@ def screen_run(
     *geometry* overrides the file's recorded field direction (``"ZF"``,
     ``"TF"`` or ``"LF"``); *survey_geometry* is what the folder's survey
     resolved for this run, used when the caller gives no override;
-    *scope_preset* is one of :data:`SCOPE_PRESETS`. Raises :class:`ValueError`
-    for a value outside either vocabulary — this is the boundary where that
-    vocabulary is checked.
+    *scope_preset* is one of :data:`SCOPE_PRESETS`. *include* and *exclude*
+    name time-domain components to add to or drop from the preset's families
+    (exclude wins). Raises :class:`ValueError` for a value outside any of these
+    vocabularies — this is the boundary where they are checked.
     """
     preset = WizardScopePreset(scope_preset)
+    include = frozenset(include)
+    exclude = frozenset(exclude)
+    unknown = sorted((include | exclude) - set(COMPONENTS))
+    if unknown:
+        raise ValueError(
+            f"Unknown component(s) {', '.join(unknown)}; the wizard's components are "
+            f"{', '.join(sorted(COMPONENTS))}."
+        )
     resolved_geometry, geometry_source = resolve_geometry(dataset, geometry, survey_geometry)
 
     # Hand the wizard the geometry this workflow resolved, not the file's raw
@@ -182,7 +200,10 @@ def screen_run(
         metadata["field_direction"] = resolved_geometry
     scoped = replace(dataset, metadata=metadata)
 
-    recommendation = build_fit_wizard_recommendation(scoped, scope=WizardScope(preset=preset))
+    recommendation = build_fit_wizard_recommendation(
+        scoped,
+        scope=WizardScope(preset=preset, include_components=include, exclude_components=exclude),
+    )
 
     comparable = set(recommendation.comparable_keys)
     candidates = [
@@ -211,6 +232,8 @@ def screen_run(
         geometry=resolved_geometry,
         geometry_source=geometry_source,
         scope_preset=preset.value,
+        scope_include=sorted(include),
+        scope_exclude=sorted(exclude),
         scope_note=recommendation.scope_note,
         confidence=recommendation.confidence.value,
         verdict=recommendation.verdict.value,

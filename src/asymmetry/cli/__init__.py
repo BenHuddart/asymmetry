@@ -3,7 +3,8 @@
 ``asymmetry <command>`` drives the scriptable façade in
 :mod:`asymmetry.core.workflow`, in the order an analysis runs: ``survey`` a
 folder of runs, measure ``alpha`` on a calibration run, ``reduce`` runs to
-asymmetry, screen one of them with the fit ``wizard``, ``fit`` a run or a whole
+asymmetry, screen one of them with the fit ``wizard`` (or write a ``recipe`` for the
+model the physics calls for), ``fit`` a run or a whole
 scan with ``fit-series``, and read the ``trend`` out of the result — plus
 ``skill`` to install this workflow as an agent skill, and the original
 ``info`` file summary. Every command takes ``--json``.
@@ -32,20 +33,26 @@ per occurrence — see :func:`_collapse_repeated_warnings`.
 from __future__ import annotations
 
 import argparse
+import io
 import multiprocessing as mp
+import shlex
 import sys
 import traceback
 import warnings
+from pathlib import Path
 
 from asymmetry import __version__
 from asymmetry.cli._output import UserError
+from asymmetry.cli._workdir import OUTPUT_LOG, WORKDIR_NAME
 from asymmetry.cli.commands import alpha as alpha_command
+from asymmetry.cli.commands import audit as audit_command
 from asymmetry.cli.commands import fit as fit_command
 from asymmetry.cli.commands import fit_global as fit_global_command
 from asymmetry.cli.commands import fit_series as fit_series_command
 from asymmetry.cli.commands import fourier as fourier_command
 from asymmetry.cli.commands import info as info_command
 from asymmetry.cli.commands import integral_scan as integral_scan_command
+from asymmetry.cli.commands import recipe as recipe_command
 from asymmetry.cli.commands import reduce as reduce_command
 from asymmetry.cli.commands import skill as skill_command
 from asymmetry.cli.commands import survey as survey_command
@@ -61,11 +68,13 @@ _COMMANDS = (
     reduce_command,
     integral_scan_command,
     wizard_command,
+    recipe_command,
     fit_command,
     fit_global_command,
     fit_series_command,
     trend_command,
     fourier_command,
+    audit_command,
     skill_command,
     info_command,
 )
@@ -87,6 +96,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Commands without a work directory still log their output to the default
+    # one (see _logged); a subcommand's own --workdir overrides this.
+    parser.set_defaults(workdir=None)
     subparsers = parser.add_subparsers(dest="command")
     for module in _COMMANDS:
         module.add_parser(subparsers)
@@ -138,13 +150,55 @@ def main(argv: list[str] | None = None) -> None:
     # line; anything else is a bug, so it prints the traceback and exits 2
     # rather than pretending the run succeeded.
     try:
-        args.func(args)
+        _logged(args, argv)
     except UserError as exc:
         print(f"asymmetry: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
     except Exception:
         traceback.print_exc()
         raise SystemExit(2) from None
+
+
+#: Commands whose output is not analysis output: the audit must not verify a
+#: summary against its own report, and the skill installer prints paths.
+_UNLOGGED = frozenset({"audit", "skill"})
+
+
+class _Tee(io.TextIOBase):
+    """Write to the real stdout and keep a copy."""
+
+    def __init__(self, stream) -> None:
+        self._stream = stream
+        self.copy = io.StringIO()
+
+    def write(self, text: str) -> int:
+        self.copy.write(text)
+        return self._stream.write(text)
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+
+def _logged(args: argparse.Namespace, argv: list[str] | None) -> None:
+    """Run the command, appending what it printed to its work directory's log.
+
+    The log is written only into a work directory that exists after the command
+    ran, so a stateless command run outside a project creates nothing.
+    """
+    if args.command in _UNLOGGED:
+        args.func(args)
+        return
+    tee = _Tee(sys.stdout)
+    sys.stdout = tee
+    try:
+        args.func(args)
+    finally:
+        sys.stdout = tee._stream
+    root = Path(args.workdir or WORKDIR_NAME)
+    if root.is_dir():
+        command = " ".join(shlex.quote(part) for part in (sys.argv[1:] if argv is None else argv))
+        with (root / OUTPUT_LOG).open("a", encoding="utf-8") as log:
+            log.write(f"$ asymmetry {command}\n{tee.copy.getvalue()}\n")
 
 
 if __name__ == "__main__":

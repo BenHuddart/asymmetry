@@ -71,7 +71,7 @@ for later reuse.
 - **Optional publication export**: export trend and plot data for GLE-based figure generation.
 - **Scripting and agents**: an `asymmetry` command-line workflow to survey, select acquisition
   periods, calibrate, reduce, inspect Fourier spectra, fit ALC/QLCR field scans, run true
-  simultaneous fits, and trend conventional scans, with headless plots and a `--json` payload on
+  simultaneous fits, and trend scans and fit physical laws to the trends, with headless plots and a `--json` payload on
   every command, plus a packaged `asymmetry-analysis` skill that lets an AI coding agent drive it.
 
 ## Installation

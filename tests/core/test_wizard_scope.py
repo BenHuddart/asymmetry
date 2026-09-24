@@ -244,7 +244,9 @@ def test_zero_field_override_via_dataset_wrapper():
 # --- fluorine sniff -----------------------------------------------------
 
 
-@pytest.mark.parametrize("sample", ["PbF2", "CaF2", "LiF", "NaF", "KTCNQF4 T=300.0 F=100.0"])
+@pytest.mark.parametrize(
+    "sample", ["PbF2", "CaF2", "LiF", "NaF", "KTCNQF4 T=300.0 F=100.0", "CaF2 TF20"]
+)
 def test_fluorine_sniff_positive(sample):
     _, _, note, _ = infer_auto_query("Zero field", None, sample)
     assert "fluorine" in note.lower()
@@ -262,6 +264,10 @@ def test_fluorine_sniff_positive(sample):
         "nickel_T=100_F=0",
         "Y(MnAl)2 T=75.0 F=110",
         "Teflon T=5.0 F=20.0",
+        # Geometry tokens in PSI and ISIS titles: a field, not a fluoride.
+        "EuO TF60G",
+        "EuO ZF",
+        "sample LF100",
     ],
 )
 def test_fluorine_sniff_negative(sample):

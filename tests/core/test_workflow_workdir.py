@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -336,3 +337,46 @@ def test_a_series_payload_is_stamped_and_read_back(reduced) -> None:
     assert workdir.series_names() == ["scan"]
     with pytest.raises(KeyError, match="No series"):
         workdir.read_series("missing")
+
+
+def _restamp(path: Path, schema: int) -> None:
+    """Rewrite a stored JSON document as if an older asymmetry had written it."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["schema"] = schema
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_a_reduced_run_from_an_older_schema_is_refused_until_reduced_again(reduced) -> None:
+    workdir, dataset, entry, _path, _grouping, _settings = reduced
+    workdir.write_reduced(dataset, entry)
+    _restamp(workdir.reduced_dir / f"{entry.run_number}.json", SCHEMA - 1)
+
+    with pytest.raises(KeyError, match="reduced .* by an older asymmetry"):
+        workdir.reduced(entry.run_number)
+
+
+def test_the_digest_folds_in_the_schema(reduced, monkeypatch) -> None:
+    from asymmetry.core.workflow import workdir as workdir_module
+
+    _workdir, _dataset, entry, path, grouping, settings = reduced
+    monkeypatch.setattr(workdir_module, "SCHEMA", SCHEMA - 1)
+    older = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+    assert older != entry.digest
+
+
+def test_a_series_from_an_older_schema_is_refused(reduced) -> None:
+    workdir, _dataset, _entry, _path, _grouping, _settings = reduced
+    workdir.write_series("scan", {"name": "scan", "results": []})
+    _restamp(workdir.series_path("scan"), SCHEMA - 1)
+
+    with pytest.raises(KeyError, match="Series 'scan' was written by an older asymmetry"):
+        workdir.read_series("scan")
+
+
+def test_a_reduced_run_records_the_logged_sample_temperature_beside_the_setpoint(
+    reduced,
+) -> None:
+    _workdir, _dataset, entry, _path, _grouping, _settings = reduced
+    # The simulated files log no sample temperature; the field is present and empty.
+    assert entry.run["sample_temperature_logged"] is None
+    assert entry.run["temperature"] == 10.0
