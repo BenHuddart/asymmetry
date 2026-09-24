@@ -154,7 +154,9 @@ comparison in another. A block sitting at a different temperature from its neigh
 different measurement, not a faulty thermometer to ignore. A steady offset the
 sample could not have had — a liquid logged above its boiling point, a
 cryostat base temperature below what the setpoint allows — points to the
-sensor, and then the setpoint is the better axis. The `scans` block still groups them by
+sensor, and then the setpoint is the better axis. The data can settle it: a
+signal missing where the setpoint predicts one (a line that should be there
+below a transition) is evidence that the logged temperature is the real one. The `scans` block still groups them by
 setpoint, so take its temperature scans as provisional: order those series by
 `sample_temperature_logged`, split off runs that sit far from the rest, and
 quote logged temperatures in the summary.
@@ -249,10 +251,12 @@ asymmetry reduce <folder> --runs 102-107 --alpha-from 101 --deadtime from_file -
   them with the Read tool — the lowest-temperature, the highest, and one in the
   middle. That is how you learn whether there is an oscillation, a Kubo–Toyabe
   dip, or featureless relaxation, before any model is chosen.
-- `--tmax` trims a noisy tail; `--rebin k` merges bins. Both are available on
-  `reduce`, and `wizard`, `recipe`, `fit` and `fit-series` also take
-  `--tmin`/`--tmax` per screen or fit (a wizard window is kept in the recipe
-  it writes).
+- `reduce --tmin/--tmax` **cut the stored reduction** every later command
+  reads — the wizard and every fit then see only that window. To zoom a plot,
+  use `reduce --plot --plot-tmax 2`, which leaves the record whole. To restrict
+  one screen or fit, pass `--tmin`/`--tmax` to `wizard`, `recipe`, `fit` or
+  `fit-series` instead (a wizard window is kept in the recipe it writes).
+  `--rebin k` merges bins.
 - `--period red`, `--period green` or `--period N` selects one acquisition
   period before calibration or reduction. For ISIS photo-μSR files the usual
   convention is red/light-ON and green/light-OFF, but confirm that against the
@@ -313,7 +317,7 @@ evidence, not a stamp:
 check otherwise. A **transverse** field precesses the muon at γ_μ/2π × B —
 13.55 kHz/G, so 20 G ≈ 0.27 MHz, 110 G ≈ 1.5 MHz, 400 G ≈ 5.4 MHz — a plainly
 visible oscillation filling the early-time window. No oscillation at that
-frequency means the field is longitudinal. (Use `reduce --tmax 2 --plot` to zoom
+frequency means the field is longitudinal. (Use `reduce --plot --plot-tmax 2` to zoom
 the early window if the full range is too compressed to judge.)
 
 Then pass the right `--geometry ZF|TF|LF` to `wizard` for every run you screen,
@@ -1158,6 +1162,11 @@ worked out in your head: a significance in σ, a percentage change, a ratio or a
 sum of two printed values. The evidence must be an `asymmetry` command's own
 output. If a useful derived quantity is not printed by the CLI, explain the
 qualitative relation and leave the number out.
+
+**Fits you flag do not carry physics.** A series whose runs are
+`frequency_unresolved` or `amplitude_exceeds_data`, or that you call unreliable
+yourself, supports no conclusion about the system — not even a qualitative
+one ("consistent with critical slowing"). Say what failed and why.
 
 **A law that did not fit does not get to tell the story.** When `trend
 --model` prints `LAW NOT ESTABLISHED` — it did not converge, a parameter sits at

@@ -244,7 +244,10 @@ def _law_hints(name: str, order_key: str, free_params: list[str]) -> list[str]:
         if len(siblings) > 1:
             hints.append(
                 f"  This series splits the rate between {', '.join(siblings)}: Redfield "
-                f"describes one rate, so refit the series with a single-rate recipe first."
+                f"describes one exponential rate, so refit the series first with "
+                f"asymmetry recipe <folder> --expression 'Exponential + Constant' --run <run> "
+                f"--name single-rate, then fit-series --recipe single-rate. Flags in that "
+                f"series are caveats on the law, not a reason to skip it."
             )
     if order_key in ("temperature", "sample_temperature_logged") and frequencies:
         hints.append(

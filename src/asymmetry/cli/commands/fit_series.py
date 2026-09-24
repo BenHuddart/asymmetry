@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 from pathlib import Path
 
 from asymmetry.cli._axis import add_axis_arguments, axis_from_arguments
@@ -15,7 +16,7 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._recipes import add_recipe_arguments, load_recipe, recipe_with_overrides
-from asymmetry.cli._runs import parse_run_spec, reduced_datasets
+from asymmetry.cli._runs import parse_run_spec, reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 
@@ -168,6 +169,13 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(outcome, series_path, plot_paths))
+    note = window_note(workdir, sorted(datasets))
+    if note is not None:
+        print(note)
+    print(
+        f"Next: asymmetry trend {shlex.quote(args.folder)} --series {name} — the trend "
+        f"table, and the law it calls for."
+    )
     if args.order == "temperature":
         from asymmetry.core.workflow.survey import departs
 

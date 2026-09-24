@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from asymmetry.cli._output import UserError, emit_json, format_number, payload, render_table
-from asymmetry.cli._runs import reduced_datasets
+from asymmetry.cli._runs import reduced_datasets, window_note
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 #: Candidates listed in the human-readable table.
@@ -160,6 +160,9 @@ def run(args: argparse.Namespace) -> None:
             args.folder, peaks, line_recipe, result, wizard_path, recipe_path, plot_path, plot_note
         )
     )
+    note = window_note(workdir, [args.run])
+    if note is not None:
+        print(note)
 
 
 def _spectral_lines(result, duration_us: float) -> tuple[list[dict], list[float]]:

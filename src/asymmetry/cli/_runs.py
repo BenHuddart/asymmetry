@@ -136,6 +136,32 @@ def reduced_datasets(workdir: WorkDir, runs: list[int]) -> dict[int, MuonDataset
         raise UserError(exc.args[0]) from None
 
 
+def window_note(workdir: WorkDir, runs: list[int]) -> str | None:
+    """A note naming runs whose stored reduction was cut to a time window, or ``None``.
+
+    ``reduce --tmin/--tmax`` trims what every later command sees, not just the
+    plot, so a window chosen to zoom on early precession silently starves the
+    wizard and the fits of the rest of the record.
+    """
+    windowed = sorted(
+        (run, workdir.entry(run).settings)
+        for run in runs
+        if workdir.entry(run).settings.t_min is not None
+        or workdir.entry(run).settings.t_max is not None
+    )
+    if not windowed:
+        return None
+    spans = {
+        f"{'start' if s.t_min is None else s.t_min}-{'end' if s.t_max is None else s.t_max} µs"
+        for _, s in windowed
+    }
+    return (
+        f"NOTE: run(s) {', '.join(str(run) for run, _ in windowed)} were reduced to a time "
+        f"window ({', '.join(sorted(spans))}), so this sees only that part of the record. "
+        f"Reduce again without --tmin/--tmax to use it all; --plot-tmax zooms a plot alone."
+    )
+
+
 def _range_text(runs: list[int]) -> str:
     if not runs:
         return "no runs"
@@ -145,6 +171,7 @@ def _range_text(runs: list[int]) -> str:
 
 
 __all__ = [
+    "window_note",
     "parse_run_spec",
     "reduced_datasets",
     "resolve_run",

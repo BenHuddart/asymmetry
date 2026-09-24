@@ -94,8 +94,8 @@ options:
 ```
 usage: asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FROM]
                         [--deadtime {off,from_file}] [--rebin REBIN] [--tmin TMIN]
-                        [--tmax TMAX] [--period RED|GREEN|N] [--plot] [--json]
-                        [--workdir WORKDIR]
+                        [--tmax TMAX] [--plot-tmax PLOT_TMAX] [--period RED|GREEN|N]
+                        [--plot] [--json] [--workdir WORKDIR]
                         folder
 
 positional arguments:
@@ -112,8 +112,13 @@ options:
                         Deadtime correction (default: off, matching the GUI's fresh-
                         run default)
   --rebin REBIN         Merge this many bins (default: 1)
-  --tmin TMIN           Discard points below this time/µs
-  --tmax TMAX           Discard points above this time/µs
+  --tmin TMIN           Discard points below this time/µs from the stored reduction
+                        every later fit uses
+  --tmax TMAX           Discard points above this time/µs from the stored reduction
+                        every later fit uses; to zoom the plot only, use --plot-tmax
+  --plot-tmax PLOT_TMAX
+                        Draw the reduced PNG only up to this time/µs; the stored
+                        reduction keeps it all
   --period RED|GREEN|N  Select one period from a multi-period file. The common two-
                         period labels are red (period 1) and green (period 2)
   --plot                Write plots/reduced-<run>.png for each run

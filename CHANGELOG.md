@@ -222,6 +222,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recommended model with a small starting amplitude — written as recipe `line-<run>` — instead
   of replacing the model; `audit` ignores bulk arrays in the logged output and lists the
   vocabulary of a trend law no logged fit established.
+- **`reduce --plot-tmax` zooms the PNG without cutting the stored reduction**, and `wizard`,
+  `fit` and `fit-series` note runs whose stored reduction was cut by `reduce --tmin/--tmax`
+  (a plot zoom had been silently starving later fits of the record). `fit-series` ends with the
+  `trend` step; the two-rate hint names the single-rate recipe to refit with.
 
 ### Changed
 

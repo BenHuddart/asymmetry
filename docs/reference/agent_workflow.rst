@@ -373,8 +373,9 @@ directory.
 
    asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FROM]
                     [--period RED|GREEN|N] [--deadtime {off,from_file}]
-                    [--rebin REBIN] [--tmin TMIN]
-                    [--tmax TMAX] [--plot] [--json] [--workdir WORKDIR]
+                    [--rebin REBIN] [--tmin TMIN] [--tmax TMAX]
+                    [--plot-tmax PLOT_TMAX] [--plot] [--json]
+                    [--workdir WORKDIR]
                     folder
 
 ``--runs`` takes ranges and commas (``102-107``, ``102-105,107``).
@@ -387,6 +388,11 @@ default is ``off``, matching the GUI's fresh-run default. Writes
 ``plots/reduced-<run>.png`` per run with ``--plot``. Results are cached on a
 digest of the source file, the grouping and the reduction settings, so
 re-running ``reduce`` on unchanged runs is cheap.
+
+``--tmin``/``--tmax`` cut the *stored* reduction, so every later ``wizard``,
+``fit`` and ``fit-series`` sees only that window, and each of those commands
+ends with a note naming runs reduced that way. To zoom the reduced PNG on early
+precession without cutting the record, use ``--plot-tmax``.
 
 ``--period red``, ``--period green`` or ``--period N`` selects one period
 before alpha calibration and reduction. The choice is part of the cache

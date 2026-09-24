@@ -1672,3 +1672,41 @@ def test_a_trend_law_is_judged_on_its_physical_parameters_and_scaled_errors() ->
     assert "LAW NOT ESTABLISHED" in text
     assert "nu's scaled error" in text
     assert "Tc's scaled error" not in text
+
+
+def test_a_fit_on_a_windowed_reduction_says_so_and_plot_tmax_keeps_the_record(
+    workflow_folder: Path, tmp_path: Path, capsys
+) -> None:
+    from asymmetry.core.workflow.recipe import FitRecipe
+    from asymmetry.core.workflow.workdir import WorkDir
+
+    workdir = tmp_path / "wd"
+    run = SCAN_RUNS[0]
+    base = ["reduce", str(workflow_folder), "--runs", str(run), "--workdir", str(workdir)]
+    cli.main([*base, "--plot-tmax", "2", "--plot"])
+    full = WorkDir(workdir).reduced(run).n_points
+    assert WorkDir(workdir).entry(run).settings.t_max is None
+
+    cli.main([*base, "--tmax", "2"])
+    assert WorkDir(workdir).reduced(run).n_points < full
+    WorkDir(workdir).write_recipe(
+        "relax",
+        FitRecipe.from_expression("Exponential + Constant", dataset=WorkDir(workdir).reduced(run)),
+    )
+    capsys.readouterr()
+    cli.main(
+        [
+            "fit",
+            str(workflow_folder),
+            "--run",
+            str(run),
+            "--recipe",
+            "relax",
+            "--workdir",
+            str(workdir),
+        ]
+    )
+    assert (
+        f"NOTE: run(s) {run} were reduced to a time window (start-2.0 µs)"
+        in capsys.readouterr().out
+    )
