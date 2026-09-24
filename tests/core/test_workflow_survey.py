@@ -351,6 +351,30 @@ def test_a_zero_field_run_beside_one_field_run_is_not_a_field_scan() -> None:
     assert scans[0].values == pytest.approx([0.0, 100.0, 2000.0])
 
 
+def test_a_line_free_point_of_a_longitudinal_field_scan_is_named_in_a_tf_scan() -> None:
+    tf = [
+        _row(run_number=run, temperature=t, field=100.0, geometry="TF", geometry_source="measured")
+        for run, t in ((1, 100.0), (2, 250.0), (3, 280.0))
+    ]
+    # A decoupling scan at 40 K whose 100 G point lands in the 100 G TF scan.
+    lf = [
+        _row(run_number=run, temperature=40.0, field=b, geometry=None, geometry_source="refuted")
+        for run, b in ((10, 50.0), (11, 80.0), (12, 100.0))
+    ]
+    scan = next(s for s in _scan_groups(tf + lf) if s.axis == "temperature")
+    assert scan.runs == [12, 1, 2, 3]
+    assert "run 12 also belongs to a field scan with no transverse line" in scan.geometry_note
+
+    # In a grid of fields by temperatures every run is in both kinds of scan,
+    # and most runs resolve no line: nothing is singled out.
+    grid = [
+        _row(run_number=10 * i + j, temperature=t, field=b, geometry=None)
+        for i, t in enumerate((2.0, 3.0, 4.0))
+        for j, b in enumerate((20.0, 40.0))
+    ]
+    assert all("also belong" not in s.geometry_note for s in _scan_groups(grid))
+
+
 def test_two_instruments_in_one_folder_never_share_a_scan() -> None:
     rows = [
         _row(run_number=1, temperature=10.0, instrument="EMU"),

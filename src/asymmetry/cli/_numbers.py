@@ -10,7 +10,8 @@ printed value it rounds from — so a match says only that the number appears in
 some output, not that it is the right one. Numbers written as a multiple or a
 significance or a whole-number percentage (``10×``, ``4.3σ``, ``32 %``) are almost always
 arithmetic on printed values, so they match only when a command printed that
-exact token, and a number after "a factor of" is always listed.
+exact token, and a number after "a factor of" or a difference phrase ("agree to
+within 2 G", "differ by 0.6") is always listed.
 """
 
 from __future__ import annotations
@@ -29,8 +30,13 @@ _DERIVED_SUFFIX = re.compile(
     r"|\s?(?:standard|combined) errors?|\s?error bars?)(?![a-zA-Z])"
 )
 
-#: Phrases that make the number after them a ratio ("a factor of 3").
-_RATIO_PREFIX = re.compile(r"(?:factor of|times|fold)\s*$", re.IGNORECASE)
+#: Phrases that make the number after them a ratio ("a factor of ~3") or a
+#: difference ("within about 2 G", "differ by 0.6"), hedged or not.
+_DERIVED_PREFIX = re.compile(
+    r"(?:factor of|times|fold|within|differ(?:s|ed|ing)? by|apart by|offset by)"
+    r"\s*(?:about|roughly|approximately|around|some|~|≈)?\s*$",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -70,10 +76,11 @@ def unverified_numbers(draft: str, log_text: str) -> list[Unverified]:
     for line_number, line in enumerate(draft.splitlines(), start=1):
         for match in _NUMBER.finditer(line):
             token = match.group()
-            if _RATIO_PREFIX.search(line[: match.start()]):
-                found.append(Unverified(token, line_number, line.strip()))
-                continue
             suffix = _DERIVED_SUFFIX.match(line, match.end())
+            if _DERIVED_PREFIX.search(line[: match.start()]):
+                text = token if suffix is None else token + suffix.group()
+                found.append(Unverified(text, line_number, line.strip()))
+                continue
             # A decimal percentage ("A(0) 16.42 %") is a printed asymmetry in
             # its unit; a whole-number one ("32 %") is almost always a ratio.
             if suffix is not None and "%" in suffix.group() and "." in token:

@@ -205,7 +205,16 @@ def _render(
     if fit is not None:
         lines.extend(["", *_render_fit(fit, series["free_params"])])
     else:
-        lines.extend(["", *_law_hints(series["name"], trend.order_key, series["free_params"])])
+        from asymmetry.core.workflow.series import envelope_change
+
+        change = envelope_change(trend)
+        lines.extend(
+            [
+                "",
+                *([change] if change is not None else []),
+                *_law_hints(series["name"], trend, series["free_params"]),
+            ]
+        )
     if csv_path is not None:
         lines.extend(["", f"Trend written to {csv_path}"])
     if plot_paths:
@@ -221,13 +230,35 @@ _FREQUENCY_BASES = frozenset({"frequency", "freq", "B_int", "field"})
 _FILE_AXES = frozenset({"temperature", "sample_temperature_logged", "field", "run"})
 
 
-def _law_hints(name: str, order_key: str, free_params: list[str]) -> list[str]:
+#: A frequency whose values span less than this fraction of their median sits
+#: at a fixed field (the applied one) along the scan: not an order parameter.
+_HELD_FREQUENCY_SPREAD = 0.10
+
+
+def _held_frequency(trend, param: str) -> float | None:
+    """The median of *param* when it holds steady along the scan, else ``None``."""
+    import statistics
+
+    values = [
+        row[param]
+        for row in trend.rows
+        if row[param] is not None and not {"failed", "frequency_unresolved"} & set(row["flags"])
+    ]
+    if len(values) < 2:
+        return None
+    median = statistics.median(values)
+    return median if (max(values) - min(values)) < _HELD_FREQUENCY_SPREAD * abs(median) else None
+
+
+def _law_hints(name: str, trend, free_params: list[str]) -> list[str]:
     """Which trend law this series' axis and parameters call for (Step 6a).
 
     A field-ordered rate is the Redfield question and needs one rate; a
-    frequency against temperature is an order parameter; a rate against a
-    supplied quantity (a concentration) is a linear rate law.
+    frequency falling with temperature is an order parameter, one held steady
+    is the applied field's and leaves the relaxation as the physics; a rate
+    against a supplied quantity (a concentration) is a linear rate law.
     """
+    order_key = trend.order_key
     by_base: dict[str, list[str]] = {}
     for param in free_params:
         by_base.setdefault(re.sub(r"_\d+$", "", param), []).append(param)
@@ -250,10 +281,26 @@ def _law_hints(name: str, order_key: str, free_params: list[str]) -> list[str]:
                 f"series are caveats on the law, not a reason to skip it."
             )
     if order_key in ("temperature", "sample_temperature_logged") and frequencies:
-        hints.append(
-            f"A precession frequency against temperature is an order parameter: {command} "
-            f"OrderParameter --param {frequencies[0]} (fit below the transition)."
-        )
+        held = _held_frequency(trend, frequencies[0])
+        if held is None:
+            hints.append(
+                f"A precession frequency against temperature is an order parameter: {command} "
+                f"OrderParameter --param {frequencies[0]} (fit below the transition)."
+            )
+        else:
+            hints.append(
+                f"{frequencies[0]} holds at {format_number(held, 4)} MHz along the scan: the "
+                f"line follows a fixed field, not an order parameter. The physics is in the "
+                f"relaxation — its rate"
+                + (f" ({', '.join(rates)})" if rates else "")
+                + " and its shape"
+                + (
+                    ": see the envelope column, where fit-series compared a Gaussian and an "
+                    "exponential envelope run by run."
+                    if "envelope" in trend.columns
+                    else " (fit the series with a Gaussian and with an exponential envelope)."
+                )
+            )
     if order_key not in _FILE_AXES and rates:
         hints.append(
             f"A rate against a supplied {order_key} is a rate law: {command} Linear "
@@ -272,6 +319,15 @@ def _law_hints(name: str, order_key: str, free_params: list[str]) -> list[str]:
 #: CriticalDivergence ``a``/``c``, Linear's intercept ``b``): an undetermined
 #: one says nothing about whether the law's physical parameters are.
 _NUISANCE_BASES = frozenset({"a", "b", "c"})
+
+
+#: A law's shape exponent that points near its transition cannot fix, with the
+#: value to hold it at and what it sets. Near Tc the order parameter's
+#: (1 - (T/Tc)^alpha)^beta reduces to a power of (Tc - T) whatever alpha is, so
+#: alpha trades off against the prefactor y0 and the fit wanders.
+_SHAPE_EXPONENTS: dict[str, tuple[str, float, str]] = {
+    "alpha": ("OrderParameter", 1.0, "the curve's shape far below the transition"),
+}
 
 
 def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
@@ -339,6 +395,28 @@ def _render_fit(fit: dict[str, Any], free_params: list[str]) -> list[str]:
             f"LAW NOT ESTABLISHED ({'; '.join(reasons)}): {fit['expression']} does not describe "
             f"this trend. Describe the trend in plain words and do not use this law's physics."
         )
+        shapes = [
+            (name, value, meaning)
+            for name, (law, value, meaning) in _SHAPE_EXPONENTS.items()
+            if law in fit["expression"] and name in physical
+        ]
+        determined = [name for name in physical if name not in undetermined + pinned]
+        if shapes:
+            lines.append(
+                "Next: "
+                + "; ".join(
+                    f"{name} sets {meaning} — refit with --fix {name}={format_number(value, 3)}"
+                    for name, value, meaning in shapes
+                )
+                + ", and report the law with that value stated as fixed."
+            )
+        elif fit["success"] and determined and undetermined:
+            lines.append(
+                f"Next: {', '.join(determined)} {'is' if len(determined) == 1 else 'are'} "
+                f"determined and {', '.join(undetermined)} not. Hold "
+                f"{', '.join(undetermined)} at a textbook value with --fix and refit; then "
+                f"report {', '.join(determined)} with the fixed value stated."
+            )
     else:
         lines.append(
             "Converged, with its physical parameters determined: report them with the "

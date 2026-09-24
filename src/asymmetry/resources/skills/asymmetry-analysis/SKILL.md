@@ -341,7 +341,7 @@ re-screens — and it will happily offer a vortex lattice to a ferromagnet.
 | Magnet ordering in zero field | ZF temperature scan with `prec other@<MHz>` on the cold runs (spontaneous precession) | `--geometry ZF --scope zf-static-magnetism` | `OrderParameter` on the frequency below the transition; `CriticalDivergence` on a rate diverging towards it |
 | Spin glass or frozen moments | no spontaneous line; the rate rises and stretches on cooling, then A(0) collapses at the freezing temperature (the fast-relaxing fraction leaves the resolvable window) | `--scope zf-static-magnetism` (ZF) or `lf-dynamics` (LF) | `CriticalDivergence` on the rate from above the freezing; place T_g where the rate peaks or A(0) collapses, not where the wizard stops finding structure |
 | Fluctuating moments decoupled by a field | a **field** scan at one temperature whose runs do not precess at their field (`prec none` where measurable, `-` above Nyquist) — longitudinal decoupling, whatever zero field showed | `--geometry LF --scope lf-dynamics`; a **single** exponential rate λ | `Redfield` on λ(B), over the field range one process dominates |
-| Nuclear dipolar fields, muon or ion hopping | a dense-nucleus compound; Kubo–Toyabe dip in ZF; in TF a Gaussian envelope that turns exponential on warming (motional narrowing) | ZF/LF: `zf-static-magnetism` / `lf-dynamics`, Gaussian KT (see decision rules). TF: fit the envelope shape per run (a stretched exponential with β free, or Gaussian vs exponential) and report the shape against temperature | `Arrhenius` on the hop rate `nu` over the range where it rises; state any low-temperature upturn separately |
+| Nuclear dipolar fields, muon or ion hopping | a dense-nucleus compound; Kubo–Toyabe dip in ZF; in TF a Gaussian envelope that turns exponential on warming (motional narrowing) | ZF/LF: `zf-static-magnetism` / `lf-dynamics`, Gaussian KT (see decision rules). TF: fit the series with one Gaussian or exponential envelope; `fit-series` weighs the other shape on every run (the `envelope` column) — report the shape against temperature | `Arrhenius` on the hop rate `nu` over the range where it rises; state any low-temperature upturn separately |
 | Quadrupolar level crossing | an LF scan over a narrow field range (tens of gauss) at one low temperature, in a compound with quadrupolar nuclei (Cu, Al, Nb …); a dip in the integral asymmetry, or fits whose χ²ᵣ spikes, at particular fields | `integral-scan` over the field range (Step 5b), not a decoupling analysis | the scan's resonance fit (`GaussianLCR`/`LorentzianLCR` + background) |
 | Type-II superconductor | TF scan through Tc, `prec larmor`, line broadening on cooling | `--geometry TF --scope tf-superconductor` | an `SC_*` gap model on σ(T) |
 | Type-I superconductor, intermediate state | a pure elemental superconductor (Sn, Pb, In, Al …) in a field **below H_c**, often LF on a tilted foil; `prec none` at the applied field | `--geometry LF --scope lf-dynamics --include Oscillatory`, and `fourier` to find the line — muons in the normal domains precess at γ_μ·H_c whatever field is applied | `OrderParameter` with `--fix alpha=2 --fix beta=1` (H_c(0)[1−(T/T_c)²]) on the frequency, against the logged temperature |
@@ -811,6 +811,10 @@ When the series fits a frequency, the table carries `survey_line_mhz`: the line
 the survey measured in each run. A fitted frequency far from it, or a line
 fitted where the survey found none (`-`), is the fit locking onto noise or an
 artefact — trust the survey's line and say which runs disagree.
+
+When the model has one Gaussian or exponential envelope, the `envelope` column
+says which shape each run prefers (`either` when they fit alike). A change of
+shape along the scan is a result: report it with the runs on each side.
 
 **Look at the trend PNGs with the Read tool before writing anything.** A trend
 that is flat, that jumps, or whose scatter swamps the error bars is telling you

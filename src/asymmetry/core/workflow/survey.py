@@ -741,7 +741,43 @@ def _scan_groups(rows: list[RunRow]) -> list[ScanGroup]:
                 )
             )
     scans.sort(key=lambda scan: (scan.axis, scan.runs[0]))
-    return scans
+    return [_note_shared_unresolved(scan, scans, rows) for scan in scans]
+
+
+def _note_shared_unresolved(
+    scan: ScanGroup, scans: list[ScanGroup], rows: list[RunRow]
+) -> ScanGroup:
+    """*scan* with the few members that look like another scan's points named.
+
+    A temperature scan resolved as transverse on at least three runs in four,
+    whose remaining runs show no line and also sit in a field scan with no
+    transverse line of its own, is most likely holding that field scan's
+    (longitudinal) points — which a precession model then fails to fit. A grid
+    of fields by temperatures, where every run belongs to both kinds of scan,
+    does not qualify: its scans are not mostly resolved.
+    """
+    geometry = {row.run_number: row.geometry for row in rows}
+    unresolved = [run for run in scan.runs if geometry[run] is None]
+    if scan.axis != "temperature" or not unresolved or 4 * len(unresolved) > len(scan.runs):
+        return scan
+    longitudinal_like = {
+        run
+        for other in scans
+        if other.axis == "field" and all(geometry[member] != "TF" for member in other.runs)
+        for run in other.runs
+    }
+    shared = [run for run in unresolved if run in longitudinal_like]
+    if not shared:
+        return scan
+    runs = ", ".join(str(run) for run in shared)
+    return replace(
+        scan,
+        geometry_note=(
+            f"{scan.geometry_note}; run{'s' if len(shared) > 1 else ''} {runs} also "
+            f"belong{'' if len(shared) > 1 else 's'} to a field scan with no transverse line "
+            f"at this temperature — likely its points, not this scan's"
+        ),
+    )
 
 
 def calibration_verdict(

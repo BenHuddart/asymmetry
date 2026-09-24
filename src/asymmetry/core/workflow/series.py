@@ -74,13 +74,14 @@ the analyst's call, never this function's.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from asymmetry.core.data.dataset import MuonDataset
 from asymmetry.core.fitting.composite import CompositeModel
-from asymmetry.core.fitting.engine import FitEngine
+from asymmetry.core.fitting.engine import AsymmetryScaleWarning, FitEngine
 from asymmetry.core.fitting.models import LINEAR_PARAM_ROLE_NAMES
 from asymmetry.core.fitting.parameters import ParameterSet, split_parameter_name
 from asymmetry.core.fitting.result_summary import fit_result_summary
@@ -147,6 +148,107 @@ def frequency_unresolved(
         for name in free
         if split_parameter_name(name)[0] == "frequency"
     )
+
+
+#: The two relaxation envelopes a single-envelope recipe is weighed between on
+#: every run: a static distribution of fields dephases as a Gaussian, one
+#: fluctuating faster than its width (motional narrowing) as an exponential.
+RIVAL_ENVELOPES = {"Gaussian": "Exponential", "Exponential": "Gaussian"}
+
+#: The χ² margin by which one envelope must beat the other to be named — the
+#: two have the same parameter count, so this is also the AIC difference.
+ENVELOPE_MARGIN = 10.0
+
+
+def rival_envelope_model(model: CompositeModel) -> tuple[CompositeModel, dict[str, str]] | None:
+    """*model* with its one relaxation envelope swapped, and the parameter renames.
+
+    ``None`` unless the model carries exactly one Gaussian or Exponential — with
+    two, which one is "the" envelope is not the model's to say.
+    """
+    names = model.component_names
+    envelopes = [index for index, name in enumerate(names) if name in RIVAL_ENVELOPES]
+    if len(envelopes) != 1:
+        return None
+    index = envelopes[0]
+    payload = model.to_dict()
+    payload["component_names"] = [
+        *names[:index],
+        RIVAL_ENVELOPES[names[index]],
+        *names[index + 1 :],
+    ]
+    rival = CompositeModel.from_dict(payload)
+    return rival, dict(zip(model.param_names, rival.param_names, strict=True))
+
+
+def envelope_preference(
+    record: MuonDataset,
+    recipe: FitRecipe,
+    rival: tuple[CompositeModel, dict[str, str]],
+    fitted: Mapping[str, float],
+    chi_squared: float,
+) -> dict[str, Any]:
+    """Refit one run with the rival envelope, started from its fitted values.
+
+    Returns the preferred envelope's name (``"either"`` inside
+    :data:`ENVELOPE_MARGIN`) and ``delta_chi2`` = χ²(rival) − χ²(recipe); both
+    ``None`` when the rival fit failed, since a failed fit weighs nothing.
+    """
+    model, renames = rival
+    parameters = ParameterSet(
+        [
+            replace(entry, name=renames[entry.name], value=fitted[entry.name]).to_parameter()
+            for entry in recipe.parameters
+        ]
+    )
+    # The start is a converged fit, not a seed, so the seed-scale guard's
+    # premise does not hold: a small fitted amplitude is a result.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", AsymmetryScaleWarning)
+        result = FitEngine().fit(
+            record, model.function, parameters, t_min=recipe.t_min, t_max=recipe.t_max
+        )
+    if not result.success:
+        return {"preferred": None, "delta_chi2": None}
+    own = next(name for name in recipe.model().component_names if name in RIVAL_ENVELOPES)
+    delta = float(result.chi_squared) - float(chi_squared)
+    if delta >= ENVELOPE_MARGIN:
+        preferred = own
+    elif delta <= -ENVELOPE_MARGIN:
+        preferred = RIVAL_ENVELOPES[own]
+    else:
+        preferred = "either"
+    return {"preferred": preferred, "delta_chi2": delta}
+
+
+def envelope_change(trend: TrendTable) -> str | None:
+    """A note naming where the preferred envelope changes along the scan, or ``None``."""
+    if "envelope" not in trend.columns:
+        return None
+    decided = [row for row in trend.rows if row["envelope"] in RIVAL_ENVELOPES]
+    if len({row["envelope"] for row in decided}) < 2:
+        return None
+    blocks: list[tuple[str, list[dict[str, Any]]]] = []
+    for row in decided:
+        if blocks and blocks[-1][0] == row["envelope"]:
+            blocks[-1][1].append(row)
+        else:
+            blocks.append((row["envelope"], [row]))
+    described = "; ".join(
+        f"{shape} on {', '.join(str(row['run']) for row in rows)} ({trend.order_key} {_span(rows)})"
+        for shape, rows in blocks
+    )
+    return (
+        f"NOTE: the relaxation shape changes along this scan — {described} (the envelope "
+        f"column; runs marked 'either' fit both alike). A Gaussian (a static spread of fields) "
+        f"turning exponential as the fluctuations outrun it is motional narrowing: report the "
+        f"shape against {trend.order_key}, not only the rate."
+    )
+
+
+def _span(rows: Sequence[Mapping[str, Any]]) -> str:
+    values = [row["x"] for row in rows]
+    return f"{min(values):g}" if len(values) == 1 else f"{min(values):g}–{max(values):g}"
 
 
 @dataclass(frozen=True)
@@ -506,6 +608,7 @@ def fit_series(
             )
         )
 
+    rival = rival_envelope_model(model)
     results: list[dict[str, Any]] = []
     for run in runs:
         quality = quality_by_run[run]
@@ -521,6 +624,21 @@ def fit_series(
                 "reseeded": run in reseeded,
                 "member_quality": quality.to_payload(),
                 **summary,
+                **(
+                    {}
+                    if rival is None
+                    else {"envelope": {"preferred": None, "delta_chi2": None}}
+                    if not summary["success"]
+                    else {
+                        "envelope": envelope_preference(
+                            records[run],
+                            recipe,
+                            rival,
+                            summary["parameters"],
+                            summary["chi_squared"],
+                        )
+                    }
+                ),
             }
         )
 
@@ -579,6 +697,9 @@ def build_trend_table(
         columns.extend([name, f"{name}_err"])
     if survey_lines is not None:
         columns.append("survey_line_mhz")
+    compared = all("envelope" in entry for entry in results)
+    if compared:
+        columns.extend(["envelope", "envelope_dchi2"])
     columns.append("flags")
 
     rows: list[dict[str, Any]] = []
@@ -589,6 +710,9 @@ def build_trend_table(
             row[f"{name}_err"] = entry["uncertainties"].get(name)
         if survey_lines is not None:
             row["survey_line_mhz"] = survey_lines[entry["run"]]
+        if compared:
+            row["envelope"] = entry["envelope"]["preferred"]
+            row["envelope_dchi2"] = entry["envelope"]["delta_chi2"]
         row["flags"] = list(entry["quality_flags"])
         rows.append(row)
     return TrendTable(order_key=order_key, columns=columns, rows=rows)
@@ -597,17 +721,22 @@ def build_trend_table(
 __all__ = [
     "AMPLITUDE_EXCEEDS_DATA",
     "AMPLITUDE_EXCESS_FACTOR",
+    "ENVELOPE_MARGIN",
     "FREQUENCY_UNRESOLVED",
     "ORDER_KEYS",
+    "RIVAL_ENVELOPES",
     "ScanAxis",
     "SeriesBranch",
     "SeriesOutcome",
     "TrendTable",
     "amplitude_exceeds_data",
     "build_trend_table",
+    "envelope_change",
+    "envelope_preference",
     "fit_one",
     "fit_series",
     "frequency_unresolved",
+    "rival_envelope_model",
     "scan_axis",
     "supplied_axis",
     "survey_line",

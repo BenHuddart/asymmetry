@@ -169,9 +169,11 @@ def run(args: argparse.Namespace) -> None:
         return
 
     print(_render(outcome, series_path, plot_paths))
-    note = window_note(workdir, sorted(datasets))
-    if note is not None:
-        print(note)
+    from asymmetry.core.workflow.series import envelope_change
+
+    for note in (window_note(workdir, sorted(datasets)), envelope_change(outcome.trend)):
+        if note is not None:
+            print(note)
     print(
         f"Next: asymmetry trend {shlex.quote(args.folder)} --series {name} — the trend "
         f"table, and the law it calls for."
@@ -199,7 +201,15 @@ def run(args: argparse.Namespace) -> None:
 
 def _render(outcome, series_path: Path, plot_paths: list[Path] | None = None) -> str:
     """The human-readable per-run table plus the seeding that was used."""
-    headers = ["run", outcome.order_key, "chi2_red", "verdict", "flags"]
+    compared = "envelope" in outcome.trend.columns
+    headers = [
+        "run",
+        outcome.order_key,
+        "chi2_red",
+        "verdict",
+        *(["envelope (dchi2 rival-own)"] if compared else []),
+        "flags",
+    ]
     rows = []
     for entry in outcome.results:
         quality = entry["quality"]
@@ -209,6 +219,16 @@ def _render(outcome, series_path: Path, plot_paths: list[Path] | None = None) ->
                 format_number(entry["x"], 3),
                 format_number(entry["reduced_chi_squared"], 3),
                 "unknown" if quality is None else quality["verdict"],
+                *(
+                    [
+                        "-"
+                        if entry["envelope"]["preferred"] is None
+                        else f"{entry['envelope']['preferred']} "
+                        f"({format_number(entry['envelope']['delta_chi2'], 3)})"
+                    ]
+                    if compared
+                    else []
+                ),
                 ", ".join(entry["quality_flags"]) or "-",
             ]
         )

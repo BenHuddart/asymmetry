@@ -338,7 +338,12 @@ disagree:
          geometry: TF measured on 12 of 21 runs; 9 unresolved
 
 That note is itself a finding: it says where in the scan the measurement could
-settle the geometry and where it could not.
+settle the geometry and where it could not. When a temperature scan resolves
+as transverse on at least three runs in four, and a remaining run shows no line
+and also sits in a field scan with no transverse line of its own, the note
+names it — "run 20898 also belongs to a field scan with no transverse line at
+this temperature — likely its points, not this scan's" — since a longitudinal
+point the file does not label is otherwise fitted with a precession model.
 
 ``alpha``
 ~~~~~~~~~
@@ -605,7 +610,14 @@ frequency completes fewer than two cycles in the informative window is flagged
 checks. A series that fits a frequency adds a ``survey_line_mhz`` column: the line the
 survey measured in each run, beside the fitted frequency, so a fit that drifted
 off the measured line or found one where the survey saw none shows in the
-table. Ordered by ``temperature`` (the setpoint) while the logged sample
+table. When the recipe carries exactly one relaxation envelope, ``Gaussian`` or
+``Exponential``, every converged run is refitted with the other one from its
+fitted values and the table gains an ``envelope`` column — the shape that wins
+by a χ² margin of 10 (the two have the same parameter count), or ``either`` —
+and ``envelope_dchi2``, χ²(other) − χ²(recipe). When the winning shape changes
+along the scan the command ends with a note naming the runs on each side: a
+Gaussian (a static spread of fields) turning exponential as the fluctuations
+outrun it is motional narrowing. Ordered by ``temperature`` (the setpoint) while the logged sample
 temperature departs on some of its runs, the command ends with a note naming
 them. Writes
 ``series/<name>.json`` (per-run results, a trend table, and quality flags —
@@ -669,14 +681,22 @@ series' model (``Lambda_1`` beside ``Lambda_2``): a law describes one physical
 rate or line, not one of two that split it between them. Without ``--model``,
 the report ends by naming the law the series' axis and parameters call for —
 Redfield for a rate against field (and a warning when the model splits the
-rate between two components), ``OrderParameter`` for a frequency against
-temperature, ``Linear`` for a rate against a supplied quantity. A fitted law's
+rate between two components), ``OrderParameter`` for a frequency that falls
+with temperature — one that holds within 10 % along the scan follows a fixed
+field and is pointed at the relaxation's rate and shape instead — and
+``Linear`` for a rate against a supplied quantity; a note repeats a change of
+envelope along the scan. A fitted law's
 report states the x span of the points it rests on and each parameter's unit,
 and judges the law on the √χ²\ :sub:`r`-scaled errors of its physical
 parameters (a prefactor or offset — ``a``, ``b``, ``c`` — that the data leave
 open does not by itself sink a determined T\ :sub:`c`); it notes when the fitted
 points turn through an extremum, across which a monotonic law averages two
-regimes. Excluding a run is the analyst's call: every run with a
+regimes. A law not established ends with the next step: for ``OrderParameter``
+with ``alpha`` free, refit with ``--fix alpha=1`` (points near T\ :sub:`c` fix
+only a power of T\ :sub:`c` − T, so α trades off against ``y0``); otherwise,
+when some physical parameters are determined and others are not, hold the
+undetermined ones at a textbook value and report the rest with it stated.
+Excluding a run is the analyst's call: every run with a
 value enters unless ``--exclude RUNS`` names it, and the output lists both the
 runs left out (with the reason) and the flagged runs that were fitted. The fit
 is stored in ``series/<name>.json`` under ``trend_fits``, and ``--plot``
@@ -711,7 +731,8 @@ on. A number written with *d* decimals matches any printed value it rounds
 from, so a clean audit means every number appears in *some* output, not that it
 is the right one; a multiple, a significance or a whole-number percentage
 (``10×``, ``4.3σ``, ``32 %``) matches only when a command printed that exact
-token, and a number after "a factor of" is always listed. What it catches is the arithmetic an
+token, and a number after "a factor of" or a difference phrase ("within
+about 2 G", "differ by 0.6"), hedged or not, is always listed. What it catches is the arithmetic an
 analyst does in prose — percentage changes, ratios, unit conversions,
 differences between printed columns — which the agent skill's number rule
 forbids. It also lists a law's vocabulary ("critical slowing",

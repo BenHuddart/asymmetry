@@ -171,6 +171,8 @@ def test_the_trend_table_carries_every_free_parameter_with_its_error(outcome) ->
         "Lambda_err",
         "A_bg",
         "A_bg_err",
+        "envelope",
+        "envelope_dchi2",
         "flags",
     ]
     assert len(outcome.trend.rows) == len(ZF_RUNS)
@@ -472,3 +474,56 @@ def test_a_frequency_below_the_records_resolution_is_flagged() -> None:
     assert not frequency_unresolved(record, {"A_1": 20.0, "frequency": 1.9, "Lambda": 0.1}, free)
     # A frequency the recipe holds is not the fit's choice.
     assert not frequency_unresolved(record, {"frequency": 0.025}, ["A_1"])
+
+
+def test_the_series_weighs_a_gaussian_against_an_exponential_envelope_run_by_run() -> None:
+    from asymmetry.core.workflow.series import envelope_change
+
+    time = np.linspace(0.0, 10.0, 1000)
+    rng = np.random.default_rng(3)
+
+    def run(number: int, temperature: float, envelope: np.ndarray) -> MuonDataset:
+        clean = 20.0 * envelope * np.cos(2 * np.pi * 0.27 * time) + 3.0
+        return MuonDataset(
+            time,
+            clean + rng.normal(0.0, 0.5, time.size),
+            np.full(time.size, 0.5),
+            {"run_number": number, "temperature": temperature},
+        )
+
+    # Static fields dephase as a Gaussian when cold; narrowed ones relax exponentially.
+    datasets = {
+        1: run(1, 50.0, np.exp(-((0.35 * time) ** 2))),
+        2: run(2, 100.0, np.exp(-((0.3 * time) ** 2))),
+        3: run(3, 200.0, np.exp(-0.15 * time)),
+        4: run(4, 300.0, np.exp(-0.1 * time)),
+    }
+    recipe = FitRecipe.from_expression(
+        "Oscillatory * Gaussian + Constant", dataset=datasets[1]
+    ).with_overrides(initial={"A_1": 20.0, "frequency": 0.27, "sigma": 0.3, "A_bg": 3.0})
+    outcome = fit_series(datasets, recipe, axis=scan_axis(datasets, "temperature"), name="tf")
+
+    assert [row["envelope"] for row in outcome.trend.rows] == [
+        "Gaussian",
+        "Gaussian",
+        "Exponential",
+        "Exponential",
+    ]
+    assert outcome.trend.rows[0]["envelope_dchi2"] > 0 > outcome.trend.rows[3]["envelope_dchi2"]
+    note = envelope_change(outcome.trend)
+    assert "Gaussian on 1, 2 (temperature 50–100)" in note
+    assert "Exponential on 3, 4 (temperature 200–300)" in note
+
+
+def test_a_model_with_two_envelopes_is_not_weighed() -> None:
+    from asymmetry.core.workflow.series import rival_envelope_model
+
+    assert rival_envelope_model(CompositeModel.from_expression("Gaussian + Exponential")) is None
+    assert (
+        rival_envelope_model(CompositeModel.from_expression("DynamicGaussianKT + Constant")) is None
+    )
+    rival, renames = rival_envelope_model(
+        CompositeModel.from_expression("Oscillatory * Gaussian + Constant")
+    )
+    assert rival.component_names == ["Oscillatory", "Exponential", "Constant"]
+    assert renames["sigma"] == "Lambda"

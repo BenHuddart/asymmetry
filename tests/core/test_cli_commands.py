@@ -1636,10 +1636,36 @@ def test_trend_names_the_law_its_axis_and_parameters_call_for(
     order_key, free_params, expected
 ) -> None:
     from asymmetry.cli.commands.trend import _law_hints
+    from asymmetry.core.workflow.series import TrendTable
 
-    text = "\n".join(_law_hints("scan", order_key, free_params))
+    trend = TrendTable(order_key=order_key, columns=["run", "x", *free_params], rows=[])
+    text = "\n".join(_law_hints("scan", trend, free_params))
     for fragment in expected:
         assert fragment in text
+
+
+@pytest.mark.parametrize(
+    ("frequencies", "expected"),
+    [
+        # A line falling to zero at the transition is an order parameter.
+        ([15.2, 11.0, 2.8], "OrderParameter --param frequency"),
+        # One held at the applied field's Larmor frequency is not.
+        ([0.285, 0.280, 0.273], "frequency holds at 0.2800 MHz"),
+    ],
+)
+def test_a_frequency_held_along_the_scan_is_not_called_an_order_parameter(
+    frequencies, expected
+) -> None:
+    from asymmetry.cli.commands.trend import _law_hints
+    from asymmetry.core.workflow.series import TrendTable
+
+    rows = [
+        {"run": run, "x": 50.0 * run, "frequency": value, "sigma": 0.3, "flags": []}
+        for run, value in enumerate(frequencies, start=1)
+    ]
+    trend = TrendTable("temperature", ["run", "x", "frequency", "sigma", "flags"], rows)
+    text = "\n".join(_law_hints("tf", trend, ["frequency", "sigma"]))
+    assert expected in text
 
 
 def test_a_trend_law_is_judged_on_its_physical_parameters_and_scaled_errors() -> None:
@@ -1672,6 +1698,37 @@ def test_a_trend_law_is_judged_on_its_physical_parameters_and_scaled_errors() ->
     assert "LAW NOT ESTABLISHED" in text
     assert "nu's scaled error" in text
     assert "Tc's scaled error" not in text
+    # The determined parameter is named, with the way to report it.
+    assert "Next: Tc is determined and nu not. Hold nu at a textbook value" in text
+
+
+def test_a_failed_order_parameter_fit_is_pointed_at_its_shape_exponent() -> None:
+    from asymmetry.cli.commands.trend import _render_fit
+
+    fit = {
+        "param": "frequency",
+        "expression": "OrderParameter",
+        "order_key": "temperature",
+        "n_points": 7,
+        "success": False,
+        "message": "Fit failed",
+        "parameters": {"y0": 27.0, "Tc": 357.7, "beta": 0.38, "alpha": 0.58},
+        "uncertainties": {"y0": 0.12, "Tc": 0.009, "beta": 0.0004, "alpha": 0.008},
+        "fixed": [],
+        "reduced_chi_squared": 158.0,
+        "params_at_bound": [],
+        "excluded": [],
+        "flagged": [],
+        "x_fitted": [320.0, 356.0],
+        "units": {"Tc": "K"},
+        "turning_point": None,
+    }
+    text = "\n".join(_render_fit(fit, ["frequency"]))
+    assert "LAW NOT ESTABLISHED" in text
+    assert "refit with --fix alpha=1" in text
+    # Once alpha is held, the hint has nothing left to say.
+    held = fit | {"fixed": ["alpha"], "success": True}
+    assert "--fix alpha" not in "\n".join(_render_fit(held, ["frequency"]))
 
 
 def test_a_fit_on_a_windowed_reduction_says_so_and_plot_tmax_keeps_the_record(

@@ -104,3 +104,12 @@ Converged, with its physical parameters determined: report them.
     assert unsupported_laws(draft, retried) == []
     # A law never fitted is not judged.
     assert unsupported_laws("an activation energy", log) == []
+
+
+def test_hedged_ratios_and_differences_are_always_listed() -> None:
+    log = "B0 78.18 G\nB0 80.09 G\nBwid 12.25\nBwid 12.83\nnu 2\n"
+    draft = (
+        "The fields agree to within about 2 G and the widths differ by 0.6 G; "
+        "the rates sit a factor of ~2 apart. B0 = 78.18 G."
+    )
+    assert [entry.text for entry in unverified_numbers(draft, log)] == ["2", "0.6", "2"]
