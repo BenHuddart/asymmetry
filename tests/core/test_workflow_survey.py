@@ -15,6 +15,7 @@ from asymmetry.core.workflow.survey import (
     _scan_groups,
     alpha_steps,
     calibration_verdict,
+    coil_geometry,
     resolve_row_geometry,
     survey_folder,
     temperature_departures,
@@ -64,6 +65,7 @@ def _row(
         sample=None,
         temperature=temperature,
         sample_temperature_logged=None,
+        sample_temperature_log_source=None,
         field=field,
         field_direction="",
         geometry=geometry,
@@ -299,6 +301,61 @@ def test_the_files_own_token_stands_when_nothing_was_measured() -> None:
         state=None, frequency_mhz=None, snr=None, larmor_mhz=None, note="no field recorded"
     )
     assert resolve_row_geometry({"field_state": "LF"}, unmeasured) == ("LF", "file")
+
+
+def _coils(main: float, x: float, y: float, z: float) -> dict:
+    """Run metadata logging HiFi's four field coils, each steady over the run."""
+    return {
+        "field": main + z,
+        "field_state": "TF",
+        "nexus_time_series": {
+            name: {"time": [0.0, 60.0], "values": [value, value]}
+            for name, value in (
+                ("Field_Main", main),
+                ("Field_X", x),
+                ("Field_Y", y),
+                ("Field_Z", z),
+            )
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("main", "x", "y", "z", "expected"),
+    [
+        (19810.0, 0.0, 0.0, 0.0, "LF"),  # the main solenoid alone
+        (0.0, 0.01, 19.96, 11.99, "TF"),  # TF20 on the Y coil, Z compensating stray field
+        (20900.0, 0.0, 0.07, 160.0, "LF"),  # a Z sweep on a persistent main
+        (0.0, 0.0, 50.0, 100.0, None),  # neither dominates
+        (0.0, 0.0, 0.0, 0.0, None),  # nothing applied
+    ],
+)
+def test_logged_coils_name_the_geometry_when_one_component_dominates(
+    main: float, x: float, y: float, z: float, expected: str | None
+) -> None:
+    assert coil_geometry(_coils(main, x, y, z)) == expected
+
+
+def test_a_file_without_coil_logs_has_no_coil_geometry() -> None:
+    assert coil_geometry({"field": 100.0, "field_state": "TF"}) is None
+    partial = _coils(19810.0, 0.0, 0.0, 0.0)
+    del partial["nexus_time_series"]["Field_Y"]
+    assert coil_geometry(partial) is None
+
+
+def test_logged_coils_rank_below_measured_precession_and_above_the_rest() -> None:
+    # HiFi stamps TF on its longitudinal runs; the coils it logged say LF.
+    longitudinal = _coils(19810.0, 0.0, 0.0, 0.0)
+    unmeasured = PrecessionEvidence(
+        state=None, frequency_mhz=None, snr=None, larmor_mhz=268.5, note="above Nyquist"
+    )
+    silent = PrecessionEvidence(state="none", frequency_mhz=None, snr=3.0, larmor_mhz=1.0, note="")
+    larmor = PrecessionEvidence(
+        state="larmor", frequency_mhz=0.27, snr=90.0, larmor_mhz=0.27, note=""
+    )
+    assert resolve_row_geometry(longitudinal, unmeasured) == ("LF", "coils")
+    assert resolve_row_geometry(longitudinal, silent) == ("LF", "coils")
+    assert resolve_row_geometry(_coils(0.0, 0.01, 19.96, 11.99), larmor) == ("TF", "measured")
 
 
 def test_survey_groups_the_zero_field_scan_with_temperature_as_axis(survey) -> None:

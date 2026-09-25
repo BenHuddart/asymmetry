@@ -424,6 +424,24 @@ def test_logged_all_zero_series_returns_none(tmp_path, loader: NexusLoader) -> N
     assert not isinstance(ds, list)
     assert ds.sample_temperature_logged is None
     assert "sample_temperature_logged" not in ds.metadata
+    [rejection] = ds.metadata["temperature_log_rejected"]
+    assert rejection["source"] == "sample/Temp_Sample"
+    assert "0 K" in rejection["reason"]
+
+
+def test_logged_sample_temperature_drops_zero_kelvin_dropouts(
+    tmp_path, loader: NexusLoader
+) -> None:
+    # A sensor that drops out mid-run logs 0 K, which is not a reading: the mean
+    # is over the physical samples only, and the series is not rejected.
+    path = tmp_path / "run_dropouts.nxs"
+    _write_v2_file(path, temp_setpoint=5.0, temp_log_values=(5.0, 0.0, 5.2, 0.0))
+
+    ds = loader.load(str(path))
+    assert not isinstance(ds, list)
+    assert ds.sample_temperature_logged == pytest.approx(5.1)
+    assert ds.metadata["sample_temperature_log_source"] == "sample/Temp_Sample"
+    assert "temperature_log_rejected" not in ds.metadata
 
 
 def test_logged_furnace_controller_block_not_matched(tmp_path, loader: NexusLoader) -> None:

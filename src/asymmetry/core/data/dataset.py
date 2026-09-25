@@ -106,9 +106,10 @@ class Run:
     def sample_temperature_logged(self) -> float | None:
         """Representative *logged* sample temperature, if recorded.
 
-        Sourced from the ``Temp_Sample`` NXlog (the actual measured sample
-        temperature), as distinct from :attr:`temperature` (the setpoint).
-        ``None`` when no logged series is present.
+        The loader's sample-thermometer reading (a ``Temp_Sample`` NXlog, or
+        PSI header sensor 1 — ``metadata["sample_temperature_log_source"]``
+        says which), as distinct from :attr:`temperature` (the setpoint).
+        ``None`` when the file holds no usable reading.
         """
         value = self.metadata.get("sample_temperature_logged")
         return None if value is None else float(value)
@@ -227,9 +228,10 @@ class MuonDataset:
     def sample_temperature_logged(self) -> float | None:
         """Representative *logged* sample temperature, if recorded.
 
-        Sourced from the ``Temp_Sample`` NXlog (the actual measured sample
-        temperature), as distinct from the ``metadata['temperature']``
-        setpoint. ``None`` when no logged series is present.
+        The loader's sample-thermometer reading (a ``Temp_Sample`` NXlog, or
+        PSI header sensor 1 — ``metadata["sample_temperature_log_source"]``
+        says which), as distinct from the ``metadata['temperature']``
+        setpoint. ``None`` when the file holds no usable reading.
         """
         value = self.metadata.get("sample_temperature_logged")
         return None if value is None else float(value)

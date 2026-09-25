@@ -306,6 +306,33 @@ def test_survey_table_shows_the_precession_column_and_the_measured_geometry(
     assert "TF" not in decoupling
 
 
+def test_survey_marks_a_coil_geometry_and_explains_a_psi_header_temperature(
+    workflow_folder: Path, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from asymmetry.cli.commands.survey import _render
+    from asymmetry.core.io.psi import PSI_HEADER_SAMPLE_SENSOR
+    from asymmetry.core.workflow.survey import survey_folder
+
+    survey = survey_folder(workflow_folder)
+    assert "header sensor 1" not in _render(survey, tmp_path / "survey.json")
+
+    row = replace(
+        survey.row(DECOUPLING_RUN),
+        geometry="LF",
+        geometry_source="coils",
+        sample_temperature_logged=52.76,
+        sample_temperature_log_source=PSI_HEADER_SAMPLE_SENSOR,
+    )
+    text = _render(replace(survey, runs=[row]), tmp_path / "survey.json")
+    line = next(line for line in text.splitlines() if line.startswith(f"{DECOUPLING_RUN} "))
+    assert "LF+" in line
+    assert "52.76" in line
+    assert "geom+: geometry read from the run's logged field-coil readbacks" in text
+    assert "T log (PSI): header sensor 1, an unlabelled sensor inferred" in text
+
+
 def test_survey_scans_block_names_the_instrument(
     workflow_folder: Path, tmp_path: Path, capsys
 ) -> None:

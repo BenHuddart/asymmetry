@@ -59,6 +59,10 @@ def run(args: argparse.Namespace) -> None:
     print(_render(survey, survey_path))
 
 
+#: Suffixes on the ``geom`` column naming a geometry the file's stamp did not decide.
+_GEOMETRY_MARKS = {"measured": "*", "coils": "+"}
+
+
 def _departure_blocks(survey) -> list[tuple[str, list[int], float, float]]:
     """Departing runs in consecutive blocks of similar offset: ``(instrument, runs, min, max)``.
 
@@ -115,6 +119,7 @@ def _run_label(prefix: str, run_number: int, clashes: dict[int, list[Path]]) -> 
 
 def _render(survey, survey_path: Path) -> str:
     """The human-readable survey: the run table, then candidates and scans."""
+    from asymmetry.core.io.psi import PSI_HEADER_SAMPLE_SENSOR
     from asymmetry.core.workflow.workdir import instrument_name
 
     clashes = run_clashes([(row.prefix, row.run_number, Path(row.file)) for row in survey.runs])
@@ -140,8 +145,7 @@ def _render(survey, survey_path: Path) -> str:
             format_number(row.temperature, 2),
             format_number(row.sample_temperature_logged, 2),
             format_number(row.field, 2),
-            # A trailing * marks a geometry the spectrum decided, not the file.
-            (row.geometry or "-") + ("*" if row.geometry_source == "measured" else ""),
+            (row.geometry or "-") + _GEOMETRY_MARKS.get(row.geometry_source, ""),
             # An `other` line's frequency is itself evidence: an internal
             # field, a muonium line, or a sub-cycle artefact near 0.1 MHz.
             (row.precession.state or "-")
@@ -172,8 +176,18 @@ def _render(survey, survey_path: Path) -> str:
             + " against the Larmor frequency of the recorded field "
             "— larmor / other@<MHz> (a different line, at that frequency) / none / - "
             "(not measurable). "
-            "geom*: geometry measured from that precession rather than read from the file."
+            "geom*: geometry measured from that precession rather than read from the file; "
+            "geom+: geometry read from the run's logged field-coil readbacks (axial against "
+            "transverse), not its field-state stamp."
         )
+        if any(
+            row.sample_temperature_log_source == PSI_HEADER_SAMPLE_SENSOR for row in survey.runs
+        ):
+            lines.append(
+                "T log (PSI): header sensor 1, an unlabelled sensor inferred to be the sample's "
+                "because it tracks the sample on the runs checked; reported only when steady and "
+                "within a factor of two of the setpoint."
+            )
         lines.append("")
     if clashes:
         shared = sorted(

@@ -38,6 +38,7 @@ from asymmetry.core.fitting.fit_wizard import (
     fingerprint_spectrum,
 )
 from asymmetry.core.fitting.spectral import field_gauss_to_frequency_mhz
+from asymmetry.core.io.nexus import active_series_mean
 from asymmetry.core.workflow.reduction import (
     ReductionSettings,
     estimate_alpha_for_run,
@@ -79,7 +80,16 @@ PRECESSION_STATES = ("larmor", "other", "none")
 
 #: Where :func:`resolve_row_geometry` got a run's geometry from. (The screening
 #: layer has its own, wider list — it can also be told by a person.)
-ROW_GEOMETRY_SOURCES = ("field", "measured", "refuted", "file", "none")
+ROW_GEOMETRY_SOURCES = ("field", "measured", "coils", "refuted", "file", "none")
+
+#: One field component must exceed the other this many times over before the
+#: logged coils name a geometry (see :func:`coil_geometry`).
+COIL_DOMINANCE = 10.0
+
+#: HiFi's Z coil carries up to this much field cancelling the stray axial field
+#: (7–12 G on the transverse runs checked), so that much of a Z reading is not an
+#: applied field.
+COIL_Z_COMPENSATION_GAUSS = 12.0
 
 
 def _parse_timestamp(text: object) -> datetime | None:
@@ -276,6 +286,34 @@ def _spontaneous_precession(fingerprint: Any) -> PrecessionEvidence:
     )
 
 
+def coil_geometry(metadata: dict[str, Any]) -> str | None:
+    """``"LF"``/``"TF"`` from the run's own logged field-coil readbacks, else ``None``.
+
+    HiFi logs every coil it drives (``Field_Main``, ``Field_Z`` along the beam;
+    ``Field_X``, ``Field_Y`` across it). The axial field is ``Field_Main +
+    Field_Z`` and the transverse ``hypot(Field_X, Field_Y)``, each the mean over
+    the run (:func:`~asymmetry.core.io.nexus.active_series_mean`). Axial above
+    :data:`COIL_DOMINANCE` times the transverse is LF; transverse above that
+    many times the axial field left after :data:`COIL_Z_COMPENSATION_GAUSS` is
+    TF; anything between, or a file that does not log all four coils, is
+    ``None``.
+    """
+    series = metadata.get("nexus_time_series", {})
+    main, z, x, y = (
+        active_series_mean(series.get(name))
+        for name in ("Field_Main", "Field_Z", "Field_X", "Field_Y")
+    )
+    if main is None or z is None or x is None or y is None:
+        return None
+    axial = abs(main + z)
+    transverse = float(np.hypot(x, y))
+    if axial > COIL_DOMINANCE * transverse:
+        return "LF"
+    if transverse > COIL_DOMINANCE * max(axial - COIL_Z_COMPENSATION_GAUSS, 0.0):
+        return "TF"
+    return None
+
+
 def resolve_row_geometry(
     metadata: dict[str, Any], evidence: PrecessionEvidence
 ) -> tuple[str | None, str]:
@@ -290,6 +328,12 @@ def resolve_row_geometry(
         transverse field, whatever the file says or fails to say — the case
         :func:`run_geometry` cannot reach, because ISIS EMU files record no
         field state at all.
+    ``"coils"``
+        The run's logged field-coil readbacks (:func:`coil_geometry`) name the
+        geometry. They are the run's own measurement of the field it applied,
+        so they outrank both a silent spectrum (a transverse line can be too
+        damped to resolve) and the file's field-state stamp, which HiFi sets to
+        ``TF`` on its longitudinal runs; they rank below measured precession.
     ``"refuted"``
         The spectrum was read and holds no line at all, so the applied field is
         not precessing the muon and the file's ``TF`` stamp is contradicted.
@@ -310,6 +354,9 @@ def resolve_row_geometry(
         return "ZF", "field"
     if evidence.state == "larmor":
         return "TF", "measured"
+    coils = coil_geometry(metadata)
+    if coils is not None:
+        return coils, "coils"
     if evidence.state == "none":
         return None, "refuted"
     geometry = run_geometry(metadata)
@@ -361,6 +408,9 @@ class RunRow:
     #: The setpoint, and the measured sample temperature when the file logs one.
     temperature: float | None
     sample_temperature_logged: float | None
+    #: Where the loader read ``sample_temperature_logged`` from (a log path, or a
+    #: PSI header sensor), ``None`` when there is no reading.
+    sample_temperature_log_source: str | None
     field: float | None
     field_direction: str
     geometry: str | None
@@ -399,6 +449,7 @@ class RunRow:
             "sample": self.sample,
             "temperature": self.temperature,
             "sample_temperature_logged": self.sample_temperature_logged,
+            "sample_temperature_log_source": self.sample_temperature_log_source,
             "field": self.field,
             "field_direction": self.field_direction,
             "geometry": self.geometry,
@@ -665,6 +716,7 @@ def build_run_row(
         sample=sample,
         temperature=dataset.temperature,
         sample_temperature_logged=dataset.sample_temperature_logged,
+        sample_temperature_log_source=metadata.get("sample_temperature_log_source"),
         field=dataset.field,
         field_direction=str(metadata.get("field_direction") or metadata.get("field_state") or ""),
         geometry=geometry,
@@ -1066,6 +1118,7 @@ __all__ = [
     "alpha_steps",
     "build_run_row",
     "calibration_verdict",
+    "coil_geometry",
     "departs",
     "has_file_deadtime",
     "precession_evidence",
