@@ -11,10 +11,18 @@ grouping or the corrections here.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
+from asymmetry.core.data.combine import (
+    combine_runs,
+    reduce_combined_run,
+    runs_with_dataset_metadata,
+)
 from asymmetry.core.data.dataset import MuonDataset, Run
+from asymmetry.core.io import load
 from asymmetry.core.io.periods import (
     GREEN_INDEX,
     RED_INDEX,
@@ -274,6 +282,26 @@ def reduction_source(loaded: MuonDataset | list[MuonDataset], period: str | None
     return select_period(loaded, period)
 
 
+def load_reduction_source(paths: Sequence[str | Path], period: str | None) -> MuonDataset:
+    """The dataset :func:`reduce_run` starts from for one run file, or the co-add of several.
+
+    Several files are summed at the count level exactly as the GUI's data
+    browser co-adds (:func:`combine_runs`), each member first narrowed to
+    *period*. The sum is identified as its first member — it keeps that run's
+    number and instrument metadata, under the combination's event-weighted
+    temperature and field and its ``combination`` provenance — since
+    :func:`combine_runs` records only what it combined. Raises
+    :class:`~asymmetry.core.data.combine.CombineError` (a :class:`ValueError`)
+    when the members cannot be summed.
+    """
+    sources = [reduction_source(load(str(path)), period) for path in paths]
+    if len(sources) == 1:
+        return sources[0]
+    runs = runs_with_dataset_metadata(sources)
+    combined = combine_runs(runs, sign=1)
+    return reduce_combined_run(replace(combined, metadata=runs[0].metadata | combined.metadata))
+
+
 def resolve_reduction_grouping(run: Run, settings: ReductionSettings) -> dict[str, Any]:
     """The full grouping payload :func:`reduce_run` will reduce *run* with.
 
@@ -403,6 +431,7 @@ __all__ = [
     "AlphaEstimate",
     "ReductionSettings",
     "estimate_alpha_for_run",
+    "load_reduction_source",
     "reduce_run",
     "reduction_source",
     "resolve_reduction_grouping",

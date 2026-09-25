@@ -663,6 +663,8 @@ def test_reduce_selects_and_records_a_multi_period_run(
         return dataset
 
     monkeypatch.setattr("asymmetry.core.io.load", _load_two_periods)
+    # ``reduce`` loads through the reduction module, which binds the loader at import.
+    monkeypatch.setattr("asymmetry.core.workflow.reduction.load", _load_two_periods)
     workdir = tmp_path / "period-wd"
     cli.main(
         [
@@ -711,6 +713,8 @@ def _two_identical_periods(monkeypatch: pytest.MonkeyPatch) -> None:
         return dataset
 
     monkeypatch.setattr("asymmetry.core.io.load", _load_two_periods)
+    # ``reduce`` loads through the reduction module, which binds the loader at import.
+    monkeypatch.setattr("asymmetry.core.workflow.reduction.load", _load_two_periods)
 
 
 def test_reduce_green_red_is_the_difference_of_the_two_periods(

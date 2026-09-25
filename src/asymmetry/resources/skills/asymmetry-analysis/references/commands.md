@@ -126,8 +126,9 @@ options:
 ## `asymmetry reduce`
 
 ```
-usage: asymmetry reduce [-h] --runs RUNS [--alpha ALPHA] [--alpha-from ALPHA_FROM]
-                        [--deadtime {off,from_file}] [--pair FWD/BWD]
+usage: asymmetry reduce [-h] --runs RUNS [--coadd] [--alpha ALPHA]
+                        [--alpha-from ALPHA_FROM] [--deadtime {off,from_file}]
+                        [--pair FWD/BWD]
                         [--background none|tail_fit|range[:FIRST:LAST]]
                         [--t0-offset BINS] [--t-good-offset BINS]
                         [--period RED|GREEN|N|green-red] [--rebin REBIN] [--tmin TMIN]
@@ -141,6 +142,10 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --runs RUNS           Run numbers, e.g. '17294-17296,17300'
+  --coadd               Sum the named runs' counts (the GUI's co-add) and reduce the
+                        sum as one run, stored under the first run's number; that
+                        run's own reduction is replaced, so keep both in separate
+                        --workdir directories
   --alpha ALPHA         Fixed alpha to reduce with
   --alpha-from ALPHA_FROM
                         Estimate alpha on this run (a weak-TF calibration run), with
@@ -457,7 +462,9 @@ options:
 ## `asymmetry fourier`
 
 ```
-usage: asymmetry fourier [-h] --run RUN [--name NAME]
+usage: asymmetry fourier [-h] --run RUN [--name NAME] [--correlation]
+                         [--correlation-field GAUSS]
+                         [--correlation-order CORRELATION_ORDER]
                          [--window {none,hann,cosine,gaussian,lorentzian}]
                          [--padding PADDING] [--tmin TMIN] [--tmax TMAX]
                          [--phase PHASE] [--filter-tau FILTER_TAU] [--fmin FMIN]
@@ -471,7 +478,19 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --run RUN             Reduced run number
-  --name NAME           Stored spectrum name (default: run-<N>)
+  --name NAME           Stored spectrum name (default: run-<N>, or
+                        run-<N>-correlation)
+  --correlation         Muoniated-radical correlation spectrum: pair the radical lines
+                        of the run's forward and backward groups (reloaded from the
+                        run files, the co-add's members for a co-add, on the file's
+                        own bins) onto the hyperfine coupling axis; peaks are
+                        couplings A_mu / MHz, --fmin/--fmax bound the coupling
+  --correlation-field GAUSS
+                        Transverse field the line pairs are computed at (default: the
+                        run's own field)
+  --correlation-order CORRELATION_ORDER
+                        Ratio-penalty order of the correlation function (default: 2,
+                        as WiMDA)
   --window {none,hann,cosine,gaussian,lorentzian}
   --padding PADDING     Zero-padding factor (default: 4)
   --tmin TMIN           Transform-window start / µs

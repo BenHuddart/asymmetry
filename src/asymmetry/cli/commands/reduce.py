@@ -16,7 +16,7 @@ from asymmetry.cli._output import (
     render_table,
 )
 from asymmetry.cli._reduction import add_reduction_arguments, describe, reduction_settings
-from asymmetry.cli._runs import resolve_runs
+from asymmetry.cli._runs import coadd_note, range_text, resolve_runs
 from asymmetry.cli._workdir import add_workdir_argument, workdir_for
 
 #: Points averaged to report the initial asymmetry A(0).
@@ -34,6 +34,15 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         "--runs",
         required=True,
         help="Run numbers, e.g. '17294-17296,17300'",
+    )
+    parser.add_argument(
+        "--coadd",
+        action="store_true",
+        help=(
+            "Sum the named runs' counts (the GUI's co-add) and reduce the sum as one run, "
+            "stored under the first run's number; that run's own reduction is replaced, "
+            "so keep both in separate --workdir directories"
+        ),
     )
     add_reduction_arguments(parser)
     parser.add_argument("--rebin", type=int, default=1, help="Merge this many bins (default: 1)")
@@ -70,11 +79,10 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
 def run(args: argparse.Namespace) -> None:
     """Reduce every named run, caching each result in the work directory."""
     from asymmetry.cli import plots
-    from asymmetry.core.io import load
     from asymmetry.core.io.periods import period_count
     from asymmetry.core.workflow.reduction import (
+        load_reduction_source,
         reduce_run,
-        reduction_source,
         resolve_reduction_grouping,
     )
     from asymmetry.core.workflow.survey import build_run_row, precession_evidence
@@ -89,24 +97,40 @@ def run(args: argparse.Namespace) -> None:
     )
 
     targets = resolve_runs(selection, args.runs)
+    if args.coadd and len(targets) < 2:
+        raise UserError(f"--coadd sums two or more runs; {args.runs!r} names one run file.")
+    # One reduction per run, or one of the co-add, keyed on its first member.
+    reductions = (
+        [
+            (
+                targets[0][0],
+                targets[0][1],
+                [path for _run, _prefix, path in targets],
+                [run for run, _prefix, _path in targets],
+            )
+        ]
+        if args.coadd
+        else [(run_number, prefix, [path], []) for run_number, prefix, path in targets]
+    )
     # Written before the first spectrum, not after the last: the manifest is
     # what binds the directory to this data folder, so a reduction interrupted
     # part-way still leaves a directory that says whose runs are in it.
     workdir.write_manifest(
         selection,
         settings=settings,
-        runs=[run_number for run_number, _prefix, _path in targets],
+        runs=[run_number for run_number, _prefix, _paths, _members in reductions],
     )
 
     entries: list[dict[str, Any]] = []
     plot_paths: list[Path] = []
-    for run_number, prefix, path in targets:
+    for run_number, prefix, paths, members in reductions:
         try:
-            dataset_in = reduction_source(load(str(path)), settings.period)
+            dataset_in = load_reduction_source(paths, settings.period)
             grouping = resolve_reduction_grouping(dataset_in.run, settings)
         except (TypeError, ValueError) as exc:
-            raise UserError(f"Run {run_number}: {exc}") from None
-        digest = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+            source = f"Co-add of {range_text(members)}" if members else f"Run {run_number}"
+            raise UserError(f"{source}: {exc}") from None
+        digest = reduction_digest(source_files=paths, grouping=grouping, settings=settings)
 
         if workdir.is_current(run_number, digest):
             dataset = workdir.reduced(run_number)
@@ -119,7 +143,7 @@ def run(args: argparse.Namespace) -> None:
                 raise UserError(str(exc)) from None
             row = build_run_row(
                 dataset_in,
-                path=path,
+                path=paths[0],
                 prefix=prefix,
                 run_number=run_number,
                 # Measured on the record this command actually produced, so a
@@ -130,7 +154,7 @@ def run(args: argparse.Namespace) -> None:
             entry = ReducedEntry(
                 run_number=run_number,
                 digest=digest,
-                source_file=str(path),
+                source_file=str(paths[0]),
                 n_points=dataset.n_points,
                 settings=settings,
                 run=row.to_dict(),
@@ -138,6 +162,7 @@ def run(args: argparse.Namespace) -> None:
                 deadtime_mode=str(grouping["deadtime_mode"]),
                 forward_group=int(grouping["forward_group"]),
                 backward_group=int(grouping["backward_group"]),
+                members=members,
             )
             workdir.write_reduced(dataset, entry)
             recomputed = True
@@ -210,6 +235,11 @@ def _render(
     lines = [
         render_table(headers, rows),
         "",
+        *(
+            coadd_note(entry["run_number"], entry["members"])
+            for entry in entries
+            if entry["members"]
+        ),
         describe(settings),
         f"{len(entries)} run(s) reduced into {workdir_root}"
         + (f" ({reused} reused from cache)" if reused else ""),

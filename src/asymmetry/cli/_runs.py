@@ -10,6 +10,7 @@ its result, narrowed to the one instrument a
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -136,7 +137,7 @@ def resolve_runs(selection: RunSelection, spec: str) -> list[tuple[int, str, Pat
     if not resolved:
         raise UserError(
             f"No run files in {selection} match {spec!r} "
-            f"(the folder holds {_range_text(sorted(available))})."
+            f"(the folder holds {range_text(sorted(available))})."
         )
     return resolved
 
@@ -147,7 +148,7 @@ def resolve_run(selection: RunSelection, run_number: int) -> Path:
     if run_number not in available:
         raise UserError(
             f"Run {run_number} is not in {selection} (the folder holds "
-            f"{_range_text(sorted(available))})."
+            f"{range_text(sorted(available))})."
         )
     return available[run_number][1]
 
@@ -157,7 +158,8 @@ def reduced_datasets(workdir: WorkDir, runs: list[int]) -> dict[int, MuonDataset
 
     The screening and fitting commands read their data from the work directory
     rather than the raw files, so every one of them agrees on the reduction
-    that produced it. Raises :class:`UserError` naming the runs that have not
+    that produced it — and each of them names a co-add's members, here, on
+    stderr. Raises :class:`UserError` naming the runs that have not
     been reduced, because that is a step the user has to run first.
     """
     stored = set(workdir.reduced_runs())
@@ -168,9 +170,20 @@ def reduced_datasets(workdir: WorkDir, runs: list[int]) -> dict[int, MuonDataset
             f"{workdir.root}; run 'asymmetry reduce' on them first."
         )
     try:
-        return {run: workdir.reduced(run) for run in runs}
+        datasets = {run: workdir.reduced(run) for run in runs}
+        members = {run: workdir.entry(run).members for run in runs}
     except KeyError as exc:
         raise UserError(exc.args[0]) from None
+    # stderr, so a --json payload on stdout stays one JSON document.
+    for run in runs:
+        if members[run]:
+            print(f"asymmetry: note: {coadd_note(run, members[run])}", file=sys.stderr)
+    return datasets
+
+
+def coadd_note(run_number: int, members: list[int]) -> str:
+    """The line naming the runs a stored co-add summed."""
+    return f"Run {run_number} is co-added from {range_text(members)}."
 
 
 def window_note(workdir: WorkDir, runs: list[int]) -> str | None:
@@ -199,16 +212,27 @@ def window_note(workdir: WorkDir, runs: list[int]) -> str | None:
     )
 
 
-def _range_text(runs: list[int]) -> str:
+def range_text(runs: list[int]) -> str:
+    """``"runs 3678-3682"``, ``"runs 101, 103-105"`` or ``"run 7"`` for ascending *runs*."""
     if not runs:
         return "no runs"
     if len(runs) == 1:
         return f"run {runs[0]}"
-    return f"runs {runs[0]}-{runs[-1]}"
+    spans: list[list[int]] = []
+    for run in runs:
+        if spans and run == spans[-1][-1] + 1:
+            spans[-1].append(run)
+        else:
+            spans.append([run])
+    return "runs " + ", ".join(
+        str(span[0]) if len(span) == 1 else f"{span[0]}-{span[-1]}" for span in spans
+    )
 
 
 __all__ = [
     "add_instrument_argument",
+    "coadd_note",
+    "range_text",
     "run_clashes",
     "window_note",
     "parse_run_spec",

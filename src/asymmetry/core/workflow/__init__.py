@@ -9,7 +9,13 @@ GUI analysis of the same runs agree.
 Pure core: no Qt, no matplotlib, no ``asymmetry.gui``.
 """
 
-from asymmetry.core.workflow.fourier import FourierOutcome, FourierSettings, fourier_spectrum
+from asymmetry.core.workflow.fourier import (
+    CorrelationSettings,
+    FourierOutcome,
+    FourierSettings,
+    correlation_spectrum,
+    fourier_spectrum,
+)
 from asymmetry.core.workflow.global_fit import GlobalFitOutcome, fit_global
 from asymmetry.core.workflow.integral_scan import (
     build_integral_scan,
@@ -24,6 +30,7 @@ from asymmetry.core.workflow.reduction import (
     AlphaEstimate,
     ReductionSettings,
     estimate_alpha_for_run,
+    load_reduction_source,
     reduce_run,
     reduction_source,
     resolve_reduction_grouping,
@@ -97,6 +104,7 @@ __all__ = [
     "AlphaEstimate",
     "AlphaStep",
     "CalibrationCandidate",
+    "CorrelationSettings",
     "FitRecipe",
     "FourierOutcome",
     "FourierSettings",
@@ -122,9 +130,11 @@ __all__ = [
     "build_integral_scan",
     "build_trend_table",
     "calibration_verdict",
+    "correlation_spectrum",
     "estimate_alpha_for_run",
     "file_fingerprint",
     "instrument_name",
+    "load_reduction_source",
     "fit_one",
     "field_scan_payload",
     "fit_integral_scan",

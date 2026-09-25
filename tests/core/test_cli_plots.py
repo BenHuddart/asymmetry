@@ -240,6 +240,7 @@ def test_fourier_plot_writes_real_and_magnitude_channels(tmp_path: Path) -> None
         real,
         magnitude,
         run_number=20721,
+        coupling=False,
         out_path=tmp_path / "fourier.png",
     )
 

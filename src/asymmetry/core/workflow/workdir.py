@@ -29,8 +29,8 @@ with no manifest yet is unclaimed; the first ``survey`` or ``reduce`` writes the
 binding.
 
 A reduced entry is keyed on a **digest** of everything that determines its
-numbers: the source file's identity (size, mtime and the SHA-256 of the whole
-file), the resolved grouping payload, the reduction settings and the schema the
+numbers: the identity of every source file (size, mtime and the SHA-256 of the
+whole file — one file, or each member of a co-add), the resolved grouping payload, the reduction settings and the schema the
 sidecar was written under. A cached entry whose digest no longer matches is
 stale and is recomputed, never trusted; one written under an older schema is
 refused until ``reduce`` rewrites it.
@@ -44,6 +44,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,7 +63,8 @@ from asymmetry.core.workflow.reduction import ReductionSettings
 #: reduced sidecar's run record carries ``sample_temperature_logged``, and every
 #: stored series its ``trend`` and ``trend_fits``. 3: reduction settings carry
 #: the pair, background range and t0/t_good offsets. 4: the manifest records the
-#: instrument whose runs the session holds.
+#: instrument whose runs the session holds, and a reduced sidecar the runs it
+#: co-adds.
 SCHEMA = 4
 
 #: Default work-directory name, resolved against the current directory. Not
@@ -214,14 +216,14 @@ def file_fingerprint(path: str | Path) -> dict[str, Any]:
 
 def reduction_digest(
     *,
-    source_file: str | Path,
+    source_files: Sequence[str | Path],
     grouping: dict[str, Any],
     settings: ReductionSettings,
 ) -> str:
-    """The digest a reduced entry is keyed on."""
+    """The digest a reduced entry is keyed on: every source file it was reduced from."""
     payload = {
         "schema": SCHEMA,
-        "file": file_fingerprint(source_file),
+        "files": [file_fingerprint(path) for path in source_files],
         "grouping": _canonical(grouping),
         "settings": settings.to_dict(),
     }
@@ -231,7 +233,11 @@ def reduction_digest(
 
 @dataclass(frozen=True)
 class ReducedEntry:
-    """The JSON sidecar of one reduced run."""
+    """The JSON sidecar of one reduced run.
+
+    ``members`` names the runs a co-add summed, the first of them
+    ``run_number`` itself; it is empty for a run reduced alone.
+    """
 
     run_number: int
     digest: str
@@ -243,6 +249,12 @@ class ReducedEntry:
     deadtime_mode: str
     forward_group: int
     backward_group: int
+    members: list[int]
+
+    @property
+    def source_runs(self) -> list[int]:
+        """The runs whose files this entry was reduced from."""
+        return self.members or [self.run_number]
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain, JSON-safe dict (round-trips via :meth:`from_dict`)."""
@@ -259,6 +271,7 @@ class ReducedEntry:
             "deadtime_mode": self.deadtime_mode,
             "forward_group": self.forward_group,
             "backward_group": self.backward_group,
+            "members": list(self.members),
         }
 
     @classmethod
@@ -275,6 +288,7 @@ class ReducedEntry:
             deadtime_mode=str(data["deadtime_mode"]),
             forward_group=int(data["forward_group"]),
             backward_group=int(data["backward_group"]),
+            members=[int(run) for run in data["members"]],
         )
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -42,7 +43,7 @@ def reduced(workflow_folder: Path, tmp_path: Path):
     settings = ReductionSettings()
     grouping = resolve_reduction_grouping(dataset_in.run, settings)
     dataset = reduce_run(dataset_in.run, settings)
-    digest = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+    digest = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     entry = ReducedEntry(
         run_number=run_number,
         digest=digest,
@@ -60,6 +61,7 @@ def reduced(workflow_folder: Path, tmp_path: Path):
         deadtime_mode=str(grouping["deadtime_mode"]),
         forward_group=int(grouping["forward_group"]),
         backward_group=int(grouping["backward_group"]),
+        members=[],
     )
     return WorkDir(tmp_path / "wd"), dataset, entry, path, grouping, settings
 
@@ -226,26 +228,26 @@ def test_is_current_tracks_the_digest(reduced) -> None:
     assert workdir.is_current(entry.run_number, entry.digest)
 
     changed = ReductionSettings(alpha=1.3, alpha_source="user")
-    changed_digest = reduction_digest(source_file=path, grouping=grouping, settings=changed)
+    changed_digest = reduction_digest(source_files=[path], grouping=grouping, settings=changed)
     assert changed_digest != entry.digest
     assert not workdir.is_current(entry.run_number, changed_digest)
 
 
 def test_digest_changes_when_the_grouping_changes(reduced) -> None:
     _workdir, _dataset, _entry, path, grouping, settings = reduced
-    baseline = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+    baseline = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     altered = dict(grouping)
     altered["first_good_bin"] = int(altered["first_good_bin"]) + 1
-    assert reduction_digest(source_file=path, grouping=altered, settings=settings) != baseline
+    assert reduction_digest(source_files=[path], grouping=altered, settings=settings) != baseline
 
 
 def test_digest_changes_when_the_file_changes(reduced, tmp_path: Path) -> None:
     _workdir, _dataset, _entry, path, grouping, settings = reduced
-    baseline = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+    baseline = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
 
     copy = tmp_path / "copy.nxs"
     copy.write_bytes(path.read_bytes() + b"\0")
-    assert reduction_digest(source_file=copy, grouping=grouping, settings=settings) != baseline
+    assert reduction_digest(source_files=[copy], grouping=grouping, settings=settings) != baseline
 
 
 def test_file_fingerprint_reports_size_mtime_and_hash(reduced) -> None:
@@ -427,7 +429,7 @@ def test_the_digest_folds_in_the_schema(reduced, monkeypatch) -> None:
 
     _workdir, _dataset, entry, path, grouping, settings = reduced
     monkeypatch.setattr(workdir_module, "SCHEMA", SCHEMA - 1)
-    older = reduction_digest(source_file=path, grouping=grouping, settings=settings)
+    older = reduction_digest(source_files=[path], grouping=grouping, settings=settings)
     assert older != entry.digest
 
 
@@ -447,3 +449,26 @@ def test_a_reduced_run_records_the_logged_sample_temperature_beside_the_setpoint
     # The simulated files log no sample temperature; the field is present and empty.
     assert entry.run["sample_temperature_logged"] is None
     assert entry.run["temperature"] == 10.0
+
+
+def test_a_coadd_entry_records_its_members_and_reads_from_them(reduced) -> None:
+    workdir, dataset, entry, _path, _grouping, _settings = reduced
+    assert entry.source_runs == [entry.run_number]
+
+    coadd = dataclasses.replace(entry, members=[entry.run_number, entry.run_number + 1])
+    workdir.write_reduced(dataset, coadd)
+    stored = workdir.entry(entry.run_number)
+    assert stored.members == [entry.run_number, entry.run_number + 1]
+    assert stored.source_runs == stored.members
+
+
+def test_the_digest_covers_every_member_of_a_coadd(reduced, tmp_path: Path) -> None:
+    _workdir, _dataset, _entry, path, grouping, settings = reduced
+    member = tmp_path / "member.nxs"
+    member.write_bytes(path.read_bytes())
+    baseline = reduction_digest(source_files=[path, member], grouping=grouping, settings=settings)
+    assert baseline != reduction_digest(source_files=[path], grouping=grouping, settings=settings)
+
+    member.write_bytes(path.read_bytes() + b"\0")
+    changed = reduction_digest(source_files=[path, member], grouping=grouping, settings=settings)
+    assert changed != baseline
