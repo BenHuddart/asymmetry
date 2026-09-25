@@ -929,6 +929,72 @@ single-period `integral-scan --period red` lists encoded period run numbers
 (`29809001`); background in integrals; coupling seeds for `RFResonanceMuP`;
 the radical repolarisation model; corannulene's step baseline.
 
+### Open corpus items — 2026-09-25, on `feat/cli-open-items`
+
+CLI and core only, like the two PRs before it: every item #334, #335 and the
+corpus audit left open except the pass-17a evaluation items. Plan and decisions
+D1–D6: `docs/plans/cli-open-items.md`. Each phase ran as a subagent; the lead
+read every diff before running it, then the phase's tests and corpus check
+(scratch outputs only).
+
+| # | Item | Corpus result |
+|---|---|---|
+| 1 | Period run numbers | benzene RG `integral-scan --period red` and `alpha --period red` name 29809, not 29809001 (a run-ordered x axis too) |
+| 2 | `recipe --run` seeding | LiFeAs 3366 (`--pair Up/Down --background range`): A_1 = 14.6 > 0, phase π, frequency 5.4216 MHz; the 400 G `fit-series` converges on all eight runs without `--initial` |
+| 3 | Survey of sub-folders | benzene `data/` names its three run-holding sub-folders and exits 1; `ALC resonance/` names liquid, solid, solution |
+| 4 | Two instruments in one folder (D1) | Basics refused without `--instrument`, naming EMU and MUSR (nine shared run numbers); `--instrument EMU --runs 18850-18863` reduces 13 runs; alpha per file (emu 44989–44997 1.09–1.11, MUSR 44989 1.23); a 10-bin `--t0-offset` moves the 100 G phase by 1.415 rad (2π·f·Δt = 1.411) |
+| 5 | Background in integrals | LiFeAs `--background range`: errors grow as they should (0.00046 → 0.00128); magnitudes need not, since a TF pair's background carries its own asymmetry. No-background numbers are bit-identical to before |
+| 6 | RF coupling seeds | benzene DEVA, `--fix nu_RF=218`: seeds A_μ 515.2, A_p 133.7; fit 514.775 ± 0.034, 124.4 ± 1.4 MHz, χ²ᵣ 1.41 over the full good range (1.17 over 0.1–4 µs); from `--initial A_mu=470 --initial A_p=90`, which failed in #334, the same minimum |
+| 7 | Differential ALC line shape | benzene liquid RG with `LorentzianLCRPair ×2 + Constant --fix dB_n=44.4`: B0 28938.6 and 29536.8 G, HWHM 12.8 and 10.4 G, χ²ᵣ 1.49 (the plan expected HWHM ≈ 14, χ²ᵣ ≈ 1.3); measured red − green offset −44.38 G over 43 runs; `dB` free is degenerate, as expected |
+| 8 | HiFi geometry from coils (D4) | every HiFi ALC scan now LF from `coils` (liquid 258, solid 122, solution 360, corannulene 359 runs); TF20 calibrations stay TF measured |
+| 9 | PSI logged temperature (D3); implausible NeXus T | EuO 2935 → 52.76 K, 2923 → none (133.5 ± 34 K against 5 K), LiFeAs 3366 → 1.739 K; EuO 49/51 and LiFeAs 34/34 runs carry a reading. Basics: MUSR ~100 K is genuine (the header's 290 K setpoint is stale); emu ~644 K (a furnace-channel echo) and EMU 943.48 K (a railed sensor) are **not** fixed — see below |
+| 10 | Co-add; correlation spectrum (D2) | benzene 3678–3682 co-added: FFT lines 40.7, 208.6 and 305.6 MHz; correlation peak 514.1 MHz (SNR ≈ 600) |
+| 11 | Batch of groups; law through trend fits (D6) | maleic acid, nine groups (per-block `--alpha-from` across the 78280/78281 step, `--strategy least_squares`): k_Mu per group 2.05–2.94 (278–338 K); Arrhenius over all nine pins Ea at 0 (LAW NOT ESTABLISHED), ≤ 330 K gives Ea = 57 ± 26 meV (5.5 ± 2.5 kJ/mol, χ²ᵣ 1.14); the worksheet asks only for a comparison with Ng et al. (1981). Al-LLZ: 13 LF triplets as a batch, ν rising 0.33 → 1.10 MHz above ~260 K; `Arrhenius + Constant` Ea 256 ± 16 meV |
+| 12 | `MuRepolarisation` seeds (D5) | benzene repolarisation, two terms from seeds alone: A_hf 943 and 5429 MHz, χ²ᵣ 25.9 (one term: 460) |
+
+Lead corrections during review: one `source_run_of` in place of two private
+copies; the run-ordered integral-scan axis decoded too; `dataset_nyquist_mhz`
+without its silent fallbacks; the red/green Hall step recorded in probe units
+and converted by the slope of `Field_Main` against `Field_Hall_Z` over the
+scan's runs — the plan's per-run ratio of means carries the probe's ~1 kG zero
+offset and read 42.98 G; LCR and repolarisation group seeding walked through
+one table (`_GROUP_SEEDERS`); corpus run numbers removed from tests; the
+phase's `SKILL.md` edit reverted (skill text waits for the skill pass).
+
+Survey before/after on all 28 corpus folders (a worktree of `main` against the
+branch): geometry changes only in HiFi folders — the ALC folders above, plus
+the plateau system, photo-µSR silicon and Sn, all LF from their coils; logged
+temperatures appear on the PSI folders (EuO, LiFeAs, benzene high TF) and shift
+by 0.1–2.3 K on several NeXus folders now that 0 K dropout samples are left out
+of the mean (benzene RF 290.7 → 293.0 K); the two benzene parent folders name
+their sub-folders. No scan was split or merged. The benzene liquid RG scan now
+shows geometry `-`: three of its runs log no coils and keep their TF stamp.
+
+Not done, and why:
+
+- **Railed and echoed NeXus sample temperatures** (Basics emu ~644 K, EMU
+  943.48 K). No rule separates them from real readings: a steady real log is
+  also one value over ~100 samples, the controller echo matches exactly in
+  only 3 of 11 runs, and a factor-of-two gate hides the genuine MUSR 100 K. The
+  survey's temperature-departure note flags them.
+- **Reference-run background in integrals.** The integral transform has no
+  reference loader, so such a run (and one whose tail fit fails) is excluded
+  with the reason — in the GUI's integral scans too — rather than integrated
+  unsubtracted.
+- `.mon` sidecars never set `sample_temperature_logged` (no corpus folder has
+  one); the PSI header sensor stands aside when a sidecar loads.
+- `combine_runs` drops the members' instrument metadata; the CLI co-add
+  overlays the first member's, the GUI's co-add does not.
+- The correlation spectrum uses the entry's forward/backward pair, not every
+  group; the peak table splits some lines into twins (pre-existing).
+- RF dips closer than ~3 widths give no coupling seeds; the GUI's RF fit is
+  still single-start.
+- Survey JSON still names alpha steps, temperature departures and the best
+  calibration run by run number alone (the text output labels instruments).
+- For the skill pass: `SKILL.md` still says batches of global fits and laws
+  through trend fits have no command; the maleic batch needed `--strategy
+  least_squares` (the default `joint` failed two of nine groups).
+
 ### Sonnet trend-fit pass — 2026-09-23, on `feat/trend-model-fit`
 
 Host: Claude Code. Model: `sonnet`. Runner: `tools/agent_eval/run_eval.py`,

@@ -306,7 +306,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   --correlation` builds the muoniated-radical correlation spectrum.** `--coadd` combines the
   named runs at the count level (`combine_runs`, the GUI data browser's own co-add) and
   reduces the sum under the reduction options, storing it under the first run's number; every
-  later command that reads it — `wizard`, `fit`, `fit-series`, `fourier` — names its members
+  later command that reads it — `recipe`, `wizard`, `fit`, `fit-series`, `fit-global`,
+  `fourier` — names its members
   on stderr (`Run N is co-added from runs …`). `fourier --correlation` reloads a reduced
   entry's source run(s) (a co-add's members, for a co-add) and pairs the radical lines of its
   forward/backward groups onto the hyperfine-coupling axis (`--correlation-field`,
@@ -339,9 +340,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Bwid`, `dB`): the green period's Lorentzian less the same line `dB` below, for a red/green
   scan whose resonance is fitted to the *difference* of the two periods rather than either
   alone. It is seeded like the other LCR line shapes, and `integral-scan --period green-red`
-  now reads each run's own red/green field-coil evidence — a NeXus loader addition,
-  `period_field_offset_gauss`, converted from the logged Hall-probe step to gauss by the
-  scan's own field/Hall-probe slope, never assumed — and prints the scan's mean offset with a
+  now reads each run's own red/green field-coil evidence — the NeXus loader records the
+  red − green Hall-probe step as `period_hall_offset`, which the scan converts to gauss by its
+  own slope of main field against Hall probe, never assumed — and prints the scan's mean offset with a
   ready-made `--fix dB=…`. With `dB` free the fit is degenerate at typical ALC field steps
   against typical line widths, which the reference docs now say.
 - **`MuRepolarisation` seeds itself from the data's half-rise(s).** `a_Mu` and `A_hf` are

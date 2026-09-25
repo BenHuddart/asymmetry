@@ -1021,20 +1021,21 @@ propagates into the integral).
 point is the green period's integral asymmetry less the red period's, each
 formed from that period's own counts under the `Reduction options`_, with their
 errors added in quadrature. ``RFResonanceMuP`` fits the muon and proton
-couplings of an RF scan with the RF frequency held at its acquisition value;
-given ``nu_RF`` as a start or fixed value, the muon/proton couplings are
-seeded by solving the resonance condition at the scan's own two dip fields
-rather than starting from the model's textbook defaults, so a scan whose
-couplings sit far from those defaults still seeds close enough to converge:
+couplings of an RF scan with the RF frequency held at its acquisition value.
+With ``nu_RF`` fixed (or given as a start), the couplings are seeded by solving
+the resonance condition at the scan's own two dip fields rather than taken from
+the model's defaults (515 and 124 MHz, the benzene radical's). On the benzene
+DEVA data of the WiMDA school, recorded at 218 MHz:
 
 .. code-block:: text
 
-   asymmetry integral-scan data --runs 501-520 --period green-red \
+   asymmetry integral-scan data --runs 56426-56462 --period green-red \
        --deadtime from_file --model RFResonanceMuP --fix nu_RF=218
 
-fits from the scan's own two dips without needing ``--initial`` for
-``A_mu``/``A_p`` even where they sit well away from the model's textbook
-515/124 MHz defaults.
+gives ``A_mu`` ≈ 514.8 MHz and ``A_p`` ≈ 124.4 MHz, and reaches the same
+minimum from ``--initial A_mu=470 --initial A_p=90``: the fit also tries the
+scan's own seed beside a start given by hand, so another radical needs no
+``--initial`` near its couplings.
 
 The green and red periods of a HiFi run are not sampled at quite the same
 field — the RG coil is stepped between them, and the field the file records
